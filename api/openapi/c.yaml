@@ -1,0 +1,83 @@
+openapi: 3.0.3
+info:
+  title: Consumer API (C)
+  version: 1.0.0
+  description: C 端用户（App / 小程序 / H5）
+servers:
+  - url: http://localhost:8083
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: ok
+  /c/v1/orders:
+    get:
+      summary: 我的订单列表
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ok
+    post:
+      summary: 创建订单
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant_id, amount_cent]
+              properties:
+                merchant_id:
+                  type: string
+                amount_cent:
+                  type: integer
+                  format: int64
+                currency:
+                  type: string
+      responses:
+        "200":
+          description: ok
+  /c/v1/orders/{id}:
+    get:
+      summary: 我的订单详情（字段最小化）
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+  /c/v1/orders/{id}/cancel:
+    post:
+      summary: 取消我的订单
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "演示 Token：c.<user_id>"

@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/admin-frame/admin-frame/internal/order/app"
+	"github.com/admin-frame/admin-frame/internal/order/infrastructure/eventbus"
+	"github.com/admin-frame/admin-frame/internal/order/infrastructure/persistence"
+	admintransport "github.com/admin-frame/admin-frame/internal/order/transport/admin"
+	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/pkg/health"
+)
+
+func main() {
+	configPath := flag.String("config", "configs/admin.yaml", "config file path")
+	flag.Parse()
+
+	cfg, err := platform.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	logger := platform.NewLogger(cfg.Log, cfg.Service)
+
+	repo := persistence.NewMemoryRepository()
+	bus := eventbus.NewMemoryBus(logger)
+	svc := app.NewOrderService(repo, bus)
+	h := admintransport.NewHandler(svc)
+
+	authMW := platform.DemoAuth(auth.ChannelAdmin)
+	api := admintransport.NewRouter(h, authMW)
+
+	root := http.NewServeMux()
+	hh := health.New()
+	hh.Register("memory_repo", repo.Ping)
+	platform.MountHealth(root, hh)
+	platform.MountVersion(root, cfg.Service, "dev")
+	root.Handle("/", api)
+
+	handler := platform.Chain(root,
+		platform.Recover(logger),
+		platform.RequestID(),
+		platform.AccessLog(logger),
+	)
+
+	if err := platform.ListenAndServe(context.Background(), cfg.Addr, handler, cfg.ShutdownTimeout, logger); err != nil {
+		logger.Error("server failed", "err", err)
+		os.Exit(1)
+	}
+}

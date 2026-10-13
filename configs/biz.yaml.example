@@ -1,0 +1,17 @@
+service: biz-api
+channel: biz
+addr: ":8082"
+shutdown_timeout: 15s
+
+log:
+  level: info
+  format: json
+
+auth:
+  # 演示用：Authorization: Bearer biz.<merchant_id>.<subject_id>
+  demo_mode: true
+  expected_channel: biz
+
+db:
+  driver: memory
+  dsn: ""

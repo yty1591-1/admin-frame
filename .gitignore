@@ -1,0 +1,13 @@
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+configs/*.yaml
+!configs/*.yaml.example
+.env
+.idea/
+.vscode/
+*.swp
+.DS_Store

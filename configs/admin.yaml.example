@@ -1,0 +1,18 @@
+service: admin-api
+channel: admin
+addr: ":8081"
+shutdown_timeout: 15s
+
+log:
+  level: info
+  format: json
+
+auth:
+  # 演示用：Authorization: Bearer admin.<subject_id>
+  # 生产应替换为独立 JWT issuer/audience/密钥
+  demo_mode: true
+  expected_channel: admin
+
+db:
+  driver: memory
+  dsn: ""

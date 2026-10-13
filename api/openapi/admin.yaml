@@ -1,0 +1,69 @@
+openapi: 3.0.3
+info:
+  title: Admin API (A)
+  version: 1.0.0
+  description: 平台运营管理端
+servers:
+  - url: http://localhost:8081
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: ok
+  /admin/v1/orders:
+    get:
+      summary: 全局订单列表
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: merchant_id
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: ok
+  /admin/v1/orders/{id}:
+    get:
+      summary: 订单详情（含运营字段）
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+  /admin/v1/orders/{id}/cancel:
+    post:
+      summary: 运营取消订单
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "演示 Token：admin.<subject_id>"

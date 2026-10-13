@@ -1,0 +1,65 @@
+openapi: 3.0.3
+info:
+  title: Biz API (B)
+  version: 1.0.0
+  description: 商家/企业端
+servers:
+  - url: http://localhost:8082
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: ok
+  /biz/v1/orders:
+    get:
+      summary: 本商户订单列表
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: ok
+  /biz/v1/orders/{id}:
+    get:
+      summary: 本商户订单详情
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+  /biz/v1/orders/{id}/cancel:
+    post:
+      summary: 商户取消订单
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "演示 Token：biz.<merchant_id>.<subject_id>"

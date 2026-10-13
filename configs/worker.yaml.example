@@ -1,0 +1,19 @@
+service: worker
+channel: worker
+addr: ":8090"
+shutdown_timeout: 15s
+
+log:
+  level: info
+  format: json
+
+auth:
+  demo_mode: true
+  expected_channel: worker
+
+db:
+  driver: memory
+  dsn: ""
+
+worker:
+  poll_interval: 5s

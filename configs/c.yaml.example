@@ -1,0 +1,17 @@
+service: c-api
+channel: c
+addr: ":8083"
+shutdown_timeout: 15s
+
+log:
+  level: info
+  format: json
+
+auth:
+  # 演示用：Authorization: Bearer c.<user_id>
+  demo_mode: true
+  expected_channel: c
+
+db:
+  driver: memory
+  dsn: ""
