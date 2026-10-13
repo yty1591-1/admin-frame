@@ -9,7 +9,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci lint fmt fmt-check tidy tidy-check \
-	check-transport check-debug secrets gitee-job ci mock migrate-up vuln docker docker-admin
+	check-transport check-debug check-openapi secrets gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -90,13 +90,17 @@ check-debug:
 secrets:
 	bash scripts/ci/gitleaks.sh
 
+# API-01/07/08：分端 OpenAPI validate + breaking（见 scripts/ci/check-openapi.sh）。
+check-openapi openapi:
+	bash scripts/ci/check-openapi.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
-	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|build"; exit 2; fi
+	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（含 SECURITY_STANDARDS 的 secrets / gosec / debug）。
-ci: fmt-check tidy-check lint test-ci vuln check-transport check-debug secrets build
+# 本地一键对齐 CI 必跑项（含 SECURITY / API 门禁）。
+ci: fmt-check tidy-check lint test-ci vuln check-transport check-debug secrets check-openapi build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

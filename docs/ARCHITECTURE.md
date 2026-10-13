@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.5  
+> **版本**：v2.6  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -13,6 +13,7 @@
 >   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
+> - [工程化 API 契约规范](./API_STANDARDS.md)（API-01～API-12）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -780,14 +781,18 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十六、API 规范
 
+> **完整硬约束**见 [`docs/API_STANDARDS.md`](./API_STANDARDS.md)（API-01～API-12）。  
+> 门禁：`make openapi` / CI job `openapi`（oasdiff validate + breaking）。
+
 ### 16.1 契约优先（分端）
 
 - 协议定义分端维护：
   - `api/openapi/admin.yaml`
   - `api/openapi/biz.yaml`
   - `api/openapi/c.yaml`
-- 实现与契约在 CI 中校验一致性（lint / breaking change 检测按端执行）。
-- 错误码枚举可共用（`internal/shared/errors`），**响应字段按端裁剪**，以各端 OpenAPI 为准。
+  - 共享信封/分页/错误响应：`api/openapi/components.yaml`
+- 实现与契约在 CI 中校验（oasdiff validate；相对基线 breaking，无 major 提升则阻断）。
+- 错误码枚举共用（`internal/shared/apperr`），**响应字段按端裁剪**，以各端 OpenAPI 为准。
 
 ### 16.2 REST 约定
 
@@ -896,15 +901,13 @@ make docker-admin       # 单端镜像（多 stage target）
 > **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)。  
 > 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
 
-**当前必跑（CI-03～CI-09）：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint → 测试（`-race` + coverage 产物）→ `govulncheck` → 跨端 transport 互引检查 → 全量 `cmd` 构建。
+**当前必跑：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint（含 gosec）→ 测试（`-race` + coverage 产物）→ `govulncheck` → 跨端 transport 互引检查 → gitleaks / 调试端点 → **OpenAPI validate + breaking** → 全量 `cmd` 构建。
 
 **规划中（专文落地后纳入）：**
 
 1. 许可证扫描（LIC）  
 2. 集成测试（容器；含隔离用例）（TEST）  
-3. OpenAPI 分端 breaking 检查（API）  
-4. 密钥扫描 gitleaks（SEC）  
-5. 按变更构建镜像、扫描、推送（RELS）
+3. 按变更构建镜像、扫描、推送（RELS）
 
 ### 18.4 发布策略
 
@@ -1001,7 +1004,7 @@ docs/adr/
 **数据与契约**
 
 - [ ] 迁移含 down（或不可逆方案已评审）
-- [ ] 对应端 OpenAPI 已更新且向后兼容
+- [ ] 对应端 OpenAPI 已更新；破坏性变更已 major 提升（见 `API_STANDARDS.md`）
 - [ ] 审计日志覆盖关键操作（如适用）
 
 **质量门禁**
@@ -1045,6 +1048,7 @@ make build
 - [工程化代码编写风格规范（硬约束）](./CODE_STYLE.md)
 - [工程化 CI 流水线规范（硬约束）](./CI_STANDARDS.md)
 - [工程化安全规范（硬约束）](./SECURITY_STANDARDS.md)
+- [工程化 API 契约规范（硬约束）](./API_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

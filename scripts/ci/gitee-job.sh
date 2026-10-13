@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐 CI_STANDARDS CI-03～CI-09）。
-# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|build>
+# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐 CI_STANDARDS / SECURITY / API）。
+# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,7 +17,7 @@ export PATH="$(go env GOPATH)/bin:${PATH}"
 
 job="${1:-}"
 if [[ -z "${job}" ]]; then
-  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|build>" >&2
+  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>" >&2
   exit 2
 fi
 
@@ -72,6 +72,9 @@ case "${job}" in
   secrets)
     bash scripts/ci/check-debug-endpoints.sh
     bash scripts/ci/gitleaks.sh
+    ;;
+  openapi)
+    bash scripts/ci/check-openapi.sh
     ;;
   build)
     mkdir -p bin

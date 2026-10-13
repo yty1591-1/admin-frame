@@ -1,0 +1,151 @@
+openapi: 3.0.3
+info:
+  title: Shared API Components
+  version: 1.0.0
+  description: |
+    A/B/C 三端共用的信封、分页与错误响应模型。
+    各端 OpenAPI 通过相对路径 $ref 引用；禁止在此文件定义业务路径。
+paths: {}
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: 页码，从 1 开始
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      description: 每页条数；超过上限须返回业务错误码 40000
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: C 端写操作幂等键；同一键重复提交须返回同一结果
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  schemas:
+    Envelope:
+      type: object
+      required: [code, message]
+      description: 统一成功/失败响应信封
+      properties:
+        code:
+          type: integer
+          description: 0 表示成功；非 0 为稳定业务错误码（见 ErrorCode）
+          example: 0
+        message:
+          type: string
+          description: 人类可读说明；C 端宜笼统，细节进日志
+          example: ok
+        data:
+          description: 成功时的业务载荷；失败时省略
+        trace_id:
+          type: string
+          description: 请求追踪 ID，与日志字段对齐
+          example: a1b2c3d4e5f60708
+    ErrorEnvelope:
+      type: object
+      required: [code, message]
+      description: 错误响应（无 data 或 data 为空）
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+          example: not found
+        trace_id:
+          type: string
+    ErrorCode:
+      type: integer
+      description: |
+        稳定业务错误码（`internal/shared/apperr`）。
+        新增码只追加；禁止复用已发布码的语义。
+      enum: [40000, 40100, 40300, 40400, 40900, 50000]
+      x-enum-descriptions:
+        - 请求参数非法
+        - 未认证或令牌无效
+        - 已认证但无权限
+        - 资源不存在（含越权对外表现为不存在）
+        - 状态冲突
+        - 内部错误
+    PageMeta:
+      type: object
+      required: [items, total]
+      description: 列表 data 载荷的公共形状（items + total）
+      properties:
+        total:
+          type: integer
+          minimum: 0
+          description: 符合过滤条件的总条数（或当前页估计，须在实现中保持一致）
+  responses:
+    BadRequest:
+      description: 参数非法
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 40000
+            message: invalid json
+            trace_id: a1b2c3d4e5f60708
+    Unauthorized:
+      description: 未认证
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 40100
+            message: unauthorized
+            trace_id: a1b2c3d4e5f60708
+    Forbidden:
+      description: 无权限
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 40300
+            message: forbidden
+            trace_id: a1b2c3d4e5f60708
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 40400
+            message: not found
+            trace_id: a1b2c3d4e5f60708
+    Conflict:
+      description: 状态冲突
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 40900
+            message: order already cancelled
+            trace_id: a1b2c3d4e5f60708
+    InternalError:
+      description: 内部错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 50000
+            message: internal error
+            trace_id: a1b2c3d4e5f60708

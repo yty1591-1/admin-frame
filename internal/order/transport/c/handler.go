@@ -3,7 +3,6 @@ package c
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
@@ -23,10 +22,16 @@ func NewHandler(svc *app.OrderService) *Handler {
 	return &Handler{svc: svc}
 }
 
-// Create 创建订单；支持 Idempotency-Key。
+// Create 创建订单；必须携带 Idempotency-Key（API-11）。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
+
+	idemKey := r.Header.Get("Idempotency-Key")
+	if idemKey == "" {
+		httpx.FromError(w, apperr.BadRequest("Idempotency-Key required"), traceID)
+		return
+	}
 
 	var req CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -38,7 +43,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:     p.SubjectID,
 		AmountCent: req.AmountCent,
 		Currency:   req.Currency,
-		IdemKey:    r.Header.Get("Idempotency-Key"),
+		IdemKey:    idemKey,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -51,13 +56,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page <= 0 {
-		page = 1
-	}
-	if limit <= 0 {
-		limit = 20
+	page, limit, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
 	}
 	items, err := h.svc.ListOrders(r.Context(), domain.ListFilter{
 		UserID: p.SubjectID,

@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
 > **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-13（纳入 API openapi job）  
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -39,7 +39,9 @@
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
-**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：OpenAPI breaking、集成测试容器、镜像扫描、覆盖率硬门槛。启用后须更新本表与各平台流水线。
+**API 门禁（API_STANDARDS，与上表一并必跑）：** job/step `openapi`（oasdiff validate + 分端 breaking，API-01/07/08）。
+
+**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：集成测试容器、镜像扫描、覆盖率硬门槛。启用后须更新本表与各平台流水线。
 
 ---
 
@@ -64,6 +66,7 @@
 | CI-06 | `vuln` | `vuln` | `make vuln` |
 | CI-09 | `arch` | `arch` | `make check-transport` |
 | SEC-01/08 | `secrets` | `secrets` | `make secrets` + `make check-debug` |
+| API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | CI-08 | `build` | `build` | `make build` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
@@ -117,6 +120,8 @@ PR / push main ──►  ├── lint
                     ├── test  (+ race, coverage)
                     ├── vuln
                     ├── arch  (cross-transport)
+                    ├── secrets (gitleaks + debug)
+                    ├── openapi (validate + breaking)
                     └── build (all cmd)
 ```
 
@@ -134,6 +139,7 @@ make lint            # CI-04
 make test-ci         # CI-05
 make vuln            # CI-06
 make check-transport # CI-09
+make openapi         # API-01/07/08
 make build           # CI-08
 ```
 
@@ -224,8 +230,9 @@ make ci
 | `.workflow/*.yml` | Gitee Go 强制执行 |
 | `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
+| `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `Makefile`（`ci` / `fmt-check` / …） | 本地对齐 |
 | `.golangci.yml` | CI-04 规则集 |
 | 本文件 | 规范正文 |
 
-后续 SEC/API/TEST 专文启用新检查时，须 **同时** 更新 GitHub workflow、Gitee `.workflow` 与（如需要）`gitee-job.sh`。
+后续 TEST/DEP 等专文启用新检查时，须 **同时** 更新 GitHub workflow、Gitee `.workflow` 与（如需要）`gitee-job.sh`。

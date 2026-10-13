@@ -18,7 +18,14 @@
 - [ ] 无 SQL 拼接 / 命令注入；`auth.demo_mode` 未在生产配置中打开
 - [ ] 未新增 pprof / Swagger（或已按 SEC-08 豁免并说明）
 
+## API 自检（API_STANDARDS）
+
+- [ ] 影响端的 `api/openapi/{admin,biz,c}.yaml` 已同步更新
+- [ ] 统一信封 / 稳定错误码 / 分页（`page_size`≤100）符合规范
+- [ ] 若有 breaking：对应端 `info.version` major 已提升，并写明弃用与迁移
+- [ ] C 端写路径含 `Idempotency-Key`；无内部字段进入 C 契约
+
 ## 质量
 
-- [ ] `make ci` 通过（含 gitleaks 与 gosec）
+- [ ] `make ci` 通过（含 gitleaks、gosec、openapi）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

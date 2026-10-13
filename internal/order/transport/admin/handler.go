@@ -2,7 +2,6 @@ package admin
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
@@ -23,13 +22,10 @@ func NewHandler(svc *app.OrderService) *Handler {
 // List 列举订单，支持 merchant_id / 分页查询参数。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page <= 0 {
-		page = 1
-	}
-	if limit <= 0 {
-		limit = 20
+	page, limit, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
 	}
 	filter := domain.ListFilter{
 		MerchantID: r.URL.Query().Get("merchant_id"),

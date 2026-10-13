@@ -171,6 +171,31 @@ jobs:
       - name: Debug endpoints and gitleaks
         run: bash scripts/ci/gitee-job.sh secrets
 
+  openapi:
+    name: openapi
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fetch PR base for breaking check
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+
+      - name: OpenAPI validate + breaking
+        env:
+          OPENAPI_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: bash scripts/ci/gitee-job.sh openapi
+
   build:
     name: build
     runs-on: ubuntu-latest

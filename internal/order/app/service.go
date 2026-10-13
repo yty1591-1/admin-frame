@@ -124,10 +124,13 @@ func (s *OrderService) GetOrderForUser(ctx context.Context, id, userID string) (
 	return order, nil
 }
 
-// ListOrders 分页列举订单；Limit 非法时回落到 20。
+// ListOrders 分页列举订单；Limit 非法时回落到 20，超过 100 返回参数错误。
 func (s *OrderService) ListOrders(ctx context.Context, filter domain.ListFilter) ([]*domain.Order, error) {
-	if filter.Limit <= 0 || filter.Limit > 100 {
+	if filter.Limit <= 0 {
 		filter.Limit = 20
+	}
+	if filter.Limit > 100 {
+		return nil, apperr.BadRequest("page_size exceeds maximum of 100")
 	}
 	return s.repo.List(ctx, filter)
 }

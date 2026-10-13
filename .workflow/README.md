@@ -8,7 +8,7 @@
 | `MasterPipeline.yml` | push 到 `main` / `master` |
 | `BranchPipeline.yml` | push 到其它分支 |
 
-命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（CI-03～CI-09）。
+命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi）。
 
 ## 开通步骤
 

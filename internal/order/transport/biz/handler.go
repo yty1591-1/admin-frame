@@ -2,7 +2,6 @@ package biz
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
@@ -30,13 +29,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.Forbidden("merchant context required"), traceID)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page <= 0 {
-		page = 1
-	}
-	if limit <= 0 {
-		limit = 20
+	page, limit, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
 	}
 	items, err := h.svc.ListOrders(r.Context(), domain.ListFilter{
 		MerchantID: p.MerchantID,

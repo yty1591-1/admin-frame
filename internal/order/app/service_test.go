@@ -2,10 +2,13 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
+	"github.com/admin-frame/admin-frame/internal/order/domain"
 	"github.com/admin-frame/admin-frame/internal/order/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
 func TestMerchantIsolation(t *testing.T) {
@@ -62,5 +65,18 @@ func TestUserOwnership(t *testing.T) {
 	}
 	if _, err := svc.GetOrderForUser(ctx, o.ID, "u2"); err == nil {
 		t.Fatal("expected not found for other user")
+	}
+}
+
+func TestListOrdersPageSizeCap(t *testing.T) {
+	ctx := context.Background()
+	svc := app.NewOrderService(persistence.NewMemoryRepository(), nil)
+	_, err := svc.ListOrders(ctx, domain.ListFilter{Limit: 101})
+	if err == nil {
+		t.Fatal("expected page_size error")
+	}
+	var ae *apperr.AppError
+	if !errors.As(err, &ae) || ae.Code != apperr.CodeBadRequest {
+		t.Fatalf("err=%v", err)
 	}
 }
