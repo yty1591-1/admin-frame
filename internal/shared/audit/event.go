@@ -9,6 +9,7 @@ import (
 // Outcome 操作结果。
 type Outcome string
 
+// Outcome 取值。
 const (
 	OutcomeSuccess Outcome = "success"
 	OutcomeFailure Outcome = "failure"

@@ -11,7 +11,7 @@ import (
 )
 
 func TestParsePageDefaults(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	page, size, err := httpx.ParsePage(r)
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestParsePageDefaults(t *testing.T) {
 }
 
 func TestParsePageRejectsOverMax(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/x?page=2&page_size=101", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x?page=2&page_size=101", http.NoBody)
 	_, _, err := httpx.ParsePage(r)
 	if err == nil {
 		t.Fatal("expected error")
