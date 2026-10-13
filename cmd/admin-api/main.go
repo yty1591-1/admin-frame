@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/health"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
+	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -55,6 +56,19 @@ func main() {
 	}
 	met.MustRegisterBuildInfo(version, commit, buildTime)
 
+	ctx := context.Background()
+	tp, err := tracing.Init(ctx, cfg.TracingOptions(version))
+	if err != nil {
+		log.Fatalf("tracing: %v", err)
+	}
+	exitCode := 0
+	defer func() {
+		_ = tp.Shutdown(context.Background()) // 进程退出前刷出剩余 span
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
+
 	root := http.NewServeMux()
 	hh := health.New()
 	hh.Register("memory_repo", repo.Ping)
@@ -70,13 +84,14 @@ func main() {
 
 	handler := platform.Chain(root,
 		platform.Recover(logger),
+		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer(""))),
 		platform.RequestID(),
 		met.HTTP().Middleware(),
 		platform.AccessLog(logger),
 	)
 
-	if err := platform.ListenAndServe(context.Background(), cfg.Addr, handler, cfg.ShutdownTimeout, logger); err != nil {
+	if err := platform.ListenAndServe(ctx, cfg.Addr, handler, cfg.ShutdownTimeout, logger); err != nil {
 		logger.Error("server failed", "err", err)
-		os.Exit(1)
+		exitCode = 1
 	}
 }

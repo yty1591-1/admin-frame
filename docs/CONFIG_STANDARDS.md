@@ -70,6 +70,11 @@ cp configs/admin.yaml.example configs/admin.yaml
 | `ADMIN_FRAME_DB_DRIVER` | `db.driver` |
 | `ADMIN_FRAME_DB_DSN` | `db.dsn` |
 | `ADMIN_FRAME_WORKER_POLL_INTERVAL` | `worker.poll_interval` |
+| `ADMIN_FRAME_TRACING_ENABLED` | `tracing.enabled` |
+| `ADMIN_FRAME_TRACING_EXPORTER` | `tracing.exporter`（none / otlp / stdout / noop） |
+| `ADMIN_FRAME_TRACING_ENDPOINT` | `tracing.endpoint` |
+| `ADMIN_FRAME_TRACING_INSECURE` | `tracing.insecure` |
+| `ADMIN_FRAME_TRACING_SAMPLE_RATIO` | `tracing.sample_ratio` |
 
 生产密钥、DSN **优先**用环境变量注入，不写进文件或镜像层。
 
@@ -86,6 +91,7 @@ cp configs/admin.yaml.example configs/admin.yaml
 - `log.level` ∈ {debug, info, warn, error}  
 - `env` 为空或 ∈ {local, dev, test, staging, prod}  
 - `env=prod` ⇒ `auth.demo_mode=false`  
+- `tracing.exporter` ∈ {none, otlp, stdout, noop}；`otlp` 时 `endpoint` 必填；`env=prod` 禁止 `stdout`  
 
 鉴权装配另见 SEC-04：`demo_mode=false` 且无生产 Authenticator 时拒绝启动。
 

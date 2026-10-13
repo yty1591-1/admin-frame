@@ -17,3 +17,9 @@ auth:
 db:
   driver: memory
   dsn: ""
+
+tracing:
+  enabled: true
+  exporter: none
+  endpoint: ""
+  insecure: false

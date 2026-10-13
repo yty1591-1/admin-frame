@@ -19,3 +19,12 @@ auth:
 db:
   driver: memory
   dsn: ""
+
+tracing:
+  # 默认启用；exporter=none 只生成 TraceID 不导出（无需 Collector）
+  # 生产可改为 otlp + endpoint（如 otel-collector:4318），内网可 insecure: true
+  enabled: true
+  exporter: none
+  endpoint: ""
+  insecure: false
+  # sample_ratio: 1.0

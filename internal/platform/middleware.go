@@ -13,6 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
 type ctxTraceKey struct{}
@@ -58,22 +59,30 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// RequestID 注入/回写 X-Request-ID，并写入 context 供日志关联。
+// RequestID 注入/回写 X-Request-ID，并写入 context 供日志 / 信封关联（OBS-05）。
+//
+// 须挂在 tracing.HTTPMiddleware 之后：无入站 X-Request-ID 时优先复用 OTel TraceID，
+// 保证日志、响应信封与链路追踪使用同一关联键。
 func RequestID() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("X-Request-ID")
 			if id == "" {
-				id = newID()
+				if tid := tracing.TraceID(r.Context()); tid != "" {
+					id = tid
+				} else {
+					id = newID()
+				}
 			}
 			w.Header().Set("X-Request-ID", id)
 			ctx := withTraceID(r.Context(), id)
+			tracing.SetAttributes(ctx, tracing.Attr("request.id", id))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// AccessLog 记录访问日志（方法、路径、状态、耗时、trace_id）。
+// AccessLog 记录访问日志（方法、路径、状态、耗时、trace_id、span_id）。
 func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +95,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 				"status", rw.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"trace_id", TraceIDFromContext(r.Context()),
+				"span_id", tracing.SpanID(r.Context()),
 			)
 		})
 	}

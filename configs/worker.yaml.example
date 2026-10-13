@@ -19,3 +19,9 @@ db:
 
 worker:
   poll_interval: 5s
+
+tracing:
+  enabled: true
+  exporter: none
+  endpoint: ""
+  insecure: false

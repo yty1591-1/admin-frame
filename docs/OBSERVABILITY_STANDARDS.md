@@ -70,7 +70,7 @@
 |------|------|
 | 指标 | RED（Rate/Errors/Duration）按 `service`/`channel`（及 `env`）常量标签；实现见 `pkg/metrics` |
 | 拉取 | API 进程暴露 `GET /metrics`（Prometheus 文本）；生产须网络隔离，禁止公网裸奔 |
-| 追踪 | OpenTelemetry；跨服务透传 W3C Trace Context 或约定 header（`pkg/tracing` 待落地） |
+| 追踪 | OpenTelemetry（`pkg/tracing`）；W3C `traceparent`；无 `X-Request-ID` 时复用 OTel TraceID 作为信封/日志 `trace_id` |
 | 队列 | worker 积压、消费失败须可观测 |
 
 HTTP `route` 标签须使用低基数模板（ServeMux `Pattern` 或显式映射），禁止默认打原始 URL.Path。
@@ -136,5 +136,6 @@ make ci
 | `internal/platform/wiring.go` | MountHealth / MountVersion / MountMetrics |
 | `pkg/health` | 存活/就绪实现 |
 | `pkg/metrics` | Prometheus Registry、HTTP RED、build_info |
-| `scripts/ci/check-observability.sh` | OBS-01/02/04 + metrics 挂载 |
+| `pkg/tracing` | OTel Init / Shutdown、HTTPMiddleware、span 工具 |
+| `scripts/ci/check-observability.sh` | OBS-01/02/04 + metrics / tracing 挂载 |
 | 本文件 | 规范正文 |

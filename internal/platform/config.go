@@ -21,6 +21,29 @@ type Config struct {
 	Auth            AuthConfig    `yaml:"auth"`
 	DB              DBConfig      `yaml:"db"`
 	Worker          WorkerConfig  `yaml:"worker"`
+	Tracing         TracingConfig `yaml:"tracing"`
+}
+
+// TracingConfig OpenTelemetry 追踪（OBS）；装配见 pkg/tracing。
+type TracingConfig struct {
+	// Enabled 为 false 时使用 noop（不生成有效 TraceID）；nil 表示默认 true。
+	Enabled *bool `yaml:"enabled"`
+	// Exporter：none（默认，只生成 ID）/ otlp / stdout / noop。
+	Exporter string `yaml:"exporter"`
+	// Endpoint OTLP/HTTP 地址（exporter=otlp 时必填），如 localhost:4318。
+	Endpoint string `yaml:"endpoint"`
+	// SampleRatio 头采样 [0,1]；nil 表示 1.0。
+	SampleRatio *float64 `yaml:"sample_ratio"`
+	// Insecure OTLP 明文（无 TLS）；仅限本地/内网。
+	Insecure bool `yaml:"insecure"`
+}
+
+// IsEnabled 报告追踪是否启用；未配置时默认 true。
+func (t TracingConfig) IsEnabled() bool {
+	if t.Enabled == nil {
+		return true
+	}
+	return *t.Enabled
 }
 
 // LogConfig 日志级别与格式。
@@ -87,6 +110,9 @@ func (c *Config) applyDefaults() {
 	if c.Auth.ExpectedChannel == "" {
 		c.Auth.ExpectedChannel = c.Channel
 	}
+	if c.Tracing.Exporter == "" {
+		c.Tracing.Exporter = "none"
+	}
 }
 
 // applyEnv 用 ADMIN_FRAME_* 环境变量覆盖文件配置（CFG-04）。
@@ -136,6 +162,36 @@ func (c *Config) applyEnv() {
 			c.Worker.PollInterval = d
 		}
 	}
+	if v := os.Getenv("ADMIN_FRAME_TRACING_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			on := true
+			c.Tracing.Enabled = &on
+		case "0", "false", "no", "off":
+			off := false
+			c.Tracing.Enabled = &off
+		}
+	}
+	if v := os.Getenv("ADMIN_FRAME_TRACING_EXPORTER"); v != "" {
+		c.Tracing.Exporter = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_TRACING_ENDPOINT"); v != "" {
+		c.Tracing.Endpoint = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_TRACING_INSECURE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			c.Tracing.Insecure = true
+		case "0", "false", "no", "off":
+			c.Tracing.Insecure = false
+		}
+	}
+	if v := os.Getenv("ADMIN_FRAME_TRACING_SAMPLE_RATIO"); v != "" {
+		var ratio float64
+		if _, err := fmt.Sscanf(v, "%f", &ratio); err == nil {
+			c.Tracing.SampleRatio = &ratio
+		}
+	}
 	// channel 被环境变量改写后，若 expected 仍为空则对齐。
 	if c.Auth.ExpectedChannel == "" {
 		c.Auth.ExpectedChannel = c.Channel
@@ -181,6 +237,23 @@ func (c *Config) Validate() error {
 	}
 	if strings.EqualFold(c.Env, "prod") && c.Auth.DemoMode {
 		return fmt.Errorf("auth.demo_mode must be false when env=prod")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Tracing.Exporter)) {
+	case "", "none", "otlp", "stdout", "noop":
+	default:
+		return fmt.Errorf("unsupported tracing.exporter: %s", c.Tracing.Exporter)
+	}
+	if c.Tracing.IsEnabled() && strings.EqualFold(c.Tracing.Exporter, "otlp") && strings.TrimSpace(c.Tracing.Endpoint) == "" {
+		return fmt.Errorf("tracing.endpoint is required when exporter=otlp")
+	}
+	if c.Tracing.SampleRatio != nil {
+		r := *c.Tracing.SampleRatio
+		if r < 0 || r > 1 {
+			return fmt.Errorf("tracing.sample_ratio must be in [0,1]")
+		}
+	}
+	if strings.EqualFold(c.Env, "prod") && strings.EqualFold(c.Tracing.Exporter, "stdout") {
+		return fmt.Errorf("tracing.exporter=stdout is forbidden when env=prod")
 	}
 	return nil
 }
