@@ -41,7 +41,25 @@
 - [ ] 仅更新 `configs/*.yaml.example`；未提交含真实密钥的本地 yaml
 - [ ] 新配置项有默认值或 `Validate`；prod 未打开 `demo_mode`
 
+## 数据自检（DATA_STANDARDS）
+
+- [ ] 迁移 up/down 成对；未在 API/worker 自动 migrate
+- [ ] 发版顺序（expand/contract）已说明；不可逆已挂 ADR
+- [ ] 未将手工改生产库作为常规手段
+
+## 可靠性自检（RELIABILITY_STANDARDS）
+
+- [ ] 新增外部调用带超时 context；无 `http.DefaultClient` / 无超时 Get/Post
+- [ ] 写路径幂等明确；限流使用 `42900`
+- [ ] 降级路径可观测（日志/指标）
+
+## 可观测自检（OBSERVABILITY_STANDARDS）
+
+- [ ] 日志含 `service`/`channel`/`env`/`trace_id`（请求路径）
+- [ ] API 保留 `/healthz`、`/readyz`、`/version`
+- [ ] A/B 关键写/导出有审计触发（或已注明后续计划）
+
 ## 质量
 
-- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test/deps/config gates）
+- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test/deps/config/DATA/REL/OBS gates）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

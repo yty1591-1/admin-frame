@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// NewLogger 按配置创建带 service 字段的 slog.Logger。
-func NewLogger(cfg LogConfig, service string) *slog.Logger {
+// NewLogger 按配置创建带 service / channel / env 字段的 slog.Logger（OBS-01）。
+func NewLogger(cfg *Config) *slog.Logger {
 	level := slog.LevelInfo
-	switch strings.ToLower(cfg.Level) {
+	switch strings.ToLower(cfg.Log.Level) {
 	case "debug":
 		level = slog.LevelDebug
 	case "warn":
@@ -20,10 +20,14 @@ func NewLogger(cfg LogConfig, service string) *slog.Logger {
 
 	opts := &slog.HandlerOptions{Level: level}
 	var handler slog.Handler
-	if strings.EqualFold(cfg.Format, "text") {
+	if strings.EqualFold(cfg.Log.Format, "text") {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
-	return slog.New(handler).With("service", service)
+	return slog.New(handler).With(
+		"service", cfg.Service,
+		"channel", cfg.Channel,
+		"env", cfg.Env,
+	)
 }

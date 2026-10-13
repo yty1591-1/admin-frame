@@ -68,6 +68,8 @@ func httpStatus(code int) int {
 		return http.StatusNotFound
 	case apperr.CodeConflict:
 		return http.StatusConflict
+	case apperr.CodeTooManyRequests:
+		return http.StatusTooManyRequests
 	default:
 		if code >= 50000 {
 			return http.StatusInternalServerError

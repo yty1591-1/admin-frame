@@ -1,10 +1,10 @@
 # 工程硬约束专文路线图
 
 > **目的**：列出本仓库尚缺的企业级 / 生产级**硬约束专文**，按优先级逐步撰写并接入门禁。  
-> **已落地**：注释（C）、风格（S）、CI、[SEC](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[TEST](./TESTING_STANDARDS.md)、[DEP](./DEPENDENCY_STANDARDS.md)、[CFG](./CONFIG_STANDARDS.md)。  
+> **已落地**：注释（C）、风格（S）、CI、[SEC](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[TEST](./TESTING_STANDARDS.md)、[DEP](./DEPENDENCY_STANDARDS.md)、[CFG](./CONFIG_STANDARDS.md)、[DATA](./DATA_STANDARDS.md)、[REL](./RELIABILITY_STANDARDS.md)、[OBS](./OBSERVABILITY_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-10-13（DEP + CFG P2 已落地）
+> **最后更新**：2026-10-13（DATA + REL + OBS P2 已落地）
 
 ---
 
@@ -32,9 +32,9 @@
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B 隔离/C 越权必测 | 已完成 | `make test-ci` + `check-test-gates.sh` | §十三 |
 | P2 | `docs/DEPENDENCY_STANDARDS.md` | DEP | go.sum、govulncheck、禁随意 replace、许可证 | 已完成 | `make vuln` + `check-deps.sh` + Dependabot | §8.5 |
 | P2 | `docs/CONFIG_STANDARDS.md` | CFG | 配置优先级、Validate、example vs 密钥、多环境 | 已完成 | `check-config.sh` + Validate 单测 + gitleaks | §十七 |
-| P2 | `docs/DATA_STANDARDS.md` | DATA | 迁移可回滚、禁手改生产库、备份与保留 | 待做 | migrate CI、Review | §十四 |
-| P2 | `docs/RELIABILITY_STANDARDS.md` | REL | 超时、重试、限流、幂等、降级可观测 | 待做 | Review + 中间件/单测 | §十一 |
-| P2 | `docs/OBSERVABILITY_STANDARDS.md` | OBS | 日志字段、指标、追踪、健康检查、审计 | 待做 | 集成测断言字段 / Review | §十二 |
+| P2 | `docs/DATA_STANDARDS.md` | DATA | 迁移可回滚、禁手改生产库、备份与保留 | 已完成 | `check-migrations.sh` + Review | §十四 |
+| P2 | `docs/RELIABILITY_STANDARDS.md` | REL | 超时、重试、限流、幂等、降级可观测 | 已完成 | `check-reliability.sh` + Review | §十一 |
+| P2 | `docs/OBSERVABILITY_STANDARDS.md` | OBS | 日志字段、指标、追踪、健康检查、审计 | 已完成 | `check-observability.sh` + Review | §十二 |
 | P3 | `docs/GIT_STANDARDS.md` | GIT | 分支策略、Commit/MR 模板、禁直推 main | 待做 | branch protection、commitlint | §十九 |
 | P3 | `docs/RELEASE_STANDARDS.md` | RELS | 镜像 digest、禁 latest、发布/回滚、版本暴露 | 待做 | 镜像扫描、发布 Checklist | §十八 |
 | P3 | `docs/RUNBOOK_STANDARDS.md` | RB | 告警必须有 runbook、值班与升级路径 | 待做 | 告警规则挂 runbook 链接 | runbooks/ |
@@ -99,9 +99,9 @@
 
 - [x] **DEP**：`govulncheck` CI 化；`replace` 审批；依赖更新节奏；许可证允许列表
 - [x] **CFG**：`Validate()` 启动失败；仅 example 入库；环境变量优先级；prod 禁 demo_mode
-- [ ] **DATA**：迁移 up/down；禁手工改生产；迁移与发版顺序
-- [ ] **REL**：外部调用必超时；写路径幂等；限流错误码
-- [ ] **OBS**：强制 `trace_id`/`service`/`channel`；healthz/readyz；审计触发点
+- [x] **DATA**：迁移 up/down；禁手工改生产；迁移与发版顺序
+- [x] **REL**：外部调用必超时；写路径幂等；限流错误码
+- [x] **OBS**：强制 `trace_id`/`service`/`channel`；healthz/readyz；审计触发点
 
 ### P3 — GIT / RELS / RB / AUD
 
@@ -126,6 +126,7 @@
 | `COMMENT_STANDARDS.md` / `CODE_STYLE.md` / `CI_STANDARDS.md` | 已完成硬约束 |
 | `SECURITY_STANDARDS.md` / `API_STANDARDS.md` / `TESTING_STANDARDS.md` | 已完成硬约束 |
 | `DEPENDENCY_STANDARDS.md` / `CONFIG_STANDARDS.md` | 已完成硬约束 |
+| `DATA_STANDARDS.md` / `RELIABILITY_STANDARDS.md` / `OBSERVABILITY_STANDARDS.md` | 已完成硬约束 |
 | `pkg-roadmap.md` | 能力实现路线图（非合入硬约束） |
 | `standards-roadmap.md`（本文） | **硬约束专文**待办与优先级 |
 | `docs/adr/` | 选型/架构决策；硬约束变更若影响架构须补 ADR |
@@ -139,12 +140,12 @@
 2. **一专文一 ID 前缀**：避免与 C/S 编号冲突。
 3. **能自动则自动**：凡可用工具检查的条目，不得仅依赖口头 Review。
 4. **状态回写**：专文合并并挂接架构后，将本表「状态」改为 `已完成`，并更新「最后更新」日期。
-5. **最小切片推荐**：P1 全完成后 → `DEP`/`CFG` → `DATA` → `REL`/`OBS`。
+5. **最小切片推荐**：P2 全完成后 → P3 `GIT` / `RELS` / `AUD`。
 
 ---
 
 ## 七、下一迭代建议（最小切片）
 
-1. 分支保护勾选 `vuln`（含 deps）、`secrets`（含 config）等必过检查。
-2. 起草 `docs/DATA_STANDARDS.md`：迁移 up/down 门禁与禁手改生产库。
-3. 有真实外部调用后起草 `RELIABILITY_STANDARDS`（超时/幂等/限流错误码）。
+1. 分支保护勾选 `arch`（含 DATA/REL/OBS）等必过检查。
+2. 起草 `docs/GIT_STANDARDS.md`：主干保护与 Commit/MR 约定。
+3. 起草 `docs/AUDIT_STANDARDS.md`：在 OBS-07 基础上固化事件目录与保留期。

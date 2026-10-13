@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	logger := platform.NewLogger(cfg.Log, cfg.Service)
+	logger := platform.NewLogger(cfg)
 
 	repo := persistence.NewMemoryRepository()
 	bus := eventbus.NewMemoryBus(logger)

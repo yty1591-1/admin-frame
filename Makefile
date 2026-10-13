@@ -9,7 +9,8 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci check-test-gates lint fmt fmt-check tidy tidy-check \
-	check-transport check-debug check-openapi check-deps check-config secrets \
+	check-transport check-debug check-openapi check-deps check-config \
+	check-migrations check-reliability check-observability secrets \
 	gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -107,13 +108,25 @@ check-deps:
 check-config:
 	bash scripts/ci/check-config.sh
 
+# DATA-01/02/03：迁移命名、up/down 配对、禁 API 自动 migrate。
+check-migrations:
+	bash scripts/ci/check-migrations.sh
+
+# REL-01/02/05：无超时 HTTP 客户端禁令、限流码、优雅关闭。
+check-reliability:
+	bash scripts/ci/check-reliability.sh
+
+# OBS-01/02/04：日志字段、healthz/readyz/version。
+check-observability:
+	bash scripts/ci/check-observability.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
 	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（含 SECURITY / API / TEST / DEP / CFG 门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-openapi build
+# 本地一键对齐 CI 必跑项（含 SECURITY / API / TEST / DEP / CFG / DATA / REL / OBS 门禁）。
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-openapi build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

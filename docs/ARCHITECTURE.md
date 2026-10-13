@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.8  
+> **版本**：v2.9  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -17,6 +17,9 @@
 > - [工程化测试规范](./TESTING_STANDARDS.md)（TEST-01～TEST-08）  
 > - [工程化依赖与供应链规范](./DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）  
 > - [工程化配置与多环境规范](./CONFIG_STANDARDS.md)（CFG-01～CFG-08）  
+> - [工程化数据与迁移规范](./DATA_STANDARDS.md)（DATA-01～DATA-08）  
+> - [工程化可靠性与弹性规范](./RELIABILITY_STANDARDS.md)（REL-01～REL-08）  
+> - [工程化可观测性规范](./OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -664,6 +667,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十一、可靠性与弹性
 
+> **完整硬约束**见 [`docs/RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)（REL-01～REL-08）。  
+> 门禁：`make check-reliability`（并入 CI job `arch`）+ Review + MR 模板。
+
 ### 11.1 超时、重试、熔断
 
 | 策略 | 要求 |
@@ -699,6 +705,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 ---
 
 ## 十二、可观测性
+
+> **完整硬约束**见 [`docs/OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）。  
+> 门禁：`make check-observability`（并入 CI job `arch`）+ Review + MR 模板。
 
 | 维度 | 要求 |
 |---|---|
@@ -747,16 +756,19 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十四、数据与迁移
 
+> **完整硬约束**见 [`docs/DATA_STANDARDS.md`](./DATA_STANDARDS.md)（DATA-01～DATA-08）。  
+> 门禁：`make check-migrations`（并入 CI job `arch`）+ Review + MR 模板。
+
 ### 14.1 模型与迁移
 
 - **领域模型 ≠ 数据库模型**；转换在 infrastructure。
-- 迁移脚本：`migrations/<version>_<desc>.up.sql` / `.down.sql`，**必须可回滚**（不可逆变更需 ADR + 运维方案）。
+- 迁移脚本：`migrations/<NNNNNN>_<desc>.up.sql` / `.down.sql`，**必须可回滚**（不可逆变更需 ADR + 运维方案）。
 - 一次 MR 优先只改一个域的表结构；SQL 必审。
 - **禁止**在业务进程启动时自动 migrate（仅 `cmd/migrate` 或发布流水线执行）。
 - 主键策略统一（雪花 / UUID）；`created_at`、`updated_at`、软删除 `deleted_at` 约定统一；时区存储用 UTC。
 - 禁止 `SELECT *`；列表必分页且有上限；大结果集走游标/导出任务（导出优先走 A/B，并审计）。
 - 索引变更评估锁表与性能影响；大表变更走在线 DDL / 分步发布。
-- 备份与恢复：生产库有定期备份与恢复演练要求（见 runbook）。
+- 备份与恢复：生产库有定期备份与恢复演练要求（见 runbook / DATA-07）。
 
 ### 14.2 多租户与行级隔离（定稿）
 
@@ -1064,6 +1076,9 @@ make build
 - [工程化测试规范（硬约束）](./TESTING_STANDARDS.md)
 - [工程化依赖与供应链规范（硬约束）](./DEPENDENCY_STANDARDS.md)
 - [工程化配置与多环境规范（硬约束）](./CONFIG_STANDARDS.md)
+- [工程化数据与迁移规范（硬约束）](./DATA_STANDARDS.md)
+- [工程化可靠性与弹性规范（硬约束）](./RELIABILITY_STANDARDS.md)
+- [工程化可观测性规范（硬约束）](./OBSERVABILITY_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

@@ -20,7 +20,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	logger := platform.NewLogger(cfg.Log, cfg.Service)
+	logger := platform.NewLogger(cfg)
 	bus := eventbus.NewMemoryBus(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

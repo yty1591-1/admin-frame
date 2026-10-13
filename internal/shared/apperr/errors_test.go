@@ -47,3 +47,16 @@ func TestRawSentinel(t *testing.T) {
 		t.Fatalf("http=%d", xerr.HTTPStatusOf(err))
 	}
 }
+
+func TestTooManyRequests(t *testing.T) {
+	err := apperr.TooManyRequests("too many requests")
+	if err.Code != apperr.CodeTooManyRequests {
+		t.Fatalf("code=%d", err.Code)
+	}
+	if err.SemanticCode() != xerr.CodeResourceExhausted {
+		t.Fatalf("semantic=%s", err.SemanticCode())
+	}
+	if !xerr.IsCode(err, xerr.CodeResourceExhausted) {
+		t.Fatal("expected IsCode resource_exhausted")
+	}
+}

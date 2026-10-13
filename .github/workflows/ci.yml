@@ -152,8 +152,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Forbid cross-channel transport imports
-        run: bash scripts/ci/check-transport-imports.sh
+      - name: Arch gates (transport + DATA/REL/OBS)
+        run: bash scripts/ci/gitee-job.sh arch
 
   secrets:
     name: secrets

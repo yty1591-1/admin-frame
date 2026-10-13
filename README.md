@@ -75,19 +75,25 @@ curl -s http://127.0.0.1:8083/readyz
 - **测试硬约束**：[docs/TESTING_STANDARDS.md](docs/TESTING_STANDARDS.md)（TEST-01～TEST-08）
 - **依赖硬约束**：[docs/DEPENDENCY_STANDARDS.md](docs/DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）
 - **配置硬约束**：[docs/CONFIG_STANDARDS.md](docs/CONFIG_STANDARDS.md)（CFG-01～CFG-08）
-- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 DATA/REL 等）
+- **数据硬约束**：[docs/DATA_STANDARDS.md](docs/DATA_STANDARDS.md)（DATA-01～DATA-08）
+- **可靠性硬约束**：[docs/RELIABILITY_STANDARDS.md](docs/RELIABILITY_STANDARDS.md)（REL-01～REL-08）
+- **可观测硬约束**：[docs/OBSERVABILITY_STANDARDS.md](docs/OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）
+- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 GIT/RELS/AUD 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
 ## 测试与 CI
 
 ```bash
 make test
-make test-ci       # -race + coverage + TEST 门禁
-make check-deps    # go.sum / replace / 许可证
-make check-config  # 配置样例门禁
-make lint          # 需已安装 golangci-lint
-make openapi       # 分端 OpenAPI validate + breaking
-make ci            # 本地对齐托管平台必跑项
+make test-ci              # -race + coverage + TEST 门禁
+make check-deps           # go.sum / replace / 许可证
+make check-config         # 配置样例门禁
+make check-migrations     # 迁移 up/down 配对
+make check-reliability    # 超时客户端 / 限流码
+make check-observability  # 日志字段 / 探针
+make lint                 # 需已安装 golangci-lint
+make openapi              # 分端 OpenAPI validate + breaking
+make ci                   # 本地对齐托管平台必跑项
 ```
 
 ## 说明

@@ -17,6 +17,8 @@ const (
 	CodeNotFound = 40400
 	// CodeConflict 表示状态冲突或资源已存在。
 	CodeConflict = 40900
+	// CodeTooManyRequests 表示限流或配额耗尽（REL-05）。
+	CodeTooManyRequests = 42900
 	// CodeInternal 表示内部错误。
 	CodeInternal = 50000
 )
@@ -85,6 +87,8 @@ func MapSemanticCode(bizCode int) xerr.Code {
 		return xerr.CodeNotFound
 	case CodeConflict:
 		return xerr.CodeAlreadyExists
+	case CodeTooManyRequests:
+		return xerr.CodeResourceExhausted
 	case CodeInternal:
 		return xerr.CodeInternal
 	case CodeOK:
@@ -150,6 +154,15 @@ func Conflict(msg string) *AppError {
 		Code:    CodeConflict,
 		Message: msg,
 		Err:     xerr.AlreadyExists(msg),
+	}
+}
+
+// TooManyRequests 返回限流 / 配额耗尽错误（业务码 42900）。
+func TooManyRequests(msg string) *AppError {
+	return &AppError{
+		Code:    CodeTooManyRequests,
+		Message: msg,
+		Err:     xerr.ResourceExhausted(msg),
 	}
 }
 
