@@ -16,6 +16,13 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/health"
 )
 
+// 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
+var (
+	version   = "dev"
+	commit    = "none"
+	buildTime = "unknown"
+)
+
 func main() {
 	configPath := flag.String("config", "configs/admin.yaml", "config file path")
 	flag.Parse()
@@ -41,7 +48,12 @@ func main() {
 	hh := health.New()
 	hh.Register("memory_repo", repo.Ping)
 	platform.MountHealth(root, hh)
-	platform.MountVersion(root, cfg.Service, "dev")
+	platform.MountVersion(root, platform.BuildInfo{
+		Service:   cfg.Service,
+		Version:   version,
+		Commit:    commit,
+		BuildTime: buildTime,
+	})
 	root.Handle("/", api)
 
 	handler := platform.Chain(root,

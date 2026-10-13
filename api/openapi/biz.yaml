@@ -178,7 +178,15 @@ components:
           example: biz-api
         version:
           type: string
-          example: dev
+          example: 1.4.2
+        commit:
+          type: string
+          description: git commit（RELS-03）；本地可为 none
+          example: abcdef0
+        build_time:
+          type: string
+          description: UTC 构建时间（RELS-03）
+          example: "2026-10-13T12:00:00Z"
     ReadyStatus:
       type: object
       required: [status]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐 CI / SECURITY / API / TEST / DEP / CFG / DATA / REL / OBS）。
+# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐各 STANDARDS 门禁）。
 # 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>
 set -euo pipefail
 
@@ -72,6 +72,10 @@ case "${job}" in
     bash scripts/ci/check-migrations.sh
     bash scripts/ci/check-reliability.sh
     bash scripts/ci/check-observability.sh
+    bash scripts/ci/check-git.sh
+    bash scripts/ci/check-release.sh
+    bash scripts/ci/check-runbooks.sh
+    bash scripts/ci/check-audit.sh
     ;;
   secrets)
     bash scripts/ci/check-debug-endpoints.sh

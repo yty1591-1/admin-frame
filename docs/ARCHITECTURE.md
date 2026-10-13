@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.9  
+> **版本**：v2.11  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -20,6 +20,10 @@
 > - [工程化数据与迁移规范](./DATA_STANDARDS.md)（DATA-01～DATA-08）  
 > - [工程化可靠性与弹性规范](./RELIABILITY_STANDARDS.md)（REL-01～REL-08）  
 > - [工程化可观测性规范](./OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）  
+> - [工程化 Git 协作规范](./GIT_STANDARDS.md)（GIT-01～GIT-08）  
+> - [工程化发布与镜像规范](./RELEASE_STANDARDS.md)（RELS-01～RELS-08）  
+> - [工程化 Runbook 与值班规范](./RUNBOOK_STANDARDS.md)（RB-01～RB-07）  
+> - [工程化审计规范](./AUDIT_STANDARDS.md)（AUD-01～AUD-09）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -707,6 +711,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 ## 十二、可观测性
 
 > **完整硬约束**见 [`docs/OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）。  
+> **审计硬约束**见 [`docs/AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)（AUD-01～AUD-09）；门禁：`make check-audit`（并入 CI job `arch`）。  
 > 门禁：`make check-observability`（并入 CI job `arch`）+ Review + MR 模板。
 
 | 维度 | 要求 |
@@ -715,7 +720,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 | **指标** | RED + 业务关键指标；按 `service`/`channel` 分标签；队列积压、缓存命中率、连接池使用率 |
 | **追踪** | OpenTelemetry 全链路；跨服务 W3C Trace Context / 约定 header 透传 |
 | **健康检查** | `/healthz` 存活；`/readyz` 就绪（探测 DB/MQ 等关键依赖） |
-| **审计** | A/B 登录、权限变更、支付、数据导出等写审计日志；单独存储或投递，保留期限符合合规 |
+| **审计** | 见 AUD 专文：事件目录、字段字典、追加写存储、保留期；经 `internal/shared/audit` 发出 |
 
 **日志规范补充**：
 
@@ -892,6 +897,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十八、构建、发布与运维
 
+> **完整硬约束**见 [`docs/RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)（RELS-01～RELS-08）与 [`docs/RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)（RB-01～RB-07）。  
+> 门禁：`make check-release` / `make check-runbooks`（并入 CI job `arch`）+ 发布 Checklist + Review。
+
 ### 18.1 Makefile 目标（基线）
 
 ```make
@@ -931,7 +939,7 @@ make docker-admin       # 单端镜像（多 stage target）
 
 1. 更完整的许可证专文（LIC）与组织策略对齐  
 2. 集成测试容器（testcontainers）常态化  
-3. 按变更构建镜像、扫描、推送（RELS）
+3. 发版流水线内镜像扫描与自动推送（工具与仓库按组织接入；规范见 RELS）
 
 ### 18.4 发布策略
 
@@ -948,12 +956,15 @@ make docker-admin       # 单端镜像（多 stage target）
 ### 18.5 运行与值班
 
 - 就绪后才接入流量（K8s readiness）。
-- 关键事故按 runbook 执行；事后复盘（Postmortem）沉淀到 `docs/`。
+- 关键事故按 runbook 执行（`docs/runbooks/` + `ALERTS.md`）；事后复盘（Postmortem）沉淀到 `docs/`。
 - 禁止在生产直接 `kubectl exec` 改数据作为常规手段；应急操作需双人与审计。
 
 ---
 
 ## 十九、治理与演进
+
+> **完整硬约束**见 [`docs/GIT_STANDARDS.md`](./GIT_STANDARDS.md)（GIT-01～GIT-08）。  
+> 门禁：平台分支保护（人工）+ `make check-git`（并入 CI job `arch`）+ PR 模板。
 
 ### 19.1 演进路线
 
@@ -1079,6 +1090,10 @@ make build
 - [工程化数据与迁移规范（硬约束）](./DATA_STANDARDS.md)
 - [工程化可靠性与弹性规范（硬约束）](./RELIABILITY_STANDARDS.md)
 - [工程化可观测性规范（硬约束）](./OBSERVABILITY_STANDARDS.md)
+- [工程化 Git 协作规范（硬约束）](./GIT_STANDARDS.md)
+- [工程化发布与镜像规范（硬约束）](./RELEASE_STANDARDS.md)
+- [工程化 Runbook 与值班规范（硬约束）](./RUNBOOK_STANDARDS.md)
+- [工程化审计规范（硬约束）](./AUDIT_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

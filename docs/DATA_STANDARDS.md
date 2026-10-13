@@ -3,7 +3,7 @@
 > **状态**：生效中（Normative）  
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库 schema 迁移、生产数据变更、备份与保留、多租户行级隔离相关 SQL  
-> **关联**：架构 §十四；安全见 `SECURITY_STANDARDS.md`；发布顺序见后续 `RELEASE_STANDARDS`  
+> **关联**：架构 §十四；安全见 `SECURITY_STANDARDS.md`；发布顺序见 `RELEASE_STANDARDS.md`  
 > **执行方式**：`check-migrations.sh` + Review + MR 模板  
 > **最后更新**：2026-10-13  
 > **变更方式**：修改本规范须同步更新 `migrations/`、`cmd/migrate`、`scripts/ci/check-migrations.sh` 与架构 §十四，经架构 Owner Review
@@ -95,7 +95,7 @@ DO $$ BEGIN RAISE EXCEPTION 'IRREVERSIBLE: ADR-00XX'; END $$;
 | 增量 / WAL | 开启（若引擎支持）；保留与 RPO 目标对齐 |
 | RPO / RTO | 写入 `docs/runbooks/` 对应库 runbook；未定义不得宣称「生产就绪」 |
 | 恢复演练 | ≥ 每 6 个月一次；结果记入 runbook 变更记录 |
-| 审计 / 导出数据 | 保留期遵循合规与后续 `AUDIT_STANDARDS`；不得仅依赖业务表软删 |
+| 审计 / 导出数据 | 保留期遵循 `AUDIT_STANDARDS`（AUD-07）；不得仅依赖业务表软删 |
 
 开发 / CI 库不适用本表，但**禁止**用生产备份还原到共享开发环境且未脱敏。
 

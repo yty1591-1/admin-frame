@@ -1,10 +1,19 @@
 package platform
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/pkg/health"
 )
+
+// BuildInfo 构建身份（RELS-03 / OBS-04）。
+type BuildInfo struct {
+	Service   string `json:"service"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
+}
 
 // MountHealth 注册存活/就绪探针（无需鉴权）。
 func MountHealth(mux *http.ServeMux, h *health.Handler) {
@@ -12,10 +21,10 @@ func MountHealth(mux *http.ServeMux, h *health.Handler) {
 	mux.HandleFunc("GET /readyz", h.Readiness())
 }
 
-// MountVersion 暴露构建信息占位。
-func MountVersion(mux *http.ServeMux, service, version string) {
+// MountVersion 暴露构建信息（service / version / commit / build_time）。
+func MountVersion(mux *http.ServeMux, info BuildInfo) {
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"service":"` + service + `","version":"` + version + `"}`)) // 忽略短响应写失败
+		_ = json.NewEncoder(w).Encode(info)
 	})
 }

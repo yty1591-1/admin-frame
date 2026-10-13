@@ -3,7 +3,7 @@
 > **状态**：生效中（Normative）  
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部可执行进程的日志、指标、追踪、健康检查与关键审计触发点  
-> **关联**：架构 §十二；脱敏见 `SECURITY_STANDARDS.md`；审计深化见后续 `AUDIT_STANDARDS`  
+> **关联**：架构 §十二；脱敏见 `SECURITY_STANDARDS.md`；审计见 `AUDIT_STANDARDS.md`  
 > **执行方式**：`check-observability.sh` + Review + MR 模板  
 > **最后更新**：2026-10-13  
 > **变更方式**：修改本规范须同步更新 `platform` 日志/探针、`scripts/ci/check-observability.sh` 与架构 §十二，经架构 Owner Review
@@ -28,7 +28,7 @@
 | OBS-04 | 每个 API 进程必须暴露 `GET /version`（service + version） | `MountVersion` + 检查脚本 |
 | OBS-05 | 业务响应信封携带 `trace_id`，并与访问日志一致（`X-Request-ID` / context） | API-03 + 实现 |
 | OBS-06 | 预期内 4xx 默认不打 Error 级，避免告警噪音；5xx / panic 打 Error | Review |
-| OBS-07 | A/B：登录失败耗尽、权限变更、支付、数据导出等写审计事件（可先打结构化 audit 日志）；C：登录/支付等关键点 | Review（AUD 专文落地前最低要求） |
+| OBS-07 | A/B/C 关键操作写审计事件；字段与目录以 `AUDIT_STANDARDS` 为准 | `make check-audit` + Review |
 | OBS-08 | 合并请求须勾选可观测自检 | PR 模板 |
 
 ---
@@ -76,17 +76,10 @@
 
 ---
 
-## 6. 审计触发点（最低）
+## 6. 审计触发点
 
-在 `AUDIT_STANDARDS` 落地前，以下操作至少打一条结构化日志（`audit=true` 或独立 logger）：
-
-| 端 | 事件 |
-|----|------|
-| A | 登录成功/失败、权限/角色变更、配置变更、数据导出 |
-| B | 登录、商户内权限变更、支付/退款、导出 |
-| C | 登录、支付成功/失败 |
-
-字段至少：`actor`、`action`、`resource`、`channel`、`trace_id`、时间。完整字典与不可篡改存储见 AUD 专文。
+**完整硬约束**见 [`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)（事件目录、字段字典、保留期、不可篡改）。  
+实现统一走 `internal/shared/audit` Emitter；禁止用普通访问日志冒充审计。
 
 ---
 
@@ -119,7 +112,7 @@ make ci
 
 1. **migrate CLI**：短时命令可不挂 HTTP 探针；须有非零退出与日志。  
 2. **本地 text 日志**：`log.format=text` 仅限 local/dev；prod example 保持 json。  
-3. **审计存储未就绪**：允许先打日志，但 MR 须注明后续落库/投递计划。
+3. **审计存储未就绪**：允许 `SlogEmitter`（见 AUD）；生产落库/投递须有 ADR 或发版 Checklist。
 
 ---
 

@@ -1,10 +1,10 @@
 # 工程硬约束专文路线图
 
 > **目的**：列出本仓库尚缺的企业级 / 生产级**硬约束专文**，按优先级逐步撰写并接入门禁。  
-> **已落地**：注释（C）、风格（S）、CI、[SEC](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[TEST](./TESTING_STANDARDS.md)、[DEP](./DEPENDENCY_STANDARDS.md)、[CFG](./CONFIG_STANDARDS.md)、[DATA](./DATA_STANDARDS.md)、[REL](./RELIABILITY_STANDARDS.md)、[OBS](./OBSERVABILITY_STANDARDS.md)。  
+> **已落地**：注释（C）、风格（S）、CI、[SEC](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[TEST](./TESTING_STANDARDS.md)、[DEP](./DEPENDENCY_STANDARDS.md)、[CFG](./CONFIG_STANDARDS.md)、[DATA](./DATA_STANDARDS.md)、[REL](./RELIABILITY_STANDARDS.md)、[OBS](./OBSERVABILITY_STANDARDS.md)、[GIT](./GIT_STANDARDS.md)、[RELS](./RELEASE_STANDARDS.md)、[RB](./RUNBOOK_STANDARDS.md)、[AUD](./AUDIT_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-10-13（DATA + REL + OBS P2 已落地）
+> **最后更新**：2026-10-13（AUD P3 已落地；P0～P3 专文全部完成）
 
 ---
 
@@ -35,10 +35,10 @@
 | P2 | `docs/DATA_STANDARDS.md` | DATA | 迁移可回滚、禁手改生产库、备份与保留 | 已完成 | `check-migrations.sh` + Review | §十四 |
 | P2 | `docs/RELIABILITY_STANDARDS.md` | REL | 超时、重试、限流、幂等、降级可观测 | 已完成 | `check-reliability.sh` + Review | §十一 |
 | P2 | `docs/OBSERVABILITY_STANDARDS.md` | OBS | 日志字段、指标、追踪、健康检查、审计 | 已完成 | `check-observability.sh` + Review | §十二 |
-| P3 | `docs/GIT_STANDARDS.md` | GIT | 分支策略、Commit/MR 模板、禁直推 main | 待做 | branch protection、commitlint | §十九 |
-| P3 | `docs/RELEASE_STANDARDS.md` | RELS | 镜像 digest、禁 latest、发布/回滚、版本暴露 | 待做 | 镜像扫描、发布 Checklist | §十八 |
-| P3 | `docs/RUNBOOK_STANDARDS.md` | RB | 告警必须有 runbook、值班与升级路径 | 待做 | 告警规则挂 runbook 链接 | runbooks/ |
-| P3 | `docs/AUDIT_STANDARDS.md` | AUD | A/B 审计事件、字段、保留期、不可篡改要求 | 待做 | Review + 抽检用例 | §十二审计 |
+| P3 | `docs/GIT_STANDARDS.md` | GIT | 分支策略、Commit/MR 模板、禁直推 main | 已完成 | `check-git.sh` + 分支保护（人工） | §十九 |
+| P3 | `docs/RELEASE_STANDARDS.md` | RELS | 镜像 digest、禁 latest、发布/回滚、版本暴露 | 已完成 | `check-release.sh` + Checklist | §十八 |
+| P3 | `docs/RUNBOOK_STANDARDS.md` | RB | 告警必须有 runbook、值班与升级路径 | 已完成 | `check-runbooks.sh` + ALERTS.md | runbooks/ |
+| P3 | `docs/AUDIT_STANDARDS.md` | AUD | A/B 审计事件、字段、保留期、不可篡改要求 | 已完成 | `check-audit.sh` + audit 包单测 | §十二审计 |
 | P4 | `docs/LICENSE_STANDARDS.md` | LIC | 允许/禁止许可证、引入依赖审批 | 待做 | 与 DEP-05 对齐深化 | §8.5 |
 | P4 | `docs/CODEGEN_STANDARDS.md` | GEN | OpenAPI/sqlc/mockery 生成物提交策略、禁手改 | 待做 | CI diff 检查 | 工具链 |
 | P4 | `docs/PERFORMANCE_STANDARDS.md` | PERF | 关键路径基线、回归门槛（可选） | 暂缓 | benchmark / 压测门禁 | §十一容量 |
@@ -66,49 +66,12 @@
 
 ### P0 — CI
 
-- [x] `docs/CI_STANDARDS.md`：必跑 `fmt/lint/test/vuln/build/arch`；多平台说明；失败阻断
-- [x] `.github/workflows/ci.yml`：GitHub Actions
-- [x] `.workflow/*.yml` + `scripts/ci/gitee-job.sh`：Gitee Go 等价流水线
+- [x] `docs/CI_STANDARDS.md` + 双平台流水线
 - [ ] 分支保护：GitHub / Gitee 勾选必过流水线（**需仓库管理员人工完成**）
 
-### P1 — SEC / API / TEST
+### P1 / P2 / P3
 
-**SECURITY_STANDARDS（SEC）**
-
-- [x] 禁提交密钥与生产连接串（gitleaks，含 git 历史）
-- [x] SQL / 命令注入：gosec（G201/G202/G204 等）
-- [x] 三端隔离：沿用 transport 互引检查；`demo_mode=false` 拒绝启动
-- [x] 日志与错误响应脱敏要求写入专文（Review）
-- [x] 调试端点扫描（pprof / Swagger）
-
-**API_STANDARDS（API）**
-
-- [x] 三端独立 OpenAPI，与实现同步更新
-- [x] breaking change 检测阻断（或显式 major）
-- [x] 统一信封、分页上限、稳定业务错误码
-- [x] 弃用字段流程与最短保留期
-
-**TESTING_STANDARDS（TEST）**
-
-- [x] domain 纯逻辑必须单测
-- [x] B 商户隔离、C 越权场景自动化必过
-- [x] 覆盖率门槛（core domain 包 ≥70%）
-- [x] 禁 CI 使用生产凭据 / 生产库
-
-### P2 — DEP / CFG / DATA / REL / OBS
-
-- [x] **DEP**：`govulncheck` CI 化；`replace` 审批；依赖更新节奏；许可证允许列表
-- [x] **CFG**：`Validate()` 启动失败；仅 example 入库；环境变量优先级；prod 禁 demo_mode
-- [x] **DATA**：迁移 up/down；禁手工改生产；迁移与发版顺序
-- [x] **REL**：外部调用必超时；写路径幂等；限流错误码
-- [x] **OBS**：强制 `trace_id`/`service`/`channel`；healthz/readyz；审计触发点
-
-### P3 — GIT / RELS / RB / AUD
-
-- [ ] **GIT**：主干保护、MR 模板勾选架构 Checklist
-- [ ] **RELS**：镜像 tag+digest；回滚步骤；`/version` 必有
-- [ ] **RB**：P1/P2 告警必须链到 `docs/runbooks/`
-- [ ] **AUD**：审计事件目录与字段字典
+- [x] SEC / API / TEST / DEP / CFG / DATA / REL / OBS / GIT / RELS / RB / **AUD**
 
 ### P4 — LIC / GEN / PERF
 
@@ -123,14 +86,13 @@
 | 文档 | 角色 |
 |------|------|
 | `ARCHITECTURE.md` | 总规范；专文生效后在文首与对应章节挂接链接 |
-| `COMMENT_STANDARDS.md` / `CODE_STYLE.md` / `CI_STANDARDS.md` | 已完成硬约束 |
-| `SECURITY_STANDARDS.md` / `API_STANDARDS.md` / `TESTING_STANDARDS.md` | 已完成硬约束 |
-| `DEPENDENCY_STANDARDS.md` / `CONFIG_STANDARDS.md` | 已完成硬约束 |
-| `DATA_STANDARDS.md` / `RELIABILITY_STANDARDS.md` / `OBSERVABILITY_STANDARDS.md` | 已完成硬约束 |
+| 已完成硬约束专文 | C / S / CI / SEC / API / TEST / DEP / CFG / DATA / REL / OBS / GIT / RELS / RB / AUD |
+| `docs/audit/` | 审计事件目录与字段字典（受 AUD 约束） |
 | `pkg-roadmap.md` | 能力实现路线图（非合入硬约束） |
 | `standards-roadmap.md`（本文） | **硬约束专文**待办与优先级 |
 | `docs/adr/` | 选型/架构决策；硬约束变更若影响架构须补 ADR |
 | `docs/runbooks/` | 运维处置；受 `RUNBOOK_STANDARDS` 约束 |
+| `docs/release/` | 发版 Checklist；受 `RELEASE_STANDARDS` 约束 |
 
 ---
 
@@ -140,12 +102,12 @@
 2. **一专文一 ID 前缀**：避免与 C/S 编号冲突。
 3. **能自动则自动**：凡可用工具检查的条目，不得仅依赖口头 Review。
 4. **状态回写**：专文合并并挂接架构后，将本表「状态」改为 `已完成`，并更新「最后更新」日期。
-5. **最小切片推荐**：P2 全完成后 → P3 `GIT` / `RELS` / `AUD`。
+5. **最小切片推荐**：P4 按需；优先完成分支保护人工勾选。
 
 ---
 
 ## 七、下一迭代建议（最小切片）
 
-1. 分支保护勾选 `arch`（含 DATA/REL/OBS）等必过检查。
-2. 起草 `docs/GIT_STANDARDS.md`：主干保护与 Commit/MR 约定。
-3. 起草 `docs/AUDIT_STANDARDS.md`：在 OBS-07 基础上固化事件目录与保留期。
+1. 管理员完成 GitHub / Gitee **分支保护**（GIT-01～03 / CI-01）。
+2. 业务路径接线 `audit.Emitter`，将 EVENTS 中对应行改为 `active`。
+3. 按需起草 P4：`LICENSE_STANDARDS` 或 `CODEGEN_STANDARDS`。

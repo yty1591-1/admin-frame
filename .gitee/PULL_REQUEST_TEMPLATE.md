@@ -57,9 +57,32 @@
 
 - [ ] 日志含 `service`/`channel`/`env`/`trace_id`（请求路径）
 - [ ] API 保留 `/healthz`、`/readyz`、`/version`
-- [ ] A/B 关键写/导出有审计触发（或已注明后续计划）
+- [ ] A/B/C 关键写按 AUD 发出审计（见「审计自检」）
+
+## Git 自检（GIT_STANDARDS）
+
+- [ ] 经 MR 合入保护分支；分支名符合 `feature|fix|hotfix|chore|docs/*`
+- [ ] Commit / MR 标题符合 Conventional Commits
+- [ ] 未直推 `main`；未在描述中粘贴密钥
+
+## 发布自检（RELEASE_STANDARDS）
+
+- [ ] 若触及镜像/发版：无 `:latest`；`/version` 字段齐全
+- [ ] 生产引用将使用 tag+digest；回滚点明确
+- [ ] 发版将按 `docs/release/CHECKLIST.md` 执行（或本 MR 仅代码无关发版）
+
+## Runbook 自检（RUNBOOK_STANDARDS）
+
+- [ ] 若新增/变更 P1/P2 告警：已更新 `docs/runbooks/ALERTS.md` 与对应 runbook
+- [ ] 未在 runbook 写入密钥或生产连接串
+
+## 审计自检（AUDIT_STANDARDS）
+
+- [ ] 新必审路径已登记 `docs/audit/EVENTS.md`，并经 `audit.Emitter` 发出
+- [ ] 字段符合 `docs/audit/FIELDS.md`；无 Token/密码等进入审计载荷
+- [ ] 保留期符合类别（认证≥180d / 资金导出≥365d）或已写 ADR
 
 ## 质量
 
-- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test/deps/config/DATA/REL/OBS gates）
+- [ ] `make ci` 通过（含 arch 内 DATA/REL/OBS/GIT/RELS/RB/AUD 等 gates）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

@@ -78,7 +78,11 @@ curl -s http://127.0.0.1:8083/readyz
 - **数据硬约束**：[docs/DATA_STANDARDS.md](docs/DATA_STANDARDS.md)（DATA-01～DATA-08）
 - **可靠性硬约束**：[docs/RELIABILITY_STANDARDS.md](docs/RELIABILITY_STANDARDS.md)（REL-01～REL-08）
 - **可观测硬约束**：[docs/OBSERVABILITY_STANDARDS.md](docs/OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）
-- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 GIT/RELS/AUD 等）
+- **Git 硬约束**：[docs/GIT_STANDARDS.md](docs/GIT_STANDARDS.md)（GIT-01～GIT-08）
+- **发布硬约束**：[docs/RELEASE_STANDARDS.md](docs/RELEASE_STANDARDS.md)（RELS-01～RELS-08）
+- **Runbook 硬约束**：[docs/RUNBOOK_STANDARDS.md](docs/RUNBOOK_STANDARDS.md)（RB-01～RB-07）
+- **审计硬约束**：[docs/AUDIT_STANDARDS.md](docs/AUDIT_STANDARDS.md)（AUD-01～AUD-09）
+- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 LIC/GEN 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
 ## 测试与 CI
@@ -91,6 +95,10 @@ make check-config         # 配置样例门禁
 make check-migrations     # 迁移 up/down 配对
 make check-reliability    # 超时客户端 / 限流码
 make check-observability  # 日志字段 / 探针
+make check-git            # PR 模板 / commitlint 配置
+make check-release        # Dockerfile / 版本注入
+make check-runbooks       # 基线 runbook / ALERTS
+make check-audit          # 审计事件目录 / audit 包
 make lint                 # 需已安装 golangci-lint
 make openapi              # 分端 OpenAPI validate + breaking
 make ci                   # 本地对齐托管平台必跑项

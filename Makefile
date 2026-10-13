@@ -10,7 +10,8 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	run-admin run-biz run-c run-worker \
 	test test-ci check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi check-deps check-config \
-	check-migrations check-reliability check-observability secrets \
+	check-migrations check-reliability check-observability \
+	check-git check-release check-runbooks check-audit secrets \
 	gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -120,13 +121,29 @@ check-reliability:
 check-observability:
 	bash scripts/ci/check-observability.sh
 
+# GIT-05/06：PR 模板与 commitlint 配置。
+check-git:
+	bash scripts/ci/check-git.sh
+
+# RELS-01/02/03/07：Dockerfile、版本注入、发布 Checklist。
+check-release:
+	bash scripts/ci/check-release.sh
+
+# RB-01～04：基线 runbook 与告警目录。
+check-runbooks:
+	bash scripts/ci/check-runbooks.sh
+
+# AUD-01/02/04：事件目录、字段字典、audit 包抽检。
+check-audit:
+	bash scripts/ci/check-audit.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
 	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（含 SECURITY / API / TEST / DEP / CFG / DATA / REL / OBS 门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-openapi build
+# 本地一键对齐 CI 必跑项（含 DATA/REL/OBS/GIT/RELS/RB/AUD 等门禁）。
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-openapi build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
@@ -135,11 +152,16 @@ migrate-up: build-migrate
 vuln:
 	$(GOVULNCHECK) ./...
 
+# 本地镜像 tag:local（非生产）。版本可通过 VERSION/COMMIT/BUILD_TIME 覆盖。
+VERSION ?= local
+COMMIT ?= none
+BUILD_TIME ?= unknown
+
 docker:
-	docker build --target admin-api -t admin-frame/admin-api:local .
-	docker build --target biz-api -t admin-frame/biz-api:local .
-	docker build --target c-api -t admin-frame/c-api:local .
-	docker build --target worker -t admin-frame/worker:local .
+	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .
+	docker build --target biz-api --build-arg CMD=biz-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/biz-api:local .
+	docker build --target c-api --build-arg CMD=c-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/c-api:local .
+	docker build --target worker --build-arg CMD=worker --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/worker:local .
 
 docker-admin:
-	docker build --target admin-api -t admin-frame/admin-api:local .
+	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .

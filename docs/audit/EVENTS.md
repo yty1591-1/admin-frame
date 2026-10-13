@@ -1,0 +1,16 @@
+# 审计事件目录（AUD-01）
+
+> 稳定 `action` 只追加、不复用语义。实现状态：`active` = 代码须可发出；`planned` = 路径未合入前允许仅目录占位。
+
+| action | 端 | 说明 | 保留类别 | 最短保留 | status |
+|--------|----|------|----------|----------|--------|
+| `auth.login` | A/B/C | 登录成功 | 认证 | 180d | planned |
+| `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | planned |
+| `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | planned |
+| `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
+| `data.export` | A/B | 数据导出（含 PII 须记范围摘要） | 导出 | 365d | planned |
+| `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |
+| `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
+| `payment.refund` | B/C | 退款 | 资金 | 365d | planned |
+
+脚手架：`internal/shared/audit` 已提供 Emitter 与上述 `action` 常量；业务路径接线时把对应行 `status` 改为 `active`。

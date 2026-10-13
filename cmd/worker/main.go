@@ -12,6 +12,13 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 )
 
+// 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
+var (
+	version   = "dev"
+	commit    = "none"
+	buildTime = "unknown"
+)
+
 func main() {
 	configPath := flag.String("config", "configs/worker.yaml", "config file path")
 	flag.Parse()
@@ -26,7 +33,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger.Info("worker started", "poll_interval", cfg.Worker.PollInterval.String())
+	logger.Info("worker started",
+		"poll_interval", cfg.Worker.PollInterval.String(),
+		"version", version,
+		"commit", commit,
+		"build_time", buildTime,
+	)
 	ticker := time.NewTicker(cfg.Worker.PollInterval)
 	defer ticker.Stop()
 
