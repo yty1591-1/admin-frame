@@ -11,6 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
+// TestMerchantIsolation 覆盖 B 端商户隔离（TEST-03）。
 func TestMerchantIsolation(t *testing.T) {
 	ctx := context.Background()
 	repo := persistence.NewMemoryRepository()
@@ -25,9 +26,9 @@ func TestMerchantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.GetOrderForMerchant(ctx, o.ID, "m2"); err == nil {
-		t.Fatal("expected not found for other merchant")
-	}
+	_, err = svc.GetOrderForMerchant(ctx, o.ID, "m2")
+	assertNotFound(t, err)
+
 	got, err := svc.GetOrderForMerchant(ctx, o.ID, "m1")
 	if err != nil {
 		t.Fatal(err)
@@ -35,8 +36,12 @@ func TestMerchantIsolation(t *testing.T) {
 	if got.ID != o.ID {
 		t.Fatalf("id=%s", got.ID)
 	}
+
+	_, err = svc.CancelOrder(ctx, app.CancelOrderCommand{OrderID: o.ID, MerchantID: "m2"})
+	assertNotFound(t, err)
 }
 
+// TestUserOwnership 覆盖 C 端越权表现为不存在（TEST-03）。
 func TestUserOwnership(t *testing.T) {
 	ctx := context.Background()
 	repo := persistence.NewMemoryRepository()
@@ -63,9 +68,12 @@ func TestUserOwnership(t *testing.T) {
 	if again.ID != o.ID {
 		t.Fatalf("idempotency broken: %s vs %s", again.ID, o.ID)
 	}
-	if _, err := svc.GetOrderForUser(ctx, o.ID, "u2"); err == nil {
-		t.Fatal("expected not found for other user")
-	}
+
+	_, err = svc.GetOrderForUser(ctx, o.ID, "u2")
+	assertNotFound(t, err)
+
+	_, err = svc.CancelOrder(ctx, app.CancelOrderCommand{OrderID: o.ID, UserID: "u2"})
+	assertNotFound(t, err)
 }
 
 func TestListOrdersPageSizeCap(t *testing.T) {
@@ -78,5 +86,19 @@ func TestListOrdersPageSizeCap(t *testing.T) {
 	var ae *apperr.AppError
 	if !errors.As(err, &ae) || ae.Code != apperr.CodeBadRequest {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func assertNotFound(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected not found")
+	}
+	if !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("err=%v want ErrNotFound", err)
+	}
+	var ae *apperr.AppError
+	if errors.As(err, &ae) && ae.Code != apperr.CodeNotFound {
+		t.Fatalf("code=%d", ae.Code)
 	}
 }

@@ -25,7 +25,13 @@
 - [ ] 若有 breaking：对应端 `info.version` major 已提升，并写明弃用与迁移
 - [ ] C 端写路径含 `Idempotency-Key`；无内部字段进入 C 契约
 
+## 测试自检（TESTING_STANDARDS）
+
+- [ ] 触及的 domain 包有单测；核心 domain 覆盖率 ≥70%
+- [ ] B 隔离（`TestMerchantIsolation`）/ C 越权（`TestUserOwnership`）仍通过
+- [ ] 未使用生产凭据或生产库跑测试
+
 ## 质量
 
-- [ ] `make ci` 通过（含 gitleaks、gosec、openapi）
+- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test gates）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

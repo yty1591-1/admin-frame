@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.6  
+> **版本**：v2.7  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -14,6 +14,7 @@
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
 > - [工程化 API 契约规范](./API_STANDARDS.md)（API-01～API-12）  
+> - [工程化测试规范](./TESTING_STANDARDS.md)（TEST-01～TEST-08）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -711,11 +712,14 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十三、测试规范
 
+> **完整硬约束**见 [`docs/TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)（TEST-01～TEST-08）。  
+> 门禁：`make test-ci` / CI job `test`（含 `scripts/ci/check-test-gates.sh`）。
+
 ### 13.1 分层放置
 
 | 类型 | 位置 | 说明 |
 |---|---|---|
-| 单元测试 | 同包 `_test.go` | 覆盖 domain 为主；核心域目标覆盖率 ≥ 70% |
+| 单元测试 | 同包 `_test.go` | domain **必须**；核心 domain 包覆盖率 ≥ 70%（硬门槛） |
 | 集成测试 | `tests/integration/` | testcontainers 起真实 DB/MQ；含商户隔离用例 |
 | 端到端 | `tests/e2e/{admin,biz,c}/` | 分别拉起对应 api 进程 |
 | Benchmark | `BenchmarkXxx` | 核心热路径按需 |
@@ -725,9 +729,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - domain 纯逻辑**必须单测**。
 - infrastructure **不得连接生产库**；用容器或 mock。
 - 测试数据用 factory/builder；禁止大段复制 fixture。
-- 多分支用表驱动测试；**B 端隔离、C 端越权**必须有自动化用例。
+- 多分支用表驱动测试；**B 端隔离、C 端越权**必须有自动化用例（基线函数名见 TEST-03）。
 - mock 由 `mockery` 生成，放在 `internal/<domain>/mocks/`（或生成目录并 gitignore，团队统一一种）。
-- CI：`make test` 失败阻断；覆盖率不达标可按模块设门槛。
+- CI：`make test-ci` 失败阻断（含 `-race`、domain 覆盖率、必测场景）。
 
 ### 13.3 测试环境隔离
 
@@ -901,12 +905,12 @@ make docker-admin       # 单端镜像（多 stage target）
 > **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)。  
 > 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
 
-**当前必跑：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint（含 gosec）→ 测试（`-race` + coverage 产物）→ `govulncheck` → 跨端 transport 互引检查 → gitleaks / 调试端点 → **OpenAPI validate + breaking** → 全量 `cmd` 构建。
+**当前必跑：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint（含 gosec）→ 测试（`-race` + coverage + **TEST 门禁**）→ `govulncheck` → 跨端 transport 互引检查 → gitleaks / 调试端点 → OpenAPI validate + breaking → 全量 `cmd` 构建。
 
 **规划中（专文落地后纳入）：**
 
 1. 许可证扫描（LIC）  
-2. 集成测试（容器；含隔离用例）（TEST）  
+2. 集成测试容器（testcontainers）常态化  
 3. 按变更构建镜像、扫描、推送（RELS）
 
 ### 18.4 发布策略
@@ -1009,7 +1013,7 @@ docs/adr/
 
 **质量门禁**
 
-- [ ] 新增/变更单测充分；隔离/越权场景有覆盖
+- [ ] 新增/变更单测充分；隔离/越权场景有覆盖（见 `TESTING_STANDARDS.md`）
 - [ ] 新增包有包注释；新增/变更导出符号有合格 godoc（见 `COMMENT_STANDARDS.md`）
 - [ ] 命名/签名/错误处理符合 `CODE_STYLE.md`（S-01～S-12）
 - [ ] 无空 TODO；`nolint` / 忽略 error 均有说明
@@ -1049,6 +1053,7 @@ make build
 - [工程化 CI 流水线规范（硬约束）](./CI_STANDARDS.md)
 - [工程化安全规范（硬约束）](./SECURITY_STANDARDS.md)
 - [工程化 API 契约规范（硬约束）](./API_STANDARDS.md)
+- [工程化测试规范（硬约束）](./TESTING_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

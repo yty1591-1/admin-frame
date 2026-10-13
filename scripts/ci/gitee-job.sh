@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐 CI_STANDARDS / SECURITY / API）。
+# Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐 CI / SECURITY / API / TEST）。
 # 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>
 set -euo pipefail
 
@@ -60,7 +60,7 @@ case "${job}" in
     golangci-lint run ./...
     ;;
   test)
-    go test -race -count=1 -coverprofile=coverage.out ./...
+    bash scripts/ci/run-tests.sh
     ;;
   vuln)
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"

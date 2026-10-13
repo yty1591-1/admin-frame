@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
 > **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-13（纳入 API openapi job）  
+> **最后更新**：2026-10-13（纳入 API openapi + TEST gates）  
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -41,7 +41,9 @@
 
 **API 门禁（API_STANDARDS，与上表一并必跑）：** job/step `openapi`（oasdiff validate + 分端 breaking，API-01/07/08）。
 
-**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：集成测试容器、镜像扫描、覆盖率硬门槛。启用后须更新本表与各平台流水线。
+**测试门禁（TESTING_STANDARDS，并入 job `test`）：** `-race` + `coverage.out` + `scripts/ci/check-test-gates.sh`（domain 覆盖率 ≥70%、B/C 必测、禁 test 步注入 secrets）。
+
+**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：集成测试容器常态化、镜像扫描。启用后须更新本表与各平台流水线。
 
 ---
 
@@ -62,7 +64,7 @@
 | CI-03 | `fmt` | `fmt` | `make fmt-check` |
 | CI-07 | `mod` | `mod` | `make tidy-check` |
 | CI-04 | `lint` | `lint` | `make lint` |
-| CI-05 | `test` | `test` | `make test-ci` |
+| CI-05 + TEST-01～05 | `test` | `test` | `make test-ci` |
 | CI-06 | `vuln` | `vuln` | `make vuln` |
 | CI-09 | `arch` | `arch` | `make check-transport` |
 | SEC-01/08 | `secrets` | `secrets` | `make secrets` + `make check-debug` |
@@ -140,6 +142,7 @@ make test-ci         # CI-05
 make vuln            # CI-06
 make check-transport # CI-09
 make openapi         # API-01/07/08
+make test-ci         # CI-05 + TEST 门禁
 make build           # CI-08
 ```
 
@@ -231,6 +234,7 @@ make ci
 | `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
+| `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
 | `Makefile`（`ci` / `fmt-check` / …） | 本地对齐 |
 | `.golangci.yml` | CI-04 规则集 |
 | 本文件 | 规范正文 |

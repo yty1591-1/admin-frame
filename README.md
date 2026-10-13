@@ -72,13 +72,15 @@ curl -s http://127.0.0.1:8083/readyz
   - Gitee：`.workflow/`（见 [.workflow/README.md](.workflow/README.md)）
 - **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-14；gitleaks / gosec）
 - **API 硬约束**：[docs/API_STANDARDS.md](docs/API_STANDARDS.md)（API-01～API-12；oasdiff）
-- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 TEST/DEP 等）
+- **测试硬约束**：[docs/TESTING_STANDARDS.md](docs/TESTING_STANDARDS.md)（TEST-01～TEST-08）
+- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 DEP/CFG 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
 ## 测试与 CI
 
 ```bash
 make test
+make test-ci  # -race + coverage + TESTING_STANDARDS 门禁
 make lint     # 需已安装 golangci-lint
 make openapi  # 分端 OpenAPI validate + breaking
 make ci       # 本地对齐托管平台必跑项

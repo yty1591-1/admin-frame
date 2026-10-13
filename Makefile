@@ -8,7 +8,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
-	test test-ci lint fmt fmt-check tidy tidy-check \
+	test test-ci check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi secrets gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -43,9 +43,13 @@ run-worker: build-worker
 test:
 	$(GO) test ./...
 
-# 与 CI job test 对齐（race + coverage）。
+# TEST-01～05：domain 覆盖率、必测隔离/越权、CI 禁生产 secrets。
+check-test-gates:
+	bash scripts/ci/check-test-gates.sh
+
+# 与 CI job test 对齐（race + coverage + TESTING_STANDARDS 门禁）。
 test-ci:
-	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
+	bash scripts/ci/run-tests.sh
 
 lint:
 	golangci-lint run ./...
@@ -99,7 +103,7 @@ gitee-job:
 	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（含 SECURITY / API 门禁）。
+# 本地一键对齐 CI 必跑项（含 SECURITY / API / TEST 门禁）。
 ci: fmt-check tidy-check lint test-ci vuln check-transport check-debug secrets check-openapi build
 
 migrate-up: build-migrate
