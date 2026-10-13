@@ -3,9 +3,9 @@
 > **状态**：生效中（Normative）  
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
-> **执行方式**：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) + 分支保护必过检查  
+> **执行方式**：见下文「多平台」；本地统一 `make ci`  
 > **最后更新**：2026-10-13  
-> **变更方式**：修改本规范须同步更新 workflow 与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
+> **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
 
@@ -13,7 +13,8 @@
 
 1. **可强制**：格式、静态分析、测试、漏洞扫描在合并前自动阻断。
 2. **可复现**：本地 `make` 目标与 CI 步骤一一对应，避免「只在我机器过」。
-3. **最小权限**：流水线默认只读仓库；不写 secrets 到日志。
+3. **平台无关门禁**：GitHub / Gitee 语法不同，但 **CI-03～CI-09 检查项必须一致**。
+4. **最小权限**：流水线默认只读仓库；不写 secrets 到日志。
 
 ---
 
@@ -21,8 +22,8 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| CI-01 | 默认保护分支的 PR **必须**通过名为 `CI` 的 workflow（全部 required job）方可合并 | 分支保护 + Actions |
-| CI-02 | 每次 PR 与 push 到 `main` **必须**触发 CI；禁止跳过必跑 job（见例外） | workflow `on` |
+| CI-01 | 默认保护分支的 PR **必须**通过本仓库 CI（全部必跑 job/步骤）方可合并 | 分支保护 + 平台流水线 |
+| CI-02 | 每次 PR 与 push 到 `main`/`master` **必须**触发 CI；禁止跳过必跑项（见例外） | 触发器配置 |
 | CI-03 | 必跑：格式检查（`gofmt`/`goimports` 无 diff） | job `fmt` |
 | CI-04 | 必跑：`golangci-lint`（与本地 `.golangci.yml` 一致） | job `lint` |
 | CI-05 | 必跑：单元测试（含 `-race`）且失败即失败 | job `test` |
@@ -30,45 +31,107 @@
 | CI-07 | 必跑：`go mod tidy` 后 `go.mod`/`go.sum` 无未提交 diff | job `mod` |
 | CI-08 | 必跑：全量 `go build` 所有 `cmd/*` | job `build` |
 | CI-09 | 必跑：禁止跨端 transport 互引（admin/biz/c） | job `arch` |
-| CI-10 | workflow `permissions` 默认最小化（至少 `contents: read`）；写权限按 job 显式授予 | workflow 审查 |
-| CI-11 | 同一 PR 的新 push **取消**进行中的旧 run（concurrency） | workflow |
+| CI-10 | 凭证与权限最小化；写权限按需显式授予；禁向日志打印 token | 流水线审查 |
+| CI-11 | 同一 PR 的新推送应取消或取代进行中的旧构建（平台支持时必须开启） | concurrency / 等价配置 |
 | CI-12 | 禁止在 CI 中使用生产密钥 / 生产数据源；测试仅用 fixture 或 ephemeral | Review + 本规范 |
-| CI-13 | Action 与 linter 版本**钉扎**（tag 或 commit SHA）；禁止浮动 `latest` 无说明 | workflow |
-| CI-14 | Job 必须设 `timeout-minutes`；禁止无限跑 | workflow |
+| CI-13 | 工具与镜像版本**钉扎**；禁止无说明的浮动 `latest` | 流水线 YAML |
+| CI-14 | Job/阶段必须有超时或平台默认超时；禁止无限跑 | 流水线配置 |
 
-**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：OpenAPI breaking、集成测试容器、镜像扫描、gitleaks、覆盖率硬门槛。启用后须更新本表与 workflow。
+**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：OpenAPI breaking、集成测试容器、镜像扫描、gitleaks、覆盖率硬门槛。启用后须更新本表与各平台流水线。
 
 ---
 
-## 3. 流水线拓扑
+## 3. 多平台（GitHub / Gitee）
+
+> **重要**：`.github/workflows/*.yml` **不会**被 Gitee 执行；`.workflow/*.yml` **不会**被 GitHub 执行。二者并存，检查项对齐。
+
+| 平台 | 配置位置 | 引擎 | 命令入口 |
+|------|----------|------|----------|
+| **GitHub** | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | GitHub Actions | 各 job 内联 / Action |
+| **Gitee** | [`.workflow/`](../.workflow/)（`PRPipeline.yml` / `MasterPipeline.yml` / `BranchPipeline.yml`） | Gitee Go | [`scripts/ci/gitee-job.sh`](../scripts/ci/gitee-job.sh) |
+| **本地** | `Makefile` | 开发者机器 | `make ci` |
+
+### 3.1 检查项映射（必须保持同步）
+
+| 检查 | GitHub job | Gitee step `name` | 本地目标 |
+|------|------------|-------------------|----------|
+| CI-03 | `fmt` | `fmt` | `make fmt-check` |
+| CI-07 | `mod` | `mod` | `make tidy-check` |
+| CI-04 | `lint` | `lint` | `make lint` |
+| CI-05 | `test` | `test` | `make test-ci` |
+| CI-06 | `vuln` | `vuln` | `make vuln` |
+| CI-09 | `arch` | `arch` | `make check-transport` |
+| CI-08 | `build` | `build` | `make build` |
+
+变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
+
+### 3.2 GitHub Actions
+
+- 触发：`push` / `pull_request` → `main`、`master`
+- 并行 job + `concurrency` 取消旧 run
+- `permissions: contents: read`
+- Go 版本：`actions/setup-go` 读取 `go.mod`
+
+### 3.3 Gitee Go
+
+- 目录约定：仓库根目录 `.workflow/`（开通 Gitee Go 后由平台识别）
+- 触发：
+  - `PRPipeline.yml`：PR 目标为 `main`/`master`
+  - `MasterPipeline.yml`：push 到 `main`/`master`
+  - `BranchPipeline.yml`：其它分支 push（排除主干，避免重复）
+- 插件：`build@golang`；阶段 `strategy: fast`（一失败则快速失败）
+- 代理：默认 `GOPROXY=https://goproxy.cn,direct`
+- **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
+  1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或
+  2. 升级组织提供的 Golang 构建镜像；  
+  **禁止**为迁就过旧插件而擅自降低 `go.mod` 语言版本（除非 ADR 批准）。
+
+开通清单：
+
+1. 仓库启用 Gitee Go  
+2. 确认 `.workflow` 三个文件生效（或控制台从代码库导入）  
+3. 调整 `golangVersion`  
+4. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
+
+详见 [`.workflow/README.md`](../.workflow/README.md)。
+
+### 3.4 双托管 / 仅单边
+
+| 场景 | 要求 |
+|------|------|
+| 仅 GitHub | 维护 `.github/workflows`；`.workflow` 可保留作模板，但须在 README 标明未启用 |
+| 仅 Gitee | 维护 `.workflow`；分支保护走 Gitee；`.github` 可保留供镜像仓使用 |
+| 双远端 | 两边流水线均须绿；禁止「只过一边就合入」 |
+
+---
+
+## 4. 流水线拓扑
 
 ```text
                     ┌── fmt
                     ├── mod
 PR / push main ──►  ├── lint
-                    ├── test  (+ race, coverage artifact)
+                    ├── test  (+ race, coverage)
                     ├── vuln
                     ├── arch  (cross-transport)
                     └── build (all cmd)
 ```
 
-- 各 job **并行**（互不依赖），缩短反馈时间。
-- 任一 required job 失败 → 合并阻断。
+- 各检查 **并行**（平台支持时）；任一失败 → 合并阻断。
+- Gitee：同 stage 下多 step 无 `dependsOn` 即并行；`strategy: fast`。
 
 ---
 
-## 4. 本地对齐（MUST）
-
-开发者合并前应能本地复现：
+## 5. 本地对齐（MUST）
 
 ```bash
-make fmt-check      # CI-03
-make tidy-check     # CI-07
-make lint           # CI-04
-make test-ci        # CI-05
-make vuln           # CI-06
+make fmt-check       # CI-03
+make tidy-check      # CI-07
+make lint            # CI-04
+make test-ci         # CI-05
+make vuln            # CI-06
 make check-transport # CI-09
-make build          # CI-08
+make build           # CI-08
 ```
 
 或一键：
@@ -77,82 +140,89 @@ make build          # CI-08
 make ci
 ```
 
-`make ci` 失败时**禁止**依赖「CI 会过」而强行合入。
+`make ci` 失败时**禁止**依赖「远端 CI 会过」而强行合入。
 
 ---
 
-## 5. 分支保护与仓库设置（MUST，人工一次配置）
+## 6. 分支保护与仓库设置（MUST，人工一次配置）
 
-仓库管理员须在托管平台配置（GitHub 示例）：
+### GitHub
 
-1. 保护 `main`（或默认分支）。
-2. Require a pull request before merging。
-3. Require status checks to pass：勾选本仓库 `CI` workflow 下全部必跑 job（或单一 gate job，若采用）。
-4. 禁止管理员无检查强推（组织策略允许时）。
-5. 限制绕过：仅应急账号可跳过，且须事后补跑与记录。
+1. 保护 `main`（或默认分支）  
+2. Require a pull request before merging  
+3. Require status checks：勾选 `CI` workflow 全部必跑 job  
+4. 限制无检查强推；应急绕过须事后补跑  
 
-未完成分支保护前，CI 文件合入仍视为「门禁未闭环」——须在上线清单中跟踪。
+### Gitee
+
+1. 保护默认分支 / 设置合并规则  
+2. 要求关联 PR 流水线（`PR CI` / `pr-pipeline`）通过后方可合并  
+3. 限制管理员绕过；应急流程同 GitHub  
+
+未完成分支保护前，流水线文件合入仍视为「门禁未闭环」。
 
 ---
 
-## 6. 失败策略
+## 7. 失败策略
 
 | 场景 | 策略 |
 |------|------|
 | fmt / tidy diff | 本地 `make fmt` / `go mod tidy` 后提交 |
 | lint | 按 `.golangci.yml` 与注释/风格专文修复；例外走 `nolint`+原因 |
-| test / race | 修复或补测；禁止 `t.Skip` 掩盖必测场景而无 issue |
-| vuln | 升级依赖或官方缓解；无法短期修复须 ADR + 风险接受记录（Owner 签字）后方可临时豁免 |
+| test / race | 修复或补测；禁止无 issue 的 `t.Skip` 掩盖必测场景 |
+| vuln | 升级依赖或官方缓解；否则 ADR + 风险接受后方可临时豁免 |
 | arch 跨端引用 | 删除错误 import；端能力只通过 app/domain 共享 |
-| Action 基础设施故障 | 可重跑；连续失败升级平台/Owner，不降低检查标准 |
+| 平台 / 插件故障 | 可重跑；连续失败升级 Owner，不降低检查标准 |
+| Gitee Go 版本不足 | 换自建 Agent 或升级构建镜像，见 §3.3 |
 
 ---
 
-## 7. 缓存、性能与成本
+## 8. 缓存、性能与成本
 
-- 缓存 Go modules 与 build cache（`setup-go` cache）。
-- golangci-lint 使用官方 action 缓存。
-- 不在每个 PR 默认构建并推送镜像（发布流水线另议，见 `RELEASE_STANDARDS`）。
-- 集成测试 / 容器任务启用后单独 job，可按路径过滤（`paths`）以省分钟数——**不可**用路径过滤跳过 fmt/lint/test/vuln。
-
----
-
-## 8. 安全（CI 面）
-
-- 不 `echo` secrets；不把 `GITHUB_TOKEN` 打进日志。
-- fork PR 不向本仓库写权限；secrets 不对外部 fork 暴露（GitHub 默认行为，勿改弱）。
-- 第三方 Action 优先用官方或组织允许列表；升级须看 release notes。
+- GitHub：`setup-go` cache；golangci-lint-action 缓存  
+- Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载  
+- 不在每个 PR 默认构建并推送镜像（见后续 `RELEASE_STANDARDS`）  
+- 不可用路径过滤跳过 fmt/lint/test/vuln  
 
 ---
 
-## 9. 例外与豁免
+## 9. 安全（CI 面）
 
-1. **临时跳过某检查**：禁止在 workflow 中 `continue-on-error: true` 作用于 CI-03～CI-09，除非 Owner 书面批准且设到期日。
-2. **紧急热修**：允许平台管理员绕过分支保护时，须在 24h 内补跑 CI 全绿，并在变更单注明。
-3. **govuln 误报/无修复**：开 ADR，记录 CVE、影响面、缓解措施、复查日期；workflow 豁免须可追溯（注释 + ADR 编号）。
-
----
-
-## 10. Review / 变更检查清单
-
-改动 `.github/workflows/**` 或本专文时：
-
-- [ ] CI-03～CI-09 仍为失败即失败
-- [ ] `permissions` 未被放宽到超出需要
-- [ ] Action 版本仍钉扎
-- [ ] `make ci` 与 workflow 步骤一致（或文档说明差异）
-- [ ] 已更新 `ARCHITECTURE.md` / `standards-roadmap.md` 状态（如需要）
+- 不 `echo` secrets；不把平台 Token 打进日志  
+- Fork/外部 PR 不授予写权限、不暴露组织密钥  
+- 第三方 Action / 插件钉扎版本，升级看 release notes  
 
 ---
 
-## 11. 与工具链对应
+## 10. 例外与豁免
+
+1. **临时跳过某检查**：禁止对 CI-03～CI-09 使用「失败继续」，除非 Owner 书面批准且设到期日。  
+2. **紧急热修**：绕过保护后 24h 内补跑全绿，并在变更单注明。  
+3. **govuln 误报/无修复**：ADR 记录 CVE、影响面、缓解与复查日期。  
+
+---
+
+## 11. Review / 变更检查清单
+
+改动 `.github/workflows/**`、`.workflow/**`、`scripts/ci/gitee-job.sh` 或本专文时：
+
+- [ ] CI-03～CI-09 在 **GitHub 与 Gitee**（若都启用）仍失败即失败  
+- [ ] 两边检查命令与 `make ci` / `gitee-job.sh` 一致  
+- [ ] 版本仍钉扎；权限未被放宽  
+- [ ] 已更新本专文映射表（若有增删 job）  
+
+---
+
+## 12. 与工具链对应
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `.github/workflows/ci.yml` | 强制执行 CI-02～CI-11、CI-13、CI-14 |
-| `Makefile`（`ci` / `fmt-check` / `test-ci` / …） | 本地对齐 CI-03～CI-09 |
+| `.github/workflows/ci.yml` | GitHub 强制执行 |
+| `.workflow/*.yml` | Gitee Go 强制执行 |
+| `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
+| `Makefile`（`ci` / `fmt-check` / …） | 本地对齐 |
 | `.golangci.yml` | CI-04 规则集 |
 | 本文件 | 规范正文 |
 
-后续 SEC/API/TEST 专文启用新 job 时，增补本文件 §2 表并保持编号稳定。
+后续 SEC/API/TEST 专文启用新检查时，须 **同时** 更新 GitHub workflow、Gitee `.workflow` 与（如需要）`gitee-job.sh`。

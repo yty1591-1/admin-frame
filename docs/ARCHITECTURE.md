@@ -9,8 +9,10 @@
 > **关联硬约束**：  
 > - [工程化注释规范](./COMMENT_STANDARDS.md)（C-01～C-10）  
 > - [工程化代码编写风格规范](./CODE_STYLE.md)（S-01～S-12）  
-> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）+ [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
-> 经 `make lint` / `make ci` / GitHub Actions 与 Review 强制，违反不得合并。  
+> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
+>   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
+>   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
+> 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
 ---
@@ -888,7 +890,8 @@ make docker-admin       # 单端镜像（多 stage target）
 
 ### 18.3 CI 流水线（门禁）
 
-> **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)；实现见 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)。本地对齐：`make ci`。
+> **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)。  
+> 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
 
 **当前必跑（CI-03～CI-09）：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint → 测试（`-race` + coverage 产物）→ `govulncheck` → 跨端 transport 互引检查 → 全量 `cmd` 构建。
 

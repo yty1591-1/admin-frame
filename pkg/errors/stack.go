@@ -103,19 +103,19 @@ type StackTrace []Frame
 
 // Format 格式化整段栈。
 func (st StackTrace) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'v':
-		switch {
-		case s.Flag('+'):
-			for _, f := range st {
-				_, _ = io.WriteString(s, "\n")
-				f.Format(s, verb)
-			}
-		case s.Flag('#'):
-			_, _ = fmt.Fprintf(s, "%#v", []Frame(st))
-		default:
-			_, _ = fmt.Fprintf(s, "%v", []Frame(st))
+	if verb != 'v' {
+		return
+	}
+	switch {
+	case s.Flag('+'):
+		for _, f := range st {
+			_, _ = io.WriteString(s, "\n")
+			f.Format(s, verb)
 		}
+	case s.Flag('#'):
+		_, _ = fmt.Fprintf(s, "%#v", []Frame(st))
+	default:
+		_, _ = fmt.Fprintf(s, "%v", []Frame(st))
 	}
 }
 

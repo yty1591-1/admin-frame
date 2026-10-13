@@ -1,0 +1,87 @@
+# Gitee Go — 非主干分支 push（不含 main/master，避免与 MasterPipeline 重复）
+# 检查项与 PR/Master 一致，保证特性分支尽早发现门禁问题。
+
+version: "1.0"
+name: branch-pipeline
+displayName: Branch CI
+
+triggers:
+  push:
+    branches:
+      include:
+        - ".*"
+      exclude:
+        - main
+        - master
+
+variables:
+  GOLANGCI_LINT_VERSION: v1.64.8
+
+stages:
+  - name: quality-gates
+    displayName: 质量门禁
+    strategy: fast
+    trigger: auto
+    steps:
+      - step: build@golang
+        name: fmt
+        displayName: fmt
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh fmt
+
+      - step: build@golang
+        name: mod
+        displayName: mod
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh mod
+
+      - step: build@golang
+        name: lint
+        displayName: lint
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - export GOLANGCI_LINT_VERSION=${GOLANGCI_LINT_VERSION}
+          - bash scripts/ci/gitee-job.sh lint
+
+      - step: build@golang
+        name: test
+        displayName: test
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh test
+
+      - step: build@golang
+        name: vuln
+        displayName: vuln
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh vuln
+
+      - step: build@golang
+        name: arch
+        displayName: arch
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - bash scripts/ci/gitee-job.sh arch
+
+      - step: build@golang
+        name: build
+        displayName: build
+        golangVersion: "1.26"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh build

@@ -17,7 +17,7 @@ type Envelope struct {
 }
 
 // JSON 写入任意业务码与 HTTP 状态的 JSON 响应。
-func JSON(w http.ResponseWriter, status int, code int, message string, data interface{}, traceID string) {
+func JSON(w http.ResponseWriter, status, code int, message string, data interface{}, traceID string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(Envelope{ // 响应写入失败时只能记录日志，此处忽略

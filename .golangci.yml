@@ -30,6 +30,9 @@ linters-settings:
 
   misspell:
     locale: US
+    # 领域状态字面量沿用英式 cancelled（对外契约），不强制改为 canceled
+    ignore-words:
+      - cancelled
 
   gocritic:
     enabled-tags:
@@ -76,7 +79,6 @@ linters-settings:
       - name: redefines-builtin-id
       - name: var-naming
       - name: increment-decrement
-      - name: confuse-naming
 
   nolintlint:
     allow-unused: false

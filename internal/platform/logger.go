@@ -20,7 +20,7 @@ func NewLogger(cfg LogConfig, service string) *slog.Logger {
 
 	opts := &slog.HandlerOptions{Level: level}
 	var handler slog.Handler
-	if strings.ToLower(cfg.Format) == "text" {
+	if strings.EqualFold(cfg.Format, "text") {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, opts)

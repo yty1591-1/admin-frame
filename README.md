@@ -67,7 +67,9 @@ curl -s http://127.0.0.1:8083/readyz
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **注释硬约束**：[docs/COMMENT_STANDARDS.md](docs/COMMENT_STANDARDS.md)（C-01～C-10）
 - **代码风格硬约束**：[docs/CODE_STYLE.md](docs/CODE_STYLE.md)（S-01～S-12）
-- **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）+ `.github/workflows/ci.yml`
+- **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）  
+  - GitHub：`.github/workflows/ci.yml`  
+  - Gitee：`.workflow/`（见 [.workflow/README.md](.workflow/README.md)）
 - **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 SEC/API/TEST 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 

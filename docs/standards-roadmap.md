@@ -25,8 +25,8 @@
 
 | 优先级 | 专文路径（建议） | ID 前缀 | 说明 | 状态 | 主要门禁 | 架构对照 |
 |-------|------------------|---------|------|------|----------|----------|
-| P0 | `.github/workflows/ci.yml`（或等价 CI） | CI | **流水线本身**：无 CI 则后续专文无法自动强制 | 已完成 | Actions；分支保护需仓库管理员勾选 | §18.3 |
-| P0 | `docs/CI_STANDARDS.md` | CI | CI 必跑步骤、失败策略、缓存、权限最小化 | 已完成 | 与 workflow 同批落地；`make ci` | §18.3 |
+| P0 | `.github/workflows/ci.yml` + `.workflow/`（Gitee Go） | CI | **流水线本身**：无 CI 则后续专文无法自动强制 | 已完成 | GitHub Actions + Gitee Go；分支保护需管理员勾选 | §18.3 |
+| P0 | `docs/CI_STANDARDS.md` | CI | CI 必跑步骤、失败策略、多平台、缓存、权限最小化 | 已完成 | 与双平台流水线同批；`make ci` | §18.3 |
 | P1 | `docs/SECURITY_STANDARDS.md` | SEC | 密钥、注入、三端鉴权隔离、PII/日志脱敏、调试端点 | 待做 | gitleaks、gosec、MR 模板 | §十 |
 | P1 | `docs/API_STANDARDS.md` | API | 分端 OpenAPI、错误码、分页、兼容与 breaking | 待做 | openapi-diff / spectral | §十六 |
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B 隔离/C 越权必测 | 待做 | `go test` + coverage gate | §十三 |
@@ -66,9 +66,10 @@
 
 ### P0 — CI
 
-- [x] `docs/CI_STANDARDS.md`：必跑 `fmt/lint/test/vuln/build/arch`；失败阻断；PR 与 main 策略
-- [x] `.github/workflows/ci.yml`：实际 job
-- [ ] 分支保护：必过 status check 才能合并（**需在 GitHub 仓库设置中人工完成**）
+- [x] `docs/CI_STANDARDS.md`：必跑 `fmt/lint/test/vuln/build/arch`；多平台说明；失败阻断
+- [x] `.github/workflows/ci.yml`：GitHub Actions
+- [x] `.workflow/*.yml` + `scripts/ci/gitee-job.sh`：Gitee Go 等价流水线
+- [ ] 分支保护：GitHub / Gitee 勾选必过流水线（**需仓库管理员人工完成**）
 
 ### P1 — SEC / API / TEST
 
