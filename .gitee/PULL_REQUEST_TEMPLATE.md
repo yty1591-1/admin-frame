@@ -82,7 +82,22 @@
 - [ ] 字段符合 `docs/audit/FIELDS.md`；无 Token/密码等进入审计载荷
 - [ ] 保留期符合类别（认证≥180d / 资金导出≥365d）或已写 ADR
 
+## 许可证自检（LICENSE_STANDARDS）
+
+- [ ] 新直接依赖 SPDX 在允许列表；未引入禁止列表项
+- [ ] 若调整 `deps/allowed-licenses.txt` / `forbidden`：已说明并获批
+
+## 代码生成自检（CODEGEN_STANDARDS）
+
+- [ ] 未手改带 `DO NOT EDIT` 的生成文件；变更来自再生
+- [ ] 若新增生成路径：已更新 `docs/codegen/MANIFEST.md`
+
+## 性能自检（PERFORMANCE_STANDARDS）
+
+- [ ] 若触及已登记热点：已更新 `docs/perf/BASELINES.md` 或说明无回归动机
+- [ ] 未移除分页上限 / 无界重试等背压手段
+
 ## 质量
 
-- [ ] `make ci` 通过（含 arch 内 DATA/REL/OBS/GIT/RELS/RB/AUD 等 gates）
+- [ ] `make ci` 通过（含 arch 内 LIC/GEN/PERF 等 gates）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

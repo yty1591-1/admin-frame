@@ -26,7 +26,7 @@
 | DEP-02 | `go mod tidy` 后 `go.mod` / `go.sum` 无未提交 diff | job `mod` / `make tidy-check` |
 | DEP-03 | 禁止未审批的 `replace`（含指向未审计 fork / 本地路径）；例外须列入 allowlist 并有 ADR | `check-deps.sh` + `deps/replace-allowlist.txt` |
 | DEP-04 | CI 必跑 `govulncheck ./...`；已知高危未缓解不得合并/发版 | job `vuln` / `make vuln` |
-| DEP-05 | 依赖许可证须在允许列表内；禁止 GPL/AGPL 等传染性或未知许可证进入主构建图 | `go-licenses check`（`deps/allowed-licenses.txt`） |
+| DEP-05 | 依赖许可证须在允许列表内；策略以 `LICENSE_STANDARDS` 为准；禁止列表见 `deps/forbidden-licenses.txt` | `go-licenses check` + `check-license.sh` |
 | DEP-06 | 新增**直接**依赖须在 MR 说明用途、许可证与替代方案（若有） | Review + PR 模板 |
 | DEP-07 | 依赖更新由机器人或人工定期发起；禁止无说明大范围混升无关依赖 | Dependabot + Review |
 | DEP-08 | 合并请求须勾选依赖自检 | PR 模板 |
@@ -45,15 +45,10 @@
 
 ---
 
-## 4. 许可证允许列表
+## 4. 许可证
 
-默认允许（`deps/allowed-licenses.txt`，与 `go-licenses` 名称对齐）：
-
-- MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC、MPL-2.0、Unlicense、0BSD  
-
-禁止进入主模块构建图（示例，非穷尽）：GPL-2.0、GPL-3.0、AGPL-3.0、SSPL、未知（unknown）。  
-
-完整许可证合规专文见后续 `LICENSE_STANDARDS`（LIC）；在其落地前以本表 + `go-licenses` 为准。
+> **完整策略**见 [`LICENSE_STANDARDS.md`](./LICENSE_STANDARDS.md)（LIC-01～LIC-07）。  
+> 允许列表：`deps/allowed-licenses.txt`；禁止列表：`deps/forbidden-licenses.txt`；声明：`deps/NOTICE`。
 
 工具钉扎：`github.com/google/go-licenses@v1.6.0`。
 

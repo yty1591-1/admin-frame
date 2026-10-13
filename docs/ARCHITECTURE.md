@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.11  
+> **版本**：v2.12  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -24,8 +24,11 @@
 > - [工程化发布与镜像规范](./RELEASE_STANDARDS.md)（RELS-01～RELS-08）  
 > - [工程化 Runbook 与值班规范](./RUNBOOK_STANDARDS.md)（RB-01～RB-07）  
 > - [工程化审计规范](./AUDIT_STANDARDS.md)（AUD-01～AUD-09）  
+> - [工程化许可证与开源合规规范](./LICENSE_STANDARDS.md)（LIC-01～LIC-07）  
+> - [工程化代码生成规范](./CODEGEN_STANDARDS.md)（GEN-01～GEN-07）  
+> - [工程化性能与容量规范](./PERFORMANCE_STANDARDS.md)（PERF-01～PERF-07）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
-> **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
+> **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)（当前 P0～P4 专文已全部落地；分支保护仍需管理员勾选）。
 
 ---
 
@@ -530,10 +533,11 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 ### 8.5 依赖管理与供应链
 
 > **完整硬约束**见 [`docs/DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）。  
-> 门禁：`make vuln` + `make check-deps`（并入 CI job `vuln`）。
+> **许可证策略**见 [`docs/LICENSE_STANDARDS.md`](./LICENSE_STANDARDS.md)（LIC-01～LIC-07）。  
+> 门禁：`make vuln` + `make check-deps` + `make check-license`（并入 CI）。
 
 - 使用 Go modules；锁定 `go.sum`；禁止随意 `replace`（例外：ADR + `deps/replace-allowlist.txt`）。
-- CI 运行 `govulncheck` 与许可证允许列表检查；高危漏洞 / 禁止许可证阻断合并。
+- CI 运行 `govulncheck` 与许可证允许/禁止列表检查；高危漏洞 / 禁止许可证阻断合并。
 - 依赖更新：Dependabot（每周）+ Review；新增直接依赖须在 MR 说明用途与许可证。
 - 生产镜像构建可开启 SBOM（如 CycloneDX）与镜像签名（按组织要求）。
 
@@ -690,9 +694,13 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ### 11.3 容量与背压
 
+> **完整硬约束**见 [`docs/PERFORMANCE_STANDARDS.md`](./PERFORMANCE_STANDARDS.md)（PERF-01～PERF-07）。  
+> 门禁：`make check-perf`（并入 CI job `arch`）+ 关键路径 Benchmark 登记。
+
 - 三端 API 与 worker 的 HTTP Server、DB 连接池、并发数**分别可配置**。
 - 队列消费者控制并发与 ack 时机；积压可告警。
 - 列表接口强制分页与 `page_size` 上限。
+- 已登记热点须有可运行的 `Benchmark*`（见 `docs/perf/BASELINES.md`）。
 
 ### 11.4 SLO 与告警（建议基线）
 
@@ -749,7 +757,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - infrastructure **不得连接生产库**；用容器或 mock。
 - 测试数据用 factory/builder；禁止大段复制 fixture。
 - 多分支用表驱动测试；**B 端隔离、C 端越权**必须有自动化用例（基线函数名见 TEST-03）。
-- mock 由 `mockery` 生成，放在 `internal/<domain>/mocks/`（或生成目录并 gitignore，团队统一一种）。
+- mock 由 `mockery` 生成，放在 `internal/<domain>/mocks/`；**禁止手改**生成物（见 [`CODEGEN_STANDARDS.md`](./CODEGEN_STANDARDS.md)）。
 - CI：`make test-ci` 失败阻断（含 `-race`、domain 覆盖率、必测场景）。
 
 ### 13.3 测试环境隔离
@@ -1094,6 +1102,9 @@ make build
 - [工程化发布与镜像规范（硬约束）](./RELEASE_STANDARDS.md)
 - [工程化 Runbook 与值班规范（硬约束）](./RUNBOOK_STANDARDS.md)
 - [工程化审计规范（硬约束）](./AUDIT_STANDARDS.md)
+- [工程化许可证与开源合规规范（硬约束）](./LICENSE_STANDARDS.md)
+- [工程化代码生成规范（硬约束）](./CODEGEN_STANDARDS.md)
+- [工程化性能与容量规范（硬约束）](./PERFORMANCE_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

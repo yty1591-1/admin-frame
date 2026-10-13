@@ -82,7 +82,10 @@ curl -s http://127.0.0.1:8083/readyz
 - **发布硬约束**：[docs/RELEASE_STANDARDS.md](docs/RELEASE_STANDARDS.md)（RELS-01～RELS-08）
 - **Runbook 硬约束**：[docs/RUNBOOK_STANDARDS.md](docs/RUNBOOK_STANDARDS.md)（RB-01～RB-07）
 - **审计硬约束**：[docs/AUDIT_STANDARDS.md](docs/AUDIT_STANDARDS.md)（AUD-01～AUD-09）
-- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 LIC/GEN 等）
+- **许可证硬约束**：[docs/LICENSE_STANDARDS.md](docs/LICENSE_STANDARDS.md)（LIC-01～LIC-07）
+- **代码生成硬约束**：[docs/CODEGEN_STANDARDS.md](docs/CODEGEN_STANDARDS.md)（GEN-01～GEN-07）
+- **性能硬约束**：[docs/PERFORMANCE_STANDARDS.md](docs/PERFORMANCE_STANDARDS.md)（PERF-01～PERF-07）
+- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（P0～P4 已完成；分支保护待管理员勾选）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
 ## 测试与 CI
@@ -99,6 +102,9 @@ make check-git            # PR 模板 / commitlint 配置
 make check-release        # Dockerfile / 版本注入
 make check-runbooks       # 基线 runbook / ALERTS
 make check-audit          # 审计事件目录 / audit 包
+make check-license        # 许可证允许/禁止列表
+make check-codegen        # 生成物 MANIFEST
+make check-perf           # 关键路径 Benchmark
 make lint                 # 需已安装 golangci-lint
 make openapi              # 分端 OpenAPI validate + breaking
 make ci                   # 本地对齐托管平台必跑项

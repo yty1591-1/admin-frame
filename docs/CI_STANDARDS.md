@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
 > **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-13（纳入 DEP/CFG/DATA/REL/OBS/GIT/RELS/RB/AUD 门禁）  
+> **最后更新**：2026-10-13（纳入 LIC/GEN/PERF；P0～P4 专文门禁齐套）  
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -51,7 +51,9 @@
 
 **Git / 发布 / Runbook / 审计门禁（GIT / RELS / RB / AUD，并入 job `arch`）：** `check-git.sh` + `check-release.sh` + `check-runbooks.sh` + `check-audit.sh`。
 
-**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：集成测试容器常态化、发版流水线镜像扫描推送。启用后须更新本表与各平台流水线。
+**许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检；全链路压测仍可选）。
+
+**尚未纳入必跑、但已规划**：集成测试容器常态化、发版流水线镜像扫描推送。启用后须更新本表与各平台流水线。
 
 ---
 
@@ -74,7 +76,7 @@
 | CI-04 | `lint` | `lint` | `make lint` |
 | CI-05 + TEST-01～05 | `test` | `test` | `make test-ci` |
 | CI-06 + DEP-01/03～05 | `vuln` | `vuln` | `make vuln` + `make check-deps` |
-| CI-09 + DATA/REL/OBS/GIT/RELS/RB/AUD | `arch` | `arch` | `make check-transport` + migrations/reliability/observability/git/release/runbooks/audit |
+| CI-09 + DATA…AUD + LIC/GEN/PERF | `arch` | `arch` | `make check-transport` + 各 standards 检查脚本（见 gitee-job arch） |
 | SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | CI-08 | `build` | `build` | `make build` |
@@ -161,6 +163,9 @@ make check-git            # GIT-05/06
 make check-release        # RELS-01/02/03/07
 make check-runbooks       # RB-01～04
 make check-audit          # AUD-01/02/04
+make check-license        # LIC-01/02/06
+make check-codegen        # GEN-01/02
+make check-perf           # PERF-01/02
 make build                # CI-08
 ```
 
@@ -262,7 +267,11 @@ make ci
 | `scripts/ci/check-release.sh` | RELS-01/02/03/07 |
 | `scripts/ci/check-runbooks.sh` | RB-01～04 |
 | `scripts/ci/check-audit.sh` | AUD-01/02/04 |
-| `deps/allowed-licenses.txt` / `replace-allowlist.txt` | 依赖策略 |
+| `scripts/ci/check-license.sh` | LIC-01/02/06 |
+| `scripts/ci/check-codegen.sh` | GEN-01/02 |
+| `scripts/ci/check-perf.sh` | PERF-01/02 |
+| `deps/allowed-licenses.txt` / `forbidden-licenses.txt` / `NOTICE` | 许可证策略 |
+| `deps/replace-allowlist.txt` | 依赖 replace |
 | `.github/dependabot.yml` | DEP-07 |
 | `Makefile`（`ci` / `fmt-check` / …） | 本地对齐 |
 | `.golangci.yml` | CI-04 规则集 |

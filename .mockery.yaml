@@ -1,0 +1,11 @@
+# CODEGEN_STANDARDS GEN-04：mockery 配置（引入接口 mock 时启用）。
+# 钉扎版本建议在 Makefile 的 mock 目标中固定。
+dir: '{{.InterfaceDir}}/mocks'
+filename: 'mock_{{.InterfaceName | snakecase}}.go'
+outpkg: mocks
+with-expecter: true
+# 示例：取消注释并按域追加
+# packages:
+#   github.com/admin-frame/admin-frame/internal/order/app:
+#     interfaces:
+#       Repository:

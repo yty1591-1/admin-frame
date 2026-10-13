@@ -1,0 +1,12 @@
+Third-Party Notices
+===================
+
+This repository's runtime/build graph must comply with docs/LICENSE_STANDARDS.md
+and deps/allowed-licenses.txt (enforced by go-licenses in CI).
+
+To generate a dependency license report locally:
+
+  go run github.com/google/go-licenses@v1.6.0 report ./... --ignore=github.com/admin-frame/admin-frame
+
+Attach or publish the report when redistributing binaries or container images,
+per your organization's release process (see docs/RELEASE_STANDARDS.md).

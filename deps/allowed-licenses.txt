@@ -1,5 +1,7 @@
-# DEPENDENCY_STANDARDS DEP-05：go-licenses --allowed_licenses 允许列表（逗号拼接）。
+# LICENSE_STANDARDS LIC-01 / DEPENDENCY_STANDARDS DEP-05：
+# go-licenses --allowed_licenses 允许列表（逗号拼接）。
 # 一行一个 SPDX 风格名称；# 开头为注释。
+# 变更须遵循 docs/LICENSE_STANDARDS.md LIC-05。
 MIT
 Apache-2.0
 BSD-2-Clause

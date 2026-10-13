@@ -11,7 +11,8 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	test test-ci check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi check-deps check-config \
 	check-migrations check-reliability check-observability \
-	check-git check-release check-runbooks check-audit secrets \
+	check-git check-release check-runbooks check-audit \
+	check-license check-codegen check-perf secrets \
 	gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -137,13 +138,31 @@ check-runbooks:
 check-audit:
 	bash scripts/ci/check-audit.sh
 
+# LIC-01/02/06：许可证允许/禁止列表与 NOTICE。
+check-license:
+	bash scripts/ci/check-license.sh
+
+# GEN-01/02：codegen MANIFEST 与生成头。
+check-codegen:
+	bash scripts/ci/check-codegen.sh
+
+# PERF-01/02：关键路径 Benchmark 登记与抽检。
+check-perf:
+	bash scripts/ci/check-perf.sh
+
+# mockery（GEN-04）；需已安装 mockery，配置见 .mockery.yaml。
+MOCKERY ?= mockery
+mock:
+	@command -v $(MOCKERY) >/dev/null 2>&1 || { echo "install mockery or set MOCKERY=..."; exit 1; }
+	$(MOCKERY)
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
 	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（含 DATA/REL/OBS/GIT/RELS/RB/AUD 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-openapi build
+# 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

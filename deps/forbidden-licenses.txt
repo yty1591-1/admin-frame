@@ -1,0 +1,16 @@
+# LICENSE_STANDARDS LIC-02/03：禁止进入主构建图的 SPDX 名（文档与互斥检查）。
+# go-licenses 以 allowed 白名单强制；本文件用于策略声明与 check-license 互斥校验。
+# 一行一个；# 开头为注释。
+GPL-2.0
+GPL-2.0-only
+GPL-2.0-or-later
+GPL-3.0
+GPL-3.0-only
+GPL-3.0-or-later
+AGPL-3.0
+AGPL-3.0-only
+AGPL-3.0-or-later
+SSPL
+SSPL-1.0
+unknown
+UNLICENSED
