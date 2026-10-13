@@ -33,7 +33,7 @@ else
   FAIL=1
 fi
 
-echo "==> OBS-02/04: API mains must MountHealth and MountVersion"
+echo "==> OBS-02/04: API mains must MountHealth, MountVersion, MountMetrics"
 for cmd in admin-api biz-api c-api; do
   main="cmd/${cmd}/main.go"
   if [[ ! -f "${main}" ]]; then
@@ -53,9 +53,15 @@ for cmd in admin-api biz-api c-api; do
   else
     echo "    OK: ${cmd} MountVersion"
   fi
+  if ! grep -q 'MountMetrics' "${main}"; then
+    echo "ERROR: ${main} missing MountMetrics (Prometheus scrape)" >&2
+    FAIL=1
+  else
+    echo "    OK: ${cmd} MountMetrics"
+  fi
 done
 
-echo "==> OBS-02: wiring registers /healthz and /readyz"
+echo "==> OBS-02: wiring registers /healthz, /readyz, /metrics"
 WIRING="internal/platform/wiring.go"
 if [[ -f "${WIRING}" ]] \
   && grep -q '/healthz' "${WIRING}" \
@@ -63,6 +69,12 @@ if [[ -f "${WIRING}" ]] \
   echo "    OK: healthz/readyz routes"
 else
   echo "ERROR: ${WIRING} must register /healthz and /readyz (OBS-02)" >&2
+  FAIL=1
+fi
+if [[ -f "${WIRING}" ]] && grep -q '/metrics' "${WIRING}"; then
+  echo "    OK: metrics route"
+else
+  echo "ERROR: ${WIRING} must register /metrics" >&2
   FAIL=1
 fi
 

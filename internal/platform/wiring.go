@@ -28,3 +28,12 @@ func MountVersion(mux *http.ServeMux, info BuildInfo) {
 		_ = json.NewEncoder(w).Encode(info)
 	})
 }
+
+// MountMetrics 注册 Prometheus 拉取端点（GET /metrics，无需鉴权）。
+// 生产须靠网络策略 / 独立 listen 限制暴露面；本函数不附加鉴权。
+func MountMetrics(mux *http.ServeMux, h http.Handler) {
+	if mux == nil || h == nil {
+		return
+	}
+	mux.Handle("GET /metrics", h)
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/health"
+	"github.com/admin-frame/admin-frame/pkg/metrics"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -44,6 +45,16 @@ func main() {
 	}
 	api := biztransport.NewRouter(h, authMW)
 
+	met, err := metrics.New(metrics.Options{
+		Service: cfg.Service,
+		Channel: cfg.Channel,
+		Env:     cfg.Env,
+	})
+	if err != nil {
+		log.Fatalf("metrics: %v", err)
+	}
+	met.MustRegisterBuildInfo(version, commit, buildTime)
+
 	root := http.NewServeMux()
 	hh := health.New()
 	hh.Register("memory_repo", repo.Ping)
@@ -54,11 +65,13 @@ func main() {
 		Commit:    commit,
 		BuildTime: buildTime,
 	})
+	platform.MountMetrics(root, met.Handler())
 	root.Handle("/", api)
 
 	handler := platform.Chain(root,
 		platform.Recover(logger),
 		platform.RequestID(),
+		met.HTTP().Middleware(),
 		platform.AccessLog(logger),
 	)
 
