@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-13（`pkg/errors` 已落地）
+> **最后更新**：2026-10-13（`pkg/errors`、`pkg/httpx` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、retry、id、crypto | 如：apperr、httpx、auth.Principal | 如：config、logger、server、middleware |
+| 如：health、httpx、retry、id、crypto | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -27,7 +27,7 @@
 |-------|--------|------|------|------|
 | P0 | `pkg/health` | 存活/就绪探针 | 已完成 | 已有实现 |
 | P1 | `pkg/errors` | 统一错误类型、错误码、因果链 | 已完成 | `apperr` 薄封装业务数字码，底层挂接本包 |
-| P1 | `pkg/httpx` | 统一响应体、分页结构、状态码映射 | 待做 | 若仅本仓库用，可留在 `internal/shared/httpx` |
+| P1 | `pkg/httpx` | 统一响应体、分页结构、状态码映射 | 已完成 | `internal/shared/httpx` 薄封装挂接 `apperr` |
 | P1 | `pkg/metrics` | Prometheus 指标注册与常用指标 | 待做 | |
 | P1 | `pkg/tracing` | OpenTelemetry 初始化与 span 工具 | 待做 | |
 | P2 | `pkg/retry` | 重试、退避、可取消 | 待做 | |
@@ -65,7 +65,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/httpx` / `pkg/response` | 统一响应体、分页结构、状态码映射 | P1 | 待做 |
+| `pkg/httpx` / `pkg/response` | 统一响应体、分页结构、状态码映射 | P1 | 已完成 |
 | `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 暂缓（见 platform） |
 | `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 待做 |
 | `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 待做 |
@@ -133,7 +133,7 @@
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
-| HTTP 响应 | `internal/shared/httpx` | 评估是否抽到 `pkg/httpx` |
+| HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/分页/映射在 pkg；业务码挂接留 shared |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 工具可进 `pkg/jwt` |
 
 ---
@@ -151,6 +151,6 @@
 ## 六、下一迭代建议（最小切片）
 
 1. 落地 `pkg/metrics` + `pkg/tracing`，与现有 middleware 接线。
-2. `httpx.FromError` 可选用 `PublicMessageOf`（尤其 C 端）。
+2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
 3. 落地 `pkg/retry`、`pkg/id`，供 order / worker 使用。
 4. 鉴权落地时补 `pkg/jwt`（或 `pkg/crypto`）+ `pkg/mask`。

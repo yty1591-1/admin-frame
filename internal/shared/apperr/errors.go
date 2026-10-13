@@ -66,12 +66,44 @@ func (e *AppError) Unwrap() error {
 	return e.Err
 }
 
+// NumericCode 实现 pkg/httpx.NumericCoder，返回稳定信封业务数字码。
+func (e *AppError) NumericCode() int {
+	if e == nil {
+		return CodeInternal
+	}
+	return e.Code
+}
+
 // SemanticCode 将当前业务码映射为 pkg/errors 语义码。
 func (e *AppError) SemanticCode() xerr.Code {
 	if e == nil {
 		return xerr.CodeUnknown
 	}
 	return MapSemanticCode(e.Code)
+}
+
+// BizCodeFromSemantic 将语义码映射为本仓库契约数字码（OpenAPI ErrorCode）。
+func BizCodeFromSemantic(code xerr.Code) int {
+	switch code {
+	case xerr.CodeInvalidArgument, xerr.CodeFailedPrecondition, xerr.CodeOutOfRange:
+		return CodeBadRequest
+	case xerr.CodeUnauthenticated:
+		return CodeUnauthorized
+	case xerr.CodePermissionDenied:
+		return CodeForbidden
+	case xerr.CodeNotFound:
+		return CodeNotFound
+	case xerr.CodeAlreadyExists, xerr.CodeAborted:
+		return CodeConflict
+	case xerr.CodeResourceExhausted:
+		return CodeTooManyRequests
+	case xerr.CodeInternal, xerr.CodeUnknown, xerr.CodeDataLoss,
+		xerr.CodeCanceled, xerr.CodeDeadlineExceeded,
+		xerr.CodeUnimplemented, xerr.CodeUnavailable:
+		return CodeInternal
+	default:
+		return CodeInternal
+	}
 }
 
 // MapSemanticCode 将本仓库业务数字码映射为可移植语义码。

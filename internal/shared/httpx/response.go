@@ -1,79 +1,68 @@
 package httpx
 
 import (
-	"encoding/json"
-	"errors"
+	stderrors "errors"
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	xerr "github.com/admin-frame/admin-frame/pkg/errors"
+	"github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
-// Envelope 统一 JSON 响应体。
-type Envelope struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-	TraceID string      `json:"trace_id,omitempty"`
-}
+// Envelope 统一 JSON 响应体（别名，契约字段与 pkg/httpx 一致）。
+type Envelope = httpx.Envelope
 
 // JSON 写入任意业务码与 HTTP 状态的 JSON 响应。
-func JSON(w http.ResponseWriter, status, code int, message string, data interface{}, traceID string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(Envelope{ // 响应写入失败时只能记录日志，此处忽略
-		Code:    code,
-		Message: message,
-		Data:    data,
-		TraceID: traceID,
-	})
+func JSON(w http.ResponseWriter, status, code int, message string, data any, traceID string) {
+	httpx.JSON(w, status, code, message, data, traceID)
 }
 
 // OK 写入成功响应（code=0）。
-func OK(w http.ResponseWriter, data interface{}, traceID string) {
-	JSON(w, http.StatusOK, apperr.CodeOK, "ok", data, traceID)
+func OK(w http.ResponseWriter, data any, traceID string) {
+	httpx.OK(w, data, traceID)
 }
 
 // FromError 将 error 映射为统一错误响应；未知错误返回 500 且不暴露内部细节。
+//
+// 优先识别 *apperr.AppError（稳定契约码）；其余委托 pkg/httpx，
+// 并用 apperr 语义→数字码表覆盖可移植默认映射，保证与 OpenAPI ErrorCode 一致。
 func FromError(w http.ResponseWriter, err error, traceID string) {
-	var ae *apperr.AppError
-	if errors.As(err, &ae) {
-		JSON(w, httpStatus(ae.Code), ae.Code, ae.Message, nil, traceID)
-		return
-	}
-	switch {
-	case errors.Is(err, apperr.ErrUnauthorized):
-		JSON(w, http.StatusUnauthorized, apperr.CodeUnauthorized, "unauthorized", nil, traceID)
-	case errors.Is(err, apperr.ErrForbidden):
-		JSON(w, http.StatusForbidden, apperr.CodeForbidden, "forbidden", nil, traceID)
-	case errors.Is(err, apperr.ErrNotFound):
-		JSON(w, http.StatusNotFound, apperr.CodeNotFound, "not found", nil, traceID)
-	case errors.Is(err, apperr.ErrBadRequest):
-		JSON(w, http.StatusBadRequest, apperr.CodeBadRequest, err.Error(), nil, traceID)
-	case errors.Is(err, apperr.ErrConflict):
-		JSON(w, http.StatusConflict, apperr.CodeConflict, err.Error(), nil, traceID)
-	default:
-		JSON(w, http.StatusInternalServerError, apperr.CodeInternal, "internal error", nil, traceID)
-	}
+	httpx.FromError(w, err, traceID,
+		httpx.WithBizCode(bizCodeOf),
+		httpx.WithStatus(statusOf),
+		httpx.WithMessage(messageOf),
+	)
 }
 
-func httpStatus(code int) int {
-	switch code {
-	case apperr.CodeBadRequest:
-		return http.StatusBadRequest
-	case apperr.CodeUnauthorized:
-		return http.StatusUnauthorized
-	case apperr.CodeForbidden:
-		return http.StatusForbidden
-	case apperr.CodeNotFound:
-		return http.StatusNotFound
-	case apperr.CodeConflict:
-		return http.StatusConflict
-	case apperr.CodeTooManyRequests:
-		return http.StatusTooManyRequests
-	default:
-		if code >= 50000 {
-			return http.StatusInternalServerError
-		}
-		return http.StatusBadRequest
+func bizCodeOf(err error) int {
+	var ae *apperr.AppError
+	if stderrors.As(err, &ae) {
+		return ae.Code
 	}
+	return apperr.BizCodeFromSemantic(xerr.CodeOf(err))
+}
+
+func statusOf(err error) int {
+	var ae *apperr.AppError
+	if stderrors.As(err, &ae) {
+		return httpx.HTTPStatusFromBizCode(ae.Code)
+	}
+	// 有语义码时优先用 pkg/errors 的 HTTP 映射（含 499/504/503 等），
+	// 再保证信封数字码与 apperr 一致。
+	if xerr.CodeOf(err) != xerr.CodeUnknown {
+		return xerr.HTTPStatusOf(err)
+	}
+	return httpx.HTTPStatusFromBizCode(bizCodeOf(err))
+}
+
+func messageOf(err error) string {
+	var ae *apperr.AppError
+	if stderrors.As(err, &ae) && ae.Message != "" {
+		// AppError.Message 由业务显式构造；内部错误构造时已用笼统文案。
+		if ae.Code == apperr.CodeInternal {
+			return "internal error"
+		}
+		return ae.Message
+	}
+	return xerr.PublicMessageOf(err)
 }

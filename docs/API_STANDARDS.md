@@ -24,7 +24,7 @@
 |----|------|------|
 | API-01 | 三端独立契约：`api/openapi/admin.yaml`、`biz.yaml`、`c.yaml`；共用模型仅放 `components.yaml` | `make openapi` / CI job `openapi` |
 | API-02 | 公开路径/方法/请求响应字段变更须同步更新对应端 OpenAPI；禁止「先上线后补契约」 | Review + openapi job |
-| API-03 | 业务响应使用统一信封：`code` / `message` / `data` / `trace_id`（`internal/shared/httpx`） | Review + 契约 schema |
+| API-03 | 业务响应使用统一信封：`code` / `message` / `data` / `trace_id`（`pkg/httpx`；本仓库经 `internal/shared/httpx`） | Review + 契约 schema |
 | API-04 | 稳定业务错误码来自 `internal/shared/apperr`；已发布码禁止改语义；新码只追加 | Review + 单测 |
 | API-05 | 列表强制分页查询参数 `page`、`page_size`；`page_size` 上限 **100**，超限返回 `40000` | 实现 + OpenAPI `maximum` |
 | API-06 | URL 前缀：`/admin/v1`、`/biz/v1`、`/c/v1`；资源名词复数；动作用 HTTP Method | Review + 契约 paths |
@@ -176,6 +176,7 @@ make ci               # 含 openapi
 | `api/openapi/components.yaml` | 共享信封/分页/错误响应 |
 | `api/openapi/.oasdiff-severity.txt` | 版本策略严重级别 |
 | `scripts/ci/check-openapi.sh` | validate + breaking |
-| `internal/shared/httpx` | 信封与分页解析 |
+| `pkg/httpx` | 可复用信封、分页、错误写响应 |
+| `internal/shared/httpx` | 本仓库薄封装（挂接 apperr 契约码） |
 | `internal/shared/apperr` | 稳定业务码 |
 | 本文件 | 规范正文 |

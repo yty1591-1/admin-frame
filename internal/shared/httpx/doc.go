@@ -1,5 +1,6 @@
-// Package httpx 提供统一 JSON 响应信封、分页解析与错误到 HTTP 的映射。
+// Package httpx 是本仓库对 pkg/httpx 的薄封装：挂接 apperr 业务数字码与 API 契约约定。
 //
-// 业务数字码来自 apperr；按端字段裁剪由各 transport 负责。
+// 可移植信封 / 分页 / 状态映射实现见 pkg/httpx；本包保持既有导入路径稳定，
+// 供 transport 与 platform middleware 使用。
 // 分页上限见 MaxPageSize（API_STANDARDS API-05）。
 package httpx

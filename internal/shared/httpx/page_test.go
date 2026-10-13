@@ -1,13 +1,12 @@
 package httpx_test
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	xerr "github.com/admin-frame/admin-frame/pkg/errors"
 )
 
 func TestParsePageDefaults(t *testing.T) {
@@ -27,8 +26,7 @@ func TestParsePageRejectsOverMax(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var ae *apperr.AppError
-	if !errors.As(err, &ae) || ae.Code != apperr.CodeBadRequest {
+	if !xerr.IsCode(err, xerr.CodeInvalidArgument) {
 		t.Fatalf("err=%v", err)
 	}
 }

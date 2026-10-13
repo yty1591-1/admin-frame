@@ -60,3 +60,27 @@ func TestTooManyRequests(t *testing.T) {
 		t.Fatal("expected IsCode resource_exhausted")
 	}
 }
+
+func TestBizCodeFromSemantic(t *testing.T) {
+	cases := map[xerr.Code]int{
+		xerr.CodeInvalidArgument:   apperr.CodeBadRequest,
+		xerr.CodeUnauthenticated:   apperr.CodeUnauthorized,
+		xerr.CodePermissionDenied:  apperr.CodeForbidden,
+		xerr.CodeNotFound:          apperr.CodeNotFound,
+		xerr.CodeAlreadyExists:     apperr.CodeConflict,
+		xerr.CodeResourceExhausted: apperr.CodeTooManyRequests,
+		xerr.CodeInternal:          apperr.CodeInternal,
+	}
+	for sem, want := range cases {
+		if got := apperr.BizCodeFromSemantic(sem); got != want {
+			t.Fatalf("sem=%s got=%d want=%d", sem, got, want)
+		}
+	}
+}
+
+func TestNumericCode(t *testing.T) {
+	err := apperr.Conflict("dup")
+	if err.NumericCode() != apperr.CodeConflict {
+		t.Fatalf("NumericCode=%d", err.NumericCode())
+	}
+}

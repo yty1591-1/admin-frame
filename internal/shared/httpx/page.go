@@ -1,36 +1,30 @@
 package httpx
 
 import (
-	"fmt"
 	"net/http"
-	"strconv"
 
-	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
 const (
 	// DefaultPage 默认页码（从 1 开始）。
-	DefaultPage = 1
+	DefaultPage = httpx.DefaultPage
 	// DefaultPageSize 默认每页条数。
-	DefaultPageSize = 20
+	DefaultPageSize = httpx.DefaultPageSize
 	// MaxPageSize 列表 page_size 上限（API-05）。
-	MaxPageSize = 100
+	MaxPageSize = httpx.MaxPageSize
 )
+
+// PageData 列表 data 载荷公共形状（别名）。
+type PageData = httpx.PageData
 
 // ParsePage 解析查询参数 page / page_size。
 // page 缺省或非法时为 DefaultPage；page_size 缺省或非法时为 DefaultPageSize。
-// page_size 超过 MaxPageSize 时返回业务错误 40000。
+// page_size 超过 MaxPageSize 时返回 CodeInvalidArgument（可由 FromError 映射为 40000）。
 func ParsePage(r *http.Request) (page, pageSize int, err error) {
-	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
-	pageSize, _ = strconv.Atoi(r.URL.Query().Get("page_size"))
-	if page <= 0 {
-		page = DefaultPage
-	}
-	if pageSize <= 0 {
-		pageSize = DefaultPageSize
-	}
-	if pageSize > MaxPageSize {
-		return 0, 0, apperr.BadRequest(fmt.Sprintf("page_size exceeds maximum of %d", MaxPageSize))
-	}
-	return page, pageSize, nil
+	return httpx.ParsePageWith(r, httpx.PageConfig{
+		DefaultPage:     DefaultPage,
+		DefaultPageSize: DefaultPageSize,
+		MaxPageSize:     MaxPageSize,
+	})
 }
