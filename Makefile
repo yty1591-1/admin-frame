@@ -9,7 +9,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci lint fmt fmt-check tidy tidy-check \
-	check-transport gitee-job ci mock migrate-up vuln docker docker-admin
+	check-transport check-debug secrets gitee-job ci mock migrate-up vuln docker docker-admin
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -82,13 +82,21 @@ tidy-check:
 check-transport:
 	bash scripts/ci/check-transport-imports.sh
 
+# SEC-08：禁止未标注的 pprof / Swagger。
+check-debug:
+	bash scripts/ci/check-debug-endpoints.sh
+
+# SEC-01：gitleaks（版本见 scripts/ci/gitleaks.sh）。
+secrets:
+	bash scripts/ci/gitleaks.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
-	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|build"; exit 2; fi
+	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
-# 本地一键对齐 CI 必跑项（CI_STANDARDS.md；GitHub/Gitee 检查项一致）。
-ci: fmt-check tidy-check lint test-ci vuln check-transport build
+# 本地一键对齐 CI 必跑项（含 SECURITY_STANDARDS 的 secrets / gosec / debug）。
+ci: fmt-check tidy-check lint test-ci vuln check-transport check-debug secrets build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

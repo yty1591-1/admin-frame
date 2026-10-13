@@ -31,7 +31,10 @@ func main() {
 	svc := app.NewOrderService(repo, bus)
 	h := ctransport.NewHandler(svc)
 
-	authMW := platform.DemoAuth(auth.ChannelC)
+	authMW, err := platform.NewAuthMiddleware(cfg.Auth, auth.ChannelC)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
 	api := ctransport.NewRouter(h, authMW)
 
 	root := http.NewServeMux()

@@ -37,7 +37,9 @@
 | CI-13 | 工具与镜像版本**钉扎**；禁止无说明的浮动 `latest` | 流水线 YAML |
 | CI-14 | Job/阶段必须有超时或平台默认超时；禁止无限跑 | 流水线配置 |
 
-**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：OpenAPI breaking、集成测试容器、镜像扫描、gitleaks、覆盖率硬门槛。启用后须更新本表与各平台流水线。
+**安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
+
+**尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：OpenAPI breaking、集成测试容器、镜像扫描、覆盖率硬门槛。启用后须更新本表与各平台流水线。
 
 ---
 
@@ -61,6 +63,7 @@
 | CI-05 | `test` | `test` | `make test-ci` |
 | CI-06 | `vuln` | `vuln` | `make vuln` |
 | CI-09 | `arch` | `arch` | `make check-transport` |
+| SEC-01/08 | `secrets` | `secrets` | `make secrets` + `make check-debug` |
 | CI-08 | `build` | `build` | `make build` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。

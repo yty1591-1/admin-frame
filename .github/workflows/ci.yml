@@ -152,6 +152,25 @@ jobs:
       - name: Forbid cross-channel transport imports
         run: bash scripts/ci/check-transport-imports.sh
 
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Debug endpoints and gitleaks
+        run: bash scripts/ci/gitee-job.sh secrets
+
   build:
     name: build
     runs-on: ubuntu-latest

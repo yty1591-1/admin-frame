@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -101,7 +102,20 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// DemoAuth 演示用 Bearer Token 解析，生产替换为各端独立 JWT 校验。
+// NewAuthMiddleware 按配置返回鉴权中间件。
+// demo_mode 为 true 时使用 DemoAuth（仅本地/演示）；为 false 时拒绝启动，
+// 避免生产环境静默回退到可伪造的演示令牌（见 docs/SECURITY_STANDARDS.md SEC-04）。
+func NewAuthMiddleware(cfg AuthConfig, expected auth.Channel) (func(http.Handler) http.Handler, error) {
+	if !cfg.DemoMode {
+		return nil, fmt.Errorf("auth.demo_mode=false: production authenticator is not configured")
+	}
+	if cfg.ExpectedChannel != "" && cfg.ExpectedChannel != string(expected) {
+		return nil, fmt.Errorf("auth.expected_channel %q != process channel %q", cfg.ExpectedChannel, expected)
+	}
+	return DemoAuth(expected), nil
+}
+
+// DemoAuth 演示用 Bearer Token 解析，仅允许在 auth.demo_mode=true 时挂载。
 //
 //	admin: Bearer admin.<subject_id>
 //	biz:   Bearer biz.<merchant_id>.<subject_id>

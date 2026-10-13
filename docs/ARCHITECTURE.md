@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.4  
+> **版本**：v2.5  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -12,6 +12,7 @@
 > - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
 >   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
+> - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -600,6 +601,8 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十、安全规范
 
+> **硬约束全文**见 [`docs/SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）。门禁：`make secrets`（gitleaks）、`make lint`（gosec）、`make check-debug`、MR 模板。
+
 ### 10.1 三端认证与鉴权（定稿）
 
 | 端 | AuthN | AuthZ | 额外要求 |
@@ -1041,6 +1044,7 @@ make build
 - [工程化注释规范（硬约束）](./COMMENT_STANDARDS.md)
 - [工程化代码编写风格规范（硬约束）](./CODE_STYLE.md)
 - [工程化 CI 流水线规范（硬约束）](./CI_STANDARDS.md)
+- [工程化安全规范（硬约束）](./SECURITY_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

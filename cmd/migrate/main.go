@@ -48,7 +48,7 @@ func main() {
 	case "up":
 		for _, f := range ups {
 			path := filepath.Join(*dir, f)
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) // #nosec G304 -- migration path comes from operator CLI, not request input
 			if err != nil {
 				log.Fatalf("read %s: %v", path, err)
 			}
@@ -59,7 +59,7 @@ func main() {
 		for i := len(downs) - 1; i >= 0; i-- {
 			f := downs[i]
 			path := filepath.Join(*dir, f)
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) // #nosec G304 -- migration path comes from operator CLI, not request input
 			if err != nil {
 				log.Fatalf("read %s: %v", path, err)
 			}

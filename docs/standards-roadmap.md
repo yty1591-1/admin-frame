@@ -1,10 +1,10 @@
 # 工程硬约束专文路线图
 
 > **目的**：列出本仓库尚缺的企业级 / 生产级**硬约束专文**，按优先级逐步撰写并接入门禁。  
-> **已落地**：[`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)（C）、[`CODE_STYLE.md`](./CODE_STYLE.md)（S）、[`CI_STANDARDS.md`](./CI_STANDARDS.md)（CI）+ [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)。  
+> **已落地**：注释（C）、风格（S）、CI、[安全（SEC）](./SECURITY_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-10-13（CI P0 已落地）
+> **最后更新**：2026-10-13（SEC P1 已落地）
 
 ---
 
@@ -27,7 +27,7 @@
 |-------|------------------|---------|------|------|----------|----------|
 | P0 | `.github/workflows/ci.yml` + `.workflow/`（Gitee Go） | CI | **流水线本身**：无 CI 则后续专文无法自动强制 | 已完成 | GitHub Actions + Gitee Go；分支保护需管理员勾选 | §18.3 |
 | P0 | `docs/CI_STANDARDS.md` | CI | CI 必跑步骤、失败策略、多平台、缓存、权限最小化 | 已完成 | 与双平台流水线同批；`make ci` | §18.3 |
-| P1 | `docs/SECURITY_STANDARDS.md` | SEC | 密钥、注入、三端鉴权隔离、PII/日志脱敏、调试端点 | 待做 | gitleaks、gosec、MR 模板 | §十 |
+| P1 | `docs/SECURITY_STANDARDS.md` | SEC | 密钥、注入、三端鉴权隔离、PII/日志脱敏、调试端点 | 已完成 | gitleaks、gosec、调试端点检查、MR 模板 | §十 |
 | P1 | `docs/API_STANDARDS.md` | API | 分端 OpenAPI、错误码、分页、兼容与 breaking | 待做 | openapi-diff / spectral | §十六 |
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B 隔离/C 越权必测 | 待做 | `go test` + coverage gate | §十三 |
 | P2 | `docs/DEPENDENCY_STANDARDS.md` | DEP | go.sum、govulncheck、禁随意 replace、许可证 | 待做 | `make vuln`、依赖机器人 | §8.5 |
@@ -75,11 +75,11 @@
 
 **SECURITY_STANDARDS（SEC）**
 
-- [ ] 禁提交密钥与生产连接串（含历史扫描）
-- [ ] SQL / 命令 / SSRF 等注入防护要求
-- [ ] 三端 Token 域隔离；禁跨端 Handler/DTO 复用
-- [ ] 日志与错误响应脱敏（尤其 C 端）
-- [ ] 生产关闭或强鉴权调试端点
+- [x] 禁提交密钥与生产连接串（gitleaks，含 git 历史）
+- [x] SQL / 命令注入：gosec（G201/G202/G204 等）
+- [x] 三端隔离：沿用 transport 互引检查；`demo_mode=false` 拒绝启动
+- [x] 日志与错误响应脱敏要求写入专文（Review）
+- [x] 调试端点扫描（pprof / Swagger）
 
 **API_STANDARDS（API）**
 
@@ -144,7 +144,6 @@
 
 ## 七、下一迭代建议（最小切片）
 
-1. 在 GitHub 为 `main` 开启分支保护并勾选 CI 全部 required checks。
-2. 起草 `docs/SECURITY_STANDARDS.md`（SEC-01～）+ gitleaks 进 CI。
-3. 起草 `docs/TESTING_STANDARDS.md`，先强制「B 隔离 / C 越权」用例存在性检查。
-4. 起草 `docs/API_STANDARDS.md` + OpenAPI breaking 检查。
+1. 在 GitHub / Gitee 为默认分支勾选 CI required checks（含 `secrets`）。
+2. 起草 `docs/TESTING_STANDARDS.md`，先强制「B 隔离 / C 越权」用例存在性检查。
+3. 起草 `docs/API_STANDARDS.md` + OpenAPI breaking 检查。

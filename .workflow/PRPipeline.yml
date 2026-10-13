@@ -78,6 +78,15 @@ stages:
           - bash scripts/ci/gitee-job.sh arch
 
       - step: build@golang
+        name: secrets
+        displayName: secrets
+        golangVersion: "1.22"
+        commands:
+          - set -euo pipefail
+          - export GOPROXY=https://goproxy.cn,direct
+          - bash scripts/ci/gitee-job.sh secrets
+
+      - step: build@golang
         name: build
         displayName: build
         golangVersion: "1.26"

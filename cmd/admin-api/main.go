@@ -31,7 +31,10 @@ func main() {
 	svc := app.NewOrderService(repo, bus)
 	h := admintransport.NewHandler(svc)
 
-	authMW := platform.DemoAuth(auth.ChannelAdmin)
+	authMW, err := platform.NewAuthMiddleware(cfg.Auth, auth.ChannelAdmin)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
 	api := admintransport.NewRouter(h, authMW)
 
 	root := http.NewServeMux()

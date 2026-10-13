@@ -45,7 +45,7 @@ type WorkerConfig struct {
 
 // LoadConfig 从 YAML 文件加载配置，应用默认值并校验。
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- config path is an operator CLI flag, not request input
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}

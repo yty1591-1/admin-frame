@@ -70,6 +70,7 @@ curl -s http://127.0.0.1:8083/readyz
 - **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）  
   - GitHub：`.github/workflows/ci.yml`  
   - Gitee：`.workflow/`（见 [.workflow/README.md](.workflow/README.md)）
+- **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-14；gitleaks / gosec）
 - **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 SEC/API/TEST 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 

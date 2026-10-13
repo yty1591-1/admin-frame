@@ -1,0 +1,18 @@
+title = "admin-frame"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "文档与演示令牌说明，不是真实密钥"
+paths = [
+  '''(^|/)docs/''',
+  '''(^|/)README\.md$''',
+  '''(^|/)\.github/PULL_REQUEST_TEMPLATE\.md$''',
+  '''(^|/)\.gitee/PULL_REQUEST_TEMPLATE\.md$''',
+  '''(^|/)docs/SECURITY_STANDARDS\.md$''',
+]
+regexes = [
+  '''Bearer (admin|biz|c)\.[A-Za-z0-9._-]+''',
+  '''demo_mode''',
+]

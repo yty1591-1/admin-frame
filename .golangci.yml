@@ -3,6 +3,7 @@
 version: "2"
 linters:
   enable:
+    - gosec
     - gocritic
     - misspell
     - nakedret
@@ -11,6 +12,10 @@ linters:
     - usestdlibvars
     - whitespace
   settings:
+    gosec:
+      # G104 与 errcheck 重复；演示令牌解析不涉及弱随机。
+      excludes:
+        - G104
     gocritic:
       disabled-checks:
         - whyNoLint
