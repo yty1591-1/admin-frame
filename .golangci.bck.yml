@@ -1,0 +1,101 @@
+# 与 docs/COMMENT_STANDARDS.md、docs/CODE_STYLE.md、docs/ARCHITECTURE.md §8.6/§8.7 对齐。
+# 硬门禁：注释（exported/package-comments/nolintlint）+ 风格（gofmt/goimports/revive/...）。
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - revive
+    - nolintlint
+    - misspell
+    - gocritic
+    - whitespace
+    - nakedret
+    - usestdlibvars
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/admin-frame/admin-frame
+
+  nakedret:
+    max-func-lines: 40
+
+  misspell:
+    locale: US
+    # 领域状态字面量沿用英式 cancelled（对外契约），不强制改为 canceled
+    ignore-words:
+      - cancelled
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      # 与项目习惯冲突或噪音过高时关闭
+      - whyNoLint
+      - hugeParam
+      - rangeValCopy
+
+  revive:
+    severity: error
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        severity: error
+        disabled: false
+        arguments:
+          - checkPrivateReceivers
+          - sayRepetitiveInsteadOfStutters
+      - name: package-comments
+        severity: error
+        disabled: false
+      - name: indent-error-flow
+      - name: if-return
+      - name: var-declaration
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+      - name: var-naming
+      - name: increment-decrement
+
+  nolintlint:
+    allow-unused: false
+    require-explanation: true
+    require-specific: true
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    # main 包无需包注释。
+    - path: 'cmd/.*/main\.go'
+      text: "package-comments"
+      linters: [revive]
+    # 测试文件：不强制包注释与导出注释。
+    - path: _test\.go
+      linters: [revive]
+      text: "package-comments|exported"
+    # 错误文案允许中文完整句；英文 error-strings 规则不适用。
+    - linters: [revive]
+      text: "error strings should not be capitalized|error strings should not end with punctuation"

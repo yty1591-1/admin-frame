@@ -14,7 +14,7 @@ triggers:
         - master
 
 variables:
-  GOLANGCI_LINT_VERSION: v1.64.8
+  GOLANGCI_LINT_VERSION: v2.14.0
   # golangVersion 字段已钉扎为 "1.26"；若控制台无此版本，全文替换为可用最高版（须满足 go.mod）
 
 stages:

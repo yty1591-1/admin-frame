@@ -13,7 +13,7 @@ triggers:
         - master
 
 variables:
-  GOLANGCI_LINT_VERSION: v1.64.8
+  GOLANGCI_LINT_VERSION: v2.14.0
 
 stages:
   - name: quality-gates
