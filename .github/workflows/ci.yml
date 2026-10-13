@@ -124,7 +124,7 @@ jobs:
   vuln:
     name: vuln
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -140,6 +140,9 @@ jobs:
 
       - name: govulncheck
         run: govulncheck ./...
+
+      - name: Dependency standards (replace + licenses)
+        run: bash scripts/ci/check-deps.sh
 
   arch:
     name: arch
@@ -168,7 +171,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Debug endpoints and gitleaks
+      - name: Debug endpoints, gitleaks, config examples
         run: bash scripts/ci/gitee-job.sh secrets
 
   openapi:

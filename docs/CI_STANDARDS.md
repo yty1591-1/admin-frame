@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
 > **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-13（纳入 API openapi + TEST gates）  
+> **最后更新**：2026-10-13（纳入 DEP/CFG 门禁）  
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -43,6 +43,10 @@
 
 **测试门禁（TESTING_STANDARDS，并入 job `test`）：** `-race` + `coverage.out` + `scripts/ci/check-test-gates.sh`（domain 覆盖率 ≥70%、B/C 必测、禁 test 步注入 secrets）。
 
+**依赖门禁（DEPENDENCY_STANDARDS，并入 job `vuln`）：** `govulncheck` + `scripts/ci/check-deps.sh`（go.sum、replace、许可证）。
+
+**配置门禁（CONFIG_STANDARDS，并入 job `secrets`）：** `scripts/ci/check-config.sh`（example 齐全、禁跟踪本地 yaml、DSN 策略）+ gitleaks。
+
 **尚未纳入必跑、但已规划**（见 `standards-roadmap.md`）：集成测试容器常态化、镜像扫描。启用后须更新本表与各平台流水线。
 
 ---
@@ -65,9 +69,9 @@
 | CI-07 | `mod` | `mod` | `make tidy-check` |
 | CI-04 | `lint` | `lint` | `make lint` |
 | CI-05 + TEST-01～05 | `test` | `test` | `make test-ci` |
-| CI-06 | `vuln` | `vuln` | `make vuln` |
+| CI-06 + DEP-01/03～05 | `vuln` | `vuln` | `make vuln` + `make check-deps` |
 | CI-09 | `arch` | `arch` | `make check-transport` |
-| SEC-01/08 | `secrets` | `secrets` | `make secrets` + `make check-debug` |
+| SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | CI-08 | `build` | `build` | `make build` |
 
@@ -119,10 +123,10 @@
                     ┌── fmt
                     ├── mod
 PR / push main ──►  ├── lint
-                    ├── test  (+ race, coverage)
-                    ├── vuln
+                    ├── test  (+ race, coverage, TEST gates)
+                    ├── vuln  (+ deps / licenses)
                     ├── arch  (cross-transport)
-                    ├── secrets (gitleaks + debug)
+                    ├── secrets (gitleaks + debug + config examples)
                     ├── openapi (validate + breaking)
                     └── build (all cmd)
 ```
@@ -143,6 +147,9 @@ make vuln            # CI-06
 make check-transport # CI-09
 make openapi         # API-01/07/08
 make test-ci         # CI-05 + TEST 门禁
+make vuln            # CI-06 / DEP-04
+make check-deps      # DEP-01/03/05
+make check-config    # CFG-01/02/06
 make build           # CI-08
 ```
 
@@ -235,6 +242,10 @@ make ci
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
+| `scripts/ci/check-deps.sh` | DEP-01/03/05 |
+| `scripts/ci/check-config.sh` | CFG-01/02/06 |
+| `deps/allowed-licenses.txt` / `replace-allowlist.txt` | 依赖策略 |
+| `.github/dependabot.yml` | DEP-07 |
 | `Makefile`（`ci` / `fmt-check` / …） | 本地对齐 |
 | `.golangci.yml` | CI-04 规则集 |
 | 本文件 | 规范正文 |

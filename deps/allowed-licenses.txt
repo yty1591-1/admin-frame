@@ -1,0 +1,10 @@
+# DEPENDENCY_STANDARDS DEP-05：go-licenses --allowed_licenses 允许列表（逗号拼接）。
+# 一行一个 SPDX 风格名称；# 开头为注释。
+MIT
+Apache-2.0
+BSD-2-Clause
+BSD-3-Clause
+ISC
+MPL-2.0
+Unlicense
+0BSD

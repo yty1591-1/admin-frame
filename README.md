@@ -73,17 +73,21 @@ curl -s http://127.0.0.1:8083/readyz
 - **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-14；gitleaks / gosec）
 - **API 硬约束**：[docs/API_STANDARDS.md](docs/API_STANDARDS.md)（API-01～API-12；oasdiff）
 - **测试硬约束**：[docs/TESTING_STANDARDS.md](docs/TESTING_STANDARDS.md)（TEST-01～TEST-08）
-- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 DEP/CFG 等）
+- **依赖硬约束**：[docs/DEPENDENCY_STANDARDS.md](docs/DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）
+- **配置硬约束**：[docs/CONFIG_STANDARDS.md](docs/CONFIG_STANDARDS.md)（CFG-01～CFG-08）
+- **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（待落地 DATA/REL 等）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
 ## 测试与 CI
 
 ```bash
 make test
-make test-ci  # -race + coverage + TESTING_STANDARDS 门禁
-make lint     # 需已安装 golangci-lint
-make openapi  # 分端 OpenAPI validate + breaking
-make ci       # 本地对齐托管平台必跑项
+make test-ci       # -race + coverage + TEST 门禁
+make check-deps    # go.sum / replace / 许可证
+make check-config  # 配置样例门禁
+make lint          # 需已安装 golangci-lint
+make openapi       # 分端 OpenAPI validate + breaking
+make ci            # 本地对齐托管平台必跑项
 ```
 
 ## 说明

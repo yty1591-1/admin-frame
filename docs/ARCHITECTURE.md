@@ -1,6 +1,6 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.7  
+> **版本**：v2.8  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
@@ -15,6 +15,8 @@
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
 > - [工程化 API 契约规范](./API_STANDARDS.md)（API-01～API-12）  
 > - [工程化测试规范](./TESTING_STANDARDS.md)（TEST-01～TEST-08）  
+> - [工程化依赖与供应链规范](./DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）  
+> - [工程化配置与多环境规范](./CONFIG_STANDARDS.md)（CFG-01～CFG-08）  
 > 经 `make ci` / 托管平台流水线与 Review 强制，违反不得合并。  
 > **待落地硬约束专文**见 [standards-roadmap.md](./standards-roadmap.md)。
 
@@ -520,9 +522,12 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ### 8.5 依赖管理与供应链
 
-- 使用 Go modules；锁定 `go.sum`；禁止随意 `replace` 指向未审计私有 fork（例外需 ADR）。
-- CI 运行 `govulncheck`；高危漏洞阻断发布。
-- 定期清理无用依赖；新增依赖需评估许可证（禁止引入与公司策略冲突的许可证）。
+> **完整硬约束**见 [`docs/DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）。  
+> 门禁：`make vuln` + `make check-deps`（并入 CI job `vuln`）。
+
+- 使用 Go modules；锁定 `go.sum`；禁止随意 `replace`（例外：ADR + `deps/replace-allowlist.txt`）。
+- CI 运行 `govulncheck` 与许可证允许列表检查；高危漏洞 / 禁止许可证阻断合并。
+- 依赖更新：Dependabot（每周）+ Review；新增直接依赖须在 MR 说明用途与许可证。
 - 生产镜像构建可开启 SBOM（如 CycloneDX）与镜像签名（按组织要求）。
 
 ### 8.6 注释与文档硬约束
@@ -844,12 +849,15 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十七、配置、密钥与多环境
 
+> **完整硬约束**见 [`docs/CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)（CFG-01～CFG-08）。  
+> 门禁：`make check-config`（并入 CI `secrets`）+ `Validate` 单测 + gitleaks。
+
 ### 17.1 配置加载
 
-- 来源：`configs/<cmd>.yaml.example` + 环境变量 +（可选）配置中心。
-- 优先级建议：**环境变量 > 配置中心 > 配置文件 > 默认值**。
+- 来源：`configs/<cmd>.yaml.example` + 环境变量（`ADMIN_FRAME_*`）+（可选）配置中心。
+- 优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须 ADR 并更新专文）。
 - 各 cmd **独立监听地址/端口**与限流等段；DB/Redis 等共享连接参数可通过公共配置段或环境变量复用，由 `platform` 统一加载。
-- 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项，失败则拒绝启动。
+- 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项（含 `env=prod` ⇒ `demo_mode=false`），失败则拒绝启动。
 - 禁止业务代码硬编码地址、超时、功能开关。
 
 ### 17.2 多环境
@@ -859,9 +867,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 | local | 可分别启动三端 api；可用 docker-compose |
 | dev / test | 与生产拓扑近似；数据可销毁 |
 | staging | 生产同配（缩容）；发布前验证 |
-| prod | 变更受控；密钥隔离；审计开启；三端可独立扩缩 |
+| prod | 变更受控；密钥隔离；审计开启；三端可独立扩缩；禁演示鉴权 |
 
-- 仓库内仅提交 example，不含真实密钥。
+- 仓库内仅提交 `*.yaml.example`，不含真实密钥；本地 `configs/*.yaml` 由 `.gitignore` 忽略。
 
 ### 17.3 特性开关
 
@@ -905,11 +913,11 @@ make docker-admin       # 单端镜像（多 stage target）
 > **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)。  
 > 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
 
-**当前必跑：** 格式（gofmt/goimports）→ `go mod tidy` 无 diff → golangci-lint（含 gosec）→ 测试（`-race` + coverage + **TEST 门禁**）→ `govulncheck` → 跨端 transport 互引检查 → gitleaks / 调试端点 → OpenAPI validate + breaking → 全量 `cmd` 构建。
+**当前必跑：** 格式 → `go mod tidy` → lint（gosec）→ 测试（race + TEST 门禁）→ **govulncheck + 依赖/许可证门禁** → transport 隔离 → **gitleaks + 调试端点 + 配置样例门禁** → OpenAPI → 全量构建。
 
 **规划中（专文落地后纳入）：**
 
-1. 许可证扫描（LIC）  
+1. 更完整的许可证专文（LIC）与组织策略对齐  
 2. 集成测试容器（testcontainers）常态化  
 3. 按变更构建镜像、扫描、推送（RELS）
 
@@ -1054,6 +1062,8 @@ make build
 - [工程化安全规范（硬约束）](./SECURITY_STANDARDS.md)
 - [工程化 API 契约规范（硬约束）](./API_STANDARDS.md)
 - [工程化测试规范（硬约束）](./TESTING_STANDARDS.md)
+- [工程化依赖与供应链规范（硬约束）](./DEPENDENCY_STANDARDS.md)
+- [工程化配置与多环境规范（硬约束）](./CONFIG_STANDARDS.md)
 - [工程硬约束专文路线图](./standards-roadmap.md)
 - [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
 - Clean Architecture / Hexagonal Architecture

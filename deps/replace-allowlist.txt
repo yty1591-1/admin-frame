@@ -1,0 +1,4 @@
+# DEPENDENCY_STANDARDS DEP-03：允许出现在 go.mod 的 replace 左侧模块路径。
+# 一行一个模块路径；须同时有 ADR。默认应为空。
+# 示例：
+# github.com/example/module

@@ -1,10 +1,10 @@
 # 工程硬约束专文路线图
 
 > **目的**：列出本仓库尚缺的企业级 / 生产级**硬约束专文**，按优先级逐步撰写并接入门禁。  
-> **已落地**：注释（C）、风格（S）、CI、[安全（SEC）](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[测试（TEST）](./TESTING_STANDARDS.md)。  
+> **已落地**：注释（C）、风格（S）、CI、[SEC](./SECURITY_STANDARDS.md)、[API](./API_STANDARDS.md)、[TEST](./TESTING_STANDARDS.md)、[DEP](./DEPENDENCY_STANDARDS.md)、[CFG](./CONFIG_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-10-13（TEST P1 已落地）
+> **最后更新**：2026-10-13（DEP + CFG P2 已落地）
 
 ---
 
@@ -30,8 +30,8 @@
 | P1 | `docs/SECURITY_STANDARDS.md` | SEC | 密钥、注入、三端鉴权隔离、PII/日志脱敏、调试端点 | 已完成 | gitleaks、gosec、调试端点检查、MR 模板 | §十 |
 | P1 | `docs/API_STANDARDS.md` | API | 分端 OpenAPI、错误码、分页、兼容与 breaking | 已完成 | oasdiff validate / breaking；`make openapi` | §十六 |
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B 隔离/C 越权必测 | 已完成 | `make test-ci` + `check-test-gates.sh` | §十三 |
-| P2 | `docs/DEPENDENCY_STANDARDS.md` | DEP | go.sum、govulncheck、禁随意 replace、许可证 | 待做 | `make vuln`、依赖机器人 | §8.5 |
-| P2 | `docs/CONFIG_STANDARDS.md` | CFG | 配置优先级、Validate、example vs 密钥、多环境 | 待做 | gitleaks + 启动校验测试 | §十七 |
+| P2 | `docs/DEPENDENCY_STANDARDS.md` | DEP | go.sum、govulncheck、禁随意 replace、许可证 | 已完成 | `make vuln` + `check-deps.sh` + Dependabot | §8.5 |
+| P2 | `docs/CONFIG_STANDARDS.md` | CFG | 配置优先级、Validate、example vs 密钥、多环境 | 已完成 | `check-config.sh` + Validate 单测 + gitleaks | §十七 |
 | P2 | `docs/DATA_STANDARDS.md` | DATA | 迁移可回滚、禁手改生产库、备份与保留 | 待做 | migrate CI、Review | §十四 |
 | P2 | `docs/RELIABILITY_STANDARDS.md` | REL | 超时、重试、限流、幂等、降级可观测 | 待做 | Review + 中间件/单测 | §十一 |
 | P2 | `docs/OBSERVABILITY_STANDARDS.md` | OBS | 日志字段、指标、追踪、健康检查、审计 | 待做 | 集成测断言字段 / Review | §十二 |
@@ -39,7 +39,7 @@
 | P3 | `docs/RELEASE_STANDARDS.md` | RELS | 镜像 digest、禁 latest、发布/回滚、版本暴露 | 待做 | 镜像扫描、发布 Checklist | §十八 |
 | P3 | `docs/RUNBOOK_STANDARDS.md` | RB | 告警必须有 runbook、值班与升级路径 | 待做 | 告警规则挂 runbook 链接 | runbooks/ |
 | P3 | `docs/AUDIT_STANDARDS.md` | AUD | A/B 审计事件、字段、保留期、不可篡改要求 | 待做 | Review + 抽检用例 | §十二审计 |
-| P4 | `docs/LICENSE_STANDARDS.md` | LIC | 允许/禁止许可证、引入依赖审批 | 待做 | go-licenses | §8.5 |
+| P4 | `docs/LICENSE_STANDARDS.md` | LIC | 允许/禁止许可证、引入依赖审批 | 待做 | 与 DEP-05 对齐深化 | §8.5 |
 | P4 | `docs/CODEGEN_STANDARDS.md` | GEN | OpenAPI/sqlc/mockery 生成物提交策略、禁手改 | 待做 | CI diff 检查 | 工具链 |
 | P4 | `docs/PERFORMANCE_STANDARDS.md` | PERF | 关键路径基线、回归门槛（可选） | 暂缓 | benchmark / 压测门禁 | §十一容量 |
 
@@ -97,8 +97,8 @@
 
 ### P2 — DEP / CFG / DATA / REL / OBS
 
-- [ ] **DEP**：`govulncheck` CI 化；`replace` 审批；依赖更新节奏
-- [ ] **CFG**：`Validate()` 启动失败；仅 example 入库；环境优先级
+- [x] **DEP**：`govulncheck` CI 化；`replace` 审批；依赖更新节奏；许可证允许列表
+- [x] **CFG**：`Validate()` 启动失败；仅 example 入库；环境变量优先级；prod 禁 demo_mode
 - [ ] **DATA**：迁移 up/down；禁手工改生产；迁移与发版顺序
 - [ ] **REL**：外部调用必超时；写路径幂等；限流错误码
 - [ ] **OBS**：强制 `trace_id`/`service`/`channel`；healthz/readyz；审计触发点
@@ -112,7 +112,7 @@
 
 ### P4 — LIC / GEN / PERF
 
-- [ ] **LIC**：许可证允许列表
+- [ ] **LIC**：许可证允许列表（与 DEP-05 深化对齐组织策略）
 - [ ] **GEN**：生成代码目录约定与「禁止手改」检测
 - [ ] **PERF**：按需启用，避免过早门禁
 
@@ -122,13 +122,10 @@
 
 | 文档 | 角色 |
 |------|------|
-| `ARCHITECTURE.md` | 总规范；专文生效后在文首与 §八 等处挂接链接 |
-| `COMMENT_STANDARDS.md` | 已完成硬约束 |
-| `CODE_STYLE.md` | 已完成硬约束 |
-| `CI_STANDARDS.md` | 已完成硬约束 |
-| `SECURITY_STANDARDS.md` | 已完成硬约束 |
-| `API_STANDARDS.md` | 已完成硬约束 |
-| `TESTING_STANDARDS.md` | 已完成硬约束 |
+| `ARCHITECTURE.md` | 总规范；专文生效后在文首与对应章节挂接链接 |
+| `COMMENT_STANDARDS.md` / `CODE_STYLE.md` / `CI_STANDARDS.md` | 已完成硬约束 |
+| `SECURITY_STANDARDS.md` / `API_STANDARDS.md` / `TESTING_STANDARDS.md` | 已完成硬约束 |
+| `DEPENDENCY_STANDARDS.md` / `CONFIG_STANDARDS.md` | 已完成硬约束 |
 | `pkg-roadmap.md` | 能力实现路线图（非合入硬约束） |
 | `standards-roadmap.md`（本文） | **硬约束专文**待办与优先级 |
 | `docs/adr/` | 选型/架构决策；硬约束变更若影响架构须补 ADR |
@@ -142,12 +139,12 @@
 2. **一专文一 ID 前缀**：避免与 C/S 编号冲突。
 3. **能自动则自动**：凡可用工具检查的条目，不得仅依赖口头 Review。
 4. **状态回写**：专文合并并挂接架构后，将本表「状态」改为 `已完成`，并更新「最后更新」日期。
-5. **最小切片推荐**：`CI` → `SECURITY` → `API` → `TESTING` → `DEP` / `CFG`。
+5. **最小切片推荐**：P1 全完成后 → `DEP`/`CFG` → `DATA` → `REL`/`OBS`。
 
 ---
 
 ## 七、下一迭代建议（最小切片）
 
-1. 在 GitHub / Gitee 为默认分支勾选 CI required checks（含 `secrets`、`openapi`、`test`）。
-2. 起草 `docs/DEPENDENCY_STANDARDS.md`（`replace` 审批 + 许可证基线）或 `CONFIG_STANDARDS.md`（`Validate()` 启动失败）。
-3. 有真实 DB 后将 `tests/integration/` + testcontainers 纳入必跑（加强 TEST-07）。
+1. 分支保护勾选 `vuln`（含 deps）、`secrets`（含 config）等必过检查。
+2. 起草 `docs/DATA_STANDARDS.md`：迁移 up/down 门禁与禁手改生产库。
+3. 有真实外部调用后起草 `RELIABILITY_STANDARDS`（超时/幂等/限流错误码）。

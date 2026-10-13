@@ -1,3 +1,6 @@
+# 复制为 configs/admin.yaml 后按需修改；勿提交含真实密钥的 yaml（CONFIG_STANDARDS）。
+# 环境变量覆盖见 docs/CONFIG_STANDARDS.md（前缀 ADMIN_FRAME_）。
+env: local
 service: admin-api
 channel: admin
 addr: ":8081"

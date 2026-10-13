@@ -31,7 +31,17 @@
 - [ ] B 隔离（`TestMerchantIsolation`）/ C 越权（`TestUserOwnership`）仍通过
 - [ ] 未使用生产凭据或生产库跑测试
 
+## 依赖自检（DEPENDENCY_STANDARDS）
+
+- [ ] `go.sum` 已更新；无未审批 `replace`
+- [ ] 新直接依赖已说明用途与许可证；`make vuln` / `make check-deps` 可通过
+
+## 配置自检（CONFIG_STANDARDS）
+
+- [ ] 仅更新 `configs/*.yaml.example`；未提交含真实密钥的本地 yaml
+- [ ] 新配置项有默认值或 `Validate`；prod 未打开 `demo_mode`
+
 ## 质量
 
-- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test gates）
+- [ ] `make ci` 通过（含 gitleaks、gosec、openapi、test/deps/config gates）
 - [ ] 需要时已更新 ADR / OpenAPI / runbook

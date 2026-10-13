@@ -3,6 +3,7 @@ package platform
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -10,6 +11,8 @@ import (
 
 // Config 进程配置根对象（按 cmd 对应 yaml 加载）。
 type Config struct {
+	// Env 部署环境：local / dev / test / staging / prod（可空，表示未声明）。
+	Env             string        `yaml:"env"`
 	Service         string        `yaml:"service"`
 	Channel         string        `yaml:"channel"`
 	Addr            string        `yaml:"addr"`
@@ -43,7 +46,8 @@ type WorkerConfig struct {
 	PollInterval time.Duration `yaml:"poll_interval"`
 }
 
-// LoadConfig 从 YAML 文件加载配置，应用默认值并校验。
+// LoadConfig 从 YAML 文件加载配置，应用默认值与环境变量覆盖后校验。
+// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- config path is an operator CLI flag, not request input
 	if err != nil {
@@ -54,6 +58,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.applyDefaults()
+	cfg.applyEnv()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -84,7 +89,60 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate 校验必填项与受支持的 DB 驱动。
+// applyEnv 用 ADMIN_FRAME_* 环境变量覆盖文件配置（CFG-04）。
+func (c *Config) applyEnv() {
+	if v := os.Getenv("ADMIN_FRAME_ENV"); v != "" {
+		c.Env = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_SERVICE"); v != "" {
+		c.Service = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_CHANNEL"); v != "" {
+		c.Channel = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_ADDR"); v != "" {
+		c.Addr = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.ShutdownTimeout = d
+		}
+	}
+	if v := os.Getenv("ADMIN_FRAME_LOG_LEVEL"); v != "" {
+		c.Log.Level = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_LOG_FORMAT"); v != "" {
+		c.Log.Format = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_AUTH_DEMO_MODE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			c.Auth.DemoMode = true
+		case "0", "false", "no", "off":
+			c.Auth.DemoMode = false
+		}
+	}
+	if v := os.Getenv("ADMIN_FRAME_AUTH_EXPECTED_CHANNEL"); v != "" {
+		c.Auth.ExpectedChannel = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_DB_DRIVER"); v != "" {
+		c.DB.Driver = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_DB_DSN"); v != "" {
+		c.DB.DSN = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_WORKER_POLL_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.Worker.PollInterval = d
+		}
+	}
+	// channel 被环境变量改写后，若 expected 仍为空则对齐。
+	if c.Auth.ExpectedChannel == "" {
+		c.Auth.ExpectedChannel = c.Channel
+	}
+}
+
+// Validate 校验必填项、枚举与生产互斥项（CFG-03/05）。
 func (c *Config) Validate() error {
 	if c.Service == "" {
 		return fmt.Errorf("service is required")
@@ -92,8 +150,21 @@ func (c *Config) Validate() error {
 	if c.Channel == "" {
 		return fmt.Errorf("channel is required")
 	}
+	switch c.Channel {
+	case "admin", "biz", "c", "worker":
+	default:
+		return fmt.Errorf("unsupported channel: %s", c.Channel)
+	}
 	if c.Addr == "" {
 		return fmt.Errorf("addr is required")
+	}
+	if c.Auth.ExpectedChannel != c.Channel {
+		return fmt.Errorf("auth.expected_channel %q must equal channel %q", c.Auth.ExpectedChannel, c.Channel)
+	}
+	switch strings.ToLower(c.Log.Level) {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("unsupported log.level: %s", c.Log.Level)
 	}
 	switch c.DB.Driver {
 	case "memory", "mysql", "postgres":
@@ -102,6 +173,14 @@ func (c *Config) Validate() error {
 	}
 	if c.DB.Driver != "memory" && c.DB.DSN == "" {
 		return fmt.Errorf("db.dsn is required when driver is %s", c.DB.Driver)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Env)) {
+	case "", "local", "dev", "test", "staging", "prod":
+	default:
+		return fmt.Errorf("unsupported env: %s", c.Env)
+	}
+	if strings.EqualFold(c.Env, "prod") && c.Auth.DemoMode {
+		return fmt.Errorf("auth.demo_mode must be false when env=prod")
 	}
 	return nil
 }
