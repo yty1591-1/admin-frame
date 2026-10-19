@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/httpclient` 已落地）
+> **最后更新**：2026-10-19（`pkg/logger` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -41,7 +41,7 @@
 | P3 | `pkg/mq` | 消息生产/消费通用封装 | 已完成 | 接口 + Memory/Outbox；Kafka/NATS 后接 |
 | P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 已完成 | 强制超时；幂等重试；OTel 出站 |
 | P4 | `pkg/config` | 配置加载与校验 | 暂缓 | 已有 `internal/platform/config` |
-| P4 | `pkg/logger` | 结构化日志 | 暂缓 | 已有 `internal/platform/logger` |
+| P4 | `pkg/logger` | 结构化日志 | 已完成 | slog + ContextHandler；platform 薄封装 |
 | P4 | `pkg/middleware` | 通用中间件原语 | 暂缓 | 已有 `internal/platform/middleware` |
 | P4 | 其余工具包 | 见下方完整清单 | 待做 | 按实际需求再开 |
 
@@ -54,7 +54,7 @@
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
 | `pkg/config` | 配置加载（env/yaml）、校验、热更新封装 | P4 | 暂缓（见 platform） |
-| `pkg/logger` / `pkg/logx` | 结构化日志、字段约定、trace 关联 | P4 | 暂缓（见 platform） |
+| `pkg/logger` / `pkg/logx` | 结构化日志、字段约定、trace 关联 | P4 | 已完成（`pkg/logger`） |
 | `pkg/errors` / `pkg/apperr` | 统一错误类型、错误码、堆栈/因果链 | P1 | 已完成 |
 | `pkg/health` | 存活/就绪探针 | P0 | 已完成 |
 | `pkg/metrics` | Prometheus 指标注册、常用 counter/histogram | P1 | 已完成 |
@@ -141,8 +141,9 @@
 | cache | `pkg/cache` | 保持；L1 Memory + L2 `redis.Cache.Store()` 由 platform 组合 |
 | mq | `pkg/mq` | 保持；Kafka/NATS 实现接口后注入；Outbox 持久化在 infrastructure |
 | httpclient | `pkg/httpclient` | 保持；下游 HTTP 禁止 DefaultClient，统一本包 |
+| logger | `pkg/logger` | 保持；`platform.NewLogger` 薄封装；AccessLog 仍在 platform |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
-| 日志 | `internal/platform/logger` | 同上 |
+| 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
 | 中间件 / Server | `internal/platform` | 同上 |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
 | HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/分页/映射在 pkg；业务码挂接留 shared |

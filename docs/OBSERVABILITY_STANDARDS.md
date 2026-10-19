@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部可执行进程的日志、指标、追踪、健康检查与关键审计触发点  
 > **关联**：架构 §十二；脱敏见 `SECURITY_STANDARDS.md`；审计见 `AUDIT_STANDARDS.md`  
 > **执行方式**：`check-observability.sh` + Review + MR 模板  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-19  
 > **变更方式**：修改本规范须同步更新 `platform` 日志/探针、`scripts/ci/check-observability.sh` 与架构 §十二，经架构 Owner Review
 
 ---
@@ -22,7 +22,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| OBS-01 | 结构化日志（生产默认 JSON）必须能带上：`trace_id`、`service`、`channel`、`env`；访问日志另含 method/path/status/duration | `NewLogger` + AccessLog + `check-observability.sh` |
+| OBS-01 | 结构化日志（生产默认 JSON）必须能带上：`trace_id`、`service`、`channel`、`env`；访问日志另含 method/path/status/duration | `pkg/logger` + `platform.NewLogger` + AccessLog + `check-observability.sh` |
 | OBS-02 | 每个 API 进程必须暴露 `GET /healthz`（存活）与 `GET /readyz`（就绪）；`security: []` | `MountHealth` + OpenAPI + 检查脚本 |
 | OBS-03 | `/readyz` 须探测关键依赖（如 DB）；memory 驱动至少注册仓储 ping；失败返回 503 | 代码 + Review |
 | OBS-04 | 每个 API 进程必须暴露 `GET /version`（service + version） | `MountVersion` + 检查脚本 |
@@ -131,7 +131,8 @@ make ci
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `internal/platform/logger.go` | OBS-01 基础字段 |
+| `pkg/logger` | OBS-01：结构化 slog、字段字典、ContextHandler / WithTraceID |
+| `internal/platform/logger.go` | 进程配置 → `pkg/logger` 薄封装 |
 | `internal/platform/middleware.go` | RequestID / AccessLog |
 | `internal/platform/wiring.go` | MountHealth / MountVersion / MountMetrics |
 | `pkg/health` | 存活/就绪实现 |

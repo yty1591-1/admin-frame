@@ -13,21 +13,17 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/logger"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
-type ctxTraceKey struct{}
-
 // TraceIDFromContext 读取请求追踪 ID；缺失时返回空串。
 func TraceIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(ctxTraceKey{}).(string); ok {
-		return v
-	}
-	return ""
+	return logger.TraceIDFromContext(ctx)
 }
 
 func withTraceID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, ctxTraceKey{}, id)
+	return logger.WithTraceID(ctx, id)
 }
 
 func newID() string {
@@ -89,7 +85,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rw, r)
-			log.Info("access",
+			log.InfoContext(r.Context(), "access",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rw.status,

@@ -8,20 +8,26 @@ cd "${ROOT}"
 
 FAIL=0
 
-echo "==> OBS-01: NewLogger must bind service, channel, env"
-LOGGER="internal/platform/logger.go"
-if [[ ! -f "${LOGGER}" ]]; then
-  echo "ERROR: missing ${LOGGER}" >&2
+echo "==> OBS-01: pkg/logger must bind service, channel, env"
+LOGGER_PKG="pkg/logger"
+if [[ ! -d "${LOGGER_PKG}" ]]; then
+  echo "ERROR: missing ${LOGGER_PKG}" >&2
   FAIL=1
 else
   for field in service channel env; do
-    if ! grep -q "\"${field}\"" "${LOGGER}"; then
-      echo "ERROR: ${LOGGER} must With(\"${field}\", ...) (OBS-01)" >&2
+    if ! grep -R -q "\"${field}\"" "${LOGGER_PKG}"; then
+      echo "ERROR: ${LOGGER_PKG} must define field \"${field}\" (OBS-01)" >&2
       FAIL=1
     else
       echo "    OK: logger field ${field}"
     fi
   done
+  if ! grep -q 'pkg/logger' internal/platform/logger.go; then
+    echo "ERROR: platform.NewLogger must delegate to pkg/logger" >&2
+    FAIL=1
+  else
+    echo "    OK: platform delegates to pkg/logger"
+  fi
 fi
 
 echo "==> OBS-01: AccessLog must emit trace_id"

@@ -2,32 +2,18 @@ package platform
 
 import (
 	"log/slog"
-	"os"
-	"strings"
+
+	"github.com/admin-frame/admin-frame/pkg/logger"
 )
 
 // NewLogger 按配置创建带 service / channel / env 字段的 slog.Logger（OBS-01）。
+// 实现下沉至 pkg/logger；本函数仅做进程配置映射。
 func NewLogger(cfg *Config) *slog.Logger {
-	level := slog.LevelInfo
-	switch strings.ToLower(cfg.Log.Level) {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	opts := &slog.HandlerOptions{Level: level}
-	var handler slog.Handler
-	if strings.EqualFold(cfg.Log.Format, "text") {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	}
-	return slog.New(handler).With(
-		"service", cfg.Service,
-		"channel", cfg.Channel,
-		"env", cfg.Env,
-	)
+	return logger.Must(logger.Config{
+		Level:   cfg.Log.Level,
+		Format:  cfg.Log.Format,
+		Service: cfg.Service,
+		Channel: cfg.Channel,
+		Env:     cfg.Env,
+	})
 }
