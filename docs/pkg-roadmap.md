@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/middleware` 已落地）
+> **最后更新**：2026-10-19（`pkg/validator` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -67,7 +67,7 @@
 |--------|------|--------|------|
 | `pkg/httpx` / `pkg/response` | 统一响应体、分页结构、状态码映射 | P1 | 已完成 |
 | `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 已完成 |
-| `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 待做 |
+| `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 已完成 |
 | `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 待做 |
 | `pkg/idempotency` | 幂等 Key 中间件与存储接口 | P3 | 待做 |
 
@@ -144,6 +144,7 @@
 | logger | `pkg/logger` | 保持；`platform.NewLogger` 薄封装；AccessLog 仍在 platform |
 | contextx | `pkg/contextx` | 保持；Auth 中间件注入；Principal 仍在 shared/auth |
 | middleware | `pkg/middleware` | 保持；platform 薄封装 + AuthN/AuthZ |
+| validator | `pkg/validator` | 保持；Handler DecodeJSON + Struct；映射 40000 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
 | 中间件 / Server | `pkg/middleware` + `platform` | 通用原语在 pkg；鉴权/装配留 platform |
