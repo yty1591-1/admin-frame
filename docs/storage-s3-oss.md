@@ -1,6 +1,6 @@
 # 对象存储：多云模块化驱动规划与选型
 
-> **状态**：落地中（M0–M3 已完成；M4/M5 按需）  
+> **状态**：落地中（M0–M3b / M5-multipart 已完成；M4 与生命周期/多桶按需）  
 > **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五  
 > **最后更新**：2026-10-19  
 > **目标读者**：后端 / 平台装配 / 安全 Review
@@ -179,6 +179,25 @@ storage:
 5. 优先桶 SSE / KMS；应用层加密用 `pkg/crypto`。  
 6. Trace/日志：禁止 Secret 与完整 signed query（SEC-05）。
 
+### 6.1 A 端 files API（M3b）
+
+业务键约束在 `files/{category}/YYYY/MM/{id}_{filename}`；权限点 `file:read` / `file:write`（`admin` 超管、`ops` 已授予）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| POST | `/admin/v1/files` | `file:write` | multipart 服务端中转上传（`file` + `category`） |
+| POST | `/admin/v1/files/uploads/presign` | `file:write` | 云驱动 PresignPut；memory/local 返回 BadRequest |
+| GET | `/admin/v1/files/downloads/presign?key=` | `file:read` | PresignGet |
+| GET | `/admin/v1/files/object?key=` | `file:read` | 服务端流式下载 |
+
+代码：`internal/files/app`、`internal/files/transport/admin`；装配：`cmd/admin-api`。
+
+### 6.2 Multipart（M5 起步）
+
+- 契约：`pkg/storage.MultipartUploader`（`CreateMultipartUpload` / `UploadPart` / `Complete` / `Abort`）
+- 实现：`pkg/storage/s3`；经 `storage.AsMultipart(store)` 探测
+- 业务 Handler 尚未暴露 HTTP；大文件直传优先用 PresignPut
+
 ---
 
 ## 7. 分期落地
@@ -188,9 +207,10 @@ storage:
 | **M0** | 注册表 + `Open` + 内置 memory/local + 本文档 | ✅ |
 | **M1** | `pkg/storage/s3`（含 `minio`）+ `storagetest` + `docker-compose.storage.yml` | ✅；联调：`go test -tags=minio ./pkg/storage/s3/` |
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
-| **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅；业务 Put/Presign 用例可后续挂 Handler |
+| **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
+| **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅ |
 | **M4** | （按需）各厂商 L2 原生 SDK | 待做 |
-| **M5** | multipart、生命周期、多桶 | 待做 |
+| **M5** | multipart、生命周期、多桶 | 进行中：`MultipartUploader` + S3 实现 ✅；生命周期/多桶待做 |
 
 ---
 

@@ -179,4 +179,4 @@
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。
-8. 附件/导出业务 Handler 挂已装配的 `Store`/`Presigner`；L2 原生 SDK / multipart 见 [`storage-s3-oss.md`](./storage-s3-oss.md) M4/M5。
+8. A 端 files API 已挂 `Store`/`Presigner`；multipart 接口已有；L2 原生 / 生命周期 / 多桶见 [`storage-s3-oss.md`](./storage-s3-oss.md) M4/M5。

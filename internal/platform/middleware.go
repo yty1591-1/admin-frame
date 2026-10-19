@@ -20,6 +20,8 @@ import (
 var defaultRBAC = func() *rbac.Checker {
 	c := rbac.New(rbac.WithSuperRoles("admin"))
 	c.GrantRole("merchant_staff", "order:read", "order:write")
+	// A 端附件/导出权限点（admin 超管已覆盖；显式授予便于非超管角色扩展）
+	c.GrantRole("ops", "file:read", "file:write", "order:read", "order:write")
 	return c
 }()
 

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 
+	filesapp "github.com/admin-frame/admin-frame/internal/files/app"
+	filesadmin "github.com/admin-frame/admin-frame/internal/files/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/infrastructure/eventbus"
 	"github.com/admin-frame/admin-frame/internal/order/infrastructure/persistence"
@@ -39,13 +41,12 @@ func main() {
 	repo := persistence.NewMemoryRepository()
 	bus := eventbus.NewMemoryBus(logger)
 	svc := app.NewOrderService(repo, bus)
-	h := admintransport.NewHandler(svc)
+	orderH := admintransport.NewHandler(svc)
 
 	authMW, err := platform.NewAuthMiddleware(cfg.Auth, auth.ChannelAdmin)
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
-	api := admintransport.NewRouter(h, authMW)
 
 	met, err := metrics.New(metrics.Options{
 		Service: cfg.Service,
@@ -63,6 +64,17 @@ func main() {
 		log.Fatalf("storage: %v", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	fileSvc := filesapp.NewService(store, filesapp.Config{
+		MaxBytes:      cfg.Storage.MaxObjectBytes,
+		PresignPutTTL: cfg.Storage.PresignPutTTL,
+		PresignGetTTL: cfg.Storage.PresignGetTTL,
+	})
+	filesH := filesadmin.NewHandler(fileSvc)
+
+	api := http.NewServeMux()
+	admintransport.Register(api, orderH, authMW)
+	filesadmin.Register(api, filesH, authMW)
 
 	tp, err := tracing.Init(ctx, cfg.TracingOptions(version))
 	if err != nil {
