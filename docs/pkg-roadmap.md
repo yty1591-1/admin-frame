@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/pagination` 已落地；业务直调，已移除 httpx 兼容层）
+> **最后更新**：2026-10-19（`pkg/idempotency` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination、idempotency | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -69,7 +69,7 @@
 | `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 已完成 |
 | `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 已完成 |
 | `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 已完成 |
-| `pkg/idempotency` | 幂等 Key 中间件与存储接口 | P3 | 待做 |
+| `pkg/idempotency` | 幂等 Key 中间件与存储接口 | P3 | 已完成 |
 
 ### 3.3 安全与身份
 
@@ -151,6 +151,7 @@
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
 | HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/映射在 pkg；业务码挂接留 shared |
 | 分页/排序 | `pkg/pagination` | 保持；列表 Handler 直接 `pagination.Parse` / `ParseParams` |
+| 幂等 | `pkg/idempotency` | 保持；C 写路径 middleware + Store；跨实例由 platform 接 Redis/DB |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---
