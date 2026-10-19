@@ -12,7 +12,16 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	"github.com/admin-frame/admin-frame/pkg/middleware"
+	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
+
+// defaultRBAC 演示/本地默认权限表（生产应由 IAM 装配注入）。
+// admin 为超级角色；merchant_staff 仅订单读写（不再绕过全部权限点）。
+var defaultRBAC = func() *rbac.Checker {
+	c := rbac.New(rbac.WithSuperRoles("admin"))
+	c.GrantRole("merchant_staff", "order:read", "order:write")
+	return c
+}()
 
 // TraceIDFromContext 读取请求追踪 ID；缺失时返回空串。
 func TraceIDFromContext(ctx context.Context) string {
@@ -139,22 +148,23 @@ func parseDemoToken(token string) (auth.Principal, error) {
 	}
 }
 
-// RequirePermission 简单权限点校验（A/B 端）。
+// RequirePermission 权限点校验（A/B 端；委托 pkg/rbac，默认拒绝）。
 func RequirePermission(perm string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return rbac.Require(rbac.RequireConfig{
+		Checker:    defaultRBAC,
+		Permission: rbac.Permission(perm),
+		SubjectFrom: func(r *http.Request) (rbac.Subject, bool) {
 			p, ok := auth.FromContext(r.Context())
 			if !ok {
-				httpx.FromError(w, apperr.Unauthorized("unauthorized"), TraceIDFromContext(r.Context()))
-				return
+				return rbac.Subject{}, false
 			}
-			for _, role := range p.Roles {
-				if role == "admin" || role == perm || role == "merchant_staff" {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			httpx.FromError(w, apperr.Forbidden("permission denied: "+perm), TraceIDFromContext(r.Context()))
-		})
-	}
+			return rbac.Subject{Roles: p.Roles}, true
+		},
+		OnUnauthenticated: func(w http.ResponseWriter, r *http.Request) {
+			httpx.FromError(w, apperr.Unauthorized("unauthorized"), TraceIDFromContext(r.Context()))
+		},
+		OnDenied: func(w http.ResponseWriter, r *http.Request, need rbac.Permission) {
+			httpx.FromError(w, apperr.Forbidden(rbac.Denied(need).Error()), TraceIDFromContext(r.Context()))
+		},
+	})
 }

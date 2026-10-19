@@ -5,7 +5,7 @@
 //   - 生产默认 JSON；text 仅限 local/dev
 //   - ContextHandler 在 InfoContext 等调用时自动附加 trace_id / span_id
 //   - 关联键 WithTraceID 与响应信封 / X-Request-ID 对齐（OBS-05）；优先于裸 OTel TraceID
-//   - 禁止记录密钥、完整 Token、未脱敏 PII（SEC-05）；脱敏见后续 pkg/mask
+//   - 禁止记录密钥、完整 Token、未脱敏 PII（SEC-05）；脱敏见 pkg/mask
 //   - HTTP AccessLog / Recover 等中间件仍留 platform；本包只提供 Logger 原语
 //
 // 典型用法：

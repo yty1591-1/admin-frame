@@ -53,6 +53,8 @@
 - JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token。
 - 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；密钥须来自环境变量或 KMS，禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
 - 账号密码哈希见 `pkg/password`（默认 argon2id，兼容 bcrypt）；禁止可逆加密存密码；日志禁止记录明文密码。
+- 日志 / Trace / 错误详情中的手机号、证件、银行卡、邮箱、Token 等须经 `pkg/mask` 脱敏后再输出（SEC-05）。
+- A/B 权限点判定见 `pkg/rbac`（默认拒绝；`resource:action`）；业务码 40300 由 platform/transport 映射；复杂 ABAC 留业务层。
 
 ---
 
