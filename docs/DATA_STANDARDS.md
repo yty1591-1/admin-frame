@@ -5,7 +5,7 @@
 > **适用范围**：本仓库 schema 迁移、生产数据变更、备份与保留、多租户行级隔离相关 SQL  
 > **关联**：架构 §十四；安全见 `SECURITY_STANDARDS.md`；发布顺序见 `RELEASE_STANDARDS.md`  
 > **执行方式**：`check-migrations.sh` + Review + MR 模板  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-19  
 > **变更方式**：修改本规范须同步更新 `migrations/`、`cmd/migrate`、`scripts/ci/check-migrations.sh` 与架构 §十四，经架构 Owner Review
 
 ---
@@ -105,6 +105,7 @@ DO $$ BEGIN RAISE EXCEPTION 'IRREVERSIBLE: ADR-00XX'; END $$;
 
 - 领域模型 ≠ 表模型；转换仅在 infrastructure。  
 - 主键策略、时间列（UTC）、软删 `deleted_at` 约定全库一致；雪花 ID 统一用 `pkg/id`（多实例 `NodeID` 唯一）。  
+- 连接池、事务 helper、就绪 Ping 见 `pkg/db`（`database/sql`）；驱动由 platform / cmd 注册；查询须带 context；DSN 日志用 `RedactDSN`。  
 - 禁止 `SELECT *`；列表必分页且有上限。  
 - 禁止「先全表查出再在内存按商户过滤」作为唯一防护。  
 
@@ -160,6 +161,7 @@ make ci
 |-------------|------|
 | `migrations/*.sql` | schema 变更 |
 | `cmd/migrate` | 唯一业务侧迁移入口 |
+| `pkg/db` | 连接池 / 事务 / 就绪探测（不含 migrate） |
 | `scripts/ci/check-migrations.sh` | DATA-01/02/03 |
 | `docs/runbooks/` | 备份恢复与演练 |
 | `docs/adr/` | 不可逆与分库演进 |
