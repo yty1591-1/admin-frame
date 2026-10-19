@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/mq` 已落地）
+> **最后更新**：2026-10-19（`pkg/httpclient` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -39,7 +39,7 @@
 | P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 已完成 | go-redis；单实例锁；Cache-Aside KV |
 | P3 | `pkg/cache` | 本地/多级缓存抽象 | 已完成 | Store + Memory LRU + Multi + Cache-Aside |
 | P3 | `pkg/mq` | 消息生产/消费通用封装 | 已完成 | 接口 + Memory/Outbox；Kafka/NATS 后接 |
-| P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 待做 | |
+| P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 已完成 | 强制超时；幂等重试；OTel 出站 |
 | P4 | `pkg/config` | 配置加载与校验 | 暂缓 | 已有 `internal/platform/config` |
 | P4 | `pkg/logger` | 结构化日志 | 暂缓 | 已有 `internal/platform/logger` |
 | P4 | `pkg/middleware` | 通用中间件原语 | 暂缓 | 已有 `internal/platform/middleware` |
@@ -109,7 +109,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | P3 | 待做 |
+| `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | P3 | 已完成 |
 | `pkg/sms` | 短信渠道适配（接口 + 实现） | P4 | 待做 |
 | `pkg/email` | 邮件渠道适配 | P4 | 待做 |
 | `pkg/push` | 推送渠道适配 | P4 | 待做 |
@@ -140,6 +140,7 @@
 | redis | `pkg/redis` | 保持；platform 装配 Addr/口令/前缀；就绪挂 `Checker()` |
 | cache | `pkg/cache` | 保持；L1 Memory + L2 `redis.Cache.Store()` 由 platform 组合 |
 | mq | `pkg/mq` | 保持；Kafka/NATS 实现接口后注入；Outbox 持久化在 infrastructure |
+| httpclient | `pkg/httpclient` | 保持；下游 HTTP 禁止 DefaultClient，统一本包 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
@@ -161,7 +162,7 @@
 
 ## 六、下一迭代建议（最小切片）
 
-1. worker 消费路径挂 span；HTTP Client 出站注入（可并入 `pkg/httpclient`）。
+1. worker 消费路径挂 span；下游 HTTP 统一改用 `pkg/httpclient`。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
 3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
 4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；补 `pkg/mask`；敏感字段落库可挂 `pkg/crypto`。

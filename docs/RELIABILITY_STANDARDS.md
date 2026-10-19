@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部对外 API、worker、以及对外部系统（HTTP/RPC/DB/MQ/缓存）的调用  
 > **关联**：架构 §十一、§九；API 错误码见 `API_STANDARDS.md`；可观测见 `OBSERVABILITY_STANDARDS.md`  
 > **执行方式**：`check-reliability.sh` + 单测 + Review + MR 模板  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-19  
 > **变更方式**：修改本规范须同步更新 `scripts/ci/check-reliability.sh`、`apperr` 限流码与架构 §十一，经架构 Owner Review
 
 ---
@@ -22,7 +22,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| REL-01 | 所有外部 I/O（HTTP/RPC/SDK）必须使用带 deadline 的 `context`；禁止无超时的 `http.DefaultClient` / `http.Get` / `http.Post` 用于业务路径 | `check-reliability.sh` + Review |
+| REL-01 | 所有外部 I/O（HTTP/RPC/SDK）必须使用带 deadline 的 `context`；禁止无超时的 `http.DefaultClient` / `http.Get` / `http.Post` 用于业务路径；出站 HTTP 优先 `pkg/httpclient` | `check-reliability.sh` + Review |
 | REL-02 | 进程优雅关闭超时可配置（`shutdown_timeout`）；`ListenAndServe` 必须尊重该超时 | 代码 + CFG |
 | REL-03 | 重试仅针对幂等或明确可安全重试的错误；指数退避 + 抖动 + **有上限**；禁止热循环空转 | Review |
 | REL-04 | C 端创建类写操作与支付回调等必须幂等（`Idempotency-Key` 或业务唯一键）；消费者至少一次投递下须幂等 | API-11 + 单测 + Review |
@@ -143,6 +143,7 @@ make ci
 |-------------|------|
 | `internal/shared/apperr` | `42900` / `TooManyRequests` |
 | `pkg/retry` | REL-03：可取消重试、退避抖动、次数/时间上限 |
+| `pkg/httpclient` | REL-01/03：强制超时出站 Client；幂等重试；OTel 传播 |
 | `pkg/ratelimit` | REL-05：令牌桶 / 滑动窗口原语；`ErrLimited` |
 | `pkg/errors` | `Retryable` / `RetryableOf` 默认可重试判定 |
 | `api/openapi/components.yaml` | ErrorCode 枚举 |
