@@ -10,6 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // Handler 处理 C 端订单 HTTP 请求（用户归属 + 字段裁剪）。
@@ -56,15 +57,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
-	page, limit, err := httpx.ParsePage(r)
+	q, err := pagination.Parse(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
 	items, err := h.svc.ListOrders(r.Context(), domain.ListFilter{
 		UserID: p.SubjectID,
-		Limit:  limit,
-		Offset: (page - 1) * limit,
+		Limit:  q.Limit(),
+		Offset: q.Offset(),
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)

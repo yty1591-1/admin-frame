@@ -9,6 +9,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // Handler 处理 B 端订单 HTTP 请求（商户隔离）。
@@ -29,15 +30,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.Forbidden("merchant context required"), traceID)
 		return
 	}
-	page, limit, err := httpx.ParsePage(r)
+	q, err := pagination.Parse(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
 	items, err := h.svc.ListOrders(r.Context(), domain.ListFilter{
 		MerchantID: p.MerchantID,
-		Limit:      limit,
-		Offset:     (page - 1) * limit,
+		Limit:      q.Limit(),
+		Offset:     q.Offset(),
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)

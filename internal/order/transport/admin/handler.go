@@ -7,6 +7,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/order/domain"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // Handler 处理 A 端订单 HTTP 请求。
@@ -22,15 +23,15 @@ func NewHandler(svc *app.OrderService) *Handler {
 // List 列举订单，支持 merchant_id / 分页查询参数。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
-	page, limit, err := httpx.ParsePage(r)
+	q, err := pagination.Parse(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
 	filter := domain.ListFilter{
 		MerchantID: r.URL.Query().Get("merchant_id"),
-		Limit:      limit,
-		Offset:     (page - 1) * limit,
+		Limit:      q.Limit(),
+		Offset:     q.Offset(),
 	}
 	items, err := h.svc.ListOrders(r.Context(), filter)
 	if err != nil {

@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/validator` 已落地）
+> **最后更新**：2026-10-19（`pkg/pagination` 已落地；业务直调，已移除 httpx 兼容层）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -27,7 +27,7 @@
 |-------|--------|------|------|------|
 | P0 | `pkg/health` | 存活/就绪探针 | 已完成 | 已有实现 |
 | P1 | `pkg/errors` | 统一错误类型、错误码、因果链 | 已完成 | `apperr` 薄封装业务数字码，底层挂接本包 |
-| P1 | `pkg/httpx` | 统一响应体、分页结构、状态码映射 | 已完成 | `internal/shared/httpx` 薄封装挂接 `apperr` |
+| P1 | `pkg/httpx` | 统一响应体、状态码映射 | 已完成 | `internal/shared/httpx` 薄封装挂接 `apperr` |
 | P1 | `pkg/metrics` | Prometheus 指标注册与常用指标 | 已完成 | HTTP RED + build_info；三端已挂 `/metrics` |
 | P1 | `pkg/tracing` | OpenTelemetry 初始化与 span 工具 | 已完成 | W3C 传播；与 RequestID / 信封 trace_id 对齐 |
 | P2 | `pkg/retry` | 重试、退避、可取消 | 已完成 | 默认挂接 `errors.RetryableOf`；`Permanent` 短路 |
@@ -65,10 +65,10 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/httpx` / `pkg/response` | 统一响应体、分页结构、状态码映射 | P1 | 已完成 |
+| `pkg/httpx` / `pkg/response` | 统一响应体、状态码映射 | P1 | 已完成 |
 | `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 已完成 |
 | `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 已完成 |
-| `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 待做 |
+| `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 已完成 |
 | `pkg/idempotency` | 幂等 Key 中间件与存储接口 | P3 | 待做 |
 
 ### 3.3 安全与身份
@@ -149,7 +149,8 @@
 | 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
 | 中间件 / Server | `pkg/middleware` + `platform` | 通用原语在 pkg；鉴权/装配留 platform |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
-| HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/分页/映射在 pkg；业务码挂接留 shared |
+| HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/映射在 pkg；业务码挂接留 shared |
+| 分页/排序 | `pkg/pagination` | 保持；列表 Handler 直接 `pagination.Parse` / `ParseParams` |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---
