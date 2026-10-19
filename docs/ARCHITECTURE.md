@@ -800,6 +800,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 - 缓存是性能优化，不是数据源真相；真相在持久化存储。
 - Key 命名规范：`{env}:{channel}:{merchant_id?}:{domain}:{entity}:{id}`；必须设置 TTL。
+- Redis 客户端 / 分布式锁 / KV 缓存原语见 `pkg/redis`（`Key` / `Cache` / `Lock`）；进程装配留 platform。
 - 更新策略明确：Cache-Aside / Write-Through 等，并处理穿透、击穿、雪崩（空值缓存、互斥、随机 TTL）。
 - 禁止缓存未脱敏的敏感信息；权限与商户数据缓存失效时不得导致越权（缓存条目必须绑定租户/用户维度）。
 

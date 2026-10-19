@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/db` 已落地）
+> **最后更新**：2026-10-19（`pkg/redis` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -36,7 +36,7 @@
 | P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 已完成 | HS256/RS256；业务鉴权仍在 platform |
 | P2 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | 已完成 | AES-256-GCM / HMAC / Ed25519 / WrapKey；stdlib only |
 | P3 | `pkg/db` | DB 连接池、事务 helper、健康检查 | 已完成 | database/sql；驱动由 platform 注册；无 migrate |
-| P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 待做 | |
+| P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 已完成 | go-redis；单实例锁；Cache-Aside KV |
 | P3 | `pkg/cache` | 本地/多级缓存抽象 | 待做 | |
 | P3 | `pkg/mq` | 消息生产/消费通用封装 | 待做 | 可先抽象接口，后接 Kafka/NATS |
 | P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 待做 | |
@@ -86,7 +86,7 @@
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
 | `pkg/db` / `pkg/sqlx` | DB 连接池、事务 helper、健康检查 | P3 | 已完成（`pkg/db`） |
-| `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | P3 | 待做 |
+| `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | P3 | 已完成 |
 | `pkg/mq` / `pkg/kafka` | 消息生产/消费通用封装 | P3 | 待做 |
 | `pkg/cache` | 本地/多级缓存抽象 | P3 | 待做 |
 | `pkg/oss` / `pkg/storage` | 对象存储上传下载 | P4 | 待做 |
@@ -137,6 +137,7 @@
 | jwt | `pkg/jwt` | 保持；三端独立 iss/aud/密钥由 platform 装配 |
 | crypto | `pkg/crypto` | 保持；字段级加密 / DEK 包装；密钥由 KMS/env 注入 |
 | db | `pkg/db` | 保持；platform 注册驱动并装配 Config；就绪挂 `Checker()` |
+| redis | `pkg/redis` | 保持；platform 装配 Addr/口令/前缀；就绪挂 `Checker()` |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
@@ -163,3 +164,4 @@
 3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
 4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；补 `pkg/mask`；敏感字段落库可挂 `pkg/crypto`。
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
+6. 接入 Redis 时：platform 挂 `pkg/redis.Open`，缓存/锁按 Key 规范拼租户维度；补 `pkg/cache` 多级抽象按需。
