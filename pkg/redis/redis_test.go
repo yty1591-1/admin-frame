@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admin-frame/admin-frame/pkg/cache"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/alicebob/miniredis/v2"
 )
@@ -180,5 +181,21 @@ func TestPrefixApplied(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("keys=%v", keys)
+	}
+}
+
+func TestCacheStoreAdapter(t *testing.T) {
+	_, c := startMini(t)
+	ctx := context.Background()
+	store := c.Cache().Store()
+	if err := store.Set(ctx, "s1", []byte("v"), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, "s1")
+	if err != nil || string(got) != "v" {
+		t.Fatalf("got=%q err=%v", got, err)
+	}
+	if _, err := store.Get(ctx, "missing"); !errors.Is(err, cache.ErrMiss) {
+		t.Fatalf("err=%v", err)
 	}
 }
