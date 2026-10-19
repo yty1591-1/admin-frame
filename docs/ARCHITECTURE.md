@@ -473,6 +473,7 @@ domain         → 仅 domain 内部 + 标准库（及极少数无 I/O 的纯工
 Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → AuthZ → TenantGuard(B) → Timeout → Handler
 ```
 
+- 通用中间件原语见 `pkg/middleware`（Chain / Recover / RequestID / AccessLog / Timeout / CORS / RateLimit）；`AuthN` / `AuthZ` / 租户守卫与业务码映射留 platform。
 - `AuthN` / `AuthZ` **按 cmd 挂载不同实现**（不同 issuer、密钥、权限源）。
 - B 端 `TenantGuard`：校验路径/Body 中的 `merchant_id`（若有）与 Token 内商户一致。
 

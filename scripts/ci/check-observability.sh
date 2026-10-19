@@ -31,8 +31,7 @@ else
 fi
 
 echo "==> OBS-01: AccessLog must emit trace_id"
-MW="internal/platform/middleware.go"
-if [[ -f "${MW}" ]] && grep -q '"trace_id"' "${MW}"; then
+if grep -Rq '"trace_id"' pkg/middleware internal/platform/middleware.go 2>/dev/null; then
   echo "    OK: AccessLog trace_id"
 else
   echo "ERROR: AccessLog must log trace_id (OBS-01)" >&2

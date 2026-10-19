@@ -4,7 +4,7 @@
 //   - 不得依赖 internal/；业务键（channel/user/merchant）由调用方拼装
 //   - 本包只做「允不允许」；映射 42900 / HTTP 429 / Retry-After 由 platform 或 transport 负责
 //   - 默认内存实现，适合单进程；跨实例限流需后续 Redis 等后端（接口可替换）
-//   - 不内置 HTTP 中间件（见 internal/platform）
+//   - HTTP 中间件见 pkg/middleware.RateLimit；42900 映射仍由 platform/transport 负责
 //
 // 典型用法：
 //

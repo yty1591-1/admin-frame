@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/contextx` 已落地）
+> **最后更新**：2026-10-19（`pkg/middleware` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -42,7 +42,7 @@
 | P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 已完成 | 强制超时；幂等重试；OTel 出站 |
 | P4 | `pkg/config` | 配置加载与校验 | 暂缓 | 已有 `internal/platform/config` |
 | P4 | `pkg/logger` | 结构化日志 | 已完成 | slog + ContextHandler；platform 薄封装 |
-| P4 | `pkg/middleware` | 通用中间件原语 | 暂缓 | 已有 `internal/platform/middleware` |
+| P4 | `pkg/middleware` | 通用中间件原语 | 已完成 | Chain/RequestID/Recover/Timeout/CORS/限流；鉴权留 platform |
 | P4 | 其余工具包 | 见下方完整清单 | 待做 | 按实际需求再开 |
 
 ---
@@ -66,7 +66,7 @@
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
 | `pkg/httpx` / `pkg/response` | 统一响应体、分页结构、状态码映射 | P1 | 已完成 |
-| `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 暂缓（见 platform） |
+| `pkg/middleware` | 请求 ID、超时、CORS、recover、限流（通用部分） | P4 | 已完成 |
 | `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 待做 |
 | `pkg/pagination` | 分页/排序参数解析与默认值 | P2 | 待做 |
 | `pkg/idempotency` | 幂等 Key 中间件与存储接口 | P3 | 待做 |
@@ -143,9 +143,10 @@
 | httpclient | `pkg/httpclient` | 保持；下游 HTTP 禁止 DefaultClient，统一本包 |
 | logger | `pkg/logger` | 保持；`platform.NewLogger` 薄封装；AccessLog 仍在 platform |
 | contextx | `pkg/contextx` | 保持；Auth 中间件注入；Principal 仍在 shared/auth |
+| middleware | `pkg/middleware` | 保持；platform 薄封装 + AuthN/AuthZ |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
-| 中间件 / Server | `internal/platform` | 同上 |
+| 中间件 / Server | `pkg/middleware` + `platform` | 通用原语在 pkg；鉴权/装配留 platform |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
 | HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/分页/映射在 pkg；业务码挂接留 shared |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
