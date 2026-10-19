@@ -65,9 +65,10 @@
 |------|------|------|
 | 42900 | 429 | 请求过于频繁 / 配额耗尽 |
 
-- 实现入口：`apperr.TooManyRequests`；契约 `ErrorCode` 枚举须包含 `42900`。  
+- 限流原语：`pkg/ratelimit`（令牌桶 / 滑动窗口 / 按 key 注册表）；业务键与按端松紧在 platform。  
+- 实现入口：拒绝时映射 `apperr.TooManyRequests`（`errors.Is(..., ratelimit.ErrLimited)`）；契约 `ErrorCode` 含 `42900`。  
 - 限流键建议：`channel` + 主体（C: user/IP；B: merchant_id；A: subject 或 IP）。  
-- 响应 `message` 笼统（如 `too many requests`），不泄露内部阈值细节给 C 端。
+- 响应 `message` 笼统（如 `too many requests`），不泄露内部配额细节给 C 端；可用 `Result.RetryAfter` 填 `Retry-After`。
 
 ---
 
@@ -142,6 +143,7 @@ make ci
 |-------------|------|
 | `internal/shared/apperr` | `42900` / `TooManyRequests` |
 | `pkg/retry` | REL-03：可取消重试、退避抖动、次数/时间上限 |
+| `pkg/ratelimit` | REL-05：令牌桶 / 滑动窗口原语；`ErrLimited` |
 | `pkg/errors` | `Retryable` / `RetryableOf` 默认可重试判定 |
 | `api/openapi/components.yaml` | ErrorCode 枚举 |
 | `internal/platform/server.go` | 优雅关闭超时 |
