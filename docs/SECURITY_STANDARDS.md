@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部代码、配置样例、流水线与发布物  
 > **关联**：架构 §十；密钥扫描与 gosec 见 CI；注释中的隐私约束见 `COMMENT_STANDARDS.md` C-08  
 > **执行方式**：gitleaks + gosec（golangci-lint）+ 调试端点检查 + MR 模板 + Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-19  
 > **变更方式**：修改本规范须同步更新 `.gitleaks.toml`、`.golangci.yml`（gosec）、流水线与架构 §十，经架构 Owner Review
 
 ---
@@ -51,6 +51,7 @@
 - 进程 `channel` 必须与令牌渠道一致；`auth.expected_channel` 与启动端不一致时拒绝启动。
 - **演示令牌**格式见 README，只存在于文档与 `demo_mode=true`。生产配置必须 `demo_mode: false`，在真实鉴权接入前进程会启动失败——这是预期行为，禁止用演示中间件“先顶上”。
 - JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token。
+- 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；密钥须来自环境变量或 KMS，禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
 
 ---
 

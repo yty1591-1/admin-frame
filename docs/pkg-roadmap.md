@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/jwt` 已落地）
+> **最后更新**：2026-10-19（`pkg/crypto` 已落地）
 
 ---
 
@@ -34,7 +34,7 @@
 | P2 | `pkg/ratelimit` | 令牌桶/滑动窗口 | 已完成 | 原语在 pkg；键策略 / 42900 映射留 platform |
 | P2 | `pkg/id` | 分布式 ID（如 snowflake） | 已完成 | 订单创建已接入；多实例须唯一 NodeID |
 | P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 已完成 | HS256/RS256；业务鉴权仍在 platform |
-| P2 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | 待做 | |
+| P2 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | 已完成 | AES-256-GCM / HMAC / Ed25519 / WrapKey；stdlib only |
 | P3 | `pkg/db` | DB 连接池、事务 helper、健康检查 | 待做 | 接真实存储时 |
 | P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 待做 | |
 | P3 | `pkg/cache` | 本地/多级缓存抽象 | 待做 | |
@@ -76,7 +76,7 @@
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
 | `pkg/auth` / `pkg/jwt` | JWT 签发/校验、claims 解析（无业务策略） | P2 | 已完成（`pkg/jwt`） |
-| `pkg/crypto` | 加解密、签名、哈希、密钥包装 | P2 | 待做 |
+| `pkg/crypto` | 加解密、签名、哈希、密钥包装 | P2 | 已完成 |
 | `pkg/password` | 密码哈希（bcrypt/argon2） | P3 | 待做 |
 | `pkg/mask` | 日志/响应脱敏（手机号、身份证等） | P2 | 待做 |
 | `pkg/rbac` | 权限判断原语（轻量；复杂策略放业务层） | P4 | 待做 |
@@ -135,6 +135,7 @@
 | ratelimit | `pkg/ratelimit` | 保持；HTTP 中间件与键策略在 platform |
 | id | `pkg/id` | 保持；订单等场景注入 Generator；NodeID 按实例配置 |
 | jwt | `pkg/jwt` | 保持；三端独立 iss/aud/密钥由 platform 装配 |
+| crypto | `pkg/crypto` | 保持；字段级加密 / DEK 包装；密钥由 KMS/env 注入 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
@@ -159,4 +160,4 @@
 1. worker 消费路径挂 span；HTTP Client 出站注入（可并入 `pkg/httpclient`）。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
 3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
-4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；补 `pkg/mask`。
+4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；补 `pkg/mask`；敏感字段落库可挂 `pkg/crypto`。
