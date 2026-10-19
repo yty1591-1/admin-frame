@@ -59,13 +59,13 @@ func main() {
 	met.MustRegisterBuildInfo(version, commit, buildTime)
 
 	ctx := context.Background()
-	store, err := platform.OpenStorage(ctx, cfg.Storage)
+	stores, err := platform.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = stores.Close() }()
 
-	fileSvc := filesapp.NewService(store, filesapp.Config{
+	fileSvc := filesapp.NewService(stores.Default, filesapp.Config{
 		MaxBytes:      cfg.Storage.MaxObjectBytes,
 		PresignPutTTL: cfg.Storage.PresignPutTTL,
 		PresignGetTTL: cfg.Storage.PresignGetTTL,
@@ -91,7 +91,12 @@ func main() {
 	root := http.NewServeMux()
 	hh := health.New()
 	hh.Register("memory_repo", repo.Ping)
-	hh.Register("storage", func() error { return storage.Ready(context.Background(), store) })
+	hh.Register("storage", func() error { return stores.ReadyAll(context.Background()) })
+	for _, name := range stores.Names() {
+		n := name
+		st, _ := stores.Get(n)
+		hh.Register("storage:"+n, func() error { return storage.Ready(context.Background(), st) })
+	}
 	platform.MountHealth(root, hh)
 	platform.MountVersion(root, platform.BuildInfo{
 		Service:   cfg.Service,

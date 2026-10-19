@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"time"
 )
 
 // PrefixStore 为所有键强制加上固定前缀（租户隔离常用）。
@@ -144,4 +145,113 @@ func (p *PrefixStore) Close() error {
 		return nil
 	}
 	return p.inner.Close()
+}
+
+// Inner 返回被包装的 Store（测试 / 装配探测用）。
+func (p *PrefixStore) Inner() Store {
+	if p == nil {
+		return nil
+	}
+	return p.inner
+}
+
+// PresignPut 转发并改写键前缀。
+func (p *PrefixStore) PresignPut(ctx context.Context, key string, expiry time.Duration, opts PutOptions) (string, error) {
+	ps, ok := AsPresigner(p.inner)
+	if !ok {
+		return "", ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return "", err
+	}
+	return ps.PresignPut(ctx, fk, expiry, opts)
+}
+
+// PresignGet 转发并改写键前缀。
+func (p *PrefixStore) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	ps, ok := AsPresigner(p.inner)
+	if !ok {
+		return "", ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return "", err
+	}
+	return ps.PresignGet(ctx, fk, expiry)
+}
+
+// CreateMultipart 转发并改写键前缀。
+func (p *PrefixStore) CreateMultipart(ctx context.Context, key string, opts PutOptions) (string, error) {
+	m, ok := AsMultipart(p.inner)
+	if !ok {
+		return "", ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return "", err
+	}
+	return m.CreateMultipart(ctx, fk, opts)
+}
+
+// UploadPart 转发并改写键前缀。
+func (p *PrefixStore) UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.Reader) (string, error) {
+	m, ok := AsMultipart(p.inner)
+	if !ok {
+		return "", ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return "", err
+	}
+	return m.UploadPart(ctx, fk, uploadID, partNumber, body)
+}
+
+// CompleteMultipart 转发并改写键前缀。
+func (p *PrefixStore) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) (ObjectInfo, error) {
+	m, ok := AsMultipart(p.inner)
+	if !ok {
+		return ObjectInfo{}, ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	info, err := m.CompleteMultipart(ctx, fk, uploadID, parts)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	info.Key = key
+	return info, nil
+}
+
+// AbortMultipart 转发并改写键前缀。
+func (p *PrefixStore) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	m, ok := AsMultipart(p.inner)
+	if !ok {
+		return ErrUnsupported
+	}
+	fk, err := p.fullKey(key)
+	if err != nil {
+		return err
+	}
+	return m.AbortMultipart(ctx, fk, uploadID)
+}
+
+// PutLifecycle 桶级操作，直接委托内层（规则 Prefix 须含本包装前缀时由运维配置）。
+func (p *PrefixStore) PutLifecycle(ctx context.Context, rules []LifecycleRule) error {
+	lm, ok := AsLifecycle(p.inner)
+	if !ok {
+		return ErrUnsupported
+	}
+	return lm.PutLifecycle(ctx, rules)
+}
+
+// GetLifecycle 委托内层。
+func (p *PrefixStore) GetLifecycle(ctx context.Context) ([]LifecycleRule, error) {
+	lm, ok := AsLifecycle(p.inner)
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	return lm.GetLifecycle(ctx)
 }

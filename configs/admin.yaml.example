@@ -50,6 +50,24 @@ storage:
     region: ""
     bucket: ""
     native: false
+  # 生命周期：默认不写桶；生产开启前请确认权限与规则。
+  lifecycle:
+    apply_on_start: false
+    # rules:
+    #   - id: abort-mpu
+    #     prefix: ""
+    #     abort_incomplete_multipart_days: 7
+    #   - id: expire-tmp
+    #     prefix: tmp/
+    #     expire_days: 7
+  # 命名附加桶（可选）：公有静态 / 导出隔离等；键不可为 default。
+  # buckets:
+  #   public:
+  #     driver: s3
+  #     key_prefix: "local/public/"
+  #     s3:
+  #       bucket: admin-frame-public
+  #       region: ap-southeast-1
 
 tracing:
   # 默认启用；exporter=none 只生成 TraceID 不导出（无需 Collector）

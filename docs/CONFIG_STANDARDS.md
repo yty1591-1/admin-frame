@@ -78,6 +78,8 @@ cp configs/admin.yaml.example configs/admin.yaml
 | `ADMIN_FRAME_STORAGE_ACCESS_KEY` | `storage.s3.access_key` |
 | `ADMIN_FRAME_STORAGE_SECRET_KEY` | `storage.s3.secret_key` |
 | `ADMIN_FRAME_STORAGE_S3_FORCE_PATH_STYLE` | `storage.s3.force_path_style` |
+| （yaml）`storage.buckets.*` | 命名附加桶；不可用环境变量批量覆盖，见 `storage-s3-oss.md` §6.3 |
+| （yaml）`storage.lifecycle` | 桶生命周期；仅 `apply_on_start=true` 时写入 |
 | `ADMIN_FRAME_WORKER_POLL_INTERVAL` | `worker.poll_interval` |
 | `ADMIN_FRAME_TRACING_ENABLED` | `tracing.enabled` |
 | `ADMIN_FRAME_TRACING_EXPORTER` | `tracing.exporter`（none / otlp / stdout / noop） |

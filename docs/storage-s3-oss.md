@@ -1,6 +1,6 @@
 # 对象存储：多云模块化驱动规划与选型
 
-> **状态**：落地中（M0–M3b / M5-multipart 已完成；M4 与生命周期/多桶按需）  
+> **状态**：落地中（M0–M3b / M5 已完成；M4 L2 原生 SDK 按需暂缓）  
 > **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五  
 > **最后更新**：2026-10-19  
 > **目标读者**：后端 / 平台装配 / 安全 Review
@@ -163,6 +163,25 @@ storage:
     region: cn-north-4
     bucket: admin-frame-prod
     native: false
+
+  lifecycle:
+    apply_on_start: false       # true 时启动写桶策略（需对应驱动权限）
+    rules:
+      - id: abort-mpu
+        prefix: ""
+        abort_incomplete_multipart_days: 7
+      - id: expire-tmp
+        prefix: tmp/
+        expire_days: 7
+
+  # 命名附加桶（可选）；键不可为 default
+  buckets:
+    public:
+      driver: s3
+      key_prefix: "prod/public/"
+      s3:
+        region: ap-southeast-1
+        bucket: admin-frame-public
 ```
 
 
@@ -192,11 +211,25 @@ storage:
 
 代码：`internal/files/app`、`internal/files/transport/admin`；装配：`cmd/admin-api`。
 
-### 6.2 Multipart（M5 起步）
+### 6.2 Multipart（M5）
 
-- 契约：`pkg/storage.MultipartUploader`（`CreateMultipartUpload` / `UploadPart` / `Complete` / `Abort`）
-- 实现：`pkg/storage/s3`；经 `storage.AsMultipart(store)` 探测
+- 契约：`pkg/storage.MultipartUploader`（`CreateMultipart` / `UploadPart` / `CompleteMultipart` / `AbortMultipart`）
+- 实现：`pkg/storage/s3`；`PrefixStore` 转发并改写键；经 `storage.AsMultipart(store)` 探测
 - 业务 Handler 尚未暴露 HTTP；大文件直传优先用 PresignPut
+
+### 6.3 多桶（M5）
+
+- 装配：`platform.OpenStorageSet` → `StorageSet{Default, named…}`；`Get("default"|name)`
+- 配置：顶层 `storage` 为默认桶；`storage.buckets.<name>` 为附加桶（名不可为 `default`）
+- 健康：`StorageSet.ReadyAll`；admin-api 另注册 `storage:<name>`
+- 注入：业务按名取 Store（如 `stores.MustGet("public")`）；files 默认用 `stores.Default`
+
+### 6.4 生命周期（M5）
+
+- 契约：`pkg/storage.LifecycleManager`（`PutLifecycle` / `GetLifecycle`）；`AsLifecycle` / `ApplyLifecycle`
+- 实现：`pkg/storage/s3`（空 rules = 删除桶生命周期）
+- 配置：`storage.lifecycle` / `buckets.*.lifecycle`；**仅** `apply_on_start: true` 时启动写入
+- memory/local 不支持；校验拒绝对其开启 `apply_on_start`
 
 ---
 
@@ -209,8 +242,8 @@ storage:
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
 | **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
 | **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅ |
-| **M4** | （按需）各厂商 L2 原生 SDK | 待做 |
-| **M5** | multipart、生命周期、多桶 | 进行中：`MultipartUploader` + S3 实现 ✅；生命周期/多桶待做 |
+| **M4** | （按需）各厂商 L2 原生 SDK | 暂缓（L1 足够；遇独有能力再开 MR + DEP-06） |
+| **M5** | multipart、生命周期、多桶 | ✅ |
 
 ---
 
@@ -238,7 +271,7 @@ storage:
 | 问题 | 建议默认 |
 |------|----------|
 | 国内是否允许只用 S3 兼容、不上原生？ | M2 先 L1；遇阻再 L2 |
-| 是否支持同进程多 Store（公有静态桶 + 私有附件桶）？ | 支持；platform 按名注入多个 `Open` 结果 |
+| 是否支持同进程多 Store（公有静态桶 + 私有附件桶）？ | ✅ `OpenStorageSet` + `storage.buckets` |
 | 驱动包是否拆独立 Go module？ | 近期单 module；依赖膨胀再拆 |
 
 ---

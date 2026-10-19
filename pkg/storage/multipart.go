@@ -19,8 +19,17 @@ type MultipartUploader interface {
 	AbortMultipart(ctx context.Context, key, uploadID string) error
 }
 
-// AsMultipart 若 Store 支持分片则返回。
+// AsMultipart 若 Store 支持分片则返回（含 PrefixStore 穿透探测）。
 func AsMultipart(s Store) (MultipartUploader, bool) {
+	if s == nil {
+		return nil, false
+	}
+	if p, ok := s.(*PrefixStore); ok {
+		if _, ok := AsMultipart(p.inner); !ok {
+			return nil, false
+		}
+		return p, true
+	}
 	m, ok := s.(MultipartUploader)
 	return m, ok
 }

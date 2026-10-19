@@ -57,8 +57,17 @@ type Presigner interface {
 	PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error)
 }
 
-// AsPresigner 若 Store 同时实现 Presigner 则返回。
+// AsPresigner 若 Store 支持预签名则返回（含 PrefixStore 穿透探测）。
 func AsPresigner(s Store) (Presigner, bool) {
+	if s == nil {
+		return nil, false
+	}
+	if p, ok := s.(*PrefixStore); ok {
+		if _, ok := AsPresigner(p.inner); !ok {
+			return nil, false
+		}
+		return p, true
+	}
 	p, ok := s.(Presigner)
 	return p, ok
 }
