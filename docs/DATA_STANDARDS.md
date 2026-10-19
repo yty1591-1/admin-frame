@@ -104,7 +104,7 @@ DO $$ BEGIN RAISE EXCEPTION 'IRREVERSIBLE: ADR-00XX'; END $$;
 ## 6. 模型与 SQL 纪律
 
 - 领域模型 ≠ 表模型；转换仅在 infrastructure。  
-- 主键策略、时间列（UTC）、软删 `deleted_at` 约定全库一致。  
+- 主键策略、时间列（UTC）、软删 `deleted_at` 约定全库一致；雪花 ID 统一用 `pkg/id`（多实例 `NodeID` 唯一）。  
 - 禁止 `SELECT *`；列表必分页且有上限。  
 - 禁止「先全表查出再在内存按商户过滤」作为唯一防护。  
 

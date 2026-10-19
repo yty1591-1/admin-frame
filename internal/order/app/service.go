@@ -2,14 +2,13 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/order/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
 // EventPublisher 领域事件发布端口（worker 可订阅）。
@@ -27,19 +26,31 @@ func (noopPublisher) Publish(context.Context, ...domain.Event) error { return ni
 type OrderService struct {
 	repo      domain.Repository
 	publisher EventPublisher
+	ids       id.Generator
 
 	mu       sync.Mutex
 	idemKeys map[string]string // idempotency key -> order id
 }
 
 // NewOrderService 构造订单应用服务；publisher 为 nil 时使用空实现。
+// 默认使用 Snowflake（NodeID=1）；多实例部署须注入互不冲突的 Generator。
 func NewOrderService(repo domain.Repository, publisher EventPublisher) *OrderService {
+	return NewOrderServiceWithID(repo, publisher, nil)
+}
+
+// NewOrderServiceWithID 同 NewOrderService，并允许注入分布式 ID 生成器。
+// ids 为 nil 时使用 NodeID=1 的 Snowflake（仅适合单实例/本地）。
+func NewOrderServiceWithID(repo domain.Repository, publisher EventPublisher, ids id.Generator) *OrderService {
 	if publisher == nil {
 		publisher = noopPublisher{}
+	}
+	if ids == nil {
+		ids = id.MustSnowflake(id.Options{NodeID: 1})
 	}
 	return &OrderService{
 		repo:      repo,
 		publisher: publisher,
+		ids:       ids,
 		idemKeys:  make(map[string]string),
 	}
 }
@@ -55,11 +66,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, cmd CreateOrderCommand) 
 		s.mu.Unlock()
 	}
 
-	id, err := newID()
+	raw, err := s.ids.NextString()
 	if err != nil {
 		return nil, apperr.Internal("generate id", err)
 	}
-	order, err := domain.NewOrder(id, cmd.MerchantID, cmd.UserID, cmd.AmountCent, cmd.Currency)
+	orderID := fmt.Sprintf("ord_%s", raw)
+	order, err := domain.NewOrder(orderID, cmd.MerchantID, cmd.UserID, cmd.AmountCent, cmd.Currency)
 	if err != nil {
 		return nil, err
 	}
@@ -164,12 +176,4 @@ func (s *OrderService) CancelOrder(ctx context.Context, cmd CancelOrderCommand) 
 		At:         time.Now().UTC(),
 	})
 	return order, nil
-}
-
-func newID() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("ord_%s", hex.EncodeToString(b)), nil
 }

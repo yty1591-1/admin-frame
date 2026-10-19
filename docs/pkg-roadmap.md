@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/ratelimit` 已落地）
+> **最后更新**：2026-10-19（`pkg/id` 已落地）
 
 ---
 
@@ -32,7 +32,7 @@
 | P1 | `pkg/tracing` | OpenTelemetry 初始化与 span 工具 | 已完成 | W3C 传播；与 RequestID / 信封 trace_id 对齐 |
 | P2 | `pkg/retry` | 重试、退避、可取消 | 已完成 | 默认挂接 `errors.RetryableOf`；`Permanent` 短路 |
 | P2 | `pkg/ratelimit` | 令牌桶/滑动窗口 | 已完成 | 原语在 pkg；键策略 / 42900 映射留 platform |
-| P2 | `pkg/id` | 分布式 ID（如 snowflake） | 待做 | 订单号等场景 |
+| P2 | `pkg/id` | 分布式 ID（如 snowflake） | 已完成 | 订单创建已接入；多实例须唯一 NodeID |
 | P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 待做 | 不含业务鉴权策略 |
 | P2 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | 待做 | |
 | P3 | `pkg/db` | DB 连接池、事务 helper、健康检查 | 待做 | 接真实存储时 |
@@ -100,7 +100,7 @@
 | `pkg/circuitbreaker` | 熔断 | P3 | 待做 |
 | `pkg/ratelimit` | 令牌桶/滑动窗口 | P2 | 已完成 |
 | `pkg/clock` / `pkg/timeutil` | 可注入时钟、时区、业务日切 | P3 | 待做 |
-| `pkg/id` / `pkg/snowflake` | 分布式 ID 生成 | P2 | 待做 |
+| `pkg/id` / `pkg/snowflake` | 分布式 ID 生成 | P2 | 已完成 |
 | `pkg/set` / `pkg/slice` / `pkg/maputil` | 集合工具（避免变成杂物间） | P4 | 待做 |
 | `pkg/convert` | 类型安全转换、指针工具 | P4 | 待做 |
 | `pkg/money` / `pkg/decimal` | 金额/精度（多域共用时） | P3 | 待做 |
@@ -133,6 +133,7 @@
 | tracing | `pkg/tracing` | 保持；cmd Init + HTTPMiddleware；配置在 platform |
 | retry | `pkg/retry` | 保持；下游 I/O / worker 按需调用 |
 | ratelimit | `pkg/ratelimit` | 保持；HTTP 中间件与键策略在 platform |
+| id | `pkg/id` | 保持；订单等场景注入 Generator；NodeID 按实例配置 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
@@ -156,5 +157,5 @@
 
 1. worker 消费路径挂 span；HTTP Client 出站注入（可并入 `pkg/httpclient`）。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
-3. 落地 `pkg/id`；下游调用处接入 `pkg/retry`（order / worker）。
+3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
 4. 鉴权落地时补 `pkg/jwt`（或 `pkg/crypto`）+ `pkg/mask`。
