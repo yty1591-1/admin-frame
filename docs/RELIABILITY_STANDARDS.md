@@ -52,7 +52,7 @@
 
 - 允许：网络抖动、明确的 `Unavailable` / 限流后的受控重试（须尊重 `Retry-After` 若有）。  
 - 禁止：对非幂等写、未知 5xx 盲目重试导致重复下单/扣款。  
-- 实现：上限次数、总预算时间、指数退避 + 抖动。
+- 实现：上限次数、总预算时间、指数退避 + 抖动（统一用 `pkg/retry`；默认仅重试 `errors.RetryableOf`；不可重试用 `retry.Permanent`）。
 
 ### 4.2 熔断 / 舱壁
 
@@ -141,6 +141,8 @@ make ci
 | 工具 / 文件 | 作用 |
 |-------------|------|
 | `internal/shared/apperr` | `42900` / `TooManyRequests` |
+| `pkg/retry` | REL-03：可取消重试、退避抖动、次数/时间上限 |
+| `pkg/errors` | `Retryable` / `RetryableOf` 默认可重试判定 |
 | `api/openapi/components.yaml` | ErrorCode 枚举 |
 | `internal/platform/server.go` | 优雅关闭超时 |
 | `scripts/ci/check-reliability.sh` | REL-01/05 |

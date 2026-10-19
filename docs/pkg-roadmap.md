@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-13（`pkg/errors`、`pkg/httpx`、`pkg/metrics`、`pkg/tracing` 已落地）
+> **最后更新**：2026-10-14（`pkg/retry` 已落地）
 
 ---
 
@@ -30,7 +30,7 @@
 | P1 | `pkg/httpx` | 统一响应体、分页结构、状态码映射 | 已完成 | `internal/shared/httpx` 薄封装挂接 `apperr` |
 | P1 | `pkg/metrics` | Prometheus 指标注册与常用指标 | 已完成 | HTTP RED + build_info；三端已挂 `/metrics` |
 | P1 | `pkg/tracing` | OpenTelemetry 初始化与 span 工具 | 已完成 | W3C 传播；与 RequestID / 信封 trace_id 对齐 |
-| P2 | `pkg/retry` | 重试、退避、可取消 | 待做 | |
+| P2 | `pkg/retry` | 重试、退避、可取消 | 已完成 | 默认挂接 `errors.RetryableOf`；`Permanent` 短路 |
 | P2 | `pkg/ratelimit` | 令牌桶/滑动窗口 | 待做 | 通用部分；业务策略仍在 platform/业务层 |
 | P2 | `pkg/id` | 分布式 ID（如 snowflake） | 待做 | 订单号等场景 |
 | P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 待做 | 不含业务鉴权策略 |
@@ -96,7 +96,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/retry` | 重试、退避、可取消 | P2 | 待做 |
+| `pkg/retry` | 重试、退避、可取消 | P2 | 已完成 |
 | `pkg/circuitbreaker` | 熔断 | P3 | 待做 |
 | `pkg/ratelimit` | 令牌桶/滑动窗口 | P2 | 待做 |
 | `pkg/clock` / `pkg/timeutil` | 可注入时钟、时区、业务日切 | P3 | 待做 |
@@ -131,6 +131,7 @@
 | health | `pkg/health` | 保持 |
 | metrics | `pkg/metrics` | 保持；`platform.MountMetrics` + cmd 装配 |
 | tracing | `pkg/tracing` | 保持；cmd Init + HTTPMiddleware；配置在 platform |
+| retry | `pkg/retry` | 保持；下游 I/O / worker 按需调用 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
@@ -154,5 +155,5 @@
 
 1. worker 消费路径挂 span；HTTP Client 出站注入（可并入 `pkg/httpclient`）。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
-3. 落地 `pkg/retry`、`pkg/id`，供 order / worker 使用。
+3. 落地 `pkg/id`；下游调用处接入 `pkg/retry`（order / worker）。
 4. 鉴权落地时补 `pkg/jwt`（或 `pkg/crypto`）+ `pkg/mask`。
