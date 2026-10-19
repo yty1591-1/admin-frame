@@ -50,6 +50,7 @@
 - 校验失败（401）与权限不足（403）使用不同业务码（`apperr`）。
 - 进程 `channel` 必须与令牌渠道一致；`auth.expected_channel` 与启动端不一致时拒绝启动。
 - **演示令牌**格式见 README，只存在于文档与 `demo_mode=true`。生产配置必须 `demo_mode: false`，在真实鉴权接入前进程会启动失败——这是预期行为，禁止用演示中间件“先顶上”。
+- JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token。
 
 ---
 

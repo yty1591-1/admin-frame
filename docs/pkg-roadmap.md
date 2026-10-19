@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/id` 已落地）
+> **最后更新**：2026-10-19（`pkg/jwt` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、crypto | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、logger、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -33,7 +33,7 @@
 | P2 | `pkg/retry` | 重试、退避、可取消 | 已完成 | 默认挂接 `errors.RetryableOf`；`Permanent` 短路 |
 | P2 | `pkg/ratelimit` | 令牌桶/滑动窗口 | 已完成 | 原语在 pkg；键策略 / 42900 映射留 platform |
 | P2 | `pkg/id` | 分布式 ID（如 snowflake） | 已完成 | 订单创建已接入；多实例须唯一 NodeID |
-| P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 待做 | 不含业务鉴权策略 |
+| P2 | `pkg/jwt` | JWT 签发/校验、claims 解析 | 已完成 | HS256/RS256；业务鉴权仍在 platform |
 | P2 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | 待做 | |
 | P3 | `pkg/db` | DB 连接池、事务 helper、健康检查 | 待做 | 接真实存储时 |
 | P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 待做 | |
@@ -75,7 +75,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/auth` / `pkg/jwt` | JWT 签发/校验、claims 解析（无业务策略） | P2 | 待做 |
+| `pkg/auth` / `pkg/jwt` | JWT 签发/校验、claims 解析（无业务策略） | P2 | 已完成（`pkg/jwt`） |
 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | P2 | 待做 |
 | `pkg/password` | 密码哈希（bcrypt/argon2） | P3 | 待做 |
 | `pkg/mask` | 日志/响应脱敏（手机号、身份证等） | P2 | 待做 |
@@ -134,12 +134,13 @@
 | retry | `pkg/retry` | 保持；下游 I/O / worker 按需调用 |
 | ratelimit | `pkg/ratelimit` | 保持；HTTP 中间件与键策略在 platform |
 | id | `pkg/id` | 保持；订单等场景注入 Generator；NodeID 按实例配置 |
+| jwt | `pkg/jwt` | 保持；三端独立 iss/aud/密钥由 platform 装配 |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `internal/platform/logger` | 同上 |
 | 中间件 / Server | `internal/platform` | 同上 |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
 | HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/分页/映射在 pkg；业务码挂接留 shared |
-| 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 工具可进 `pkg/jwt` |
+| 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---
 
@@ -158,4 +159,4 @@
 1. worker 消费路径挂 span；HTTP Client 出站注入（可并入 `pkg/httpclient`）。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
 3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
-4. 鉴权落地时补 `pkg/jwt`（或 `pkg/crypto`）+ `pkg/mask`。
+4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；补 `pkg/mask`。
