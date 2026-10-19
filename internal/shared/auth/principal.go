@@ -15,6 +15,9 @@ const (
 )
 
 // Principal 认证后的主体上下文。
+//
+// 请求链路中的 request_id / user_id / merchant_id / channel 原语见 pkg/contextx；
+// 鉴权成功后应由 middleware 同时写入 contextx，供非 auth 层只读使用。
 type Principal struct {
 	Channel    Channel
 	SubjectID  string

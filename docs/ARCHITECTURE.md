@@ -464,6 +464,7 @@ domain         → 仅 domain 内部 + 标准库（及极少数无 I/O 的纯工
 | `request_id` | 与日志、响应 envelope 一致 |
 
 - 同时透传：`trace_id` / `span_id`、截止时间。
+- 只读关联原语（`request_id` / `user_id` / `merchant_id` / `channel`）见 `pkg/contextx`；鉴权中间件在写入 Principal 时应同步注入，避免业务层依赖 auth 包仅取租户。
 - 禁止将 `context.Context` 存入结构体长期持有；禁止用 context 传递可选业务参数（应用显式参数）。
 
 ### 7.2 中间件顺序（建议）

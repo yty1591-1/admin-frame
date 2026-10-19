@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/logger` 已落地）
+> **最后更新**：2026-10-19（`pkg/contextx` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server、middleware |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server、middleware |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -59,7 +59,7 @@
 | `pkg/health` | 存活/就绪探针 | P0 | 已完成 |
 | `pkg/metrics` | Prometheus 指标注册、常用 counter/histogram | P1 | 已完成 |
 | `pkg/tracing` | OpenTelemetry / Jaeger 初始化与 span 工具 | P1 | 已完成 |
-| `pkg/contextx` | 从 context 取 requestID、user、tenant 等 | P2 | 待做 |
+| `pkg/contextx` | 从 context 取 requestID、user、tenant 等 | P2 | 已完成 |
 
 ### 3.2 HTTP / API 公共层
 
@@ -142,6 +142,7 @@
 | mq | `pkg/mq` | 保持；Kafka/NATS 实现接口后注入；Outbox 持久化在 infrastructure |
 | httpclient | `pkg/httpclient` | 保持；下游 HTTP 禁止 DefaultClient，统一本包 |
 | logger | `pkg/logger` | 保持；`platform.NewLogger` 薄封装；AccessLog 仍在 platform |
+| contextx | `pkg/contextx` | 保持；Auth 中间件注入；Principal 仍在 shared/auth |
 | 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
 | 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
 | 中间件 / Server | `internal/platform` | 同上 |

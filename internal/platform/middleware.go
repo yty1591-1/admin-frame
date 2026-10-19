@@ -13,17 +13,17 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
-	"github.com/admin-frame/admin-frame/pkg/logger"
+	"github.com/admin-frame/admin-frame/pkg/contextx"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
 // TraceIDFromContext 读取请求追踪 ID；缺失时返回空串。
 func TraceIDFromContext(ctx context.Context) string {
-	return logger.TraceIDFromContext(ctx)
+	return contextx.RequestID(ctx)
 }
 
 func withTraceID(ctx context.Context, id string) context.Context {
-	return logger.WithTraceID(ctx, id)
+	return contextx.WithRequestID(ctx, id)
 }
 
 func newID() string {
@@ -147,6 +147,13 @@ func DemoAuth(expected auth.Channel) func(http.Handler) http.Handler {
 			}
 			p.RequestID = traceID
 			ctx := auth.WithPrincipal(r.Context(), p)
+			ctx = contextx.WithIdentity(ctx, contextx.Identity{
+				RequestID:  p.RequestID,
+				UserID:     p.SubjectID,
+				MerchantID: p.MerchantID,
+				Channel:    string(p.Channel),
+				Roles:      p.Roles,
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
