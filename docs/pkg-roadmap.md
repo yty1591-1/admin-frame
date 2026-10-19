@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/idempotency` 已落地）
+> **最后更新**：2026-10-19（`pkg/password` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination、idempotency | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination、idempotency、password | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -77,7 +77,7 @@
 |--------|------|--------|------|
 | `pkg/auth` / `pkg/jwt` | JWT 签发/校验、claims 解析（无业务策略） | P2 | 已完成（`pkg/jwt`） |
 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | P2 | 已完成 |
-| `pkg/password` | 密码哈希（bcrypt/argon2） | P3 | 待做 |
+| `pkg/password` | 密码哈希（bcrypt/argon2） | P3 | 已完成 |
 | `pkg/mask` | 日志/响应脱敏（手机号、身份证等） | P2 | 待做 |
 | `pkg/rbac` | 权限判断原语（轻量；复杂策略放业务层） | P4 | 待做 |
 
@@ -152,6 +152,7 @@
 | HTTP 响应 | `pkg/httpx` + `internal/shared/httpx` | 信封/映射在 pkg；业务码挂接留 shared |
 | 分页/排序 | `pkg/pagination` | 保持；列表 Handler 直接 `pagination.Parse` / `ParseParams` |
 | 幂等 | `pkg/idempotency` | 保持；C 写路径 middleware + Store；跨实例由 platform 接 Redis/DB |
+| 密码哈希 | `pkg/password` | 保持；默认 argon2id；登录成功可 NeedsRehash 升级 |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---

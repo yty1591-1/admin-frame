@@ -52,6 +52,7 @@
 - **演示令牌**格式见 README，只存在于文档与 `demo_mode=true`。生产配置必须 `demo_mode: false`，在真实鉴权接入前进程会启动失败——这是预期行为，禁止用演示中间件“先顶上”。
 - JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token。
 - 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；密钥须来自环境变量或 KMS，禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
+- 账号密码哈希见 `pkg/password`（默认 argon2id，兼容 bcrypt）；禁止可逆加密存密码；日志禁止记录明文密码。
 
 ---
 

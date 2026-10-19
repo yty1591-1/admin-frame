@@ -3,7 +3,7 @@
 // 设计边界（对齐 SEC）：
 //   - 不得依赖 internal/；密钥须由调用方从环境变量 / KMS 注入，禁止硬编码
 //   - 默认仅 AES-256-GCM（AEAD）、HMAC-SHA256、Ed25519；不提供 ECB/CBC 等易误用模式
-//   - 密码哈希（bcrypt/argon2）见后续 pkg/password；JWT 见 pkg/jwt
+//   - 密码哈希（bcrypt/argon2id）见 pkg/password；JWT 见 pkg/jwt
 //   - 错误与返回值不得包含密钥或明文；调用方日志须脱敏（SEC-05）
 //
 // 密文格式（Seal / WrapKey）：
