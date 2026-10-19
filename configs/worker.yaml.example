@@ -17,6 +17,17 @@ db:
   driver: memory
   dsn: ""
 
+storage:
+  driver: memory
+  key_prefix: "local/worker/"
+  local:
+    root: ""
+  s3:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    force_path_style: false
+
 worker:
   poll_interval: 5s
 

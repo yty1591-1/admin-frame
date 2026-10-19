@@ -33,8 +33,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	store, err := platform.OpenStorage(ctx, cfg.Storage)
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
 	logger.Info("worker started",
 		"poll_interval", cfg.Worker.PollInterval.String(),
+		"storage_driver", cfg.Storage.Driver,
 		"version", version,
 		"commit", commit,
 		"build_time", buildTime,

@@ -69,6 +69,15 @@ cp configs/admin.yaml.example configs/admin.yaml
 | `ADMIN_FRAME_AUTH_EXPECTED_CHANNEL` | `auth.expected_channel` |
 | `ADMIN_FRAME_DB_DRIVER` | `db.driver` |
 | `ADMIN_FRAME_DB_DSN` | `db.dsn` |
+| `ADMIN_FRAME_STORAGE_DRIVER` | `storage.driver`（memory/local/s3/minio/oss/cos/obs） |
+| `ADMIN_FRAME_STORAGE_KEY_PREFIX` | `storage.key_prefix` |
+| `ADMIN_FRAME_STORAGE_LOCAL_ROOT` | `storage.local.root` |
+| `ADMIN_FRAME_STORAGE_S3_ENDPOINT` | `storage.s3.endpoint` |
+| `ADMIN_FRAME_STORAGE_S3_REGION` | `storage.s3.region` |
+| `ADMIN_FRAME_STORAGE_S3_BUCKET` | `storage.s3.bucket` |
+| `ADMIN_FRAME_STORAGE_ACCESS_KEY` | `storage.s3.access_key` |
+| `ADMIN_FRAME_STORAGE_SECRET_KEY` | `storage.s3.secret_key` |
+| `ADMIN_FRAME_STORAGE_S3_FORCE_PATH_STYLE` | `storage.s3.force_path_style` |
 | `ADMIN_FRAME_WORKER_POLL_INTERVAL` | `worker.poll_interval` |
 | `ADMIN_FRAME_TRACING_ENABLED` | `tracing.enabled` |
 | `ADMIN_FRAME_TRACING_EXPORTER` | `tracing.exporter`（none / otlp / stdout / noop） |
@@ -88,6 +97,7 @@ cp configs/admin.yaml.example configs/admin.yaml
 - `channel` ∈ {admin, biz, c, worker}  
 - `auth.expected_channel` 与 `channel` 一致（缺省时由默认值填齐）  
 - `db.driver` ∈ {memory, mysql, postgres}；非 memory 时 `db.dsn` 必填  
+- `storage.driver` ∈ {memory, local, s3, minio, oss, cos, obs}；`local` 时 `storage.local.root` 必填；`env=prod` 禁止 `memory`  
 - `log.level` ∈ {debug, info, warn, error}  
 - `env` 为空或 ∈ {local, dev, test, staging, prod}  
 - `env=prod` ⇒ `auth.demo_mode=false`  

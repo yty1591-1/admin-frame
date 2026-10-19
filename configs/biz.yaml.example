@@ -18,6 +18,17 @@ db:
   driver: memory
   dsn: ""
 
+storage:
+  driver: memory
+  key_prefix: "local/biz/"
+  local:
+    root: ""
+  s3:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    force_path_style: false
+
 tracing:
   enabled: true
   exporter: none

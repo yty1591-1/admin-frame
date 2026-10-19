@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/rbac` 已落地）
+> **最后更新**：2026-10-19（`pkg/storage` 已落地）
 
 ---
 
@@ -13,7 +13,7 @@
 | 放 `pkg/` | 放 `internal/shared` | 放 `internal/platform` |
 |-----------|----------------------|------------------------|
 | 与具体业务无关、可跨仓库复用 | 仅本仓库用的约定与类型 | 进程启动与依赖接线 |
-| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination、idempotency、password、mask、rbac | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
+| 如：health、httpx、metrics、tracing、retry、ratelimit、id、jwt、crypto、db、redis、cache、mq、httpclient、logger、contextx、middleware、validator、pagination、idempotency、password、mask、rbac、storage | 如：apperr、httpx（薄封装）、auth.Principal | 如：config、server |
 
 **经验法则**：换一个项目也能直接拷走 → `pkg`；一沾业务规则 → `internal`。
 
@@ -89,7 +89,7 @@
 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | P3 | 已完成 |
 | `pkg/mq` / `pkg/kafka` | 消息生产/消费通用封装 | P3 | 已完成（`pkg/mq`；Kafka 后接） |
 | `pkg/cache` | 本地/多级缓存抽象 | P3 | 已完成 |
-| `pkg/oss` / `pkg/storage` | 对象存储上传下载 | P4 | 待做 |
+| `pkg/oss` / `pkg/storage` | 对象存储上传下载（多云可插拔） | P4 | 已完成（`storage`+`s3/oss/cos/obs`；见 [`storage-s3-oss.md`](./storage-s3-oss.md)） |
 | `pkg/migrate` | 迁移工具薄封装（主逻辑在 `cmd/migrate`） | P4 | 待做 |
 
 ### 3.5 并发、时间与通用工具
@@ -155,6 +155,7 @@
 | 密码哈希 | `pkg/password` | 保持；默认 argon2id；登录成功可 NeedsRehash 升级 |
 | 脱敏 | `pkg/mask` | 保持；日志/Trace/审计摘要显式 Phone/IDCard/Text |
 | 权限点 | `pkg/rbac`；platform `RequirePermission` 薄封装 | 保持；角色表由 IAM/platform 装配；ABAC 留业务层 |
+| 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | 模块化 Open；L1 S3 兼容；L2 原生按需；装配见 platform |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---
@@ -178,3 +179,4 @@
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。
+8. 附件/导出业务 Handler 挂已装配的 `Store`/`Presigner`；L2 原生 SDK / multipart 见 [`storage-s3-oss.md`](./storage-s3-oss.md) M4/M5。

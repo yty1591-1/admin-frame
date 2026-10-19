@@ -20,6 +20,7 @@ type Config struct {
 	Log             LogConfig     `yaml:"log"`
 	Auth            AuthConfig    `yaml:"auth"`
 	DB              DBConfig      `yaml:"db"`
+	Storage         StorageConfig `yaml:"storage"`
 	Worker          WorkerConfig  `yaml:"worker"`
 	Tracing         TracingConfig `yaml:"tracing"`
 }
@@ -104,6 +105,9 @@ func (c *Config) applyDefaults() {
 	if c.DB.Driver == "" {
 		c.DB.Driver = "memory"
 	}
+	if c.Storage.Driver == "" {
+		c.Storage.Driver = "memory"
+	}
 	if c.Worker.PollInterval == 0 {
 		c.Worker.PollInterval = 5 * time.Second
 	}
@@ -156,6 +160,38 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("ADMIN_FRAME_DB_DSN"); v != "" {
 		c.DB.DSN = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_DRIVER"); v != "" {
+		c.Storage.Driver = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_KEY_PREFIX"); v != "" {
+		c.Storage.KeyPrefix = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_LOCAL_ROOT"); v != "" {
+		c.Storage.Local.Root = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_ENDPOINT"); v != "" {
+		c.Storage.S3.Endpoint = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_REGION"); v != "" {
+		c.Storage.S3.Region = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_BUCKET"); v != "" {
+		c.Storage.S3.Bucket = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_ACCESS_KEY"); v != "" {
+		c.Storage.S3.AccessKey = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_SECRET_KEY"); v != "" {
+		c.Storage.S3.SecretKey = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_FORCE_PATH_STYLE"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			c.Storage.S3.ForcePathStyle = true
+		case "0", "false", "no", "off":
+			c.Storage.S3.ForcePathStyle = false
+		}
 	}
 	if v := os.Getenv("ADMIN_FRAME_WORKER_POLL_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -229,6 +265,9 @@ func (c *Config) Validate() error {
 	}
 	if c.DB.Driver != "memory" && c.DB.DSN == "" {
 		return fmt.Errorf("db.dsn is required when driver is %s", c.DB.Driver)
+	}
+	if err := ValidateStorage(c.Env, c.Storage); err != nil {
+		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(c.Env)) {
 	case "", "local", "dev", "test", "staging", "prod":

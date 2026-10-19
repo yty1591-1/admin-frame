@@ -20,6 +20,37 @@ db:
   driver: memory
   dsn: ""
 
+# 对象存储（pkg/storage）；生产禁止 memory，密钥用环境变量注入。
+storage:
+  driver: memory                 # memory|local|s3|minio|oss|cos|obs
+  key_prefix: "local/admin/"
+  # max_object_bytes: 33554432
+  # presign_put_ttl: 15m
+  # presign_get_ttl: 15m
+  local:
+    root: ""                     # driver=local 时必填，如 ./data/objects
+  s3:
+    endpoint: ""                 # MinIO 例：http://127.0.0.1:9000
+    region: ""
+    bucket: ""
+    force_path_style: false
+    # access_key / secret_key → ADMIN_FRAME_STORAGE_ACCESS_KEY / SECRET_KEY
+  oss:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    native: false
+  cos:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    native: false
+  obs:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    native: false
+
 tracing:
   # 默认启用；exporter=none 只生成 TraceID 不导出（无需 Collector）
   # 生产可改为 otlp + endpoint（如 otel-collector:4318），内网可 insecure: true

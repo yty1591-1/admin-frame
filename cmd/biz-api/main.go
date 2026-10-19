@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/health"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
+	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
@@ -57,6 +58,12 @@ func main() {
 	met.MustRegisterBuildInfo(version, commit, buildTime)
 
 	ctx := context.Background()
+	store, err := platform.OpenStorage(ctx, cfg.Storage)
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
 	tp, err := tracing.Init(ctx, cfg.TracingOptions(version))
 	if err != nil {
 		log.Fatalf("tracing: %v", err)
@@ -72,6 +79,7 @@ func main() {
 	root := http.NewServeMux()
 	hh := health.New()
 	hh.Register("memory_repo", repo.Ping)
+	hh.Register("storage", func() error { return storage.Ready(context.Background(), store) })
 	platform.MountHealth(root, hh)
 	platform.MountVersion(root, platform.BuildInfo{
 		Service:   cfg.Service,
