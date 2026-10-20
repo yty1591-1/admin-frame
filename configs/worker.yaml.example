@@ -10,7 +10,8 @@ log:
   format: json
 
 auth:
-  demo_mode: true
+  # worker 不对外提供 HTTP，鉴权配置仅用于共享配置结构校验。
+  mode: demo
   expected_channel: worker
 
 db:

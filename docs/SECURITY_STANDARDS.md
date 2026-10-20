@@ -25,7 +25,7 @@
 | SEC-01 | 禁止将密钥、私钥、云 AK/SK、生产 DSN、完整会话 Token 提交到仓库（含历史） | `make secrets` / CI job `secrets`（gitleaks） |
 | SEC-02 | SQL 必须参数化；禁止拼接 SQL、shell 命令或把不可信输入传入 `exec` | gosec（G201/G202/G204）+ Review |
 | SEC-03 | 三端 Token 域、DTO、Handler 隔离；禁止 transport 跨端互引 | `make check-transport` + Review |
-| SEC-04 | `auth.demo_mode=true` 仅限本地/演示。为 false 时进程**必须拒绝启动**，不得静默使用 `DemoAuth` | `NewAuthMiddleware` + 单测 |
+| SEC-04 | `auth.mode=demo` 仅限 local/dev/test；prod/staging 必须 `jwt`。未显式配置 mode 时，生产环境回退 `jwt` 且缺少 issuer/audience/密钥即拒绝启动，不得静默使用演示令牌 | `Validate` + `NewAuthMiddleware` + 单测 |
 | SEC-05 | 日志、Trace、错误上报不得记录密钥、完整 Token、证件号、银行卡；手机号等 PII 须脱敏 | Review |
 | SEC-06 | C 端响应禁止包含运营内部字段（如成本、内部备注） | Review + 分端 DTO |
 | SEC-07 | 业务接口默认鉴权；仅 `/healthz`、`/readyz`、`/version` 可匿名 | Review |
@@ -49,12 +49,14 @@
 
 - 校验失败（401）与权限不足（403）使用不同业务码（`apperr`）。
 - 进程 `channel` 必须与令牌渠道一致；`auth.expected_channel` 与启动端不一致时拒绝启动。
-- **演示令牌**格式见 README，只存在于文档与 `demo_mode=true`。生产配置必须 `demo_mode: false`，在真实鉴权接入前进程会启动失败——这是预期行为，禁止用演示中间件“先顶上”。
-- JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token。
+- **演示令牌**格式见 README，仅在 `auth.mode=demo`（local/dev/test）可用；`prod`/`staging` 使用 demo 会直接启动失败。真实鉴权未接入时必须让进程失败，禁止用演示中间件“先顶上”。
+- **JWT 鉴权**由 `internal/security.NewJWTAuth` 实现：校验签名、`exp/nbf`（含 leeway）、`iss`、`aud`；`sub` 必填，`channel` 声明若存在必须与进程端别一致（防跨端复用）。API 进程只持有校验密钥/公钥，`alg` 推荐 RS256。
+- 令牌通过 `Authorization: Bearer <token>` 传入；失败统一 401，响应不区分具体校验原因，避免枚举。
+- JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token（`Config.LogValue` 已脱敏密钥）。
 - 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；密钥须来自环境变量或 KMS，禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
 - 账号密码哈希见 `pkg/password`（默认 argon2id，兼容 bcrypt）；禁止可逆加密存密码；日志禁止记录明文密码。
 - 日志 / Trace / 错误详情中的手机号、证件、银行卡、邮箱、Token 等须经 `pkg/mask` 脱敏后再输出（SEC-05）。
-- A/B 权限点判定见 `pkg/rbac`（默认拒绝；`resource:action`）；业务码 40300 由 platform/transport 映射；复杂 ABAC 留业务层。
+- A/B 权限点判定见 `pkg/rbac`（默认拒绝；`resource:action`）；业务码 40300 由 `internal/security.Authorizer` 映射；角色→权限点表由 cmd 注入（`rbac.Checker`），platform 不持有业务权限数据；复杂 ABAC 留业务层。
 
 ---
 
@@ -117,4 +119,4 @@ make ci               # 以上均包含
 - [ ] 模板中的安全项已勾选且与 diff 相符
 - [ ] 无新密钥、无跨端引用、无未标注调试端点
 - [ ] C 端 DTO 未增加内部字段
-- [ ] `demo_mode` 未在将用于生产的配置中打开
+- [ ] `auth.mode` 未在将用于生产的配置中设为 `demo`

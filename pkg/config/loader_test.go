@@ -172,7 +172,7 @@ func TestLoadEnvTypes(t *testing.T) {
 		"APP_ENABLED":                     "yes",
 		"APP_TAGS":                        " a , b ,, c ",
 		"APP_LOG_LEVEL":                   "error",
-		"APP_AUTH_DEMO_MODE":              "off",
+		"APP_AUTH_MODE":                   "demo",
 		"APP_STORAGE_S3_ENDPOINT":         "localhost:9000",
 		"APP_STORAGE_S3_FORCE_PATH_STYLE": "1",
 		"TEST_ONLY_CUSTOM":                "custom-value",
@@ -198,7 +198,7 @@ func TestLoadEnvTypes(t *testing.T) {
 	if cfg.Log.Level != "error" {
 		t.Fatalf("log.level=%q", cfg.Log.Level)
 	}
-	if cfg.Auth == nil || cfg.Auth.DemoMode {
+	if cfg.Auth == nil || cfg.Auth.Mode != "demo" {
 		t.Fatalf("auth=%+v", cfg.Auth)
 	}
 	if cfg.Storage.S3.Endpoint != "localhost:9000" || !cfg.Storage.S3.ForcePathStyle {

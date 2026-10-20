@@ -5,7 +5,6 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
-	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
@@ -24,7 +23,7 @@ func NewHandler(svc *app.OrderService) *Handler {
 
 // List 列举当前商户订单。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	if p.MerchantID == "" {
 		httpx.FromError(w, apperr.Forbidden("merchant context required"), traceID)
@@ -53,7 +52,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get 获取本商户订单；越权表现为 NotFound。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	o, err := h.svc.GetOrderForMerchant(r.Context(), r.PathValue("id"), p.MerchantID)
 	if err != nil {
@@ -65,7 +64,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Cancel 取消本商户订单。
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	o, err := h.svc.CancelOrder(r.Context(), app.CancelOrderCommand{
 		OrderID:    r.PathValue("id"),

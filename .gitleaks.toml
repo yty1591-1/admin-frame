@@ -14,7 +14,6 @@ paths = [
 ]
 regexes = [
   '''Bearer (admin|biz|c)\.[A-Za-z0-9._-]+''',
-  '''demo_mode''',
   # 测试用固定假 token（pkg/push/apns/client_test.go），并非真实凭据。
   '''^0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
   # pkg/password/argon2.go 的默认参数常量名被 generic-api-key 误判。

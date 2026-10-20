@@ -23,7 +23,8 @@
 | ID | 约束 | 门禁 |
 |----|------|------|
 | REL-01 | 所有外部 I/O（HTTP/RPC/SDK）必须使用带 deadline 的 `context`；禁止无超时的 `http.DefaultClient` / `http.Get` / `http.Post` 用于业务路径；出站 HTTP 优先 `pkg/httpclient` | `check-reliability.sh` + Review |
-| REL-02 | 进程优雅关闭超时可配置（`shutdown_timeout`）；`ListenAndServe` 必须尊重该超时 | 代码 + CFG |
+| REL-02 | 进程优雅关闭超时可配置（`shutdown_timeout`）；`platform.ListenAndServe` 必须尊重该超时，并在绑定端口成功后才输出 listening 日志 | 代码 + CFG |
+| REL-02b | HTTP Server 必须显式配置 `ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout` / `MaxHeaderBytes`；`ErrorLog` 接入 slog，`BaseContext` 继承进程 ctx | `internal/platform/server.go` + 单测 |
 | REL-03 | 重试仅针对幂等或明确可安全重试的错误；指数退避 + 抖动 + **有上限**；禁止热循环空转 | Review |
 | REL-04 | C 端创建类写操作与支付回调等必须幂等（`Idempotency-Key` 或业务唯一键）；消费者至少一次投递下须幂等 | API-11 + 单测 + Review |
 | REL-05 | 限流超限返回稳定业务码 **`42900`**（HTTP 429）；按端配置：C 最严、B 按商户、A 适中 | `apperr` + OpenAPI + Review |
@@ -43,6 +44,20 @@
 | Worker / 异步 | 独立超时与取消，不绑请求生命周期（除非明确需要） |
 
 默认建议（可配置，禁止魔法数散落业务逻辑）：入口 5–30s；下游 ≤ 入口的 50%–80%。
+
+### 3.1 入口请求链路（固定顺序）
+
+`platform.NewPipeline` 统一装配，禁止各 cmd 自行拼装或调换顺序：
+
+```text
+Recover → Trace → RequestID → Metrics → AccessLog → CORS
+→ Timeout → BodyLimit → RateLimit → Handler
+```
+
+- `http.timeout` 为软超时（注入 context deadline）；Handler 必须尊重 `ctx.Done()`。
+- `http.body_limit_bytes` 超限在进入 Handler 前返回 `40000`。
+- `rate_limit` 按 `channel + user + merchant + IP` 分桶，超限返回 429 + `42900`，并写 `Retry-After`。
+- CORS 仅对显式 `cors.allow_origins` 生效；`*` 与 `allow_credentials` 互斥。
 
 ---
 

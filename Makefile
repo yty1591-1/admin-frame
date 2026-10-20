@@ -91,6 +91,10 @@ check-transport:
 	bash scripts/ci/check-transport-imports.sh
 
 # SEC-08：禁止未标注的 pprof / Swagger。
+# CI-09 / PLAT-12：分层依赖门禁（transport 不得依赖 platform 等）。
+check-layering:
+	bash scripts/ci/check-layering.sh
+
 check-debug:
 	bash scripts/ci/check-debug-endpoints.sh
 
@@ -162,7 +166,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

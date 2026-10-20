@@ -50,7 +50,7 @@ func (s *StorageSet) Names() []string {
 	return out
 }
 
-// Close 关闭 Default 与全部命名桶。
+// Close 关闭 Default 与全部命名桶，返回首个错误。
 func (s *StorageSet) Close() error {
 	if s == nil {
 		return nil
@@ -88,6 +88,9 @@ func (s *StorageSet) ReadyAll(ctx context.Context) error {
 }
 
 // OpenStorageSet 打开默认桶与 storage.buckets 命名桶。
+//
+// 命名桶复用 StorageConfig（类型别名），字段映射只经 ToStorageConfig 一处，
+// 避免新增字段时多处漏改；命名桶内的 buckets 段不被支持。
 func OpenStorageSet(ctx context.Context, cfg StorageConfig) (*StorageSet, error) {
 	primary := cfg
 	primary.Buckets = nil
@@ -105,18 +108,11 @@ func OpenStorageSet(ctx context.Context, cfg StorageConfig) (*StorageSet, error)
 			_ = set.Close()
 			return nil, fmt.Errorf("storage.buckets name %q is reserved", name)
 		}
-		st, err := OpenStorage(ctx, StorageConfig{
-			Driver:         bcfg.Driver,
-			KeyPrefix:      bcfg.KeyPrefix,
-			MaxObjectBytes: bcfg.MaxObjectBytes,
-			PresignPutTTL:  bcfg.PresignPutTTL,
-			PresignGetTTL:  bcfg.PresignGetTTL,
-			Local:          bcfg.Local,
-			S3:             bcfg.S3,
-			OSS:            bcfg.OSS,
-			COS:            bcfg.COS,
-			OBS:            bcfg.OBS,
-		})
+		if len(bcfg.Buckets) > 0 {
+			_ = set.Close()
+			return nil, fmt.Errorf("storage.buckets.%s.buckets is not supported (nested buckets)", n)
+		}
+		st, err := OpenStorage(ctx, bcfg)
 		if err != nil {
 			_ = set.Close()
 			return nil, fmt.Errorf("storage.buckets.%s: %w", n, err)

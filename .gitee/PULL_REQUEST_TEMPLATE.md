@@ -15,7 +15,7 @@
 - [ ] 无密钥、生产连接串、完整 Token 进入代码、配置样例或日志
 - [ ] 新接口挂在正确端，且默认鉴权（健康检查白名单除外）
 - [ ] B 端校验 `merchant_id`；C 端校验资源归属；响应已裁剪内部字段
-- [ ] 无 SQL 拼接 / 命令注入；`auth.demo_mode` 未在生产配置中打开
+- [ ] 无 SQL 拼接 / 命令注入；生产配置未使用 `auth.mode=demo`
 - [ ] 未新增 pprof / Swagger（或已按 SEC-08 豁免并说明）
 
 ## API 自检（API_STANDARDS）
@@ -39,7 +39,7 @@
 ## 配置自检（CONFIG_STANDARDS）
 
 - [ ] 仅更新 `configs/*.yaml.example`；未提交含真实密钥的本地 yaml
-- [ ] 新配置项有默认值或 `Validate`；prod 未打开 `demo_mode`
+- [ ] 新配置项有默认值或 `Validate`；prod 未使用 `auth.mode=demo`
 
 ## 数据自检（DATA_STANDARDS）
 

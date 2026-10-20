@@ -154,7 +154,7 @@
 | 幂等 | `pkg/idempotency` | 保持；C 写路径 middleware + Store；跨实例由 platform 接 Redis/DB |
 | 密码哈希 | `pkg/password` | 保持；默认 argon2id；登录成功可 NeedsRehash 升级 |
 | 脱敏 | `pkg/mask` | 保持；日志/Trace/审计摘要显式 Phone/IDCard/Text |
-| 权限点 | `pkg/rbac`；platform `RequirePermission` 薄封装 | 保持；角色表由 IAM/platform 装配；ABAC 留业务层 |
+| 权限点 | `pkg/rbac`；`internal/security.Authorizer` 薄封装 | 保持；角色表由 cmd/IAM 装配；ABAC 留业务层 |
 | 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | L1 S3 兼容 + L2 原生（`native=true`）；多桶 / Lifecycle |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 | 熔断 | `pkg/circuitbreaker` | 保持；下游按 SLO 配置 Timeout/ReadyToTrip，`OnStateChange` 接指标 |
@@ -179,7 +179,7 @@
 1. worker 消费路径挂 span；下游 HTTP 统一改用 `pkg/httpclient`。
 2. C 端 `FromError` 可按端传入 `WithMessage` 笼统文案（`pkg/httpx` 已支持）。
 3. 下游调用处接入 `pkg/retry`（order / worker）；NodeID 纳入配置/环境变量。
-4. platform 用 `pkg/jwt` 替换 DemoAuth（`demo_mode=false`）；敏感字段落库可挂 `pkg/crypto`；日志字段统一 `pkg/mask`。
+4. platform 已用 `internal/security` + `pkg/jwt` 接入真实鉴权（`auth.mode=jwt`）；敏感字段落库可挂 `pkg/crypto`；日志字段统一 `pkg/mask`。
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。

@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部 Go 测试、CI 测试步骤与测试用配置  
 > **关联**：架构 §十三；安全见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`  
 > **执行方式**：`go test`（含 `-race`）+ 覆盖率门槛 + 必测场景检查 + MR 模板 + Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-20  
 > **变更方式**：修改本规范须同步更新 `scripts/ci/check-test-gates.sh`、流水线 test job 与架构 §十三，经架构 Owner Review
 
 ---
@@ -24,6 +24,8 @@
 |----|------|------|
 | TEST-01 | 每个业务 `internal/<domain>/domain` 包必须有同包 `*_test.go`，覆盖聚合/不变量等纯逻辑 | `scripts/ci/check-test-gates.sh` |
 | TEST-02 | 核心 domain 包语句覆盖率 ≥ **70%**（按包分别计量） | `check-test-gates.sh`（`TEST_DOMAIN_COVER_MIN`） |
+| TEST-02b | `internal/platform` 语句覆盖率 ≥ **70%**（配置校验、Server 加固、请求链路、鉴权装配） | `check-test-gates.sh`（`TEST_PLATFORM_COVER_MIN`） |
+| TEST-02c | `internal/security` 语句覆盖率 ≥ **80%**（JWT 校验、密钥轮换、授权中间件） | `check-test-gates.sh`（`TEST_SECURITY_COVER_MIN`） |
 | TEST-03 | **B 商户隔离**与 **C 越权（对外 NotFound）** 必须有可执行用例，且 CI 必跑 | 必测函数名 + `go test -run` |
 | TEST-04 | CI（Linux）/ `make test-ci` 必须带 `-race`；失败即阻断合并。本地 Windows 无 CGO 工具链时可降级并告警 | job `test` / `run-tests.sh` |
 | TEST-05 | 禁止在测试或 CI 中使用生产凭据、生产 DSN、生产库；仅用 memory / fixture / ephemeral 容器 | Review + CI-12；流水线禁注入 prod secrets |
@@ -59,11 +61,13 @@
 
 ## 5. 覆盖率
 
-- **门槛范围**：`go list ./internal/...` 中路径以 `/domain` 结尾的每个包。
-- **阈值**：默认 **70%** 语句覆盖；可通过环境变量 `TEST_DOMAIN_COVER_MIN` 上调，**禁止下调**除非 Owner + ADR。
+- **门槛范围 1**：`go list ./internal/...` 中路径以 `/domain` 结尾的每个包。
+- **门槛范围 2**：`./internal/platform`（进程装配、配置校验、Server 加固、请求链路）。
+- **门槛范围 3**：`./internal/security`（JWT 校验与密钥轮换、授权中间件）。
+- **阈值**：默认 domain / platform **70%**、security **80%** 语句覆盖；分别可用 `TEST_DOMAIN_COVER_MIN` / `TEST_PLATFORM_COVER_MIN` / `TEST_SECURITY_COVER_MIN` 上调，**禁止下调**除非 Owner + ADR。
 - **计量**：按包分别 `go test -coverprofile` 后读 `go tool cover -func` 的 `total`。
 - 纯接口/无语句包：无 `.go` 实现文件（仅 `doc.go` / 接口）时跳过覆盖率，但仍建议保留契约测试于 app 层。
-- 全仓 coverage 产物（`coverage.out`）继续上传 CI artifact，供趋势分析；**硬门槛仅 domain**。
+- 全仓 coverage 产物（`coverage.out`）继续上传 CI artifact，供趋势分析；**硬门槛为 domain、platform 与 security**。
 
 ---
 

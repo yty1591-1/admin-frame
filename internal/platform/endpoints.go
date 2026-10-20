@@ -16,13 +16,21 @@ type BuildInfo struct {
 }
 
 // MountHealth 注册存活/就绪探针（无需鉴权）。
+//
+// mux 或 h 为 nil 时直接返回，便于测试与可选依赖场景。
 func MountHealth(mux *http.ServeMux, h *health.Handler) {
+	if mux == nil || h == nil {
+		return
+	}
 	mux.HandleFunc("GET /healthz", h.Liveness())
 	mux.HandleFunc("GET /readyz", h.Readiness())
 }
 
 // MountVersion 暴露构建信息（service / version / commit / build_time）。
 func MountVersion(mux *http.ServeMux, info BuildInfo) {
+	if mux == nil {
+		return
+	}
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(info)

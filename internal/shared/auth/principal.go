@@ -1,6 +1,9 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // Channel 业务端别，与架构文档一致。
 type Channel string
@@ -13,6 +16,12 @@ const (
 	// ChannelC 消费者端（C 端）。
 	ChannelC Channel = "c"
 )
+
+// PermissionMiddleware 是权限中间件工厂：给定权限点返回 HTTP 中间件。
+//
+// 由 cmd 在装配期注入（如 security.Authorizer.Require），使 transport 只依赖
+// shared 契约，而不必 import internal/platform（ARCHITECTURE §6.1）。
+type PermissionMiddleware func(permission string) func(http.Handler) http.Handler
 
 // Principal 认证后的主体上下文。
 //

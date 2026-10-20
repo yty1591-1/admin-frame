@@ -69,6 +69,7 @@ case "${job}" in
     ;;
   arch)
     bash scripts/ci/check-transport-imports.sh
+    bash scripts/ci/check-layering.sh
     bash scripts/ci/check-migrations.sh
     bash scripts/ci/check-reliability.sh
     bash scripts/ci/check-observability.sh

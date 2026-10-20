@@ -6,7 +6,6 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
-	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
@@ -25,7 +24,7 @@ func NewHandler(svc *app.OrderService) *Handler {
 
 // Create 创建订单；必须携带 Idempotency-Key（API-11）。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 
 	idemKey := r.Header.Get("Idempotency-Key")
@@ -55,7 +54,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List 列举当前用户订单（响应已裁剪内部字段）。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	q, err := pagination.Parse(r)
 	if err != nil {
@@ -80,7 +79,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get 获取当前用户订单；越权表现为 NotFound。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	o, err := h.svc.GetOrderForUser(r.Context(), r.PathValue("id"), p.SubjectID)
 	if err != nil {
@@ -92,7 +91,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Cancel 取消当前用户订单。
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	p := auth.MustFromContext(r.Context())
 	o, err := h.svc.CancelOrder(r.Context(), app.CancelOrderCommand{
 		OrderID: r.PathValue("id"),

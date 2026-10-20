@@ -5,7 +5,6 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/order/app"
 	"github.com/admin-frame/admin-frame/internal/order/domain"
-	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -22,7 +21,7 @@ func NewHandler(svc *app.OrderService) *Handler {
 
 // List 列举订单，支持 merchant_id / 分页查询参数。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	q, err := pagination.Parse(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -47,7 +46,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get 按 ID 获取订单（含内部字段）。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	id := r.PathValue("id")
 	o, err := h.svc.GetOrder(r.Context(), id)
 	if err != nil {
@@ -59,7 +58,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Cancel 取消订单（管理端，不强制商户/用户归属）。
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	id := r.PathValue("id")
 	o, err := h.svc.CancelOrder(r.Context(), app.CancelOrderCommand{OrderID: id})
 	if err != nil {

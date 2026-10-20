@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,44 +29,38 @@ type StorageConfig struct {
 	Lifecycle storage.LifecycleConfig `yaml:"lifecycle"`
 
 	// Buckets 命名附加桶（公有静态 / 私有附件等）；键不可为 default。
-	Buckets map[string]BucketConfig `yaml:"buckets"`
+	// 命名桶内不允许再次声明 buckets（ValidateStorage 会拒绝）。
+	Buckets map[string]StorageConfig `yaml:"buckets"`
 }
 
-// BucketConfig 命名桶配置（与顶层 storage 同形，可独立 driver/lifecycle）。
-type BucketConfig struct {
-	Driver         string        `yaml:"driver"`
-	KeyPrefix      string        `yaml:"key_prefix"`
-	MaxObjectBytes int64         `yaml:"max_object_bytes"`
-	PresignPutTTL  time.Duration `yaml:"presign_put_ttl"`
-	PresignGetTTL  time.Duration `yaml:"presign_get_ttl"`
+// BucketConfig 是命名桶配置的类型别名。
+//
+// 与顶层 storage 完全同形，只是语义上位于 storage.buckets.<name>；
+// 复用同一类型可保证字段映射只有一份实现，新增字段不会漏改（PLAT-09）。
+type BucketConfig = StorageConfig
 
-	Local storage.LocalConfig `yaml:"local"`
-	S3    storage.S3Config    `yaml:"s3"`
-	OSS   storage.OSSConfig   `yaml:"oss"`
-	COS   storage.COSConfig   `yaml:"cos"`
-	OBS   storage.OBSConfig   `yaml:"obs"`
-
-	Lifecycle storage.LifecycleConfig `yaml:"lifecycle"`
-}
-
-// ToStorageConfig 转为 pkg/storage.Config。
-func (c StorageConfig) ToStorageConfig() storage.Config {
-	return storage.Config{
-		Driver:         c.Driver,
-		KeyPrefix:      c.KeyPrefix,
-		MaxObjectBytes: c.MaxObjectBytes,
-		PresignPutTTL:  c.PresignPutTTL,
-		PresignGetTTL:  c.PresignGetTTL,
-		Local:          c.Local,
-		S3:             c.S3,
-		OSS:            c.OSS,
-		COS:            c.COS,
-		OBS:            c.OBS,
+// LogValue 实现 slog.LogValuer：只输出非敏感字段。
+//
+// 各云厂商的 access_key / secret_key / session_token 不进入日志（SEC-05）。
+func (c StorageConfig) LogValue() slog.Value {
+	names := make([]string, 0, len(c.Buckets))
+	for name := range c.Buckets {
+		names = append(names, name)
 	}
+	sort.Strings(names)
+	return slog.GroupValue(
+		slog.String("driver", c.Driver),
+		slog.String("key_prefix", c.KeyPrefix),
+		slog.Int64("max_object_bytes", c.MaxObjectBytes),
+		slog.Bool("lifecycle_apply_on_start", c.Lifecycle.ApplyOnStart),
+		slog.Any("buckets", names),
+	)
 }
 
 // ToStorageConfig 转为 pkg/storage.Config。
-func (c BucketConfig) ToStorageConfig() storage.Config {
+//
+// 只映射连接参数；Buckets / Lifecycle 由 OpenStorageSet 单独处理。
+func (c StorageConfig) ToStorageConfig() storage.Config {
 	return storage.Config{
 		Driver:         c.Driver,
 		KeyPrefix:      c.KeyPrefix,
@@ -99,6 +95,9 @@ func ValidateStorage(env string, cfg StorageConfig) error {
 			return fmt.Errorf("storage.buckets name %q is reserved", name)
 		}
 		label := "storage.buckets." + n
+		if len(b.Buckets) > 0 {
+			return fmt.Errorf("%s.buckets is not supported (nested buckets)", label)
+		}
 		if err := validateOneStorage(env, label, b.Driver, b.Local.Root, b.Lifecycle); err != nil {
 			return err
 		}
@@ -106,6 +105,7 @@ func ValidateStorage(env string, cfg StorageConfig) error {
 	return nil
 }
 
+// validateOneStorage 校验单桶驱动的枚举、环境互斥与生命周期支持情况。
 func validateOneStorage(env, label, driver, localRoot string, life storage.LifecycleConfig) error {
 	d := strings.ToLower(strings.TrimSpace(driver))
 	if d == "" {
@@ -119,7 +119,7 @@ func validateOneStorage(env, label, driver, localRoot string, life storage.Lifec
 	if strings.EqualFold(env, "prod") && d == "memory" {
 		return fmt.Errorf("%s.driver=memory is forbidden when env=prod", label)
 	}
-	if d == "local" && localRoot == "" {
+	if d == "local" && strings.TrimSpace(localRoot) == "" {
 		return fmt.Errorf("%s.local.root is required when driver=local", label)
 	}
 	if err := storage.ValidateLifecycleRules(life.Rules); err != nil {

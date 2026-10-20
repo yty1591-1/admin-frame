@@ -61,8 +61,8 @@ else
   echo "    OK: ldflags version injection"
 fi
 
-WIRING="internal/platform/wiring.go"
-if [[ -f "${WIRING}" ]] && grep -q 'BuildInfo' "${WIRING}" && grep -q 'build_time' "${WIRING}"; then
+ENDPOINTS="internal/platform/endpoints.go"
+if [[ -f "${ENDPOINTS}" ]] && grep -q 'BuildInfo' "${ENDPOINTS}" && grep -q 'build_time' "${ENDPOINTS}"; then
   echo "    OK: /version exposes build info"
 else
   echo "ERROR: MountVersion must expose commit/build_time via BuildInfo (RELS-03)" >&2

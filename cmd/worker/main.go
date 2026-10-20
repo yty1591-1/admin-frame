@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/order/infrastructure/eventbus"
 	"github.com/admin-frame/admin-frame/internal/platform"
+
+	// 消费端按需访问对象存储；不需要时可移除该 import 以缩小二进制。
+	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -22,22 +27,35 @@ var (
 func main() {
 	configPath := flag.String("config", "configs/worker.yaml", "config file path")
 	flag.Parse()
+	if err := run(*configPath); err != nil {
+		log.Printf("worker: %v", err)
+		os.Exit(1)
+	}
+}
 
-	cfg, err := platform.LoadConfig(*configPath)
+// run 装配 worker 依赖并阻塞消费，直到收到退出信号。
+//
+// 使用 error 返回而非 log.Fatal，保证 defer（storage.Close / stop）一定执行。
+func run(configPath string) error {
+	cfg, err := platform.LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
 	logger := platform.NewLogger(cfg)
 	bus := eventbus.NewMemoryBus(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	store, err := platform.OpenStorage(ctx, cfg.Storage)
 	if err != nil {
-		log.Fatalf("storage: %v", err)
+		return fmt.Errorf("storage: %w", err)
 	}
-	defer stop()
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			logger.Warn("storage close", "err", closeErr)
+		}
+	}()
 
 	logger.Info("worker started",
 		"poll_interval", cfg.Worker.PollInterval.String(),
@@ -53,7 +71,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("worker shutting down")
-			return
+			return nil
 		case <-ticker.C:
 			events := bus.Drain()
 			for _, e := range events {

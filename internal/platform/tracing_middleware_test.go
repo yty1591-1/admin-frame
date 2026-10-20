@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
@@ -22,7 +23,7 @@ func TestRequestIDReusesOTelTraceID(t *testing.T) {
 
 	var got string
 	h := platform.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = platform.TraceIDFromContext(r.Context())
+		got = httpx.TraceIDFromContext(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}),
 		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer("http.server"))),
@@ -51,7 +52,7 @@ func TestRequestIDKeepsIncomingHeader(t *testing.T) {
 
 	var got string
 	h := platform.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = platform.TraceIDFromContext(r.Context())
+		got = httpx.TraceIDFromContext(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}),
 		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer("http.server"))),

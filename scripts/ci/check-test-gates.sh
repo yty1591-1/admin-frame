@@ -20,6 +20,8 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 COVER_MIN="${TEST_DOMAIN_COVER_MIN:-70}"
+PLATFORM_COVER_MIN="${TEST_PLATFORM_COVER_MIN:-70}"
+SECURITY_COVER_MIN="${TEST_SECURITY_COVER_MIN:-80}"
 REQUIRED_TESTS=(TestMerchantIsolation TestUserOwnership)
 FAIL=0
 
@@ -85,6 +87,40 @@ for pkg in "${DOMAIN_PKGS[@]}"; do
     echo "    OK: ${pkg} ${pct}%"
   fi
 done
+
+echo "==> TEST-02b: internal/platform coverage >= ${PLATFORM_COVER_MIN}% (per package)"
+tmp="$(mktemp)"
+if ! go test -count=1 -coverprofile="${tmp}" ./internal/platform >/dev/null; then
+  echo "ERROR: go test failed for ./internal/platform (TEST-02b)" >&2
+  rm -f "${tmp}"
+  FAIL=1
+else
+  pct="$(go tool cover -func="${tmp}" | awk '/^total:/{gsub(/%/,"",$3); print $3; exit}')"
+  rm -f "${tmp}"
+  if [[ -z "${pct}" ]] || ! awk -v p="${pct}" -v m="${PLATFORM_COVER_MIN}" 'BEGIN{exit !(p+0 >= m+0)}'; then
+    echo "ERROR: ./internal/platform coverage ${pct}% < ${PLATFORM_COVER_MIN}% (TEST-02b)" >&2
+    FAIL=1
+  else
+    echo "    OK: internal/platform ${pct}%"
+  fi
+fi
+
+echo "==> TEST-02c: internal/security coverage >= ${SECURITY_COVER_MIN}% (per package)"
+tmp="$(mktemp)"
+if ! go test -count=1 -coverprofile="${tmp}" ./internal/security >/dev/null; then
+  echo "ERROR: go test failed for ./internal/security (TEST-02c)" >&2
+  rm -f "${tmp}"
+  FAIL=1
+else
+  pct="$(go tool cover -func="${tmp}" | awk '/^total:/{gsub(/%/,"",$3); print $3; exit}')"
+  rm -f "${tmp}"
+  if [[ -z "${pct}" ]] || ! awk -v p="${pct}" -v m="${SECURITY_COVER_MIN}" 'BEGIN{exit !(p+0 >= m+0)}'; then
+    echo "ERROR: ./internal/security coverage ${pct}% < ${SECURITY_COVER_MIN}% (TEST-02c)" >&2
+    FAIL=1
+  else
+    echo "    OK: internal/security ${pct}%"
+  fi
+fi
 
 echo "==> TEST-03: required isolation / ownership tests must exist"
 for name in "${REQUIRED_TESTS[@]}"; do

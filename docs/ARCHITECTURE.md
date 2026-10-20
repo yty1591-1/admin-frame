@@ -322,30 +322,27 @@ internal/
 
 ```go
 func main() {
-    cfg, err := platform.LoadConfig("configs/admin.yaml") // 1. 加载 + 默认值 + env + Validate
-    if err != nil {
-        log.Fatal(err)
-    }
-    logger := platform.NewLogger(cfg)            // 2. 平台能力
-    db := platform.NewDB(cfg.DB)                 // 3. 基础设施
-    defer db.Close()
-
-    repo := persistence.NewOrderRepository(db)   // 4. 装配
-    svc := app.NewOrderService(repo)
-    h := admintransport.NewOrderHandler(svc)     // 仅 A 端 transport
-    r := admintransport.NewRouter(h, adminAuth)  // 5. 启动
-
-    server := &http.Server{Addr: cfg.Addr, Handler: r}
-    go func() {
-        <-signalChan
-        ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-        defer cancel()
-        _ = server.Shutdown(ctx)
-    }()
-    if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-        logger.Error("server stopped", "err", err)
+    if err := run(); err != nil {
+        log.Printf("admin-api: %v", err) // 错误出口唯一：main 只决定退出码
         os.Exit(1)
     }
+}
+
+// run 只做装配声明；配置加载、鉴权、探针、请求链路与优雅关闭由 platform.Run 负责。
+func run() error {
+    return platform.Run(context.Background(), platform.Options{
+        ConfigPath:    "configs/admin.yaml",
+        Build:         platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+        NewAuthorizer: newAuthorizer,
+        Register: func(deps *platform.Deps, mux *http.ServeMux) error {
+            repo := persistence.NewMemoryRepository()       // 3. 基础设施
+            deps.Health.Register("repo", repo.Ping)         //    就绪探针
+            svc := app.NewOrderService(repo, eventbus.NewMemoryBus(deps.Logger))
+            // 4. 只注册本端 transport；权限中间件由 cmd 注入
+            admintransport.Register(mux, admintransport.NewHandler(svc), deps.AuthMW, deps.RequirePermission)
+            return nil
+        },
+    })
 }
 ```
 
@@ -354,6 +351,7 @@ func main() {
 - 启动失败（配置非法、关键依赖不可达）必须非零退出。
 - 收到 `SIGTERM`/`SIGINT` 后停止接新请求，排空进行中请求，关闭 DB/MQ 连接。
 - 关闭超时可配置，默认建议 15–30s。
+- **禁止** `defer` 配 `os.Exit`：`os.Exit` 不执行 defer，资源不会释放；错误一律向上返回。
 
 ### 5.2 transport —— 接入层（按端）
 
@@ -395,9 +393,22 @@ func main() {
 
 ### 5.6 platform —— 平台能力层
 
-**内容**：配置加载、日志、指标、链路追踪、健康检查、通用中间件、（可选）轻量 DI。
+**内容**：配置加载、日志、指标、链路追踪、健康检查、通用中间件、鉴权装配、进程生命周期（`platform.Run`）。
 
 **约束**：不承载业务语义；不反向依赖业务层；可提供按 channel 区分的 Auth 中间件工厂，但权限业务规则仍在 app / IAM 域。
+
+**不包含**：角色/权限点表（由 cmd 构造 `rbac.Checker` 注入）、演示令牌解析（`internal/security`）、云厂商 SDK（按需在 cmd import）。
+
+**包拆分触发条件**（满足任一即启动拆分，见 PLAT-15）：
+
+1. 单包非测试文件 > 20 个，或单文件 > 500 行；
+2. 出现两组互不相关的能力（如「配置 + 日志」与「HTTP 生命周期」），且任一端只用到其中一组；
+3. 单元测试需要 2 个以上进程级 fake，说明职责边界不清；
+4. 新增能力必须在 `init()` 注册全局状态（当前已禁止）。
+
+拆分目标形态：`internal/platform/{config,observability,httpserver,authn}`；拆包前须保持现有导出 API 兼容一个版本，并同步更新 `scripts/ci/check-layering.sh`。
+
+**配置热更新**：`NewConfigLoader` 仅为未来长驻进程预留，当前所有 cmd 都在启动期一次性 `LoadConfig`。启用热更新前必须定义可热更字段白名单（禁止 `addr` / `auth` / `storage.driver` 等需重建资源的字段）并补 ADR。
 
 ### 5.7 pkg —— 公共库
 
@@ -416,7 +427,8 @@ cmd            → 任意层（仅装配本端）
 transport      → app、domain、shared（DTO 转换）；禁止 import 他端 transport
 app            → domain、shared
 infrastructure → domain（实现接口）
-platform       → 无业务依赖
+platform       → shared、security、pkg（无业务域依赖）
+security       → shared、pkg（无 platform、无业务域依赖）
 domain         → 仅 domain 内部 + 标准库（及极少数无 I/O 的纯工具）
 ```
 
@@ -426,6 +438,7 @@ domain         → 仅 domain 内部 + 标准库（及极少数无 I/O 的纯工
 |---|---|
 | `domain` 导入 `app` / `transport` / `infrastructure` / `platform` | 分层倒置 |
 | `transport` 直接导入 `infrastructure` | 绕过应用层 |
+| `transport` 导入 `internal/platform` | 接入层应只依赖 shared 契约；由 `scripts/ci/check-layering.sh` 阻断 |
 | `app` 导入具体仓储实现 | 应依赖接口 |
 | `transport/admin` 导入 `transport/biz` 或 `transport/c` | 端隔离破坏 |
 | 领域之间互相 import 实现包（如 `order` → `user/app`） | 见 6.3 |
@@ -887,7 +900,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - 来源：`configs/<cmd>.yaml.example` + 环境变量（`ADMIN_FRAME_*`）+（可选）配置中心。
 - 优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须 ADR 并更新专文）。
 - 各 cmd **独立监听地址/端口**与限流等段；DB/Redis 等共享连接参数可通过公共配置段或环境变量复用，由 `platform` 统一加载。
-- 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项（含 `env=prod` ⇒ `demo_mode=false`），失败则拒绝启动。
+- 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项（含 `env=prod` ⇒ `auth.mode != demo`），失败则拒绝启动。
 - 禁止业务代码硬编码地址、超时、功能开关。
 
 ### 17.2 多环境

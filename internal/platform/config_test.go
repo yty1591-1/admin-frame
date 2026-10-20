@@ -12,18 +12,18 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
-func TestValidateRejectsProdDemoMode(t *testing.T) {
+func TestValidateRejectsProdAuthModeDemo(t *testing.T) {
 	cfg := &platform.Config{
 		Env:     "prod",
 		Service: "c-api",
 		Channel: "c",
 		Addr:    ":8083",
-		Auth:    platform.AuthConfig{DemoMode: true, ExpectedChannel: "c"},
+		Auth:    platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "c"},
 		DB:      platform.DBConfig{Driver: "memory"},
 		Log:     platform.LogConfig{Level: "info"},
 	}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected error for prod+demo_mode")
+		t.Fatal("expected error for prod + auth.mode=demo")
 	}
 }
 
@@ -50,7 +50,7 @@ channel: c
 addr: ":8083"
 env: local
 auth:
-  demo_mode: true
+  mode: demo
   expected_channel: c
 db:
   driver: memory
@@ -113,7 +113,7 @@ func TestLoadDBConfigEmptyPath(t *testing.T) {
 	}
 }
 
-func TestLoadConfigProdDemoModeFromEnv(t *testing.T) {
+func TestLoadConfigRejectsProdAuthModeDemoFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
 	content := []byte(`
@@ -121,7 +121,7 @@ service: c-api
 channel: c
 addr: ":8083"
 auth:
-  demo_mode: true
+  mode: demo
   expected_channel: c
 db:
   driver: memory
@@ -132,9 +132,22 @@ log:
 		t.Fatal(err)
 	}
 	t.Setenv("ADMIN_FRAME_ENV", "prod")
-	t.Setenv("ADMIN_FRAME_AUTH_DEMO_MODE", "true")
+	t.Setenv("ADMIN_FRAME_AUTH_MODE", "demo")
 	if _, err := platform.LoadConfig(path); err == nil {
 		t.Fatal("expected validate failure")
+	}
+}
+
+// TestLoadConfigRejectsLegacyDemoModeField 验证已删除的 auth.demo_mode 不再被兼容：
+// 严格解析会把它当作未知字段并拒绝启动（CFG-04）。
+func TestLoadConfigRejectsLegacyDemoModeField(t *testing.T) {
+	path := writeConfig(t, "legacy.yaml", "service: c-api\n"+
+		"channel: c\n"+
+		"auth:\n"+
+		"  demo_mode: true\n")
+	_, err := platform.LoadConfig(path)
+	if !errors.Is(err, config.ErrUnknownField) {
+		t.Fatalf("err=%v want ErrUnknownField", err)
 	}
 }
 

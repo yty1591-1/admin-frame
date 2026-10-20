@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/files/app"
-	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
@@ -27,7 +26,7 @@ func NewHandler(svc *app.Service) *Handler {
 
 // PresignUpload POST /admin/v1/files/uploads/presign
 func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	var req PresignUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.FromError(w, apperr.BadRequest("invalid json"), traceID)
@@ -43,7 +42,7 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 
 // Upload POST /admin/v1/files （multipart: file + category）
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadFormBytes)
 	//nolint:gosec // G120 的污点分析不识别 MaxBytesReader，请求体大小已在上方限制
 	if err := r.ParseMultipartForm(maxUploadFormBytes); err != nil {
@@ -76,7 +75,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 // PresignDownload GET /admin/v1/files/downloads/presign?key=
 func (h *Handler) PresignDownload(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
 		httpx.FromError(w, apperr.BadRequest("key is required"), traceID)
@@ -92,7 +91,7 @@ func (h *Handler) PresignDownload(w http.ResponseWriter, r *http.Request) {
 
 // Download GET /admin/v1/files/object?key=
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
-	traceID := platform.TraceIDFromContext(r.Context())
+	traceID := httpx.TraceIDFromContext(r.Context())
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
 		httpx.FromError(w, apperr.BadRequest("key is required"), traceID)

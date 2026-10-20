@@ -38,70 +38,60 @@ else
   FAIL=1
 fi
 
-echo "==> Tracing: API mains must Init pkg/tracing and mount HTTPMiddleware"
-for cmd in admin-api biz-api c-api; do
-  main="cmd/${cmd}/main.go"
-  if [[ ! -f "${main}" ]]; then
-    echo "ERROR: missing ${main}" >&2
-    FAIL=1
-    continue
-  fi
-  if ! grep -q 'tracing.Init' "${main}"; then
-    echo "ERROR: ${main} missing tracing.Init" >&2
-    FAIL=1
-  else
-    echo "    OK: ${cmd} tracing.Init"
-  fi
-  if ! grep -q 'tracing.HTTPMiddleware' "${main}"; then
-    echo "ERROR: ${main} missing tracing.HTTPMiddleware" >&2
-    FAIL=1
-  else
-    echo "    OK: ${cmd} tracing.HTTPMiddleware"
-  fi
-done
-
-echo "==> OBS-02/04: API mains must MountHealth, MountVersion, MountMetrics"
-for cmd in admin-api biz-api c-api; do
-  main="cmd/${cmd}/main.go"
-  if [[ ! -f "${main}" ]]; then
-    echo "ERROR: missing ${main}" >&2
-    FAIL=1
-    continue
-  fi
-  if ! grep -q 'MountHealth' "${main}"; then
-    echo "ERROR: ${main} missing MountHealth (OBS-02)" >&2
-    FAIL=1
-  else
-    echo "    OK: ${cmd} MountHealth"
-  fi
-  if ! grep -q 'MountVersion' "${main}"; then
-    echo "ERROR: ${main} missing MountVersion (OBS-04)" >&2
-    FAIL=1
-  else
-    echo "    OK: ${cmd} MountVersion"
-  fi
-  if ! grep -q 'MountMetrics' "${main}"; then
-    echo "ERROR: ${main} missing MountMetrics (Prometheus scrape)" >&2
-    FAIL=1
-  else
-    echo "    OK: ${cmd} MountMetrics"
-  fi
-done
-
-echo "==> OBS-02: wiring registers /healthz, /readyz, /metrics"
-WIRING="internal/platform/wiring.go"
-if [[ -f "${WIRING}" ]] \
-  && grep -q '/healthz' "${WIRING}" \
-  && grep -q '/readyz' "${WIRING}"; then
-  echo "    OK: healthz/readyz routes"
+echo "==> Tracing: platform bootstrap must Init pkg/tracing and mount HTTPMiddleware"
+BOOTSTRAP="internal/platform/bootstrap.go"
+PIPELINE="internal/platform/pipeline.go"
+if grep -q 'tracing.Init' "${BOOTSTRAP}"; then
+  echo "    OK: bootstrap tracing.Init"
 else
-  echo "ERROR: ${WIRING} must register /healthz and /readyz (OBS-02)" >&2
+  echo "ERROR: ${BOOTSTRAP} missing tracing.Init" >&2
   FAIL=1
 fi
-if [[ -f "${WIRING}" ]] && grep -q '/metrics' "${WIRING}"; then
+if grep -q 'tracing.HTTPMiddleware' "${PIPELINE}"; then
+  echo "    OK: pipeline tracing.HTTPMiddleware"
+else
+  echo "ERROR: ${PIPELINE} missing tracing.HTTPMiddleware" >&2
+  FAIL=1
+fi
+for cmd in admin-api biz-api c-api; do
+  main="cmd/${cmd}/main.go"
+  if [[ ! -f "${main}" ]]; then
+    echo "ERROR: missing ${main}" >&2
+    FAIL=1
+    continue
+  fi
+  if ! grep -q 'platform.Run' "${main}"; then
+    echo "ERROR: ${main} must delegate lifecycle to platform.Run (PLAT-08)" >&2
+    FAIL=1
+  else
+    echo "    OK: ${cmd} platform.Run"
+  fi
+done
+
+echo "==> OBS-02/04: platform bootstrap must MountHealth, MountVersion, MountMetrics"
+for symbol in MountHealth MountVersion MountMetrics; do
+  if ! grep -q "${symbol}" "${BOOTSTRAP}"; then
+    echo "ERROR: ${BOOTSTRAP} missing ${symbol}" >&2
+    FAIL=1
+  else
+    echo "    OK: bootstrap ${symbol}"
+  fi
+done
+
+echo "==> OBS-02: endpoints registers /healthz, /readyz, /metrics"
+ENDPOINTS="internal/platform/endpoints.go"
+if [[ -f "${ENDPOINTS}" ]] \
+  && grep -q '/healthz' "${ENDPOINTS}" \
+  && grep -q '/readyz' "${ENDPOINTS}"; then
+  echo "    OK: healthz/readyz routes"
+else
+  echo "ERROR: ${ENDPOINTS} must register /healthz and /readyz (OBS-02)" >&2
+  FAIL=1
+fi
+if [[ -f "${ENDPOINTS}" ]] && grep -q '/metrics' "${ENDPOINTS}"; then
   echo "    OK: metrics route"
 else
-  echo "ERROR: ${WIRING} must register /metrics" >&2
+  echo "ERROR: ${ENDPOINTS} must register /metrics" >&2
   FAIL=1
 fi
 

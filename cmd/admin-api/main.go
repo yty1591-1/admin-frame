@@ -4,21 +4,12 @@ import (
 	"context"
 	"flag"
 	"log"
-	"net/http"
 	"os"
 
-	filesapp "github.com/admin-frame/admin-frame/internal/files/app"
-	filesadmin "github.com/admin-frame/admin-frame/internal/files/transport/admin"
-	"github.com/admin-frame/admin-frame/internal/order/app"
-	"github.com/admin-frame/admin-frame/internal/order/infrastructure/eventbus"
-	"github.com/admin-frame/admin-frame/internal/order/infrastructure/persistence"
-	admintransport "github.com/admin-frame/admin-frame/internal/order/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/platform"
-	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/pkg/health"
-	"github.com/admin-frame/admin-frame/pkg/metrics"
-	"github.com/admin-frame/admin-frame/pkg/storage"
-	"github.com/admin-frame/admin-frame/pkg/tracing"
+	// 注册全部云存储驱动：admin-api 支持 memory / local / s3 / minio / oss / cos / obs。
+	// 若部署确定不用多云，可改为只 import pkg/storage/s3，减少二进制与 CVE 面。
+	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -31,93 +22,18 @@ var (
 func main() {
 	configPath := flag.String("config", "configs/admin.yaml", "config file path")
 	flag.Parse()
-
-	cfg, err := platform.LoadConfig(*configPath)
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+	if err := run(*configPath); err != nil {
+		log.Printf("admin-api: %v", err)
+		os.Exit(1)
 	}
-	logger := platform.NewLogger(cfg)
+}
 
-	repo := persistence.NewMemoryRepository()
-	bus := eventbus.NewMemoryBus(logger)
-	svc := app.NewOrderService(repo, bus)
-	orderH := admintransport.NewHandler(svc)
-
-	authMW, err := platform.NewAuthMiddleware(cfg.Auth, auth.ChannelAdmin)
-	if err != nil {
-		log.Fatalf("auth: %v", err)
-	}
-
-	met, err := metrics.New(metrics.Options{
-		Service: cfg.Service,
-		Channel: cfg.Channel,
-		Env:     cfg.Env,
+// run 只做装配声明；平台生命周期（含资源释放）由 platform.Run 统一负责。
+func run(configPath string) error {
+	return platform.Run(context.Background(), platform.Options{
+		ConfigPath:    configPath,
+		Build:         platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		NewAuthorizer: newAuthorizer,
+		Register:      registerRoutes,
 	})
-	if err != nil {
-		log.Fatalf("metrics: %v", err)
-	}
-	met.MustRegisterBuildInfo(version, commit, buildTime)
-
-	ctx := context.Background()
-	stores, err := platform.OpenStorageSet(ctx, cfg.Storage)
-	if err != nil {
-		log.Fatalf("storage: %v", err)
-	}
-
-	fileSvc := filesapp.NewService(stores.Default, filesapp.Config{
-		MaxBytes:      cfg.Storage.MaxObjectBytes,
-		PresignPutTTL: cfg.Storage.PresignPutTTL,
-		PresignGetTTL: cfg.Storage.PresignGetTTL,
-	})
-	filesH := filesadmin.NewHandler(fileSvc)
-
-	api := http.NewServeMux()
-	admintransport.Register(api, orderH, authMW)
-	filesadmin.Register(api, filesH, authMW)
-
-	tp, err := tracing.Init(ctx, cfg.TracingOptions(version))
-	if err != nil {
-		log.Fatalf("tracing: %v", err)
-	}
-	// 在此之后不应再使用 log.Fatalf，否则 defer 收尾（含退出码）不会执行。
-	defer func() { _ = stores.Close() }()
-	exitCode := 0
-	defer func() {
-		_ = tp.Shutdown(context.Background()) // 进程退出前刷出剩余 span
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-	}()
-
-	root := http.NewServeMux()
-	hh := health.New()
-	hh.Register("memory_repo", repo.Ping)
-	hh.Register("storage", func() error { return stores.ReadyAll(context.Background()) })
-	for _, name := range stores.Names() {
-		n := name
-		st, _ := stores.Get(n)
-		hh.Register("storage:"+n, func() error { return storage.Ready(context.Background(), st) })
-	}
-	platform.MountHealth(root, hh)
-	platform.MountVersion(root, platform.BuildInfo{
-		Service:   cfg.Service,
-		Version:   version,
-		Commit:    commit,
-		BuildTime: buildTime,
-	})
-	platform.MountMetrics(root, met.Handler())
-	root.Handle("/", api)
-
-	handler := platform.Chain(root,
-		platform.Recover(logger),
-		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer(""))),
-		platform.RequestID(),
-		met.HTTP().Middleware(),
-		platform.AccessLog(logger),
-	)
-
-	if err := platform.ListenAndServe(ctx, cfg.Addr, handler, cfg.ShutdownTimeout, logger); err != nil {
-		logger.Error("server failed", "err", err)
-		exitCode = 1
-	}
 }

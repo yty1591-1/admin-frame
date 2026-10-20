@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# PLAT-12 / ARCHITECTURE §6.1：分层依赖门禁。
+#
+# 规则：
+#   1. transport 只依赖 app/domain/shared/pkg，不得 import internal/platform；
+#   2. platform 不依赖业务域（order/files 的 domain/app/infrastructure）；
+#   3. security 不依赖 platform，也不依赖业务域；
+#   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）。
+#
+# 用法: bash scripts/ci/check-layering.sh
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT}"
+
+FAIL=0
+
+fail_with() {
+  echo "ERROR: $1" >&2
+  FAIL=1
+}
+
+echo "==> LAYER-01: transport must not import internal/platform"
+if grep -RIn --include='*.go' --exclude='*_test.go' \
+  '"github.com/admin-frame/admin-frame/internal/platform"' \
+  internal/*/transport 2>/dev/null; then
+  fail_with "transport must depend on shared contracts, not platform (LAYER-01)"
+else
+  echo "    OK: transport has no platform import"
+fi
+
+echo "==> LAYER-02: platform must not import business domains"
+if grep -RIn --include='*.go' --exclude='*_test.go' -E \
+  '"github.com/admin-frame/admin-frame/internal/(order|files)/(app|domain|infrastructure)' \
+  internal/platform 2>/dev/null; then
+  fail_with "platform must not depend on business domains (LAYER-02)"
+else
+  echo "    OK: platform has no business domain import"
+fi
+
+echo "==> LAYER-03: security must not import platform or business domains"
+if grep -RIn --include='*.go' --exclude='*_test.go' -E \
+  '"github.com/admin-frame/admin-frame/internal/(platform|order|files)' \
+  internal/security 2>/dev/null; then
+  fail_with "security must stay independent of platform and domains (LAYER-03)"
+else
+  echo "    OK: security is independent"
+fi
+
+echo "==> LAYER-04: shared must not import platform or business domains"
+if grep -RIn --include='*.go' --exclude='*_test.go' -E \
+  '"github.com/admin-frame/admin-frame/internal/(platform|order|files)' \
+  internal/shared 2>/dev/null; then
+  fail_with "shared must not depend on platform or domains (LAYER-04)"
+else
+  echo "    OK: shared is independent"
+fi
+
+if [[ "${FAIL}" -ne 0 ]]; then
+  echo "layering check failed (PLAT-12 / ARCHITECTURE §6.1)" >&2
+  exit 1
+fi
+echo "OK: layering"

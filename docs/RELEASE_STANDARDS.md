@@ -152,7 +152,7 @@ make ci
 | 工具 / 文件 | 作用 |
 |-------------|------|
 | `Dockerfile` | 多 stage；版本 ARG；HEALTHCHECK |
-| `internal/platform/wiring.go` | `/version` |
+| `internal/platform/endpoints.go` | `/version` |
 | `docs/release/CHECKLIST.md` | 发版核对 |
 | `scripts/ci/check-release.sh` | RELS-01/02/03 |
 | `docs/runbooks/release-rollback.md` | 回滚处置 |

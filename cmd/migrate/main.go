@@ -65,7 +65,8 @@ func main() {
 		StatementTimeout: *statementTimeout,
 	}
 	if err := runWithSignal(opts, *timeout); err != nil {
-		log.Fatalf("migrate: %v", err)
+		fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+		os.Exit(1)
 	}
 }
 

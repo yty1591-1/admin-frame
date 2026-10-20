@@ -31,7 +31,7 @@ type logConfig struct {
 }
 
 type authConfig struct {
-	DemoMode bool `yaml:"demo_mode"`
+	Mode string `yaml:"mode"`
 }
 
 type storageConfig struct {
