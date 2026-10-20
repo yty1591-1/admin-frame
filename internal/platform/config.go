@@ -2,14 +2,19 @@ package platform
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
+// envPrefix 是本进程所有环境变量的统一前缀（CONFIG_STANDARDS CFG-04）。
+const envPrefix = "ADMIN_FRAME"
+
 // Config 进程配置根对象（按 cmd 对应 yaml 加载）。
+//
+// yaml 标签同时决定环境变量名：Env → ADMIN_FRAME_ENV、Log.Level →
+// ADMIN_FRAME_LOG_LEVEL（pkg/config.BindEnv）。新增字段无需再改环境变量代码。
 type Config struct {
 	// Env 部署环境：local / dev / test / staging / prod（可空，表示未声明）。
 	Env             string        `yaml:"env"`
@@ -70,51 +75,66 @@ type WorkerConfig struct {
 	PollInterval time.Duration `yaml:"poll_interval"`
 }
 
+// NewConfigLoader 构造进程配置加载器；供需要热更新（pkg/config.Watcher）的
+// 长驻进程复用，普通入口直接用 LoadConfig 即可。
+//
+// 严格解析 YAML（未知字段报错），按 CFG-04 应用默认值、环境变量与校验。
+func NewConfigLoader(path string) (*config.Loader[Config], error) {
+	return config.NewLoader(config.Options[Config]{
+		Files:     []string{path},
+		EnvPrefix: envPrefix,
+		Defaults:  (*Config).applyDefaults,
+		Normalize: (*Config).normalize,
+		Validate:  (*Config).Validate,
+	})
+}
+
 // LoadConfig 从 YAML 文件加载配置，应用默认值与环境变量覆盖后校验。
+//
 // 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// 环境变量无法解析（如非法 duration/bool）时返回错误，不再静默忽略；
+// 错误只包含字段路径与变量名，不含取值（SEC-05）。
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- config path is an operator CLI flag, not request input
+	loader, err := NewConfigLoader(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	cfg.applyDefaults()
-	cfg.applyEnv()
-	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return loader.Load()
+}
+
+// dbOnlyConfig 是 LoadDBConfig 的解码目标，只声明 db 段。
+type dbOnlyConfig struct {
+	DB DBConfig `yaml:"db"`
 }
 
 // LoadDBConfig 仅加载配置文件的 db 段，并应用 ADMIN_FRAME_DB_* 环境变量覆盖。
 //
 // 供 cmd/migrate 等只需要数据库连接的工具复用 CFG-04 的配置优先级；
 // 不校验服务级字段（service/channel/addr）。path 为空时只读取环境变量。
+// 传入完整服务配置时其余字段被忽略（AllowUnknownFields），便于直接复用线上 yaml。
 func LoadDBConfig(path string) (DBConfig, error) {
-	var wrapper struct {
-		DB DBConfig `yaml:"db"`
+	opts := config.Options[dbOnlyConfig]{
+		EnvPrefix:          envPrefix,
+		AllowUnknownFields: true,
 	}
 	if path != "" {
-		data, err := os.ReadFile(path) // #nosec G304 -- config path is an operator CLI flag, not request input
-		if err != nil {
-			return DBConfig{}, fmt.Errorf("read config: %w", err)
-		}
-		if err := yaml.Unmarshal(data, &wrapper); err != nil {
-			return DBConfig{}, fmt.Errorf("parse config: %w", err)
-		}
+		opts.Files = []string{path}
 	}
-	if v := os.Getenv("ADMIN_FRAME_DB_DRIVER"); v != "" {
-		wrapper.DB.Driver = v
+	loader, err := config.NewLoader(opts)
+	if err != nil {
+		return DBConfig{}, err
 	}
-	if v := os.Getenv("ADMIN_FRAME_DB_DSN"); v != "" {
-		wrapper.DB.DSN = v
+	cfg, err := loader.Load()
+	if err != nil {
+		return DBConfig{}, err
 	}
-	return wrapper.DB, nil
+	return cfg.DB, nil
 }
 
+// applyDefaults 在解码文件前填充默认值。
+//
+// 只处理与其它字段无关的常量默认值；跨字段派生放在 normalize，
+// 以免被文件或环境变量覆盖后失去一致性。
 func (c *Config) applyDefaults() {
 	if c.Addr == "" {
 		c.Addr = ":8080"
@@ -137,124 +157,16 @@ func (c *Config) applyDefaults() {
 	if c.Worker.PollInterval == 0 {
 		c.Worker.PollInterval = 5 * time.Second
 	}
-	if c.Auth.ExpectedChannel == "" {
-		c.Auth.ExpectedChannel = c.Channel
-	}
 	if c.Tracing.Exporter == "" {
 		c.Tracing.Exporter = "none"
 	}
 }
 
-// applyEnv 用 ADMIN_FRAME_* 环境变量覆盖文件配置（CFG-04）。
-func (c *Config) applyEnv() {
-	if v := os.Getenv("ADMIN_FRAME_ENV"); v != "" {
-		c.Env = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_SERVICE"); v != "" {
-		c.Service = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_CHANNEL"); v != "" {
-		c.Channel = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_ADDR"); v != "" {
-		c.Addr = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.ShutdownTimeout = d
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_LOG_LEVEL"); v != "" {
-		c.Log.Level = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_LOG_FORMAT"); v != "" {
-		c.Log.Format = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_AUTH_DEMO_MODE"); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			c.Auth.DemoMode = true
-		case "0", "false", "no", "off":
-			c.Auth.DemoMode = false
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_AUTH_EXPECTED_CHANNEL"); v != "" {
-		c.Auth.ExpectedChannel = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_DB_DRIVER"); v != "" {
-		c.DB.Driver = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_DB_DSN"); v != "" {
-		c.DB.DSN = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_DRIVER"); v != "" {
-		c.Storage.Driver = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_KEY_PREFIX"); v != "" {
-		c.Storage.KeyPrefix = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_LOCAL_ROOT"); v != "" {
-		c.Storage.Local.Root = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_ENDPOINT"); v != "" {
-		c.Storage.S3.Endpoint = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_REGION"); v != "" {
-		c.Storage.S3.Region = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_BUCKET"); v != "" {
-		c.Storage.S3.Bucket = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_ACCESS_KEY"); v != "" {
-		c.Storage.S3.AccessKey = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_SECRET_KEY"); v != "" {
-		c.Storage.S3.SecretKey = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_STORAGE_S3_FORCE_PATH_STYLE"); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			c.Storage.S3.ForcePathStyle = true
-		case "0", "false", "no", "off":
-			c.Storage.S3.ForcePathStyle = false
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_WORKER_POLL_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			c.Worker.PollInterval = d
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_TRACING_ENABLED"); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			on := true
-			c.Tracing.Enabled = &on
-		case "0", "false", "no", "off":
-			off := false
-			c.Tracing.Enabled = &off
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_TRACING_EXPORTER"); v != "" {
-		c.Tracing.Exporter = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_TRACING_ENDPOINT"); v != "" {
-		c.Tracing.Endpoint = v
-	}
-	if v := os.Getenv("ADMIN_FRAME_TRACING_INSECURE"); v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			c.Tracing.Insecure = true
-		case "0", "false", "no", "off":
-			c.Tracing.Insecure = false
-		}
-	}
-	if v := os.Getenv("ADMIN_FRAME_TRACING_SAMPLE_RATIO"); v != "" {
-		var ratio float64
-		if _, err := fmt.Sscanf(v, "%f", &ratio); err == nil {
-			c.Tracing.SampleRatio = &ratio
-		}
-	}
-	// channel 被环境变量改写后，若 expected 仍为空则对齐。
+// normalize 在环境变量覆盖后、Validate 前补齐跨字段派生值。
+//
+// auth.expected_channel 未显式声明时跟随 channel，保证环境变量改写
+// channel 后两者仍然一致（CFG-04）。
+func (c *Config) normalize() {
 	if c.Auth.ExpectedChannel == "" {
 		c.Auth.ExpectedChannel = c.Channel
 	}

@@ -322,11 +322,11 @@ internal/
 
 ```go
 func main() {
-    cfg := platform.LoadConfig("admin")          // 1. 按 cmd 加载
-    if err := cfg.Validate(); err != nil {
+    cfg, err := platform.LoadConfig("configs/admin.yaml") // 1. 加载 + 默认值 + env + Validate
+    if err != nil {
         log.Fatal(err)
     }
-    logger := platform.NewLogger(cfg.Log)        // 2. 平台能力
+    logger := platform.NewLogger(cfg)            // 2. 平台能力
     db := platform.NewDB(cfg.DB)                 // 3. 基础设施
     defer db.Close()
 

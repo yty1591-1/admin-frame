@@ -34,7 +34,7 @@ storage:
     region: ""
     bucket: ""
     force_path_style: false
-    # access_key / secret_key → ADMIN_FRAME_STORAGE_ACCESS_KEY / SECRET_KEY
+    # access_key / secret_key → ADMIN_FRAME_STORAGE_S3_ACCESS_KEY / ADMIN_FRAME_STORAGE_S3_SECRET_KEY
   oss:
     endpoint: ""
     region: ""

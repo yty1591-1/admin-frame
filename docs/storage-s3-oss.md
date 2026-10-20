@@ -144,8 +144,8 @@ storage:
     bucket: admin-frame-prod
     force_path_style: false   # MinIO 常 true
     # ACCESS_KEY / SECRET_KEY → 环境变量
-    # ADMIN_FRAME_STORAGE_ACCESS_KEY
-    # ADMIN_FRAME_STORAGE_SECRET_KEY
+    # ADMIN_FRAME_STORAGE_S3_ACCESS_KEY
+    # ADMIN_FRAME_STORAGE_S3_SECRET_KEY
 
   # 厂商覆盖（可选；空则回落 s3 段）
   oss:
@@ -281,7 +281,7 @@ storage:
     endpoint: oss-cn-hangzhou.aliyuncs.com
     region: cn-hangzhou
     bucket: admin-frame-prod
-    # access_key / secret_key → ADMIN_FRAME_STORAGE_ACCESS_KEY / SECRET_KEY
+    # access_key / secret_key → ADMIN_FRAME_STORAGE_S3_ACCESS_KEY / ADMIN_FRAME_STORAGE_S3_SECRET_KEY
 ```
 
 校验：`storage.ValidateCloudL2`（bucket + AK/SK；oss/cos 要 region；obs 要 endpoint）。

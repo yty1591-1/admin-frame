@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money`/`webhook` 已落地；通知渠道见 [`notification-channels.md`](./notification-channels.md)）
+> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money`/`webhook`/`config` 已落地；通知渠道见 [`notification-channels.md`](./notification-channels.md)）
 
 ---
 
@@ -40,7 +40,7 @@
 | P3 | `pkg/cache` | 本地/多级缓存抽象 | 已完成 | Store + Memory LRU + Multi + Cache-Aside |
 | P3 | `pkg/mq` | 消息生产/消费通用封装 | 已完成 | 接口 + Memory/Outbox；Kafka/NATS 后接 |
 | P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 已完成 | 强制超时；幂等重试；OTel 出站 |
-| P4 | `pkg/config` | 配置加载与校验 | 暂缓 | 已有 `internal/platform/config` |
+| P4 | `pkg/config` | 配置加载与校验 | 已完成 | 通用 Loader/BindEnv/Watcher；platform 业务字段装配待迁移 |
 | P4 | `pkg/logger` | 结构化日志 | 已完成 | slog + ContextHandler；platform 薄封装 |
 | P4 | `pkg/middleware` | 通用中间件原语 | 已完成 | Chain/RequestID/Recover/Timeout/CORS/限流；鉴权留 platform |
 | P4 | 其余工具包 | 见下方完整清单 | 待做 | 按实际需求再开 |
@@ -53,7 +53,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
-| `pkg/config` | 配置加载（env/yaml）、校验、热更新封装 | P4 | 暂缓（见 platform） |
+| `pkg/config` | 配置加载（env/yaml）、校验、热更新封装 | P4 | 已完成（严格 YAML + 分层覆盖 + env 绑定 + 原子热更新） |
 | `pkg/logger` / `pkg/logx` | 结构化日志、字段约定、trace 关联 | P4 | 已完成（`pkg/logger`） |
 | `pkg/errors` / `pkg/apperr` | 统一错误类型、错误码、堆栈/因果链 | P1 | 已完成 |
 | `pkg/health` | 存活/就绪探针 | P0 | 已完成 |
@@ -145,7 +145,7 @@
 | contextx | `pkg/contextx` | 保持；Auth 中间件注入；Principal 仍在 shared/auth |
 | middleware | `pkg/middleware` | 保持；platform 薄封装 + AuthN/AuthZ |
 | validator | `pkg/validator` | 保持；Handler DecodeJSON + Struct；映射 40000 |
-| 配置 | `internal/platform/config` | 暂不下沉 pkg，除非要跨仓库复用 |
+| 配置 | `pkg/config` + `internal/platform/config` | 加载/环境变量/校验/热更新原语在 pkg；业务字段、默认值与 `Validate` 留 platform |
 | 日志 | `pkg/logger` + `platform.NewLogger` | 原语在 pkg；进程装配留 platform |
 | 中间件 / Server | `pkg/middleware` + `platform` | 通用原语在 pkg；鉴权/装配留 platform |
 | 统一错误 | `pkg/errors` + `internal/shared/apperr` | 语义码/栈在 pkg；业务数字码留 apperr |
@@ -185,3 +185,4 @@
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。
 8. `pkg/storage` M0–M5 已落地（含 OSS/COS/OBS L2 原生）；细节见 [`storage-s3-oss.md`](./storage-s3-oss.md)。
 9. 下游调用按「重试包住熔断」还是「熔断包住重试」明确策略后接入 `pkg/circuitbreaker`；金额换算统一 `pkg/decimal`/`pkg/money`，禁止 float64。
+10. `internal/platform.LoadConfig` 已改为 `pkg/config.Loader` 装配（默认值/`normalize`/`Validate` 保留在 platform）：严格 YAML、环境变量解析失败即报错、历史存储变量名兼容。`pkg/config.Watcher` 已具备热更新能力，但 `pkg/logger` 尚不支持运行时改级别，接入前须先引入 `slog.LevelVar`；且连接池/存储等资源不做热重建。
