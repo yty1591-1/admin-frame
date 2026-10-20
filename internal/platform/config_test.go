@@ -79,6 +79,37 @@ log:
 	}
 }
 
+func TestLoadDBConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "migrate.yaml")
+	content := []byte("db:\n  driver: mysql\n  dsn: \"file-dsn\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADMIN_FRAME_DB_DRIVER", "postgres")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "env-dsn")
+
+	got, err := platform.LoadDBConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Driver != "postgres" || got.DSN != "env-dsn" {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestLoadDBConfigEmptyPath(t *testing.T) {
+	t.Setenv("ADMIN_FRAME_DB_DRIVER", "mysql")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "env-only")
+	got, err := platform.LoadDBConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Driver != "mysql" || got.DSN != "env-only" {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
 func TestLoadConfigProdDemoModeFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")

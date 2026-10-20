@@ -76,6 +76,7 @@ curl -s http://127.0.0.1:8083/readyz
 - **依赖硬约束**：[docs/DEPENDENCY_STANDARDS.md](docs/DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）
 - **配置硬约束**：[docs/CONFIG_STANDARDS.md](docs/CONFIG_STANDARDS.md)（CFG-01～CFG-08）
 - **数据硬约束**：[docs/DATA_STANDARDS.md](docs/DATA_STANDARDS.md)（DATA-01～DATA-08）
+- **数据库迁移指南**：[docs/migration-guide.md](docs/migration-guide.md)（`pkg/migrate` / `cmd/migrate` 使用与故障处置）
 - **可靠性硬约束**：[docs/RELIABILITY_STANDARDS.md](docs/RELIABILITY_STANDARDS.md)（REL-01～REL-08）
 - **可观测硬约束**：[docs/OBSERVABILITY_STANDARDS.md](docs/OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）
 - **Git 硬约束**：[docs/GIT_STANDARDS.md](docs/GIT_STANDARDS.md)（GIT-01～GIT-08）
@@ -113,4 +114,4 @@ make ci                   # 本地对齐托管平台必跑项
 ## 说明
 
 - 默认 `db.driver: memory`，各 API 进程内存独立；跨进程联调请接入共享 MySQL/Postgres 并实现 SQL 仓储。
-- `cmd/migrate` 目前校验并打印迁移文件，接入真实 DB 后执行 SQL。
+- `cmd/migrate` 已接入 PostgreSQL / MySQL 执行迁移；配置、发布与故障处置见 [docs/migration-guide.md](docs/migration-guide.md)。

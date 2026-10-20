@@ -89,6 +89,32 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadDBConfig 仅加载配置文件的 db 段，并应用 ADMIN_FRAME_DB_* 环境变量覆盖。
+//
+// 供 cmd/migrate 等只需要数据库连接的工具复用 CFG-04 的配置优先级；
+// 不校验服务级字段（service/channel/addr）。path 为空时只读取环境变量。
+func LoadDBConfig(path string) (DBConfig, error) {
+	var wrapper struct {
+		DB DBConfig `yaml:"db"`
+	}
+	if path != "" {
+		data, err := os.ReadFile(path) // #nosec G304 -- config path is an operator CLI flag, not request input
+		if err != nil {
+			return DBConfig{}, fmt.Errorf("read config: %w", err)
+		}
+		if err := yaml.Unmarshal(data, &wrapper); err != nil {
+			return DBConfig{}, fmt.Errorf("parse config: %w", err)
+		}
+	}
+	if v := os.Getenv("ADMIN_FRAME_DB_DRIVER"); v != "" {
+		wrapper.DB.Driver = v
+	}
+	if v := os.Getenv("ADMIN_FRAME_DB_DSN"); v != "" {
+		wrapper.DB.DSN = v
+	}
+	return wrapper.DB, nil
+}
+
 func (c *Config) applyDefaults() {
 	if c.Addr == "" {
 		c.Addr = ":8080"

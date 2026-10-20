@@ -26,7 +26,10 @@ func TestOpenStorageSetNamedBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer set.Close()
+	t.Cleanup(func() {
+		// 忽略：测试清理阶段关闭存储集合，关闭失败不影响断言。
+		_ = set.Close()
+	})
 
 	def, ok := set.Get("default")
 	if !ok || def == nil {

@@ -19,7 +19,10 @@ func TestOpenStorageMemoryDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		// 忽略：测试清理阶段关闭内存存储，关闭失败不影响断言。
+		_ = store.Close()
+	})
 }
 
 func TestValidateStorageLocalNeedsRoot(t *testing.T) {

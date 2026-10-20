@@ -90,7 +90,7 @@
 | `pkg/mq` / `pkg/kafka` | 消息生产/消费通用封装 | P3 | 已完成（`pkg/mq`；Kafka 后接） |
 | `pkg/cache` | 本地/多级缓存抽象 | P3 | 已完成 |
 | `pkg/oss` / `pkg/storage` | 对象存储上传下载（多云可插拔） | P4 | 已完成（`storage`+`s3/oss/cos/obs`；见 [`storage-s3-oss.md`](./storage-s3-oss.md)） |
-| `pkg/migrate` | 迁移工具薄封装（主逻辑在 `cmd/migrate`） | P4 | 待做 |
+| `pkg/migrate` | 迁移工具薄封装（主逻辑在 `cmd/migrate`） | P4 | 已完成（`up/down/status`、咨询锁、checksum/dirty、`cmd/migrate`；见 [`migration-guide.md`](./migration-guide.md)） |
 
 ### 3.5 并发、时间与通用工具
 
