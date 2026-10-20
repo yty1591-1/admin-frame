@@ -2,6 +2,7 @@ package obs
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	hwobs "github.com/huaweicloud/huaweicloud-sdk-go-obs/obs"
@@ -15,7 +16,7 @@ func mapErr(err error) error {
 	}
 	var oe hwobs.ObsError
 	if errors.As(err, &oe) {
-		if oe.StatusCode == 404 {
+		if oe.StatusCode == http.StatusNotFound {
 			return storage.ErrNotFound
 		}
 		switch strings.ToLower(oe.Code) {

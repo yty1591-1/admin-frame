@@ -54,6 +54,7 @@ func (m *Memory) Consumer() Consumer { return (*memoryConsumer)(m) }
 
 type memoryProducer Memory
 
+// Publish 将消息投递到内存队列；ctx 取消时返回 ctx.Err()。
 func (p *memoryProducer) Publish(ctx context.Context, msg Message) error {
 	m := (*Memory)(p)
 	if m.closed.Load() {
@@ -71,12 +72,14 @@ func (p *memoryProducer) Publish(ctx context.Context, msg Message) error {
 	}
 }
 
+// Close 关闭底层 broker。
 func (p *memoryProducer) Close() error {
 	return (*Memory)(p).Close()
 }
 
 type memoryConsumer Memory
 
+// Subscribe 注册主题 handler；同一主题可注册多个（扇出）。
 func (c *memoryConsumer) Subscribe(topic string, h Handler) error {
 	m := (*Memory)(c)
 	if m.closed.Load() {
@@ -91,6 +94,7 @@ func (c *memoryConsumer) Subscribe(topic string, h Handler) error {
 	return nil
 }
 
+// Run 循环消费直到 ctx 取消或 broker 关闭。
 func (c *memoryConsumer) Run(ctx context.Context) error {
 	m := (*Memory)(c)
 	if m.closed.Load() {
@@ -109,6 +113,7 @@ func (c *memoryConsumer) Run(ctx context.Context) error {
 	}
 }
 
+// Close 关闭底层 broker。
 func (c *memoryConsumer) Close() error {
 	return (*Memory)(c).Close()
 }

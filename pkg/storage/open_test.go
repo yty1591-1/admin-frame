@@ -20,7 +20,7 @@ func TestOpenMemoryAndLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	local, err := storage.Open(ctx, storage.Config{
 		Driver: "local",
@@ -29,7 +29,7 @@ func TestOpenMemoryAndLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close()
+	_ = local.Close()
 }
 
 func TestOpenUnknownDriver(t *testing.T) {

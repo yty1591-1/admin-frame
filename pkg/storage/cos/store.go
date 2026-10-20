@@ -89,7 +89,7 @@ func (s *Store) Stat(ctx context.Context, key string) (storage.ObjectInfo, error
 	if err != nil {
 		return storage.ObjectInfo{}, mapErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return objectInfoFromHeader(key, resp.Header), nil
 }
 

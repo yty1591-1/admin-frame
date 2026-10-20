@@ -9,6 +9,7 @@ type Clock interface {
 
 type realClock struct{}
 
+// Now 返回墙钟当前时间。
 func (realClock) Now() time.Time { return time.Now() }
 
 // RealClock 返回墙钟。

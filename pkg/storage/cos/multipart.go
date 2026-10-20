@@ -52,7 +52,7 @@ func (s *Store) UploadPart(ctx context.Context, key, uploadID string, partNumber
 	if err != nil {
 		return "", mapErr(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return trimETag(resp.Header.Get("ETag")), nil
 }
 

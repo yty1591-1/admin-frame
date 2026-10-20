@@ -13,7 +13,7 @@ import (
 
 func TestUploadAndDownload(t *testing.T) {
 	store := storage.NewMemory(storage.MemoryConfig{})
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	svc := app.NewService(store, app.Config{})
 
 	info, err := svc.Upload(context.Background(), "export", "report.csv", "text/csv", strings.NewReader("a,b\n1,2\n"))
@@ -28,7 +28,7 @@ func TestUploadAndDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	body, _ := io.ReadAll(rc)
 	if !bytes.Equal(body, []byte("a,b\n1,2\n")) || got.Key != info.Key {
 		t.Fatalf("body=%q got=%+v", body, got)

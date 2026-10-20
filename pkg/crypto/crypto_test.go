@@ -1,6 +1,7 @@
 package crypto_test
 
 import (
+	"bytes"
 	stderrors "errors"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestAESGCMRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(pt) {
+	if !bytes.Equal(got, pt) {
 		t.Fatalf("got=%q", got)
 	}
 

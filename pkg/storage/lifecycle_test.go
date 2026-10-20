@@ -32,7 +32,7 @@ func TestValidateLifecycleRules(t *testing.T) {
 
 func TestApplyLifecycleUnsupportedOnMemory(t *testing.T) {
 	store := storage.NewMemory(storage.MemoryConfig{})
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	err := storage.ApplyLifecycle(context.Background(), store, []storage.LifecycleRule{
 		{ID: "tmp", ExpireDays: 1},
 	})

@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/admin-frame/admin-frame/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
 type traceTransport struct {
@@ -19,6 +20,7 @@ type traceTransport struct {
 	injectRequestID bool
 }
 
+// RoundTrip 为出站请求注入 trace/span 与 request-id，并记录结果。
 func (t *traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t == nil || t.next == nil {
 		return nil, ErrInvalidConfig

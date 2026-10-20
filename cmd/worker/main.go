@@ -31,12 +31,12 @@ func main() {
 	bus := eventbus.NewMemoryBus(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	store, err := platform.OpenStorage(ctx, cfg.Storage)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
+	defer stop()
 	defer func() { _ = store.Close() }()
 
 	logger.Info("worker started",

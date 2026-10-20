@@ -10,12 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/pkg/httpclient"
-	"github.com/admin-frame/admin-frame/pkg/retry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/admin-frame/admin-frame/pkg/httpclient"
+	"github.com/admin-frame/admin-frame/pkg/retry"
 )
 
 func TestNewRequiresTimeoutAfterDefaults(t *testing.T) {
@@ -45,21 +46,21 @@ func TestDoGETSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, http.NoBody)
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
-	if string(b) != "ok" || resp.StatusCode != 200 {
+	if string(b) != "ok" || resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
 	}
 }
 
 func TestRetryIdempotentOn503(t *testing.T) {
 	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		n := hits.Add(1)
 		if n < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -77,23 +78,23 @@ func TestRetryIdempotentOn503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, http.NoBody)
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if hits.Load() != 3 {
 		t.Fatalf("hits=%d", hits.Load())
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
 
 func TestNoRetryPOSTByDefault(t *testing.T) {
 	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -107,16 +108,16 @@ func TestNoRetryPOSTByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL, http.NoBody)
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if hits.Load() != 1 {
 		t.Fatalf("hits=%d want 1", hits.Load())
 	}
-	if resp.StatusCode != 503 {
+	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
 }
@@ -154,12 +155,12 @@ func TestTracingInjectsTraceparent(t *testing.T) {
 	ctx, span := tp.Tracer("test").Start(context.Background(), "parent")
 	defer span.End()
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if gotTP == "" {
 		t.Fatal("expected traceparent")
 	}
@@ -169,13 +170,13 @@ func TestTracingInjectsTraceparent(t *testing.T) {
 }
 
 func TestCheckStatus(t *testing.T) {
-	resp := &http.Response{StatusCode: 404, Request: httptest.NewRequest(http.MethodGet, "http://x", nil)}
+	resp := &http.Response{StatusCode: http.StatusNotFound, Request: httptest.NewRequest(http.MethodGet, "http://x", http.NoBody)}
 	err := httpclient.CheckStatus(resp)
 	var se *httpclient.StatusError
-	if !stderrors.As(err, &se) || se.StatusCode != 404 {
+	if !stderrors.As(err, &se) || se.StatusCode != http.StatusNotFound {
 		t.Fatalf("err=%v", err)
 	}
-	ok := &http.Response{StatusCode: 204}
+	ok := &http.Response{StatusCode: http.StatusNoContent}
 	if err := httpclient.CheckStatus(ok); err != nil {
 		t.Fatal(err)
 	}

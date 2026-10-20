@@ -98,14 +98,14 @@ func TestWithinTxCommitAndRollback(t *testing.T) {
 	}
 
 	boom := errors.New("boom")
-	err = db.WithinTx(ctx, d.SQL(), nil, func(tx *sql.Tx) error {
+	err = db.WithinTx(ctx, d.SQL(), nil, func(_ *sql.Tx) error {
 		return boom
 	})
 	if !errors.Is(err, db.ErrTxFailed) || !errors.Is(err, boom) {
 		t.Fatalf("err=%v", err)
 	}
 
-	err = db.WithinTx(ctx, d.SQL(), nil, func(tx *sql.Tx) error {
+	err = db.WithinTx(ctx, d.SQL(), nil, func(_ *sql.Tx) error {
 		panic("explode")
 	})
 	if !errors.Is(err, db.ErrTxFailed) {
@@ -192,11 +192,11 @@ type testStmt struct {
 func (s *testStmt) Close() error  { return nil }
 func (s *testStmt) NumInput() int { return -1 }
 
-func (s *testStmt) Exec(args []driver.Value) (driver.Result, error) {
+func (s *testStmt) Exec(_ []driver.Value) (driver.Result, error) {
 	return driver.RowsAffected(1), nil
 }
 
-func (s *testStmt) Query(args []driver.Value) (driver.Rows, error) {
+func (s *testStmt) Query(_ []driver.Value) (driver.Rows, error) {
 	return &testRows{}, nil
 }
 
@@ -204,7 +204,7 @@ type testRows struct{ closed bool }
 
 func (r *testRows) Columns() []string { return nil }
 func (r *testRows) Close() error      { r.closed = true; return nil }
-func (r *testRows) Next(dest []driver.Value) error {
+func (r *testRows) Next(_ []driver.Value) error {
 	return io.EOF
 }
 

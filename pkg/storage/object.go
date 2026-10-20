@@ -35,9 +35,9 @@ type ListOptions struct {
 
 // ListResult 列举结果。
 type ListResult struct {
-	Items         []ObjectInfo
-	NextToken     string
-	IsTruncated   bool
+	Items       []ObjectInfo
+	NextToken   string
+	IsTruncated bool
 }
 
 // Store 对象存储核心接口。

@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	playground "github.com/go-playground/validator/v10"
+
 	pkgerrors "github.com/admin-frame/admin-frame/pkg/errors"
 	"github.com/admin-frame/admin-frame/pkg/validator"
-	playground "github.com/go-playground/validator/v10"
 )
 
 type sampleReq struct {

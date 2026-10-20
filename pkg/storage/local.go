@@ -118,7 +118,7 @@ func (l *Local) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo,
 	if err != nil {
 		return nil, ObjectInfo{}, err
 	}
-	f, err := os.Open(full)
+	f, err := os.Open(full) //nolint:gosec // full 由 resolve 校验并限定在 root 内
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ObjectInfo{}, ErrNotFound
@@ -301,18 +301,15 @@ func (l *Local) ready(ctx context.Context) error {
 	if l == nil || l.closed.Load() {
 		return ErrClosed
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nil
+	return ctx.Err()
 }
 
 func fileETag(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // 仅由本地后端以已校验的对象路径调用
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	hr := newSHA256Reader(f)
 	if _, err := io.Copy(io.Discard, hr); err != nil {
 		return "", err

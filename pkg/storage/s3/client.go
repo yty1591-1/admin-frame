@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/admin-frame/admin-frame/pkg/storage"
 )
 
 // Open 根据统一 Config 构造 S3 兼容 Store（同时实现 Presigner）。

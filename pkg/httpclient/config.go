@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/admin-frame/admin-frame/pkg/retry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/admin-frame/admin-frame/pkg/retry"
 )
 
 const (

@@ -59,9 +59,9 @@ func NewOrderServiceWithID(repo domain.Repository, publisher EventPublisher, ids
 func (s *OrderService) CreateOrder(ctx context.Context, cmd CreateOrderCommand) (*domain.Order, error) {
 	if cmd.IdemKey != "" {
 		s.mu.Lock()
-		if id, ok := s.idemKeys[cmd.IdemKey]; ok {
+		if existingID, ok := s.idemKeys[cmd.IdemKey]; ok {
 			s.mu.Unlock()
-			return s.repo.FindByID(ctx, id)
+			return s.repo.FindByID(ctx, existingID)
 		}
 		s.mu.Unlock()
 	}
@@ -98,8 +98,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, cmd CreateOrderCommand) 
 }
 
 // GetOrder 按 ID 获取订单（无端别隔离，供 A 端）。
-func (s *OrderService) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
-	order, err := s.repo.FindByID(ctx, id)
+func (s *OrderService) GetOrder(ctx context.Context, orderID string) (*domain.Order, error) {
+	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -107,11 +107,11 @@ func (s *OrderService) GetOrder(ctx context.Context, id string) (*domain.Order, 
 }
 
 // GetOrderForMerchant B 端：强制商户隔离。
-func (s *OrderService) GetOrderForMerchant(ctx context.Context, id, merchantID string) (*domain.Order, error) {
+func (s *OrderService) GetOrderForMerchant(ctx context.Context, orderID, merchantID string) (*domain.Order, error) {
 	if merchantID == "" {
 		return nil, apperr.Forbidden("merchant_id required")
 	}
-	order, err := s.repo.FindByID(ctx, id)
+	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,11 +122,11 @@ func (s *OrderService) GetOrderForMerchant(ctx context.Context, id, merchantID s
 }
 
 // GetOrderForUser C 端：强制用户归属。
-func (s *OrderService) GetOrderForUser(ctx context.Context, id, userID string) (*domain.Order, error) {
+func (s *OrderService) GetOrderForUser(ctx context.Context, orderID, userID string) (*domain.Order, error) {
 	if userID == "" {
 		return nil, apperr.Forbidden("user_id required")
 	}
-	order, err := s.repo.FindByID(ctx, id)
+	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}

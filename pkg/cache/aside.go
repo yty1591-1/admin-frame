@@ -143,10 +143,10 @@ func (c *Cache) validateGetOrLoad(key string, loader Loader) error {
 // lookup 读取并归一化：实值 / ErrNegative / ErrMiss / 其他错误。
 func (c *Cache) lookup(ctx context.Context, key string) ([]byte, error) {
 	val, err := c.store.Get(ctx, key)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return val, nil
-	case err == ErrNegative, err == ErrMiss:
+	case ErrNegative, ErrMiss:
 		return nil, err
 	default:
 		return nil, err
@@ -195,7 +195,8 @@ func (c *Cache) applyJitter(ttl time.Duration) time.Duration {
 	if j > ttl {
 		j = ttl
 	}
-	extra := time.Duration(randUint64() % uint64(j))
+	// 取模结果严格小于 j（正数），不会溢出 int64。
+	extra := time.Duration(randUint64() % uint64(j)) //nolint:gosec // 上界受 j 约束，转换安全
 	if ttl > time.Duration(math.MaxInt64)-extra {
 		return ttl
 	}

@@ -17,6 +17,7 @@ type redisStore struct {
 	c *Cache
 }
 
+// Get 读取 key 对应的原始字节；未命中时返回 cache.ErrMiss。
 func (r redisStore) Get(ctx context.Context, key string) ([]byte, error) {
 	val, err := r.c.Get(ctx, key)
 	if err == nil {
@@ -28,10 +29,12 @@ func (r redisStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return nil, err
 }
 
+// Set 写入 key，ttl 为 0 表示不过期。
 func (r redisStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	return r.c.Set(ctx, key, value, ttl)
 }
 
+// Delete 批量删除 key。
 func (r redisStore) Delete(ctx context.Context, keys ...string) error {
 	return r.c.Delete(ctx, keys...)
 }

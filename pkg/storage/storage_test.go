@@ -35,7 +35,7 @@ func TestValidateKeyAndJoin(t *testing.T) {
 func TestMemoryPutGetDeleteList(t *testing.T) {
 	ctx := context.Background()
 	s := storage.NewMemory(storage.MemoryConfig{})
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	info, err := s.Put(ctx, "a/b.txt", strings.NewReader("hello"), storage.PutOptions{
 		ContentType: "text/plain",
@@ -52,7 +52,7 @@ func TestMemoryPutGetDeleteList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	body, _ := io.ReadAll(rc)
 	if string(body) != "hello" || got.ETag != info.ETag {
 		t.Fatalf("body=%s got=%+v", body, got)
@@ -86,7 +86,7 @@ func TestMemoryPutGetDeleteList(t *testing.T) {
 
 func TestMemoryTooLarge(t *testing.T) {
 	s := storage.NewMemory(storage.MemoryConfig{MaxObjectBytes: 4})
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	_, err := s.Put(context.Background(), "k", strings.NewReader("12345"), storage.PutOptions{})
 	if !errors.Is(err, storage.ErrTooLarge) {
 		t.Fatalf("err=%v", err)
@@ -95,7 +95,7 @@ func TestMemoryTooLarge(t *testing.T) {
 
 func TestMemoryPresignUnsupported(t *testing.T) {
 	s := storage.NewMemory(storage.MemoryConfig{})
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if _, err := s.PresignGet(context.Background(), "k", 0); !errors.Is(err, storage.ErrUnsupported) {
 		t.Fatalf("err=%v", err)
 	}
@@ -108,7 +108,7 @@ func TestLocalStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	key := storage.MustJoin("tenant", "doc.pdf")
 	info, err := s.Put(ctx, key, bytes.NewReader([]byte("%PDF")), storage.PutOptions{
@@ -154,7 +154,7 @@ func TestLocalStore(t *testing.T) {
 func TestPrefixStore(t *testing.T) {
 	ctx := context.Background()
 	inner := storage.NewMemory(storage.MemoryConfig{})
-	defer inner.Close()
+	defer func() { _ = inner.Close() }()
 	s, err := storage.WithPrefix(inner, "tenant-a")
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestPrefixStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	if info.Key != "file.txt" {
 		t.Fatalf("key=%s", info.Key)
 	}

@@ -2,7 +2,6 @@ package validator
 
 import (
 	"fmt"
-	"reflect"
 	"sync"
 
 	playground "github.com/go-playground/validator/v10"
@@ -57,9 +56,7 @@ func New(opts ...Option) (*Validator, error) {
 		locale:          LocaleZhCN,
 		disallowUnknown: true,
 	}
-	v.validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
-		return fieldName(fld)
-	})
+	v.validate.RegisterTagNameFunc(fieldName)
 	for _, opt := range opts {
 		if opt != nil {
 			opt(v)

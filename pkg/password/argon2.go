@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -132,13 +133,16 @@ func parseArgon2id(encoded string) (parsedArgon2id, error) {
 	if len(salt) == 0 || len(sum) == 0 || mem == 0 || timeCost == 0 || threads == 0 {
 		return parsedArgon2id{}, ErrInvalidHash
 	}
+	if len(salt) > math.MaxUint32 || len(sum) > math.MaxUint32 {
+		return parsedArgon2id{}, ErrInvalidHash
+	}
 	return parsedArgon2id{
 		params: Argon2idParams{
 			Time:    timeCost,
 			Memory:  mem,
 			Threads: threads,
-			SaltLen: uint32(len(salt)),
-			KeyLen:  uint32(len(sum)),
+			SaltLen: uint32(len(salt)), //nolint:gosec // 上方已校验长度不超过 MaxUint32
+			KeyLen:  uint32(len(sum)),  //nolint:gosec // 上方已校验长度不超过 MaxUint32
 		},
 		salt: salt,
 		hash: sum,

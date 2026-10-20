@@ -23,7 +23,7 @@ func writeSidecar(objectPath string, opts PutOptions) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sidecarPath(objectPath), b, 0o640)
+	return os.WriteFile(sidecarPath(objectPath), b, 0o600)
 }
 
 func readSidecar(objectPath string) (contentType string, metadata map[string]string) {

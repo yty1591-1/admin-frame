@@ -12,6 +12,9 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
+// maxUploadFormBytes 限制 multipart 表单整体读入内存的上限。
+const maxUploadFormBytes = 32 << 20
+
 // Handler A 端文件 HTTP。
 type Handler struct {
 	svc *app.Service
@@ -41,7 +44,9 @@ func (h *Handler) PresignUpload(w http.ResponseWriter, r *http.Request) {
 // Upload POST /admin/v1/files （multipart: file + category）
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	traceID := platform.TraceIDFromContext(r.Context())
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadFormBytes)
+	//nolint:gosec // G120 的污点分析不识别 MaxBytesReader，请求体大小已在上方限制
+	if err := r.ParseMultipartForm(maxUploadFormBytes); err != nil {
 		httpx.FromError(w, apperr.BadRequest("invalid multipart form"), traceID)
 		return
 	}
@@ -51,7 +56,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.BadRequest("file is required"), traceID)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	ct := hdr.Header.Get("Content-Type")
 	if ct == "" {
 		ct = r.FormValue("content_type")
@@ -98,7 +103,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	if info.ContentType != "" {
 		w.Header().Set("Content-Type", info.ContentType)
 	}

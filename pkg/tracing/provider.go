@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -86,7 +86,7 @@ func newResource(opts Options) (*resource.Resource, error) {
 		attrs = append(attrs, semconv.ServiceVersion(opts.Version))
 	}
 	if opts.Env != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironmentName(opts.Env))
+		attrs = append(attrs, semconv.DeploymentEnvironmentNameKey.String(opts.Env))
 	}
 	if opts.Channel != "" {
 		attrs = append(attrs, attribute.String("deployment.channel", opts.Channel))

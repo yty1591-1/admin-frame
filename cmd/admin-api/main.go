@@ -63,7 +63,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}
-	defer func() { _ = stores.Close() }()
 
 	fileSvc := filesapp.NewService(stores.Default, filesapp.Config{
 		MaxBytes:      cfg.Storage.MaxObjectBytes,
@@ -80,6 +79,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("tracing: %v", err)
 	}
+	// 在此之后不应再使用 log.Fatalf，否则 defer 收尾（含退出码）不会执行。
+	defer func() { _ = stores.Close() }()
 	exitCode := 0
 	defer func() {
 		_ = tp.Shutdown(context.Background()) // 进程退出前刷出剩余 span

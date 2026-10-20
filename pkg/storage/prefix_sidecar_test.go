@@ -48,7 +48,7 @@ func (s *stubCloud) AbortMultipart(_ context.Context, key, _ string) error {
 
 func TestPrefixStoreForwardsPresignAndMultipart(t *testing.T) {
 	inner := &stubCloud{Store: storage.NewMemory(storage.MemoryConfig{})}
-	defer inner.Close()
+	defer func() { _ = inner.Close() }()
 	ps, err := storage.WithPrefix(inner, "env/ch")
 	if err != nil {
 		t.Fatal(err)

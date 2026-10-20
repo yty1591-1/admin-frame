@@ -95,10 +95,10 @@ func WithMaxElapsed(d time.Duration) Option {
 }
 
 // WithBackoff 设置初始与最大退避。
-func WithBackoff(initial, max time.Duration) Option {
+func WithBackoff(initial, maxBackoff time.Duration) Option {
 	return func(p *Policy) {
 		p.InitialBackoff = initial
-		p.MaxBackoff = max
+		p.MaxBackoff = maxBackoff
 	}
 }
 

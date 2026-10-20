@@ -10,9 +10,9 @@ type Config struct {
 
 // Hasher 密码哈希门面：Hash 按配置算法编码，Verify 按前缀自动识别。
 type Hasher struct {
-	algo    Algorithm
-	bcrypt  BcryptParams
-	argon2  Argon2idParams
+	algo   Algorithm
+	bcrypt BcryptParams
+	argon2 Argon2idParams
 }
 
 // New 构造 Hasher；零值 Config 使用 argon2id + OWASP 默认参数。

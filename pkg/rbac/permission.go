@@ -18,9 +18,9 @@ func (p Permission) Valid() bool { return p.Normalize() != "" }
 
 // Matches 报告本授予项是否覆盖 need（本值为 grant）。
 //
-//	*           → 任意
-//	order:*     → order:read / order:write
-//	order:read  → 精确匹配
+//   - → 任意
+//     order:*     → order:read / order:write
+//     order:read  → 精确匹配
 func (p Permission) Matches(need Permission) bool {
 	grant := p.Normalize()
 	req := need.Normalize()

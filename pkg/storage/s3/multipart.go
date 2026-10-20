@@ -5,10 +5,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/admin-frame/admin-frame/pkg/storage"
 )
 
 // CreateMultipart 实现 storage.MultipartUploader。

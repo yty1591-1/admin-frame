@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+
 	"github.com/admin-frame/admin-frame/pkg/cache"
 	"github.com/admin-frame/admin-frame/pkg/redis"
-	"github.com/alicebob/miniredis/v2"
 )
 
 func startMini(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
@@ -71,25 +72,25 @@ func TestKeyHelpers(t *testing.T) {
 func TestCacheRoundTripAndMiss(t *testing.T) {
 	_, c := startMini(t)
 	ctx := context.Background()
-	cache := c.Cache()
+	cacheStore := c.Cache()
 
-	if _, err := cache.Get(ctx, "k1"); !errors.Is(err, redis.ErrMiss) {
+	if _, err := cacheStore.Get(ctx, "k1"); !errors.Is(err, redis.ErrMiss) {
 		t.Fatalf("err=%v", err)
 	}
-	if err := cache.Set(ctx, "k1", []byte("v1"), time.Minute); err != nil {
+	if err := cacheStore.Set(ctx, "k1", []byte("v1"), time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	got, err := cache.Get(ctx, "k1")
+	got, err := cacheStore.Get(ctx, "k1")
 	if err != nil || string(got) != "v1" {
 		t.Fatalf("got=%q err=%v", got, err)
 	}
-	if err := cache.Set(ctx, "k2", []byte("x"), 0); !errors.Is(err, redis.ErrInvalidConfig) {
+	if err := cacheStore.Set(ctx, "k2", []byte("x"), 0); !errors.Is(err, redis.ErrInvalidConfig) {
 		t.Fatalf("ttl err=%v", err)
 	}
-	if err := cache.Delete(ctx, "k1"); err != nil {
+	if err := cacheStore.Delete(ctx, "k1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.Get(ctx, "k1"); !errors.Is(err, redis.ErrMiss) {
+	if _, err := cacheStore.Get(ctx, "k1"); !errors.Is(err, redis.ErrMiss) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -97,7 +98,7 @@ func TestCacheRoundTripAndMiss(t *testing.T) {
 func TestCacheGetOrLoadCoalesce(t *testing.T) {
 	_, c := startMini(t)
 	ctx := context.Background()
-	cache := c.Cache()
+	cacheStore := c.Cache()
 
 	var loads atomic.Int32
 	var wg sync.WaitGroup
@@ -106,7 +107,7 @@ func TestCacheGetOrLoadCoalesce(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			val, err := cache.GetOrLoad(ctx, "hot", time.Minute, func(ctx context.Context) ([]byte, error) {
+			val, err := cacheStore.GetOrLoad(ctx, "hot", time.Minute, func(_ context.Context) ([]byte, error) {
 				loads.Add(1)
 				time.Sleep(20 * time.Millisecond)
 				return []byte("loaded"), nil

@@ -2,6 +2,7 @@ package oss
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	alioss "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
@@ -15,7 +16,7 @@ func mapErr(err error) error {
 	}
 	var se *alioss.ServiceError
 	if errors.As(err, &se) {
-		if se.StatusCode == 404 {
+		if se.StatusCode == http.StatusNotFound {
 			return storage.ErrNotFound
 		}
 		switch strings.ToLower(se.Code) {

@@ -4,10 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/admin-frame/admin-frame/pkg/storage"
 )
 
 // PutLifecycle 实现 storage.LifecycleManager；空 rules 删除桶生命周期配置。
@@ -36,12 +37,12 @@ func (s *Store) PutLifecycle(ctx context.Context, rules []storage.LifecycleRule)
 		}
 		if r.ExpireDays > 0 {
 			rule.Expiration = &types.LifecycleExpiration{
-				Days: aws.Int32(int32(r.ExpireDays)),
+				Days: aws.Int32(int32(r.ExpireDays)), //nolint:gosec // ValidateLifecycleRules 已限制上界为 MaxInt32
 			}
 		}
 		if r.AbortIncompleteMultipartDays > 0 {
 			rule.AbortIncompleteMultipartUpload = &types.AbortIncompleteMultipartUpload{
-				DaysAfterInitiation: aws.Int32(int32(r.AbortIncompleteMultipartDays)),
+				DaysAfterInitiation: aws.Int32(int32(r.AbortIncompleteMultipartDays)), //nolint:gosec // ValidateLifecycleRules 已限制上界为 MaxInt32
 			}
 		}
 		cfgRules = append(cfgRules, rule)
@@ -73,8 +74,8 @@ func (s *Store) GetLifecycle(ctx context.Context) ([]storage.LifecycleRule, erro
 		}
 		if r.Filter != nil && r.Filter.Prefix != nil {
 			lr.Prefix = aws.ToString(r.Filter.Prefix)
-		} else if r.Prefix != nil {
-			lr.Prefix = aws.ToString(r.Prefix)
+		} else if r.Prefix != nil { //nolint:staticcheck // 兼容仅设置旧式顶层 Prefix 的生命周期规则
+			lr.Prefix = aws.ToString(r.Prefix) //nolint:staticcheck // 同上
 		}
 		if r.Expiration != nil && r.Expiration.Days != nil {
 			lr.ExpireDays = int(aws.ToInt32(r.Expiration.Days))

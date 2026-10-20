@@ -116,7 +116,7 @@ func TestAsideGetOrLoadCoalesceAndNegative(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			val, err := c.GetOrLoad(ctx, "hot", func(ctx context.Context) ([]byte, error) {
+			val, err := c.GetOrLoad(ctx, "hot", func(_ context.Context) ([]byte, error) {
 				loads.Add(1)
 				time.Sleep(15 * time.Millisecond)
 				return []byte("ok"), nil
@@ -131,14 +131,14 @@ func TestAsideGetOrLoadCoalesceAndNegative(t *testing.T) {
 		t.Fatalf("loads=%d", loads.Load())
 	}
 
-	_, err = c.GetOrLoad(ctx, "none", func(ctx context.Context) ([]byte, error) {
+	_, err = c.GetOrLoad(ctx, "none", func(_ context.Context) ([]byte, error) {
 		return nil, nil
 	})
 	if !errors.Is(err, cache.ErrNegative) {
 		t.Fatalf("err=%v", err)
 	}
 	// second call should hit negative without loader
-	_, err = c.GetOrLoad(ctx, "none", func(ctx context.Context) ([]byte, error) {
+	_, err = c.GetOrLoad(ctx, "none", func(_ context.Context) ([]byte, error) {
 		t.Fatal("loader should not run")
 		return nil, nil
 	})
@@ -152,7 +152,7 @@ func TestAsideRequiresTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.GetOrLoad(context.Background(), "k", func(ctx context.Context) ([]byte, error) {
+	_, err = c.GetOrLoad(context.Background(), "k", func(_ context.Context) ([]byte, error) {
 		return []byte("x"), nil
 	})
 	if !errors.Is(err, cache.ErrInvalidConfig) {
@@ -188,13 +188,13 @@ func TestJitterIncreasesTTL(t *testing.T) {
 func TestMultiSoftFail(t *testing.T) {
 	l1 := cache.NewMemory(cache.MemoryConfig{MaxEntries: 8})
 	bad := cache.FuncStore{
-		GetFunc: func(ctx context.Context, key string) ([]byte, error) {
+		GetFunc: func(_ context.Context, _ string) ([]byte, error) {
 			return nil, errors.New("redis down")
 		},
-		SetFunc: func(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+		SetFunc: func(_ context.Context, _ string, _ []byte, _ time.Duration) error {
 			return errors.New("redis down")
 		},
-		DeleteFunc: func(ctx context.Context, keys ...string) error {
+		DeleteFunc: func(_ context.Context, _ ...string) error {
 			return errors.New("redis down")
 		},
 	}

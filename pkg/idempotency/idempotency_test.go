@@ -51,12 +51,12 @@ func TestMemoryStoreReplayAndConflict(t *testing.T) {
 	if err != nil || !created || rec.State != idempotency.StateInProgress {
 		t.Fatalf("begin1 created=%v rec=%+v err=%v", created, rec, err)
 	}
-	if err := store.Complete(ctx, key, fp, 201, http.Header{"Content-Type": {"application/json"}}, []byte(`{"id":1}`), time.Hour); err != nil {
+	if err := store.Complete(ctx, key, fp, http.StatusCreated, http.Header{"Content-Type": {"application/json"}}, []byte(`{"id":1}`), time.Hour); err != nil {
 		t.Fatal(err)
 	}
 
 	rec, created, err = store.Begin(ctx, key, fp, time.Hour)
-	if err != nil || created || rec.StatusCode != 201 || string(rec.Body) != `{"id":1}` {
+	if err != nil || created || rec.StatusCode != http.StatusCreated || string(rec.Body) != `{"id":1}` {
 		t.Fatalf("replay created=%v rec=%+v err=%v", created, rec, err)
 	}
 

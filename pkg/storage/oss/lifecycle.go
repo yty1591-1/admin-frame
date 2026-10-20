@@ -32,12 +32,12 @@ func (s *Store) PutLifecycle(ctx context.Context, rules []storage.LifecycleRule)
 		}
 		if r.ExpireDays > 0 {
 			rule.Expiration = &alioss.LifecycleRuleExpiration{
-				Days: alioss.Ptr(int32(r.ExpireDays)),
+				Days: alioss.Ptr(int32(r.ExpireDays)), //nolint:gosec // ValidateLifecycleRules 已限制上界为 MaxInt32
 			}
 		}
 		if r.AbortIncompleteMultipartDays > 0 {
 			rule.AbortMultipartUpload = &alioss.LifecycleRuleAbortMultipartUpload{
-				Days: alioss.Ptr(int32(r.AbortIncompleteMultipartDays)),
+				Days: alioss.Ptr(int32(r.AbortIncompleteMultipartDays)), //nolint:gosec // ValidateLifecycleRules 已限制上界为 MaxInt32
 			}
 		}
 		cfgRules = append(cfgRules, rule)

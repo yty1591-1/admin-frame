@@ -69,8 +69,8 @@ func TestLogArgs(t *testing.T) {
 }
 
 func TestNilContextSafe(t *testing.T) {
-	if contextx.UserID(nil) != "" || contextx.MerchantID(nil) != "" {
+	if contextx.UserID(context.TODO()) != "" || contextx.MerchantID(context.TODO()) != "" {
 		t.Fatal("nil ctx")
 	}
-	_ = contextx.WithUserID(nil, "u")
+	_ = contextx.WithUserID(context.TODO(), "u")
 }

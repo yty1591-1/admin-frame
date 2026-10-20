@@ -18,15 +18,9 @@ func Text(s string) string {
 		return ""
 	}
 	out := RedactSecrets(s)
-	out = reIDCard.ReplaceAllStringFunc(out, func(m string) string {
-		return IDCard(m)
-	})
-	out = reMobile.ReplaceAllStringFunc(out, func(m string) string {
-		return Phone(m)
-	})
-	out = reEmail.ReplaceAllStringFunc(out, func(m string) string {
-		return Email(m)
-	})
+	out = reIDCard.ReplaceAllStringFunc(out, IDCard)
+	out = reMobile.ReplaceAllStringFunc(out, Phone)
+	out = reEmail.ReplaceAllStringFunc(out, Email)
 	out = reBankish.ReplaceAllStringFunc(out, func(m string) string {
 		// 避免把已脱敏的 11 位手机残留再当卡号；仅处理更长数字串
 		if len(digitsOnly(m)) < 13 {

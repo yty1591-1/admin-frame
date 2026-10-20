@@ -3,16 +3,20 @@ package storage
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 )
+
+// maxLifecycleDays 为各云厂商 Days 字段可接受的 int32 上限。
+const maxLifecycleDays = math.MaxInt32
 
 // LifecycleRule 桶级对象生命周期规则（过期 / 中止未完成分片）。
 // Prefix 为空表示整桶；非空时须为合法键前缀（不含前导 /）。
 type LifecycleRule struct {
-	ID                             string `yaml:"id" json:"id"`
-	Prefix                         string `yaml:"prefix" json:"prefix"`
-	ExpireDays                     int    `yaml:"expire_days" json:"expire_days"`
-	AbortIncompleteMultipartDays   int    `yaml:"abort_incomplete_multipart_days" json:"abort_incomplete_multipart_days"`
+	ID                           string `yaml:"id" json:"id"`
+	Prefix                       string `yaml:"prefix" json:"prefix"`
+	ExpireDays                   int    `yaml:"expire_days" json:"expire_days"`
+	AbortIncompleteMultipartDays int    `yaml:"abort_incomplete_multipart_days" json:"abort_incomplete_multipart_days"`
 }
 
 // LifecycleConfig 生命周期装配；默认不写桶（须显式 ApplyOnStart）。
@@ -66,6 +70,9 @@ func ValidateLifecycleRules(rules []LifecycleRule) error {
 		}
 		if r.ExpireDays < 0 || r.AbortIncompleteMultipartDays < 0 {
 			return fmt.Errorf("%w: lifecycle rule %q days must be >= 0", ErrInvalidConfig, id)
+		}
+		if r.ExpireDays > maxLifecycleDays || r.AbortIncompleteMultipartDays > maxLifecycleDays {
+			return fmt.Errorf("%w: lifecycle rule %q days must be <= %d", ErrInvalidConfig, id, maxLifecycleDays)
 		}
 		if r.ExpireDays == 0 && r.AbortIncompleteMultipartDays == 0 {
 			return fmt.Errorf("%w: lifecycle rule %q needs expire_days or abort_incomplete_multipart_days", ErrInvalidConfig, id)

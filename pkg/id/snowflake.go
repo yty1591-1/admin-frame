@@ -166,7 +166,7 @@ type Parts struct {
 
 // Parse 按默认位布局与给定纪元拆解 ID。
 // epochMS ≤0 时使用 DefaultEpochMS。
-func Parse(id int64, epochMS int64) Parts {
+func Parse(id, epochMS int64) Parts {
 	if epochMS <= 0 {
 		epochMS = DefaultEpochMS
 	}

@@ -21,7 +21,7 @@ func TestMemoryPublishSubscribe(t *testing.T) {
 	defer cancel()
 
 	var got atomic.Value
-	err := broker.Consumer().Subscribe("order.created", func(ctx context.Context, msg mq.Message) error {
+	err := broker.Consumer().Subscribe("order.created", func(_ context.Context, msg mq.Message) error {
 		got.Store(string(msg.Body))
 		cancel()
 		return nil
@@ -52,7 +52,7 @@ func TestMemoryPublishSubscribe(t *testing.T) {
 
 func TestWrapRetryThenAck(t *testing.T) {
 	var attempts atomic.Int32
-	h := mq.Wrap(func(ctx context.Context, msg mq.Message) error {
+	h := mq.Wrap(func(_ context.Context, _ mq.Message) error {
 		n := attempts.Add(1)
 		if n < 3 {
 			return pkgerrors.Unavailable("tmp")
@@ -87,11 +87,11 @@ func TestWrapRetryThenAck(t *testing.T) {
 
 func TestWrapDeadLetterOnPermanent(t *testing.T) {
 	var dlqMsg atomic.Value
-	h := mq.Wrap(func(ctx context.Context, msg mq.Message) error {
+	h := mq.Wrap(func(_ context.Context, _ mq.Message) error {
 		return retry.Permanent(errors.New("bad payload"))
 	}, mq.ConsumeOptions{
 		MaxAttempts: 3,
-		DeadLetter: mq.DeadLetterFunc(func(ctx context.Context, msg mq.Message, cause error) error {
+		DeadLetter: mq.DeadLetterFunc(func(_ context.Context, msg mq.Message, _ error) error {
 			dlqMsg.Store(msg.ID)
 			return nil
 		}),
@@ -141,7 +141,7 @@ func TestClassify(t *testing.T) {
 
 func TestMiddlewareChain(t *testing.T) {
 	var order []int
-	h := mq.Chain(func(ctx context.Context, msg mq.Message) error {
+	h := mq.Chain(func(_ context.Context, _ mq.Message) error {
 		order = append(order, 0)
 		return nil
 	}, func(next mq.Handler) mq.Handler {
@@ -170,7 +170,7 @@ func TestOutboxRelay(t *testing.T) {
 	defer cancel()
 
 	var got sync.Map
-	_ = broker.Consumer().Subscribe("evt", func(ctx context.Context, msg mq.Message) error {
+	_ = broker.Consumer().Subscribe("evt", func(_ context.Context, msg mq.Message) error {
 		got.Store(msg.ID, string(msg.Body))
 		cancel()
 		return nil

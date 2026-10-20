@@ -43,7 +43,7 @@ func New(cfg Config) (*Client, error) {
 		http: &http.Client{
 			Transport: rt,
 			Timeout:   cfg.Timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
 					return http.ErrUseLastResponse
 				}
@@ -73,7 +73,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("User-Agent") == "" && c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
-	return c.http.Do(req)
+	return c.http.Do(req) //nolint:gosec // 通用 HTTP 客户端，目标地址由调用方显式指定
 }
 
 // CloseIdleConnections 关闭空闲连接（进程退出前可选调用）。

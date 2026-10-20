@@ -218,8 +218,5 @@ func (m *Memory) ready(ctx context.Context) error {
 	if m == nil || m.closed.Load() {
 		return ErrClosed
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nil
+	return ctx.Err()
 }

@@ -1,3 +1,4 @@
+// Package app 实现文件预签名、上传、下载等用例编排。
 package app
 
 import (
@@ -28,11 +29,11 @@ type Config struct {
 
 // Service 附件上传/下载用例。
 type Service struct {
-	store     storage.Store
-	allowCT   map[string]struct{}
-	maxBytes  int64
-	putTTL    time.Duration
-	getTTL    time.Duration
+	store    storage.Store
+	allowCT  map[string]struct{}
+	maxBytes int64
+	putTTL   time.Duration
+	getTTL   time.Duration
 }
 
 // NewService 构造用例服务。
@@ -254,14 +255,14 @@ func mapStorageErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case err == storage.ErrNotFound:
+	switch err {
+	case storage.ErrNotFound:
 		return apperr.NotFound("object not found")
-	case err == storage.ErrInvalidKey, err == storage.ErrInvalidConfig:
+	case storage.ErrInvalidKey, storage.ErrInvalidConfig:
 		return apperr.BadRequest(err.Error())
-	case err == storage.ErrTooLarge:
+	case storage.ErrTooLarge:
 		return apperr.BadRequest("object too large")
-	case err == storage.ErrUnsupported:
+	case storage.ErrUnsupported:
 		return apperr.BadRequest(err.Error())
 	default:
 		return apperr.Internal("storage error", err)

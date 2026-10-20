@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	"github.com/admin-frame/admin-frame/pkg/middleware"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func TestChainOrder(t *testing.T) {
@@ -26,10 +27,10 @@ func TestChainOrder(t *testing.T) {
 			})
 		}
 	}
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		order = append(order, "h")
 	}), mw("a"), mw("b"))
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	want := "a:in b:in h b:out a:out"
 	got := strings.Join(order, " ")
 	if got != want {
@@ -39,10 +40,10 @@ func TestChainOrder(t *testing.T) {
 
 func TestRequestIDIncoming(t *testing.T) {
 	var got string
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got = contextx.RequestID(r.Context())
 	}), middleware.RequestID())
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("X-Request-ID", "client-id")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -62,10 +63,10 @@ func TestRequestIDFromOTel(t *testing.T) {
 	}
 
 	var got string
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got = contextx.RequestID(r.Context())
 	}), middleware.RequestID())
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if got != tid {
@@ -75,16 +76,16 @@ func TestRequestIDFromOTel(t *testing.T) {
 
 func TestRecover(t *testing.T) {
 	var panicked any
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("boom")
 	}), middleware.Recover(middleware.RecoverConfig{
-		OnPanic: func(w http.ResponseWriter, r *http.Request, recovered any) {
+		OnPanic: func(w http.ResponseWriter, _ *http.Request, recovered any) {
 			panicked = recovered
 			w.WriteHeader(http.StatusInternalServerError)
 		},
 	}))
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	if panicked != "boom" || rr.Code != 500 {
 		t.Fatalf("panic=%v code=%d", panicked, rr.Code)
 	}
@@ -100,20 +101,20 @@ func TestTimeoutSoft(t *testing.T) {
 		}
 	}), middleware.Timeout(5*time.Millisecond))
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	if rr.Code != http.StatusGatewayTimeout {
 		t.Fatalf("code=%d", rr.Code)
 	}
 }
 
 func TestCORSPreflight(t *testing.T) {
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}), middleware.CORS(middleware.CORSConfig{
 		AllowOrigins: []string{"https://app.example.com"},
 		MaxAge:       time.Hour,
 	}))
-	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/", http.NoBody)
 	req.Header.Set("Origin", "https://app.example.com")
 	req.Header.Set("Access-Control-Request-Method", "POST")
 	rr := httptest.NewRecorder()
@@ -132,19 +133,19 @@ func TestRateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var limited int
-	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}), middleware.RateLimit(middleware.RateLimitConfig{
 		Limiter: lim,
-		OnLimited: func(w http.ResponseWriter, r *http.Request, result ratelimit.Result) {
+		OnLimited: func(w http.ResponseWriter, _ *http.Request, _ ratelimit.Result) {
 			limited++
 			w.WriteHeader(http.StatusTooManyRequests)
 		},
 	}))
 	rr1 := httptest.NewRecorder()
-	h.ServeHTTP(rr1, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr1, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	rr2 := httptest.NewRecorder()
-	h.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	if rr1.Code != 200 || rr2.Code != 429 || limited != 1 {
 		t.Fatalf("c1=%d c2=%d limited=%d", rr1.Code, rr2.Code, limited)
 	}

@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/admin-frame/admin-frame/pkg/logger"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func TestNewBindsServiceChannelEnv(t *testing.T) {

@@ -142,7 +142,7 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 	if r.Body == nil || r.Body == http.NoBody {
 		return nil, nil
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	limited := io.LimitReader(r.Body, maxBytes+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {

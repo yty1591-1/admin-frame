@@ -1,6 +1,9 @@
 package id
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Clock 可注入时钟，便于单测与时钟回拨场景验证。
 type Clock interface {
@@ -16,8 +19,10 @@ func (realClock) Now() time.Time { return time.Now() }
 func RealClock() Clock { return realClock{} }
 
 // ManualClock 可供测试手动拨快的时钟。
+// 内部加锁，可在被测并发代码运行时安全拨表（race-free）。
 type ManualClock struct {
-	t time.Time
+	mu sync.RWMutex
+	t  time.Time
 }
 
 // NewManualClock 从 t 创建手动时钟；零值时使用 Unix epoch UTC。
@@ -33,6 +38,8 @@ func (c *ManualClock) Now() time.Time {
 	if c == nil {
 		return time.Unix(0, 0).UTC()
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.t
 }
 
@@ -41,6 +48,8 @@ func (c *ManualClock) Advance(d time.Duration) {
 	if c == nil {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
 }
 
@@ -49,5 +58,7 @@ func (c *ManualClock) Set(t time.Time) {
 	if c == nil {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.t = t
 }

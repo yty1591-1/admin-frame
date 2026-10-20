@@ -38,7 +38,7 @@ func TestOpenNativeConstructsClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if _, ok := storage.AsPresigner(store); !ok {
 		t.Fatal("expected Presigner")
 	}

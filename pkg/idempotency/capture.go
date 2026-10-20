@@ -17,6 +17,7 @@ func newResponseCapture(w http.ResponseWriter) *responseCapture {
 	return &responseCapture{ResponseWriter: w, status: http.StatusOK}
 }
 
+// WriteHeader 记录首次写入的状态码，重复调用被忽略。
 func (c *responseCapture) WriteHeader(code int) {
 	if c.wrote {
 		return

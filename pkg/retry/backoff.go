@@ -25,9 +25,9 @@ func (p Policy) backoffDelay(attempt int) time.Duration {
 	if p.JitterFraction > 0 && base > 0 {
 		// full jitter 的比例形式：delay = base * (1 - J) + random(0, base * J * 2) 在 J=1 时等价 random(0, base)
 		// 采用：delay = random(base*(1-J), base] 当 J∈(0,1]；J=1 → [0, base]
-		min := base * (1 - p.JitterFraction)
-		span := base - min
-		delay = min + rand.Float64()*span //nolint:gosec // 退避抖动无需密码学随机
+		lower := base * (1 - p.JitterFraction)
+		span := base - lower
+		delay = lower + rand.Float64()*span //nolint:gosec // 退避抖动无需密码学随机
 	}
 	d := time.Duration(delay)
 	if d < 0 {

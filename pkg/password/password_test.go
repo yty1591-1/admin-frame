@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/pkg/password"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/admin-frame/admin-frame/pkg/password"
 )
 
 func TestHashVerifyArgon2idDefault(t *testing.T) {

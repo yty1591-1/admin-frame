@@ -21,6 +21,7 @@ type retryTransport struct {
 	retryStatuses []int
 }
 
+// RoundTrip 在可重试方法与错误/状态码下按策略重放请求。
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t == nil || t.next == nil {
 		return nil, ErrInvalidConfig
@@ -40,7 +41,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var lastResp *http.Response
 
 	err := retry.Do(req.Context(), policy, func(ctx context.Context) error {
-		attempt, err := cloneRequest(req, ctx)
+		attempt, err := cloneRequest(ctx, req)
 		if err != nil {
 			return retry.Permanent(err)
 		}
@@ -112,7 +113,7 @@ func ensureRewindable(req *http.Request) error {
 	return nil
 }
 
-func cloneRequest(req *http.Request, ctx context.Context) (*http.Request, error) {
+func cloneRequest(ctx context.Context, req *http.Request) (*http.Request, error) {
 	out := req.Clone(ctx)
 	if req.Body == nil || req.Body == http.NoBody {
 		return out, nil

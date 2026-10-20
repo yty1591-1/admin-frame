@@ -156,7 +156,7 @@ func (w *SlidingWindow) weightedCountLocked(now time.Time) float64 {
 	if elapsed > w.window {
 		elapsed = w.window
 	}
-	// 上一窗剩余比例 = 1 - elapsed/window
+	// 上一窗剩余比例等于 1 减去 elapsed 与 window 的比值。
 	frac := 1 - float64(elapsed)/float64(w.window)
 	if frac < 0 {
 		frac = 0

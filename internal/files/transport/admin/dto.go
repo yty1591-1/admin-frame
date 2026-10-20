@@ -1,3 +1,4 @@
+// Package admin 提供 A 端文件接口的 HTTP 传输层。
 package admin
 
 // PresignUploadRequest 预签名上传请求。
