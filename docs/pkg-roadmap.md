@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-19（`pkg/storage` 已落地）
+> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money` 已落地）
 
 ---
 
@@ -97,13 +97,13 @@
 | 包路径 | 用途 | 优先级 | 状态 |
 |--------|------|--------|------|
 | `pkg/retry` | 重试、退避、可取消 | P2 | 已完成 |
-| `pkg/circuitbreaker` | 熔断 | P3 | 待做 |
+| `pkg/circuitbreaker` | 熔断 | P3 | 已完成（三态 + 半开探测 + 可注入时钟） |
 | `pkg/ratelimit` | 令牌桶/滑动窗口 | P2 | 已完成 |
-| `pkg/clock` / `pkg/timeutil` | 可注入时钟、时区、业务日切 | P3 | 待做 |
+| `pkg/clock` / `pkg/timeutil` | 可注入时钟、时区、业务日切 | P3 | 已完成（Clock/Manual、时区、日/周/月边界、固定 cutoff 日切） |
 | `pkg/id` / `pkg/snowflake` | 分布式 ID 生成 | P2 | 已完成 |
 | `pkg/set` / `pkg/slice` / `pkg/maputil` | 集合工具（避免变成杂物间） | P4 | 待做 |
-| `pkg/convert` | 类型安全转换、指针工具 | P4 | 待做 |
-| `pkg/money` / `pkg/decimal` | 金额/精度（多域共用时） | P3 | 待做 |
+| `pkg/convert` | 类型安全转换、指针工具 | P4 | 已完成（checked 数值/字符串/any 转换 + 指针工具） |
+| `pkg/money` / `pkg/decimal` | 金额/精度（多域共用时） | P3 | 已完成（big.Int 定点 decimal + 最小单位 money / 最大余数分配） |
 
 ### 3.6 集成与对外客户端
 
@@ -157,6 +157,10 @@
 | 权限点 | `pkg/rbac`；platform `RequirePermission` 薄封装 | 保持；角色表由 IAM/platform 装配；ABAC 留业务层 |
 | 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | L1 S3 兼容 + L2 原生（`native=true`）；多桶 / Lifecycle |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
+| 熔断 | `pkg/circuitbreaker` | 保持；下游按 SLO 配置 Timeout/ReadyToTrip，`OnStateChange` 接指标 |
+| 时钟/时区 | `pkg/clock` + `pkg/timeutil` | 保持；测试注入 `clock.Manual`；业务日切 cutoff 由 platform 配置 |
+| 类型转换 | `pkg/convert` | 保持；数值/字符串/any 转换统一走本包，禁止绕过溢出检查 |
+| 金额/精度 | `pkg/decimal` + `pkg/money` | 保持；金额落库用最小单位，汇率/比例用 decimal 并显式舍入 |
 
 ---
 
@@ -180,3 +184,4 @@
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。
 8. `pkg/storage` M0–M5 已落地（含 OSS/COS/OBS L2 原生）；细节见 [`storage-s3-oss.md`](./storage-s3-oss.md)。
+9. 下游调用按「重试包住熔断」还是「熔断包住重试」明确策略后接入 `pkg/circuitbreaker`；金额换算统一 `pkg/decimal`/`pkg/money`，禁止 float64。
