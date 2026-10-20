@@ -1,8 +1,8 @@
 # 对象存储：多云模块化驱动规划与选型
 
-> **状态**：落地中（M0–M3b / M5 已完成；M4 L2 原生 SDK 按需暂缓）  
+> **状态**：已落地（M0–M5；默认 L1，`native=true` 切 L2）  
 > **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五  
-> **最后更新**：2026-10-19  
+> **最后更新**：2026-10-20  
 > **目标读者**：后端 / 平台装配 / 安全 Review
 
 ---
@@ -242,7 +242,7 @@ storage:
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
 | **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
 | **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅ |
-| **M4** | （按需）各厂商 L2 原生 SDK | 暂缓（L1 足够；遇独有能力再开 MR + DEP-06） |
+| **M4** | 各厂商 L2 原生 SDK（`native=true`） | ✅ OSS / COS / OBS |
 | **M5** | multipart、生命周期、多桶 | ✅ |
 
 ---
@@ -258,11 +258,33 @@ storage:
 
 ---
 
-## 9. 依赖与许可证
+## 9. 依赖与许可证（DEP-06）
 
-- 每引入一个原生 SDK：独立 MR，填写 DEP-06，跑 `make vuln` / `make check-license`。  
-- L1 仅 AWS SDK v2 时，oss/cos/obs 子包可只依赖 `storage/s3`，**不强制**三家原生 SDK 同时进 `go.mod`。  
-- L2 落地某厂商时，再将其 SDK 加入直接依赖并更新本表。
+| 直接依赖 | 用途 | 许可证 | 替代方案 |
+|----------|------|--------|----------|
+| `github.com/aws/aws-sdk-go-v2` + `service/s3` | L1 S3/MinIO/兼容基座 | Apache-2.0 | —（基座） |
+| `github.com/aliyun/alibabacloud-oss-go-sdk-v2` | L2 阿里云 OSS 原生 | Apache-2.0 | L1 `native=false` + S3 兼容 Endpoint |
+| `github.com/tencentyun/cos-go-sdk-v5` | L2 腾讯云 COS 原生 | Apache-2.0 | L1 S3 兼容 |
+| `github.com/huaweicloud/huaweicloud-sdk-go-obs` | L2 华为云 OBS 原生 | Apache-2.0 | L1 S3 兼容 |
+
+- L2 SDK **仅**出现在 `pkg/storage/{oss,cos,obs}`，不泄漏到 `pkg/storage` 根包。  
+- 默认配置 `native: false`（L1）；进程 blank-import 驱动包后才会链接对应 SDK。  
+- 引入后须跑 `make vuln` / `make check-license`（CI）。
+
+### 9.1 启用 L2
+
+```yaml
+storage:
+  driver: oss          # 或 cos / obs
+  oss:
+    native: true
+    endpoint: oss-cn-hangzhou.aliyuncs.com
+    region: cn-hangzhou
+    bucket: admin-frame-prod
+    # access_key / secret_key → ADMIN_FRAME_STORAGE_ACCESS_KEY / SECRET_KEY
+```
+
+校验：`storage.ValidateCloudL2`（bucket + AK/SK；oss/cos 要 region；obs 要 endpoint）。
 
 ---
 
@@ -270,7 +292,7 @@ storage:
 
 | 问题 | 建议默认 |
 |------|----------|
-| 国内是否允许只用 S3 兼容、不上原生？ | M2 先 L1；遇阻再 L2 |
+| 国内是否允许只用 S3 兼容、不上原生？ | ✅ 默认 L1；`native=true` 切 L2（M4 已实现） |
 | 是否支持同进程多 Store（公有静态桶 + 私有附件桶）？ | ✅ `OpenStorageSet` + `storage.buckets` |
 | 驱动包是否拆独立 Go module？ | 近期单 module；依赖膨胀再拆 |
 

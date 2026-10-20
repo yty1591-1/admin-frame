@@ -78,13 +78,13 @@ func TestOpenS3Validation(t *testing.T) {
 	}
 }
 
-func TestOpenNativeUnsupported(t *testing.T) {
+func TestOpenNativeRequiresCredentials(t *testing.T) {
 	_, err := storage.Open(context.Background(), storage.Config{
 		Driver: "oss",
 		OSS:    storage.OSSConfig{Native: true, Bucket: "b", Region: "cn-hangzhou", Endpoint: "oss.aliyuncs.com"},
 		S3:     storage.S3Config{Bucket: "b", Region: "cn-hangzhou"},
 	})
-	if !errors.Is(err, storage.ErrUnsupported) {
+	if !errors.Is(err, storage.ErrInvalidConfig) {
 		t.Fatalf("err=%v", err)
 	}
 }

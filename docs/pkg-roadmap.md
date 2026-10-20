@@ -155,7 +155,7 @@
 | 密码哈希 | `pkg/password` | 保持；默认 argon2id；登录成功可 NeedsRehash 升级 |
 | 脱敏 | `pkg/mask` | 保持；日志/Trace/审计摘要显式 Phone/IDCard/Text |
 | 权限点 | `pkg/rbac`；platform `RequirePermission` 薄封装 | 保持；角色表由 IAM/platform 装配；ABAC 留业务层 |
-| 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | Open + Multipart/Lifecycle；多桶 `OpenStorageSet`；L2 原生按需 |
+| 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | L1 S3 兼容 + L2 原生（`native=true`）；多桶 / Lifecycle |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 
 ---
@@ -179,4 +179,4 @@
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
 7. worker 消费挂 `pkg/mq`；领域事件经 Outbox → Producer；Kafka/NATS 驱动按需实现接口。
-8. A 端 files + M5（multipart/生命周期/多桶）已落地；L2 原生 SDK 见 [`storage-s3-oss.md`](./storage-s3-oss.md) M4（暂缓）。
+8. `pkg/storage` M0–M5 已落地（含 OSS/COS/OBS L2 原生）；细节见 [`storage-s3-oss.md`](./storage-s3-oss.md)。
