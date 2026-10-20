@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money` 已落地；通知渠道进入规划，见 [`notification-channels.md`](./notification-channels.md)）
+> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money`/`webhook` 已落地；通知渠道见 [`notification-channels.md`](./notification-channels.md)）
 
 ---
 
@@ -113,7 +113,7 @@
 | `pkg/sms` | 短信渠道适配（接口 + 实现） | P4 | 已完成（契约 + memory/阿里云驱动 + `smstest`） |
 | `pkg/email` | 邮件渠道适配 | P4 | 已完成（契约 + MIME + memory/SMTP 驱动 + `emailtest`） |
 | `pkg/push` | 推送渠道适配 | P4 | 已完成（契约 + memory/APNs/FCM 驱动 + `pushtest`） |
-| `pkg/webhook` | 签名校验、重放保护 | P4 | 待做 |
+| `pkg/webhook` | 签名校验、重放保护 | P4 | 已完成（Standard Webhooks 兼容签名 + 时间窗 + `NonceStore` + 中间件；含出站 `Signer`） |
 
 ### 3.7 测试与开发辅助
 
