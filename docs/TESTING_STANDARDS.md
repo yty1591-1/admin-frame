@@ -40,7 +40,7 @@
 | 类型 | 位置 | 要求 |
 |------|------|------|
 | 单元测试 | 同包 `*_test.go`（推荐 `xxx_test` 黑盒包名，domain 可为白盒） | domain **必须**；app 对隔离/用例逻辑应有覆盖 |
-| 集成测试 | `tests/integration/` | 真实 DB/MQ 时用容器；含租户隔离 |
+| 集成测试 | `tests/integration/` | 真实 DB/MQ 时用容器或 CI service（ephemeral）；含租户隔离；DSN 经环境变量注入，未配置时显式 `t.Skipf` 并说明原因，不得静默通过 |
 | 端到端 | `tests/e2e/{admin,biz,c}/` | 按需；分别拉起对应 api |
 | Benchmark | `BenchmarkXxx` | 热路径按需，不替代功能测试 |
 

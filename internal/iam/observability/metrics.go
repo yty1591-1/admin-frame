@@ -1,0 +1,209 @@
+// Package observability 提供 IAM 鉴权链路的 Prometheus 指标适配。
+//
+// 本包只做「观测接口 → 指标」的翻译，不参与鉴权决策；由 cmd 在装配期
+// 创建一次并同时注入 cache.SnapshotCache、app.AuthorizeService 与
+// security.Authorizer，保证三类观测共享同一 Registry（docs/rbac-iam.md §9）。
+package observability
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/admin-frame/admin-frame/internal/iam/app"
+	iampcache "github.com/admin-frame/admin-frame/internal/iam/infrastructure/cache"
+	"github.com/admin-frame/admin-frame/internal/security"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
+)
+
+// Metrics 是 IAM 鉴权指标集，实现缓存 / 加载 / 决策 / shadow 观测接口。
+type Metrics struct {
+	cacheTotal     *prometheus.CounterVec
+	loadDuration   *prometheus.HistogramVec
+	snapshotSize   *prometheus.HistogramVec
+	decisions      *prometheus.CounterVec
+	invalidateFail *prometheus.CounterVec
+	shadowMismatch *prometheus.CounterVec
+	loadErrors     *prometheus.CounterVec
+	roleChanges    *prometheus.CounterVec
+	bindingChanges *prometheus.CounterVec
+}
+
+// NewMetrics 创建并注册指标；重复注册视为装配错误（fail-fast）。
+func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("iam observability: registerer is required")
+	}
+	m := &Metrics{
+		cacheTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_authz_cache_total",
+			Help: "IAM 鉴权快照缓存读取次数，按层与结果分组。",
+		}, []string{"layer", "result"}),
+		loadDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "iam_authz_duration_seconds",
+			Help:    "IAM 鉴权快照加载耗时，按端别与来源分组。",
+			Buckets: []float64{0.0005, 0.001, 0.003, 0.005, 0.01, 0.03, 0.05, 0.1, 0.3, 1},
+		}, []string{"channel", "source"}),
+		snapshotSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "iam_authz_snapshot_permissions",
+			Help:    "IAM 单主体快照权限点数量，用于发现角色膨胀。",
+			Buckets: []float64{0, 5, 10, 20, 50, 100, 200, 500},
+		}, []string{"channel"}),
+		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_authz_decisions_total",
+			Help: "IAM 动态鉴权决策次数，result=allow|deny|unavailable。",
+		}, []string{"channel", "result"}),
+		invalidateFail: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_cache_invalidate_failed_total",
+			Help: "IAM 缓存删除失败次数；依赖 TTL 过期兜底。",
+		}, []string{"layer"}),
+		shadowMismatch: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_shadow_mismatch_total",
+			Help: "IAM shadow 模式与静态角色表判定差异次数。",
+		}, []string{"channel", "static_allow", "iam_allow"}),
+		loadErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_authz_load_errors_total",
+			Help: "IAM 快照加载 / 缓存写失败次数，按阶段分组。",
+		}, []string{"stage"}),
+		roleChanges: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_role_changes_total",
+			Help: "IAM 角色变更次数，按端别、变更类型与结果分组。",
+		}, []string{"channel", "operation", "outcome"}),
+		bindingChanges: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_binding_changes_total",
+			Help: "IAM 主体绑定变更次数，按端别、变更类型与结果分组。",
+		}, []string{"channel", "operation", "outcome"}),
+	}
+	for _, collector := range []prometheus.Collector{
+		m.cacheTotal, m.loadDuration, m.snapshotSize, m.decisions,
+		m.invalidateFail, m.shadowMismatch, m.loadErrors,
+		m.roleChanges, m.bindingChanges,
+	} {
+		if err := registerer.Register(collector); err != nil {
+			return nil, fmt.Errorf("iam observability: register metrics: %w", err)
+		}
+	}
+	return m, nil
+}
+
+// OnCache 实现 cache.Observer。
+func (m *Metrics) OnCache(layer iampcache.Layer, result string) {
+	if m == nil {
+		return
+	}
+	m.cacheTotal.WithLabelValues(string(layer), result).Inc()
+}
+
+// OnInvalidateFailure 实现 cache.Observer。
+func (m *Metrics) OnInvalidateFailure(layer iampcache.Layer) {
+	if m == nil {
+		return
+	}
+	m.invalidateFail.WithLabelValues(string(layer)).Inc()
+}
+
+// OnSnapshotLoad 实现 app.Observer。
+func (m *Metrics) OnSnapshotLoad(_ context.Context, channel string, source iampcache.Layer, elapsed time.Duration) {
+	if m == nil {
+		return
+	}
+	m.loadDuration.WithLabelValues(channel, string(source)).Observe(elapsed.Seconds())
+}
+
+// OnSnapshot 实现 app.Observer。
+func (m *Metrics) OnSnapshot(_ context.Context, channel string, permissions int) {
+	if m == nil {
+		return
+	}
+	m.snapshotSize.WithLabelValues(channel).Observe(float64(permissions))
+}
+
+// OnSnapshotError 实现 app.Observer。
+func (m *Metrics) OnSnapshotError(_ context.Context, stage string, _ error) {
+	if m == nil {
+		return
+	}
+	m.loadErrors.WithLabelValues(stage).Inc()
+}
+
+// OnDecision 实现 security.DecisionObserver。
+func (m *Metrics) OnDecision(_ context.Context, channel, result string) {
+	if m == nil {
+		return
+	}
+	m.decisions.WithLabelValues(channel, result).Inc()
+}
+
+// OnMismatch 实现 security.ShadowObserver。
+func (m *Metrics) OnMismatch(_ context.Context, mismatch security.Mismatch) {
+	if m == nil {
+		return
+	}
+	m.shadowMismatch.WithLabelValues(
+		mismatch.Channel,
+		strconv.FormatBool(mismatch.StaticAllow),
+		strconv.FormatBool(mismatch.IAMAllow),
+	).Inc()
+}
+
+// OnLoadError 实现 security.ShadowObserver；shadow 加载失败按 stage=shadow 计数。
+func (m *Metrics) OnLoadError(context.Context, string, error) {
+	if m == nil {
+		return
+	}
+	m.loadErrors.WithLabelValues("shadow").Inc()
+}
+
+// OnChange 记录一次授权变更（由 ChangeRecorder 装饰器在审计落盘后调用）。
+//
+// 只登记角色与绑定两类 action：其它 action 不在此处理，避免指标语义漂移。
+// labels 刻意不含 subject_id / role_id，遵守 §11.2 的高基数禁令。
+func (m *Metrics) OnChange(_ context.Context, action, channel, operation, outcome string) {
+	if m == nil {
+		return
+	}
+	if operation == "" {
+		operation = "unknown"
+	}
+	switch action {
+	case audit.ActionRBACRoleChange:
+		m.roleChanges.WithLabelValues(channel, operation, outcome).Inc()
+	case audit.ActionRBACBindingChange:
+		m.bindingChanges.WithLabelValues(channel, operation, outcome).Inc()
+	}
+}
+
+// ChangeRecorder 是 app.ChangeRecorder 的观测装饰器。
+//
+// 顺序语义：先写审计，再计数。审计失败时业务会失败关闭，此时计数记为 failure，
+// 因此 `iam_role_changes_total{outcome=failure}` 正是「审计/变更失败率」。
+type ChangeRecorder struct {
+	Inner   app.ChangeRecorder
+	Metrics *Metrics
+}
+
+// Record 写入审计并统计变更结果；任何失败都按 failure 计数后原样返回。
+func (r ChangeRecorder) Record(ctx context.Context, event audit.Event) error {
+	var recordErr error
+	if r.Inner == nil {
+		recordErr = apperr.Internal("audit recorder is not configured", nil)
+	} else {
+		recordErr = r.Inner.Record(ctx, event)
+	}
+	outcome := string(audit.OutcomeSuccess)
+	if recordErr != nil {
+		outcome = string(audit.OutcomeFailure)
+	}
+	operation := event.Attrs[app.AttrOperation]
+	if r.Metrics != nil {
+		r.Metrics.OnChange(ctx, event.Action, event.Channel, operation, outcome)
+	}
+	return recordErr
+}
+
+// 编译期断言：装饰器必须满足用例侧端口。
+var _ app.ChangeRecorder = ChangeRecorder{}

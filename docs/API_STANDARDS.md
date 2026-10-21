@@ -48,6 +48,7 @@
 - 探针 `/healthz`、`/readyz`、`/version` 写入各端契约且 `security: []`。
 - 共享信封、分页参数、标准错误响应只维护在 `api/openapi/components.yaml`，各端 `$ref` 引用。
 - 错误码枚举与实现以 `internal/shared/apperr` 为准；契约中的 `ErrorCode` 须与之同步。
+- 错误码表**只增不减**：`ErrorCode` 以 `x-extensible-enum` 声明为开放集合，新增码不得触发 oasdiff breaking；客户端须对未知码按「未知错误」兜底（API-04）。
 
 ---
 
@@ -79,6 +80,7 @@
 | 40900 | 冲突 | 409 |
 | 42900 | 限流 / 配额耗尽（REL-05） | 429 |
 | 50000 | 内部错误 | 500 |
+| 50300 | 依赖不可用（鉴权等关键依赖无法完成判定，失败关闭） | 503 |
 
 ### 4.3 分页
 

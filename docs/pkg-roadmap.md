@@ -4,7 +4,7 @@
 > **原则**：只放与业务域无关、可被多个 `cmd`/模块复用、未来可拷到其他项目的纯技术能力。  
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`。  
 > **状态**：规划中  
-> **最后更新**：2026-10-20（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money`/`webhook`/`config` 已落地；通知渠道见 [`notification-channels.md`](./notification-channels.md)）
+> **最后更新**：2026-10-21（`pkg/clock`/`timeutil`/`circuitbreaker`/`convert`/`decimal`/`money`/`webhook`/`config` 已落地；通知渠道见 [`notification-channels.md`](./notification-channels.md)；RBAC 权限管理服务规划见 [`rbac-iam.md`](./rbac-iam.md)）
 
 ---
 
@@ -79,7 +79,7 @@
 | `pkg/crypto` | 加解密、签名、哈希、密钥包装 | P2 | 已完成 |
 | `pkg/password` | 密码哈希（bcrypt/argon2） | P3 | 已完成 |
 | `pkg/mask` | 日志/响应脱敏（手机号、身份证等） | P2 | 已完成 |
-| `pkg/rbac` | 权限判断原语（轻量；复杂策略放业务层） | P4 | 已完成 |
+| `pkg/rbac` | 权限判断原语（轻量；复杂策略放业务层） | P4 | 已完成 | 服务化（角色/绑定/数据范围/管理 API）规划见 [`rbac-iam.md`](./rbac-iam.md) |
 
 ### 3.4 数据与基础设施适配
 
@@ -154,7 +154,7 @@
 | 幂等 | `pkg/idempotency` | 保持；C 写路径 middleware + Store；跨实例由 platform 接 Redis/DB |
 | 密码哈希 | `pkg/password` | 保持；默认 argon2id；登录成功可 NeedsRehash 升级 |
 | 脱敏 | `pkg/mask` | 保持；日志/Trace/审计摘要显式 Phone/IDCard/Text |
-| 权限点 | `pkg/rbac`；`internal/security.Authorizer` 薄封装 | 保持；角色表由 cmd/IAM 装配；ABAC 留业务层 |
+| 权限点 | `pkg/rbac`；`internal/security.Authorizer` 薄封装 | 保持；角色表由 cmd/IAM 装配；IAM 域规划见 [`rbac-iam.md`](./rbac-iam.md)；ABAC 留业务层 |
 | 对象存储 | `pkg/storage` + `s3/oss/cos/obs` 可选驱动 | L1 S3 兼容 + L2 原生（`native=true`）；多桶 / Lifecycle |
 | 鉴权主体 | `internal/shared/auth` | 保留 internal；JWT 原语见 `pkg/jwt` |
 | 熔断 | `pkg/circuitbreaker` | 保持；下游按 SLO 配置 Timeout/ReadyToTrip，`OnStateChange` 接指标 |

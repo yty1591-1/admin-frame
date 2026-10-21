@@ -6,7 +6,8 @@
 |--------|----|------|----------|----------|--------|
 | `auth.login` | A/B/C | 登录成功 | 认证 | 180d | planned |
 | `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | planned |
-| `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | planned |
+| `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
+| `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
 | `data.export` | A/B | 数据导出（含 PII 须记范围摘要） | 导出 | 365d | planned |
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |

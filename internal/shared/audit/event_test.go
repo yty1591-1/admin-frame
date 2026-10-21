@@ -70,14 +70,15 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		t.Fatalf("expected baseline actions, got %d", len(actions))
 	}
 	want := map[string]bool{
-		audit.ActionAuthLogin:       true,
-		audit.ActionAuthLoginFailed: true,
-		audit.ActionRBACRoleChange:  true,
-		audit.ActionConfigChange:    true,
-		audit.ActionDataExport:      true,
-		audit.ActionDataQueryScope:  true,
-		audit.ActionPaymentCapture:  true,
-		audit.ActionPaymentRefund:   true,
+		audit.ActionAuthLogin:         true,
+		audit.ActionAuthLoginFailed:   true,
+		audit.ActionRBACRoleChange:    true,
+		audit.ActionRBACBindingChange: true,
+		audit.ActionConfigChange:      true,
+		audit.ActionDataExport:        true,
+		audit.ActionDataQueryScope:    true,
+		audit.ActionPaymentCapture:    true,
+		audit.ActionPaymentRefund:     true,
 	}
 	for _, a := range actions {
 		if !want[a] {

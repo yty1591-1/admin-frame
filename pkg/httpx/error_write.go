@@ -114,6 +114,8 @@ func HTTPStatusFromBizCode(code int) int {
 		return http.StatusConflict
 	case BizCodeTooManyRequests:
 		return http.StatusTooManyRequests
+	case BizCodeServiceUnavailable:
+		return http.StatusServiceUnavailable
 	case BizCodeInternal:
 		return http.StatusInternalServerError
 	default:

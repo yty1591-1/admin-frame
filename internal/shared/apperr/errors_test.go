@@ -61,6 +61,22 @@ func TestTooManyRequests(t *testing.T) {
 	}
 }
 
+func TestUnavailable(t *testing.T) {
+	err := apperr.Unavailable("authorization backend unavailable")
+	if err.Code != apperr.CodeServiceUnavailable {
+		t.Fatalf("code=%d", err.Code)
+	}
+	if err.SemanticCode() != xerr.CodeUnavailable {
+		t.Fatalf("semantic=%s", err.SemanticCode())
+	}
+	if !stderrors.Is(err, xerr.ErrUnavailable) {
+		t.Fatal("expected Is ErrUnavailable")
+	}
+	if got := xerr.HTTPStatusOf(err); got != 503 {
+		t.Fatalf("http=%d", got)
+	}
+}
+
 func TestBizCodeFromSemantic(t *testing.T) {
 	cases := map[xerr.Code]int{
 		xerr.CodeInvalidArgument:   apperr.CodeBadRequest,
@@ -69,6 +85,7 @@ func TestBizCodeFromSemantic(t *testing.T) {
 		xerr.CodeNotFound:          apperr.CodeNotFound,
 		xerr.CodeAlreadyExists:     apperr.CodeConflict,
 		xerr.CodeResourceExhausted: apperr.CodeTooManyRequests,
+		xerr.CodeUnavailable:       apperr.CodeServiceUnavailable,
 		xerr.CodeInternal:          apperr.CodeInternal,
 	}
 	for sem, want := range cases {

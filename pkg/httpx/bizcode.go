@@ -19,6 +19,8 @@ const (
 	BizCodeConflict = 40900
 	// BizCodeTooManyRequests 限流或配额耗尽。
 	BizCodeTooManyRequests = 42900
+	// BizCodeServiceUnavailable 依赖不可用（失败关闭）。
+	BizCodeServiceUnavailable = 50300
 	// BizCodeInternal 内部错误。
 	BizCodeInternal = 50000
 )
@@ -45,8 +47,10 @@ func DefaultBizCode(code errors.Code) int {
 		return BizCodeConflict
 	case errors.CodeResourceExhausted:
 		return BizCodeTooManyRequests
+	case errors.CodeUnavailable:
+		return BizCodeServiceUnavailable
 	case errors.CodeCanceled, errors.CodeDeadlineExceeded,
-		errors.CodeUnimplemented, errors.CodeUnavailable,
+		errors.CodeUnimplemented,
 		errors.CodeDataLoss, errors.CodeInternal, errors.CodeUnknown:
 		return BizCodeInternal
 	default:

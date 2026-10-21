@@ -40,11 +40,114 @@ type Config struct {
 	Log             LogConfig       `yaml:"log"`
 	Auth            AuthConfig      `yaml:"auth"`
 	DB              DBConfig        `yaml:"db"`
+	Redis           RedisConfig     `yaml:"redis"`
 	Storage         StorageConfig   `yaml:"storage"`
 	Worker          WorkerConfig    `yaml:"worker"`
 	Tracing         TracingConfig   `yaml:"tracing"`
 	RateLimit       RateLimitConfig `yaml:"rate_limit"`
 	CORS            CORSConfig      `yaml:"cors"`
+	IAM             IAMConfig       `yaml:"iam"`
+}
+
+// RedisConfig 是共享缓存 / 锁的 Redis 连接参数（可选）。
+//
+// Addr 为空表示本进程不启用 Redis；IAM `cache.driver=redis` 时必须配置。
+// 口令只允许通过环境变量注入（SEC-01 / CFG-06）。
+type RedisConfig struct {
+	Addr      string `yaml:"addr"`
+	Username  string `yaml:"username"`
+	Password  string `yaml:"password"`
+	DB        int    `yaml:"db"`
+	KeyPrefix string `yaml:"key_prefix"`
+}
+
+// Enabled 报告是否配置了 Redis。
+func (r RedisConfig) Enabled() bool { return strings.TrimSpace(r.Addr) != "" }
+
+// LogValue 实现 slog.LogValuer：口令只输出占位符（SEC-05）。
+func (r RedisConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("addr", r.Addr),
+		slog.String("username", r.Username),
+		slog.String("password", maskIfSet(r.Password)),
+		slog.Int("db", r.DB),
+		slog.String("key_prefix", r.KeyPrefix),
+	)
+}
+
+// 鉴权数据来源模式（iam.mode，docs/rbac-iam.md §15.1）。
+const (
+	// IAMModeOff 使用装配期静态角色表（回滚位）。
+	IAMModeOff = "off"
+	// IAMModeShadow 计算快照但按静态表放行，仅记录差异。
+	IAMModeShadow = "shadow"
+	// IAMModeEnforce 以 IAM 快照为唯一真相。
+	IAMModeEnforce = "enforce"
+)
+
+// 快照缓存驱动。
+const (
+	// IAMCacheDriverMemory 仅进程内 L1（local / dev）。
+	IAMCacheDriverMemory = "memory"
+	// IAMCacheDriverRedis L1 + Redis（staging / prod enforce 必须）。
+	IAMCacheDriverRedis = "redis"
+)
+
+// IAMConfig 是 RBAC 权限管理（IAM）运行参数（docs/rbac-iam.md §12.1）。
+//
+// 默认 mode=off：未显式启用时保持历史静态权限表行为，避免升级即切换鉴权来源。
+type IAMConfig struct {
+	// Mode off | shadow | enforce。
+	Mode string `yaml:"mode"`
+	// LoadTimeout 回源 DB 超时上限；必须 ≤ 1s。
+	LoadTimeout time.Duration `yaml:"load_timeout"`
+	// Cache 两级快照缓存。
+	Cache IAMCacheConfig `yaml:"cache"`
+	// Limits 快照与角色规模上限，防止角色膨胀拖垮鉴权。
+	Limits IAMLimitsConfig `yaml:"limits"`
+	// Security 安全开关。
+	Security IAMSecurityConfig `yaml:"security"`
+}
+
+// IAMCacheConfig 是快照缓存参数。
+type IAMCacheConfig struct {
+	// Driver memory | redis；prod + enforce 必须 redis。
+	Driver string `yaml:"driver"`
+	// L1TTL 进程内 TTL（撤销最坏生效窗口）；≤ 5s。
+	L1TTL time.Duration `yaml:"l1_ttl"`
+	// L2TTL Redis TTL；≤ 15m 且必须大于 L1TTL。
+	L2TTL time.Duration `yaml:"l2_ttl"`
+	// NegativeTTL 空快照 TTL，防异常主体打穿 DB。
+	NegativeTTL time.Duration `yaml:"negative_ttl"`
+	// KeyPrefix 缓存域段，默认 iam。
+	KeyPrefix string `yaml:"key_prefix"`
+	// L1MaxEntries 进程内最大条目数；≤0 时使用 10000。
+	L1MaxEntries int `yaml:"l1_max_entries"`
+}
+
+// IAMLimitsConfig 是快照与角色规模上限。
+type IAMLimitsConfig struct {
+	// MaxRolesPerSubject 单主体最大生效角色数。
+	MaxRolesPerSubject int `yaml:"max_roles_per_subject"`
+	// MaxPermissionsPerRole 单角色最大权限点数。
+	MaxPermissionsPerRole int `yaml:"max_permissions_per_role"`
+	// MaxBindingsPerSubject 单主体最大绑定数。
+	MaxBindingsPerSubject int `yaml:"max_bindings_per_subject"`
+	// MaxCustomRolesPerMerchant B 端自定义角色数上限。
+	MaxCustomRolesPerMerchant int `yaml:"max_custom_roles_per_merchant"`
+}
+
+// IAMSecurityConfig 是 IAM 安全开关。
+type IAMSecurityConfig struct {
+	// AllowWildcard 是否允许快照携带通配符；prod 强制 false。
+	AllowWildcard bool `yaml:"allow_wildcard"`
+	// RequireReason 高风险变更是否强制填写原因。
+	RequireReason bool `yaml:"require_reason"`
+}
+
+// Enabled 报告 IAM 是否接管鉴权（shadow 与 enforce 都需要加载快照）。
+func (c IAMConfig) Enabled() bool {
+	return c.Mode == IAMModeShadow || c.Mode == IAMModeEnforce
 }
 
 // HTTPConfig 入口 HTTP Server 与请求链路的加固参数（REL-02 / REL-01）。
@@ -192,6 +295,7 @@ func (c Config) LogValue() slog.Value {
 			),
 		),
 		slog.Any("db", c.DB),
+		slog.Any("redis", c.Redis),
 		slog.Any("storage", c.Storage),
 		slog.Group("worker", slog.Duration("poll_interval", c.Worker.PollInterval)),
 		slog.Group("tracing",
@@ -202,6 +306,17 @@ func (c Config) LogValue() slog.Value {
 			slog.Bool("enabled", c.RateLimit.Enabled),
 			slog.Float64("rps", c.RateLimit.RPS),
 			slog.Int("burst", c.RateLimit.Burst),
+		),
+		slog.Group("iam",
+			slog.String("mode", normalizeIAMMode(c.IAM.Mode)),
+			slog.Duration("load_timeout", c.IAM.LoadTimeout),
+			slog.Group("cache",
+				slog.String("driver", c.IAM.Cache.Driver),
+				slog.Duration("l1_ttl", c.IAM.Cache.L1TTL),
+				slog.Duration("l2_ttl", c.IAM.Cache.L2TTL),
+				slog.Duration("negative_ttl", c.IAM.Cache.NegativeTTL),
+			),
+			slog.Bool("allow_wildcard", c.IAM.Security.AllowWildcard),
 		),
 	)
 }
@@ -346,6 +461,44 @@ func (c *Config) applyDefaults() {
 	if c.RateLimit.IdleTTL == 0 {
 		c.RateLimit.IdleTTL = 10 * time.Minute
 	}
+	c.applyIAMDefaults()
+}
+
+// applyIAMDefaults 填充 IAM 默认值；Mode 保持空串，由 normalize 统一为 off。
+func (c *Config) applyIAMDefaults() {
+	if c.IAM.LoadTimeout == 0 {
+		c.IAM.LoadTimeout = 300 * time.Millisecond
+	}
+	if c.IAM.Cache.Driver == "" {
+		c.IAM.Cache.Driver = IAMCacheDriverMemory
+	}
+	if c.IAM.Cache.L1TTL == 0 {
+		c.IAM.Cache.L1TTL = 3 * time.Second
+	}
+	if c.IAM.Cache.L2TTL == 0 {
+		c.IAM.Cache.L2TTL = 5 * time.Minute
+	}
+	if c.IAM.Cache.NegativeTTL == 0 {
+		c.IAM.Cache.NegativeTTL = 30 * time.Second
+	}
+	if c.IAM.Cache.KeyPrefix == "" {
+		c.IAM.Cache.KeyPrefix = "iam"
+	}
+	if c.IAM.Cache.L1MaxEntries == 0 {
+		c.IAM.Cache.L1MaxEntries = 10000
+	}
+	if c.IAM.Limits.MaxRolesPerSubject == 0 {
+		c.IAM.Limits.MaxRolesPerSubject = 20
+	}
+	if c.IAM.Limits.MaxPermissionsPerRole == 0 {
+		c.IAM.Limits.MaxPermissionsPerRole = 200
+	}
+	if c.IAM.Limits.MaxBindingsPerSubject == 0 {
+		c.IAM.Limits.MaxBindingsPerSubject = 50
+	}
+	if c.IAM.Limits.MaxCustomRolesPerMerchant == 0 {
+		c.IAM.Limits.MaxCustomRolesPerMerchant = 50
+	}
 }
 
 // normalize 在环境变量覆盖后、Validate 前补齐跨字段派生值。
@@ -357,6 +510,16 @@ func (c *Config) normalize() {
 		c.Auth.ExpectedChannel = c.Channel
 	}
 	c.Auth.Mode = c.Auth.effectiveMode(c.Env)
+	c.IAM.Mode = normalizeIAMMode(c.IAM.Mode)
+}
+
+// normalizeIAMMode 归一化 iam.mode；空串视为 off（保持历史静态权限表行为）。
+func normalizeIAMMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return IAMModeOff
+	}
+	return mode
 }
 
 // Validate 校验必填项、枚举与生产互斥项（CFG-03/05）。
@@ -393,6 +556,7 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateEnv()...)
 	errs = append(errs, c.validateTracing()...)
 	errs = append(errs, c.validateRateLimit()...)
+	errs = append(errs, c.validateIAM()...)
 	return errors.Join(errs...)
 }
 
@@ -518,6 +682,79 @@ func (c *Config) validateRateLimit() []error {
 	}
 	if c.RateLimit.IdleTTL < 0 {
 		errs = append(errs, errors.New("rate_limit.idle_ttl must be >= 0"))
+	}
+	return errs
+}
+
+// validateIAM 校验 IAM 模式、缓存 TTL、生产互斥项与端别约束（docs/rbac-iam.md §12.2）。
+//
+// 错误只包含字段路径与约束，不回显取值（CFG-05）。
+func (c *Config) validateIAM() []error {
+	// 完全未配置 iam 段时保持历史行为（zero-value Config 直接调用 Validate 也不会误报）；
+	// 生产路径统一经 LoadConfig → applyDefaults，因此段内字段必然已填充。
+	if c.IAM.Mode == "" && c.IAM.Cache.Driver == "" && c.IAM.LoadTimeout == 0 {
+		return nil
+	}
+	var errs []error
+	mode := normalizeIAMMode(c.IAM.Mode)
+	switch mode {
+	case IAMModeOff, IAMModeShadow, IAMModeEnforce:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported iam.mode: %s", c.IAM.Mode))
+	}
+
+	if c.Service != "" {
+		// C 端与 worker 不挂载 IAM；显式开启会在无 transport 时静默失效，故启动即拒绝。
+		if (c.Channel == "c" || c.Channel == "worker") && mode != IAMModeOff {
+			errs = append(errs, fmt.Errorf("iam.mode must be off when channel is %s", c.Channel))
+		}
+	}
+
+	if c.IAM.LoadTimeout <= 0 || c.IAM.LoadTimeout > time.Second {
+		errs = append(errs, errors.New("iam.load_timeout must be in (0, 1s]"))
+	}
+	switch c.IAM.Cache.Driver {
+	case IAMCacheDriverMemory:
+	case IAMCacheDriverRedis:
+		if !c.Redis.Enabled() {
+			errs = append(errs, errors.New("redis.addr is required when iam.cache.driver=redis"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("unsupported iam.cache.driver: %s", c.IAM.Cache.Driver))
+	}
+	if c.IAM.Cache.L1TTL <= 0 || c.IAM.Cache.L1TTL > 5*time.Second {
+		errs = append(errs, errors.New("iam.cache.l1_ttl must be in (0, 5s]"))
+	}
+	if c.IAM.Cache.L2TTL <= 0 || c.IAM.Cache.L2TTL > 15*time.Minute {
+		errs = append(errs, errors.New("iam.cache.l2_ttl must be in (0, 15m]"))
+	}
+	if c.IAM.Cache.L2TTL <= c.IAM.Cache.L1TTL {
+		errs = append(errs, errors.New("iam.cache.l2_ttl must be greater than iam.cache.l1_ttl"))
+	}
+	if c.IAM.Cache.NegativeTTL <= 0 || c.IAM.Cache.NegativeTTL > c.IAM.Cache.L2TTL {
+		errs = append(errs, errors.New("iam.cache.negative_ttl must be in (0, iam.cache.l2_ttl]"))
+	}
+	if c.IAM.Cache.L1MaxEntries < 0 {
+		errs = append(errs, errors.New("iam.cache.l1_max_entries must be >= 0"))
+	}
+	if c.IAM.Limits.MaxRolesPerSubject <= 0 {
+		errs = append(errs, errors.New("iam.limits.max_roles_per_subject must be > 0"))
+	}
+	if c.IAM.Limits.MaxPermissionsPerRole <= 0 {
+		errs = append(errs, errors.New("iam.limits.max_permissions_per_role must be > 0"))
+	}
+	if c.IAM.Limits.MaxBindingsPerSubject <= 0 {
+		errs = append(errs, errors.New("iam.limits.max_bindings_per_subject must be > 0"))
+	}
+	if c.Channel == "biz" && c.IAM.Limits.MaxCustomRolesPerMerchant <= 0 {
+		errs = append(errs, errors.New("iam.limits.max_custom_roles_per_merchant must be > 0 when channel=biz"))
+	}
+
+	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && c.IAM.Cache.Driver != IAMCacheDriverRedis {
+		errs = append(errs, errors.New("iam.cache.driver must be redis when iam.mode=enforce in prod/staging"))
+	}
+	if isProdEnv(c.Env) && c.IAM.Security.AllowWildcard {
+		errs = append(errs, errors.New("iam.security.allow_wildcard must be false when env=prod"))
 	}
 	return errs
 }

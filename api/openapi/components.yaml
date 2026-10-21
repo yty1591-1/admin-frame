@@ -71,7 +71,9 @@ components:
       description: |
         稳定业务错误码（`internal/shared/apperr`）。
         新增码只追加；禁止复用已发布码的语义。
-      enum: [40000, 40100, 40300, 40400, 40900, 42900, 50000]
+        该码表按 API-04 只增不减，故声明为可扩展开放集合（`x-extensible-enum`）：
+        客户端必须对未知码按「未知错误」兜底，不得据此改变已实现分支。
+      x-extensible-enum: [40000, 40100, 40300, 40400, 40900, 42900, 50000, 50300]
       x-enum-descriptions:
         - 请求参数非法
         - 未认证或令牌无效
@@ -80,6 +82,7 @@ components:
         - 状态冲突
         - 限流或配额耗尽
         - 内部错误
+        - 依赖不可用（鉴权等关键依赖无法完成判定时失败关闭）
     PageMeta:
       type: object
       required: [items, total]
@@ -159,4 +162,20 @@ components:
           example:
             code: 50000
             message: internal error
+            trace_id: a1b2c3d4e5f60708
+    ServiceUnavailable:
+      description: 依赖不可用（鉴权等关键依赖无法完成判定时失败关闭；带 Retry-After）
+      headers:
+        Retry-After:
+          description: 建议重试等待秒数
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            code: 50300
+            message: service temporarily unavailable
             trace_id: a1b2c3d4e5f60708

@@ -10,8 +10,10 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/health"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
+	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
@@ -26,6 +28,10 @@ type Deps struct {
 	Metrics *metrics.Metrics
 	Tracer  *tracing.Provider
 	Storage *StorageSet
+	// Database 是进程数据库；db.driver=memory 时为 nil（业务使用内存实现）。
+	Database *db.DB
+	// Redis 是共享缓存客户端；未配置 redis.addr 时为 nil。
+	Redis *redis.Client
 	// AuthMW 是已按 channel 绑定的鉴权中间件。
 	AuthMW func(http.Handler) http.Handler
 	// RequirePermission 是权限中间件工厂，由 cmd 注入的 Authorizer 提供。
@@ -40,8 +46,11 @@ type Options struct {
 	ConfigPath string
 	// Build 是构建身份；Service 为空时取配置中的 service。
 	Build BuildInfo
-	// NewAuthorizer 构造权限校验器；nil 时默认拒绝所有权限点（fail-closed）。
-	NewAuthorizer func() *security.Authorizer
+	// NewAuthorizer 构造权限校验器；返回 nil 或 nil 函数时默认拒绝所有权限点（fail-closed）。
+	//
+	// 参数为已装配的平台能力（配置 / 数据库 / Redis / 指标 / 健康检查），
+	// 使 cmd 可在同一处构造 IAM 快照加载器并复用其仓储与缓存。
+	NewAuthorizer func(*Deps) (*security.Authorizer, error)
 	// Register 注册本端 transport 与业务依赖；不得注册他端路由。
 	Register func(*Deps, *http.ServeMux) error
 }
@@ -99,31 +108,63 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}()
 
+	database, err := OpenDatabase(ctx, cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := database.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("db close: %w", closeErr)
+		}
+	}()
+
+	redisClient, err := OpenRedis(ctx, cfg.Redis)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := redisClient.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("redis close: %w", closeErr)
+		}
+	}()
+
 	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
 
-	authorizer := security.NewAuthorizer(nil)
-	if opts.NewAuthorizer != nil {
-		if authorizer = opts.NewAuthorizer(); authorizer == nil {
-			authorizer = security.NewAuthorizer(nil)
-		}
-	}
-
 	hh := health.New()
 	registerStorageChecks(hh, stores)
+	if database != nil {
+		hh.Register("db", database.Checker())
+	}
+	if redisClient != nil {
+		hh.Register("redis", redisClient.Checker())
+	}
 
 	deps := &Deps{
-		Config:            cfg,
-		Logger:            logger,
-		Metrics:           met,
-		Tracer:            tp,
-		Storage:           stores,
-		AuthMW:            authMW,
-		RequirePermission: auth.PermissionMiddleware(authorizer.Require),
-		Health:            hh,
+		Config:   cfg,
+		Logger:   logger,
+		Metrics:  met,
+		Tracer:   tp,
+		Storage:  stores,
+		Database: database,
+		Redis:    redisClient,
+		AuthMW:   authMW,
+		Health:   hh,
 	}
+
+	authorizer := security.NewAuthorizer(nil)
+	if opts.NewAuthorizer != nil {
+		built, buildErr := opts.NewAuthorizer(deps)
+		if buildErr != nil {
+			return fmt.Errorf("authorizer: %w", buildErr)
+		}
+		if built != nil {
+			authorizer = built
+		}
+	}
+	deps.RequirePermission = authorizer.Require
 
 	api := http.NewServeMux()
 	if err := opts.Register(deps, api); err != nil {

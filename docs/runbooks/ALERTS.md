@@ -9,6 +9,10 @@
 | `release.health_failed` | P1 | 发版后 readiness 失败或错误激增需回滚 | [release-rollback.md](./release-rollback.md) |
 | `api.latency.p99_high` | P2 | 端侧 P99 延迟超过 SLO | [api-5xx-spike.md](./api-5xx-spike.md) |
 | `worker.queue_lag` | P2 | worker 队列积压超过阈值 | [api-5xx-spike.md](./api-5xx-spike.md) |
+| `iam.authz.unavailable` | P1 | 鉴权依赖不可用（`result=unavailable`）占比超阈值 | [iam.md](./iam.md) |
+| `iam.cache.invalidate_failed` | P1 | IAM 快照缓存删除失败，撤销可能延迟 | [iam.md](./iam.md) |
+| `iam.authz.deny_rate_high` | P2 | 鉴权拒绝率突增，疑似误授权或客户端异常 | [iam.md](./iam.md) |
+| `iam.shadow.mismatch` | P2 | shadow 判定与静态表不一致，enforce 前必须归零 | [iam.md](./iam.md) |
 
 P3 示例（鼓励登记，CI 不强制链接）：
 

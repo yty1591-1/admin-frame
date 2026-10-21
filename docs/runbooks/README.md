@@ -11,6 +11,7 @@
 | [api-5xx-spike.md](./api-5xx-spike.md) | 5xx / 延迟 / 队列积压 |
 | [db-connection-pool.md](./db-connection-pool.md) | 连接池耗尽 |
 | [release-rollback.md](./release-rollback.md) | 发版回滚 |
+| [iam.md](./iam.md) | IAM 鉴权不可用 / 拒绝率异常 / 误授权回滚 |
 
 ## 值班与升级（基线）
 

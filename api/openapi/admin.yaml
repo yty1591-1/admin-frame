@@ -13,6 +13,11 @@ tags:
     description: 存活/就绪/版本（无需鉴权）
   - name: orders
     description: 全局订单
+  - name: iam
+    description: |
+      RBAC / IAM 管理。写接口要求 `If-Match` 或 body `version` 与当前版本一致（乐观锁），
+      冲突返回 40900；每次变更写审计事件 `rbac.role_change` / `rbac.binding_change`，
+      审计失败即失败关闭（不落库）。
 paths:
   /healthz:
     get:
@@ -159,8 +164,617 @@ paths:
           $ref: "./components.yaml#/components/responses/Conflict"
         "500":
           $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/permissions:
+    get:
+      tags: [iam]
+      summary: 权限点目录（分页）
+      description: 需要 `iam:permission:read`。目录为只读基线，变更走迁移与发布。
+      operationId: adminListIAMPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: channel
+          description: 按端别过滤；空表示全部
+          schema:
+            $ref: "#/components/schemas/Channel"
+        - in: query
+          name: keyword
+          description: 按权限码 / 名称模糊匹配
+          schema:
+            type: string
+        - $ref: "./components.yaml#/components/parameters/Page"
+        - $ref: "./components.yaml#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PermissionListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/permissions/tree:
+    get:
+      tags: [iam]
+      summary: 权限点目录（树）
+      description: 需要 `iam:permission:read`。用于管理端菜单/授权界面渲染。
+      operationId: adminIAMPermissionTree
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: channel
+          schema:
+            $ref: "#/components/schemas/Channel"
+        - in: query
+          name: keyword
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/PermissionTreeNode"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/roles:
+    get:
+      tags: [iam]
+      summary: 角色列表
+      description: 需要 `iam:role:read`。B 端强制按 Principal 的 merchant_id 收窄。
+      operationId: adminListIAMRoles
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: channel
+          schema:
+            $ref: "#/components/schemas/Channel"
+        - in: query
+          name: merchant_id
+          description: A 端可选；B 端忽略并由令牌决定
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            $ref: "#/components/schemas/RoleStatus"
+        - in: query
+          name: keyword
+          description: 按角色码 / 名称模糊匹配
+          schema:
+            type: string
+        - $ref: "./components.yaml#/components/parameters/Page"
+        - $ref: "./components.yaml#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    post:
+      tags: [iam]
+      summary: 创建角色
+      description: 需要 `iam:role:write`。权限码必须存在于目录且与端别匹配。
+      operationId: adminCreateIAMRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/roles/{id}:
+    get:
+      tags: [iam]
+      summary: 角色详情（含绑定数）
+      description: 需要 `iam:role:read`。
+      operationId: adminGetIAMRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    patch:
+      tags: [iam]
+      summary: 更新角色基础信息 / 启停
+      description: 需要 `iam:role:write`。需提供 `version`（或 `If-Match`）。
+      operationId: adminUpdateIAMRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/IfMatchVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    delete:
+      tags: [iam]
+      summary: 软删角色
+      description: |
+        需要 `iam:role:write`。版本可由 body `version` 或 `If-Match` 提供；
+        仍存在绑定时返回 40900（须先解绑）。
+      operationId: adminDeleteIAMRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/IfMatchVersion"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteRoleRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IdOnly"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/roles/{id}/permissions:
+    put:
+      tags: [iam]
+      summary: 全量替换角色权限与数据范围
+      description: |
+        需要 `iam:role:grant`。语义为全量替换，响应返回 added / removed 差量；
+        `data_scopes` 省略表示不修改，空数组表示清空。审计记录差量。
+      operationId: adminReplaceIAMRolePermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/IfMatchVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplacePermissionsRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ReplacePermissionsData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/roles/{id}/clone:
+    post:
+      tags: [iam]
+      summary: 复制角色
+      description: 需要 `iam:role:write`。新角色为 disabled 状态，需显式启用。
+      operationId: adminCloneIAMRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloneRoleRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/bindings:
+    get:
+      tags: [iam]
+      summary: 查询绑定
+      description: 需要 `iam:binding:read`。`role_id` 优先；否则按 subject 查询。
+      operationId: adminListIAMBindings
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: role_id
+          schema:
+            type: string
+        - in: query
+          name: subject_type
+          schema:
+            $ref: "#/components/schemas/SubjectType"
+        - in: query
+          name: subject_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/BindingListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    post:
+      tags: [iam]
+      summary: 绑定主体角色
+      description: |
+        需要 `iam:binding:write`。校验：主体与角色同端别、同商户；角色须 enabled；
+        单主体绑定数受 `iam.limits.max_bindings_per_subject` 约束（只统计未过期绑定）。
+        同一 (主体, 角色) 重复绑定不会新增行：刷新 `expires_at` / `granted_by` 并保留原 ID，
+        因此过期后重新绑定会立即重新生效。
+      operationId: adminCreateIAMBinding
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBindingRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Binding"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/bindings/{id}:
+    delete:
+      tags: [iam]
+      summary: 解绑
+      description: 需要 `iam:binding:write`。删除后主动失效该主体快照。
+      operationId: adminDeleteIAMBinding
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BindingID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnbindRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IdOnly"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/subjects/{subject_type}/{subject_id}/permissions:
+    get:
+      tags: [iam]
+      summary: 主体有效权限（快照）
+      description: 需要 `iam:binding:read`。B 端只能查询本商户主体。
+      operationId: adminGetIAMSubjectPermissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SubjectTypePath"
+        - $ref: "#/components/parameters/SubjectIDPath"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SubjectPermissions"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /admin/v1/iam/authorize:
+    post:
+      tags: [iam]
+      summary: 模拟鉴权
+      description: |
+        需要 `iam:check`。只读、不修改任何状态，用于排障与灰度比对；
+        响应不返回完整权限表，仅返回判定、命中角色与匹配到的数据范围。
+      operationId: adminSimulateIAMAuthorize
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizeRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthorizeResult"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/iam/me/permissions:
+    get:
+      tags: [iam]
+      summary: 当前主体权限
+      description: 仅需认证，不额外要求权限点。返回调用者自身的有效权限快照。
+      operationId: adminGetIAMMePermissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SubjectPermissions"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
 components:
   parameters:
+    RoleID:
+      name: id
+      in: path
+      required: true
+      description: 角色 ID
+      schema:
+        type: string
+        minLength: 1
+    BindingID:
+      name: id
+      in: path
+      required: true
+      description: 绑定 ID
+      schema:
+        type: string
+        minLength: 1
+    SubjectTypePath:
+      name: subject_type
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/SubjectType"
+    SubjectIDPath:
+      name: subject_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IfMatchVersion:
+      name: If-Match
+      in: header
+      required: false
+      description: 期望版本号（与 body.version 二选一，冲突返回 40000）
+      schema:
+        type: string
+        pattern: '^"?[1-9][0-9]*"?$'
     OrderID:
       name: id
       in: path
@@ -260,3 +874,396 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Order"
+    # ---- IAM ----
+    Channel:
+      type: string
+      description: 端别；IAM 角色与绑定必须与端别一致
+      enum: [admin, biz]
+    RoleStatus:
+      type: string
+      enum: [active, disabled]
+    RoleType:
+      type: string
+      enum: [system, custom, breakglass]
+    SubjectType:
+      type: string
+      description: staff 仅 A 端；merchant_staff 仅 B 端
+      enum: [staff, merchant_staff]
+    DataScopeType:
+      type: string
+      description: all / merchant_set 仅 A 端允许
+      enum: [all, merchant, self, merchant_set]
+    DataScope:
+      type: object
+      required: [resource, scope_type]
+      properties:
+        resource:
+          type: string
+          description: 资源段："*" 或权限码首段（如 order / file）
+          example: order
+        scope_type:
+          $ref: "#/components/schemas/DataScopeType"
+        merchant_ids:
+          type: array
+          description: 仅 scope_type=merchant_set 使用，最多 100 个
+          items:
+            type: string
+    Permission:
+      type: object
+      required: [code, name, channel, kind, data_bearing, status, sort]
+      properties:
+        code:
+          type: string
+          description: 稳定权限码，形如 domain:resource:action
+          example: iam:role:read
+        name:
+          type: string
+        channel:
+          type: string
+          description: admin / biz / both
+          enum: [admin, biz, both]
+        kind:
+          type: string
+          enum: [api, menu, button]
+        data_bearing:
+          type: boolean
+          description: 为 true 时角色必须声明对应数据范围
+        status:
+          type: string
+          enum: [active, deprecated]
+        sort:
+          type: integer
+        parent_code:
+          type: string
+        path:
+          type: string
+        description:
+          type: string
+    PermissionTreeNode:
+      allOf:
+        - $ref: "#/components/schemas/Permission"
+        - type: object
+          properties:
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/PermissionTreeNode"
+    PermissionListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+        total:
+          type: integer
+    Role:
+      type: object
+      required:
+        - id
+        - channel
+        - scope_type
+        - code
+        - name
+        - role_type
+        - status
+        - version
+        - permissions
+        - data_scopes
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        scope_type:
+          type: string
+          description: 角色作用域；A 端为 admin，B 端为 merchant
+          enum: [admin, merchant]
+        merchant_id:
+          type: string
+        code:
+          type: string
+          description: 端别内唯一角色码
+        name:
+          type: string
+        description:
+          type: string
+        role_type:
+          $ref: "#/components/schemas/RoleType"
+        status:
+          $ref: "#/components/schemas/RoleStatus"
+        version:
+          type: integer
+          format: int64
+          description: 乐观锁版本；写接口必须回传
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataScope"
+        binding_count:
+          type: integer
+          description: 仅详情返回
+        created_by:
+          type: string
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RoleListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        total:
+          type: integer
+    CreateRoleRequest:
+      type: object
+      required: [code, name, scope_type, permissions]
+      properties:
+        channel:
+          $ref: "#/components/schemas/Channel"
+        scope_type:
+          type: string
+          enum: [admin, merchant]
+        code:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataScope"
+        reason:
+          type: string
+          description: 变更原因，写入审计
+    UpdateRoleRequest:
+      type: object
+      required: [version]
+      description: |
+        nil 字段表示不修改；至少提供一个字段，否则 40000。
+        status=disabled 属高风险变更：`iam.security.require_reason=true` 时 `reason` 必填。
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/RoleStatus"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+          description: 变更原因，写入审计；停用角色时强制
+    ReplacePermissionsRequest:
+      type: object
+      required: [permissions, version]
+      properties:
+        permissions:
+          type: array
+          description: 全量替换；空数组表示清空
+          items:
+            type: string
+        data_scopes:
+          type: array
+          description: 省略表示不修改；空数组表示清空
+          items:
+            $ref: "#/components/schemas/DataScope"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    ReplacePermissionsData:
+      type: object
+      required: [role, added, removed]
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        added:
+          type: array
+          items:
+            type: string
+        removed:
+          type: array
+          items:
+            type: string
+    CloneRoleRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+    DeleteRoleRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    Binding:
+      type: object
+      required: [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        role_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          description: 空表示永久绑定
+        granted_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    BindingListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Binding"
+        total:
+          type: integer
+    CreateBindingRequest:
+      type: object
+      required: [subject_type, subject_id, role_id]
+      properties:
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+          minLength: 1
+        role_id:
+          type: string
+          minLength: 1
+        expires_at:
+          type: string
+          format: date-time
+          description: 可选；必须晚于当前时间
+        reason:
+          type: string
+    UnbindRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+    SubjectPermissions:
+      type: object
+      required: [channel, subject_type, subject_id, roles, permissions, data_scopes, snapshot_version, generated_at]
+      properties:
+        channel:
+          $ref: "#/components/schemas/Channel"
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataScope"
+        snapshot_version:
+          type: integer
+          format: int64
+        generated_at:
+          type: string
+          format: date-time
+    AuthorizeRequest:
+      type: object
+      required: [subject_type, subject_id, permission]
+      properties:
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        permission:
+          type: string
+          example: order:read
+        resource:
+          $ref: "#/components/schemas/AuthorizeResource"
+    AuthorizeResource:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        merchant_id:
+          type: string
+    AuthorizeResult:
+      type: object
+      required: [allowed, reason, matched_roles, snapshot_version]
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+          description: |
+            稳定判定原因：permission_granted / permission_not_granted /
+            unknown_permission / no_active_role / empty_snapshot。
+        matched_roles:
+          type: array
+          items:
+            type: string
+        data_scope:
+          $ref: "#/components/schemas/DataScope"
+        snapshot_version:
+          type: integer
+          format: int64
+    IdOnly:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string

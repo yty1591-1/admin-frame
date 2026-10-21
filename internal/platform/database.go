@@ -1,0 +1,66 @@
+package platform
+
+import (
+	"context"
+	"fmt"
+
+	// 注册 MySQL 与 PostgreSQL 的 database/sql 驱动（迁移与业务共用同一驱动集合）。
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/redis"
+)
+
+// sqlDriverName 把配置中的引擎名映射为已注册的 database/sql 驱动名。
+//
+// 配置面向运维使用 postgres，而 pgx stdlib 注册名是 pgx，必须在此显式转换；
+// 未知引擎直接失败，避免静默回落到其它数据库。
+func sqlDriverName(driver string) (string, error) {
+	switch driver {
+	case "mysql":
+		return "mysql", nil
+	case "postgres", "postgresql", "pgx":
+		return "pgx", nil
+	default:
+		return "", fmt.Errorf("platform: unsupported db.driver %q", driver)
+	}
+}
+
+// OpenDatabase 按配置打开进程数据库；driver=memory 返回 nil（业务使用内存实现）。
+//
+// 连接池默认值由 pkg/db 提供；调用方须在使用完毕后 Close。
+func OpenDatabase(ctx context.Context, cfg DBConfig) (*db.DB, error) {
+	if cfg.Driver == "" || cfg.Driver == "memory" {
+		return nil, nil
+	}
+	driver, err := sqlDriverName(cfg.Driver)
+	if err != nil {
+		return nil, err
+	}
+	database, err := db.Open(ctx, db.Config{Driver: driver, DSN: cfg.DSN})
+	if err != nil {
+		return nil, fmt.Errorf("db: %w", err)
+	}
+	return database, nil
+}
+
+// OpenRedis 按配置打开共享 Redis；未配置 addr 时返回 nil（单实例 / 本地）。
+//
+// 连接失败即返回错误：IAM enforce 依赖 Redis 时不得静默降级为单层内存缓存。
+func OpenRedis(ctx context.Context, cfg RedisConfig) (*redis.Client, error) {
+	if !cfg.Enabled() {
+		return nil, nil
+	}
+	client, err := redis.Open(ctx, redis.Config{
+		Addr:      cfg.Addr,
+		Username:  cfg.Username,
+		Password:  cfg.Password,
+		DB:        cfg.DB,
+		KeyPrefix: cfg.KeyPrefix,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("redis: %w", err)
+	}
+	return client, nil
+}

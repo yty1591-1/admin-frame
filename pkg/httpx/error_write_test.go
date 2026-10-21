@@ -103,16 +103,17 @@ func TestFromErrorWithMessageOverride(t *testing.T) {
 
 func TestHTTPStatusFromBizCode(t *testing.T) {
 	cases := map[int]int{
-		httpx.CodeOK:                 http.StatusOK,
-		httpx.BizCodeBadRequest:      http.StatusBadRequest,
-		httpx.BizCodeUnauthorized:    http.StatusUnauthorized,
-		httpx.BizCodeForbidden:       http.StatusForbidden,
-		httpx.BizCodeNotFound:        http.StatusNotFound,
-		httpx.BizCodeConflict:        http.StatusConflict,
-		httpx.BizCodeTooManyRequests: http.StatusTooManyRequests,
-		httpx.BizCodeInternal:        http.StatusInternalServerError,
-		49999:                        http.StatusBadRequest,
-		60000:                        http.StatusInternalServerError,
+		httpx.CodeOK:                    http.StatusOK,
+		httpx.BizCodeBadRequest:         http.StatusBadRequest,
+		httpx.BizCodeUnauthorized:       http.StatusUnauthorized,
+		httpx.BizCodeForbidden:          http.StatusForbidden,
+		httpx.BizCodeNotFound:           http.StatusNotFound,
+		httpx.BizCodeConflict:           http.StatusConflict,
+		httpx.BizCodeTooManyRequests:    http.StatusTooManyRequests,
+		httpx.BizCodeServiceUnavailable: http.StatusServiceUnavailable,
+		httpx.BizCodeInternal:           http.StatusInternalServerError,
+		49999:                           http.StatusBadRequest,
+		60000:                           http.StatusInternalServerError,
 	}
 	for code, want := range cases {
 		if got := httpx.HTTPStatusFromBizCode(code); got != want {
@@ -132,6 +133,7 @@ func TestDefaultBizCodeAlignment(t *testing.T) {
 		{errors.CodeNotFound, httpx.BizCodeNotFound},
 		{errors.CodeAlreadyExists, httpx.BizCodeConflict},
 		{errors.CodeResourceExhausted, httpx.BizCodeTooManyRequests},
+		{errors.CodeUnavailable, httpx.BizCodeServiceUnavailable},
 		{errors.CodeInternal, httpx.BizCodeInternal},
 	}
 	for _, tc := range cases {

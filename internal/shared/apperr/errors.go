@@ -19,6 +19,8 @@ const (
 	CodeConflict = 40900
 	// CodeTooManyRequests 表示限流或配额耗尽（REL-05）。
 	CodeTooManyRequests = 42900
+	// CodeServiceUnavailable 表示鉴权/关键依赖不可用，服务暂时无法处理请求（失败关闭）。
+	CodeServiceUnavailable = 50300
 	// CodeInternal 表示内部错误。
 	CodeInternal = 50000
 )
@@ -34,6 +36,8 @@ var (
 	ErrConflict = xerr.ErrAlreadyExists
 	// ErrBadRequest 参数错误哨兵。
 	ErrBadRequest = xerr.ErrInvalidArgument
+	// ErrUnavailable 依赖不可用哨兵（50300）；鉴权路径必须失败关闭。
+	ErrUnavailable = xerr.ErrUnavailable
 )
 
 // AppError 带稳定业务数字错误码的应用错误。
@@ -97,9 +101,11 @@ func BizCodeFromSemantic(code xerr.Code) int {
 		return CodeConflict
 	case xerr.CodeResourceExhausted:
 		return CodeTooManyRequests
+	case xerr.CodeUnavailable:
+		return CodeServiceUnavailable
 	case xerr.CodeInternal, xerr.CodeUnknown, xerr.CodeDataLoss,
 		xerr.CodeCanceled, xerr.CodeDeadlineExceeded,
-		xerr.CodeUnimplemented, xerr.CodeUnavailable:
+		xerr.CodeUnimplemented:
 		return CodeInternal
 	default:
 		return CodeInternal
@@ -121,6 +127,8 @@ func MapSemanticCode(bizCode int) xerr.Code {
 		return xerr.CodeAlreadyExists
 	case CodeTooManyRequests:
 		return xerr.CodeResourceExhausted
+	case CodeServiceUnavailable:
+		return xerr.CodeUnavailable
 	case CodeInternal:
 		return xerr.CodeInternal
 	case CodeOK:
@@ -195,6 +203,17 @@ func TooManyRequests(msg string) *AppError {
 		Code:    CodeTooManyRequests,
 		Message: msg,
 		Err:     xerr.ResourceExhausted(msg),
+	}
+}
+
+// Unavailable 返回依赖不可用错误（业务码 50300 / HTTP 503）。
+//
+// 用于鉴权、关键依赖无法完成判定时失败关闭；调用方不得降级为放行。
+func Unavailable(msg string) *AppError {
+	return &AppError{
+		Code:    CodeServiceUnavailable,
+		Message: msg,
+		Err:     xerr.Unavailable(msg),
 	}
 }
 

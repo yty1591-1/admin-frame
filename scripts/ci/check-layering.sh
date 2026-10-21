@@ -3,9 +3,11 @@
 #
 # 规则：
 #   1. transport 只依赖 app/domain/shared/pkg，不得 import internal/platform；
-#   2. platform 不依赖业务域（order/files 的 domain/app/infrastructure）；
+#   2. platform 不依赖业务域（order/files/iam 的 domain/app/infrastructure）；
 #   3. security 不依赖 platform，也不依赖业务域；
-#   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）。
+#   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）；
+#   5. iam/domain 不依赖 app/transport/infrastructure/platform；
+#   6. iam/transport 不依赖 iam/infrastructure。
 #
 # 用法: bash scripts/ci/check-layering.sh
 set -euo pipefail
@@ -31,7 +33,7 @@ fi
 
 echo "==> LAYER-02: platform must not import business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(order|files)/(app|domain|infrastructure)' \
+  '"github.com/admin-frame/admin-frame/internal/(order|files|iam)/(app|domain|infrastructure)' \
   internal/platform 2>/dev/null; then
   fail_with "platform must not depend on business domains (LAYER-02)"
 else
@@ -40,7 +42,7 @@ fi
 
 echo "==> LAYER-03: security must not import platform or business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(platform|order|files)' \
+  '"github.com/admin-frame/admin-frame/internal/(platform|order|files|iam)' \
   internal/security 2>/dev/null; then
   fail_with "security must stay independent of platform and domains (LAYER-03)"
 else
@@ -49,11 +51,29 @@ fi
 
 echo "==> LAYER-04: shared must not import platform or business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(platform|order|files)' \
+  '"github.com/admin-frame/admin-frame/internal/(platform|order|files|iam)' \
   internal/shared 2>/dev/null; then
   fail_with "shared must not depend on platform or domains (LAYER-04)"
 else
   echo "    OK: shared is independent"
+fi
+
+echo "==> LAYER-05: iam/domain must not import app/transport/infrastructure/platform"
+if grep -RIn --include='*.go' --exclude='*_test.go' -E \
+  '"github.com/admin-frame/admin-frame/internal/(platform|iam/(app|transport|infrastructure))' \
+  internal/iam/domain 2>/dev/null; then
+  fail_with "iam/domain must only depend on shared contracts (LAYER-05)"
+else
+  echo "    OK: iam/domain is isolated"
+fi
+
+echo "==> LAYER-06: iam/transport must not import iam/infrastructure"
+if grep -RIn --include='*.go' --exclude='*_test.go' \
+  '"github.com/admin-frame/admin-frame/internal/iam/infrastructure' \
+  internal/iam/transport 2>/dev/null; then
+  fail_with "iam/transport must go through app interfaces, not infrastructure (LAYER-06)"
+else
+  echo "    OK: iam/transport has no infrastructure import"
 fi
 
 if [[ "${FAIL}" -ne 0 ]]; then

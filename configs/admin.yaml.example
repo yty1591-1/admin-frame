@@ -30,6 +30,34 @@ auth:
   mode: demo
   expected_channel: admin
 
+# RBAC / IAM（internal/iam）。off=不启用；shadow=只比对不拦截；enforce=拦截。
+iam:
+  mode: shadow                   # off|shadow|enforce；prod 建议 enforce
+  load_timeout: 300ms            # 回源 DB 上限，必须 ≤ 1s
+  cache:
+    driver: memory               # memory|redis；prod/staging + enforce 必须 redis
+    l1_ttl: 3s                   # 进程内 TTL ≤ 5s（撤销最坏窗口）
+    l2_ttl: 5m                   # Redis TTL ≤ 15m 且必须 > l1_ttl
+    negative_ttl: 30s            # 空快照 TTL，≤ l2_ttl
+    key_prefix: iam
+    l1_max_entries: 10000
+  limits:
+    max_roles_per_subject: 20
+    max_permissions_per_role: 200
+    max_bindings_per_subject: 50
+    max_custom_roles_per_merchant: 50
+  security:
+    allow_wildcard: false        # prod 强制 false；通配符只经 breakglass 展开
+    require_reason: true         # 高风险变更强制填写 reason
+
+# Redis：iam.cache.driver=redis 时必填；密码走 ADMIN_FRAME_REDIS_PASSWORD。
+redis:
+  addr: ""                       # 如 127.0.0.1:6379
+  username: ""
+  password: ""
+  db: 0
+  key_prefix: "admin-frame:"
+
 db:
   driver: memory
   dsn: ""

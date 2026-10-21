@@ -99,6 +99,25 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # MySQL 8.0 service 供 tests/integration/iam 验证 SQL 仓储（租户隔离、唯一约束、乐观锁、
+    # 快照查询）。版本与 docs/rbac-iam.md §13.1 的数据库基线一致；不使用生产数据源（CI-12）。
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: iam_test
+          MYSQL_USER: iam
+          MYSQL_PASSWORD: iam
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=24
+    env:
+      IAM_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
