@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
   -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
   -o /out/app ./cmd/${CMD}
 
-FROM alpine:3.20 AS runtime
+FROM alpine:3.24 AS runtime
 RUN adduser -D -u 10001 appuser \
   && apk add --no-cache ca-certificates tzdata wget \
   && mkdir -p /app/configs
