@@ -57,7 +57,11 @@
 ## 5. 漏洞与更新节奏
 
 - **高危**：`govulncheck` 失败即阻断；缓解须升级依赖或官方 workaround，并在 MR/ADR 记录 CVE。  
-- **机器人**：GitHub Dependabot（`.github/dependabot.yml`）每周检查 `gomod`；Gitee 侧可用等价依赖机器人或人工周检。  
+- **镜像侧漏洞**：发版镜像流水线的 Trivy（`image` job）按 **二进制/OS 实际内容**扫描，与 `govulncheck` 的**源码可达性**判定口径不同：
+  - `govulncheck` 只报「从本仓库代码可调用到」的漏洞；间接依赖里未被调用到的路径不报。
+  - Trivy 报二进制中**所有**已收录漏洞（含未触达路径），因此可能出现在 `vuln` job 全绿后 `image` job 仍失败的情况。
+  - 处理口径：**以 image 结果为准**阻断发版；优先升级到已修复版本；确属不可触达且无修复时，走 `check-release` 记录的豁免（ADR + 到期日），不得直接放宽扫描等级。
+- **机器人**：GitHub Dependabot（`.github/dependabot.yml`）每周检查 `gomod` / `github-actions` / `docker`；Gitee 侧可用等价依赖机器人或人工周检。  
 - **批量升级**：安全紧急可单独 MR；常规升级按域/模块拆分，便于回滚。
 
 ---

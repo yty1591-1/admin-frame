@@ -48,7 +48,9 @@
 
 **禁止**：生产 Deployment 仅写 `:latest`；禁止「构建机上最新的那次」无记录引用。
 
-基础镜像：钉扎 major.minor（如 `alpine:3.20`）；生产流水线**推荐**锁定 digest，并在升级时显式变更。
+基础镜像：钉扎 major.minor（如 `alpine:3.24`）；生产流水线**推荐**锁定 digest，并在升级时显式变更。
+
+**运行镜像 OS 必须在发行版支持期内**：过期基线（如已 EOL 的 `alpine:3.20`）会让 Trivy 只给出 `This OS version is no longer supported` 警告并**停止提供 OS 漏洞数据**，扫描结果变成「假绿」。`check-release.sh` 已对该下限做静态校验（`MIN_ALPINE_MINOR`），升级基础镜像时同步抬高该值。
 
 ---
 
@@ -103,6 +105,8 @@ docker build --target admin-api \
 
 - 发版流水线应对推送镜像做漏洞扫描（组织工具：Trivy / 云厂商扫描等）；**高危未缓解不得上生产**。  
   已落地：`.github/workflows/image.yml` 推送后立即 Trivy 扫描 `CRITICAL,HIGH`（`ignore-unfixed`），命中即 job 失败，该 digest 不得进入生产。  
+- 扫描失败**不得**通过「放宽 severity / 加 ignore 文件」解决；须先升级依赖或基础镜像。确属不可触达且无修复时，按 DEPENDENCY_STANDARDS §5 走 ADR 豁免（含到期日）。  
+- 与 `govulncheck` 口径差异见 `docs/DEPENDENCY_STANDARDS.md` §5：`govulncheck` 按源码可达性判定，Trivy 按镜像实际内容判定，后者可能更严格。  
 - 镜像非 root 运行；不含 `.git` 与源码树（多阶段构建）。  
 - SBOM / 签名按组织要求启用（推荐，本仓库脚手架不强制工具版本）。
 

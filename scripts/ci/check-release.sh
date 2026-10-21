@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RELEASE_STANDARDS：Dockerfile 禁 latest、HEALTHCHECK、版本注入与 Checklist。
+# RELEASE_STANDARDS：Dockerfile 禁 latest、HEALTHCHECK、版本注入、基础 OS 支持期与 Checklist。
 # 用法: bash scripts/ci/check-release.sh
 set -euo pipefail
 
@@ -43,6 +43,33 @@ if ! grep -q 'healthz' "${DF}"; then
   FAIL=1
 else
   echo "    OK: healthz referenced"
+fi
+
+# RELS-02/§3：运行镜像基础 OS 必须在支持期内。
+# 过期的 Alpine 会让 Trivy 只警告而不提供 OS 漏洞数据（"detection may be insufficient"），
+# 扫描结果变成假绿。升级基础镜像时同步抬高这里的下限。
+MIN_ALPINE_MINOR="3.24"
+echo "==> RELS-02/§3: runtime base OS must be supported (alpine >= ${MIN_ALPINE_MINOR})"
+runtime_from="$(grep -nE '^[[:space:]]*FROM[[:space:]]' "${DF}" | grep -iE 'AS[[:space:]]+runtime[[:space:]]*$' | tail -n 1 || true)"
+if [[ -z "${runtime_from}" ]]; then
+  # 兜底：最后一条引用外部镜像（带 tag 或 registry 路径）的 FROM。
+  runtime_from="$(grep -nE '^[[:space:]]*FROM[[:space:]]+[^ ]*[:/]' "${DF}" | grep -viE 'AS[[:space:]]+builder[[:space:]]*$' | tail -n 1 || true)"
+fi
+if [[ -z "${runtime_from}" ]]; then
+  echo "ERROR: cannot locate runtime FROM in ${DF} (RELS-02)" >&2
+  FAIL=1
+elif [[ "${runtime_from}" =~ alpine:([0-9]+)\.([0-9]+) ]]; then
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  if (( major > 3 )) || { (( major == 3 )) && (( minor >= ${MIN_ALPINE_MINOR#3.} )); }; then
+    echo "    OK: runtime base alpine:${major}.${minor}"
+  else
+    echo "ERROR: runtime base alpine:${major}.${minor} is EOL/unsupported; use alpine:${MIN_ALPINE_MINOR}+ (RELS-02/§3)" >&2
+    FAIL=1
+  fi
+else
+  echo "ERROR: runtime base must pin an alpine major.minor tag (RELS-02/§3; switching distro requires updating this check): ${runtime_from}" >&2
+  FAIL=1
 fi
 
 echo "==> RELS-03: build version ARG / ldflags wiring"

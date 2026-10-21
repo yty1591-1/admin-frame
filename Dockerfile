@@ -3,7 +3,7 @@
 
 # 构建阶段固定在 BUILDPLATFORM（runner 原生架构），按 TARGETOS/TARGETARCH 交叉编译，
 # 多架构（amd64/arm64）构建无需逐架构 QEMU 编译 Go 代码。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.24 AS builder
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
   -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
   -o /out/app ./cmd/${CMD}
 
-FROM alpine:3.20 AS runtime
+FROM alpine:3.24 AS runtime
 RUN adduser -D -u 10001 appuser \
   && apk add --no-cache ca-certificates tzdata wget \
   && mkdir -p /app/configs

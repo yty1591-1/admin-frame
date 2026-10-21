@@ -134,7 +134,8 @@
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
 | 架构 | `linux/amd64,linux/arm64`；`Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
 | 版本 | `VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
-| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6） |
+| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
+| 基础镜像 | 运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起）；EOL 基线会让 OS 漏洞扫描失效，`check-release.sh` 静态拦截（RELS-02/§3） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
 
 - 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备）。
@@ -230,6 +231,7 @@ make ci
 | lint | 按 `.golangci.yml` 与注释/风格专文修复；例外走 `nolint`+原因 |
 | test / race | 修复或补测；禁止无 issue 的 `t.Skip` 掩盖必测场景 |
 | vuln | 升级依赖或官方缓解；否则 ADR + 风险接受后方可临时豁免 |
+| image（Trivy 命中） | 升级依赖 / 基础镜像到修复版本（如 grpc 补丁版、`alpine` 支持期内 minor）；**禁止**放宽 severity 或加 ignore 消警；确属不可触达且无修复走 ADR 豁免（含到期日） |
 | arch 跨端引用 | 删除错误 import；端能力只通过 app/domain 共享 |
 | 平台 / 插件故障 | 可重跑；连续失败升级 Owner，不降低检查标准 |
 | Gitee Go 版本不足 | 换自建 Agent 或升级构建镜像，见 §3.3 |
