@@ -5,7 +5,7 @@
 > **适用范围**：本仓库镜像构建、版本暴露、生产发布与回滚  
 > **关联**：架构 §十八；迁移顺序见 `DATA_STANDARDS.md`；探针见 `OBSERVABILITY_STANDARDS.md`  
 > **执行方式**：`check-release.sh` + 发布 Checklist + Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-21（发版镜像流水线 `image` 落地：多架构构建 + 推送 + Trivy 扫描）  
 > **变更方式**：修改本规范须同步更新 `Dockerfile`、`scripts/ci/check-release.sh`、`docs/release/` 与架构 §十八，经架构 Owner Review
 
 ---
@@ -37,9 +37,12 @@
 
 | 环境 | 标签约定 | 说明 |
 |------|----------|------|
-| 本地 | `admin-frame/<cmd>:local` | 仅开发；不推送生产仓库 |
-| CI / 预发 | `<registry>/<cmd>:<git-sha>` 或 `<semver>-<sha>` | 可丢弃 |
+| 本地 | `admin-frame/<cmd>:local` | 仅开发；**禁止**推送（`make docker-push` 会拒绝 `local`） |
+| CI / 预发 | `<registry>/<cmd>:sha-<short>`（主干 push） | 可丢弃；对应 `image` 流水线分支产物 |
+| 预发 / 生产候选 | `<registry>/<cmd>:<semver>` 与 `<semver>-sha-<short>`（tag push） | 由 `v*` tag 产出；保留 sha 便于回溯 |
 | 生产 | `<registry>/<cmd>:<semver>` **且** 记录 digest `sha256:…` | 部署清单保存 digest |
+
+镜像名与注册表：`<registry>/<owner>/<cmd>`，默认 `ghcr.io`（见 `docs/CI_STANDARDS.md` §3.5）。
 
 命名示例：`ghcr.io/org/admin-api:1.4.2@sha256:…`
 
@@ -99,6 +102,7 @@ docker build --target admin-api \
 ## 6. 镜像安全（基线）
 
 - 发版流水线应对推送镜像做漏洞扫描（组织工具：Trivy / 云厂商扫描等）；**高危未缓解不得上生产**。  
+  已落地：`.github/workflows/image.yml` 推送后立即 Trivy 扫描 `CRITICAL,HIGH`（`ignore-unfixed`），命中即 job 失败，该 digest 不得进入生产。  
 - 镜像非 root 运行；不含 `.git` 与源码树（多阶段构建）。  
 - SBOM / 签名按组织要求启用（推荐，本仓库脚手架不强制工具版本）。
 
@@ -116,14 +120,16 @@ docker build --target admin-api \
 ## 8. 本地与 CI
 
 ```bash
-make check-release   # RELS-01/02/03 可自动项
+make check-release   # RELS-01/02/03 可自动项（含 image 流水线静态校验）
 make docker          # 本地 tag:local（非生产）
+make docker-push VERSION=<semver|sha>   # 本地复现推送（single-arch，不扫描）
 make ci
 ```
 
 | 平台 | 入口 |
 |------|------|
 | GitHub / Gitee | job `arch` 内跑 `check-release.sh` |
+| 发版镜像 | GitHub `image` 流水线（push main / `v*` tag；buildx 多架构 + Trivy） |
 | 发版 | `docs/release/CHECKLIST.md` |
 | MR | PR 模板「发布自检」 |
 
@@ -142,6 +148,7 @@ make ci
 - [ ] Dockerfile 无 `latest`；HEALTHCHECK 指向 healthz  
 - [ ] `/version` 含 version/commit/build_time  
 - [ ] 生产引用含 digest；回滚点明确  
+- [ ] 镜像由 `image` 流水线产出（非本机手工构建）  
 - [ ] 迁移顺序与 Checklist 已完成  
 - [ ] `make check-release` 通过  
 
@@ -151,7 +158,8 @@ make ci
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `Dockerfile` | 多 stage；版本 ARG；HEALTHCHECK |
+| `Dockerfile` | 多 stage；版本 ARG；HEALTHCHECK；`BUILDPLATFORM` 交叉编译 |
+| `.github/workflows/image.yml` | 发版镜像：多架构构建 + 推送 + Trivy 扫描 |
 | `internal/platform/endpoints.go` | `/version` |
 | `docs/release/CHECKLIST.md` | 发版核对 |
 | `scripts/ci/check-release.sh` | RELS-01/02/03 |

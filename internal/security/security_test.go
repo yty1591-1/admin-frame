@@ -87,7 +87,7 @@ func TestJWTConfigValidate(t *testing.T) {
 
 // TestNewJWTAuthRejectsChannelClaimMismatch 验证跨端复用令牌被拒绝（SEC-03）。
 func TestNewJWTAuthRejectsChannelClaimMismatch(t *testing.T) {
-	const secret = "0123456789abcdef0123456789abcdef"
+	secret := testJWTSecret('s')
 	cfg := security.JWTConfig{
 		Issuer:   "issuer",
 		Audience: []string{"c"},

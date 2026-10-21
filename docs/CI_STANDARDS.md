@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
 > **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-13（纳入 LIC/GEN/PERF；P0～P4 专文门禁齐套）  
+> **最后更新**：2026-10-21（纳入发版镜像流水线 `image`；LIC/GEN/PERF 已于 2026-10-13 纳入）  
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -53,7 +53,9 @@
 
 **许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检；全链路压测仍可选）。
 
-**尚未纳入必跑、但已规划**：集成测试容器常态化、发版流水线镜像扫描推送。启用后须更新本表与各平台流水线。
+**发版镜像（不在 PR 必跑，见 §3.5）**：`image` job 在 push `main`/`master` 与 `v*` tag 时构建多架构镜像、推送并用 Trivy 扫描；命中 `CRITICAL/HIGH` 即失败，该 digest 不得上生产。
+
+**尚未纳入必跑、但已规划**：集成测试容器常态化。启用后须更新本表与各平台流水线。
 
 ---
 
@@ -80,6 +82,7 @@
 | SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | CI-08 | `build` | `build` | `make build` |
+| RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make docker-push` + `make check-release` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
 
@@ -121,6 +124,22 @@
 | 仅 Gitee | 维护 `.workflow`；分支保护走 Gitee；`.github` 可保留供镜像仓使用 |
 | 双远端 | 两边流水线均须绿；禁止「只过一边就合入」 |
 
+### 3.5 发版镜像流水线（`.github/workflows/image.yml`）
+
+| 项 | 约定 |
+|----|------|
+| 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
+| 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
+| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05） |
+| 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
+| 架构 | `linux/amd64,linux/arm64`；`Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
+| 版本 | `VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
+| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6） |
+| 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
+
+- 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备）。
+- Gitee 端暂未接入（需组织 registry 凭据）；接入前镜像只由 GitHub 流水线产出，Gitee 只跑质量门禁。
+
 ---
 
 ## 4. 流水线拓扑
@@ -135,6 +154,10 @@ PR / push main ──►  ├── lint
                     ├── secrets (gitleaks + debug + config examples)
                     ├── openapi (validate + breaking)
                     └── build (all cmd)
+```
+
+```text
+push main / v* tag ──► image (buildx 多架构 + Trivy 扫描；非合并门禁)
 ```
 
 - 各检查 **并行**（平台支持时）；任一失败 → 合并阻断。
@@ -167,6 +190,7 @@ make check-license        # LIC-01/02/06
 make check-codegen        # GEN-01/02
 make check-perf           # PERF-01/02
 make build                # CI-08
+make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构/扫描见 CI `image`）
 ```
 
 或一键：
@@ -216,7 +240,7 @@ make ci
 
 - GitHub：`setup-go` cache；golangci-lint-action 缓存  
 - Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载  
-- 不在每个 PR 默认构建并推送镜像（见后续 `RELEASE_STANDARDS`）  
+- 不在 PR 构建/推送镜像；仅在 push `main`/`master` 与 `v*` tag 触发 `image`（§3.5），避免重复构建与成本  
 - 不可用路径过滤跳过 fmt/lint/test/vuln  
 
 ---
@@ -244,6 +268,7 @@ make ci
 - [ ] CI-03～CI-09 在 **GitHub 与 Gitee**（若都启用）仍失败即失败  
 - [ ] 两边检查命令与 `make ci` / `gitee-job.sh` 一致  
 - [ ] 版本仍钉扎；权限未被放宽  
+- [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）  
 - [ ] 已更新本专文映射表（若有增删 job）  
 
 ---
@@ -253,6 +278,7 @@ make ci
 | 工具 / 文件 | 作用 |
 |-------------|------|
 | `.github/workflows/ci.yml` | GitHub 强制执行 |
+| `.github/workflows/image.yml` | 发版镜像构建 / 推送 / Trivy 扫描（§3.5） |
 | `.workflow/*.yml` | Gitee Go 强制执行 |
 | `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |

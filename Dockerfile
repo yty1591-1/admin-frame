@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 # RELS：禁止 :latest；基础镜像钉扎 minor；生产推送推荐锁定 digest。
 
-FROM golang:1.26-alpine AS builder
+# 构建阶段固定在 BUILDPLATFORM（runner 原生架构），按 TARGETOS/TARGETARCH 交叉编译，
+# 多架构（amd64/arm64）构建无需逐架构 QEMU 编译 Go 代码。
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
@@ -11,7 +13,9 @@ ARG CMD=admin-api
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_TIME=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build \
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
   -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
   -o /out/app ./cmd/${CMD}
 

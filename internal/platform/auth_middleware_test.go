@@ -65,7 +65,7 @@ func TestNewAuthMiddlewareDemo(t *testing.T) {
 
 func TestNewAuthMiddlewareProdDefaultsToJWT(t *testing.T) {
 	// 未显式声明 auth.mode 时，prod 回退 jwt；提供合法 JWT 配置即可启动。
-	const secret = "0123456789abcdef0123456789abcdef"
+	secret := testJWTSecret('s')
 	mw, err := platform.NewAuthMiddleware(platform.AuthConfig{
 		ExpectedChannel: "c",
 		JWT: security.JWTConfig{
@@ -101,7 +101,7 @@ func TestNewAuthMiddlewareLocalDefaultsToDemo(t *testing.T) {
 }
 
 func TestNewAuthMiddlewareJWT(t *testing.T) {
-	const secret = "0123456789abcdef0123456789abcdef" // 32 bytes
+	secret := testJWTSecret('s') // 32 bytes
 	cfg := platform.AuthConfig{
 		Mode:            platform.AuthModeJWT,
 		ExpectedChannel: "c",

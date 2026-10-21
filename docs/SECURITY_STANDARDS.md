@@ -75,6 +75,12 @@
 - 运行时密钥来自环境变量或 KMS，不写进镜像层。
 - gitleaks 命中后：轮换已泄露凭证（即使是误提交），从历史清除须单独变更，不能只删最新文件。
 - 允许列表仅用于**明确的演示文案**（`.gitleaks.toml`）。禁止用 allowlist 放过真实密钥。
+- 测试中的假密钥（如 HS256 32 字节密钥、推送 Token）禁止写成高熵字面量：
+  gitleaks 的 `generic-api-key` 会按熵值判定，`0123456789abcdef…` 这类十六进制样例串
+  必然命中。用 `strings.Repeat` 等构造方式生成（示例见
+  `internal/platform/testsupport_test.go`），既不写死凭据，也让「这是假值」一目了然。
+- allowlist 中的字面量条目只用于放行**历史提交**里已存在的测试向量（历史不可改），
+  新增代码不得依赖 allowlist。
 
 ---
 

@@ -69,6 +69,40 @@ else
   FAIL=1
 fi
 
+echo "==> RELS-01/03/06: release image pipeline"
+IMG_WF=".github/workflows/image.yml"
+if [[ ! -f "${IMG_WF}" ]]; then
+  echo "ERROR: missing ${IMG_WF} (发版镜像流水线，见 RELEASE_STANDARDS §3/§6)" >&2
+  FAIL=1
+else
+  if grep -nE ':latest' "${IMG_WF}"; then
+    echo "ERROR: floating :latest tag in ${IMG_WF} (RELS-01)" >&2
+    FAIL=1
+  else
+    echo "    OK: no :latest push tag"
+  fi
+  if grep -qE '^[[:space:]]*latest[[:space:]]*[:=][[:space:]]*false' "${IMG_WF}"; then
+    echo "    OK: metadata-action latest disabled"
+  else
+    echo "ERROR: metadata-action must disable implicit latest tag (RELS-01)" >&2
+    FAIL=1
+  fi
+  if grep -q 'aquasecurity/trivy-action' "${IMG_WF}"; then
+    echo "    OK: image scan wired"
+  else
+    echo "ERROR: image pipeline must scan before release (RELS-06 / §6)" >&2
+    FAIL=1
+  fi
+  for arg in VERSION COMMIT BUILD_TIME; do
+    if grep -qF "${arg}=\${{ steps.ver.outputs" "${IMG_WF}"; then
+      echo "    OK: build arg ${arg} from pipeline"
+    else
+      echo "ERROR: image pipeline missing ${arg} build arg (RELS-03)" >&2
+      FAIL=1
+    fi
+  done
+fi
+
 echo "==> RELS-07: release checklist present"
 if [[ -f docs/release/CHECKLIST.md ]]; then
   echo "    OK: docs/release/CHECKLIST.md"

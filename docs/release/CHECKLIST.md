@@ -7,6 +7,7 @@
 - [ ] 发布单 / 工单号：________
 - [ ] 影响端：admin / biz / c / worker / migrate
 - [ ] 镜像 tag：________
+- [ ] 镜像由 GitHub `Image` 流水线产出（push main / `v*` tag），非本机手工构建
 - [ ] 镜像 digest：`sha256:________`（已记录）
 - [ ] git commit：________
 

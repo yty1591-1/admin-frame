@@ -10,7 +10,7 @@
 > - [工程化注释规范](./COMMENT_STANDARDS.md)（C-01～C-10）  
 > - [工程化代码编写风格规范](./CODE_STYLE.md)（S-01～S-12）  
 > - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
->   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
+>   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（合并门禁）、[`.github/workflows/image.yml`](../.github/workflows/image.yml)（发版镜像）  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
 > - [工程化 API 契约规范](./API_STANDARDS.md)（API-01～API-12）  
@@ -944,11 +944,12 @@ make migrate-up
 make vuln
 make docker             # 构建全部业务镜像
 make docker-admin       # 单端镜像（多 stage target）
+make docker-push VERSION=<semver|sha>   # 推送镜像（single-arch；多架构与扫描见 CI `image`）
 ```
 
 ### 18.2 Dockerfile
 
-- 多阶段构建：builder 编译，runtime 仅二进制 + 必要配置。
+- 多阶段构建：builder 编译，runtime 仅二进制 + 必要配置；builder 固定 `BUILDPLATFORM`、按 `TARGETOS/TARGETARCH` 交叉编译以支持多架构。
 - **同一 Dockerfile 多 target**（或 build-arg `CMD`）产出 `admin-api` / `biz-api` / `c-api` / `worker` 镜像。
 - 不含源码与 `.git`；非 root 用户；固定基础镜像 tag（含 digest 更佳）。
 - 禁止 `latest`；`HEALTHCHECK` 指向 `/healthz` 或等价探针。
@@ -957,15 +958,17 @@ make docker-admin       # 单端镜像（多 stage target）
 ### 18.3 CI 流水线（门禁）
 
 > **完整硬约束**见 [`docs/CI_STANDARDS.md`](./CI_STANDARDS.md)。  
-> 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
+> 实现：GitHub [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（合并门禁）+ [`.github/workflows/image.yml`](../.github/workflows/image.yml)（发版镜像）；Gitee [`.workflow/`](../.workflow/)。本地对齐：`make ci`。
 
 **当前必跑：** 格式 → `go mod tidy` → lint（gosec）→ 测试（race + TEST 门禁）→ **govulncheck + 依赖/许可证门禁** → transport 隔离 → **gitleaks + 调试端点 + 配置样例门禁** → OpenAPI → 全量构建。
+
+**发版镜像（非合并门禁）：** push `main`/`master` 与 `v*` tag 触发 buildx 多架构（amd64/arm64）构建 → 推送 → Trivy 扫描；命中 `CRITICAL/HIGH` 即失败，该 digest 不得上生产。详见 CI_STANDARDS §3.5。
 
 **规划中（专文落地后纳入）：**
 
 1. 更完整的许可证专文（LIC）与组织策略对齐  
 2. 集成测试容器（testcontainers）常态化  
-3. 发版流水线内镜像扫描与自动推送（工具与仓库按组织接入；规范见 RELS）
+3. Gitee 端镜像发布接入（需组织 registry 凭据）
 
 ### 18.4 发布策略
 

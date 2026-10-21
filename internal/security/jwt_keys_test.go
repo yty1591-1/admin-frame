@@ -256,7 +256,7 @@ func TestNewJWTAuthRejectsShortRotationSecret(t *testing.T) {
 	_, err := security.NewJWTAuth(security.JWTConfig{
 		Issuer:   "issuer",
 		Audience: []string{"admin"},
-		Secret:   "0123456789abcdef0123456789abcdef",
+		Secret:   testJWTSecret('s'),
 		Secrets:  []string{"short"},
 	}, auth.ChannelAdmin)
 	if err == nil {
@@ -266,8 +266,8 @@ func TestNewJWTAuthRejectsShortRotationSecret(t *testing.T) {
 
 // TestNewJWTAuthAcceptsRotationSecret 验证轮换密钥签发的令牌仍可校验。
 func TestNewJWTAuthAcceptsRotationSecret(t *testing.T) {
-	const current = "0123456789abcdef0123456789abcdef"
-	const old = "fedcba9876543210fedcba9876543210"
+	current := testJWTSecret('s')
+	old := testJWTSecret('o')
 	mw, err := security.NewJWTAuth(security.JWTConfig{
 		Issuer:   "issuer",
 		Audience: []string{"admin"},

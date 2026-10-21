@@ -1,5 +1,5 @@
 # golangci-lint v2。与 docs/COMMENT_STANDARDS.md、docs/CODE_STYLE.md 对齐。
-# 二进制须用 Go >= 1.26 构建（钉扎 v2.14.0），否则无法加载 go 1.26.9 模块。
+# 二进制须用 Go >= 1.26 构建（钉扎 v2.14.0），否则无法加载 go 1.26.10 模块。
 version: "2"
 linters:
   enable:

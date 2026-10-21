@@ -21,3 +21,14 @@ updates:
       - dependencies
     commit-message:
       prefix: "ci"
+  # RELS-01：基础镜像升级走独立 MR（钉扎 major.minor）。
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "deps"

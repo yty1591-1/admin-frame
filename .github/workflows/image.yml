@@ -1,0 +1,120 @@
+# 发版镜像流水线（RELEASE_STANDARDS + CI_STANDARDS §3.5）
+# 变更本文件须同步审查 docs/CI_STANDARDS.md、docs/RELEASE_STANDARDS.md。
+#
+# 触发：push 到 main/master、push v* tag、手动。
+# 产物：<registry>/<owner>/<cmd>:<version>，多架构 linux/amd64 + linux/arm64，推后 Trivy 扫描。
+# 注册表：默认 GHCR（GITHUB_TOKEN 推送）；私有仓库可设 Repository variable
+#         IMAGE_REGISTRY，并另外注入推送凭据。
+
+name: Image
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+# 发版镜像不取消进行中的构建，避免「一半已推送、一半被取消」的不可追溯状态。
+concurrency:
+  group: image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  image:
+    name: image (${{ matrix.cmd }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        cmd: [admin-api, biz-api, c-api, worker]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # metadata-action 需要 tag 才能生成 semver 标签。
+          fetch-depth: 0
+
+      - name: Resolve image name and version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          # RELS-01/§3：CI/预发用 <git-sha>，生产用 <semver>；本地 :local 不得推送。
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="sha-${GITHUB_SHA::7}"
+          fi
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/${owner}/${MATRIX_CMD}" >> "$GITHUB_OUTPUT"
+        env:
+          MATRIX_CMD: ${{ matrix.cmd }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (tags + labels)
+        id: tags
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.ver.outputs.image }}
+          # RELS-01：禁止浮动 latest 作为推送标签。
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{version}}-sha-{{sha}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.cmd }}
+
+      - name: Build and push (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.cmd }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.tags.outputs.labels }}
+          build-args: |
+            CMD=${{ matrix.cmd }}
+            VERSION=${{ steps.ver.outputs.version }}
+            COMMIT=${{ steps.ver.outputs.commit }}
+            BUILD_TIME=${{ steps.ver.outputs.build_time }}
+          cache-from: type=gha,scope=image-${{ matrix.cmd }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.cmd }}
+
+      - name: Trivy scan (HIGH/CRITICAL)
+        # 推后扫描：命中高危则 job 失败，禁止该 digest 进入生产（RELS-06 / §6）。
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

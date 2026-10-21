@@ -18,11 +18,11 @@ import (
 func TestConfigLogValueRedactsSecrets(t *testing.T) {
 	const (
 		dsnSecret    = "postgres://user:super-secret@db:5432/app" //nolint:gosec // 测试用假 DSN，仅用于验证脱敏输出。
-		jwtSecret    = "0123456789abcdef0123456789abcdef"
 		storageAK    = "storage-access-key"
 		storageSK    = "storage-secret-key"
 		sessionToken = "session-token"
 	)
+	jwtSecret := testJWTSecret('j')
 	cfg := &platform.Config{
 		Env:     "prod",
 		Service: "c-api",

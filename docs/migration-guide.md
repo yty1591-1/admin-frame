@@ -87,7 +87,7 @@ schema_migrations（version / description / checksum / applied_at / execution_ms
 
 | 项 | 要求 |
 |----|------|
-| Go | 与 `go.mod` 一致（当前 `go 1.26.9`） |
+| Go | 与 `go.mod` 一致（当前 `go 1.26.10`） |
 | 数据库 | PostgreSQL 或 MySQL / MariaDB 可连接 |
 | 权限 | 可 `CREATE TABLE`（历史表）、可执行迁移中的 DDL/DML |
 | 目录 | 仓库根 `migrations/` 已存在至少一对 up/down 文件 |

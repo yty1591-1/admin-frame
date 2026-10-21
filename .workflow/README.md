@@ -10,6 +10,12 @@
 
 命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi）。
 
+## 发版镜像（当前仅 GitHub）
+
+镜像构建/推送/扫描在 `.github/workflows/image.yml`，GitHub 侧触发（push `main`/`master`、`v*` tag）。
+Gitee 端**暂未接入**（需组织 registry 凭据与 `build@docker` 等价能力），因此 Gitee 流水线只做质量门禁。
+接入时须同步 `docs/CI_STANDARDS.md` §3.1 映射表，并保持 RELS 约束（无 `:latest`、扫描、版本注入）。
+
 ## 开通步骤
 
 1. 在 Gitee 仓库开通 **Gitee Go**。

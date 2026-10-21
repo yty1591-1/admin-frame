@@ -16,6 +16,12 @@ regexes = [
   '''Bearer (admin|biz|c)\.[A-Za-z0-9._-]+''',
   # 测试用固定假 token（pkg/push/apns/client_test.go），并非真实凭据。
   '''^0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
+  # 测试用固定假 HMAC 密钥（32 字节十六进制示例串），并非真实凭据。
+  #
+  # 代码侧已改为 strings.Repeat 构造（见 internal/*/testsupport_test.go），本条目
+  # 仅用于放行历史提交中已存在的该向量：gitleaks 扫描的是 git 历史，
+  # 删除工作区字面量并不能消除既有 commit 中的命中。
+  '''^0123456789abcdef0123456789abcdef$''',
   # pkg/password/argon2.go 的默认参数常量名被 generic-api-key 误判。
   '''^defaultArgon2KeyLen$''',
   # pkg/jwt/manager_test.go 手工构造的 alg=none 测试向量。

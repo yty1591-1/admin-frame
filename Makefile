@@ -13,7 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
 	check-license check-codegen check-perf secrets \
-	gitee-job ci mock migrate-up vuln docker docker-admin
+	gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -188,3 +188,25 @@ docker:
 
 docker-admin:
 	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .
+
+# 本地复现 image 流水线（只推 single-arch；多架构与扫描见 CI job image）。
+# RELS-01/§9：:local 标签禁止推送，必须显式给 VERSION=<semver|sha>。
+IMAGE_REGISTRY ?= ghcr.io
+IMAGE_NAMESPACE ?= admin-frame
+
+docker-push:
+	@if [ "$(VERSION)" = "local" ]; then \
+		echo "error: set VERSION=<semver|sha>; the local tag must not be pushed (RELS-01/§9)" >&2; \
+		exit 1; \
+	fi
+	@set -e; for cmd in admin-api biz-api c-api worker; do \
+		img="$(IMAGE_REGISTRY)/$(IMAGE_NAMESPACE)/$$cmd:$(VERSION)"; \
+		echo "==> push $$img"; \
+		docker build --target $$cmd \
+			--build-arg CMD=$$cmd \
+			--build-arg VERSION=$(VERSION) \
+			--build-arg COMMIT=$(COMMIT) \
+			--build-arg BUILD_TIME=$(BUILD_TIME) \
+			-t $$img . ; \
+		docker push $$img ; \
+	done
