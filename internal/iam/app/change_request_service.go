@@ -28,6 +28,7 @@ type ChangeRequestService struct {
 	requests   domain.ChangeRequestRepository
 	applicator ChangeApplicator
 	revoker    BreakglassRevoker
+	uow        UnitOfWork
 	log        *slog.Logger
 	ids        id.Generator
 	limits     ChangeLimits
@@ -52,9 +53,11 @@ type ChangeRequestServiceConfig struct {
 	Applicator ChangeApplicator
 	// Revoker 撤销破玻璃绑定；为空时尝试从 Applicator 推导。
 	Revoker BreakglassRevoker
-	IDs     id.Generator
-	Limits  ChangeLimits
-	Logger  *slog.Logger
+	// UnitOfWork 让「目标聚合写入 + 审批单状态 + 审计」同事务提交。
+	UnitOfWork UnitOfWork
+	IDs        id.Generator
+	Limits     ChangeLimits
+	Logger     *slog.Logger
 }
 
 // NewChangeRequestService 构造审批用例；缺失必要依赖时返回错误（fail-closed）。
@@ -78,10 +81,15 @@ func NewChangeRequestService(cfg ChangeRequestServiceConfig) (*ChangeRequestServ
 			revoker = candidate
 		}
 	}
+	uow := cfg.UnitOfWork
+	if uow == nil {
+		uow = NoopUnitOfWork{}
+	}
 	return &ChangeRequestService{
 		requests:   cfg.Requests,
 		applicator: cfg.Applicator,
 		revoker:    revoker,
+		uow:        uow,
 		log:        logger,
 		ids:        cfg.IDs,
 		limits:     cfg.Limits,
@@ -256,22 +264,28 @@ func (s *ChangeRequestService) Apply(ctx context.Context, cmd ApplyChangeRequest
 		return nil, apperr.BadRequest("actor is required")
 	}
 
-	targetID, err := s.applicator.Apply(ctx, request, actor)
-	if err != nil {
+	// 目标变更与审批单状态必须同事务：否则可能出现「权限已生效但审批单仍是 approved」
+	// （重复应用 → 重复审计）或反之。契约由 UnitOfWork 保证，嵌套调用复用外层事务。
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		targetID, applyErr := s.applicator.Apply(ctx, request, actor)
+		if applyErr != nil {
+			return applyErr
+		}
+		if targetID != "" && request.TargetID == "" {
+			if err := request.BindTarget(targetID); err != nil {
+				return err
+			}
+		}
+		expected := request.Version
+		if err := request.MarkApplied(expected); err != nil {
+			return err
+		}
+		return s.requests.Save(ctx, request, expected)
+	}); err != nil {
+		// 契约冲突（版本过期 / 状态不符 / 目标已变更）是预期内的可重试结果，
+		// 只记 Warn 一次；其余错误同样返回，交由上层映射 50000 / 40900。
 		s.log.WarnContext(ctx, "iam change request apply failed",
 			"change_request_id", request.ID, "action", string(request.Action), "err", err)
-		return nil, err
-	}
-	if targetID != "" && request.TargetID == "" {
-		if err := request.BindTarget(targetID); err != nil {
-			return nil, err
-		}
-	}
-	expected := request.Version
-	if err := request.MarkApplied(expected); err != nil {
-		return nil, err
-	}
-	if err := s.requests.Save(ctx, request, expected); err != nil {
 		return nil, err
 	}
 	return request, nil

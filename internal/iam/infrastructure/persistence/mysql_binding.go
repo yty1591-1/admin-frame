@@ -7,6 +7,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // bindingSelectColumns 是绑定表的显式列清单。
@@ -24,6 +25,11 @@ type SQLBindingRepository struct {
 // NewSQLBindingRepository 基于已打开的 *sql.DB 创建绑定仓储。
 func NewSQLBindingRepository(sqlDB *sql.DB) *SQLBindingRepository {
 	return &SQLBindingRepository{sql: sqlDB}
+}
+
+// exec 返回当前请求的执行器（UnitOfWork 事务内为 *sql.Tx）。
+func (r *SQLBindingRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
 }
 
 // Save 创建绑定；唯一键冲突时刷新有效期与授权人，保留原主键。
@@ -46,7 +52,7 @@ func (r *SQLBindingRepository) Save(ctx context.Context, binding *domain.Binding
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx, `INSERT INTO iam_role_binding
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO iam_role_binding
 		(id, channel, subject_type, subject_id, merchant_id, role_id, expires_at, granted_by, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), granted_by = VALUES(granted_by)`,
@@ -65,7 +71,7 @@ func (r *SQLBindingRepository) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := r.sql.ExecContext(ctx, `DELETE FROM iam_role_binding WHERE id = ?`, bindingID); err != nil {
+	if _, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM iam_role_binding WHERE id = ?`, bindingID); err != nil {
 		return err
 	}
 	return nil
@@ -77,7 +83,7 @@ func (r *SQLBindingRepository) FindByID(ctx context.Context, id string) (*domain
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+bindingSelectColumns+` FROM iam_role_binding WHERE id = ?`, bindingID)
 	binding, err := scanBinding(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,7 +104,7 @@ func (r *SQLBindingRepository) ListBySubject(ctx context.Context, query domain.S
 	if err := validateSubjectQuery(query); err != nil {
 		return nil, err
 	}
-	rows, err := r.sql.QueryContext(ctx,
+	rows, err := r.exec(ctx).QueryContext(ctx,
 		`SELECT `+bindingSelectColumns+` FROM iam_role_binding
 		 WHERE channel = ? AND subject_type = ? AND subject_id = ? AND merchant_id = ?
 		   AND (expires_at IS NULL OR expires_at > ?)
@@ -117,7 +123,7 @@ func (r *SQLBindingRepository) ListByRole(ctx context.Context, roleID string) ([
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.sql.QueryContext(ctx,
+	rows, err := r.exec(ctx).QueryContext(ctx,
 		`SELECT `+bindingSelectColumns+` FROM iam_role_binding WHERE role_id = ? ORDER BY id`, parsedRoleID)
 	if err != nil {
 		return nil, err

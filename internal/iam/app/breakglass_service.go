@@ -99,22 +99,22 @@ func (s *BreakglassService) Request(ctx context.Context, cmd RequestBreakglassCo
 	if err != nil {
 		return nil, apperr.Internal("encode breakglass payload", err)
 	}
-	request, err := s.changes.Create(ctx, CreateChangeRequestCommand{
-		Channel: domain.ChannelAdmin,
-		Action:  domain.ChangeActionBreakglassRequest,
-		Payload: payload,
-		Reason:  cmd.Reason,
-		Actor:   cmd.Actor,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := s.record(ctx, request, "request", cmd.Actor, nil); err != nil {
-		// 审计失败视为申请无效：尽力撤销，避免留下一张没有申请事实的单子。
-		if _, cancelErr := s.changes.Cancel(ctx, request.ID, request.Version, cmd.Actor); cancelErr != nil {
-			s.log.WarnContext(ctx, "iam breakglass request audit failed and cancel failed",
-				"change_request_id", request.ID, "err", cancelErr)
+	var request *domain.ChangeRequest
+	// 审批单与申请审计同事务：审计失败即整体回滚，不会留下「有单子、无申请事实」的孤儿记录。
+	if err := s.changes.uow.WithinTx(ctx, func(ctx context.Context) error {
+		created, createErr := s.changes.Create(ctx, CreateChangeRequestCommand{
+			Channel: domain.ChannelAdmin,
+			Action:  domain.ChangeActionBreakglassRequest,
+			Payload: payload,
+			Reason:  cmd.Reason,
+			Actor:   cmd.Actor,
+		})
+		if createErr != nil {
+			return createErr
 		}
+		request = created
+		return s.record(ctx, created, "request", cmd.Actor, nil)
+	}); err != nil {
 		return nil, err
 	}
 	return request, nil
@@ -132,42 +132,56 @@ type ApproveBreakglassCommand struct {
 // 失败语义：审批已通过但应用失败时，审批单保持 approved，调用方可用同一端点
 // 重试（此时 version 取服务端当前值）。
 func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCommand) (*domain.ChangeRequest, error) {
-	request, err := s.changes.Get(ctx, cmd.ID, domain.ChannelAdmin)
-	if err != nil {
-		return nil, err
-	}
-	if request.Action != domain.ChangeActionBreakglassRequest {
-		return nil, apperr.BadRequest("change request is not a breakglass request")
-	}
+	var applied *domain.ChangeRequest
+	// 审批状态、绑定创建与审批审计同事务：任一步失败都不留下半成品超级权限。
+	if err := s.changes.uow.WithinTx(ctx, func(ctx context.Context) error {
+		request, findErr := s.changes.Get(ctx, cmd.ID, domain.ChannelAdmin)
+		if findErr != nil {
+			return findErr
+		}
+		if request.Action != domain.ChangeActionBreakglassRequest {
+			return apperr.BadRequest("change request is not a breakglass request")
+		}
 
-	current := request
-	switch {
-	case request.IsPending():
-		current, err = s.changes.Approve(ctx, request.ID, cmd.Version, cmd.Approver)
-	case request.IsApproved():
-		// 上次应用失败后的重试；version 以服务端为准。
-		current, err = s.changes.Get(ctx, request.ID, domain.ChannelAdmin)
-	case request.Status == domain.ChangeStatusApplied:
-		return request, nil
-	default:
-		return nil, apperr.Conflict("breakglass request is not pending or approved")
-	}
-	if err != nil {
-		return nil, err
-	}
+		current := request
+		switch {
+		case request.IsPending():
+			approved, approveErr := s.changes.Approve(ctx, request.ID, cmd.Version, cmd.Approver)
+			if approveErr != nil {
+				return approveErr
+			}
+			current = approved
+		case request.IsApproved():
+			// 上次应用失败后的重试；version 以服务端为准。
+			latest, getErr := s.changes.Get(ctx, request.ID, domain.ChannelAdmin)
+			if getErr != nil {
+				return getErr
+			}
+			current = latest
+		case request.Status == domain.ChangeStatusApplied:
+			return nil
+		default:
+			return apperr.Conflict("breakglass request is not pending or approved")
+		}
 
-	applied, err := s.changes.Apply(ctx, ApplyChangeRequestCommand{
-		ID:      current.ID,
-		Version: current.Version,
-		Actor:   cmd.Approver,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := s.record(ctx, applied, "approve", cmd.Approver, map[string]string{
-		attrBindingID: applied.TargetID,
+		result, applyErr := s.changes.Apply(ctx, ApplyChangeRequestCommand{
+			ID:      current.ID,
+			Version: current.Version,
+			Actor:   cmd.Approver,
+		})
+		if applyErr != nil {
+			return applyErr
+		}
+		applied = result
+		return s.record(ctx, result, "approve", cmd.Approver, map[string]string{
+			attrBindingID: result.TargetID,
+		})
 	}); err != nil {
 		return nil, err
+	}
+	if applied == nil {
+		// 已生效：幂等返回当前审批单，不重复写审计。
+		return s.changes.Get(ctx, cmd.ID, domain.ChannelAdmin)
 	}
 	return applied, nil
 }
@@ -191,11 +205,13 @@ func (s *BreakglassService) Revoke(
 	if request.Version != version {
 		return nil, apperr.Conflict("change request version conflict")
 	}
-	if err := s.changes.RevokeBreakglass(ctx, requestID, actor); err != nil {
-		return nil, err
-	}
-	if err := s.record(ctx, request, "revoke", actor, map[string]string{
-		attrBindingID: request.TargetID,
+	if err := s.changes.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if revokeErr := s.changes.RevokeBreakglass(ctx, requestID, actor); revokeErr != nil {
+			return revokeErr
+		}
+		return s.record(ctx, request, "revoke", actor, map[string]string{
+			attrBindingID: request.TargetID,
+		})
 	}); err != nil {
 		return nil, err
 	}

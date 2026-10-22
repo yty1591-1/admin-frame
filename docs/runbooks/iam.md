@@ -69,9 +69,18 @@
    2. 确认原因与影响面后，`POST /admin/v1/iam/breakglass/{id}/revoke`（body 带当前 `version`）提前收回。
    3. 等待 L1（≤3s）+ L2（≤5m）过期，再用主体权限查询接口确认 `*` 已消失。
    4. 核对 `rbac.breakglass` 的 request / approve / revoke 三条审计，缺失即升级安全 Owner。
-7. **迁移回滚**：`migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
+7. **写入事务与审计一致性（M4.5 起）**：业务变更与审计事件在同一个数据库事务内提交，
+   正常不应出现「变更成功但审计缺失」。若怀疑 M4.4 及更早版本的历史窗口存在缺口，
+   按业务行 `updated_at` 时间窗与 `iam_outbox.aggregate_id`、审计目的地 `event_id` 三方对照：
+   - 业务行存在、outbox 与审计目的地都没有对应记录：属历史缺口，补录审计并记录事故；
+   - outbox 为 `dead` / `failed`：按第 5 条处理，**禁止直接改业务行来掩盖审计缺失**；
+   - 变更请求整体返回 `50000` 且无任何副作用：通常是事务未能建立或提交失败（DB 故障），
+     按 [db-connection-pool.md](./db-connection-pool.md) 排查；重试前确认请求具备幂等性
+     （角色 `version`、审批单 `version`、outbox `event_id`）。
+   运维注意：原子性只覆盖「业务写入 + 入队」，投递仍是至少一次，审计出口必须按 `event_id` 去重。
+8. **迁移回滚**：`migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
    生产回滚只切配置（`iam.mode=off`），不回滚 schema。
-8. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
+9. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
 
 ## 升级
 

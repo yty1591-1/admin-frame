@@ -22,6 +22,7 @@ type BindingService struct {
 	bindings    domain.BindingRepository
 	recorder    ChangeRecorder
 	invalidator SnapshotInvalidator
+	uow         UnitOfWork
 	log         *slog.Logger
 	ids         id.Generator
 	audit       auditBuilder
@@ -42,10 +43,12 @@ type BindingServiceConfig struct {
 	Bindings    domain.BindingRepository
 	Recorder    ChangeRecorder
 	Invalidator SnapshotInvalidator
-	IDs         id.Generator
-	Audit       AuditMeta
-	Limits      BindingLimits
-	Logger      *slog.Logger
+	// UnitOfWork 让「绑定写入 + 审计事件」同事务提交；nil 时退化为无事务。
+	UnitOfWork UnitOfWork
+	IDs        id.Generator
+	Audit      AuditMeta
+	Limits     BindingLimits
+	Logger     *slog.Logger
 }
 
 // NewBindingService 构造绑定用例；缺失必要依赖时返回错误（fail-closed）。
@@ -69,11 +72,16 @@ func NewBindingService(cfg BindingServiceConfig) (*BindingService, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	uow := cfg.UnitOfWork
+	if uow == nil {
+		uow = NoopUnitOfWork{}
+	}
 	return &BindingService{
 		roles:       cfg.Roles,
 		bindings:    cfg.Bindings,
 		recorder:    cfg.Recorder,
 		invalidator: cfg.Invalidator,
+		uow:         uow,
 		log:         logger,
 		ids:         cfg.IDs,
 		audit:       newAuditBuilder(cfg.IDs, cfg.Audit),
@@ -158,34 +166,37 @@ func (s *BindingService) Bind(ctx context.Context, cmd BindCommand) (*domain.Bin
 	if err := binding.ValidateAgainst(role, now); err != nil {
 		return nil, err
 	}
-	if err := s.bindings.Save(ctx, binding); err != nil {
-		return nil, err
-	}
-	// 过期后重新绑定会命中唯一键：仓储刷新既有记录而保留原 ID，
-	// 因此回读一次拿真实主键，避免返回一个无法解绑的临时 ID。
-	if persisted, listErr := s.bindings.ListBySubject(ctx, domain.SubjectQuery{
-		Channel:     cmd.Channel,
-		SubjectType: cmd.SubjectType,
-		SubjectID:   cmd.SubjectID,
-		MerchantID:  cmd.MerchantID,
-	}); listErr == nil {
-		for _, candidate := range persisted {
-			if candidate.RoleID == cmd.RoleID {
-				binding = candidate
-				break
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.bindings.Save(ctx, binding); err != nil {
+			return err
+		}
+		// 过期后重新绑定会命中唯一键：仓储刷新既有记录而保留原 ID，
+		// 因此回读一次拿真实主键，避免返回一个无法解绑的临时 ID。
+		// 回读与写入同事务，读到的是本次写入后的最新状态。
+		if persisted, listErr := s.bindings.ListBySubject(ctx, domain.SubjectQuery{
+			Channel:     cmd.Channel,
+			SubjectType: cmd.SubjectType,
+			SubjectID:   cmd.SubjectID,
+			MerchantID:  cmd.MerchantID,
+		}); listErr == nil {
+			for _, candidate := range persisted {
+				if candidate.RoleID == cmd.RoleID {
+					binding = candidate
+					break
+				}
 			}
 		}
-	}
-	attrs := map[string]string{
-		attrRoleID:      role.ID,
-		attrRoleCode:    role.Code,
-		attrSubjectType: string(binding.SubjectType),
-		attrSubjectID:   binding.SubjectID,
-	}
-	if binding.ExpiresAt != nil {
-		attrs[attrExpiresAt] = binding.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	if err := s.recordBinding(ctx, binding, opBind, cmd.Actor, cmd.Reason, attrs); err != nil {
+		attrs := map[string]string{
+			attrRoleID:      role.ID,
+			attrRoleCode:    role.Code,
+			attrSubjectType: string(binding.SubjectType),
+			attrSubjectID:   binding.SubjectID,
+		}
+		if binding.ExpiresAt != nil {
+			attrs[attrExpiresAt] = binding.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		return s.recordBinding(ctx, binding, opBind, cmd.Actor, cmd.Reason, attrs)
+	}); err != nil {
 		return nil, err
 	}
 	s.invalidate(ctx, binding)
@@ -217,13 +228,15 @@ func (s *BindingService) Unbind(ctx context.Context, cmd UnbindCommand) error {
 		// 跨商户一律 404，不泄露资源是否存在（SEC-14）。
 		return apperr.NotFound("binding not found")
 	}
-	if err := s.bindings.Delete(ctx, binding.ID); err != nil {
-		return err
-	}
-	if err := s.recordBinding(ctx, binding, opUnbind, cmd.Actor, cmd.Reason, map[string]string{
-		attrRoleID:      binding.RoleID,
-		attrSubjectType: string(binding.SubjectType),
-		attrSubjectID:   binding.SubjectID,
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.bindings.Delete(ctx, binding.ID); err != nil {
+			return err
+		}
+		return s.recordBinding(ctx, binding, opUnbind, cmd.Actor, cmd.Reason, map[string]string{
+			attrRoleID:      binding.RoleID,
+			attrSubjectType: string(binding.SubjectType),
+			attrSubjectID:   binding.SubjectID,
+		})
 	}); err != nil {
 		return err
 	}

@@ -136,12 +136,19 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 	auditMeta := app.AuditMeta{Service: cfg.Service, ActorType: auditActorType(cfg.Channel)}
 	invalidator := iampcache.NewSubjectInvalidator(snapshotCache, cfg.Env)
+	// 事务边界：MySQL 下把「业务写入 + 审计 outbox」合并为一次提交；
+	// 内存仓储无法回滚，显式退化为无事务（见 app.NoopUnitOfWork）。
+	uow := app.UnitOfWork(app.NoopUnitOfWork{})
+	if deps.Database != nil {
+		uow = persistence.NewSQLUnitOfWork(deps.Database.SQL())
+	}
 
 	roleSvc, err := app.NewRoleService(app.RoleServiceConfig{
 		Roles:       roles,
 		Bindings:    bindings,
 		Recorder:    recorder,
 		Invalidator: invalidator,
+		UnitOfWork:  uow,
 		IDs:         ids,
 		Audit:       auditMeta,
 		Limits: app.RoleLimits{
@@ -159,6 +166,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Bindings:    bindings,
 		Recorder:    recorder,
 		Invalidator: invalidator,
+		UnitOfWork:  uow,
 		IDs:         ids,
 		Audit:       auditMeta,
 		Limits: app.BindingLimits{
@@ -182,6 +190,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	changeSvc, err := app.NewChangeRequestService(app.ChangeRequestServiceConfig{
 		Requests:   buildChangeRequestRepository(deps),
 		Applicator: applicator,
+		UnitOfWork: uow,
 		IDs:        ids,
 		Limits: app.ChangeLimits{
 			RequireReason: cfg.IAM.Security.RequireReason,

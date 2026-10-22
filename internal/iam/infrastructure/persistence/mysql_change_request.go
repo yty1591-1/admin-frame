@@ -8,6 +8,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // changeRequestSelectColumns 是审批单表的显式列清单（禁止 SELECT *，DATA-04）。
@@ -20,6 +21,11 @@ const changeRequestSelectColumns = `id, channel, action, target_type, target_id,
 // 后到的请求必须收到 40900 而不是静默覆盖前一次决定。
 type SQLChangeRequestRepository struct {
 	sql *sql.DB
+}
+
+// exec 返回当前请求的执行器（UnitOfWork 事务内为 *sql.Tx）。
+func (r *SQLChangeRequestRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
 }
 
 // NewSQLChangeRequestRepository 基于已打开的 *sql.DB 创建审批单仓储。
@@ -43,7 +49,7 @@ func (r *SQLChangeRequestRepository) Save(ctx context.Context, request *domain.C
 		return err
 	}
 	if expectedVersion == 0 {
-		_, err = r.sql.ExecContext(ctx, `INSERT INTO iam_change_request
+		_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO iam_change_request
 			(id, channel, action, target_type, target_id, payload, status, reason,
 				requested_by, requested_at, approved_by, approved_at, applied_at, version)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -54,7 +60,7 @@ func (r *SQLChangeRequestRepository) Save(ctx context.Context, request *domain.C
 		return conflictOnDuplicate(err, "change request id already exists")
 	}
 
-	result, err := r.sql.ExecContext(ctx, `UPDATE iam_change_request
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE iam_change_request
 		SET target_id = ?, status = ?, reason = ?, approved_by = ?, approved_at = ?,
 			applied_at = ?, version = ?
 		WHERE id = ? AND version = ?`,
@@ -84,7 +90,7 @@ func (r *SQLChangeRequestRepository) FindByID(ctx context.Context, id string) (*
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+changeRequestSelectColumns+` FROM iam_change_request WHERE id = ?`, requestID)
 	request, err := scanChangeRequest(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -104,8 +110,7 @@ func (r *SQLChangeRequestRepository) List(ctx context.Context, filter domain.Cha
 	clause, args := changeRequestFilterClause(filter)
 	args = append(args, normalizeLimit(filter.Limit), normalizeOffset(filter.Offset))
 
-	//nolint:gosec // G202：拼接部分仅含固定列名与常量条件，参数全部走占位符。
-	rows, err := r.sql.QueryContext(ctx,
+	rows, err := r.exec(ctx).QueryContext(ctx,
 		`SELECT `+changeRequestSelectColumns+` FROM iam_change_request WHERE 1 = 1`+clause+
 			` ORDER BY requested_at DESC, id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -134,7 +139,7 @@ func (r *SQLChangeRequestRepository) Count(ctx context.Context, filter domain.Ch
 	}
 	clause, args := changeRequestFilterClause(filter)
 	var total int
-	if err := r.sql.QueryRowContext(ctx,
+	if err := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM iam_change_request WHERE 1 = 1`+clause, args...).Scan(&total); err != nil {
 		return 0, err
 	}

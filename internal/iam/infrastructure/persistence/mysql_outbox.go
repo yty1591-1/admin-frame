@@ -9,6 +9,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // outboxSelectColumns 是 outbox 表的显式列清单（禁止 SELECT *，DATA-04）。
@@ -28,6 +29,14 @@ func NewSQLOutboxRepository(sqlDB *sql.DB) *SQLOutboxRepository {
 	return &SQLOutboxRepository{sql: sqlDB}
 }
 
+// exec 返回当前请求的执行器（UnitOfWork 事务内为 *sql.Tx）。
+//
+// outbox 与业务写入同事务是 D9 的核心：append 落在业务事务里，
+// 业务回滚时审计事件一并回滚，避免「审计记录了未发生的变更」。
+func (r *SQLOutboxRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
+}
+
 // Append 写入一条 pending 事件。
 func (r *SQLOutboxRepository) Append(ctx context.Context, event *domain.OutboxEvent) error {
 	if event == nil {
@@ -40,7 +49,7 @@ func (r *SQLOutboxRepository) Append(ctx context.Context, event *domain.OutboxEv
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx, `INSERT INTO iam_outbox
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO iam_outbox
 		(id, event_type, aggregate_type, aggregate_id, payload, status,
 			attempts, next_retry_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -55,7 +64,7 @@ func (r *SQLOutboxRepository) ListDue(ctx context.Context, now time.Time, limit 
 	if r.sql == nil {
 		return nil, apperr.Unavailable("iam outbox repository is not configured")
 	}
-	rows, err := r.sql.QueryContext(ctx, `SELECT `+outboxSelectColumns+` FROM iam_outbox
+	rows, err := r.exec(ctx).QueryContext(ctx, `SELECT `+outboxSelectColumns+` FROM iam_outbox
 		WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)
 		ORDER BY id LIMIT ?`,
 		string(domain.OutboxPending), now.UTC(), normalizeOutboxLimit(limit))
@@ -87,7 +96,7 @@ func (r *SQLOutboxRepository) Claim(ctx context.Context, id string, now time.Tim
 	if err != nil {
 		return false, err
 	}
-	result, err := r.sql.ExecContext(ctx, `UPDATE iam_outbox
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE iam_outbox
 		SET status = ?, updated_at = ?
 		WHERE id = ? AND status = ?`,
 		string(domain.OutboxProcessing), now.UTC(), eventID, string(domain.OutboxPending))
@@ -108,7 +117,7 @@ func (r *SQLOutboxRepository) ReclaimStale(ctx context.Context, staleBefore, now
 	if r.sql == nil {
 		return 0, apperr.Unavailable("iam outbox repository is not configured")
 	}
-	result, err := r.sql.ExecContext(ctx, `UPDATE iam_outbox
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE iam_outbox
 		SET status = ?, next_retry_at = NULL, updated_at = ?
 		WHERE status = ? AND updated_at < ?`,
 		string(domain.OutboxPending), now.UTC(),
@@ -164,7 +173,7 @@ func (r *SQLOutboxRepository) Stats(ctx context.Context) (domain.OutboxStats, er
 		pending int
 		oldest  sql.NullTime
 	)
-	err := r.sql.QueryRowContext(ctx, `SELECT COUNT(*), MIN(created_at) FROM iam_outbox
+	err := r.exec(ctx).QueryRowContext(ctx, `SELECT COUNT(*), MIN(created_at) FROM iam_outbox
 		WHERE status IN (?, ?, ?, ?)`,
 		string(domain.OutboxPending), string(domain.OutboxProcessing),
 		string(domain.OutboxDead), string(domain.OutboxFailed)).Scan(&pending, &oldest)
@@ -188,7 +197,7 @@ func (r *SQLOutboxRepository) transition(ctx context.Context, id, query string, 
 		return err
 	}
 	args = append(args, eventID, string(domain.OutboxProcessing))
-	result, err := r.sql.ExecContext(ctx, query, args...)
+	result, err := r.exec(ctx).ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

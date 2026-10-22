@@ -99,6 +99,7 @@ type fixture struct {
 	changes     *persistence.MemoryChangeRequestRepository
 	recorder    *capturedRecorder
 	invalidator *capturedInvalidator
+	uow         app.UnitOfWork
 	roleSvc     *app.RoleService
 	bindingSvc  *app.BindingService
 	querySvc    *app.QueryService
@@ -106,6 +107,12 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	return newFixtureWithUOW(t, app.NoopUnitOfWork{})
+}
+
+// newFixtureWithUOW 允许注入自定义事务边界，用于验证「写入 + 审计」的原子装配。
+func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 	t.Helper()
 	roles := persistence.NewMemoryRoleRepository()
 	bindings := persistence.NewMemoryBindingRepository()
@@ -116,6 +123,7 @@ func newFixture(t *testing.T) *fixture {
 		recorder:    &capturedRecorder{},
 		invalidator: &capturedInvalidator{},
 		changes:     persistence.NewMemoryChangeRequestRepository(),
+		uow:         uow,
 	}
 	ids := &seqIDs{}
 	var err error
@@ -124,6 +132,7 @@ func newFixture(t *testing.T) *fixture {
 		Bindings:    bindings,
 		Recorder:    f.recorder,
 		Invalidator: f.invalidator,
+		UnitOfWork:  uow,
 		IDs:         ids,
 		Audit:       app.AuditMeta{Service: "test", ActorType: "staff"},
 		Limits:      app.RoleLimits{MaxPermissionsPerRole: 200, RequireReason: true},
@@ -136,6 +145,7 @@ func newFixture(t *testing.T) *fixture {
 		Bindings:    bindings,
 		Recorder:    f.recorder,
 		Invalidator: f.invalidator,
+		UnitOfWork:  uow,
 		IDs:         ids,
 		Audit:       app.AuditMeta{Service: "test", ActorType: "staff"},
 		Limits:      app.BindingLimits{MaxBindingsPerSubject: 2, RequireReason: true},
@@ -154,6 +164,7 @@ func newFixture(t *testing.T) *fixture {
 	f.changeSvc, err = app.NewChangeRequestService(app.ChangeRequestServiceConfig{
 		Requests:   f.changes,
 		Applicator: applicator,
+		UnitOfWork: uow,
 		IDs:        ids,
 		Limits:     app.ChangeLimits{RequireReason: true},
 	})

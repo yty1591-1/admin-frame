@@ -42,6 +42,7 @@ type RoleService struct {
 	bindings    domain.BindingRepository
 	recorder    ChangeRecorder
 	invalidator SnapshotInvalidator
+	uow         UnitOfWork
 	log         *slog.Logger
 	ids         id.Generator
 	audit       auditBuilder
@@ -64,10 +65,12 @@ type RoleServiceConfig struct {
 	Bindings    domain.BindingRepository
 	Recorder    ChangeRecorder
 	Invalidator SnapshotInvalidator
-	IDs         id.Generator
-	Audit       AuditMeta
-	Limits      RoleLimits
-	Logger      *slog.Logger
+	// UnitOfWork 让「业务写入 + 审计事件」同事务提交；nil 时退化为无事务（内存仓储）。
+	UnitOfWork UnitOfWork
+	IDs        id.Generator
+	Audit      AuditMeta
+	Limits     RoleLimits
+	Logger     *slog.Logger
 }
 
 // NewRoleService 构造角色管理用例；缺失必要依赖时返回错误（fail-closed）。
@@ -91,11 +94,16 @@ func NewRoleService(cfg RoleServiceConfig) (*RoleService, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	uow := cfg.UnitOfWork
+	if uow == nil {
+		uow = NoopUnitOfWork{}
+	}
 	return &RoleService{
 		roles:       cfg.Roles,
 		bindings:    cfg.Bindings,
 		recorder:    cfg.Recorder,
 		invalidator: cfg.Invalidator,
+		uow:         uow,
 		log:         logger,
 		ids:         cfg.IDs,
 		audit:       newAuditBuilder(cfg.IDs, cfg.Audit),
@@ -163,11 +171,13 @@ func (s *RoleService) CreateRole(ctx context.Context, cmd CreateRoleCommand) (*d
 	if err := requireDataScopes(role, required); err != nil {
 		return nil, err
 	}
-	if err := s.roles.Save(ctx, role, 0); err != nil {
-		return nil, err
-	}
-	if err := s.recordRole(ctx, role, opCreate, cmd.Actor, "", map[string]string{
-		attrAdded: codesAttr(rolePermissionStrings(role)),
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.roles.Save(ctx, role, 0); err != nil {
+			return err
+		}
+		return s.recordRole(ctx, role, opCreate, cmd.Actor, "", map[string]string{
+			attrAdded: codesAttr(rolePermissionStrings(role)),
+		})
 	}); err != nil {
 		return nil, err
 	}
@@ -295,11 +305,13 @@ func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*d
 			statusChanged = true
 		}
 	}
-	if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
-		return nil, err
-	}
-	if err := s.recordRole(ctx, role, operation, cmd.Actor, cmd.Reason, map[string]string{
-		attrOperation: operation,
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
+			return err
+		}
+		return s.recordRole(ctx, role, operation, cmd.Actor, cmd.Reason, map[string]string{
+			attrOperation: operation,
+		})
 	}); err != nil {
 		return nil, err
 	}
@@ -363,12 +375,14 @@ func (s *RoleService) ReplacePermissions(ctx context.Context, cmd ReplacePermiss
 	if err := requireDataScopes(role, required); err != nil {
 		return nil, domain.PermissionChange{}, err
 	}
-	if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
-		return nil, domain.PermissionChange{}, err
-	}
-	if err := s.recordRole(ctx, role, opReplacePermission, cmd.Actor, cmd.Reason, map[string]string{
-		attrAdded:   codesAttr(permissionCodeStrings(change.Added)),
-		attrRemoved: codesAttr(permissionCodeStrings(change.Removed)),
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
+			return err
+		}
+		return s.recordRole(ctx, role, opReplacePermission, cmd.Actor, cmd.Reason, map[string]string{
+			attrAdded:   codesAttr(permissionCodeStrings(change.Added)),
+			attrRemoved: codesAttr(permissionCodeStrings(change.Removed)),
+		})
 	}); err != nil {
 		return nil, domain.PermissionChange{}, err
 	}
@@ -418,11 +432,13 @@ func (s *RoleService) CloneRole(ctx context.Context, cmd CloneRoleCommand) (*dom
 	if err := role.Disable(cmd.Actor, role.Version); err != nil {
 		return nil, err
 	}
-	if err := s.roles.Save(ctx, role, 0); err != nil {
-		return nil, err
-	}
-	if err := s.recordRole(ctx, role, opClone, cmd.Actor, "", map[string]string{
-		attrRoleID: source.ID,
+	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.roles.Save(ctx, role, 0); err != nil {
+			return err
+		}
+		return s.recordRole(ctx, role, opClone, cmd.Actor, "", map[string]string{
+			attrRoleID: source.ID,
+		})
 	}); err != nil {
 		return nil, err
 	}
@@ -461,11 +477,13 @@ func (s *RoleService) DeleteRole(ctx context.Context, cmd DeleteRoleCommand) err
 	if err := role.Delete(cmd.Actor, cmd.Version); err != nil {
 		return err
 	}
-	if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
-		return err
-	}
-	return s.recordRole(ctx, role, opDelete, cmd.Actor, cmd.Reason, map[string]string{
-		attrRoleCode: role.Code,
+	return s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
+			return err
+		}
+		return s.recordRole(ctx, role, opDelete, cmd.Actor, cmd.Reason, map[string]string{
+			attrRoleCode: role.Code,
+		})
 	})
 }
 

@@ -39,7 +39,7 @@ func (r *SQLRoleRepository) FindByID(ctx context.Context, id string) (*domain.Ro
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx, `SELECT `+roleSelectColumns+` FROM iam_role WHERE id = ?`, roleID)
+	row := r.exec(ctx).QueryRowContext(ctx, `SELECT `+roleSelectColumns+` FROM iam_role WHERE id = ?`, roleID)
 	role, err := scanRole(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apperr.NotFound("role not found")
@@ -47,12 +47,12 @@ func (r *SQLRoleRepository) FindByID(ctx context.Context, id string) (*domain.Ro
 	if err != nil {
 		return nil, err
 	}
-	return role, r.attachRoleDetails(ctx, r.sql, role, roleID)
+	return role, r.attachRoleDetails(ctx, r.exec(ctx), role, roleID)
 }
 
 // FindByCode 按端别 + 商户 + 编码加载角色；软删角色仍返回，用于阻止 code 复用。
 func (r *SQLRoleRepository) FindByCode(ctx context.Context, channel domain.Channel, merchantID, code string) (*domain.Role, error) {
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+roleSelectColumns+` FROM iam_role
 		 WHERE channel = ? AND merchant_id = ? AND code = ?`,
 		string(channel), merchantID, code)
@@ -67,7 +67,7 @@ func (r *SQLRoleRepository) FindByCode(ctx context.Context, channel domain.Chann
 	if err != nil {
 		return nil, err
 	}
-	return role, r.attachRoleDetails(ctx, r.sql, role, roleID)
+	return role, r.attachRoleDetails(ctx, r.exec(ctx), role, roleID)
 }
 
 // Save 创建（expectedVersion=0）或更新角色，并同步权限与数据范围。
@@ -78,17 +78,19 @@ func (r *SQLRoleRepository) Save(ctx context.Context, role *domain.Role, expecte
 	if r.sql == nil {
 		return apperr.Unavailable("iam role repository is not configured")
 	}
-	err := db.WithinTx(ctx, r.sql, nil, func(tx *sql.Tx) error {
+	// 已在用例事务中时复用该事务（UnitOfWork），否则自开一个：
+	// 角色主体与权限 / 数据范围明细必须同批提交。
+	return db.WithinUnitOfWork(ctx, r.sql, nil, func(ctx context.Context) error {
 		if expectedVersion == 0 {
-			return r.insert(ctx, tx, role)
+			return r.insert(ctx, role)
 		}
-		return r.update(ctx, tx, role, expectedVersion)
+		return r.update(ctx, role, expectedVersion)
 	})
-	return err
 }
 
 // insert 写入新角色；唯一键冲突映射为 40900。
-func (r *SQLRoleRepository) insert(ctx context.Context, tx *sql.Tx, role *domain.Role) error {
+func (r *SQLRoleRepository) insert(ctx context.Context, role *domain.Role) error {
+	tx := r.exec(ctx)
 	roleID, err := parseID(role.ID)
 	if err != nil {
 		return err
@@ -107,7 +109,8 @@ func (r *SQLRoleRepository) insert(ctx context.Context, tx *sql.Tx, role *domain
 }
 
 // update 以乐观锁更新角色；version 不匹配返回 40900。
-func (r *SQLRoleRepository) update(ctx context.Context, tx *sql.Tx, role *domain.Role, expectedVersion int64) error {
+func (r *SQLRoleRepository) update(ctx context.Context, role *domain.Role, expectedVersion int64) error {
+	tx := r.exec(ctx)
 	roleID, err := parseID(role.ID)
 	if err != nil {
 		return err
@@ -165,7 +168,7 @@ func (r *SQLRoleRepository) List(ctx context.Context, filter domain.RoleFilter) 
 	builder.WriteString(` ORDER BY code, id LIMIT ? OFFSET ?`)
 	args = append(args, normalizeLimit(filter.Limit), normalizeOffset(filter.Offset))
 
-	rows, err := r.sql.QueryContext(ctx, builder.String(), args...)
+	rows, err := r.exec(ctx).QueryContext(ctx, builder.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +195,7 @@ func (r *SQLRoleRepository) List(ctx context.Context, filter domain.RoleFilter) 
 func (r *SQLRoleRepository) Count(ctx context.Context, filter domain.RoleFilter) (int, error) {
 	clause, args := roleFilterClause(filter)
 	var total int
-	err := r.sql.QueryRowContext(ctx,
+	err := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM iam_role WHERE deleted_at IS NULL`+clause, args...).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -232,7 +235,7 @@ func (r *SQLRoleRepository) attachRoleDetails(ctx context.Context, q queryer, ro
 }
 
 // syncRoleDetails 写入角色的权限与数据范围（差量 + 全量替换）。
-func (r *SQLRoleRepository) syncRoleDetails(ctx context.Context, tx *sql.Tx, role *domain.Role, roleID int64) error {
+func (r *SQLRoleRepository) syncRoleDetails(ctx context.Context, tx db.Querier, role *domain.Role, roleID int64) error {
 	if err := syncPermissions(ctx, tx, role, roleID); err != nil {
 		return err
 	}
@@ -243,7 +246,7 @@ func (r *SQLRoleRepository) syncRoleDetails(ctx context.Context, tx *sql.Tx, rol
 //
 // 不做全量 delete + insert：保留未被撤销行的 created_at / granted_by，
 // 让审计能回答「这个权限是什么时候第一次授予的」。
-func syncPermissions(ctx context.Context, tx *sql.Tx, role *domain.Role, roleID int64) error {
+func syncPermissions(ctx context.Context, tx db.Querier, role *domain.Role, roleID int64) error {
 	codes := role.PermissionCodes()
 	if len(codes) == 0 {
 		_, err := tx.ExecContext(ctx, `DELETE FROM iam_role_permission WHERE role_id = ?`, roleID)
@@ -257,7 +260,6 @@ func syncPermissions(ctx context.Context, tx *sql.Tx, role *domain.Role, roleID 
 		args = append(args, string(code))
 	}
 	if _, err := tx.ExecContext(ctx,
-		//nolint:gosec // G202：占位符由常量 "?," 重复拼接而成，不含任何外部输入。
 		`DELETE FROM iam_role_permission WHERE role_id = ? AND permission_code NOT IN (`+placeholders+`)`,
 		args...); err != nil {
 		return err
@@ -275,7 +277,7 @@ func syncPermissions(ctx context.Context, tx *sql.Tx, role *domain.Role, roleID 
 }
 
 // syncScopes 全量替换角色的数据范围（表小、按 resource 唯一）。
-func syncScopes(ctx context.Context, tx *sql.Tx, role *domain.Role, roleID int64) error {
+func syncScopes(ctx context.Context, tx db.Querier, role *domain.Role, roleID int64) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM iam_role_data_scope WHERE role_id = ?`, roleID); err != nil {
 		return err
 	}
@@ -356,6 +358,13 @@ func loadScopes(ctx context.Context, q queryer, role *domain.Role, roleID int64)
 // queryer 抽象 *sql.DB 与 *sql.Tx，使明细加载在事务内外复用。
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// exec 返回当前请求的执行器：在 UnitOfWork 事务内返回 *sql.Tx，否则返回连接池。
+//
+// 所有读写都经此解析，保证「用例事务」对仓储透明：调用方只需在 ctx 上开一次事务。
+func (r *SQLRoleRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
 }
 
 // scanRow 是 *sql.Row 与 *sql.Rows 的公共扫描面。
