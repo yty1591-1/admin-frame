@@ -24,8 +24,8 @@ func createRoleForChange(t *testing.T, rt *router, code string) string {
 		"scope_type":  "platform",
 		"code":        code,
 		"name":        "审批测试角色",
-		"permissions": []string{"order:read"},
-		"data_scopes": []map[string]any{{"resource": "order", "scope_type": "merchant"}},
+		"permissions": []string{"iam:role:read"},
+		"data_scopes": []map[string]any{{"resource": "iam", "scope_type": "merchant"}},
 	}, nil)
 	if rec.Code != http.StatusOK || env.Code != 0 {
 		t.Fatalf("create role status=%d env=%+v body=%s", rec.Code, env, rec.Body.String())
@@ -47,8 +47,8 @@ func TestChangeRequestHTTPFlow(t *testing.T) {
 		"action":    "role_permission_replace",
 		"target_id": roleID,
 		"payload": map[string]any{
-			"permissions": []string{"order:read", "order:write"},
-			"data_scopes": []map[string]any{{"resource": "order", "scope_type": "merchant"}},
+			"permissions": []string{"iam:role:read", "iam:role:write"},
+			"data_scopes": []map[string]any{{"resource": "iam", "scope_type": "merchant"}},
 		},
 		"reason": "补授写入权限",
 	}, nil)
@@ -141,12 +141,12 @@ func TestChangeRequestHTTPFlow(t *testing.T) {
 	}
 	granted := false
 	for _, code := range role.Permissions {
-		if code == "order:write" {
+		if code == "iam:role:write" {
 			granted = true
 		}
 	}
 	if !granted {
-		t.Fatalf("role permissions = %v, want order:write", role.Permissions)
+		t.Fatalf("role permissions = %v, want iam:role:write", role.Permissions)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestChangeRequestHTTPRejectsMistypedPayload(t *testing.T) {
 		"channel":   "admin",
 		"action":    "role_permission_replace",
 		"target_id": roleID,
-		"payload":   map[string]any{"permission": []string{"order:read"}},
+		"payload":   map[string]any{"permission": []string{"iam:role:read"}},
 		"reason":    "拼写错误",
 	}, nil)
 	if rec.Code != http.StatusOK || env.Code != 0 {

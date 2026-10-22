@@ -20,7 +20,7 @@ func TestCreateRolePersistsPermissionsAndAudits(t *testing.T) {
 		Scope:       domain.RoleScopePlatform,
 		Code:        "ops_lead",
 		Name:        "运营主管",
-		Permissions: []iam.PermissionCode{iam.PermOrderWrite, iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleWrite, iam.PermRoleRead},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeMerchantSet)},
 		Actor:       "1001",
 	})
@@ -55,7 +55,7 @@ func TestCreateRoleRejectsUnknownAndIncompatiblePermissions(t *testing.T) {
 			name: "unknown code",
 			cmd: app.CreateRoleCommand{
 				Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
-				Code: "ops", Name: "ops", Permissions: []iam.PermissionCode{"order:delete"}, Actor: "1",
+				Code: "ops", Name: "ops", Permissions: []iam.PermissionCode{"iam:delete"}, Actor: "1",
 			},
 		},
 		{
@@ -69,7 +69,7 @@ func TestCreateRoleRejectsUnknownAndIncompatiblePermissions(t *testing.T) {
 			name: "missing data scope",
 			cmd: app.CreateRoleCommand{
 				Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
-				Code: "reader", Name: "reader", Permissions: []iam.PermissionCode{iam.PermOrderRead}, Actor: "1",
+				Code: "reader", Name: "reader", Permissions: []iam.PermissionCode{iam.PermDataExport}, Actor: "1",
 			},
 		},
 	}
@@ -117,7 +117,7 @@ func TestReplacePermissionsComputesDiffAndInvalidatesSubjects(t *testing.T) {
 		Scope:       domain.RoleScopePlatform,
 		Code:        "ops_lead",
 		Name:        "运营主管",
-		Permissions: []iam.PermissionCode{iam.PermOrderRead, iam.PermOrderWrite},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead, iam.PermRoleWrite},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeAll)},
 		Actor:       "1001",
 	})
@@ -133,7 +133,7 @@ func TestReplacePermissionsComputesDiffAndInvalidatesSubjects(t *testing.T) {
 
 	updated, change, err := f.roleSvc.ReplacePermissions(context.Background(), app.ReplacePermissionsCommand{
 		ID:          role.ID,
-		Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead},
 		Version:     role.Version,
 		Actor:       "1001",
 		Reason:      "职责调整",
@@ -144,14 +144,14 @@ func TestReplacePermissionsComputesDiffAndInvalidatesSubjects(t *testing.T) {
 	if updated.Version != role.Version+1 {
 		t.Fatalf("version = %d, want %d", updated.Version, role.Version+1)
 	}
-	if len(change.Added) != 0 || len(change.Removed) != 1 || change.Removed[0] != iam.PermOrderWrite {
+	if len(change.Added) != 0 || len(change.Removed) != 1 || change.Removed[0] != iam.PermRoleWrite {
 		t.Fatalf("change = %+v", change)
 	}
 	if f.invalidator.count() == 0 {
 		t.Fatal("expected bound subject snapshot invalidation")
 	}
 	event := f.recorder.last(t)
-	if event.Attrs["removed"] != string(iam.PermOrderWrite) || event.Reason != "职责调整" {
+	if event.Attrs["removed"] != string(iam.PermRoleWrite) || event.Reason != "职责调整" {
 		t.Fatalf("event = %+v", event)
 	}
 
@@ -168,21 +168,21 @@ func TestReplacePermissionsRequiresReasonAndScopes(t *testing.T) {
 	role, err := f.roleSvc.CreateRole(context.Background(), app.CreateRoleCommand{
 		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
 		Code: "ops", Name: "ops",
-		Permissions: []iam.PermissionCode{iam.PermOrderRead},
-		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeAll)},
+		Permissions: []iam.PermissionCode{iam.PermDataExport},
+		DataScopes:  []domain.DataScope{{Resource: "data", Type: domain.DataScopeAll}},
 		Actor:       "1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := f.roleSvc.ReplacePermissions(context.Background(), app.ReplacePermissionsCommand{
-		ID: role.ID, Permissions: []iam.PermissionCode{iam.PermOrderRead}, Version: role.Version, Actor: "1",
+		ID: role.ID, Permissions: []iam.PermissionCode{iam.PermDataExport}, Version: role.Version, Actor: "1",
 	}); bizCode(err) != apperr.CodeBadRequest {
 		t.Fatalf("missing reason err = %v, want 40000", err)
 	}
 	empty := make([]domain.DataScope, 0)
 	if _, _, err := f.roleSvc.ReplacePermissions(context.Background(), app.ReplacePermissionsCommand{
-		ID: role.ID, Permissions: []iam.PermissionCode{iam.PermOrderRead}, DataScopes: &empty,
+		ID: role.ID, Permissions: []iam.PermissionCode{iam.PermDataExport}, DataScopes: &empty,
 		Version: role.Version, Actor: "1", Reason: "clear scope",
 	}); bizCode(err) != apperr.CodeBadRequest {
 		t.Fatalf("missing scope err = %v, want 40000", err)
@@ -229,7 +229,7 @@ func TestCloneRoleCreatesDisabledCopy(t *testing.T) {
 	f := newFixture(t)
 	source, err := f.roleSvc.CreateRole(context.Background(), app.CreateRoleCommand{
 		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
-		Code: "ops", Name: "ops", Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		Code: "ops", Name: "ops", Permissions: []iam.PermissionCode{iam.PermRoleRead},
 		DataScopes: []domain.DataScope{scope(t, domain.DataScopeAll)}, Actor: "1",
 	})
 	if err != nil {

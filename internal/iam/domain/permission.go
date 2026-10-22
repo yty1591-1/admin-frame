@@ -39,7 +39,7 @@ func ValidatePermissionCode(code iam.PermissionCode) error {
 	}
 	if !permissionCodePattern.MatchString(s) {
 		return errInvalid(ErrInvalidPermissionCode,
-			"permission code %q must be lowercase %d-%d segments separated by ':' (e.g. order:read)",
+			"permission code %q must be lowercase %d-%d segments separated by ':' (e.g. iam:role:read)",
 			s, MinPermissionSegments, MaxPermissionSegments)
 	}
 	return nil

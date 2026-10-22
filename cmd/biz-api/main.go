@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
-	"github.com/admin-frame/admin-frame/internal/order"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
@@ -77,12 +76,11 @@ func newIAMRuntime(deps *platform.Deps) (*iamruntime.Runtime, error) {
 	return iamruntime.New(deps, iamruntime.Options{StaticChecker: staticChecker()})
 }
 
-// staticChecker 是 mode=off 的演示表：商户员工可读写本商户订单。
+// staticChecker 是 mode=off 的回滚表：当前不授予任何业务权限。
 //
 // 刻意不授予 IAM 管理权限点：B 端自助授权必须走 enforce + 真实绑定，
 // 否则一次配置回滚（enforce → off）就会把商户管理员权限放大给所有员工。
+// 后续接入 B 端业务域时，仅可在本表补充该域的只读回滚权限。
 func staticChecker() *rbac.Checker {
-	checker := rbac.New()
-	checker.GrantRole("merchant_staff", order.PermRead, order.PermWrite)
-	return checker
+	return rbac.New()
 }

@@ -162,8 +162,8 @@ func TestBizRoleTenantIsolation(t *testing.T) {
 		"scope_type":  "merchant",
 		"code":        "merchant_viewer",
 		"name":        "查看者",
-		"permissions": []string{"order:read"},
-		"data_scopes": []map[string]any{{"resource": "order", "scope_type": "merchant"}},
+		"permissions": []string{"iam:role:read"},
+		"data_scopes": []map[string]any{{"resource": "iam", "scope_type": "merchant"}},
 	})
 	if rec.Code != http.StatusOK || env.Code != 0 {
 		t.Fatalf("create status=%d env=%+v body=%s", rec.Code, env, rec.Body.String())
@@ -248,7 +248,7 @@ func TestBizRouterHasNoAuthorizeEndpoint(t *testing.T) {
 	f := newFixture(t)
 	rt := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-1", MerchantID: "m-1"})
 	rec, _ := rt.do(t, http.MethodPost, "/biz/v1/iam/authorize", map[string]any{
-		"subject_type": "merchant_staff", "subject_id": "u-1", "permission": "order:read",
+		"subject_type": "merchant_staff", "subject_id": "u-1", "permission": "iam:role:read",
 	})
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("authorize route must not exist on biz, got %d", rec.Code)
@@ -305,8 +305,8 @@ func TestBizChangeRequestTenantIsolation(t *testing.T) {
 		"scope_type":  "merchant",
 		"code":        "merchant_viewer",
 		"name":        "查看者",
-		"permissions": []string{"order:read"},
-		"data_scopes": []map[string]any{{"resource": "order", "scope_type": "merchant"}},
+		"permissions": []string{"iam:role:read"},
+		"data_scopes": []map[string]any{{"resource": "iam", "scope_type": "merchant"}},
 	})
 	if roleRec.Code != http.StatusOK {
 		t.Fatalf("create role status=%d body=%s", roleRec.Code, roleRec.Body.String())
@@ -319,7 +319,7 @@ func TestBizChangeRequestTenantIsolation(t *testing.T) {
 	rec, env := m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
 		"action":    "role_permission_replace",
 		"target_id": role.ID,
-		"payload":   map[string]any{"permissions": []string{"order:read", "order:write"}},
+		"payload":   map[string]any{"permissions": []string{"iam:role:read", "iam:role:write"}},
 		"reason":    "补授写入权限",
 	})
 	if rec.Code != http.StatusOK {
@@ -352,7 +352,7 @@ func TestBizChangeRequestTenantIsolation(t *testing.T) {
 	// 载荷伪造租户必须 403，而不是静默忽略。
 	rec, env = m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
 		"action": "role_permission_replace", "target_id": role.ID,
-		"payload": map[string]any{"merchant_id": "m-2", "permissions": []string{"order:write"}},
+		"payload": map[string]any{"merchant_id": "m-2", "permissions": []string{"iam:role:write"}},
 	})
 	if rec.Code != http.StatusForbidden || env.Code != 40300 {
 		t.Fatalf("payload merchant_id status=%d env=%+v", rec.Code, env)
@@ -363,7 +363,7 @@ func TestBizChangeRequestTenantIsolation(t *testing.T) {
 		"action": "role_create",
 		"payload": map[string]any{
 			"scope_type": "platform", "code": "escaped", "name": "越权角色",
-			"permissions": []string{"order:read"},
+			"permissions": []string{"iam:role:read"},
 		},
 	})
 	if rec.Code != http.StatusBadRequest || env.Code != 40000 {

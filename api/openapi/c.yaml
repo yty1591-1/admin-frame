@@ -1,18 +1,17 @@
 openapi: 3.0.3
 info:
   title: Consumer API (C)
-  version: 2.0.0
+  version: 3.0.0
   description: |
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
     2.0.0：生产级信封/分页/强制 Idempotency-Key（相对 1.0.0 骨架契约）。
+    3.0.0：移除订单演示域契约（破坏性）；当前仅保留平台 probe 端点。
 servers:
   - url: http://localhost:8083
 tags:
   - name: probe
     description: 存活/就绪/版本（无需鉴权）
-  - name: orders
-    description: 我的订单
 paths:
   /healthz:
     get:
@@ -64,131 +63,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
-  /c/v1/orders:
-    get:
-      tags: [orders]
-      summary: 我的订单列表
-      operationId: cListOrders
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "./components.yaml#/components/parameters/Page"
-        - $ref: "./components.yaml#/components/parameters/PageSize"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/OrderListData"
-        "400":
-          $ref: "./components.yaml#/components/responses/BadRequest"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-    post:
-      tags: [orders]
-      summary: 创建订单
-      operationId: cCreateOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "./components.yaml#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateOrderRequest"
-      responses:
-        "200":
-          description: ok（含幂等命中已有订单）
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "400":
-          $ref: "./components.yaml#/components/responses/BadRequest"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /c/v1/orders/{id}:
-    get:
-      tags: [orders]
-      summary: 我的订单详情（字段最小化）
-      operationId: cGetOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /c/v1/orders/{id}/cancel:
-    post:
-      tags: [orders]
-      summary: 取消我的订单
-      operationId: cCancelOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "409":
-          $ref: "./components.yaml#/components/responses/Conflict"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
 components:
-  parameters:
-    OrderID:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
   securitySchemes:
     bearerAuth:
       type: http
@@ -231,55 +106,3 @@ components:
                 type: string
               error:
                 type: string
-    CreateOrderRequest:
-      type: object
-      required: [merchant_id, amount_cent]
-      properties:
-        merchant_id:
-          type: string
-          minLength: 1
-        amount_cent:
-          type: integer
-          format: int64
-          minimum: 1
-        currency:
-          type: string
-          description: 缺省由服务端按默认币种处理（当前演示为 CNY）
-          example: CNY
-    Order:
-      type: object
-      required:
-        - id
-        - merchant_id
-        - amount_cent
-        - currency
-        - status
-        - created_at
-      description: C 端最小化字段；禁止 remark / cost_cent / 运营备注
-      properties:
-        id:
-          type: string
-        merchant_id:
-          type: string
-        amount_cent:
-          type: integer
-          format: int64
-        currency:
-          type: string
-          example: CNY
-        status:
-          type: string
-          enum: [created, paid, cancelled]
-        created_at:
-          type: string
-          format: date-time
-    OrderListData:
-      allOf:
-        - $ref: "./components.yaml#/components/schemas/PageMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/Order"

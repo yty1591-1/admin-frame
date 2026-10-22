@@ -7,7 +7,7 @@ A/B/C 三端业务的 Go 模块化单体骨架，实现见 [docs/ARCHITECTURE.md
 | `admin-api` | `:8081` | A 平台运营 |
 | `biz-api` | `:8082` | B 商家/企业 |
 | `c-api` | `:8083` | C 消费者 |
-| `worker` | — | 领域事件消费（演示轮询） |
+| `worker` | — | 后台任务骨架（异步运行时待 ENT-03 落地） |
 | `migrate` | — | 迁移脚本执行器 |
 
 ## 快速开始
@@ -38,14 +38,11 @@ make run-c
 | B | `Authorization: Bearer biz.m100.staff-9` |
 | C | `Authorization: Bearer c.user-42` |
 
-### C 端下单示例
+### A 端 IAM 示例
 
 ```bash
-curl -s http://127.0.0.1:8083/c/v1/orders \
-  -H "Authorization: Bearer c.user-42" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: demo-1" \
-  -d "{\"merchant_id\":\"m100\",\"amount_cent\":1990,\"currency\":\"CNY\"}"
+curl -s "http://127.0.0.1:8081/admin/v1/iam/permissions?page=1&page_size=20" \
+  -H "Authorization: Bearer admin.staff-1"
 ```
 
 ### 健康检查
@@ -57,8 +54,9 @@ curl -s http://127.0.0.1:8083/readyz
 
 ## 目录要点
 
-- `internal/order/domain|app|infrastructure`：三端共享
-- `internal/order/transport/{admin,biz,c}`：按端隔离 Handler/DTO
+- `internal/iam/domain|app|infrastructure`：IAM 核心逻辑（三端共享）
+- `internal/iam/transport/{admin,biz}`：按端隔离 Handler/DTO
+- `internal/platform`、`internal/security`：进程生命周期、配置、鉴权中间件
 - `api/openapi/{admin,biz,c}.yaml`：分端契约
 - `migrations/`：可回滚 SQL
 
@@ -67,8 +65,8 @@ curl -s http://127.0.0.1:8083/readyz
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **注释硬约束**：[docs/COMMENT_STANDARDS.md](docs/COMMENT_STANDARDS.md)（C-01～C-10）
 - **代码风格硬约束**：[docs/CODE_STYLE.md](docs/CODE_STYLE.md)（S-01～S-12）
-- **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）  
-  - GitHub：`.github/workflows/ci.yml`  
+- **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）
+  - GitHub：`.github/workflows/ci.yml`
   - Gitee：`.workflow/`（见 [.workflow/README.md](.workflow/README.md)）
 - **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-14；gitleaks / gosec）
 - **API 硬约束**：[docs/API_STANDARDS.md](docs/API_STANDARDS.md)（API-01～API-12；oasdiff）

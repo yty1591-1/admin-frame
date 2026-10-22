@@ -663,8 +663,8 @@ func TestSQLChangeRequestRepository(t *testing.T) {
 		Channel:  domain.ChannelAdmin,
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: "1001",
-		Payload: []byte(`{"permissions":["order:read"],
-			"data_scopes":[{"resource":"order","scope_type":"merchant"}]}`),
+		Payload: []byte(`{"permissions":["iam:role:read"],
+			"data_scopes":[{"resource":"iam","scope_type":"merchant"}]}`),
 		Reason: "补授只读权限",
 		Actor:  "u-1",
 	})
@@ -684,7 +684,7 @@ func TestSQLChangeRequestRepository(t *testing.T) {
 	if loaded.TargetType != domain.ChangeTargetIAMRole || loaded.RequestedBy != "u-1" {
 		t.Fatalf("loaded=%+v", loaded)
 	}
-	if !strings.Contains(string(loaded.Payload), "order:read") {
+	if !strings.Contains(string(loaded.Payload), "iam:role:read") {
 		t.Fatalf("payload=%s", loaded.Payload)
 	}
 

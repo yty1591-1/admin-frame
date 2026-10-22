@@ -3,6 +3,7 @@ package main
 
 import (
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
+	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
@@ -15,14 +16,18 @@ func newIAMRuntime(deps *platform.Deps) (*iamRuntime, error) {
 	return iamruntime.New(deps, iamruntime.Options{StaticChecker: staticChecker()})
 }
 
-// staticChecker 是 mode=off 的回滚表：admin 为超级角色，ops 持有订单 / 文件权限。
+// staticChecker 是 mode=off 的回滚表：admin 为超级角色，ops 持有平台只读权限。
 //
 // 这是装配期的临时真相，不得在 enforce 模式下作为兜底；enforce 加载失败必须 503。
 func staticChecker() *rbac.Checker {
 	checker := rbac.New(rbac.WithSuperRoles("admin"))
 	checker.GrantRole("ops",
-		"order:read", "order:write",
-		"file:read", "file:write",
+		rbac.Permission(iam.PermPermissionRead),
+		rbac.Permission(iam.PermRoleRead),
+		rbac.Permission(iam.PermBindingRead),
+		rbac.Permission(iam.PermChangeRead),
+		rbac.Permission(iam.PermAuditRead),
+		rbac.Permission(iam.PermConfigRead),
 	)
 	return checker
 }

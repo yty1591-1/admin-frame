@@ -3,11 +3,14 @@
 #
 # 规则：
 #   1. transport 只依赖 app/domain/shared/pkg，不得 import internal/platform；
-#   2. platform 不依赖业务域（order/files/iam 的 domain/app/infrastructure）；
+#   2. platform 不依赖业务域（internal/<domain>/{domain,app,infrastructure}）；
 #   3. security 不依赖 platform，也不依赖业务域；
 #   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）；
 #   5. iam/domain 不依赖 app/transport/infrastructure/platform；
 #   6. iam/transport 不依赖 iam/infrastructure。
+#
+# 业务域目录动态发现（internal/*，排除 platform/security/shared），
+# 新增业务域时无需改脚本。
 #
 # 用法: bash scripts/ci/check-layering.sh
 set -euo pipefail
@@ -22,6 +25,24 @@ fail_with() {
   FAIL=1
 }
 
+DOMAINS_RE=""
+for d in internal/*/; do
+  [[ -d "${d}" ]] || continue
+  name="$(basename "${d}")"
+  case "${name}" in
+    platform|security|shared) continue ;;
+  esac
+  if [[ -z "${DOMAINS_RE}" ]]; then
+    DOMAINS_RE="${name}"
+  else
+    DOMAINS_RE="${DOMAINS_RE}|${name}"
+  fi
+done
+
+if [[ -z "${DOMAINS_RE}" ]]; then
+  fail_with "no business domain found under internal/ (PLAT-12)"
+fi
+
 echo "==> LAYER-01: transport must not import internal/platform"
 if grep -RIn --include='*.go' --exclude='*_test.go' \
   '"github.com/admin-frame/admin-frame/internal/platform"' \
@@ -33,7 +54,7 @@ fi
 
 echo "==> LAYER-02: platform must not import business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(order|files|iam)/(app|domain|infrastructure)' \
+  '"github.com/admin-frame/admin-frame/internal/(${DOMAINS_RE})/(app|domain|infrastructure)' \
   internal/platform 2>/dev/null; then
   fail_with "platform must not depend on business domains (LAYER-02)"
 else
@@ -42,7 +63,7 @@ fi
 
 echo "==> LAYER-03: security must not import platform or business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(platform|order|files|iam)' \
+  '"github.com/admin-frame/admin-frame/internal/(platform|${DOMAINS_RE})' \
   internal/security 2>/dev/null; then
   fail_with "security must stay independent of platform and domains (LAYER-03)"
 else
@@ -51,7 +72,7 @@ fi
 
 echo "==> LAYER-04: shared must not import platform or business domains"
 if grep -RIn --include='*.go' --exclude='*_test.go' -E \
-  '"github.com/admin-frame/admin-frame/internal/(platform|order|files|iam)' \
+  '"github.com/admin-frame/admin-frame/internal/(platform|${DOMAINS_RE})' \
   internal/shared 2>/dev/null; then
   fail_with "shared must not depend on platform or domains (LAYER-04)"
 else

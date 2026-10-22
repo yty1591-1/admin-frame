@@ -15,7 +15,7 @@ func TestValidatePermissionCode(t *testing.T) {
 		code iam.PermissionCode
 		want error
 	}{
-		{name: "resource action", code: "order:read"},
+		{name: "resource action", code: "iam:role:read"},
 		{name: "domain resource action", code: "iam:role:write"},
 		{name: "four segments", code: "iam:role:binding:read"},
 		{name: "underscore", code: "order_item:read"},
@@ -24,7 +24,7 @@ func TestValidatePermissionCode(t *testing.T) {
 		{name: "trailing separator", code: "order:", want: ErrInvalidPermissionCode},
 		{name: "uppercase", code: "Order:read", want: ErrInvalidPermissionCode},
 		{name: "dash", code: "order-item:read", want: ErrInvalidPermissionCode},
-		{name: "leading digit", code: "1order:read", want: ErrInvalidPermissionCode},
+		{name: "leading digit", code: "1iam:role:read", want: ErrInvalidPermissionCode},
 		{name: "five segments", code: "a:b:c:d:e", want: ErrInvalidPermissionCode},
 		{name: "too long", code: iam.PermissionCode("a:" + strings.Repeat("b", MaxPermissionCodeLen)), want: ErrInvalidPermissionCode},
 		{name: "bare wildcard", code: "*", want: ErrWildcardNotAllowed},

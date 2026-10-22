@@ -1,6 +1,6 @@
 # IAM 权限点目录（PERMISSIONS）
 
-> **状态**：生效中（M1 基线，19 条）
+> **状态**：生效中（21 条：17 条活跃 + 4 条已弃用）
 > **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/000003_seed_iam_permissions.up.sql` 由 Go 测试强制一致
 > **门禁**：`go test ./internal/iam/catalog/...`（已纳入 `make test-ci` → `make ci`）
 > **关联**：[`docs/rbac-iam.md`](../rbac-iam.md) §4.3 / §5.3.1、[`docs/adr/0004-rbac-iam-domain.md`](../adr/0004-rbac-iam-domain.md)
@@ -12,7 +12,7 @@
 | 规则 | 约束 | 原因 |
 |------|------|------|
 | 字符集 | 全小写 `[a-z0-9_]`，段间用 `:` | 避免大小写歧义；MySQL 排序规则不敏感，应用层再规范化一道 |
-| 段数 | 2～4 段 | `resource:action`（如 `order:read`）或 `domain:resource:action`（如 `iam:role:write`） |
+| 段数 | 2～4 段 | `resource:action`（如 `iam:role:read`）或 `domain:resource:action`（如 `iam:role:write`） |
 | 通配符 | **禁止** `*` | 超级权限只能由 `breakglass` 角色在审批有效期内动态展开，不能靠一条目录记录长期存在 |
 | 语义 | 首段 = 资源，末段 = 动作 | 数据范围按资源匹配；动作决定读写与审计级别 |
 | 稳定性 | 发布后**不得改名、不得复用** | 权限码是跨版本契约；复用会让历史审计与旧令牌产生错误解释 |
@@ -30,30 +30,33 @@
 
 ## 2. 目录基线
 
-| code | channel | kind | data_bearing | 说明 |
-|------|---------|------|--------------|------|
-| `iam:permission:read` | admin | api | 否 | 读取权限点目录，供菜单与授权页展示；不含角色授权关系 |
-| `iam:role:read` | both | api | 否 | 查看角色定义与已授予权限；B 端限本商户 |
-| `iam:role:write` | both | api | 否 | 创建、更新、停用、软删角色；不包含授权 |
-| `iam:role:grant` | both | api | 否 | 替换角色权限点集合；强制 `Idempotency-Key` 并写审计 |
-| `iam:binding:read` | both | api | 否 | 查看主体与角色的绑定关系；B 端限本商户 |
-| `iam:binding:write` | both | api | 否 | 绑定或解绑主体角色；重复绑定幂等，解绑幂等 |
-| `iam:check` | admin | api | 否 | 以指定主体与资源模拟鉴权结果，用于排障与灰度比对；不改变授权 |
-| `iam:change:read` | admin | api | 否 | 查看高风险变更审批单与审批记录 |
-| `iam:change:approve` | admin | api | 否 | 审批角色 / 绑定变更；申请人不得自审 |
-| `iam:breakglass:request` | admin | api | 否 | 申请限时超级权限；必须填写原因与有效期，默认上限 2 小时 |
-| `iam:breakglass:approve` | admin | api | 否 | 审批破玻璃申请；与申请人强制分离并触发高危告警 |
-| `order:read` | both | api | 是 | 查询订单列表与详情；受数据范围约束 |
-| `order:write` | both | api | 是 | 创建、更新、取消订单；受数据范围约束 |
-| `file:read` | both | api | 是 | 下载或预览文件；受数据范围约束 |
-| `file:write` | both | api | 是 | 上传、替换、删除文件；受数据范围约束 |
-| `audit:read` | admin | api | 是 | 查询审计事件；敏感字段脱敏，批量导出需额外 `data:export` |
-| `data:export` | both | api | 是 | 批量导出业务数据；必须限流并记录导出审计 |
-| `config:read` | admin | api | 否 | 查看运行时配置；敏感项脱敏 |
-| `config:write` | admin | api | 否 | 修改运行时配置；须审计并支持回滚 |
-| `iam:change:request` | biz | api | 否 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
-| `iam:change:review` | biz | api | 否 | 审批本商户变更申请；申请人不得自审（SoD） |
+| code | channel | kind | data_bearing | 状态 | 说明 |
+|------|---------|------|--------------|------|------|
+| `iam:permission:read` | admin | api | 否 | 活跃 | 读取权限点目录，供菜单与授权页展示；不含角色授权关系 |
+| `iam:role:read` | both | api | 否 | 活跃 | 查看角色定义与已授予权限；B 端限本商户 |
+| `iam:role:write` | both | api | 否 | 活跃 | 创建、更新、停用、软删角色；不包含授权 |
+| `iam:role:grant` | both | api | 否 | 活跃 | 替换角色权限点集合；强制 `Idempotency-Key` 并写审计 |
+| `iam:binding:read` | both | api | 否 | 活跃 | 查看主体与角色的绑定关系；B 端限本商户 |
+| `iam:binding:write` | both | api | 否 | 活跃 | 绑定或解绑主体角色；重复绑定幂等，解绑幂等 |
+| `iam:check` | admin | api | 否 | 活跃 | 以指定主体与资源模拟鉴权结果，用于排障与灰度比对；不改变授权 |
+| `iam:change:read` | admin | api | 否 | 活跃 | 查看高风险变更审批单与审批记录 |
+| `iam:change:approve` | admin | api | 否 | 活跃 | 审批角色 / 绑定变更；申请人不得自审 |
+| `iam:breakglass:request` | admin | api | 否 | 活跃 | 申请限时超级权限；必须填写原因与有效期，默认上限 2 小时 |
+| `iam:breakglass:approve` | admin | api | 否 | 活跃 | 审批破玻璃申请；与申请人强制分离并触发高危告警 |
+| `order:read` | both | api | 是 | 已弃用 | 订单演示域已移除；保留既有授权，禁止新授 |
+| `order:write` | both | api | 是 | 已弃用 | 订单演示域已移除；保留既有授权，禁止新授 |
+| `file:read` | both | api | 是 | 已弃用 | 文件演示域已移除；保留既有授权，禁止新授 |
+| `file:write` | both | api | 是 | 已弃用 | 文件演示域已移除；保留既有授权，禁止新授 |
+| `audit:read` | admin | api | 是 | 活跃 | 查询审计事件；敏感字段脱敏，批量导出需额外 `data:export` |
+| `data:export` | both | api | 是 | 活跃 | 批量导出业务数据；必须限流并记录导出审计 |
+| `config:read` | admin | api | 否 | 活跃 | 查看运行时配置；敏感项脱敏 |
+| `config:write` | admin | api | 否 | 活跃 | 修改运行时配置；须审计并支持回滚 |
+| `iam:change:request` | biz | api | 否 | 活跃 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
+| `iam:change:review` | biz | api | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
 
+> `order:*` / `file:*` 为演示域遗留权限点：目录条目与常量保留以解释历史授权与审计，
+> 状态统一为 `deprecated`（见 `migrations/000008_retire_demo_permissions.up.sql`）。
+>
 > 当前基线无 `menu` / `button` 形态，前端菜单树由后续 PR 追加；追加时 `sort` 取当前最大值 + 10，且不得改动既有条目。
 
 ---
@@ -66,7 +69,7 @@
 2. 若 `data_bearing = 是`，再按 `iam_role_data_scope` 收缩到 `all` / `merchant` / `self` / `merchant_set`；
 3. 两步任一不满足即拒绝（默认拒绝）。
 
-因此 `order:read` 与 `order:write` 可以共享同一条数据范围记录（`resource=order`），避免为每个动作重复配置。
+因此同一资源下的多个动作（如 `iam:role:read` 与 `iam:role:write`）可以共享同一条数据范围记录（`resource=iam`），避免为每个动作重复配置。
 
 ---
 
@@ -104,10 +107,10 @@
 | channel | code | 权限 | 数据范围 |
 |---------|------|------|----------|
 | admin | `system_admin` | 全部 `iam:*` 管理权限 + `audit:read` + `config:read` / `config:write` | `all` |
-| admin | `ops` | `order:read` / `order:write` / `file:read` / `file:write` | `all` 或 `merchant_set` |
+| admin | `ops` | `iam:permission:read` / `iam:role:read` / `iam:binding:read` / `iam:change:read` / `audit:read` / `config:read` | `all` 或 `merchant_set` |
 | admin | `breakglass_admin` | 目录中不授予任何权限；仅在有效审批绑定时展开 `*` | `all` |
-| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review`、`order:*`、`file:*` | `merchant` |
-| biz | `merchant_staff` | `iam:change:request`、`order:read`、`file:read` | `merchant` |
+| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review` | `merchant` |
+| biz | `merchant_staff` | `iam:change:request` | `merchant` |
 
 > B 端变更审批的 SoD：`merchant_staff` 只有 `iam:change:request`（能提不能批），
 > `merchant_owner` 同时持有 request / review，但领域层强制「申请人 ≠ 审批人」，

@@ -113,7 +113,7 @@ func TestShadowMetrics(t *testing.T) {
 	metrics, registry := newMetrics(t)
 	ctx := context.Background()
 	metrics.OnMismatch(ctx, security.Mismatch{
-		Channel: "admin", Permission: "file:read", StaticAllow: true, IAMAllow: false,
+		Channel: "admin", Permission: "iam:permission:read", StaticAllow: true, IAMAllow: false,
 	})
 	metrics.OnLoadError(ctx, "admin", context.DeadlineExceeded)
 

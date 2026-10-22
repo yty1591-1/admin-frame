@@ -22,7 +22,7 @@ fi
 COVER_MIN="${TEST_DOMAIN_COVER_MIN:-70}"
 PLATFORM_COVER_MIN="${TEST_PLATFORM_COVER_MIN:-70}"
 SECURITY_COVER_MIN="${TEST_SECURITY_COVER_MIN:-80}"
-REQUIRED_TESTS=(TestMerchantIsolation TestUserOwnership)
+REQUIRED_TESTS=(TestBizRoleTenantIsolation TestBizChangeRequestTenantIsolation)
 FAIL=0
 
 echo "==> TEST-01: domain packages must have *_test.go"

@@ -89,7 +89,7 @@ func TestRoleServiceWriteSurvivesInvalidationFailure(t *testing.T) {
 		Scope:       domain.RoleScopePlatform,
 		Code:        "ops_lead",
 		Name:        "运营主管",
-		Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeMerchantSet)},
 		Actor:       "1001",
 	})
@@ -111,7 +111,7 @@ func TestRoleServiceWriteSurvivesInvalidationFailure(t *testing.T) {
 	f.invalidator.err = errors.New("redis: connection refused")
 	updated, change, err := f.roleSvc.ReplacePermissions(ctx, app.ReplacePermissionsCommand{
 		ID:          role.ID,
-		Permissions: []iam.PermissionCode{iam.PermOrderRead, iam.PermOrderWrite},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead, iam.PermRoleWrite},
 		Version:     role.Version,
 		Actor:       "1001",
 		Reason:      "补授写入权限",
@@ -119,7 +119,7 @@ func TestRoleServiceWriteSurvivesInvalidationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReplacePermissions must not fail on invalidation error: %v", err)
 	}
-	if len(change.Added) != 1 || change.Added[0] != iam.PermOrderWrite || len(change.Removed) != 0 {
+	if len(change.Added) != 1 || change.Added[0] != iam.PermRoleWrite || len(change.Removed) != 0 {
 		t.Fatalf("change = %+v", change)
 	}
 	if updated.Version != role.Version+1 {

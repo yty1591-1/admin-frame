@@ -1,6 +1,8 @@
 # internal/platform 整改任务清单与验收标准
 
 > **状态**：已实施（Implemented，2026-10-20）
+> **历史说明**：本文件保留整改时的验收记录；文中 `internal/order`、`internal/files` 等演示域路径已随演示代码移除，
+> 相关门禁（分层、跨端 transport、必测函数）已泛化为按 `internal/*` 动态发现。
 > **效力**：本文件是 `internal/platform` 的整改计划，任务验收通过后与 `docs/ARCHITECTURE.md` §5.6 / §6.1 同等约束
 > **适用范围**：`internal/platform`、`internal/*/transport`、`internal/shared`、`cmd/*`、`.golangci.yml`、`scripts/ci/*`
 > **关联**：`ARCHITECTURE.md` §5.6/§6.1/§7、`CONFIG_STANDARDS.md`（CFG）、`RELIABILITY_STANDARDS.md`（REL）、`OBSERVABILITY_STANDARDS.md`（OBS）、`SECURITY_STANDARDS.md`（SEC）、`TESTING_STANDARDS.md`（TEST）、`CI_STANDARDS.md`（CI）

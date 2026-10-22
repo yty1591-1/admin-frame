@@ -279,7 +279,7 @@ func TestSimulateAuthorizeUsesSnapshot(t *testing.T) {
 
 	denied, err := f.querySvc.Simulate(context.Background(), app.SimulateQuery{
 		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
-		SubjectID: "2001", Permission: iam.PermOrderRead,
+		SubjectID: "2001", Permission: iam.PermRoleWrite,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestSimulateAuthorizeUsesSnapshot(t *testing.T) {
 
 	unknown, err := f.querySvc.Simulate(context.Background(), app.SimulateQuery{
 		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
-		SubjectID: "2001", Permission: "order:delete",
+		SubjectID: "2001", Permission: "iam:delete",
 	})
 	if err != nil {
 		t.Fatal(err)

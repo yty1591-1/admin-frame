@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/order/infrastructure/eventbus"
 	"github.com/admin-frame/admin-frame/internal/platform"
 
 	// 消费端按需访问对象存储；不需要时可移除该 import 以缩小二进制。
@@ -42,7 +41,6 @@ func run(configPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logger := platform.NewLogger(cfg)
-	bus := eventbus.NewMemoryBus(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -73,13 +71,8 @@ func run(configPath string) error {
 			logger.Info("worker shutting down")
 			return nil
 		case <-ticker.C:
-			events := bus.Drain()
-			for _, e := range events {
-				logger.Info("process domain event", "event", e.EventName(), "at", e.OccurredAt())
-			}
-			if len(events) == 0 {
-				logger.Debug("no events")
-			}
+			// 异步任务运行时尚未接入（见 ENT-03）；此处仅维持进程心跳。
+			logger.Debug("worker idle; async runtime pending ENT-03")
 		}
 	}
 }

@@ -183,10 +183,10 @@ func bizCode(err error) int {
 	return 0
 }
 
-// scope 构造 order 资源的数据范围。
+// scope 构造 iam 资源的数据范围。
 func scope(t *testing.T, scopeType domain.DataScopeType) domain.DataScope {
 	t.Helper()
-	value := domain.DataScope{Resource: "order", Type: scopeType}
+	value := domain.DataScope{Resource: "iam", Type: scopeType}
 	if scopeType == domain.DataScopeMerchantSet {
 		value.MerchantIDs = []string{"m_001", "m_002"}
 	}

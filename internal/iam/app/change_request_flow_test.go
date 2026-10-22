@@ -22,7 +22,7 @@ func createTestRole(t *testing.T, f *fixture, code string) *domain.Role {
 		Scope:       domain.RoleScopePlatform,
 		Code:        code,
 		Name:        "测试角色 " + code,
-		Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeMerchant)},
 		Actor:       "1001",
 	})
@@ -39,8 +39,8 @@ func createReplacePermissionsRequest(t *testing.T, f *fixture, roleID, actor str
 		Channel:  domain.ChannelAdmin,
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: roleID,
-		Payload: []byte(`{"permissions":["order:read","order:write"],` +
-			`"data_scopes":[{"resource":"order","scope_type":"merchant"}]}`),
+		Payload: []byte(`{"permissions":["iam:role:read","iam:role:write"],` +
+			`"data_scopes":[{"resource":"iam","scope_type":"merchant"}]}`),
 		Reason: "补授写入权限",
 		Actor:  actor,
 	})
@@ -83,8 +83,8 @@ func TestChangeRequestFullFlowAppliesPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if !updated.HasPermission(iam.PermOrderWrite) {
-		t.Fatalf("permissions = %v, want order:write granted", updated.PermissionCodes())
+	if !updated.HasPermission(iam.PermRoleWrite) {
+		t.Fatalf("permissions = %v, want iam:role:write granted", updated.PermissionCodes())
 	}
 	if updated.Version <= role.Version {
 		t.Fatalf("role version = %d, want > %d", updated.Version, role.Version)
@@ -169,7 +169,7 @@ func TestChangeRequestApplyFailureKeepsApprovedState(t *testing.T) {
 		Channel:  domain.ChannelAdmin,
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: "role-missing",
-		Payload:  []byte(`{"permissions":["order:read"],"data_scopes":[{"resource":"order","scope_type":"merchant"}]}`),
+		Payload:  []byte(`{"permissions":["iam:role:read"],"data_scopes":[{"resource":"iam","scope_type":"merchant"}]}`),
 		Reason:   "目标不存在",
 		Actor:    "1001",
 	})
@@ -295,7 +295,7 @@ func TestChangeRequestRoleCreateBindsTargetOnApply(t *testing.T) {
 		Channel: domain.ChannelAdmin,
 		Action:  domain.ChangeActionRoleCreate,
 		Payload: []byte(`{"scope_type":"platform","code":"auditor","name":"审计员",` +
-			`"permissions":["order:read"],"data_scopes":[{"resource":"order","scope_type":"merchant"}]}`),
+			`"permissions":["iam:role:read"],"data_scopes":[{"resource":"iam","scope_type":"merchant"}]}`),
 		Reason: "新建审计角色",
 		Actor:  "1001",
 	})
@@ -375,7 +375,7 @@ func TestChangeRequestRejectsUnknownPayloadFields(t *testing.T) {
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: role.ID,
 		// 字段名拼错（permission 而非 permissions）：必须报错而不是静默变成空权限。
-		Payload: []byte(`{"permission":["order:read"]}`),
+		Payload: []byte(`{"permission":["iam:role:read"]}`),
 		Reason:  "拼写错误",
 		Actor:   "1001",
 	})

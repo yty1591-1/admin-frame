@@ -56,7 +56,7 @@
 | 认证主体 | `internal/shared/auth` | 已完成：`Principal`（channel / subject_id / merchant_id / roles / request_id） |
 | 角色表装配 | `cmd/admin-api/register.go`、`cmd/biz-api/register.go` | **两端均已切 IAM**：`cmd/internal/iamruntime` 统一装配，A 端挂 `/admin/v1/iam/*`，B 端挂 `/biz/v1/iam/*`；静态表仅在 `iam.mode=off` 作为回滚兜底 |
 | 审计动作 | `internal/shared/audit`、`docs/audit/EVENTS.md` | `rbac.role_change` / `rbac.binding_change` 已置 `active` 并接线（`app.SlogRecorder` + `observability.ChangeRecorder`） |
-| 权限点常量 | `internal/order/perm.go`、`internal/files/perm.go` | 按域维护，`resource:action` 两段式 |
+| 权限点常量 | `internal/iam/perm.go` | 统一维护，`resource:action` 或 `domain:resource:action`；演示域权限已标记 deprecated |
 
 ### 2.2 生产化差距
 
@@ -93,7 +93,7 @@
 - **不做完整 IdP**：登录、密码、MFA、SSO、会话管理仍由认证侧负责；IAM 只消费已认证的 `Principal`。
 - **不做 ABAC 表达式引擎**：v1 不引入 Casbin / OPA / CEL 等策略引擎；时间、IP、资源属性等条件策略留待 ADR。
 - **不做角色继承 / 拒绝规则**：v1 角色扁平、仅允许；避免「继承环 + 拒绝优先」导致的解释与缓存复杂性。
-- **不做独立微服务 / 独立数据库**：与订单、文件等域共享库；`internal/iam` 只拥有自己的表。
+- **不做独立微服务 / 独立数据库**：与业务域共享库；`internal/iam` 只拥有自己的表。
 - **不做组织架构 / 部门树**：v1 数据范围只到商户 / 本人 / 商户集合；部门树另立 ADR。
 - **不做前端权限管理界面**：本文只定义后端契约；前端由 A/B 端另行规划。
 - **不把权限点写进 JWT**：避免令牌膨胀与撤销延迟。
@@ -109,7 +109,7 @@
 | Channel | 端别：`admin` / `biz` / `c`；IAM 只服务 `admin` / `biz` |
 | Scope | 角色的作用域：`platform`（A 端全局）或 `merchant`（B 端单商户） |
 | Subject | 权限主体：A 端员工（`staff`）或 B 端商户员工（`merchant_staff`） |
-| Permission | 稳定权限点，形如 `iam:role:write`、`order:read`；**代码即契约** |
+| Permission | 稳定权限点，形如 `iam:role:write`、`iam:role:read`；**代码即契约** |
 | Role | 权限点的命名集合；同一角色可绑定多个主体 |
 | Binding | 主体与角色的绑定关系；可带过期时间 |
 | Data Scope | 角色对某类资源的数据可见范围；与功能权限正交 |
@@ -143,7 +143,7 @@ segment    := [a-z][a-z0-9_]*
 wildcard   := "*" | segment ":" "*"
 ```
 
-- 推荐 `resource:action`（如 `order:read`），子资源可用 `domain:resource:action`（如 `iam:role:write`）。
+- 推荐 `resource:action`（如 `iam:read`），子资源可用 `domain:resource:action`（如 `iam:role:write`）。
 - 全小写、无空格、无连字符；段数 2～4。
 - `*` 仅允许作为最后一段，且只允许系统角色 / 破玻璃持有。
 - 权限码一经发布**不可重命名、不可改语义**；弃用通过 `status=deprecated`，至少保留一个 major。
@@ -853,10 +853,10 @@ Content-Type: application/json
   "scope_type": "platform",
   "code": "ops_lead",
   "name": "运营主管",
-  "description": "订单与文件运营",
-  "permissions": ["order:read", "order:write", "file:read"],
+  "description": "IAM 运营",
+  "permissions": ["iam:permission:read", "iam:role:read", "iam:binding:read"],
   "data_scopes": [
-    {"resource": "order", "scope_type": "merchant_set", "merchant_ids": ["m_001", "m_002"]}
+    {"resource": "iam", "scope_type": "merchant_set", "merchant_ids": ["m_001", "m_002"]}
   ]
 }
 ```
@@ -875,9 +875,9 @@ Content-Type: application/json
     "role_type": "custom",
     "status": "active",
     "version": 1,
-    "permissions": ["order:read", "order:write", "file:read"],
+    "permissions": ["iam:permission:read", "iam:role:read", "iam:binding:read"],
     "data_scopes": [
-      {"resource": "order", "scope_type": "merchant_set", "merchant_ids": ["m_001", "m_002"]}
+      {"resource": "iam", "scope_type": "merchant_set", "merchant_ids": ["m_001", "m_002"]}
     ],
     "created_at": "2026-10-21T06:00:00Z",
     "updated_at": "2026-10-21T06:00:00Z"
@@ -894,8 +894,8 @@ If-Match: "3"
 Idempotency-Key: 9a7e...
 
 {
-  "permissions": ["order:read", "file:read"],
-  "reason": "职责调整：移除订单写权限"
+  "permissions": ["iam:role:read", "iam:binding:read"],
+  "reason": "职责调整：移除角色写权限"
 }
 ```
 
@@ -911,8 +911,8 @@ POST /admin/v1/iam/authorize
 {
   "subject_type": "staff",
   "subject_id": "1001",
-  "permission": "order:read",
-  "resource": {"type": "order", "id": "ord_123", "merchant_id": "m_001"}
+  "permission": "iam:role:read",
+  "resource": {"type": "iam", "id": "role_123", "merchant_id": "m_001"}
 }
 ```
 
@@ -1358,7 +1358,7 @@ M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 
 
 ### 13.2 必测函数名
 
-除仓库基线的 `TestMerchantIsolation` / `TestUserOwnership` 必须继续存在外，IAM 的设计基线如下：
+除仓库基线的 `TestBizRoleTenantIsolation` / `TestBizChangeRequestTenantIsolation` 必须继续存在外，IAM 的设计基线如下：
 
 ```text
 TestDenyByDefault
@@ -1582,7 +1582,7 @@ BenchmarkReplaceRolePermissions_Diff
 | SEC-01 / SEC-05 | 配置不含密钥；日志 / 审计脱敏；Token 不入日志 | `make secrets` + Review |
 | SEC-03 / SEC-04 | A/B 路由、角色、绑定隔离；`channel` 校验；JWT 域隔离 | `make check-transport` + 单测 |
 | SEC-07 | 所有 IAM 管理接口挂 AuthN + AuthZ；仅探针匿名 | Review + 路由测试 |
-| SEC-14 | B 端 `merchant_id` 从 Token 取；仓储条件；越权 404 | `TestDataScopeMerchant` + `TestMerchantIsolation` |
+| SEC-14 | B 端 `merchant_id` 从 Token 取；仓储条件；越权 404 | `TestDataScopeMerchant` + `TestBizRoleTenantIsolation` |
 | DATA-01 / DATA-02 | 迁移六位序号 + 配对 down；种子 down 显式失败 | `make check-migrations` |
 | DATA-01 / D-06 | 权限目录代码所有；格式 / 唯一性 / 排序；`catalog.go`、`perm.go`、种子迁移、`PERMISSIONS.md` 四处一致 | `go test ./internal/iam/catalog/... -count=1` |
 | DATA-01 / C-08 | 每张表有表注释、每列有字段注释；枚举取值列全；注释与 domain 常量一致 | Review + §5.4 注释查询（可选门禁） |
@@ -1896,10 +1896,10 @@ BenchmarkReplaceRolePermissions_Diff
 | `iam:change:review` | biz | api | 否 | 审批本商户变更（申请人不得自审） |
 | `iam:breakglass:request` | admin | api | 否 | 申请破玻璃 |
 | `iam:breakglass:approve` | admin | api | 否 | 审批破玻璃 |
-| `order:read` | both | api | 是 | 查询订单 |
-| `order:write` | both | api | 是 | 变更订单 |
-| `file:read` | both | api | 是 | 下载 / 查看文件 |
-| `file:write` | both | api | 是 | 上传 / 删除文件 |
+| `order:read` | both | api | 是 | 查询订单（演示域已移除，已弃用） |
+| `order:write` | both | api | 是 | 变更订单（演示域已移除，已弃用） |
+| `file:read` | both | api | 是 | 下载 / 查看文件（演示域已移除，已弃用） |
+| `file:write` | both | api | 是 | 上传 / 删除文件（演示域已移除，已弃用） |
 | `audit:read` | admin | api | 是 | 查询审计 |
 | `data:export` | both | api | 是 | 导出数据 |
 | `config:read` | admin | api | 否 | 查看配置 |
@@ -1910,10 +1910,10 @@ BenchmarkReplaceRolePermissions_Diff
 | channel | code | 权限 | 数据范围 |
 |---------|------|------|----------|
 | admin | `system_admin` | 逐项授予 IAM 管理权限 + `audit:read` + `config:read/write` | `all` |
-| admin | `ops` | `order:read/write`、`file:read/write` | `all`（或 `merchant_set`） |
+| admin | `ops` | `iam:permission:read`、`iam:role:read`、`iam:binding:read`、`iam:change:read`、`audit:read`、`config:read` | `all`（或 `merchant_set`） |
 | admin | `breakglass_admin`（`role_type=breakglass`） | 目录中无权限点；仅在有效审批绑定时展开 `*` | `all` |
-| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review`、`order:read` / `order:write`、`file:read` / `file:write` | `merchant` |
-| biz | `merchant_staff` | `iam:change:request`、`order:read`、`file:read` | `merchant` |
+| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review` | `merchant` |
+| biz | `merchant_staff` | `iam:change:request` | `merchant` |
 
 > B 端审批 SoD：`merchant_staff` 只能提申请；`merchant_owner` 虽同时持有申请与审批权限点，仍受「申请人 ≠ 审批人」约束，同一主体无法自审。
 

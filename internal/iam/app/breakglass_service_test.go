@@ -122,7 +122,7 @@ func TestBreakglassRequestApproveExpandsWildcardSnapshot(t *testing.T) {
 	if !snapshot.Breakglass {
 		t.Fatal("snapshot must be marked breakglass")
 	}
-	if !snapshot.HasPermission("order:read") || !snapshot.HasPermission("iam:role:grant") {
+	if !snapshot.HasPermission("iam:permission:read") || !snapshot.HasPermission("iam:role:grant") {
 		t.Fatalf("breakglass snapshot must allow all, got %v", snapshot.Permissions)
 	}
 
@@ -152,7 +152,7 @@ func TestBreakglassRequestApproveExpandsWildcardSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot after revoke: %v", err)
 	}
-	if revoked.Breakglass || revoked.HasPermission("order:read") {
+	if revoked.Breakglass || revoked.HasPermission("iam:permission:read") {
 		t.Fatalf("revoked snapshot=%+v", revoked)
 	}
 }
@@ -223,7 +223,7 @@ func TestBreakglassGuards(t *testing.T) {
 	}
 
 	if _, _, err := f.roleSvc.ReplacePermissions(ctx, app.ReplacePermissionsCommand{
-		ID: "9001", Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		ID: "9001", Permissions: []iam.PermissionCode{iam.PermPermissionRead},
 		Version: 1, Actor: "1001", Reason: "试图固化超级权限",
 	}); bizCode(err) != 40300 {
 		t.Fatalf("breakglass permission write err=%v code=%d", err, bizCode(err))

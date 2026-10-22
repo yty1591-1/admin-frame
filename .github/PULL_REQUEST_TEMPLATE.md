@@ -28,7 +28,7 @@
 ## 测试自检（TESTING_STANDARDS）
 
 - [ ] 触及的 domain 包有单测；核心 domain 覆盖率 ≥70%
-- [ ] B 隔离（`TestMerchantIsolation`）/ C 越权（`TestUserOwnership`）仍通过
+- [ ] B 端租户隔离（`TestBizRoleTenantIsolation` / `TestBizChangeRequestTenantIsolation`）仍通过
 - [ ] 未使用生产凭据或生产库跑测试
 
 ## 依赖自检（DEPENDENCY_STANDARDS）

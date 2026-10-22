@@ -141,7 +141,7 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
           example:
             code: 40900
-            message: order already cancelled
+            message: resource state conflict
             trace_id: a1b2c3d4e5f60708
     TooManyRequests:
       description: 限流或配额耗尽

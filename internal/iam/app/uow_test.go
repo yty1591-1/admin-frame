@@ -54,7 +54,7 @@ func TestCreateRoleRunsInsideSingleTransaction(t *testing.T) {
 		Scope:       domain.RoleScopePlatform,
 		Code:        "ops_lead",
 		Name:        "运营主管",
-		Permissions: []iam.PermissionCode{iam.PermOrderWrite, iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleWrite, iam.PermRoleRead},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeMerchantSet)},
 		Actor:       "1001",
 	})
@@ -83,7 +83,7 @@ func TestCreateRolePropagatesUnitOfWorkFailure(t *testing.T) {
 		Scope:       domain.RoleScopePlatform,
 		Code:        "ops_lead",
 		Name:        "运营主管",
-		Permissions: []iam.PermissionCode{iam.PermOrderRead},
+		Permissions: []iam.PermissionCode{iam.PermRoleRead},
 		DataScopes:  []domain.DataScope{scope(t, domain.DataScopeAll)},
 		Actor:       "1001",
 	})

@@ -1,18 +1,17 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 2.0.0
+  version: 3.0.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
+    3.0.0：移除订单演示域契约（破坏性）。
 servers:
   - url: http://localhost:8081
 tags:
   - name: probe
     description: 存活/就绪/版本（无需鉴权）
-  - name: orders
-    description: 全局订单
   - name: iam
     description: |
       RBAC / IAM 管理。写接口要求 `If-Match` 或 body `version` 与当前版本一致（乐观锁），
@@ -69,101 +68,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
-  /admin/v1/orders:
-    get:
-      tags: [orders]
-      summary: 全局订单列表
-      operationId: adminListOrders
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: merchant_id
-          description: 按商户过滤；空表示不限商户
-          schema:
-            type: string
-        - $ref: "./components.yaml#/components/parameters/Page"
-        - $ref: "./components.yaml#/components/parameters/PageSize"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/OrderListData"
-        "400":
-          $ref: "./components.yaml#/components/responses/BadRequest"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /admin/v1/orders/{id}:
-    get:
-      tags: [orders]
-      summary: 订单详情（含运营内部字段）
-      operationId: adminGetOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /admin/v1/orders/{id}/cancel:
-    post:
-      tags: [orders]
-      summary: 运营取消订单
-      operationId: adminCancelOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "409":
-          $ref: "./components.yaml#/components/responses/Conflict"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
   /admin/v1/iam/permissions:
     get:
       tags: [iam]
@@ -1176,13 +1080,6 @@ components:
       schema:
         type: string
         pattern: '^"?[1-9][0-9]*"?$'
-    OrderID:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
   securitySchemes:
     bearerAuth:
       type: http
@@ -1225,56 +1122,6 @@ components:
                 type: string
               error:
                 type: string
-    Order:
-      type: object
-      required:
-        - id
-        - merchant_id
-        - user_id
-        - amount_cent
-        - currency
-        - status
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        merchant_id:
-          type: string
-        user_id:
-          type: string
-        amount_cent:
-          type: integer
-          format: int64
-        currency:
-          type: string
-          example: CNY
-        status:
-          type: string
-          enum: [created, paid, cancelled]
-        remark:
-          type: string
-          description: 运营内部备注；禁止出现在 C 端契约
-        cost_cent:
-          type: integer
-          format: int64
-          description: 内部成本；禁止出现在 C 端契约
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    OrderListData:
-      allOf:
-        - $ref: "./components.yaml#/components/schemas/PageMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/Order"
     # ---- IAM ----
     Channel:
       type: string
@@ -1300,8 +1147,8 @@ components:
       properties:
         resource:
           type: string
-          description: 资源段："*" 或权限码首段（如 order / file）
-          example: order
+          description: 资源段："*" 或权限码首段（如 iam）
+          example: iam
         scope_type:
           $ref: "#/components/schemas/DataScopeType"
         merchant_ids:
@@ -1534,7 +1381,8 @@ components:
           type: string
     Binding:
       type: object
-      required: [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
+      required:
+        [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
       properties:
         id:
           type: string
@@ -1592,7 +1440,17 @@ components:
           type: string
     SubjectPermissions:
       type: object
-      required: [channel, subject_type, subject_id, roles, permissions, data_scopes, snapshot_version, generated_at]
+      required:
+        [
+          channel,
+          subject_type,
+          subject_id,
+          roles,
+          permissions,
+          data_scopes,
+          snapshot_version,
+          generated_at,
+        ]
       properties:
         channel:
           $ref: "#/components/schemas/Channel"
@@ -1630,7 +1488,7 @@ components:
           type: string
         permission:
           type: string
-          example: order:read
+          example: iam:role:read
         resource:
           $ref: "#/components/schemas/AuthorizeResource"
     AuthorizeResource:

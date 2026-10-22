@@ -6,6 +6,6 @@ outpkg: mocks
 with-expecter: true
 # 示例：取消注释并按域追加
 # packages:
-#   github.com/admin-frame/admin-frame/internal/order/app:
+#   github.com/admin-frame/admin-frame/internal/iam/app:
 #     interfaces:
 #       Repository:

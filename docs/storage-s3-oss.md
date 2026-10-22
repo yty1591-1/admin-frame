@@ -1,8 +1,8 @@
 # 对象存储：多云模块化驱动规划与选型
 
-> **状态**：已落地（M0–M5；默认 L1，`native=true` 切 L2）  
-> **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五  
-> **最后更新**：2026-10-20  
+> **状态**：已落地（M0–M5；默认 L1，`native=true` 切 L2）
+> **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五
+> **最后更新**：2026-10-20
 > **目标读者**：后端 / 平台装配 / 安全 Review
 
 ---
@@ -11,9 +11,9 @@
 
 对象存储是本仓库的**模块化基础设施能力**：
 
-- **契约统一**：业务只依赖 `pkg/storage.Store` / `Presigner`，不感知厂商。  
-- **驱动可插拔**：阿里云 OSS、腾讯云 COS、华为云 OBS、AWS S3、MinIO 等以**独立子包 + 注册表**接入（类比 `database/sql` 驱动模型）。  
-- **装配可选**：`cmd` / `platform` **按需 blank-import** 所需驱动；未引用的驱动不进入进程。  
+- **契约统一**：业务只依赖 `pkg/storage.Store` / `Presigner`，不感知厂商。
+- **驱动可插拔**：阿里云 OSS、腾讯云 COS、华为云 OBS、AWS S3、MinIO 等以**独立子包 + 注册表**接入（类比 `database/sql` 驱动模型）。
+- **装配可选**：`cmd` / `platform` **按需 blank-import** 所需驱动；未引用的驱动不进入进程。
 - **本地可测**：内置 `memory` / `local`；CI 可用 MinIO。
 
 ```
@@ -35,16 +35,16 @@ pkg/storage          ← Store / Presigner / Open / Register
 
 ### 2.1 目标
 
-1. 一套键规范、错误语义、前缀隔离（`Join` / `ValidateKey` / `WithPrefix`）覆盖所有后端。  
-2. 配置用 `driver: s3|minio|oss|cos|obs|local|memory` 切换，业务代码零改动。  
-3. 每种云作为**可选项**独立演进：可先走 S3 兼容协议，再按需补原生 SDK 能力。  
-4. 大文件 **Presign 直传**；密钥走环境变量 / IAM / 云角色（SEC-01）；日志禁止完整签名串（SEC-05）。  
+1. 一套键规范、错误语义、前缀隔离（`Join` / `ValidateKey` / `WithPrefix`）覆盖所有后端。
+2. 配置用 `driver: s3|minio|oss|cos|obs|local|memory` 切换，业务代码零改动。
+3. 每种云作为**可选项**独立演进：可先走 S3 兼容协议，再按需补原生 SDK 能力。
+4. 大文件 **Presign 直传**；密钥走环境变量 / IAM / 云角色（SEC-01）；日志禁止完整签名串（SEC-05）。
 5. 新增 SDK 遵守 DEP-06（用途、许可证、替代方案）。
 
 ### 2.2 非目标
 
-- 运行时热切换多云双写 / 自动 failover（另开 ADR）。  
-- CDN、图片处理、内容审核（上传后异步流水线）。  
+- 运行时热切换多云双写 / 自动 failover（另开 ADR）。
+- CDN、图片处理、内容审核（上传后异步流水线）。
 - 在领域层引用任何云 SDK。
 
 ---
@@ -88,7 +88,7 @@ store, err := storage.Open(ctx, storage.Config{
 
 **两层实现策略：**
 
-1. **L1（默认）— S3 兼容协议**：多数厂商提供 S3 兼容访问；共用 `storage/s3` 客户端，各厂商包只做 Endpoint/Region/PathStyle **预设与校验**。  
+1. **L1（默认）— S3 兼容协议**：多数厂商提供 S3 兼容访问；共用 `storage/s3` 客户端，各厂商包只做 Endpoint/Region/PathStyle **预设与校验**。
 2. **L2（按需）— 原生 SDK**：当需要厂商独有能力（回调、归档、图片处理、特殊鉴权）时，在对应子包内切换原生客户端，仍实现同一 `Store` / `Presigner`。
 
 ---
@@ -107,8 +107,8 @@ store, err := storage.Open(ctx, storage.Config{
 
 **统一约定：**
 
-- 不引入 aws-sdk-go **v1**。  
-- L1 阶段 **禁止** AWS SDK 与 minio-go 双栈；S3 兼容一律 AWS SDK v2。  
+- 不引入 aws-sdk-go **v1**。
+- L1 阶段 **禁止** AWS SDK 与 minio-go 双栈；S3 兼容一律 AWS SDK v2。
 - L2 原生 SDK **仅**出现在对应子包，不泄漏到 `pkg/storage` 根包。
 
 ### 4.2 放置边界
@@ -191,25 +191,20 @@ storage:
 
 ## 6. 安全与多租户
 
-1. 键：`{env}/{channel}/{merchant_id|user_id}/...`，强制 `ValidateKey`。  
-2. 桶默认私有；对外短 TTL PresignGet。  
-3. PresignPut 限制 Content-Type 白名单与大小。  
-4. A/B 附件/导出：`pkg/rbac` + 审计；C 端仅本人前缀。  
-5. 优先桶 SSE / KMS；应用层加密用 `pkg/crypto`。  
+1. 键：`{env}/{channel}/{merchant_id|user_id}/...`，强制 `ValidateKey`。
+2. 桶默认私有；对外短 TTL PresignGet。
+3. PresignPut 限制 Content-Type 白名单与大小。
+4. A/B 附件/导出：`pkg/rbac` + 审计；C 端仅本人前缀。
+5. 优先桶 SSE / KMS；应用层加密用 `pkg/crypto`。
 6. Trace/日志：禁止 Secret 与完整 signed query（SEC-05）。
 
-### 6.1 A 端 files API（M3b）
+### 6.1 A 端 files API（已移除）
 
-业务键约束在 `files/{category}/YYYY/MM/{id}_{filename}`；权限点 `file:read` / `file:write`（`admin` 超管、`ops` 已授予）。
+原 `internal/files` 演示域及其 `/admin/v1/files*` 端点已随演示代码一并移除，`file:read` / `file:write`
+权限点保留为 `deprecated`（见 `migrations/000008_retire_demo_permissions.up.sql`）。
 
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| POST | `/admin/v1/files` | `file:write` | multipart 服务端中转上传（`file` + `category`） |
-| POST | `/admin/v1/files/uploads/presign` | `file:write` | 云驱动 PresignPut；memory/local 返回 BadRequest |
-| GET | `/admin/v1/files/downloads/presign?key=` | `file:read` | PresignGet |
-| GET | `/admin/v1/files/object?key=` | `file:read` | 服务端流式下载 |
-
-代码：`internal/files/app`、`internal/files/transport/admin`；装配：`cmd/admin-api`。
+`pkg/storage` 的能力（服务端中转上传、PresignPut/PresignGet、Multipart、多桶）保持不变；
+后续业务域接入时按 §6 的键与安全约束自行实现 Handler 并挂载权限中间件。
 
 ### 6.2 Multipart（M5）
 
@@ -222,7 +217,7 @@ storage:
 - 装配：`platform.OpenStorageSet` → `StorageSet{Default, named…}`；`Get("default"|name)`
 - 配置：顶层 `storage` 为默认桶；`storage.buckets.<name>` 为附加桶（名不可为 `default`）
 - 健康：`StorageSet.ReadyAll`；admin-api 另注册 `storage:<name>`
-- 注入：业务按名取 Store（如 `stores.MustGet("public")`）；files 默认用 `stores.Default`
+- 注入：业务按名取 Store（如 `stores.MustGet("public")`）；未指定时使用 `stores.Default`
 
 ### 6.4 生命周期（M5）
 
@@ -241,7 +236,7 @@ storage:
 | **M1** | `pkg/storage/s3`（含 `minio`）+ `storagetest` + `docker-compose.storage.yml` | ✅；联调：`go test -tags=minio ./pkg/storage/s3/` |
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
 | **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
-| **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅ |
+| **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅（演示域已移除，能力保留在 `pkg/storage`） |
 | **M4** | 各厂商 L2 原生 SDK（`native=true`） | ✅ OSS / COS / OBS |
 | **M5** | multipart、生命周期、多桶 | ✅ |
 
@@ -267,8 +262,8 @@ storage:
 | `github.com/tencentyun/cos-go-sdk-v5` | L2 腾讯云 COS 原生 | Apache-2.0 | L1 S3 兼容 |
 | `github.com/huaweicloud/huaweicloud-sdk-go-obs` | L2 华为云 OBS 原生 | Apache-2.0 | L1 S3 兼容 |
 
-- L2 SDK **仅**出现在 `pkg/storage/{oss,cos,obs}`，不泄漏到 `pkg/storage` 根包。  
-- 默认配置 `native: false`（L1）；进程 blank-import 驱动包后才会链接对应 SDK。  
+- L2 SDK **仅**出现在 `pkg/storage/{oss,cos,obs}`，不泄漏到 `pkg/storage` 根包。
+- 默认配置 `native: false`（L1）；进程 blank-import 驱动包后才会链接对应 SDK。
 - 引入后须跑 `make vuln` / `make check-license`（CI）。
 
 ### 9.1 启用 L2
@@ -300,7 +295,7 @@ storage:
 
 ## 11. 参考
 
-- 代码：`pkg/storage`、`pkg/storage/s3|oss|cos|obs`  
-- 路线图：`docs/pkg-roadmap.md`  
-- 约束：SEC-01/05、DEP-01～06、REL 超时  
-- AWS SDK v2 S3 / Presign；各云「S3 兼容」官方说明  
+- 代码：`pkg/storage`、`pkg/storage/s3|oss|cos|obs`
+- 路线图：`docs/pkg-roadmap.md`
+- 约束：SEC-01/05、DEP-01～06、REL 超时
+- AWS SDK v2 S3 / Presign；各云「S3 兼容」官方说明

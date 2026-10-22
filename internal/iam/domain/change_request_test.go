@@ -17,7 +17,7 @@ func mustNewChangeRequest(t *testing.T, mutate func(*domain.NewChangeRequestPara
 		Channel:  domain.ChannelAdmin,
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: "role-1",
-		Payload:  []byte(`{"permissions":["order:read"]}`),
+		Payload:  []byte(`{"permissions":["iam:role:read"]}`),
 		Reason:   "授予只读权限",
 		Actor:    "requester-1",
 	}
@@ -99,7 +99,7 @@ func TestNewChangeRequestValidation(t *testing.T) {
 			p.Payload = []byte(`{"a":`)
 		}, domain.ErrChangePayloadInvalid},
 		{"payload not object", func(p *domain.NewChangeRequestParams) {
-			p.Payload = []byte(`["order:read"]`)
+			p.Payload = []byte(`["iam:role:read"]`)
 		}, domain.ErrChangePayloadInvalid},
 		{"payload sensitive key", func(p *domain.NewChangeRequestParams) {
 			p.Payload = []byte(`{"access_token":"abc"}`)
@@ -307,7 +307,7 @@ func TestMarkAppliedRequiresApproval(t *testing.T) {
 
 func TestDecodePayload(t *testing.T) {
 	request := mustNewChangeRequest(t, func(p *domain.NewChangeRequestParams) {
-		p.Payload = []byte(`{"permissions":["order:read","order:write"]}`)
+		p.Payload = []byte(`{"permissions":["iam:role:read","iam:role:write"]}`)
 	})
 	var payload struct {
 		Permissions []string `json:"permissions"`

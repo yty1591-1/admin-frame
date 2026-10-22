@@ -1,11 +1,12 @@
 openapi: 3.0.3
 info:
   title: Biz API (B)
-  version: 2.0.0
+  version: 3.0.0
   description: |
     商家/企业端。数据范围强制 Token 内 `merchant_id`。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
+    3.0.0：移除订单演示域契约（破坏性）。
 servers:
   - url: http://localhost:8082
 tags:
@@ -13,8 +14,6 @@ tags:
     description: 存活/就绪/版本（无需鉴权）
   - name: iam
     description: 本商户角色、授权与绑定（自助管理）
-  - name: orders
-    description: 本商户订单
 paths:
   /healthz:
     get:
@@ -66,97 +65,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
-  /biz/v1/orders:
-    get:
-      tags: [orders]
-      summary: 本商户订单列表
-      operationId: bizListOrders
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "./components.yaml#/components/parameters/Page"
-        - $ref: "./components.yaml#/components/parameters/PageSize"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/OrderListData"
-        "400":
-          $ref: "./components.yaml#/components/responses/BadRequest"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /biz/v1/orders/{id}:
-    get:
-      tags: [orders]
-      summary: 本商户订单详情
-      operationId: bizGetOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /biz/v1/orders/{id}/cancel:
-    post:
-      tags: [orders]
-      summary: 商户取消订单
-      operationId: bizCancelOrder
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: "#/components/parameters/OrderID"
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Order"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "404":
-          $ref: "./components.yaml#/components/responses/NotFound"
-        "409":
-          $ref: "./components.yaml#/components/responses/Conflict"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-
   /biz/v1/iam/permissions:
     get:
       tags: [iam]
@@ -942,13 +850,6 @@ paths:
           $ref: "./components.yaml#/components/responses/ServiceUnavailable"
 components:
   parameters:
-    OrderID:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
     RoleID:
       name: id
       in: path
@@ -1037,49 +938,6 @@ components:
                 type: string
               error:
                 type: string
-    Order:
-      type: object
-      required:
-        - id
-        - merchant_id
-        - user_id
-        - amount_cent
-        - currency
-        - status
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        merchant_id:
-          type: string
-        user_id:
-          type: string
-        amount_cent:
-          type: integer
-          format: int64
-        currency:
-          type: string
-          example: CNY
-        status:
-          type: string
-          enum: [created, paid, cancelled]
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    OrderListData:
-      allOf:
-        - $ref: "./components.yaml#/components/schemas/PageMeta"
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: "#/components/schemas/Order"
     # ---- IAM ----
     Channel:
       type: string
@@ -1105,8 +963,8 @@ components:
       properties:
         resource:
           type: string
-          description: 资源段："*" 或权限码首段（如 order / file）
-          example: order
+          description: 资源段："*" 或权限码首段（如 iam）
+          example: iam
         scope_type:
           $ref: "#/components/schemas/DataScopeType"
         merchant_ids:
@@ -1339,7 +1197,8 @@ components:
           type: string
     Binding:
       type: object
-      required: [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
+      required:
+        [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
       properties:
         id:
           type: string
@@ -1397,7 +1256,17 @@ components:
           type: string
     SubjectPermissions:
       type: object
-      required: [channel, subject_type, subject_id, roles, permissions, data_scopes, snapshot_version, generated_at]
+      required:
+        [
+          channel,
+          subject_type,
+          subject_id,
+          roles,
+          permissions,
+          data_scopes,
+          snapshot_version,
+          generated_at,
+        ]
       properties:
         channel:
           $ref: "#/components/schemas/Channel"
@@ -1544,4 +1413,3 @@ components:
           description: 乐观锁版本；与当前审批单不一致返回 40900
         reason:
           type: string
-

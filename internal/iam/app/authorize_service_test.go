@@ -38,9 +38,9 @@ func bizSnapshot() *domain.SubjectSnapshot {
 		SubjectID:   "u-1",
 		MerchantID:  "m-1",
 		Roles:       []string{"merchant_ops", "merchant_ops"},
-		Permissions: []iam.PermissionCode{"order:write", "order:read", "*", "order:read"},
+		Permissions: []iam.PermissionCode{"iam:role:write", "iam:role:read", "*", "iam:role:read"},
 		Scopes: []domain.DataScope{
-			{Resource: "order", Type: domain.DataScopeMerchant},
+			{Resource: "iam", Type: domain.DataScopeMerchant},
 		},
 		Version:     9,
 		GeneratedAt: time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC),
@@ -108,10 +108,10 @@ func TestAuthorizeServiceCachesAndCleans(t *testing.T) {
 	if len(snapshot.Roles) != 1 || snapshot.Roles[0] != "merchant_ops" {
 		t.Fatalf("roles=%v", snapshot.Roles)
 	}
-	if len(snapshot.Permissions) != 2 || snapshot.Permissions[0] != "order:read" || snapshot.Permissions[1] != "order:write" {
+	if len(snapshot.Permissions) != 2 || snapshot.Permissions[0] != "iam:role:read" || snapshot.Permissions[1] != "iam:role:write" {
 		t.Fatalf("permissions=%v", snapshot.Permissions)
 	}
-	if snapshot.Scopes["order"].Type != string(domain.DataScopeMerchant) {
+	if snapshot.Scopes["iam"].Type != string(domain.DataScopeMerchant) {
 		t.Fatalf("scopes=%v", snapshot.Scopes)
 	}
 
@@ -344,14 +344,14 @@ func TestAuthorizeServiceReusesContextSnapshot(t *testing.T) {
 	service := newService(t, repo)
 	cached := authz.Snapshot{
 		Channel: "biz", SubjectType: "merchant_staff", SubjectID: "u-1", MerchantID: "m-1",
-		Permissions: []string{"order:read"},
+		Permissions: []string{"iam:role:read"},
 	}
 	ctx := authz.WithSnapshot(context.Background(), cached)
 	got, err := service.LoadSnapshot(ctx, bizPrincipal())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(got.Permissions) != 1 || got.Permissions[0] != "order:read" {
+	if len(got.Permissions) != 1 || got.Permissions[0] != "iam:role:read" {
 		t.Fatalf("snapshot=%+v", got)
 	}
 	if calls := repo.calls.Load(); calls != 0 {

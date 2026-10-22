@@ -47,12 +47,20 @@ const (
 	PermBreakglassApprove PermissionCode = "iam:breakglass:approve"
 
 	// PermOrderRead 查询订单。
+	//
+	// Deprecated：订单演示域已移除；保留权限码与既有授权以解释历史审计，禁止新授。
 	PermOrderRead PermissionCode = "order:read"
 	// PermOrderWrite 创建、更新、取消订单。
+	//
+	// Deprecated：订单演示域已移除；保留权限码与既有授权以解释历史审计，禁止新授。
 	PermOrderWrite PermissionCode = "order:write"
 	// PermFileRead 下载或预览文件。
+	//
+	// Deprecated：文件演示域已移除；保留权限码与既有授权以解释历史审计，禁止新授。
 	PermFileRead PermissionCode = "file:read"
 	// PermFileWrite 上传、替换、删除文件。
+	//
+	// Deprecated：文件演示域已移除；保留权限码与既有授权以解释历史审计，禁止新授。
 	PermFileWrite PermissionCode = "file:write"
 	// PermAuditRead 查询审计事件。
 	PermAuditRead PermissionCode = "audit:read"

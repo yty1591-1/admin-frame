@@ -4,6 +4,8 @@
 *.test
 *.out
 coverage.out
+/coverage
+/cov-domain
 configs/*.yaml
 !configs/*.yaml.example
 .env

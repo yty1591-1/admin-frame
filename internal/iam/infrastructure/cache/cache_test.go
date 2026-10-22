@@ -37,9 +37,9 @@ func testSnapshot() authz.Snapshot {
 		SubjectID:   "u-1",
 		MerchantID:  "m-1",
 		Roles:       []string{"merchant_ops"},
-		Permissions: []string{"order:read"},
+		Permissions: []string{"iam:role:read"},
 		Scopes: map[string]authz.Scope{
-			"order": {Type: authz.ScopeMerchant},
+			"iam": {Type: authz.ScopeMerchant},
 		},
 		Version:     3,
 		GeneratedAt: time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC),
@@ -105,16 +105,16 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		decoded.Version != snapshot.Version || !decoded.GeneratedAt.Equal(snapshot.GeneratedAt) {
 		t.Fatalf("decoded=%+v", decoded)
 	}
-	if len(decoded.Permissions) != 1 || decoded.Permissions[0] != "order:read" {
+	if len(decoded.Permissions) != 1 || decoded.Permissions[0] != "iam:role:read" {
 		t.Fatalf("permissions=%v", decoded.Permissions)
 	}
-	if decoded.Scopes["order"].Type != authz.ScopeMerchant {
+	if decoded.Scopes["iam"].Type != authz.ScopeMerchant {
 		t.Fatalf("scopes=%v", decoded.Scopes)
 	}
 
 	decoded.Permissions[0] = "tampered"
 	again, err := iampcache.Decode(raw)
-	if err != nil || again.Permissions[0] != "order:read" {
+	if err != nil || again.Permissions[0] != "iam:role:read" {
 		t.Fatalf("decoded slices must not alias payload: %v %v", again.Permissions, err)
 	}
 }

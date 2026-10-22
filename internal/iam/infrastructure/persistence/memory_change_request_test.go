@@ -17,7 +17,7 @@ func newTestChangeRequest(t *testing.T, id string, mutate func(*domain.NewChange
 		Channel:  domain.ChannelAdmin,
 		Action:   domain.ChangeActionRolePermissionReplace,
 		TargetID: "role-1",
-		Payload:  []byte(`{"permissions":["order:read"]}`),
+		Payload:  []byte(`{"permissions":["iam:role:read"]}`),
 		Reason:   "授予只读权限",
 		Actor:    "requester-1",
 	}
@@ -47,7 +47,7 @@ func TestMemoryChangeRequestRepositorySaveAndFind(t *testing.T) {
 		loaded.TargetType != domain.ChangeTargetIAMRole {
 		t.Fatalf("loaded=%+v", loaded)
 	}
-	if string(loaded.Payload) != `{"permissions":["order:read"]}` {
+	if string(loaded.Payload) != `{"permissions":["iam:role:read"]}` {
 		t.Fatalf("payload=%s", loaded.Payload)
 	}
 
