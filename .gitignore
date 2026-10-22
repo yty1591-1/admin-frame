@@ -7,6 +7,8 @@ coverage.out
 configs/*.yaml
 !configs/*.yaml.example
 .env
+# 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
+/tmp*
 .idea/
 .vscode/
 *.swp
