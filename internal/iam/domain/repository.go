@@ -84,9 +84,8 @@ func (q SubjectQuery) EffectiveTime() time.Time {
 // 约定：
 //   - 未找到返回 internal/shared/apperr 的 NotFound；
 //   - Save 必须使用 expectedVersion 做乐观锁，冲突返回 apperr 的 Conflict；
-//   - 跨端读取统一表现为 NotFound（SEC-14）。审批单表当前不含 merchant_id，
-//     因此 B 端自助发起需先补列（见文档 §7.3 的 M4.2 后续项），
-//     现阶段审批单只由 A 端创建与决定。
+//   - 跨端 / 跨商户读取统一表现为 NotFound（SEC-14），调用方据此不得区分
+//     「不存在」与「存在但不属于你」，避免用 404 / 403 的差异做枚举探测。
 type ChangeRequestRepository interface {
 	// Save 创建或更新审批单；expectedVersion 为 0 表示创建。
 	Save(ctx context.Context, request *ChangeRequest, expectedVersion int64) error
@@ -102,6 +101,11 @@ type ChangeRequestRepository interface {
 type ChangeRequestFilter struct {
 	// Channel 端别过滤；B 端必填。
 	Channel Channel
+	// MerchantID 商户过滤；空表示平台级（A 端全量）。
+	//
+	// B 端必须按 Principal 的商户过滤，否则一次分页查询就会把其它商户的
+	// 审批单（含权限载荷）暴露出去（SEC-14）。
+	MerchantID string
 	// Status 状态过滤；空表示全部。
 	Status ChangeStatus
 	// RequestedBy 申请人过滤；空表示全部。

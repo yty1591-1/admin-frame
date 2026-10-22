@@ -203,6 +203,52 @@ func TestMemoryChangeRequestRepositoryNotFound(t *testing.T) {
 	}
 }
 
+// TestMemoryChangeRequestRepositoryTenantScope 覆盖商户维度的写入、过滤与不可变。
+func TestMemoryChangeRequestRepositoryTenantScope(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryChangeRequestRepository()
+
+	tenant := newTestChangeRequest(t, "change-biz", func(p *domain.NewChangeRequestParams) {
+		p.Channel = domain.ChannelBiz
+		p.MerchantID = "m-1"
+	})
+	if err := repo.Save(ctx, tenant, 0); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := repo.FindByID(ctx, tenant.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if loaded.MerchantID != "m-1" {
+		t.Fatalf("merchant=%q, want m-1", loaded.MerchantID)
+	}
+
+	own, err := repo.List(ctx, domain.ChangeRequestFilter{Channel: domain.ChannelBiz, MerchantID: "m-1"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(own) != 1 || own[0].ID != tenant.ID {
+		t.Fatalf("own=%v", idsOf(own))
+	}
+	other, err := repo.List(ctx, domain.ChangeRequestFilter{Channel: domain.ChannelBiz, MerchantID: "m-2"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("cross tenant leaked %v", idsOf(other))
+	}
+	if total, err := repo.Count(ctx, domain.ChangeRequestFilter{MerchantID: "m-2"}); err != nil || total != 0 {
+		t.Fatalf("count=%d err=%v", total, err)
+	}
+
+	// 商户是审批单的租户归属事实，更新时不得改写。
+	mutated := *tenant
+	mutated.MerchantID = "m-2"
+	if err := repo.Save(ctx, &mutated, 1); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("err=%v, want bad request", err)
+	}
+}
+
 func idsOf(requests []*domain.ChangeRequest) []string {
 	ids := make([]string, len(requests))
 	for i, request := range requests {

@@ -1,8 +1,9 @@
 // Package rest 提供 IAM 的通道无关 HTTP 传输层。
 //
-// 本文件集中承载高风险变更审批单（change request）的 DTO 与 Handler：
-// 审批端点是 A 端专属能力，B 端路由不注册，避免在缺少 merchant_id 的
-// 数据模型上暴露跨租户数据（SEC-14）。
+// 本文件集中承载高风险变更审批单（change request）的 DTO 与 Handler。
+//
+// 同一套 Handler 同时服务 A 端与 B 端：端别来自路由挂载点，商户来自认证主体
+// （Principal.MerchantID），请求体与查询参数都不能指定商户（SEC-14）。
 package rest
 
 import (
@@ -15,14 +16,19 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // ChangeRequestDTO 是审批单响应；payload 原样返回，便于审批人核对申请意图。
+//
+// merchant_id 只对 A 端回显（平台运营需要定位租户）；B 端回显一个自己已知的值
+// 没有信息增益，反而把租户标识扩散到前端日志，因此 B 端置空。
 type ChangeRequestDTO struct {
 	ID          string          `json:"id"`
 	Channel     string          `json:"channel"`
+	MerchantID  string          `json:"merchant_id,omitempty"`
 	Action      string          `json:"action"`
 	TargetType  string          `json:"target_type"`
 	TargetID    string          `json:"target_id"`
@@ -61,14 +67,21 @@ type DecideChangeRequestRequest struct {
 }
 
 // toChangeRequestDTO 转换审批单聚合；空载荷归一为 {}，避免前端出现 null。
-func toChangeRequestDTO(request *domain.ChangeRequest) *ChangeRequestDTO {
+//
+// includeMerchant=false 时不回显商户（B 端视角，见 ChangeRequestDTO 注释）。
+func toChangeRequestDTO(request *domain.ChangeRequest, includeMerchant bool) *ChangeRequestDTO {
 	payload := request.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage("{}")
 	}
+	merchantID := ""
+	if includeMerchant {
+		merchantID = request.MerchantID
+	}
 	return &ChangeRequestDTO{
 		ID:          request.ID,
 		Channel:     string(request.Channel),
+		MerchantID:  merchantID,
 		Action:      string(request.Action),
 		TargetType:  string(request.TargetType),
 		TargetID:    request.TargetID,
@@ -84,12 +97,31 @@ func toChangeRequestDTO(request *domain.ChangeRequest) *ChangeRequestDTO {
 	}
 }
 
+// changeScope 解析本次请求的审批作用域。
+//
+// 端别取 transport 挂载点，商户取 Principal：任何试图通过 query / body 指定
+// 商户的调用都会被忽略，而不是「看起来生效了、实际用的是别的租户」。
+func (h *Handler) changeScope(r *http.Request) (auth.Principal, app.ChangeScope, error) {
+	principal, err := h.principal(r)
+	if err != nil {
+		return auth.Principal{}, app.ChangeScope{}, err
+	}
+	scope := app.ChangeScope{Channel: h.channel, MerchantID: h.merchantScope(principal)}
+	if err := scope.Validate(); err != nil {
+		return auth.Principal{}, app.ChangeScope{}, err
+	}
+	return principal, scope, nil
+}
+
 // ListChangeRequests GET /iam/change-requests
 //
-// A 端复核入口：默认按申请时间倒序，可按 status / action / requested_by 过滤。
+// 列表入口（A 端复核 / B 端待办）：默认按申请时间倒序，可按 status / action /
+// requested_by 过滤。端别与商户强制来自作用域，query 中的 channel / merchant_id 被忽略。
 func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	if !h.adminOnly(w, traceID) {
+	_, scope, err := h.changeScope(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
@@ -99,26 +131,26 @@ func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	query := r.URL.Query()
 	filter := domain.ChangeRequestFilter{
-		Channel:     domain.Channel(strings.TrimSpace(query.Get("channel"))),
 		Status:      domain.ChangeStatus(strings.TrimSpace(query.Get("status"))),
 		RequestedBy: strings.TrimSpace(query.Get("requested_by")),
 		Action:      domain.ChangeAction(strings.TrimSpace(query.Get("action"))),
 		Limit:       page.Limit(),
 		Offset:      page.Offset(),
 	}
-	requests, err := h.changes.List(r.Context(), filter)
+	requests, err := h.changes.List(r.Context(), scope, filter)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	total, err := h.changes.Count(r.Context(), filter)
+	total, err := h.changes.Count(r.Context(), scope, filter)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	includeMerchant := h.channel != domain.ChannelBiz
 	items := make([]*ChangeRequestDTO, 0, len(requests))
 	for _, request := range requests {
-		items = append(items, toChangeRequestDTO(request))
+		items = append(items, toChangeRequestDTO(request, includeMerchant))
 	}
 	httpx.OK(w, ChangeRequestListResponse{Items: items, Total: total}, traceID)
 }
@@ -126,10 +158,7 @@ func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
 // CreateChangeRequest POST /iam/change-requests
 func (h *Handler) CreateChangeRequest(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	if !h.adminOnly(w, traceID) {
-		return
-	}
-	principal, err := h.principal(r)
+	principal, scope, err := h.changeScope(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -145,18 +174,19 @@ func (h *Handler) CreateChangeRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request, err := h.changes.Create(r.Context(), app.CreateChangeRequestCommand{
-		Channel:  channel,
-		Action:   domain.ChangeAction(strings.TrimSpace(req.Action)),
-		TargetID: strings.TrimSpace(req.TargetID),
-		Payload:  req.Payload,
-		Reason:   req.Reason,
-		Actor:    principal.SubjectID,
+		Channel:    channel,
+		MerchantID: scope.MerchantID,
+		Action:     domain.ChangeAction(strings.TrimSpace(req.Action)),
+		TargetID:   strings.TrimSpace(req.TargetID),
+		Payload:    req.Payload,
+		Reason:     req.Reason,
+		Actor:      principal.SubjectID,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request), traceID)
+	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // ApproveChangeRequest POST /iam/change-requests/{id}/approve
@@ -172,10 +202,7 @@ func (h *Handler) RejectChangeRequest(w http.ResponseWriter, r *http.Request) {
 // CancelChangeRequest POST /iam/change-requests/{id}/cancel
 func (h *Handler) CancelChangeRequest(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	if !h.adminOnly(w, traceID) {
-		return
-	}
-	principal, err := h.principal(r)
+	principal, scope, err := h.changeScope(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -190,21 +217,18 @@ func (h *Handler) CancelChangeRequest(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	request, err := h.changes.Cancel(r.Context(), r.PathValue("id"), version, principal.SubjectID)
+	request, err := h.changes.Cancel(r.Context(), r.PathValue("id"), version, principal.SubjectID, scope)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request), traceID)
+	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // ApplyChangeRequest POST /iam/change-requests/{id}/apply
 func (h *Handler) ApplyChangeRequest(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	if !h.adminOnly(w, traceID) {
-		return
-	}
-	principal, err := h.principal(r)
+	principal, scope, err := h.changeScope(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -223,22 +247,20 @@ func (h *Handler) ApplyChangeRequest(w http.ResponseWriter, r *http.Request) {
 		ID:      r.PathValue("id"),
 		Version: version,
 		Actor:   principal.SubjectID,
+		Scope:   scope,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request), traceID)
+	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // decideChangeRequest 抽取通过 / 拒绝的公共解析逻辑。
 func (h *Handler) decideChangeRequest(w http.ResponseWriter, r *http.Request,
-	decide func(context.Context, string, int64, string) (*domain.ChangeRequest, error)) {
+	decide func(context.Context, string, int64, string, app.ChangeScope) (*domain.ChangeRequest, error)) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	if !h.adminOnly(w, traceID) {
-		return
-	}
-	principal, err := h.principal(r)
+	principal, scope, err := h.changeScope(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -253,22 +275,10 @@ func (h *Handler) decideChangeRequest(w http.ResponseWriter, r *http.Request,
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	request, err := decide(r.Context(), r.PathValue("id"), version, principal.SubjectID)
+	request, err := decide(r.Context(), r.PathValue("id"), version, principal.SubjectID, scope)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request), traceID)
-}
-
-// adminOnly 拒绝 B 端访问审批端点。
-//
-// 审批单表暂不含 merchant_id，跨租户隔离无法在 SQL 层保证；在补列迁移落地前
-// 直接对外 404，避免 B 端看到其它商户的申请内容（SEC-14）。
-func (h *Handler) adminOnly(w http.ResponseWriter, traceID string) bool {
-	if h.channel == domain.ChannelBiz {
-		httpx.FromError(w, apperr.NotFound("change request not found"), traceID)
-		return false
-	}
-	return true
+	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }

@@ -135,7 +135,7 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 	var applied *domain.ChangeRequest
 	// 审批状态、绑定创建与审批审计同事务：任一步失败都不留下半成品超级权限。
 	if err := s.changes.uow.WithinTx(ctx, func(ctx context.Context) error {
-		request, findErr := s.changes.Get(ctx, cmd.ID, domain.ChannelAdmin)
+		request, findErr := s.changes.Get(ctx, cmd.ID, ChangeScope{Channel: domain.ChannelAdmin})
 		if findErr != nil {
 			return findErr
 		}
@@ -146,14 +146,15 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 		current := request
 		switch {
 		case request.IsPending():
-			approved, approveErr := s.changes.Approve(ctx, request.ID, cmd.Version, cmd.Approver)
+			approved, approveErr := s.changes.Approve(ctx, request.ID, cmd.Version, cmd.Approver,
+				ChangeScope{Channel: domain.ChannelAdmin})
 			if approveErr != nil {
 				return approveErr
 			}
 			current = approved
 		case request.IsApproved():
 			// 上次应用失败后的重试；version 以服务端为准。
-			latest, getErr := s.changes.Get(ctx, request.ID, domain.ChannelAdmin)
+			latest, getErr := s.changes.Get(ctx, request.ID, ChangeScope{Channel: domain.ChannelAdmin})
 			if getErr != nil {
 				return getErr
 			}
@@ -168,6 +169,7 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 			ID:      current.ID,
 			Version: current.Version,
 			Actor:   cmd.Approver,
+			Scope:   ChangeScope{Channel: domain.ChannelAdmin},
 		})
 		if applyErr != nil {
 			return applyErr
@@ -181,7 +183,7 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 	}
 	if applied == nil {
 		// 已生效：幂等返回当前审批单，不重复写审计。
-		return s.changes.Get(ctx, cmd.ID, domain.ChannelAdmin)
+		return s.changes.Get(ctx, cmd.ID, ChangeScope{Channel: domain.ChannelAdmin})
 	}
 	return applied, nil
 }
@@ -195,7 +197,7 @@ func (s *BreakglassService) Revoke(
 	version int64,
 	actor string,
 ) (*domain.ChangeRequest, error) {
-	request, err := s.changes.Get(ctx, requestID, domain.ChannelAdmin)
+	request, err := s.changes.Get(ctx, requestID, ChangeScope{Channel: domain.ChannelAdmin})
 	if err != nil {
 		return nil, err
 	}

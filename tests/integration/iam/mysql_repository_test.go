@@ -763,6 +763,56 @@ func TestSQLChangeRequestRepository(t *testing.T) {
 	if _, err := repo.FindByID(ctx, "3999"); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("err=%v, want not found", err)
 	}
+
+	// 租户隔离：B 端单据必须落 merchant_id，且过滤条件只返回本商户数据。
+	tenant, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
+		ID:         "3003",
+		Channel:    domain.ChannelBiz,
+		MerchantID: "m-1",
+		Action:     domain.ChangeActionRoleUpdate,
+		TargetID:   "1001",
+		Payload:    []byte(`{"name":"新名称"}`),
+		Reason:     "商户自助改名",
+		Actor:      "u-m1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, tenant, 0); err != nil {
+		t.Fatalf("save tenant request: %v", err)
+	}
+	loadedTenant, err := repo.FindByID(ctx, tenant.ID)
+	if err != nil {
+		t.Fatalf("find tenant request: %v", err)
+	}
+	if loadedTenant.MerchantID != "m-1" || loadedTenant.Channel != domain.ChannelBiz {
+		t.Fatalf("tenant request = %+v", loadedTenant)
+	}
+	own, err := repo.List(ctx, domain.ChangeRequestFilter{
+		Channel: domain.ChannelBiz, MerchantID: "m-1", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(own) != 1 || own[0].ID != tenant.ID {
+		t.Fatalf("own tenant list = %+v", own)
+	}
+	other, err := repo.List(ctx, domain.ChangeRequestFilter{
+		Channel: domain.ChannelBiz, MerchantID: "m-2", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("cross tenant list leaked %d rows", len(other))
+	}
+	platform, err := repo.Count(ctx, domain.ChangeRequestFilter{Channel: domain.ChannelAdmin})
+	if err != nil {
+		t.Fatalf("platform count: %v", err)
+	}
+	if platform != 2 {
+		t.Fatalf("platform count=%d, want 2（B 端单据不得混入 A 端列表）", platform)
+	}
 }
 
 // TestSQLSnapshotBreakglassWildcard 验证破玻璃绑定在 SQL 快照中展开 "*"。

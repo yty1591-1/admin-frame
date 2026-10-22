@@ -2,8 +2,9 @@
 // 文档三处一致性的校验入口。
 //
 // 目录只描述「有哪些权限点」，不存放角色授权关系；授权关系在 iam_role_permission。
-// 新增 / 废弃权限点必须同时修改本文件、internal/iam/perm.go、migrations/000003_*.up.sql
-// 与 docs/iam/PERMISSIONS.md，四者不一致时 internal/iam/catalog 的单元测试失败。
+// 新增 / 废弃权限点必须同时修改本文件、internal/iam/perm.go、
+// migrations/*_seed_*.up.sql（追加式种子，禁止改写已应用的种子文件）
+// 与 docs/iam/PERMISSIONS.md；四者不一致时本包的单元测试失败。
 package catalog
 
 import (
@@ -321,6 +322,24 @@ var entries = []Entry{
 		Status:      StatusActive,
 		Sort:        190,
 		Description: "修改运行时配置；须审计并支持回滚。",
+	},
+	{
+		Code:        iam.PermChangeRequest,
+		Name:        "发起变更申请",
+		Channel:     ChannelBiz,
+		Kind:        KindAPI,
+		Status:      StatusActive,
+		Sort:        200,
+		Description: "以本商户身份发起高风险变更申请，并查看本商户审批单（仅 B 端）。",
+	},
+	{
+		Code:        iam.PermChangeReview,
+		Name:        "审批本商户变更",
+		Channel:     ChannelBiz,
+		Kind:        KindAPI,
+		Status:      StatusActive,
+		Sort:        210,
+		Description: "审批本商户变更申请；申请人不得自审（职责分离）。",
 	},
 }
 

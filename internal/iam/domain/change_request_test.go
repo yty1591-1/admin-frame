@@ -135,11 +135,12 @@ func TestNewChangeRequestValidation(t *testing.T) {
 
 func TestNewChangeRequestRejectsBizTenantOverride(t *testing.T) {
 	_, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
-		ID:      "change-1",
-		Channel: domain.ChannelBiz,
-		Action:  domain.ChangeActionRoleCreate,
-		Payload: []byte(`{"merchant_id":"m-2","code":"owner"}`),
-		Actor:   "requester-1",
+		ID:         "change-1",
+		Channel:    domain.ChannelBiz,
+		MerchantID: "m-1",
+		Action:     domain.ChangeActionRoleCreate,
+		Payload:    []byte(`{"merchant_id":"m-2","code":"owner"}`),
+		Actor:      "requester-1",
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -149,6 +150,58 @@ func TestNewChangeRequestRejectsBizTenantOverride(t *testing.T) {
 	}
 	if !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("err=%v, want forbidden", err)
+	}
+}
+
+func TestNewChangeRequestRejectsBizPlatformScopePayload(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{name: "platform scope", payload: `{"scope_type":"platform","code":"owner"}`},
+		{name: "invalid scope type", payload: `{"scope_type":1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
+				ID:         "change-1",
+				Channel:    domain.ChannelBiz,
+				MerchantID: "m-1",
+				Action:     domain.ChangeActionRoleCreate,
+				Payload:    []byte(tc.payload),
+				Actor:      "requester-1",
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !errors.Is(err, domain.ErrInvalidChangeTenant) {
+				t.Fatalf("err=%v, want ErrInvalidChangeTenant", err)
+			}
+			if !errors.Is(err, apperr.ErrBadRequest) {
+				t.Fatalf("err=%v, want bad request", err)
+			}
+		})
+	}
+}
+
+// 商户作用域（或未声明 scope_type）的载荷仍然允许，避免过度收紧误伤正常申请。
+func TestNewChangeRequestAcceptsBizMerchantScopePayload(t *testing.T) {
+	for _, payload := range []string{
+		`{"scope_type":"merchant","code":"owner"}`,
+		`{"scope_type":"","code":"owner"}`,
+		`{"code":"owner"}`,
+	} {
+		_, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
+			ID:         "change-1",
+			Channel:    domain.ChannelBiz,
+			MerchantID: "m-1",
+			Action:     domain.ChangeActionRoleCreate,
+			Payload:    []byte(payload),
+			Actor:      "requester-1",
+		})
+		if err != nil {
+			t.Fatalf("payload %s: unexpected error %v", payload, err)
+		}
 	}
 }
 

@@ -5,7 +5,7 @@
 //
 // 本包刻意不注册以下路由：
 //   - POST /authorize：模拟鉴权依赖 iam:check，属 A 端专属权限点；
-//   - 审批单 / 破玻璃：M4.2 / M4.3 落地，届时单独评审权限点与 SoD 规则。
+//   - 破玻璃：平台级应急能力，B 端无对应权限点，路由不注册。
 package biz
 
 import (
@@ -44,6 +44,22 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 本商户主体有效权限。
 	mux.Handle("GET /biz/v1/iam/subjects/{subject_type}/{subject_id}/permissions",
 		authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.SubjectPermissions))))
+
+	// 本商户高风险变更审批单：申请与审批使用不同权限点，便于把「提申请」与
+	// 「批准申请」授予不同角色（SoD）；申请人不得自审由领域层强制。
+	// 列表使用 iam:change:request：审批人若要看待办，需要同时持有该权限点。
+	mux.Handle("GET /biz/v1/iam/change-requests",
+		authMW(perm(string(iam.PermChangeRequest))(http.HandlerFunc(h.ListChangeRequests))))
+	mux.Handle("POST /biz/v1/iam/change-requests",
+		authMW(perm(string(iam.PermChangeRequest))(http.HandlerFunc(h.CreateChangeRequest))))
+	mux.Handle("POST /biz/v1/iam/change-requests/{id}/approve",
+		authMW(perm(string(iam.PermChangeReview))(http.HandlerFunc(h.ApproveChangeRequest))))
+	mux.Handle("POST /biz/v1/iam/change-requests/{id}/reject",
+		authMW(perm(string(iam.PermChangeReview))(http.HandlerFunc(h.RejectChangeRequest))))
+	mux.Handle("POST /biz/v1/iam/change-requests/{id}/cancel",
+		authMW(perm(string(iam.PermChangeRequest))(http.HandlerFunc(h.CancelChangeRequest))))
+	mux.Handle("POST /biz/v1/iam/change-requests/{id}/apply",
+		authMW(perm(string(iam.PermChangeReview))(http.HandlerFunc(h.ApplyChangeRequest))))
 
 	// 当前主体权限：仅需认证。
 	mux.Handle("GET /biz/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))

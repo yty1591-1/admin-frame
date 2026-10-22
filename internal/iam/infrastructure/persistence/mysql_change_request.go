@@ -12,7 +12,7 @@ import (
 )
 
 // changeRequestSelectColumns 是审批单表的显式列清单（禁止 SELECT *，DATA-04）。
-const changeRequestSelectColumns = `id, channel, action, target_type, target_id, payload,
+const changeRequestSelectColumns = `id, channel, merchant_id, action, target_type, target_id, payload,
 	status, reason, requested_by, requested_at, approved_by, approved_at, applied_at, version`
 
 // SQLChangeRequestRepository 是 MySQL 8.0 的审批单仓储实现。
@@ -50,12 +50,12 @@ func (r *SQLChangeRequestRepository) Save(ctx context.Context, request *domain.C
 	}
 	if expectedVersion == 0 {
 		_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO iam_change_request
-			(id, channel, action, target_type, target_id, payload, status, reason,
+			(id, channel, merchant_id, action, target_type, target_id, payload, status, reason,
 				requested_by, requested_at, approved_by, approved_at, applied_at, version)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			requestID, string(request.Channel), string(request.Action), string(request.TargetType),
-			request.TargetID, request.Payload, string(request.Status), request.Reason,
-			request.RequestedBy, request.RequestedAt.UTC(), request.ApprovedBy,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			requestID, string(request.Channel), request.MerchantID, string(request.Action),
+			string(request.TargetType), request.TargetID, request.Payload, string(request.Status),
+			request.Reason, request.RequestedBy, request.RequestedAt.UTC(), request.ApprovedBy,
 			nullTime(request.ApprovedAt), nullTime(request.AppliedAt), request.Version)
 		return conflictOnDuplicate(err, "change request id already exists")
 	}
@@ -153,6 +153,10 @@ func changeRequestFilterClause(filter domain.ChangeRequestFilter) (clause string
 		builder.WriteString(` AND channel = ?`)
 		args = append(args, string(filter.Channel))
 	}
+	if filter.MerchantID != "" {
+		builder.WriteString(` AND merchant_id = ?`)
+		args = append(args, filter.MerchantID)
+	}
 	if filter.Status != "" {
 		builder.WriteString(` AND status = ?`)
 		args = append(args, string(filter.Status))
@@ -176,9 +180,9 @@ func scanChangeRequest(row scanRow) (*domain.ChangeRequest, error) {
 		appliedAt  sql.NullTime
 	)
 	err := row.Scan(
-		&request.ID, &request.Channel, &request.Action, &request.TargetType, &request.TargetID,
-		&request.Payload, &request.Status, &request.Reason, &request.RequestedBy, &request.RequestedAt,
-		&request.ApprovedBy, &approvedAt, &appliedAt, &request.Version,
+		&request.ID, &request.Channel, &request.MerchantID, &request.Action, &request.TargetType,
+		&request.TargetID, &request.Payload, &request.Status, &request.Reason, &request.RequestedBy,
+		&request.RequestedAt, &request.ApprovedBy, &approvedAt, &appliedAt, &request.Version,
 	)
 	if err != nil {
 		return nil, err

@@ -18,6 +18,8 @@ const (
 	// 载荷只是「待审批的意图」，不是审计归档：超限通常意味着把整份角色清单塞进来，
 	// 既放大了审批人误判的风险，也会让列表接口变慢。需要回溯时按 target_id 查目标聚合。
 	MaxChangePayloadBytes = 16 << 10
+	// MaxChangeMerchantIDLen 商户 ID 最大字节数，与 iam_change_request.merchant_id 列宽一致。
+	MaxChangeMerchantIDLen = 64
 )
 
 // ChangeStatus 是审批单状态机取值。
@@ -153,6 +155,7 @@ var changePayloadForbiddenKeys = map[string]struct{}{
 //
 // 不变量：
 //   - 申请人必须存在，审批人不得与申请人相同（职责分离，SoD）；
+//   - 端别与商户必须自洽：A 端商户为空，B 端商户非空（租户隔离，SEC-14）；
 //   - 载荷必须是 JSON 对象，不含 Token / 密钥，且不超过 16 KiB；
 //   - 删除 / 变更类动作必须携带目标 ID；新建类动作允许为空；
 //   - 状态只能按 pending → approved → applied / rejected / cancelled 流转；
@@ -165,6 +168,11 @@ type ChangeRequest struct {
 	ID string
 	// Channel 发起端别。
 	Channel Channel
+	// MerchantID 商户 ID：A 端恒为空串，B 端必须等于 Principal 的商户（SEC-14）。
+	//
+	// 该字段只由服务端从 Principal 派生，绝不接受请求体或载荷传入；
+	// 它是审批单的租户归属事实，仓储与用例都据此做过滤与二次校验。
+	MerchantID string
 	// Action 申请动作。
 	Action ChangeAction
 	// TargetType 目标聚合类型，由 Action 派生。
@@ -193,13 +201,15 @@ type ChangeRequest struct {
 
 // NewChangeRequestParams 创建审批单的入参。
 type NewChangeRequestParams struct {
-	ID       string
-	Channel  Channel
-	Action   ChangeAction
-	TargetID string
-	Payload  []byte
-	Reason   string
-	Actor    string
+	ID      string
+	Channel Channel
+	// MerchantID 商户 ID；B 端必填，A 端必须为空（由 transport 从 Principal 派生）。
+	MerchantID string
+	Action     ChangeAction
+	TargetID   string
+	Payload    []byte
+	Reason     string
+	Actor      string
 }
 
 // NewChangeRequest 创建处于 pending 状态、版本为 1 的审批单。
@@ -211,6 +221,9 @@ func NewChangeRequest(p NewChangeRequestParams) (*ChangeRequest, error) {
 		return nil, errInvalid(ErrMissingActor, "change request requester is required")
 	}
 	if err := p.Channel.Validate(); err != nil {
+		return nil, err
+	}
+	if err := validateChangeTenant(p.Channel, p.MerchantID); err != nil {
 		return nil, err
 	}
 	if err := p.Action.Validate(); err != nil {
@@ -236,6 +249,7 @@ func NewChangeRequest(p NewChangeRequestParams) (*ChangeRequest, error) {
 	return &ChangeRequest{
 		ID:          p.ID,
 		Channel:     p.Channel,
+		MerchantID:  p.MerchantID,
 		Action:      p.Action,
 		TargetType:  targetType,
 		TargetID:    p.TargetID,
@@ -250,6 +264,18 @@ func NewChangeRequest(p NewChangeRequestParams) (*ChangeRequest, error) {
 
 // IsPending 报告审批单是否仍可被决定。
 func (c *ChangeRequest) IsPending() bool { return c.Status == ChangeStatusPending }
+
+// VisibleTo 报告审批单是否对给定端别 / 商户可见。
+//
+// 判定规则与请求解析规则一一对应：A 端只看平台级单据（merchantID 为空），
+// B 端只看本商户单据。跨端或跨商户一律返回 false，由调用方统一映射 40400，
+// 不得用 40300 区分「存在但无权」，否则等于提供了租户枚举接口（SEC-14）。
+func (c *ChangeRequest) VisibleTo(channel Channel, merchantID string) bool {
+	if channel != "" && c.Channel != channel {
+		return false
+	}
+	return c.MerchantID == merchantID
+}
 
 // IsApproved 报告审批单是否已通过但尚未应用。
 func (c *ChangeRequest) IsApproved() bool { return c.Status == ChangeStatusApproved }
@@ -373,6 +399,31 @@ func (c *ChangeRequest) ensurePending(actor string, expectedVersion int64) error
 	return nil
 }
 
+// validateChangeTenant 校验端别与商户组合，防止出现「无主」审批单。
+//
+// A 端审批单作用于平台级角色（platform role 的 merchant_id 必须为空），
+// 带上商户会让审批单与目标聚合的作用域不自洽；B 端审批单必须锁定商户，
+// 否则仓储无法按租户过滤，应用阶段也无法证明目标属于当前商户。
+func validateChangeTenant(channel Channel, merchantID string) error {
+	if len(merchantID) > MaxChangeMerchantIDLen {
+		return errInvalid(ErrInvalidChangeTenant,
+			"change request merchant id exceeds %d bytes", MaxChangeMerchantIDLen)
+	}
+	switch channel {
+	case ChannelAdmin:
+		if merchantID != "" {
+			return errInvalid(ErrInvalidChangeTenant,
+				"channel admin change request must not carry merchant id")
+		}
+	case ChannelBiz:
+		if merchantID == "" {
+			return errInvalid(ErrInvalidChangeTenant,
+				"channel biz change request requires merchant id")
+		}
+	}
+	return nil
+}
+
 // validateChangeTarget 校验目标类型与 ID 的组合。
 func validateChangeTarget(action ChangeAction, targetID string) error {
 	if len(targetID) > MaxChangeTargetIDLen {
@@ -424,6 +475,18 @@ func normalizeChangePayload(channel Channel, payload []byte) ([]byte, error) {
 		if channel == ChannelBiz && strings.EqualFold(key, "merchant_id") {
 			return nil, errForbidden(ErrChangeTenantOverride,
 				"channel biz change payload must not carry merchant_id; it is derived from the principal")
+		}
+	}
+	// B 端不得申请平台级作用域：否则审批人批准一张「本商户」单据，实际创建出
+	// 跨租户可见的 platform 角色。这里在申请阶段就拒绝，避免把越权意图带上审批台。
+	if channel == ChannelBiz {
+		if raw, ok := fields["scope_type"]; ok {
+			var scope string
+			if err := json.Unmarshal(raw, &scope); err != nil ||
+				(scope != "" && scope != string(RoleScopeMerchant)) {
+				return nil, errInvalid(ErrInvalidChangeTenant,
+					"channel biz change payload may only target merchant scope")
+			}
 		}
 	}
 	return slices.Clone(trimmed), nil

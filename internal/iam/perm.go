@@ -34,6 +34,13 @@ const (
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。
 	PermChangeApprove PermissionCode = "iam:change:approve"
+	// PermChangeRequest 以本商户身份发起审批单，并查看本商户待办列表（B 端专属）。
+	//
+	// 与 A 端的 iam:change:read 刻意分离：即使 B 端商户过滤逻辑出错，
+	// 持有本权限点的主体也无法读取平台级审批单（纵深防御，SEC-14）。
+	PermChangeRequest PermissionCode = "iam:change:request"
+	// PermChangeReview 审批本商户变更（B 端专属），申请人不得自审（SoD）。
+	PermChangeReview PermissionCode = "iam:change:review"
 	// PermBreakglassRequest 申请限时超级权限。
 	PermBreakglassRequest PermissionCode = "iam:breakglass:request"
 	// PermBreakglassApprove 审批破玻璃申请。

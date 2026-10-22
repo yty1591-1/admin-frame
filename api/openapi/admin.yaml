@@ -880,7 +880,8 @@ paths:
       description: |
         需要 `iam:change:read`。按申请时间倒序（同一时刻按 ID 倒序），
         分页参数与其它列表接口一致（page / page_size，上限 100）。
-        审批单仅 A 端暴露：表中暂无 merchant_id，B 端无法做租户隔离。
+        A 端只看平台级审批单（merchant_id 为空）；商户级审批单由
+        `/biz/v1/iam/change-requests` 按 Principal 的商户隔离展示。
       operationId: adminListIAMChangeRequests
       security:
         - bearerAuth: []
@@ -931,8 +932,9 @@ paths:
         payload 必须是 JSON 对象，且：
         - 大小不超过 16 KiB；
         - 禁止包含 token / password / secret / private_key 等敏感字段（SEC-14）；
-        - B 端载荷禁止包含 merchant_id（当前 B 端审批未开放，返回 40300）；
+        - B 端载荷禁止包含 merchant_id：商户只能来自认证主体，命中返回 40300；
         - breakglass_request 仅在 iam.breakglass.enabled=true 时可用，否则返回 40300；
+        - B 端（/biz/v1/iam/change-requests）不允许 breakglass_request，固定返回 40300；
       operationId: adminCreateIAMChangeRequest
       security:
         - bearerAuth: []
@@ -1705,6 +1707,10 @@ components:
           type: string
         channel:
           $ref: "#/components/schemas/Channel"
+        merchant_id:
+          type: string
+          readOnly: true
+          description: 商户 ID；仅 A 端回显（平台级审批单为空），B 端不返回该字段
         action:
           $ref: "#/components/schemas/ChangeAction"
         target_type:

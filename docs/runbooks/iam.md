@@ -78,9 +78,30 @@
      按 [db-connection-pool.md](./db-connection-pool.md) 排查；重试前确认请求具备幂等性
      （角色 `version`、审批单 `version`、outbox `event_id`）。
    运维注意：原子性只覆盖「业务写入 + 入队」，投递仍是至少一次，审计出口必须按 `event_id` 去重。
-8. **迁移回滚**：`migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
+8. **B 端审批单（M4.6 起）**：B 端审批按 `merchant_id` 隔离，跨商户访问一律 `40400`。
+   - 商户反馈「看不到自己的单据」：先确认 Token 的 `merchant_id` 与创建时的商户一致；
+     `SELECT merchant_id, channel, status FROM iam_change_request WHERE id = ?` 对照，
+     不一致属越权尝试（不是故障），按安全事件记录。
+   - 商户无法审批：`iam:change:review` 是否授予、审批人是否等于申请人（SoD 自审 `40300`）。
+   - B 端 `40300` 且错误为 `merchant id is required`：Token 缺失商户，属认证侧问题，不是 IAM 配置问题。
+   - 应用失败（`approved` 不转 `applied`）：目标角色 / 绑定可能不属于该商户（`40400`）
+     或已被删除；修正目标后按当前 `version` 重试，**禁止直接改审批单状态**。
+   - 破玻璃不走 B 端：B 端创建 `breakglass_request` 与 B 端路由均拒绝，属预期行为。
+9. **迁移回滚**：`migrate down 000006` → `migrate down 000005` → `migrate down 000004` →
+   `migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
+   `000005` 的回滚会丢失商户归属，回滚前必须确认没有 pending / approved 的 B 端单据。
    生产回滚只切配置（`iam.mode=off`），不回滚 schema。
-9. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
+10. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
+
+## 演练与验证
+
+- 本节承诺的降级行为已固化为可执行测试（`internal/iam/app/fault_injection_test.go`，随 `make test-ci` 运行，
+  矩阵见 [docs/rbac-iam.md §13.7](../rbac-iam.md)）：
+  - Redis 不可用 → 回源 DB 仍可鉴权（`TestAuthorizeServiceDegradesWhenL2Unavailable`）；
+  - 缓存失效失败 → 授权写入仍成功，由 TTL 兜底（`TestRoleServiceWriteSurvivesInvalidationFailure`）；
+  - 审计出口抖动 → 积压可见并在退避后自动追平（`TestOutboxPublisherDrainsBacklogAfterTransientFailure`）。
+- 每季度至少一次 staging 演练：停 Redis、停审计出口、注入 DB 超时，确认告警按「症状」触发并在 15 分钟内收敛。
+- 演练必须在变更窗口内执行，结束后确认 `iam_outbox_pending = 0`、`iam_shadow_mismatch_total` 无新增。
 
 ## 升级
 

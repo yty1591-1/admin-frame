@@ -194,8 +194,8 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		IDs:        ids,
 		Limits: app.ChangeLimits{
 			RequireReason: cfg.IAM.Security.RequireReason,
-			// B 端审批需要 iam_change_request.merchant_id 列，待 000004 迁移后开启。
-			AllowBizChannel: false,
+			// 000005 已补 merchant_id，B 端审批按 Principal 的商户隔离后开放。
+			AllowBizChannel: true,
 			AllowBreakglass: cfg.IAM.Breakglass.Enabled,
 		},
 		Logger: deps.Logger,

@@ -38,13 +38,51 @@ type ChangeRequestService struct {
 type ChangeLimits struct {
 	// RequireReason 创建审批单时是否强制填写原因。
 	RequireReason bool
-	// AllowBizChannel 是否允许 B 端发起审批单。
+	// AllowBizChannel 是否允许 B 端发起与决定审批单。
 	//
-	// 当前 iam_change_request 表没有 merchant_id 列，B 端单子无法做租户隔离，
-	// 因此默认关闭；补列迁移（000004）落地后再打开。
+	// 依赖 iam_change_request.merchant_id（迁移 000005）做租户隔离：
+	// 关闭时 B 端创建直接返回 40300，决定类接口返回 40400。
 	AllowBizChannel bool
 	// AllowBreakglass 是否允许 breakglass 动作；破玻璃流程属 M4.3。
 	AllowBreakglass bool
+}
+
+// ChangeScope 是一次审批操作的数据作用域，由 transport 从 Principal 派生。
+//
+// 服务层不信任调用方自报的端别与商户：端别来自路由挂载点，商户来自认证主体。
+// 二者共同决定「哪些审批单可见」，缺一即按不可见处理（fail-closed），
+// 避免某个入口忘记带商户时退化成跨租户可读（SEC-14）。
+type ChangeScope struct {
+	// Channel 请求所在端别。
+	Channel domain.Channel
+	// MerchantID 商户 ID；A 端为空，B 端非空。
+	MerchantID string
+}
+
+// Validate 校验作用域自洽：A 端不得携带商户，B 端必须携带商户。
+func (s ChangeScope) Validate() error {
+	if err := s.Channel.Validate(); err != nil {
+		return err
+	}
+	switch s.Channel {
+	case domain.ChannelBiz:
+		if strings.TrimSpace(s.MerchantID) == "" {
+			return apperr.Forbidden("merchant id is required")
+		}
+	case domain.ChannelAdmin:
+		if s.MerchantID != "" {
+			return apperr.BadRequest("merchant id is not allowed on channel admin")
+		}
+	}
+	return nil
+}
+
+// VisibleTo 报告审批单是否落在作用域内。
+func (s ChangeScope) VisibleTo(request *domain.ChangeRequest) bool {
+	if request == nil {
+		return false
+	}
+	return request.VisibleTo(s.Channel, s.MerchantID)
 }
 
 // ChangeRequestServiceConfig 是 ChangeRequestService 的装配参数。
@@ -98,12 +136,14 @@ func NewChangeRequestService(cfg ChangeRequestServiceConfig) (*ChangeRequestServ
 
 // CreateChangeRequestCommand 是创建审批单的入参。
 type CreateChangeRequestCommand struct {
-	Channel  domain.Channel
-	Action   domain.ChangeAction
-	TargetID string
-	Payload  []byte
-	Reason   string
-	Actor    string
+	Channel domain.Channel
+	// MerchantID 商户 ID：B 端必填（由 Principal 派生），A 端必须为空。
+	MerchantID string
+	Action     domain.ChangeAction
+	TargetID   string
+	Payload    []byte
+	Reason     string
+	Actor      string
 }
 
 // Create 创建待审批单。
@@ -113,11 +153,23 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 	if strings.TrimSpace(cmd.Actor) == "" {
 		return nil, apperr.BadRequest("actor is required")
 	}
+	scope := ChangeScope{Channel: cmd.Channel, MerchantID: cmd.MerchantID}
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
 	if s.limits.RequireReason && strings.TrimSpace(cmd.Reason) == "" {
 		return nil, apperr.BadRequest("reason is required")
 	}
-	if cmd.Channel == domain.ChannelBiz && !s.limits.AllowBizChannel {
-		return nil, apperr.Forbidden("biz channel change requests are not enabled yet")
+	if cmd.Channel == domain.ChannelBiz {
+		// B 端审批流随 000005 落地；关闭时按不可用处理，而不是静默降级为 A 端单据。
+		if !s.limits.AllowBizChannel {
+			return nil, apperr.Forbidden("biz channel change requests are not enabled")
+		}
+		// 破玻璃是平台级应急能力：允许商户自助申请等于把超级权限的入口下放到租户，
+		// 超出 M4 的威胁模型，B 端一律拒绝。
+		if cmd.Action == domain.ChangeActionBreakglassRequest {
+			return nil, apperr.Forbidden("breakglass is not available on channel biz")
+		}
 	}
 	if cmd.Action == domain.ChangeActionBreakglassRequest {
 		if !s.limits.AllowBreakglass {
@@ -132,13 +184,14 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 		return nil, apperr.Internal("generate change request id", err)
 	}
 	request, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
-		ID:       requestID,
-		Channel:  cmd.Channel,
-		Action:   cmd.Action,
-		TargetID: cmd.TargetID,
-		Payload:  cmd.Payload,
-		Reason:   cmd.Reason,
-		Actor:    cmd.Actor,
+		ID:         requestID,
+		Channel:    cmd.Channel,
+		MerchantID: cmd.MerchantID,
+		Action:     cmd.Action,
+		TargetID:   cmd.TargetID,
+		Payload:    cmd.Payload,
+		Reason:     cmd.Reason,
+		Actor:      cmd.Actor,
 	})
 	if err != nil {
 		return nil, err
@@ -149,20 +202,25 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 	return request, nil
 }
 
-// Get 按 ID 加载审批单；channel 非空时跨端一律 404（SEC-14）。
-func (s *ChangeRequestService) Get(ctx context.Context, requestID string, channel domain.Channel) (*domain.ChangeRequest, error) {
-	request, err := s.requests.FindByID(ctx, requestID)
-	if err != nil {
-		return nil, err
-	}
-	if channel != "" && request.Channel != channel {
-		return nil, apperr.NotFound("change request not found")
-	}
-	return request, nil
+// Get 按 ID 加载审批单；跨端 / 跨商户一律 404（SEC-14）。
+func (s *ChangeRequestService) Get(ctx context.Context, requestID string, scope ChangeScope) (*domain.ChangeRequest, error) {
+	return s.loadScoped(ctx, requestID, scope)
 }
 
-// List 分页列举审批单；Limit 上限 100（API-05）。
-func (s *ChangeRequestService) List(ctx context.Context, filter domain.ChangeRequestFilter) ([]*domain.ChangeRequest, error) {
+// List 分页列举审批单；端别与商户强制取自作用域，调用方无法越界查询。
+//
+// Limit 上限 100（API-05）。A 端 merchantID 为空，SQL 侧只按 channel 过滤，
+// 由端别的不变量保证不会混入商户单据；B 端追加 merchant_id 条件。
+func (s *ChangeRequestService) List(
+	ctx context.Context,
+	scope ChangeScope,
+	filter domain.ChangeRequestFilter,
+) ([]*domain.ChangeRequest, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	filter.Channel = scope.Channel
+	filter.MerchantID = scope.MerchantID
 	if err := validateChangePage(&filter); err != nil {
 		return nil, err
 	}
@@ -170,16 +228,52 @@ func (s *ChangeRequestService) List(ctx context.Context, filter domain.ChangeReq
 }
 
 // Count 返回与 List 相同条件的审批单总数，供分页 total 使用。
-func (s *ChangeRequestService) Count(ctx context.Context, filter domain.ChangeRequestFilter) (int, error) {
+func (s *ChangeRequestService) Count(
+	ctx context.Context,
+	scope ChangeScope,
+	filter domain.ChangeRequestFilter,
+) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, err
+	}
+	filter.Channel = scope.Channel
+	filter.MerchantID = scope.MerchantID
 	if err := validateChangePage(&filter); err != nil {
 		return 0, err
 	}
 	return s.requests.Count(ctx, filter)
 }
 
+// loadScoped 按作用域加载审批单：不存在、跨端、跨商户统一返回 40400。
+//
+// 40300 会泄露「该 ID 确实存在」这一事实，因此越权访问一律伪装成不存在。
+func (s *ChangeRequestService) loadScoped(
+	ctx context.Context,
+	requestID string,
+	scope ChangeScope,
+) (*domain.ChangeRequest, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	request, err := s.requests.FindByID(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.VisibleTo(request) {
+		return nil, apperr.NotFound("change request not found")
+	}
+	return request, nil
+}
+
 // Approve 通过审批单；审批人必须与申请人不同（SoD）。
-func (s *ChangeRequestService) Approve(ctx context.Context, requestID string, version int64, approver string) (*domain.ChangeRequest, error) {
-	request, err := s.loadForDecision(ctx, requestID, version)
+func (s *ChangeRequestService) Approve(
+	ctx context.Context,
+	requestID string,
+	version int64,
+	approver string,
+	scope ChangeScope,
+) (*domain.ChangeRequest, error) {
+	request, err := s.loadForDecision(ctx, requestID, version, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -193,8 +287,14 @@ func (s *ChangeRequestService) Approve(ctx context.Context, requestID string, ve
 }
 
 // Reject 拒绝审批单；同样适用职责分离。
-func (s *ChangeRequestService) Reject(ctx context.Context, requestID string, version int64, approver string) (*domain.ChangeRequest, error) {
-	request, err := s.loadForDecision(ctx, requestID, version)
+func (s *ChangeRequestService) Reject(
+	ctx context.Context,
+	requestID string,
+	version int64,
+	approver string,
+	scope ChangeScope,
+) (*domain.ChangeRequest, error) {
+	request, err := s.loadForDecision(ctx, requestID, version, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +308,14 @@ func (s *ChangeRequestService) Reject(ctx context.Context, requestID string, ver
 }
 
 // Cancel 由申请人撤销待审批单。
-func (s *ChangeRequestService) Cancel(ctx context.Context, requestID string, version int64, actor string) (*domain.ChangeRequest, error) {
-	request, err := s.loadForDecision(ctx, requestID, version)
+func (s *ChangeRequestService) Cancel(
+	ctx context.Context,
+	requestID string,
+	version int64,
+	actor string,
+	scope ChangeScope,
+) (*domain.ChangeRequest, error) {
+	request, err := s.loadForDecision(ctx, requestID, version, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -222,9 +328,14 @@ func (s *ChangeRequestService) Cancel(ctx context.Context, requestID string, ver
 	return request, nil
 }
 
-// loadForDecision 加载审批单并校验乐观锁，避免用旧页面覆盖他人决定。
-func (s *ChangeRequestService) loadForDecision(ctx context.Context, requestID string, version int64) (*domain.ChangeRequest, error) {
-	request, err := s.requests.FindByID(ctx, requestID)
+// loadForDecision 按作用域加载审批单并校验乐观锁，避免用旧页面覆盖他人决定。
+func (s *ChangeRequestService) loadForDecision(
+	ctx context.Context,
+	requestID string,
+	version int64,
+	scope ChangeScope,
+) (*domain.ChangeRequest, error) {
+	request, err := s.loadScoped(ctx, requestID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +350,7 @@ type ApplyChangeRequestCommand struct {
 	ID      string
 	Version int64
 	Actor   string
+	Scope   ChangeScope
 }
 
 // Apply 执行已通过审批单。
@@ -246,7 +358,10 @@ type ApplyChangeRequestCommand struct {
 // 失败时审批单保持 approved（可重试），不会变成 applied：宁可让人工重试，
 // 也不能出现「标记完成但目标未变更」的审计黑洞。
 func (s *ChangeRequestService) Apply(ctx context.Context, cmd ApplyChangeRequestCommand) (*domain.ChangeRequest, error) {
-	request, err := s.requests.FindByID(ctx, cmd.ID)
+	if err := cmd.Scope.Validate(); err != nil {
+		return nil, err
+	}
+	request, err := s.loadScoped(ctx, cmd.ID, cmd.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +408,8 @@ func (s *ChangeRequestService) Apply(ctx context.Context, cmd ApplyChangeRequest
 
 // RevokeBreakglass 撤销已生效的破玻璃绑定（提前收回超级权限）。
 //
+// 破玻璃是平台级能力（B 端创建已被 Create 拒绝），因此这里只接受 A 端审批单，
+// 不引入商户参数；若未来开放 B 端，必须与 Create 同步补作用域校验。
 // 审批单保持 applied 事实不变：撤销是一次新的授权变更，由 binding 审计记录，
 // 不篡改历史审批状态。
 func (s *ChangeRequestService) RevokeBreakglass(ctx context.Context, requestID, actor string) error {
@@ -302,6 +419,9 @@ func (s *ChangeRequestService) RevokeBreakglass(ctx context.Context, requestID, 
 	request, err := s.requests.FindByID(ctx, requestID)
 	if err != nil {
 		return err
+	}
+	if request.Channel != domain.ChannelAdmin {
+		return apperr.NotFound("change request not found")
 	}
 	if request.Action != domain.ChangeActionBreakglassRequest {
 		return apperr.BadRequest("change request is not a breakglass request")
@@ -468,7 +588,14 @@ func (a *RoleChangeApplicator) applyRoleCreate(ctx context.Context, request *dom
 		return "", err
 	}
 	scope := domain.RoleScopeType(payload.Scope)
-	if scope == "" {
+	if request.Channel == domain.ChannelBiz {
+		// B 端只能创建本商户角色：载荷里的 scope_type 最多只能「确认」merchant，
+		// 不允许用它把单据提升为 platform 角色（那是 A 端专属能力）。
+		if scope != "" && scope != domain.RoleScopeMerchant {
+			return "", apperr.BadRequest("channel biz may only create merchant roles")
+		}
+		scope = domain.RoleScopeMerchant
+	} else if scope == "" {
 		scope = domain.RoleScopePlatform
 	}
 	permissions, err := permissionCodesFromStrings(payload.Permissions)
@@ -482,6 +609,7 @@ func (a *RoleChangeApplicator) applyRoleCreate(ctx context.Context, request *dom
 	role, err := a.roles.CreateRole(ctx, CreateRoleCommand{
 		Channel:     request.Channel,
 		Scope:       scope,
+		MerchantID:  request.MerchantID,
 		Code:        payload.Code,
 		Name:        payload.Name,
 		Description: payload.Description,
@@ -495,13 +623,29 @@ func (a *RoleChangeApplicator) applyRoleCreate(ctx context.Context, request *dom
 	return role.ID, nil
 }
 
+// loadRoleForChange 按审批单作用域加载目标角色。
+//
+// 仓储只按 (id, channel) 定位，因此必须再比对 merchant_id：否则 B 端可以拿
+// 一张本商户的审批单，把 target_id 指向其它商户的角色 ID 来完成越权变更（SEC-14）。
+// 跨商户统一返回 404，不泄露角色是否存在。
+func (a *RoleChangeApplicator) loadRoleForChange(ctx context.Context, request *domain.ChangeRequest) (*domain.Role, error) {
+	role, err := a.roles.LoadForChange(ctx, request.TargetID, request.Channel)
+	if err != nil {
+		return nil, err
+	}
+	if role.MerchantID != request.MerchantID {
+		return nil, apperr.NotFound("role not found")
+	}
+	return role, nil
+}
+
 // applyRoleUpdate 应用名称 / 说明 / 启停变更。
 func (a *RoleChangeApplicator) applyRoleUpdate(ctx context.Context, request *domain.ChangeRequest, actor string) error {
 	var payload roleUpdatePayload
 	if err := decodeChangePayload(request, &payload); err != nil {
 		return err
 	}
-	role, err := a.roles.LoadForChange(ctx, request.TargetID, request.Channel)
+	role, err := a.loadRoleForChange(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -527,7 +671,7 @@ func (a *RoleChangeApplicator) applyRolePermissionReplace(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	role, err := a.roles.LoadForChange(ctx, request.TargetID, request.Channel)
+	role, err := a.loadRoleForChange(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -556,8 +700,14 @@ func (a *RoleChangeApplicator) applyRoleClone(ctx context.Context, request *doma
 	if err := decodeChangePayload(request, &payload); err != nil {
 		return "", err
 	}
+	// 先按作用域加载源角色：克隆会把源角色的权限与数据范围整份复制，
+	// 跨商户克隆等于直接照抄别人的授权（SEC-14）。
+	source, err := a.loadRoleForChange(ctx, request)
+	if err != nil {
+		return "", err
+	}
 	role, err := a.roles.CloneRole(ctx, CloneRoleCommand{
-		SourceID: request.TargetID,
+		SourceID: source.ID,
 		Code:     payload.Code,
 		Name:     payload.Name,
 		Actor:    actor,
@@ -570,7 +720,7 @@ func (a *RoleChangeApplicator) applyRoleClone(ctx context.Context, request *doma
 
 // applyRoleDelete 软删角色。
 func (a *RoleChangeApplicator) applyRoleDelete(ctx context.Context, request *domain.ChangeRequest, actor string) error {
-	role, err := a.roles.LoadForChange(ctx, request.TargetID, request.Channel)
+	role, err := a.loadRoleForChange(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -592,6 +742,7 @@ func (a *RoleChangeApplicator) applyBindingCreate(ctx context.Context, request *
 		Channel:     request.Channel,
 		SubjectType: domain.SubjectType(payload.SubjectType),
 		SubjectID:   payload.SubjectID,
+		MerchantID:  request.MerchantID,
 		RoleID:      payload.RoleID,
 		ExpiresAt:   payload.ExpiresAt,
 		Actor:       actor,
@@ -606,9 +757,10 @@ func (a *RoleChangeApplicator) applyBindingCreate(ctx context.Context, request *
 // applyBindingDelete 解绑。
 func (a *RoleChangeApplicator) applyBindingDelete(ctx context.Context, request *domain.ChangeRequest, actor string) error {
 	return a.bindings.Unbind(ctx, UnbindCommand{
-		ID:     request.TargetID,
-		Actor:  actor,
-		Reason: request.Reason,
+		ID:         request.TargetID,
+		MerchantID: request.MerchantID,
+		Actor:      actor,
+		Reason:     request.Reason,
 	})
 }
 
@@ -620,6 +772,11 @@ func (a *RoleChangeApplicator) applyBreakglassRequest(
 	request *domain.ChangeRequest,
 	actor string,
 ) (string, error) {
+	if request.Channel != domain.ChannelAdmin {
+		// 与 ChangeRequestService.Create 的闸门互为兜底：即使有历史单据以 biz 端
+		// 落库，执行阶段也不允许签发超级权限。
+		return "", apperr.Forbidden("breakglass is not available on channel biz")
+	}
 	var payload breakglassRequestPayload
 	if err := decodeChangePayload(request, &payload); err != nil {
 		return "", err

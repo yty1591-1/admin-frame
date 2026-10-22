@@ -11,6 +11,9 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
+// adminScope 是 A 端审批操作的作用域（平台级，无商户）。
+var adminScope = app.ChangeScope{Channel: domain.ChannelAdmin}
+
 // createTestRole 在夹具中创建一个已落库的平台角色。
 func createTestRole(t *testing.T, f *fixture, code string) *domain.Role {
 	t.Helper()
@@ -55,7 +58,7 @@ func TestChangeRequestFullFlowAppliesPermissions(t *testing.T) {
 		t.Fatalf("created request = %+v", request)
 	}
 
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -67,6 +70,7 @@ func TestChangeRequestFullFlowAppliesPermissions(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -100,7 +104,7 @@ func TestChangeRequestApproveEnforcesSeparationOfDuties(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	_, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1001")
+	_, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1001", adminScope)
 	if !errors.Is(err, domain.ErrSelfApproval) {
 		t.Fatalf("err = %v, want self approval rejection", err)
 	}
@@ -125,6 +129,7 @@ func TestChangeRequestApplyRequiresApproval(t *testing.T) {
 		ID:      request.ID,
 		Version: request.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	})
 	if !errors.Is(err, apperr.ErrConflict) {
 		t.Fatalf("err = %v, want conflict", err)
@@ -143,7 +148,7 @@ func TestChangeRequestApplyIsVersionGuarded(t *testing.T) {
 	f := newFixture(t)
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -152,6 +157,7 @@ func TestChangeRequestApplyIsVersionGuarded(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version + 5,
 		Actor:   "1002",
+		Scope:   adminScope,
 	}); !errors.Is(err, apperr.ErrConflict) {
 		t.Fatalf("err = %v, want conflict", err)
 	}
@@ -170,7 +176,7 @@ func TestChangeRequestApplyFailureKeepsApprovedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -178,6 +184,7 @@ func TestChangeRequestApplyFailureKeepsApprovedState(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	}); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("err = %v, want not found", err)
 	}
@@ -195,10 +202,10 @@ func TestChangeRequestCancelRequiresRequester(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	if _, err := f.changeSvc.Cancel(context.Background(), request.ID, request.Version, "1002"); !errors.Is(err, domain.ErrNotRequester) {
+	if _, err := f.changeSvc.Cancel(context.Background(), request.ID, request.Version, "1002", adminScope); !errors.Is(err, domain.ErrNotRequester) {
 		t.Fatalf("err = %v", err)
 	}
-	cancelled, err := f.changeSvc.Cancel(context.Background(), request.ID, request.Version, "1001")
+	cancelled, err := f.changeSvc.Cancel(context.Background(), request.ID, request.Version, "1001", adminScope)
 	if err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
@@ -212,14 +219,14 @@ func TestChangeRequestRejectFlow(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	rejected, err := f.changeSvc.Reject(context.Background(), request.ID, request.Version, "1002")
+	rejected, err := f.changeSvc.Reject(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Reject: %v", err)
 	}
 	if rejected.Status != domain.ChangeStatusRejected || rejected.ApprovedBy != "1002" {
 		t.Fatalf("rejected = %+v", rejected)
 	}
-	if _, err := f.changeSvc.Approve(context.Background(), rejected.ID, rejected.Version, "1003"); !errors.Is(err, domain.ErrChangeNotPending) {
+	if _, err := f.changeSvc.Approve(context.Background(), rejected.ID, rejected.Version, "1003", adminScope); !errors.Is(err, domain.ErrChangeNotPending) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -235,7 +242,31 @@ func TestChangeRequestCreateGuardsChannelAndBreakglass(t *testing.T) {
 		Reason:  "B 端自助",
 		Actor:   "m_001",
 	}); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("biz channel err = %v, want forbidden", err)
+		t.Fatalf("biz channel without merchant err = %v, want forbidden", err)
+	}
+
+	// B 端审批默认关闭：即使作用域自洽也必须拒绝，避免半开状态下写入无主单据。
+	if _, err := f.changeSvc.Create(ctx, app.CreateChangeRequestCommand{
+		Channel:    domain.ChannelBiz,
+		MerchantID: "m-1",
+		Action:     domain.ChangeActionRoleCreate,
+		Payload:    []byte(`{"code":"owner","name":"owner"}`),
+		Reason:     "B 端自助",
+		Actor:      "m_001",
+	}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("biz channel disabled err = %v, want forbidden", err)
+	}
+
+	// A 端不得携带商户：否则审批单与平台级目标的作用域不自洽。
+	if _, err := f.changeSvc.Create(ctx, app.CreateChangeRequestCommand{
+		Channel:    domain.ChannelAdmin,
+		MerchantID: "m-1",
+		Action:     domain.ChangeActionRoleUpdate,
+		TargetID:   "role-1",
+		Reason:     "越权尝试",
+		Actor:      "1001",
+	}); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("admin with merchant err = %v, want bad request", err)
 	}
 
 	if _, err := f.changeSvc.Create(ctx, app.CreateChangeRequestCommand{
@@ -271,7 +302,7 @@ func TestChangeRequestRoleCreateBindsTargetOnApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -279,6 +310,7 @@ func TestChangeRequestRoleCreateBindsTargetOnApply(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -309,7 +341,7 @@ func TestChangeRequestBindingCreateApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -317,6 +349,7 @@ func TestChangeRequestBindingCreateApplies(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -349,7 +382,7 @@ func TestChangeRequestRejectsUnknownPayloadFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002")
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -357,6 +390,7 @@ func TestChangeRequestRejectsUnknownPayloadFields(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "1002",
+		Scope:   adminScope,
 	}); !errors.Is(err, apperr.ErrBadRequest) {
 		t.Fatalf("err = %v, want bad request", err)
 	}
@@ -367,9 +401,8 @@ func TestChangeRequestListFiltersAndIsolatesChannel(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	list, err := f.changeSvc.List(context.Background(), domain.ChangeRequestFilter{
-		Channel: domain.ChannelAdmin,
-		Status:  domain.ChangeStatusPending,
+	list, err := f.changeSvc.List(context.Background(), adminScope, domain.ChangeRequestFilter{
+		Status: domain.ChangeStatusPending,
 	})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -377,10 +410,12 @@ func TestChangeRequestListFiltersAndIsolatesChannel(t *testing.T) {
 	if len(list) != 1 || list[0].ID != request.ID {
 		t.Fatalf("list = %d", len(list))
 	}
-	if _, err := f.changeSvc.Get(context.Background(), request.ID, domain.ChannelBiz); !errors.Is(err, apperr.ErrNotFound) {
+	if _, err := f.changeSvc.Get(context.Background(), request.ID,
+		app.ChangeScope{Channel: domain.ChannelBiz, MerchantID: "m-1"}); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("cross channel err = %v", err)
 	}
-	if _, err := f.changeSvc.List(context.Background(), domain.ChangeRequestFilter{Limit: 101}); !errors.Is(err, apperr.ErrBadRequest) {
+	if _, err := f.changeSvc.List(context.Background(), adminScope,
+		domain.ChangeRequestFilter{Limit: 101}); !errors.Is(err, apperr.ErrBadRequest) {
 		t.Fatalf("limit err = %v", err)
 	}
 }

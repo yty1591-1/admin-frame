@@ -41,7 +41,7 @@ func (r *MemoryChangeRequestRepository) FindByID(_ context.Context, id string) (
 //
 // expectedVersion 为 0 表示创建：主键冲突返回 Conflict；
 // 非 0 表示更新：版本必须一致，否则返回 Conflict（乐观锁）。
-// 审批单的端别与动作一旦创建即不可变，防止用同一张单子偷换目标。
+// 审批单的端别、商户与动作一旦创建即不可变，防止用同一张单子偷换目标或租户。
 func (r *MemoryChangeRequestRepository) Save(_ context.Context, request *domain.ChangeRequest, expectedVersion int64) error {
 	if request == nil {
 		return apperr.BadRequest("change request is required")
@@ -65,6 +65,9 @@ func (r *MemoryChangeRequestRepository) Save(_ context.Context, request *domain.
 	}
 	if existing.Channel != request.Channel || existing.Action != request.Action {
 		return apperr.BadRequest("change request channel and action are immutable")
+	}
+	if existing.MerchantID != request.MerchantID {
+		return apperr.BadRequest("change request merchant is immutable")
 	}
 	r.requests[request.ID] = cloneChangeRequest(request)
 	return nil
@@ -109,6 +112,9 @@ func (r *MemoryChangeRequestRepository) Count(_ context.Context, filter domain.C
 // matchChangeFilter 判断审批单是否命中过滤条件；List 与 Count 共用，避免规则漂移。
 func matchChangeFilter(request *domain.ChangeRequest, filter domain.ChangeRequestFilter) bool {
 	if filter.Channel != "" && request.Channel != filter.Channel {
+		return false
+	}
+	if filter.MerchantID != "" && request.MerchantID != filter.MerchantID {
 		return false
 	}
 	if filter.Status != "" && request.Status != filter.Status {

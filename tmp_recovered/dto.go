@@ -48,23 +48,23 @@ type DataScopeDTO struct {
 
 // RoleDTO 是角色响应（含权限与数据范围）。
 type RoleDTO struct {
-	ID          string         `json:"id"`
-	Channel     string         `json:"channel"`
-	ScopeType   string         `json:"scope_type"`
-	MerchantID  string         `json:"merchant_id"`
-	Code        string         `json:"code"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	RoleType    string         `json:"role_type"`
-	Status      string         `json:"status"`
-	Version     int64          `json:"version"`
-	Permissions []string       `json:"permissions"`
-	DataScopes  []DataScopeDTO `json:"data_scopes"`
-	BindingCount int           `json:"binding_count,omitempty"`
-	CreatedBy   string         `json:"created_by,omitempty"`
-	UpdatedBy   string         `json:"updated_by,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID           string         `json:"id"`
+	Channel      string         `json:"channel"`
+	ScopeType    string         `json:"scope_type"`
+	MerchantID   string         `json:"merchant_id"`
+	Code         string         `json:"code"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	RoleType     string         `json:"role_type"`
+	Status       string         `json:"status"`
+	Version      int64          `json:"version"`
+	Permissions  []string       `json:"permissions"`
+	DataScopes   []DataScopeDTO `json:"data_scopes"`
+	BindingCount int            `json:"binding_count,omitempty"`
+	CreatedBy    string         `json:"created_by,omitempty"`
+	UpdatedBy    string         `json:"updated_by,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 // RoleListResponse 是角色列表响应。
@@ -96,10 +96,10 @@ type UpdateRoleRequest struct {
 
 // ReplacePermissionsRequest 是全量替换权限请求体。
 type ReplacePermissionsRequest struct {
-	Permissions []string         `json:"permissions"`
-	DataScopes  *[]DataScopeDTO  `json:"data_scopes"`
-	Version     int64            `json:"version"`
-	Reason      string           `json:"reason"`
+	Permissions []string        `json:"permissions"`
+	DataScopes  *[]DataScopeDTO `json:"data_scopes"`
+	Version     int64           `json:"version"`
+	Reason      string          `json:"reason"`
 }
 
 // ReplacePermissionsResponse 是全量替换权限响应：返回最新角色与差量。
@@ -169,9 +169,9 @@ type SubjectPermissionsResponse struct {
 
 // AuthorizeRequest 是模拟鉴权请求体。
 type AuthorizeRequest struct {
-	SubjectType string         `json:"subject_type"`
-	SubjectID   string         `json:"subject_id"`
-	Permission  string         `json:"permission"`
+	SubjectType string            `json:"subject_type"`
+	SubjectID   string            `json:"subject_id"`
+	Permission  string            `json:"permission"`
 	Resource    AuthorizeResource `json:"resource"`
 }
 

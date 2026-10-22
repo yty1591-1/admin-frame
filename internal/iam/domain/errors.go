@@ -64,6 +64,8 @@ var (
 	ErrNotRequester = errors.New("actor is not the requester")
 	// ErrChangeTenantOverride B 端载荷试图覆盖 merchant_id（SEC-14）。
 	ErrChangeTenantOverride = errors.New("change payload must not override tenant")
+	// ErrInvalidChangeTenant 审批单端别与商户组合非法：A 端不得带商户，B 端必须带商户。
+	ErrInvalidChangeTenant = errors.New("invalid change tenant")
 )
 
 // errInvalid 构造参数错误（HTTP 400 / 业务码 40000）。

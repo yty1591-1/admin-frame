@@ -45,9 +45,10 @@ func (recorder) Record(context.Context, audit.Event) error { return nil }
 
 // fixture 复用真实用例与内存仓储，只替换 Principal 与权限中间件。
 type fixture struct {
-	roles    *persistence.MemoryRoleRepository
-	bindings *persistence.MemoryBindingRepository
-	handler  *rest.Handler
+	roles      *persistence.MemoryRoleRepository
+	bindings   *persistence.MemoryBindingRepository
+	changeRepo *persistence.MemoryChangeRequestRepository
+	handler    *rest.Handler
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -79,10 +80,12 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	changeRepo := persistence.NewMemoryChangeRequestRepository()
 	changeSvc, err := app.NewChangeRequestService(app.ChangeRequestServiceConfig{
-		Requests:   persistence.NewMemoryChangeRequestRepository(),
+		Requests:   changeRepo,
 		Applicator: applicator,
 		IDs:        ids,
+		Limits:     app.ChangeLimits{AllowBizChannel: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +97,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{roles: roles, bindings: bindings, handler: handler}
+	return &fixture{roles: roles, bindings: bindings, changeRepo: changeRepo, handler: handler}
 }
 
 type router struct{ handler http.Handler }
@@ -252,17 +255,14 @@ func TestBizRouterHasNoAuthorizeEndpoint(t *testing.T) {
 	}
 }
 
-// TestBizRouterHasNoChangeRequestEndpoints 验证审批单只在 A 端暴露。
+// TestBizRouterHasNoBreakglassEndpoints 验证破玻璃只在 A 端暴露。
 //
-// 审批单表暂不含 merchant_id，B 端无法做租户隔离；在补列迁移落地前必须保持
-// 路由不存在，而不是「存在但返回 403」——后者会泄露该功能已上线。
-func TestBizRouterHasNoChangeRequestEndpoints(t *testing.T) {
+// 破玻璃是平台级应急能力：允许商户自助申请等于把超级权限入口下放到租户，
+// 因此在路由层也不注册，而不是「存在但返回 403」——后者会泄露该功能已上线。
+func TestBizRouterHasNoBreakglassEndpoints(t *testing.T) {
 	f := newFixture(t)
 	rt := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-1", MerchantID: "m-1"})
 	for _, path := range []string{
-		"/biz/v1/iam/change-requests",
-		"/biz/v1/iam/change-requests/1/approve",
-		"/biz/v1/iam/change-requests/1/apply",
 		"/biz/v1/iam/breakglass",
 		"/biz/v1/iam/breakglass/1/approve",
 		"/biz/v1/iam/breakglass/1/revoke",
@@ -271,5 +271,167 @@ func TestBizRouterHasNoChangeRequestEndpoints(t *testing.T) {
 		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("%s must not exist on biz, got %d", path, rec.Code)
 		}
+	}
+}
+
+type changePayload struct {
+	ID         string `json:"id"`
+	Channel    string `json:"channel"`
+	MerchantID string `json:"merchant_id"`
+	Status     string `json:"status"`
+	Version    int64  `json:"version"`
+}
+
+func decodeChange(t *testing.T, env envelope) changePayload {
+	t.Helper()
+	var created changePayload
+	if err := json.Unmarshal(env.Data, &created); err != nil {
+		t.Fatalf("decode change request: %v (data=%s)", err, env.Data)
+	}
+	return created
+}
+
+// TestBizChangeRequestTenantIsolation 验证审批单的商户只来自 Principal。
+//
+// 覆盖三条不变量：
+//  1. 创建时 MerchantID 取 Principal，请求体伪造 channel=admin 被拒绝；
+//  2. 列表只返回本商户单据（跨商户查询为空，不泄露存在性）；
+//  3. 跨商户审批返回 404 而不是 403（避免枚举）。
+func TestBizChangeRequestTenantIsolation(t *testing.T) {
+	f := newFixture(t)
+	m1 := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-1", MerchantID: "m-1"})
+
+	roleRec, roleEnv := m1.do(t, http.MethodPost, "/biz/v1/iam/roles", map[string]any{
+		"scope_type":  "merchant",
+		"code":        "merchant_viewer",
+		"name":        "查看者",
+		"permissions": []string{"order:read"},
+		"data_scopes": []map[string]any{{"resource": "order", "scope_type": "merchant"}},
+	})
+	if roleRec.Code != http.StatusOK {
+		t.Fatalf("create role status=%d body=%s", roleRec.Code, roleRec.Body.String())
+	}
+	var role rolePayload
+	if err := json.Unmarshal(roleEnv.Data, &role); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, env := m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
+		"action":    "role_permission_replace",
+		"target_id": role.ID,
+		"payload":   map[string]any{"permissions": []string{"order:read", "order:write"}},
+		"reason":    "补授写入权限",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create change request status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	created := decodeChange(t, env)
+	if created.Channel != "biz" || created.Status != "pending" {
+		t.Fatalf("created = %+v", created)
+	}
+	if created.MerchantID != "" {
+		t.Fatalf("B 端响应不应回显 merchant_id，got %q", created.MerchantID)
+	}
+	// 仓储是租户归属的最终事实：必须由 Principal 派生。
+	stored, err := f.changeRepo.FindByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if stored.MerchantID != "m-1" || stored.Channel != domain.ChannelBiz {
+		t.Fatalf("stored = %+v", stored)
+	}
+
+	// 请求体伪造端别必须拒绝，而不是被静默改写为 biz。
+	rec, env = m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
+		"channel": "admin", "action": "role_update", "target_id": role.ID,
+	})
+	if rec.Code != http.StatusBadRequest || env.Code != 40000 {
+		t.Fatalf("admin channel status=%d env=%+v", rec.Code, env)
+	}
+
+	// 载荷伪造租户必须 403，而不是静默忽略。
+	rec, env = m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
+		"action": "role_permission_replace", "target_id": role.ID,
+		"payload": map[string]any{"merchant_id": "m-2", "permissions": []string{"order:write"}},
+	})
+	if rec.Code != http.StatusForbidden || env.Code != 40300 {
+		t.Fatalf("payload merchant_id status=%d env=%+v", rec.Code, env)
+	}
+
+	// B 端不得申请平台级作用域：越权意图在申请阶段即被拒绝。
+	rec, env = m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests", map[string]any{
+		"action": "role_create",
+		"payload": map[string]any{
+			"scope_type": "platform", "code": "escaped", "name": "越权角色",
+			"permissions": []string{"order:read"},
+		},
+	})
+	if rec.Code != http.StatusBadRequest || env.Code != 40000 {
+		t.Fatalf("platform scope status=%d env=%+v", rec.Code, env)
+	}
+
+	// 同商户可见。
+	rec, env = m1.do(t, http.MethodGet, "/biz/v1/iam/change-requests", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 1 {
+		t.Fatalf("same merchant total=%d, want 1", list.Total)
+	}
+
+	// 跨商户：列表为空、审批 404。
+	m2 := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-2", MerchantID: "m-2"})
+	rec, env = m2.do(t, http.MethodGet, "/biz/v1/iam/change-requests", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("m2 list status=%d", rec.Code)
+	}
+	list.Total = -1
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 0 {
+		t.Fatalf("cross merchant total=%d, want 0", list.Total)
+	}
+	rec, env = m2.do(t, http.MethodPost, "/biz/v1/iam/change-requests/"+created.ID+"/approve",
+		map[string]any{"version": created.Version})
+	if rec.Code != http.StatusNotFound || env.Code != 40400 {
+		t.Fatalf("cross merchant approve status=%d env=%+v", rec.Code, env)
+	}
+
+	// 申请人自审必须 403（SoD），且状态保持 pending。
+	rec, env = m1.do(t, http.MethodPost, "/biz/v1/iam/change-requests/"+created.ID+"/approve",
+		map[string]any{"version": created.Version})
+	if rec.Code != http.StatusForbidden || env.Code != 40300 {
+		t.Fatalf("self approval status=%d env=%+v", rec.Code, env)
+	}
+
+	// 同商户另一主体审批通过，随后应用：角色权限真实生效。
+	approver := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-9", MerchantID: "m-1"})
+	rec, env = approver.do(t, http.MethodPost, "/biz/v1/iam/change-requests/"+created.ID+"/approve",
+		map[string]any{"version": created.Version})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	approved := decodeChange(t, env)
+	rec, env = approver.do(t, http.MethodPost, "/biz/v1/iam/change-requests/"+created.ID+"/apply",
+		map[string]any{"version": approved.Version})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if applied := decodeChange(t, env); applied.Status != "applied" {
+		t.Fatalf("applied = %+v", applied)
+	}
+	updated, err := f.roles.FindByID(context.Background(), role.ID)
+	if err != nil {
+		t.Fatalf("reload role: %v", err)
+	}
+	if updated.MerchantID != "m-1" {
+		t.Fatalf("role merchant = %q, want m-1", updated.MerchantID)
 	}
 }

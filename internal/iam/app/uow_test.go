@@ -186,7 +186,7 @@ func TestApplyChangeRequestPropagatesCommitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(ctx, request.ID, request.Version, "2002")
+	approved, err := f.changeSvc.Approve(ctx, request.ID, request.Version, "2002", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -197,6 +197,7 @@ func TestApplyChangeRequestPropagatesCommitFailure(t *testing.T) {
 		ID:      approved.ID,
 		Version: approved.Version,
 		Actor:   "2002",
+		Scope:   adminScope,
 	})
 	if bizCode(applyErr) != apperr.CodeNotFound {
 		t.Fatalf("apply err = %v, want 40400", applyErr)

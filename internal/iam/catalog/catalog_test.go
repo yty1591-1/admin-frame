@@ -18,8 +18,26 @@ import (
 )
 
 // fixHint 是所有一致性失败共用的修复指引：四处必须同 MR 修改。
+//
+// 权限点属于「只追加」数据：新增权限点写进新的 *_seed_*.up.sql（不要改写已应用的
+// 种子文件，否则迁移历史表会报 checksum 漂移），并在对应 down 中追加删除语句。
 const fixHint = "请同步 internal/iam/catalog/catalog.go、internal/iam/perm.go、" +
-	"migrations/000003_seed_iam_permissions.up.sql、docs/iam/PERMISSIONS.md"
+	"migrations/*_seed_*.up.sql、docs/iam/PERMISSIONS.md"
+
+// seedFiles 返回排序后的种子迁移文件名（绝对路径）。
+func seedFiles(t *testing.T, suffix string) []string {
+	t.Helper()
+	pattern := filepath.Join(repoRoot(t), "migrations", suffix)
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("枚举种子迁移 %s 失败: %v", suffix, err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("未找到任何种子迁移（%s）", pattern)
+	}
+	slices.Sort(files)
+	return files
+}
 
 // seedRow 解析种子迁移中每条权限点行。
 //
@@ -83,59 +101,63 @@ func TestPermissionCatalogMatchesConstants(t *testing.T) {
 	}
 }
 
-// TestPermissionCatalogMatchesSeedMigration 保证种子迁移与目录元数据一致。
+// TestPermissionCatalogMatchesSeedMigration 保证全部种子迁移与目录元数据一致。
+//
+// 遍历 migrations/*_seed_*.up.sql：权限点可以分散在多个追加式种子文件中，
+// 但同一权限码只能出现一次，且元数据必须与目录逐字段一致。
 func TestPermissionCatalogMatchesSeedMigration(t *testing.T) {
-	path := filepath.Join(repoRoot(t), "migrations", "000003_seed_iam_permissions.up.sql")
-	data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
-	if err != nil {
-		t.Fatalf("读取种子迁移失败: %v", err)
-	}
-
 	byCode := make(map[iam.PermissionCode]catalog.Entry, len(catalog.All()))
 	for _, e := range catalog.All() {
 		byCode[e.Code] = e
 	}
 
-	seen := make(map[iam.PermissionCode]struct{})
-	for i, line := range strings.Split(string(data), "\n") {
-		m := seedRow.FindStringSubmatch(line)
-		if m == nil {
-			continue
+	seen := make(map[iam.PermissionCode]string)
+	for _, path := range seedFiles(t, "*_seed_*.up.sql") {
+		name := filepath.Base(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
+		if err != nil {
+			t.Fatalf("读取种子迁移 %s 失败: %v", name, err)
 		}
-		code := iam.PermissionCode(m[1])
-		if _, dup := seen[code]; dup {
-			t.Fatalf("%s:%d 种子权限码 %q 重复；%s", filepath.Base(path), i+1, code, fixHint)
-		}
-		seen[code] = struct{}{}
+		for i, line := range strings.Split(string(data), "\n") {
+			m := seedRow.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			code := iam.PermissionCode(m[1])
+			if first, dup := seen[code]; dup {
+				t.Fatalf("%s:%d 种子权限码 %q 已在 %s 定义；%s", name, i+1, code, first, fixHint)
+			}
+			seen[code] = name
 
-		e, ok := byCode[code]
-		if !ok {
-			t.Fatalf("%s:%d 种子包含目录中不存在的权限码 %q；%s", filepath.Base(path), i+1, code, fixHint)
-		}
-		if m[2] != e.Name {
-			t.Fatalf("%s:%d %q 的 name=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[2], e.Name, fixHint)
-		}
-		if catalog.Channel(m[3]) != e.Channel {
-			t.Fatalf("%s:%d %q 的 channel=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[3], e.Channel, fixHint)
-		}
-		if m[4] != e.Resource() {
-			t.Fatalf("%s:%d %q 的 resource=%q，应由权限码首段派生为 %q；%s", filepath.Base(path), i+1, code, m[4], e.Resource(), fixHint)
-		}
-		if m[5] != e.Action() {
-			t.Fatalf("%s:%d %q 的 action=%q，应由权限码末段派生为 %q；%s", filepath.Base(path), i+1, code, m[5], e.Action(), fixHint)
-		}
-		if catalog.Kind(m[6]) != e.Kind {
-			t.Fatalf("%s:%d %q 的 kind=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[6], e.Kind, fixHint)
-		}
-		wantBearing := "0"
-		if e.DataBearing {
-			wantBearing = "1"
-		}
-		if m[7] != wantBearing {
-			t.Fatalf("%s:%d %q 的 data_bearing=%s，目录为 %s；%s", filepath.Base(path), i+1, code, m[7], wantBearing, fixHint)
-		}
-		if m[8] != strconv.Itoa(e.Sort) {
-			t.Fatalf("%s:%d %q 的 sort=%s，目录为 %d；%s", filepath.Base(path), i+1, code, m[8], e.Sort, fixHint)
+			e, ok := byCode[code]
+			if !ok {
+				t.Fatalf("%s:%d 种子包含目录中不存在的权限码 %q；%s", name, i+1, code, fixHint)
+			}
+			if m[2] != e.Name {
+				t.Fatalf("%s:%d %q 的 name=%q，目录为 %q；%s", name, i+1, code, m[2], e.Name, fixHint)
+			}
+			if catalog.Channel(m[3]) != e.Channel {
+				t.Fatalf("%s:%d %q 的 channel=%q，目录为 %q；%s", name, i+1, code, m[3], e.Channel, fixHint)
+			}
+			if m[4] != e.Resource() {
+				t.Fatalf("%s:%d %q 的 resource=%q，应由权限码首段派生为 %q；%s", name, i+1, code, m[4], e.Resource(), fixHint)
+			}
+			if m[5] != e.Action() {
+				t.Fatalf("%s:%d %q 的 action=%q，应由权限码末段派生为 %q；%s", name, i+1, code, m[5], e.Action(), fixHint)
+			}
+			if catalog.Kind(m[6]) != e.Kind {
+				t.Fatalf("%s:%d %q 的 kind=%q，目录为 %q；%s", name, i+1, code, m[6], e.Kind, fixHint)
+			}
+			wantBearing := "0"
+			if e.DataBearing {
+				wantBearing = "1"
+			}
+			if m[7] != wantBearing {
+				t.Fatalf("%s:%d %q 的 data_bearing=%s，目录为 %s；%s", name, i+1, code, m[7], wantBearing, fixHint)
+			}
+			if m[8] != strconv.Itoa(e.Sort) {
+				t.Fatalf("%s:%d %q 的 sort=%s，目录为 %d；%s", name, i+1, code, m[8], e.Sort, fixHint)
+			}
 		}
 	}
 
@@ -207,18 +229,18 @@ func TestPermissionCatalogMatchesDoc(t *testing.T) {
 	}
 }
 
-// TestPermissionCatalogDownMigration 保证回滚覆盖全部种子权限码。
+// TestPermissionCatalogDownMigration 保证全部种子回滚覆盖对应权限码。
 func TestPermissionCatalogDownMigration(t *testing.T) {
-	path := filepath.Join(repoRoot(t), "migrations", "000003_seed_iam_permissions.down.sql")
-	data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
-	if err != nil {
-		t.Fatalf("读取种子回滚迁移失败: %v", err)
-	}
-
 	quoted := regexp.MustCompile(`'([a-z][a-z0-9_:]*)'`)
 	present := make(map[string]struct{})
-	for _, m := range quoted.FindAllStringSubmatch(string(data), -1) {
-		present[m[1]] = struct{}{}
+	for _, path := range seedFiles(t, "*_seed_*.down.sql") {
+		data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
+		if err != nil {
+			t.Fatalf("读取种子回滚迁移 %s 失败: %v", filepath.Base(path), err)
+		}
+		for _, m := range quoted.FindAllStringSubmatch(string(data), -1) {
+			present[m[1]] = struct{}{}
+		}
 	}
 
 	var missing []string
@@ -235,13 +257,15 @@ func TestPermissionCatalogDownMigration(t *testing.T) {
 
 // TestPermissionCatalogSeedIsIdempotent 保证种子迁移可重放而不报错。
 func TestPermissionCatalogSeedIsIdempotent(t *testing.T) {
-	path := filepath.Join(repoRoot(t), "migrations", "000003_seed_iam_permissions.up.sql")
-	data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
-	if err != nil {
-		t.Fatalf("读取种子迁移失败: %v", err)
-	}
-	if !strings.Contains(string(data), "ON DUPLICATE KEY UPDATE") {
-		t.Fatalf("种子迁移必须是幂等写入（INSERT ... ON DUPLICATE KEY UPDATE），否则重放会因主键冲突失败；%s", fixHint)
+	for _, path := range seedFiles(t, "*_seed_*.up.sql") {
+		data, err := os.ReadFile(path) //nolint:gosec // G304：path 由 runtime.Caller 定位仓库内固定文件，非用户输入。
+		if err != nil {
+			t.Fatalf("读取种子迁移 %s 失败: %v", filepath.Base(path), err)
+		}
+		if !strings.Contains(string(data), "ON DUPLICATE KEY UPDATE") {
+			t.Fatalf("%s 必须是幂等写入（INSERT ... ON DUPLICATE KEY UPDATE），否则重放会因主键冲突失败；%s",
+				filepath.Base(path), fixHint)
+		}
 	}
 }
 

@@ -182,3 +182,16 @@ func (h *Handler) RevokeBreakglass(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.OK(w, toBreakglassDTO(request), traceID)
 }
+
+// adminOnly 拒绝 B 端访问破玻璃端点。
+//
+// 破玻璃是平台级应急能力：B 端若可自助申请，等于把超级权限的入口下放到租户，
+// 超出当前威胁模型（与 ChangeRequestService.Create 的闸门互为兜底）。
+// 路由层直接 404，避免暴露端点存在性。
+func (h *Handler) adminOnly(w http.ResponseWriter, traceID string) bool {
+	if h.channel == domain.ChannelBiz {
+		httpx.FromError(w, apperr.NotFound("breakglass not found"), traceID)
+		return false
+	}
+	return true
+}

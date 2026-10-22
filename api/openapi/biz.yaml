@@ -632,6 +632,255 @@ paths:
           $ref: "./components.yaml#/components/responses/NotFound"
         "500":
           $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/change-requests:
+    get:
+      tags: [iam]
+      summary: 本商户审批单列表
+      description: |
+        需要 `iam:change:request`。只返回本商户的审批单，商户来自 Token（Principal），
+        query 中的 channel / merchant_id 一律忽略。按申请时间倒序，page_size 上限 100。
+      operationId: bizListIAMChangeRequests
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: 审批状态过滤
+          schema:
+            $ref: "#/components/schemas/ChangeStatus"
+        - name: action
+          in: query
+          required: false
+          description: 变更动作过滤
+          schema:
+            $ref: "#/components/schemas/ChangeAction"
+        - name: requested_by
+          in: query
+          required: false
+          description: 申请人主体 ID 过滤
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequestListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    post:
+      tags: [iam]
+      summary: 发起变更申请
+      description: |
+        需要 `iam:change:request`。审批单记录「待执行的变更」而不立即生效；
+        channel 固定为 biz，merchant_id 只来自 Token，载荷中出现 merchant_id 返回 40300。
+        breakglass_request 属于平台级能力，B 端固定返回 40300。
+      operationId: bizCreateIAMChangeRequest
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChangeRequestRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequest"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/change-requests/{id}/approve:
+    post:
+      tags: [iam]
+      summary: 通过审批单
+      description: |
+        需要 `iam:change:review`。审批人不得与申请人相同，自审返回 40300（SoD）；
+        跨商户访问返回 40400（不泄露存在性）；非 pending 或版本不一致返回 40900。
+      operationId: bizApproveIAMChangeRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ChangeRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideChangeRequestRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequest"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/change-requests/{id}/reject:
+    post:
+      tags: [iam]
+      summary: 拒绝审批单
+      description: 需要 `iam:change:review`。同样适用职责分离与跨商户 40400。
+      operationId: bizRejectIAMChangeRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ChangeRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideChangeRequestRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequest"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/change-requests/{id}/cancel:
+    post:
+      tags: [iam]
+      summary: 撤销审批单
+      description: 需要 `iam:change:request`。只有申请人本人可撤销 pending 单据。
+      operationId: bizCancelIAMChangeRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ChangeRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideChangeRequestRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequest"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/change-requests/{id}/apply:
+    post:
+      tags: [iam]
+      summary: 应用审批单
+      description: |
+        需要 `iam:change:review`。仅 approved 单据可应用；目标变更与审批单状态同事务提交，
+        失败保持 approved 可重试。目标角色 / 绑定必须属于本商户，跨商户返回 40400。
+      operationId: bizApplyIAMChangeRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ChangeRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideChangeRequestRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChangeRequest"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
   /biz/v1/iam/subjects/{subject_type}/{subject_id}/permissions:
     get:
       tags: [iam]
@@ -737,6 +986,14 @@ components:
       schema:
         type: string
         pattern: '^"?[1-9][0-9]*"?$'
+    ChangeRequestID:
+      name: id
+      in: path
+      required: true
+      description: 审批单 ID
+      schema:
+        type: string
+        minLength: 1
 
   securitySchemes:
     bearerAuth:
@@ -1173,5 +1430,118 @@ components:
       required: [id]
       properties:
         id:
+          type: string
+    ChangeStatus:
+      type: string
+      description: |
+        审批单状态机：pending → approved → applied；
+        pending → rejected；pending → cancelled。终态不可再流转。
+      enum: [pending, approved, rejected, applied, cancelled]
+    ChangeAction:
+      type: string
+      description: |
+        B 端可申请的动作；breakglass_request 属平台级能力，B 端固定返回 40300。
+      enum:
+        - role_create
+        - role_update
+        - role_permission_replace
+        - role_clone
+        - role_delete
+        - binding_create
+        - binding_delete
+    ChangeTargetType:
+      type: string
+      enum: [iam_role, iam_binding]
+    ChangeRequest:
+      type: object
+      required:
+        - id
+        - channel
+        - action
+        - target_type
+        - status
+        - reason
+        - requested_by
+        - requested_at
+        - version
+      description: B 端响应不回显 merchant_id（商户取自 Token，回显无信息增益）
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        action:
+          $ref: "#/components/schemas/ChangeAction"
+        target_type:
+          $ref: "#/components/schemas/ChangeTargetType"
+        target_id:
+          type: string
+          description: 目标聚合 ID；新建类动作为空，应用成功后才回填
+        payload:
+          type: object
+          description: 申请载荷原样返回，便于审批人核对；不得包含敏感字段
+          additionalProperties: true
+        status:
+          $ref: "#/components/schemas/ChangeStatus"
+        reason:
+          type: string
+        requested_by:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+        applied_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    ChangeRequestListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeRequest"
+        total:
+          type: integer
+    CreateChangeRequestRequest:
+      type: object
+      required: [action, payload, reason]
+      properties:
+        channel:
+          description: 可选；只能为空或 biz，传 admin 返回 40000
+          allOf:
+            - $ref: "#/components/schemas/Channel"
+        action:
+          $ref: "#/components/schemas/ChangeAction"
+        target_id:
+          type: string
+          description: 新建类动作可为空；其它动作必填
+        payload:
+          type: object
+          description: |
+            动作载荷，JSON 对象，最大 16 KiB，未知字段返回 40000；
+            禁止包含 merchant_id（返回 40300）与 token / secret 等敏感字段。
+          additionalProperties: true
+        reason:
+          type: string
+    DecideChangeRequestRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 乐观锁版本；与当前审批单不一致返回 40900
+        reason:
           type: string
 

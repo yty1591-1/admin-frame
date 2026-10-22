@@ -51,6 +51,8 @@
 | `data:export` | both | api | 是 | 批量导出业务数据；必须限流并记录导出审计 |
 | `config:read` | admin | api | 否 | 查看运行时配置；敏感项脱敏 |
 | `config:write` | admin | api | 否 | 修改运行时配置；须审计并支持回滚 |
+| `iam:change:request` | biz | api | 否 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
+| `iam:change:review` | biz | api | 否 | 审批本商户变更申请；申请人不得自审（SoD） |
 
 > 当前基线无 `menu` / `button` 形态，前端菜单树由后续 PR 追加；追加时 `sort` 取当前最大值 + 10，且不得改动既有条目。
 
@@ -104,8 +106,12 @@
 | admin | `system_admin` | 全部 `iam:*` 管理权限 + `audit:read` + `config:read` / `config:write` | `all` |
 | admin | `ops` | `order:read` / `order:write` / `file:read` / `file:write` | `all` 或 `merchant_set` |
 | admin | `breakglass_admin` | 目录中不授予任何权限；仅在有效审批绑定时展开 `*` | `all` |
-| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`order:*`、`file:*` | `merchant` |
-| biz | `merchant_staff` | `order:read`、`file:read` | `merchant` |
+| biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review`、`order:*`、`file:*` | `merchant` |
+| biz | `merchant_staff` | `iam:change:request`、`order:read`、`file:read` | `merchant` |
+
+> B 端变更审批的 SoD：`merchant_staff` 只有 `iam:change:request`（能提不能批），
+> `merchant_owner` 同时持有 request / review，但领域层强制「申请人 ≠ 审批人」，
+> 因此同一 owner 仍需第二个具备 review 的主体才能完成审批。
 
 `system_admin` 不含 `iam:breakglass:approve`，以满足「申请 ≠ 审批」；破玻璃审批人单独配置。
 
