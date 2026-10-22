@@ -112,6 +112,7 @@ func repositoryRoot() (string, error) {
 func reset(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
 	for _, stmt := range []string{
+		"DELETE FROM iam_change_request",
 		"DELETE FROM iam_role_binding",
 		"DELETE FROM iam_role_data_scope",
 		"DELETE FROM iam_role_permission",
@@ -650,6 +651,180 @@ func TestSQLSnapshotRepositoryEmptyOnMissingPermissions(t *testing.T) {
 	}
 }
 
+// TestSQLChangeRequestRepository 覆盖审批单的落库、状态流转与乐观锁。
+func TestSQLChangeRequestRepository(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	repo := persistence.NewSQLChangeRequestRepository(sqlDB)
+
+	request, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
+		ID:       "3001",
+		Channel:  domain.ChannelAdmin,
+		Action:   domain.ChangeActionRolePermissionReplace,
+		TargetID: "1001",
+		Payload: []byte(`{"permissions":["order:read"],
+			"data_scopes":[{"resource":"order","scope_type":"merchant"}]}`),
+		Reason: "补授只读权限",
+		Actor:  "u-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, request, 0); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := repo.FindByID(ctx, request.ID)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if loaded.Status != domain.ChangeStatusPending || loaded.Version != 1 {
+		t.Fatalf("loaded=%+v", loaded)
+	}
+	if loaded.TargetType != domain.ChangeTargetIAMRole || loaded.RequestedBy != "u-1" {
+		t.Fatalf("loaded=%+v", loaded)
+	}
+	if !strings.Contains(string(loaded.Payload), "order:read") {
+		t.Fatalf("payload=%s", loaded.Payload)
+	}
+
+	// 状态流转：批准 → 应用。
+	if err := loaded.Approve("u-2", loaded.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, loaded, 1); err != nil {
+		t.Fatalf("approve save: %v", err)
+	}
+	if err := loaded.MarkApplied(loaded.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, loaded, 2); err != nil {
+		t.Fatalf("apply save: %v", err)
+	}
+
+	applied, err := repo.FindByID(ctx, request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Status != domain.ChangeStatusApplied || applied.AppliedAt == nil || applied.ApprovedAt == nil {
+		t.Fatalf("applied=%+v", applied)
+	}
+
+	// 过期版本写入必须冲突。
+	stale := *applied
+	stale.Reason = "过期写入"
+	if err := repo.Save(ctx, &stale, 1); !errors.Is(err, apperr.ErrConflict) {
+		t.Fatalf("err=%v, want conflict", err)
+	}
+
+	// 过滤与分页。
+	second, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
+		ID:      "3002",
+		Channel: domain.ChannelAdmin,
+		Action:  domain.ChangeActionBindingCreate,
+		Payload: []byte(`{"role_id":"1001","subject_type":"staff","subject_id":"u-9"}`),
+		Reason:  "新人授权",
+		Actor:   "u-3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, second, 0); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := repo.List(ctx, domain.ChangeRequestFilter{
+		Channel: domain.ChannelAdmin, Status: domain.ChangeStatusPending, Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].ID != "3002" {
+		t.Fatalf("pending=%d", len(pending))
+	}
+	byRequester, err := repo.List(ctx, domain.ChangeRequestFilter{RequestedBy: "u-1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byRequester) != 1 || byRequester[0].ID != request.ID {
+		t.Fatalf("byRequester=%d", len(byRequester))
+	}
+
+	total, err := repo.Count(ctx, domain.ChangeRequestFilter{Channel: domain.ChannelAdmin})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total=%d, want 2", total)
+	}
+	if narrowed, err := repo.Count(ctx, domain.ChangeRequestFilter{Status: domain.ChangeStatusPending}); err != nil || narrowed != 1 {
+		t.Fatalf("pending count=%d err=%v", narrowed, err)
+	}
+
+	if _, err := repo.FindByID(ctx, "3999"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("err=%v, want not found", err)
+	}
+}
+
+// TestSQLSnapshotBreakglassWildcard 验证破玻璃绑定在 SQL 快照中展开 "*"。
+//
+// 断言包含三层：角色被识别为 breakglass、权限集合含 "*"、过期后不再展开。
+func TestSQLSnapshotBreakglassWildcard(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	roles := persistence.NewSQLRoleRepository(sqlDB)
+	bindings := persistence.NewSQLBindingRepository(sqlDB)
+	snapshots := persistence.NewSQLSnapshotRepository(sqlDB)
+
+	role := &domain.Role{
+		ID: "9100", Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		Code: domain.BreakglassRoleCode, Name: "破玻璃超级权限",
+		Type: domain.RoleTypeBreakglass, Status: domain.RoleStatusActive, Version: 1,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		CreatedBy: "system", UpdatedBy: "system",
+	}
+	if err := roles.Save(ctx, role, 0); err != nil {
+		t.Fatalf("seed breakglass role: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(15 * time.Minute)
+	binding := &domain.Binding{
+		ID: "9101", Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
+		SubjectID: "bg-1", RoleID: role.ID, ExpiresAt: &expiresAt,
+		GrantedBy: "u-1", CreatedAt: time.Now().UTC(),
+	}
+	if err := bindings.Save(ctx, binding); err != nil {
+		t.Fatalf("save breakglass binding: %v", err)
+	}
+
+	snapshot, err := snapshots.Load(ctx, domain.SubjectQuery{
+		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff, SubjectID: "bg-1",
+	})
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if !snapshot.Breakglass || !snapshot.HasPermission("iam:role:grant") {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	wildcard := false
+	for _, code := range snapshot.Permissions {
+		if code == "*" {
+			wildcard = true
+		}
+	}
+	if !wildcard {
+		t.Fatalf("permissions=%v", snapshot.Permissions)
+	}
+
+	expired, err := snapshots.Load(ctx, domain.SubjectQuery{
+		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff, SubjectID: "bg-1",
+		At: time.Now().UTC().Add(16 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("load expired snapshot: %v", err)
+	}
+	if expired.Breakglass || len(expired.Permissions) != 0 {
+		t.Fatalf("expired snapshot=%+v", expired)
+	}
+}
+
 // TestSQLRepositoriesRejectUnconfigured 验证 nil *sql.DB 时返回 50300 而不是 panic。
 func TestSQLRepositoriesRejectUnconfigured(t *testing.T) {
 	ctx := context.Background()
@@ -681,6 +856,17 @@ func TestSQLRepositoriesRejectUnconfigured(t *testing.T) {
 	if _, err := snapshotRepo.Load(ctx, domain.SubjectQuery{
 		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff, SubjectID: "u-1",
 	}); !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("err=%v, want unavailable", err)
+	}
+
+	changeRepo := persistence.NewSQLChangeRequestRepository(nil)
+	if _, err := changeRepo.FindByID(ctx, "3001"); !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("err=%v, want unavailable", err)
+	}
+	if _, err := changeRepo.List(ctx, domain.ChangeRequestFilter{Limit: 1}); !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("err=%v, want unavailable", err)
+	}
+	if _, err := changeRepo.Count(ctx, domain.ChangeRequestFilter{}); !errors.Is(err, apperr.ErrUnavailable) {
 		t.Fatalf("err=%v, want unavailable", err)
 	}
 }

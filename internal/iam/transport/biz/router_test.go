@@ -75,8 +75,21 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	applicator, err := app.NewRoleChangeApplicator(roleSvc, bindingSvc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeSvc, err := app.NewChangeRequestService(app.ChangeRequestServiceConfig{
+		Requests:   persistence.NewMemoryChangeRequestRepository(),
+		Applicator: applicator,
+		IDs:        ids,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc, Channel: domain.ChannelBiz,
+		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
+		Changes: changeSvc, Channel: domain.ChannelBiz,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -236,5 +249,27 @@ func TestBizRouterHasNoAuthorizeEndpoint(t *testing.T) {
 	})
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("authorize route must not exist on biz, got %d", rec.Code)
+	}
+}
+
+// TestBizRouterHasNoChangeRequestEndpoints 验证审批单只在 A 端暴露。
+//
+// 审批单表暂不含 merchant_id，B 端无法做租户隔离；在补列迁移落地前必须保持
+// 路由不存在，而不是「存在但返回 403」——后者会泄露该功能已上线。
+func TestBizRouterHasNoChangeRequestEndpoints(t *testing.T) {
+	f := newFixture(t)
+	rt := f.router(auth.Principal{Channel: auth.ChannelBiz, SubjectID: "u-1", MerchantID: "m-1"})
+	for _, path := range []string{
+		"/biz/v1/iam/change-requests",
+		"/biz/v1/iam/change-requests/1/approve",
+		"/biz/v1/iam/change-requests/1/apply",
+		"/biz/v1/iam/breakglass",
+		"/biz/v1/iam/breakglass/1/approve",
+		"/biz/v1/iam/breakglass/1/revoke",
+	} {
+		rec, _ := rt.do(t, http.MethodPost, path, map[string]any{"version": 1})
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s must not exist on biz, got %d", path, rec.Code)
+		}
 	}
 }

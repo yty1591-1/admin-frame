@@ -89,8 +89,12 @@ type BindCommand struct {
 	MerchantID  string
 	RoleID      string
 	ExpiresAt   *time.Time
-	Actor       string
-	Reason      string
+	// AllowBreakglass 仅供破玻璃审批执行器使用：为 true 才允许绑定 breakglass 角色。
+	//
+	// 该字段不对传输层暴露：普通「创建绑定」接口永远走审批，不能直接拿到超级权限。
+	AllowBreakglass bool
+	Actor           string
+	Reason          string
 }
 
 // Bind 绑定主体与角色；重复绑定幂等并返回既有绑定。
@@ -104,6 +108,9 @@ func (s *BindingService) Bind(ctx context.Context, cmd BindCommand) (*domain.Bin
 	}
 	if role.IsDeleted() {
 		return nil, apperr.NotFound("role not found")
+	}
+	if role.Type == domain.RoleTypeBreakglass && !cmd.AllowBreakglass {
+		return nil, apperr.Forbidden("breakglass binding requires approval")
 	}
 
 	existing, err := s.bindings.ListBySubject(ctx, domain.SubjectQuery{

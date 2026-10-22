@@ -199,6 +199,43 @@ func (s *RoleService) ensureMerchantQuota(ctx context.Context, scope domain.Role
 	return nil
 }
 
+// LoadByCode 按端别 + 商户 + 编码加载未删除角色。
+//
+// 供破玻璃执行器定位系统内置角色；跨端 / 跨商户一律 NotFound（SEC-14）。
+func (s *RoleService) LoadByCode(
+	ctx context.Context,
+	channel domain.Channel,
+	merchantID string,
+	code string,
+) (*domain.Role, error) {
+	role, err := s.roles.FindByCode(ctx, channel, merchantID, code)
+	if err != nil {
+		return nil, err
+	}
+	if role.IsDeleted() || role.Channel != channel || role.MerchantID != merchantID {
+		return nil, apperr.NotFound("role not found")
+	}
+	return role, nil
+}
+
+// LoadForChange 按 ID 加载角色并校验端别，供审批执行器在应用前重新校验。
+//
+// 审批通过到实际应用之间可能隔数小时：角色可能已被停用、删除或改版，
+// 因此应用时必须重新加载当前状态，而不是信任载荷里的版本号。
+func (s *RoleService) LoadForChange(ctx context.Context, roleID string, channel domain.Channel) (*domain.Role, error) {
+	role, err := s.roles.FindByID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	if role.IsDeleted() {
+		return nil, apperr.NotFound("role not found")
+	}
+	if channel != "" && role.Channel != channel {
+		return nil, apperr.NotFound("role not found")
+	}
+	return role, nil
+}
+
 // UpdateRoleCommand 是 PATCH 角色的入参；nil 字段表示不修改。
 type UpdateRoleCommand struct {
 	ID          string
@@ -293,6 +330,11 @@ func (s *RoleService) ReplacePermissions(ctx context.Context, cmd ReplacePermiss
 	role, err := roleForGrant(ctx, s.roles, cmd.ID, cmd.Version)
 	if err != nil {
 		return nil, domain.PermissionChange{}, err
+	}
+	if role.Type == domain.RoleTypeBreakglass {
+		// 破玻璃角色不持有权限点：超级权限只由快照在审批有效期内展开，
+		// 允许写入权限点会把临时超级权限变成永久授权。
+		return nil, domain.PermissionChange{}, apperr.Forbidden("breakglass role permissions are managed by the approval workflow")
 	}
 	if s.limits.RequireReason && strings.TrimSpace(cmd.Reason) == "" {
 		return nil, domain.PermissionChange{}, apperr.BadRequest("reason is required")

@@ -53,9 +53,14 @@
    最坏撤销延迟为两层 TTL 之和。恢复后确认 `iam_cache_invalidate_failed_total` 停止增长。
 5. **Outbox 积压（M4 起）**：`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`
    时先确认 worker 消费位点，再决定扩容消费者；禁止手工删事件。
-6. **迁移回滚**：`migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
+6. **破玻璃授权（`iam_breakglass_active > 0`）**：按 P1 安全事件处理。
+   1. `GET /admin/v1/iam/change-requests?action=breakglass_request&status=applied` 核对申请人与审批人。
+   2. 确认原因与影响面后，`POST /admin/v1/iam/breakglass/{id}/revoke`（body 带当前 `version`）提前收回。
+   3. 等待 L1（≤3s）+ L2（≤5m）过期，再用主体权限查询接口确认 `*` 已消失。
+   4. 核对 `rbac.breakglass` 的 request / approve / revoke 三条审计，缺失即升级安全 Owner。
+7. **迁移回滚**：`migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
    生产回滚只切配置（`iam.mode=off`），不回滚 schema。
-7. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
+8. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
 
 ## 升级
 

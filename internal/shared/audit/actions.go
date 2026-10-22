@@ -6,6 +6,7 @@ const (
 	ActionAuthLoginFailed   = "auth.login_failed"
 	ActionRBACRoleChange    = "rbac.role_change"
 	ActionRBACBindingChange = "rbac.binding_change"
+	ActionRBACBreakglass    = "rbac.breakglass"
 	ActionConfigChange      = "config.change"
 	ActionDataExport        = "data.export"
 	ActionDataQueryScope    = "data.query_scope"
@@ -20,6 +21,7 @@ func KnownActions() []string {
 		ActionAuthLoginFailed,
 		ActionRBACRoleChange,
 		ActionRBACBindingChange,
+		ActionRBACBreakglass,
 		ActionConfigChange,
 		ActionDataExport,
 		ActionDataQueryScope,

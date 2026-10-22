@@ -77,16 +77,7 @@ func (r *MemoryChangeRequestRepository) List(_ context.Context, filter domain.Ch
 
 	out := make([]*domain.ChangeRequest, 0, len(r.requests))
 	for _, request := range r.requests {
-		if filter.Channel != "" && request.Channel != filter.Channel {
-			continue
-		}
-		if filter.Status != "" && request.Status != filter.Status {
-			continue
-		}
-		if filter.RequestedBy != "" && request.RequestedBy != filter.RequestedBy {
-			continue
-		}
-		if filter.Action != "" && request.Action != filter.Action {
+		if !matchChangeFilter(request, filter) {
 			continue
 		}
 		out = append(out, cloneChangeRequest(request))
@@ -99,6 +90,37 @@ func (r *MemoryChangeRequestRepository) List(_ context.Context, filter domain.Ch
 		return strings.Compare(b.ID, a.ID)
 	})
 	return paginate(out, filter.Offset, filter.Limit), nil
+}
+
+// Count 返回与 List 相同条件的审批单总数（不分页）。
+func (r *MemoryChangeRequestRepository) Count(_ context.Context, filter domain.ChangeRequestFilter) (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	total := 0
+	for _, request := range r.requests {
+		if matchChangeFilter(request, filter) {
+			total++
+		}
+	}
+	return total, nil
+}
+
+// matchChangeFilter 判断审批单是否命中过滤条件；List 与 Count 共用，避免规则漂移。
+func matchChangeFilter(request *domain.ChangeRequest, filter domain.ChangeRequestFilter) bool {
+	if filter.Channel != "" && request.Channel != filter.Channel {
+		return false
+	}
+	if filter.Status != "" && request.Status != filter.Status {
+		return false
+	}
+	if filter.RequestedBy != "" && request.RequestedBy != filter.RequestedBy {
+		return false
+	}
+	if filter.Action != "" && request.Action != filter.Action {
+		return false
+	}
+	return true
 }
 
 // cloneChangeRequest 返回审批单深拷贝，隔离 Payload / ApprovedAt / AppliedAt。

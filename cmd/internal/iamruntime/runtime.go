@@ -7,7 +7,10 @@
 package iamruntime
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
@@ -73,6 +76,9 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("iam metrics: %w", err)
 	}
+	if err := iamMetrics.RegisterBreakglassGauge(breakglassActiveCounter(roles, bindings)); err != nil {
+		return nil, fmt.Errorf("iam breakglass gauge: %w", err)
+	}
 
 	authorizeSvc, err := app.NewAuthorizeService(app.AuthorizeConfig{
 		Repository:     snapshots,
@@ -134,11 +140,47 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("iam query service: %w", err)
 	}
 
+	applicator, err := app.NewRoleChangeApplicator(roleSvc, bindingSvc)
+	if err != nil {
+		return nil, fmt.Errorf("iam change applicator: %w", err)
+	}
+	changeSvc, err := app.NewChangeRequestService(app.ChangeRequestServiceConfig{
+		Requests:   buildChangeRequestRepository(deps),
+		Applicator: applicator,
+		IDs:        ids,
+		Limits: app.ChangeLimits{
+			RequireReason: cfg.IAM.Security.RequireReason,
+			// B 端审批需要 iam_change_request.merchant_id 列，待 000004 迁移后开启。
+			AllowBizChannel: false,
+			AllowBreakglass: cfg.IAM.Breakglass.Enabled,
+		},
+		Logger: deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam change request service: %w", err)
+	}
+	breakglassSvc, err := app.NewBreakglassService(app.BreakglassServiceConfig{
+		Changes:  changeSvc,
+		Recorder: recorder,
+		IDs:      ids,
+		Audit:    auditMeta,
+		Limits: app.BreakglassLimits{
+			Enabled:         cfg.IAM.Breakglass.Enabled,
+			AllowedSubjects: cfg.IAM.Breakglass.AllowedSubjects,
+		},
+		Logger: deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam breakglass service: %w", err)
+	}
+
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Roles:    roleSvc,
-		Bindings: bindingSvc,
-		Query:    querySvc,
-		Channel:  domain.Channel(cfg.Channel),
+		Roles:      roleSvc,
+		Bindings:   bindingSvc,
+		Query:      querySvc,
+		Changes:    changeSvc,
+		Breakglass: breakglassSvc,
+		Channel:    domain.Channel(cfg.Channel),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("iam handler: %w", err)
@@ -156,6 +198,42 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	return &Runtime{Authorizer: authorizer, Handler: handler}, nil
 }
 
+// breakglassActiveCounter 统计当前有效破玻璃绑定数；角色未播种时返回 0。
+//
+// 不引入额外仓储方法：复用 ListByRole 后按 expires_at 过滤，内存 / MySQL 语义一致。
+func breakglassActiveCounter(
+	roles domain.RoleRepository,
+	bindings domain.BindingRepository,
+) func() (int, error) {
+	return func() (int, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		role, err := roles.FindByCode(ctx, domain.ChannelAdmin, "", domain.BreakglassRoleCode)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		if role.IsDeleted() || role.Status != domain.RoleStatusActive {
+			// 角色被停用 / 软删后绑定不再展开 "*"，指标必须与鉴权语义一致。
+			return 0, nil
+		}
+		list, err := bindings.ListByRole(ctx, role.ID)
+		if err != nil {
+			return 0, err
+		}
+		now := time.Now().UTC()
+		active := 0
+		for _, binding := range list {
+			if !binding.IsExpired(now) {
+				active++
+			}
+		}
+		return active, nil
+	}
+}
+
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
 func buildRepositories(deps *platform.Deps) (domain.RoleRepository, domain.BindingRepository, domain.SnapshotRepository, error) {
 	if deps.Database == nil {
@@ -168,6 +246,17 @@ func buildRepositories(deps *platform.Deps) (domain.RoleRepository, domain.Bindi
 		persistence.NewSQLBindingRepository(sqlDB),
 		persistence.NewSQLSnapshotRepository(sqlDB),
 		nil
+}
+
+// buildChangeRequestRepository 按 db.driver 选择审批单仓储。
+//
+// 审批单必须持久化：进程重启丢失 pending 单会让「已批准未应用」的变更既不被执行
+// 也无法审计，因此生产使用 SQL 实现，内存实现只用于 local / demo / 单测。
+func buildChangeRequestRepository(deps *platform.Deps) domain.ChangeRequestRepository {
+	if deps.Database == nil {
+		return persistence.NewMemoryChangeRequestRepository()
+	}
+	return persistence.NewSQLChangeRequestRepository(deps.Database.SQL())
 }
 
 // registerHealth 把 IAM 依赖注册到 /readyz（OBS-03）。

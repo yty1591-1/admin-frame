@@ -96,11 +96,13 @@ type fixture struct {
 	roles       *persistence.MemoryRoleRepository
 	bindings    *persistence.MemoryBindingRepository
 	snapshots   *persistence.MemorySnapshotRepository
+	changes     *persistence.MemoryChangeRequestRepository
 	recorder    *capturedRecorder
 	invalidator *capturedInvalidator
 	roleSvc     *app.RoleService
 	bindingSvc  *app.BindingService
 	querySvc    *app.QueryService
+	changeSvc   *app.ChangeRequestService
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -113,6 +115,7 @@ func newFixture(t *testing.T) *fixture {
 		snapshots:   persistence.NewMemorySnapshotRepository(roles, bindings),
 		recorder:    &capturedRecorder{},
 		invalidator: &capturedInvalidator{},
+		changes:     persistence.NewMemoryChangeRequestRepository(),
 	}
 	ids := &seqIDs{}
 	var err error
@@ -143,6 +146,19 @@ func newFixture(t *testing.T) *fixture {
 	f.querySvc, err = app.NewQueryService(roles, bindings, f.snapshots)
 	if err != nil {
 		t.Fatalf("NewQueryService: %v", err)
+	}
+	applicator, err := app.NewRoleChangeApplicator(f.roleSvc, f.bindingSvc)
+	if err != nil {
+		t.Fatalf("NewRoleChangeApplicator: %v", err)
+	}
+	f.changeSvc, err = app.NewChangeRequestService(app.ChangeRequestServiceConfig{
+		Requests:   f.changes,
+		Applicator: applicator,
+		IDs:        ids,
+		Limits:     app.ChangeLimits{RequireReason: true},
+	})
+	if err != nil {
+		t.Fatalf("NewChangeRequestService: %v", err)
 	}
 	return f
 }

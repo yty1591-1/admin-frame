@@ -74,6 +74,7 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionAuthLoginFailed:   true,
 		audit.ActionRBACRoleChange:    true,
 		audit.ActionRBACBindingChange: true,
+		audit.ActionRBACBreakglass:    true,
 		audit.ActionConfigChange:      true,
 		audit.ActionDataExport:        true,
 		audit.ActionDataQueryScope:    true,

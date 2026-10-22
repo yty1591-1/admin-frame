@@ -39,6 +39,7 @@ func (r *MemorySnapshotRepository) Load(ctx context.Context, query domain.Subjec
 	roleSet := make(map[string]struct{})
 	permissionSet := make(map[iam.PermissionCode]struct{})
 	rawScopes := make([]domain.DataScope, 0)
+	breakglass := false
 	var version int64
 
 	for _, binding := range bindings {
@@ -53,6 +54,11 @@ func (r *MemorySnapshotRepository) Load(ctx context.Context, query domain.Subjec
 		roleSet[role.Code] = struct{}{}
 		if role.Version > version {
 			version = role.Version
+		}
+		if role.Type == domain.RoleTypeBreakglass {
+			// 与 SQL 实现一致：仅在有效绑定期内注入 "*"，目录本身不含通配符。
+			permissionSet[iam.PermissionCode("*")] = struct{}{}
+			breakglass = true
 		}
 		for _, code := range role.PermissionCodes() {
 			entry, ok := catalog.ByCode(code)
@@ -93,6 +99,7 @@ func (r *MemorySnapshotRepository) Load(ctx context.Context, query domain.Subjec
 		MerchantID:  query.MerchantID,
 		Roles:       roles,
 		Permissions: permissions,
+		Breakglass:  breakglass,
 		Scopes:      scopes,
 		Version:     version,
 		GeneratedAt: time.Now().UTC(),

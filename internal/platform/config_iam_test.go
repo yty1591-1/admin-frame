@@ -185,6 +185,52 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 	}
 }
 
+func TestValidateIAMBreakglassRules(t *testing.T) {
+	enabled := iamBaseConfig()
+	enabled.IAM.Breakglass = platform.IAMBreakglassConfig{
+		Enabled:         true,
+		AllowedSubjects: []string{"1001"},
+	}
+	if err := enabled.Validate(); err != nil {
+		t.Fatalf("breakglass enforce: %v", err)
+	}
+
+	shadow := iamBaseConfig()
+	shadow.IAM.Mode = platform.IAMModeShadow
+	shadow.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	if err := shadow.Validate(); err == nil || !strings.Contains(err.Error(), "requires iam.mode=enforce") {
+		t.Fatalf("err=%v want breakglass enforce requirement", err)
+	}
+
+	biz := iamBaseConfig()
+	biz.Channel = "biz"
+	biz.Auth.ExpectedChannel = "biz"
+	biz.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	if err := biz.Validate(); err == nil || !strings.Contains(err.Error(), "channel=admin") {
+		t.Fatalf("err=%v want admin-only rejection", err)
+	}
+
+	prod := iamBaseConfig()
+	prod.Env = "prod"
+	prod.Auth = prodJWTConfig()
+	prod.Storage.Driver = "s3"
+	prod.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prod.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prod.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	if err := prod.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_subjects") {
+		t.Fatalf("err=%v want prod allowlist requirement", err)
+	}
+
+	blank := iamBaseConfig()
+	blank.IAM.Breakglass = platform.IAMBreakglassConfig{
+		Enabled:         true,
+		AllowedSubjects: []string{"  "},
+	}
+	if err := blank.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_subjects[0]") {
+		t.Fatalf("err=%v want blank subject rejection", err)
+	}
+}
+
 func TestRedisConfigRedaction(t *testing.T) {
 	cfg := platform.RedisConfig{Addr: "127.0.0.1:6379", Password: "p@ss", DB: 1}
 	out := cfg.LogValue().String()

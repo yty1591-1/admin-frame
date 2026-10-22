@@ -25,18 +25,22 @@ import (
 // Channel 由 cmd 在装配期固定（本包同时被 A / B 端复用），transport 不接受
 // 调用方传入的端别用于授权决策，避免在 HTTP 层被请求参数劫持（SEC-14）。
 type HandlerConfig struct {
-	Roles    *app.RoleService
-	Bindings *app.BindingService
-	Query    *app.QueryService
-	Channel  domain.Channel
+	Roles      *app.RoleService
+	Bindings   *app.BindingService
+	Query      *app.QueryService
+	Changes    *app.ChangeRequestService
+	Breakglass *app.BreakglassService
+	Channel    domain.Channel
 }
 
 // Handler 处理 IAM 管理端 HTTP 请求。
 type Handler struct {
-	roles    *app.RoleService
-	bindings *app.BindingService
-	query    *app.QueryService
-	channel  domain.Channel
+	roles      *app.RoleService
+	bindings   *app.BindingService
+	query      *app.QueryService
+	changes    *app.ChangeRequestService
+	breakglass *app.BreakglassService
+	channel    domain.Channel
 }
 
 // NewHandler 构造 IAM Handler；缺失依赖时返回错误。
@@ -44,14 +48,19 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if cfg.Roles == nil || cfg.Bindings == nil || cfg.Query == nil {
 		return nil, apperr.Internal("iam handler services are required", nil)
 	}
+	if cfg.Changes == nil {
+		return nil, apperr.Internal("iam change request service is required", nil)
+	}
 	if err := cfg.Channel.Validate(); err != nil {
 		return nil, err
 	}
 	return &Handler{
-		roles:    cfg.Roles,
-		bindings: cfg.Bindings,
-		query:    cfg.Query,
-		channel:  cfg.Channel,
+		roles:      cfg.Roles,
+		bindings:   cfg.Bindings,
+		query:      cfg.Query,
+		changes:    cfg.Changes,
+		breakglass: cfg.Breakglass,
+		channel:    cfg.Channel,
 	}, nil
 }
 

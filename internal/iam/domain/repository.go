@@ -94,6 +94,8 @@ type ChangeRequestRepository interface {
 	FindByID(ctx context.Context, id string) (*ChangeRequest, error)
 	// List 按条件分页列举审批单，按申请时间倒序。
 	List(ctx context.Context, filter ChangeRequestFilter) ([]*ChangeRequest, error)
+	// Count 返回与 List 相同条件的审批单总数，供分页 total 使用。
+	Count(ctx context.Context, filter ChangeRequestFilter) (int, error)
 }
 
 // ChangeRequestFilter 是审批单列表过滤条件。
@@ -132,6 +134,11 @@ type SubjectSnapshot struct {
 	Roles []string
 	// Permissions 生效权限点并集（去重、排序）。
 	Permissions []iam.PermissionCode
+	// Breakglass 表示主体当前持有未过期的破玻璃绑定。
+	//
+	// 只有该标记为 true 时才允许 Permissions 中出现 "*"：普通角色永不含通配符，
+	// 授权层据此在 prod 关闭 allow_wildcard 的前提下仍可放行破玻璃。
+	Breakglass bool
 	// Scopes 按资源合并后的数据范围（取并集，最宽者胜出）。
 	Scopes []DataScope
 	// Version 快照版本（可由角色最大版本或生成序号派生），用于缓存比对。
@@ -141,8 +148,13 @@ type SubjectSnapshot struct {
 }
 
 // HasPermission 判断快照是否包含指定权限码。
+//
+// "*" 只在 Breakglass 为 true 时生效，避免快照被注入通配符后无差别放行。
 func (s *SubjectSnapshot) HasPermission(code iam.PermissionCode) bool {
 	for _, candidate := range s.Permissions {
+		if candidate == "*" && s.Breakglass {
+			return true
+		}
 		if candidate == code {
 			return true
 		}

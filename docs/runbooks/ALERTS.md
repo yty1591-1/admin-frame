@@ -13,6 +13,7 @@
 | `iam.cache.invalidate_failed` | P1 | IAM 快照缓存删除失败，撤销可能延迟 | [iam.md](./iam.md) |
 | `iam.authz.deny_rate_high` | P2 | 鉴权拒绝率突增，疑似误授权或客户端异常 | [iam.md](./iam.md) |
 | `iam.shadow.mismatch` | P2 | shadow 判定与静态表不一致，enforce 前必须归零 | [iam.md](./iam.md) |
+| `iam.breakglass.active` | P1 | 存在有效破玻璃授权（`iam_breakglass_active > 0`） | [iam.md](./iam.md) |
 
 P3 示例（鼓励登记，CI 不强制链接）：
 

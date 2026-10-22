@@ -268,8 +268,9 @@ func (s *AuthorizeService) build(raw *domain.SubjectSnapshot) (authz.Snapshot, e
 	permissions := make([]string, 0, len(raw.Permissions))
 	for _, code := range raw.Permissions {
 		value := string(code)
-		// 非破玻璃快照不得携带通配符；prod 固定 AllowWildcard=false。
-		if !s.allowWildcard && strings.Contains(value, "*") {
+		// 非破玻璃快照不得携带通配符：只有快照标记 Breakglass 时才允许 "*"，
+		// 与 iam.security.allow_wildcard（普通角色通配符）解耦，prod 也可用破玻璃。
+		if !s.allowWildcard && strings.Contains(value, "*") && !raw.Breakglass {
 			continue
 		}
 		permissions = append(permissions, value)

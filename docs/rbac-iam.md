@@ -1,6 +1,6 @@
 # RBAC 权限管理服务（IAM）规划与设计
 
-> **状态**：实施中（v0.10；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已落地领域层：`ChangeRequest` 审批单聚合（SoD / 状态机 / 载荷校验）+ memory 仓储，应用服务、端点与 apply 接线待办；M4 待办：审批单接线、破玻璃、`iam_outbox`）
+> **状态**：实施中（v0.12；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4 待办：`iam_outbox`（M4.4）、B 端审批（需 `merchant_id` 迁移））
 > **定位**：模块化单体中的 `internal/iam` 业务域，**不新增独立进程 / 微服务**
 > **适用范围**：A 端平台角色、B 端商户内角色与权限管理；C 端不接入 IAM
 > **决策记录**：[`docs/adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)（落位、失败关闭、`50300`、灰度路线）
@@ -182,7 +182,7 @@ wildcard   := "*" | segment ":" "*"
 
 - 配置化互斥组，例如：`iam:role:grant` 与 `audit:read` 不得由同一主体同时持有；`iam:breakglass:request` 与 `iam:breakglass:approve` 必须由不同主体持有。
 - 授权 / 绑定时校验：若新增权限导致主体同时持有任一互斥组，返回 `40900`，并在消息中只指出冲突组名，不泄露其他主体信息。
-- 破玻璃审批可临时豁免 SoD，但必须走审批并记 `rbac.breakglass` 审计。
+- 破玻璃同样适用 SoD（申请人 ≠ 审批人），并记 `rbac.breakglass` 审计；不允许以「紧急」为由绕过双人审批。
 - SoD 规则属于安全策略，放配置（`iam.security.sod_conflicts`），变更须安全 Owner Review。
 
 ---
@@ -377,11 +377,15 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
   COMMENT='IAM 高风险变更审批单；申请人与审批人强制不同，审批通过后才落到目标表';
 ```
 
-> **实现状态（M4.2 领域层）**：`domain.ChangeRequest`（状态机 `pending → approved → applied` / `rejected` / `cancelled`、SoD、载荷 JSON 对象校验、敏感字段与 B 端 `merchant_id` 覆盖拒绝）与 `MemoryChangeRequestRepository`（乐观锁 + 深拷贝 + 分页过滤）已落地，`go test ./internal/iam/domain ./internal/iam/infrastructure/persistence` 通过。
+> **实现状态（M4.2 应用层 / 持久化 / 端点已落地）**：`domain.ChangeRequest`（状态机 `pending → approved → applied` / `rejected` / `cancelled`、SoD、载荷 JSON 对象校验、敏感字段与 B 端 `merchant_id` 覆盖拒绝）、`MemoryChangeRequestRepository` / `SQLChangeRequestRepository`（乐观锁、过滤、分页）、`app.ChangeRequestService`（创建 / 列表 / 详情 / 通过 / 拒绝 / 撤销 / 应用）与 `app.RoleChangeApplicator`（应用时重新加载目标聚合并按当前版本写入）已落地。
 >
-> 尚未落地：应用服务（创建 / 列表 / 通过 / 拒绝 / 撤销 / apply）、A 端端点、SQL 仓储。
+> A 端端点：`GET|POST /admin/v1/iam/change-requests`、`POST /admin/v1/iam/change-requests/{id}/{approve|reject|cancel|apply}`（审批端点仅 A 端注册，B 端 404）。
 >
-> **已知 schema 缺口**：本表没有 `merchant_id` 列，B 端自助发起的审批单无法做租户隔离。M4.2 若开放 B 端发起，必须先新增 `000004_add_iam_change_request_merchant_id`（`merchant_id NOT NULL DEFAULT ''` + 索引），并让 `ChangeRequestFilter` 携带商户条件；在此之前审批单只允许 A 端创建与决定。
+> **应用语义**：`apply` 失败时审批单保持 `approved`（可重试），不会标记 `applied`；新建类动作（`role_create` / `role_clone` / `binding_create`）在应用成功后把真实主键回填到 `target_id`。
+>
+> **尚未接线**：`iam.approval.enabled` 配置项与「高风险直写强制转审批」的拦截尚未实现——当前管理端的直接写端点（`PUT /roles/{id}/permissions` 等）仍可立即生效，审批流需调用方主动走 `/change-requests`。强制 gating 与配置开关随 M4.2 后续小步提交，避免一次性改动影响既有调用方。
+>
+> **已知 schema 缺口**：本表没有 `merchant_id` 列，B 端自助发起的审批单无法做租户隔离。开放 B 端发起前必须先新增 `000004_add_iam_change_request_merchant_id`（`merchant_id NOT NULL DEFAULT ''` + 索引），并让 `ChangeRequestFilter` 携带商户条件；当前 `ChangeLimits.AllowBizChannel=false`，B 端创建直接返回 40300。
 
 ### 5.3.7 iam_outbox（审计 / 缓存失效事件）
 
@@ -535,7 +539,8 @@ internal/
 │   │   ├── audit.go                  # M3：ChangeRecorder（fail-closed）+ 审计事件构造
 │   │   ├── rules.go                  # M3：授权校验 / 数据范围归一化
 │   │   ├── authorize_service.go      # M2 已落地：快照加载（cache → DB、singleflight、300ms 超时、清洗）
-│   │   ├── approve_change.go          # 审批单（M4.2）
+│   │   ├── change_request_service.go  # 审批单用例（M4.2：创建 / 通过 / 拒绝 / 撤销 / 应用）
+│   │   ├── change_request_service_test.go
 │   │   └── *_test.go
 │   ├── infrastructure/
 │   │   ├── persistence/              # M1 已落地 memory（94.7%）+ MySQL 8.0 仓储；M3 补 memory_snapshot；M4.2 补 memory_change_request
@@ -674,7 +679,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | `security.Authorizer.Require` / `RequireAny` | 保留；无 loader 时走原 `rbac.Require` 静态逻辑；有 loader 时在 `security` 内先加载快照、再调用 `Checker.Allow`，以便把 loader 错误映射为 503（`rbac.Require` 的 `SubjectFrom` 无法返回错误，不强行改造其签名） |
 | `auth.Principal.Roles` | 保留；**不信任**令牌中的角色用于授权，仅作诊断字段 |
 | `cmd/*/newAuthorizer()` | 已改为接收 `*platform.Deps`，并由 `cmd/internal/iamruntime.New` 统一组装（仓储 / 缓存 / 用例 / 鉴权器 / A 端与 B 端路由）；`iam.mode` 为 `off`/`shadow` 时 B 端静态权限表仍作为兜底 |
-| `docs/audit/EVENTS.md` | M3 已将 `rbac.role_change` 置为 `active` 并新增 `rbac.binding_change`（active）；`rbac.breakglass` 留待 M4.3（AUD-01） |
+| `docs/audit/EVENTS.md` | M4.3 已将 `rbac.breakglass` 置为 `active` 并接线（申请 / 审批 / 撤销，AUD-01）；三类授权事件均为 active |
 
 ### 6.6 领域不变量（M1 实现基线）
 
@@ -748,10 +753,27 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | GET | `/admin/v1/iam/subjects/{subject_type}/{subject_id}/permissions` | `iam:binding:read` | 主体有效权限 + 角色 + 数据范围 | 否 |
 | POST | `/admin/v1/iam/authorize` | `iam:check` | 模拟鉴权（指定 subject + permission + resource） | 否（拒绝记指标） |
 | GET | `/admin/v1/iam/me/permissions` | 仅认证 | 当前主体有效权限 / 菜单 | 否 |
-| GET | `/admin/v1/iam/change-requests` | `iam:change:read` | 审批单列表（M4.2；领域层已就绪，端点待接线） | 否 |
-| POST | `/admin/v1/iam/change-requests/{id}/approve` | `iam:change:approve` | 审批（M4.2，申请人 ≠ 审批人） | `rbac.role_change` |
-| POST | `/admin/v1/iam/breakglass` | `iam:breakglass:request` | 申请限时超级权限（M4.3） | `rbac.breakglass` |
-| POST | `/admin/v1/iam/breakglass/{id}/approve` | `iam:breakglass:approve` | 审批破玻璃（M4.3） | `rbac.breakglass` |
+| GET | `/admin/v1/iam/change-requests` | `iam:change:read` | 审批单列表（`status` / `action` / `requested_by` 过滤，默认按申请时间倒序） | 否 |
+| POST | `/admin/v1/iam/change-requests` | `iam:role:write` | 发起审批单（载荷 ≤ 16 KiB，禁敏感字段与 B 端 `merchant_id`） | 否（应用时才产生变更） |
+| POST | `/admin/v1/iam/change-requests/{id}/approve` | `iam:change:approve` | 通过审批（申请人 ≠ 审批人；自审 `40300`） | 否（应用时记 `rbac.*`） |
+| POST | `/admin/v1/iam/change-requests/{id}/reject` | `iam:change:approve` | 拒绝审批（同样适用 SoD） | 否 |
+| POST | `/admin/v1/iam/change-requests/{id}/cancel` | `iam:change:read` | 撤销（仅申请人本人） | 否 |
+| POST | `/admin/v1/iam/change-requests/{id}/apply` | `iam:change:approve` | 应用已通过审批；重新加载目标并按当前版本写入 | `rbac.role_change` / `rbac.binding_change` |
+| POST | `/admin/v1/iam/breakglass` | `iam:breakglass:request` | 申请限时超级权限（≤ 2h，需开启开关） | `rbac.breakglass` |
+| POST | `/admin/v1/iam/breakglass/{id}/approve` | `iam:breakglass:approve` | 审批并立即生效（申请人 ≠ 审批人） | `rbac.breakglass` |
+| POST | `/admin/v1/iam/breakglass/{id}/revoke` | `iam:breakglass:approve` | 提前撤销临时绑定（需 version） | `rbac.breakglass` |
+
+审批单载荷（`payload`）按 `action` 区分，字段名与角色 DTO 保持一致（数据范围用 `scope_type`），未知字段返回 `40000`：
+
+| `action` | 载荷字段 | `target_id` |
+|----------|----------|-------------|
+| `role_create` | `scope_type` / `code` / `name` / `description` / `permissions[]` / `data_scopes[]` | 空，应用后回填新角色 ID |
+| `role_update` | `name` / `description` / `status`（任意子集） | 角色 ID |
+| `role_permission_replace` | `permissions[]` / 可选 `data_scopes[]` | 角色 ID |
+| `role_clone` | `code` / `name` | 源角色 ID，应用后返回新角色 ID |
+| `role_delete` | 无 | 角色 ID |
+| `binding_create` | `role_id` / `subject_type` / `subject_id` / 可选 `expires_at` | 空，应用后回填绑定 ID |
+| `binding_delete` | 无 | 绑定 ID |
 
 ### 7.3 B 端接口（M4.1 已落地）
 
@@ -1032,6 +1054,7 @@ WHERE b.channel = ?
 | 生效 | 创建一条 `expires_at` 的临时绑定到 `breakglass` 角色；快照含 `*`；到期自动失效 |
 | 审计 | 申请、批准、生效、每次使用、到期全部记 `rbac.breakglass`；触发实时告警 |
 | 撤销 | 支持提前撤销；撤销后删除缓存并等待 L1 过期（≤ 3s） |
+| 防绕过 | 普通绑定接口拒绝 `breakglass` 角色（40300）；破玻璃角色禁止写入权限点，超级权限只能由快照临时展开 |
 | 配置 | `iam.breakglass.enabled=false` 为生产默认；启用须安全 Owner 审批并配置允许主体 |
 
 > 破玻璃不是「日常运维账号」。任何长期 `*` 权限都视为安全缺陷。
@@ -1222,9 +1245,9 @@ iam:
       - "iam:breakglass:request"
 
   breakglass:
-    enabled: false
-    allowed_subjects: []
-    max_duration: 2h
+    enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
+    allowed_subjects: []  # 允许申请的主体白名单；非空时名单外主体返回 40300
+    # 时长上限硬编码 2h（domain.MaxBreakglassDuration），不提供配置项，避免误改放大权限
 ```
 
 环境变量由 `pkg/config` 按 yaml tag 自动推导，例如：
@@ -1241,7 +1264,7 @@ iam:
 
 > 数组 / 映射类字段（`sod_conflicts`、`allowed_subjects`、`required_permissions`）建议只走 yaml，不强行支持环境变量批量覆盖；如需支持，须在 CONFIG 专文登记并加 `Validate` 单测。
 
-> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。上方草案中的 `sod_*` / `approval` / `breakglass` 字段属 M4.2 / M4.3，当前 `Validate` 不识别（写了会被 `pkg/config` 严格模式拒绝）。
+> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。M4.3 已把 `breakglass.enabled` / `allowed_subjects` 接入 `Validate`（含 admin-only、enforce 与 prod 白名单要求）；`sod_*` / `approval` / `max_duration` 仍未实现，写了会被 `pkg/config` 严格模式拒绝。
 
 ### 12.2 Validate 基线
 
@@ -1255,7 +1278,7 @@ iam:
 - 未知 `iam.mode` / `cache.driver` / 负值时长一律拒绝。
 - 配置错误时 `errors.Join` 聚合，启动失败并打印字段名，不打印值（CFG-03 / CFG-05）。
 
-M4 追加（尚未实现）：`breakglass.enabled` / `approval.enabled` / `sod_*`。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
+M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 `allowed_subjects`）；`approval.enabled` / `sod_*` 仍未实现。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
 
 ### 12.3 部署
 
@@ -1324,7 +1347,7 @@ TestPermissionCatalogSeedIsIdempotent
 > | `TestConcurrentGrantIsIdempotent` | `TestBindLoadsSnapshotAndIsIdempotent`、`TestMemoryBindingRepositorySaveIsIdempotent` |
 > | `TestAuditOnRoleChange` / `TestAuditOnBindingChange` | `TestCreateRolePersistsPermissionsAndAudits`、`TestReplacePermissionsComputesDiffAndInvalidatesSubjects`、`TestBindLoadsSnapshotAndIsIdempotent` |
 > | `TestCacheInvalidation` | `TestReplacePermissionsComputesDiffAndInvalidatesSubjects`、`TestUnbindIsIdempotentAndAudited`、`TestSnapshotCache*` |
-> | `TestBreakglassRequiresApproval` | `TestBreakglassBindingRequiresBoundedExpiry`（审批流本身属 M4） |
+> | `TestBreakglassRequiresApproval` | `TestBreakglassBindingRequiresBoundedExpiry`、`TestNewBreakglassGrantRejectsInvalidInput`、`TestBreakglassRequestApproveExpandsWildcardSnapshot` |
 
 **M1 已落地**（`internal/iam/domain`、`internal/iam/infrastructure/persistence`）：
 
@@ -1422,7 +1445,7 @@ TestListRolesReportsTotalAcrossPages            # Count 与分页解耦（memory
 TestRuntimeSharedBetweenAdminAndBiz             # iamruntime.New 复用一个 Authorizer / 仓储 / 缓存实例
 ```
 
-**M4.2 已落地**（`internal/iam/domain/change_request.go`、memory 审批单仓储）：
+**M4.2 已落地**（`internal/iam/domain/change_request.go`、memory / MySQL 审批单仓储、`app.ChangeRequestService` + `app.RoleChangeApplicator`、A 端 6 个端点）：
 
 ```text
 TestNewChangeRequestDefaults                    # pending / version=1 / target_type 由 action 派生
@@ -1441,6 +1464,26 @@ TestMemoryChangeRequestRepositorySaveAndFind
 TestMemoryChangeRequestRepositoryOptimisticLock
 TestMemoryChangeRequestRepositoryListFiltersAndOrder
 TestMemoryChangeRequestRepositoryReturnsDeepCopies
+TestChangeRequestFullFlowAppliesPermissions      # 创建 → 审批 → 应用，角色权限落库且只写一条变更审计
+TestChangeRequestApplyRequiresApproval           # 未审批不动目标聚合
+TestChangeRequestApplyIsVersionGuarded           # 过期版本 40900
+TestChangeRequestApplyFailureKeepsApprovedState  # 应用失败保持 approved，可重试
+TestChangeRequestRoleCreateBindsTargetOnApply    # 新建类动作回填 target_id
+TestChangeRequestBindingCreateApplies            # 绑定类审批落库
+TestChangeRequestRejectsUnknownPayloadFields     # 载荷字段拼错 → 40000（不静默清空）
+TestChangeRequestCreateGuardsChannelAndBreakglass # B 端 / breakglass / 缺 reason 的创建拒绝
+TestChangeRequestHTTPFlow                        # A 端全链路 HTTP：自审 40300 → 换人审批 → 应用
+TestChangeRequestHTTPRejectsMistypedPayload
+TestChangeRequestHTTPRequiresVersion
+TestBizRouterHasNoChangeRequestEndpoints         # 审批端点不对 B 端暴露
+TestSQLChangeRequestRepository                   # MySQL：落库 / 状态流转 / 乐观锁 / 过滤（需 IAM_TEST_MYSQL_DSN）
+TestNewBreakglassGrantAdmin / TestNewBreakglassGrantRejectsInvalidInput
+TestBreakglassRequestApproveExpandsWildcardSnapshot  # 申请 → 审批 → 绑定 → 快照展开 "*" → 撤销后收回
+TestBreakglassWritesAuditTrail                    # request / approve / revoke 三条 rbac.breakglass
+TestBreakglassGuards                              # 开关 / 白名单 / 超时长 / 主体类型
+TestBreakglassHTTPFlow                            # A 端全链路：自审 40300 → 换人审批 → 撤销
+TestBreakglassHTTPRejectsOverlongDuration
+TestSQLSnapshotBreakglassWildcard                 # MySQL：绑定期内 "*"，过期后不再展开（需 IAM_TEST_MYSQL_DSN）
 ```
 
 ### 13.3 性能基准
@@ -1586,7 +1629,7 @@ BenchmarkReplaceRolePermissions_Diff
 | **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 97.9%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
 | **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 90.8% / cache 90.5% / security 94.1%；配置与 cmd 注入随 M3**） | 切回 `off` |
 | **M3 A 端管理 API**（5～7d） | A 端角色 / 权限 / 绑定 API、审计接线、OpenAPI、配置装配 | A 端 15 个端点全链路可用；审计事件 `rbac.role_change` / `rbac.binding_change` 已 `active` 且 fail-closed（当前目标为 SlogEmitter，持久化 Outbox 待 M4）；`admin.yaml` 已含 IAM 契约；`go test ./...`、layering / test-gates / transport / audit / migrations / observability / config / openapi / perf / deps / licenses、`golangci-lint` 全绿（**已完成**）；staging `enforce` 稳定性待环境验证 | 切回 `off` + 清缓存 |
-| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单领域层与 SoD（**M4.2 领域层已完成：`ChangeRequest` + memory 仓储 + 单测**）；审批服务 / 端点 / apply、破玻璃限时 + 告警、Outbox 持久化（M4.2 剩余 / M4.3 / M4.4 待办）；e2e 通过 | 关闭审批 / 破玻璃开关 |
+| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成：申请 / 审批 / 生效 / 撤销 + `iam_breakglass_active` + `rbac.breakglass`**）、Outbox 持久化（M4.4 待办）、B 端审批（需 `merchant_id` 迁移）；e2e 通过 | 关闭审批 / 破玻璃开关 |
 | **M5 生产加固**（3～5d） | 压测、故障演练、runbook、告警、容量评估、清理演示表 | SLO 达标；故障演练通过；`make ci` + 发布 Checklist 全绿 | 保留 `off` 开关一个版本 |
 
 **依赖顺序**：M1 完成前不合并 M2 的运行时切换；M2 shadow 数据必须来自真实（脱敏）角色配置；M3 enforce 前必须完成审计接线。
@@ -1686,7 +1729,7 @@ BenchmarkReplaceRolePermissions_Diff
 - [x] 迁移 `000002` / `000003` up/down 配对，`make check-migrations` 通过；`up` 未改动历史文件。
 - [x] 所有 IAM 表有表注释、所有字段有字段注释，枚举取值列全且与 domain 常量一致；写法统一为 MySQL 列内 `COMMENT`（`000002_create_iam_tables.up.sql`）。
 - [x] B 端租户条件在 SQL 与 app 双重落实；越权 404（`TestSQLBindingRepositoryTenantIsolation` / `TestUnbindHidesCrossMerchantBinding`）；B 端 HTTP 自助接口（13 个端点）已落地，跨商户 404、配额 40000、目录按端过滤均有传输层测试（`TestBiz*`）。
-- [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；持久化 Outbox 与 `rbac.breakglass` 留待 M4.3 / M4.4。
+- [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；`rbac.breakglass` 已在 M4.3 接线；持久化 Outbox 留待 M4.4。
 - [x] A 端管理 API 15 个端点、`RoleService` / `BindingService` / `QueryService` 单测与 HTTP 传输测试通过；OpenAPI（`api/openapi/admin.yaml`）已补齐 IAM 契约。
 - [x] 日志 / 指标 / Trace 符合 OBS：结构化日志含 `trace_id`；指标低基数（无 `subject_id` / `role_id`）；变更计数由审计装饰器产生；`/readyz` 注册 `iam_db` / `iam_cache`；请求级 span 由 `tracing.HTTPMiddleware` 统一产生。
 - [x] 配置 example（`iam` / `redis` 段）、`Validate`（`config_iam_test.go`）与环境变量文档同步。
@@ -1779,9 +1822,9 @@ iam:
       - "iam:role:grant"
       - "iam:breakglass:request"
   breakglass:
-    enabled: false
-    allowed_subjects: []
-    max_duration: 2h
+    enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
+    allowed_subjects: []  # 允许申请的主体白名单；非空时名单外主体返回 40300
+    # 时长上限硬编码 2h（domain.MaxBreakglassDuration），不提供配置项，避免误改放大权限
 ```
 
 ---

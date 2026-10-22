@@ -88,10 +88,12 @@ func (s Snapshot) Empty() bool {
 	return len(s.Roles) == 0 && len(s.Permissions) == 0
 }
 
-// HasPermission 判断快照是否包含指定权限码；按精确匹配，不做通配符展开。
+// HasPermission 判断快照是否包含指定权限码。
+//
+// 支持已展开的 "*"：它只会由破玻璃绑定在有效期内产生，普通角色永不携带。
 func (s Snapshot) HasPermission(code string) bool {
 	for _, candidate := range s.Permissions {
-		if candidate == code {
+		if candidate == code || candidate == "*" {
 			return true
 		}
 	}

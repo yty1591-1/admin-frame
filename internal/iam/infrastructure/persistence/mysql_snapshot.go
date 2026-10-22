@@ -15,17 +15,20 @@ import (
 //
 // 单条 SQL 展开 绑定 → 角色 → 角色权限 → 权限点，禁止按角色循环查询（N+1）。
 // 过滤条件同时校验角色状态、软删、权限点状态与端别，任何一项不满足都不进入快照。
+//
+// 权限表使用 LEFT JOIN：破玻璃角色本身不持有权限点，只有被绑定时才由
+// 本查询注入 "*"；用 INNER JOIN 会让它整行消失，从而永远无法展开超级权限。
 const snapshotPermissionSQL = `
-SELECT DISTINCT r.id, r.code, r.version, p.code
+SELECT DISTINCT r.id, r.code, r.version, r.role_type, p.code
 FROM iam_role_binding b
 JOIN iam_role r
 		ON r.id = b.role_id
 	AND r.channel = b.channel
 	AND r.status = 'active'
 	AND r.deleted_at IS NULL
-JOIN iam_role_permission rp
+LEFT JOIN iam_role_permission rp
 	ON rp.role_id = r.id
-JOIN iam_permission p
+LEFT JOIN iam_permission p
 	ON p.code = rp.permission_code
 	AND p.status = 'active'
 	AND p.channel IN (?, 'both')
@@ -33,7 +36,8 @@ WHERE b.channel = ?
 	AND b.subject_type = ?
 	AND b.subject_id = ?
 	AND b.merchant_id = ?
-	AND (b.expires_at IS NULL OR b.expires_at > ?)`
+	AND (b.expires_at IS NULL OR b.expires_at > ?)
+	AND (p.code IS NOT NULL OR r.role_type = 'breakglass')`
 
 // snapshotScopeSQL 是数据范围快照查询（docs/rbac-iam.md §8.3）。
 const snapshotScopeSQL = `
@@ -75,7 +79,7 @@ func (r *SQLSnapshotRepository) Load(ctx context.Context, query domain.SubjectQu
 	}
 	at := query.EffectiveTime()
 
-	roles, permissions, version, err := r.loadPermissions(ctx, query, at)
+	roles, permissions, breakglass, version, err := r.loadPermissions(ctx, query, at)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +95,7 @@ func (r *SQLSnapshotRepository) Load(ctx context.Context, query domain.SubjectQu
 		MerchantID:  query.MerchantID,
 		Roles:       roles,
 		Permissions: permissions,
+		Breakglass:  breakglass,
 		Scopes:      scopes,
 		Version:     version,
 		GeneratedAt: time.Now().UTC(),
@@ -105,12 +110,12 @@ func (r *SQLSnapshotRepository) loadPermissions(
 	ctx context.Context,
 	query domain.SubjectQuery,
 	at time.Time,
-) (roles []string, permissions []iam.PermissionCode, version int64, err error) {
+) (roles []string, permissions []iam.PermissionCode, breakglass bool, version int64, err error) {
 	rows, err := r.sql.QueryContext(ctx, snapshotPermissionSQL,
 		string(query.Channel), string(query.Channel), string(query.SubjectType),
 		query.SubjectID, query.MerchantID, at)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, false, 0, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -121,19 +126,31 @@ func (r *SQLSnapshotRepository) loadPermissions(
 			roleID     string
 			roleCode   string
 			rowVersion int64
-			permission string
+			roleType   string
+			permission sql.NullString
 		)
-		if err := rows.Scan(&roleID, &roleCode, &rowVersion, &permission); err != nil {
-			return nil, nil, 0, err
+		if err := rows.Scan(&roleID, &roleCode, &rowVersion, &roleType, &permission); err != nil {
+			return nil, nil, false, 0, err
 		}
 		roleSet[roleCode] = struct{}{}
-		permissionSet[iam.PermissionCode(permission)] = struct{}{}
+		if roleType == string(domain.RoleTypeBreakglass) {
+			// 破玻璃角色在有效绑定期内展开 "*"：权限目录本身永不含通配符。
+			permissionSet[iam.PermissionCode("*")] = struct{}{}
+			breakglass = true
+			if rowVersion > version {
+				version = rowVersion
+			}
+			continue
+		}
+		if permission.Valid {
+			permissionSet[iam.PermissionCode(permission.String)] = struct{}{}
+		}
 		if rowVersion > version {
 			version = rowVersion
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, false, 0, err
 	}
 
 	roles = make([]string, 0, len(roleSet))
@@ -147,7 +164,7 @@ func (r *SQLSnapshotRepository) loadPermissions(
 		permissions = append(permissions, code)
 	}
 	slices.Sort(permissions)
-	return roles, permissions, version, nil
+	return roles, permissions, breakglass, version, nil
 }
 
 // loadScopes 执行数据范围查询，并按资源取并集（最宽者胜出）。

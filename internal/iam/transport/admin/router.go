@@ -43,6 +43,31 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.SubjectPermissions))))
 	mux.Handle("POST /admin/v1/iam/authorize", authMW(perm(string(iam.PermCheck))(http.HandlerFunc(h.Authorize))))
 
+	// 高风险变更审批单：申请 / 通过 / 拒绝 / 撤销 / 应用。
+	// 申请需要写权限，决定与查询分别使用独立的 iam:change:* 权限点，便于把
+	// 「能提申请」与「能批准申请」授予不同角色（SoD）。
+	mux.Handle("GET /admin/v1/iam/change-requests",
+		authMW(perm(string(iam.PermChangeRead))(http.HandlerFunc(h.ListChangeRequests))))
+	mux.Handle("POST /admin/v1/iam/change-requests",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.CreateChangeRequest))))
+	mux.Handle("POST /admin/v1/iam/change-requests/{id}/approve",
+		authMW(perm(string(iam.PermChangeApprove))(http.HandlerFunc(h.ApproveChangeRequest))))
+	mux.Handle("POST /admin/v1/iam/change-requests/{id}/reject",
+		authMW(perm(string(iam.PermChangeApprove))(http.HandlerFunc(h.RejectChangeRequest))))
+	mux.Handle("POST /admin/v1/iam/change-requests/{id}/cancel",
+		authMW(perm(string(iam.PermChangeRead))(http.HandlerFunc(h.CancelChangeRequest))))
+	mux.Handle("POST /admin/v1/iam/change-requests/{id}/apply",
+		authMW(perm(string(iam.PermChangeApprove))(http.HandlerFunc(h.ApplyChangeRequest))))
+
+	// 破玻璃（限时超级权限）：申请与审批必须是不同主体（SoD），
+	// 撤销使用审批权限——能批准超级权限的人才应能提前收回。
+	mux.Handle("POST /admin/v1/iam/breakglass",
+		authMW(perm(string(iam.PermBreakglassRequest))(http.HandlerFunc(h.RequestBreakglass))))
+	mux.Handle("POST /admin/v1/iam/breakglass/{id}/approve",
+		authMW(perm(string(iam.PermBreakglassApprove))(http.HandlerFunc(h.ApproveBreakglass))))
+	mux.Handle("POST /admin/v1/iam/breakglass/{id}/revoke",
+		authMW(perm(string(iam.PermBreakglassApprove))(http.HandlerFunc(h.RevokeBreakglass))))
+
 	// 当前主体权限：仅需认证，不额外要求权限点。
 	mux.Handle("GET /admin/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
 }

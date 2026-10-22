@@ -40,17 +40,45 @@ func (s *seqIDs) NextString() (string, error) {
 	return strconv.FormatInt(id, 10), nil
 }
 
+// newChangeService 装配审批用例（内存仓储），供 HandlerConfig 使用。
+func newChangeService(t *testing.T, roleSvc *app.RoleService, bindingSvc *app.BindingService, ids *seqIDs) *app.ChangeRequestService {
+	t.Helper()
+	applicator, err := app.NewRoleChangeApplicator(roleSvc, bindingSvc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := app.NewChangeRequestService(app.ChangeRequestServiceConfig{
+		Requests:   persistence.NewMemoryChangeRequestRepository(),
+		Applicator: applicator,
+		IDs:        ids,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
 type recorder struct{}
 
 func (recorder) Record(context.Context, audit.Event) error { return nil }
 
+// router 包装 A 端路由与可变主体，便于在同一套服务上验证双人审批。
 type router struct {
 	handler http.Handler
+	subject *string
+}
+
+// as 切换后续请求的认证主体（共享同一套用例与仓储）。
+func (rt *router) as(subjectID string) *router {
+	*rt.subject = subjectID
+	return rt
 }
 
 // newRouter 装配真实用例 + 测试版鉴权中间件（仅注入 Principal，不做权限判定）。
 func newRouter(t *testing.T) *router {
 	t.Helper()
+	subject := new(string)
+	*subject = "1001"
 	roles := persistence.NewMemoryRoleRepository()
 	bindings := persistence.NewMemoryBindingRepository()
 	ids := &seqIDs{}
@@ -75,21 +103,22 @@ func newRouter(t *testing.T) *router {
 		t.Fatal(err)
 	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc, Channel: domain.ChannelAdmin,
+		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
+		Changes: newChangeService(t, roleSvc, bindingSvc, ids), Channel: domain.ChannelAdmin,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authMW := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			principal := auth.Principal{Channel: auth.ChannelAdmin, SubjectID: "1001"}
+			principal := auth.Principal{Channel: auth.ChannelAdmin, SubjectID: *subject}
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 		})
 	}
 	perm := func(string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	return &router{handler: admin.NewRouter(handler, authMW, perm)}
+	return &router{handler: admin.NewRouter(handler, authMW, perm), subject: subject}
 }
 
 // envelope 是响应信封的解码目标。
@@ -429,7 +458,8 @@ func TestMissingPrincipalIsUnauthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc, Channel: domain.ChannelAdmin,
+		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
+		Changes: newChangeService(t, roleSvc, bindingSvc, ids), Channel: domain.ChannelAdmin,
 	})
 	if err != nil {
 		t.Fatal(err)

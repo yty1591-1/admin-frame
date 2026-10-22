@@ -49,6 +49,9 @@ iam:
   security:
     allow_wildcard: false        # prod 强制 false；通配符只经 breakglass 展开
     require_reason: true         # 高风险变更强制填写 reason
+  breakglass:
+    enabled: false               # 生产默认关闭；启用要求 mode=enforce，prod 必须配置 allowed_subjects
+    allowed_subjects: []         # 允许申请的主体白名单；非空时名单外返回 40300
 
 # Redis：iam.cache.driver=redis 时必填；密码走 ADMIN_FRAME_REDIS_PASSWORD。
 redis:

@@ -31,6 +31,7 @@ type Metrics struct {
 	loadErrors     *prometheus.CounterVec
 	roleChanges    *prometheus.CounterVec
 	bindingChanges *prometheus.CounterVec
+	registerer     prometheus.Registerer
 }
 
 // NewMetrics 创建并注册指标；重复注册视为装配错误（fail-fast）。
@@ -39,6 +40,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		return nil, fmt.Errorf("iam observability: registerer is required")
 	}
 	m := &Metrics{
+		registerer: registerer,
 		cacheTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "iam_authz_cache_total",
 			Help: "IAM 鉴权快照缓存读取次数，按层与结果分组。",
@@ -88,6 +90,33 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		}
 	}
 	return m, nil
+}
+
+// RegisterBreakglassGauge 注册 iam_breakglass_active（GaugeFunc）。
+//
+// 采集时实时统计有效破玻璃绑定数，避免常驻后台任务；查询失败按 0 暴露并
+// 由 iam_authz_load_errors_total 之外的日志告警排查，绝不放行为「有权限」。
+func (m *Metrics) RegisterBreakglassGauge(counter func() (int, error)) error {
+	if m == nil || m.registerer == nil {
+		return fmt.Errorf("iam observability: metrics is not initialized")
+	}
+	if counter == nil {
+		return fmt.Errorf("iam observability: breakglass counter is required")
+	}
+	gauge := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "iam_breakglass_active",
+		Help: "IAM 活跃破玻璃绑定数；>0 触发 P1 告警（docs/rbac-iam.md §8.5）。",
+	}, func() float64 {
+		value, err := counter()
+		if err != nil || value < 0 {
+			return 0
+		}
+		return float64(value)
+	})
+	if err := m.registerer.Register(gauge); err != nil {
+		return fmt.Errorf("iam observability: register breakglass gauge: %w", err)
+	}
+	return nil
 }
 
 // OnCache 实现 cache.Observer。

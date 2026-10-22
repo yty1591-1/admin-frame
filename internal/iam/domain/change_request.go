@@ -313,6 +313,30 @@ func (c *ChangeRequest) Cancel(actor string, expectedVersion int64) error {
 	return nil
 }
 
+// BindTarget 在应用阶段回填新建聚合的真实 ID。
+//
+// 新建类动作在申请时还没有业务主键，审批单只携带载荷；应用成功后必须回填
+// 目标 ID，否则审计无法从审批单追溯到实际落库的角色 / 绑定。已回填的单子
+// 不允许再改，避免同一张单子指向不同目标。
+func (c *ChangeRequest) BindTarget(targetID string) error {
+	if c.Status != ChangeStatusApproved {
+		return errConflict(ErrChangeNotApproved,
+			"change request %s is %s; target can only be bound after approval", c.ID, string(c.Status))
+	}
+	if c.TargetID != "" {
+		return errConflict(ErrInvalidChangeTarget,
+			"change request %s already targets %s", c.ID, c.TargetID)
+	}
+	if err := validateChangeTarget(c.Action, targetID); err != nil {
+		return err
+	}
+	if targetID == "" {
+		return errInvalid(ErrInvalidChangeTarget, "change target id is required")
+	}
+	c.TargetID = targetID
+	return nil
+}
+
 // MarkApplied 标记审批单已应用。
 //
 // 应用动作必须幂等：重复调用返回 40900，由调用方回读状态，避免同一审批单被

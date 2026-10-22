@@ -107,6 +107,8 @@ type IAMConfig struct {
 	Limits IAMLimitsConfig `yaml:"limits"`
 	// Security 安全开关。
 	Security IAMSecurityConfig `yaml:"security"`
+	// Breakglass 破玻璃（限时超级权限）开关与允许主体。
+	Breakglass IAMBreakglassConfig `yaml:"breakglass"`
 }
 
 // IAMCacheConfig 是快照缓存参数。
@@ -135,6 +137,14 @@ type IAMLimitsConfig struct {
 	MaxBindingsPerSubject int `yaml:"max_bindings_per_subject"`
 	// MaxCustomRolesPerMerchant B 端自定义角色数上限。
 	MaxCustomRolesPerMerchant int `yaml:"max_custom_roles_per_merchant"`
+}
+
+// IAMBreakglassConfig 是破玻璃开关；生产默认关闭。
+type IAMBreakglassConfig struct {
+	// Enabled 是否启用破玻璃。
+	Enabled bool `yaml:"enabled"`
+	// AllowedSubjects 允许申请破玻璃的主体白名单；prod 启用时必填。
+	AllowedSubjects []string `yaml:"allowed_subjects"`
 }
 
 // IAMSecurityConfig 是 IAM 安全开关。
@@ -755,6 +765,22 @@ func (c *Config) validateIAM() []error {
 	}
 	if isProdEnv(c.Env) && c.IAM.Security.AllowWildcard {
 		errs = append(errs, errors.New("iam.security.allow_wildcard must be false when env=prod"))
+	}
+	if c.IAM.Breakglass.Enabled {
+		if c.Channel != "admin" {
+			errs = append(errs, errors.New("iam.breakglass.enabled is only supported on channel=admin"))
+		}
+		if mode != IAMModeEnforce {
+			errs = append(errs, errors.New("iam.breakglass.enabled requires iam.mode=enforce"))
+		}
+		if isProdEnv(c.Env) && len(c.IAM.Breakglass.AllowedSubjects) == 0 {
+			errs = append(errs, errors.New("iam.breakglass.allowed_subjects is required when env=prod"))
+		}
+		for i, subject := range c.IAM.Breakglass.AllowedSubjects {
+			if strings.TrimSpace(subject) == "" {
+				errs = append(errs, fmt.Errorf("iam.breakglass.allowed_subjects[%d] must not be empty", i))
+			}
+		}
 	}
 	return errs
 }

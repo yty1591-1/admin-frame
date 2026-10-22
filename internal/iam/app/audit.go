@@ -16,6 +16,8 @@ import (
 const (
 	ResourceTypeRole    = "iam_role"
 	ResourceTypeBinding = "iam_binding"
+	// ResourceTypeBreakglass 破玻璃申请 / 审批 / 撤销。
+	ResourceTypeBreakglass = "iam_breakglass"
 )
 
 // 审计属性键，保持稳定便于 SIEM 检索。
@@ -28,6 +30,7 @@ const (
 	attrAdded       = "added"
 	attrRemoved     = "removed"
 	attrExpiresAt   = "expires_at"
+	attrBindingID   = "binding_id"
 )
 
 // AttrOperation 是审计属性中「变更类型」的键（create / update / disable / bind …）。
