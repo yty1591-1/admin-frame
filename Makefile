@@ -8,7 +8,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
-	test test-ci check-test-gates lint fmt fmt-check tidy tidy-check \
+	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi check-deps check-config \
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
@@ -54,6 +54,10 @@ check-test-gates:
 # 与 CI job test 对齐（race + coverage + TESTING_STANDARDS 门禁）。
 test-ci:
 	bash scripts/ci/run-tests.sh
+
+# ENT-16：真实 MySQL / Redis / MinIO 集成测试（Tier B，不并入 make ci）。
+test-integration:
+	bash scripts/ci/run-integration-tests.sh
 
 lint:
 	golangci-lint run ./...

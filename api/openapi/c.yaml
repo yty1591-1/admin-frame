@@ -6,7 +6,7 @@ info:
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
     2.0.0：生产级信封/分页/强制 Idempotency-Key（相对 1.0.0 骨架契约）。
-    3.0.0：移除订单演示域契约（破坏性）；当前仅保留平台 probe 端点。
+    3.0.0：移除历史订单契约（破坏性）；当前仅保留平台 probe 端点。
 servers:
   - url: http://localhost:8083
 tags:

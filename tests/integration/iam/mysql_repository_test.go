@@ -528,7 +528,7 @@ func TestSQLSnapshotRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	role := newRole(t, roles, "1001", "ops_readonly",
-		[]iam.PermissionCode{iam.PermRoleRead, iam.PermOrderRead}, []domain.DataScope{orderScope})
+		[]iam.PermissionCode{iam.PermRoleRead, iam.PermRoleWrite}, []domain.DataScope{orderScope})
 
 	binding, err := domain.NewBinding(domain.NewBindingParams{
 		ID: "2001", Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
@@ -551,7 +551,7 @@ func TestSQLSnapshotRepository(t *testing.T) {
 	if len(snapshot.Roles) != 1 || snapshot.Roles[0] != "ops_readonly" {
 		t.Fatalf("roles=%v", snapshot.Roles)
 	}
-	if !snapshot.HasPermission(iam.PermRoleRead) || !snapshot.HasPermission(iam.PermOrderRead) {
+	if !snapshot.HasPermission(iam.PermRoleRead) || !snapshot.HasPermission(iam.PermRoleWrite) {
 		t.Fatalf("permissions=%v", snapshot.Permissions)
 	}
 	scope, ok := snapshot.ScopeFor("order")

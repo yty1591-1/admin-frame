@@ -1,0 +1,73 @@
+# Wave 0（ENT-16 前置切片）：集成测试依赖。
+#
+# 仅本地开发与 CI 使用；所有口令均为测试默认值，禁止用于任何真实环境（TESTING_STANDARDS TEST-05 / CI-12）。
+# 用法：bash scripts/ci/run-integration-tests.sh
+#
+# 端口可通过环境变量覆盖（默认值仅供测试）：
+#   TEST_MYSQL_PORT / TEST_REDIS_PORT / TEST_S3_PORT / TEST_S3_CONSOLE_PORT
+#
+# 固定独立 project name，避免与 docker-compose.storage.yml 的服务/网络互相覆盖。
+name: admin-frame-integration
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: admin_frame_test
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+    ports:
+      - "${TEST_MYSQL_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    volumes:
+      - integration-mysql:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${TEST_REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    # Docker Hub 的 minio/minio 仓库已不可用；使用 Bitnami 遗留归档的固定版本镜像。
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "${TEST_S3_PORT:-9010}:9000"
+      - "${TEST_S3_CONSOLE_PORT:-9011}:9001"
+
+  # 一次性创建测试 bucket；使用 AWS CLI 重试等待 MinIO 就绪，避免依赖镜像内工具差异。
+  minio-init:
+    image: amazon/aws-cli:2.15.17
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      /bin/sh -c "
+      i=0;
+      until aws --endpoint-url http://minio:9000 s3api head-bucket --bucket admin-frame 2>/dev/null; do
+        i=$$((i+1));
+        if [ $$i -ge 30 ]; then echo 'minio not ready' >&2; exit 1; fi;
+        aws --endpoint-url http://minio:9000 s3 mb s3://admin-frame >/dev/null 2>&1 || true;
+        sleep 2;
+      done;
+      exit 0;
+      "
+
+volumes:
+  integration-mysql:

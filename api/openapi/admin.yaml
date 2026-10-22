@@ -6,7 +6,7 @@ info:
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
-    3.0.0：移除订单演示域契约（破坏性）。
+    3.0.0：移除历史订单契约（破坏性）。
 servers:
   - url: http://localhost:8081
 tags:

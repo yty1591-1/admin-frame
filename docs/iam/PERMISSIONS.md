@@ -43,10 +43,10 @@
 | `iam:change:approve` | admin | api | 否 | 活跃 | 审批角色 / 绑定变更；申请人不得自审 |
 | `iam:breakglass:request` | admin | api | 否 | 活跃 | 申请限时超级权限；必须填写原因与有效期，默认上限 2 小时 |
 | `iam:breakglass:approve` | admin | api | 否 | 活跃 | 审批破玻璃申请；与申请人强制分离并触发高危告警 |
-| `order:read` | both | api | 是 | 已弃用 | 订单演示域已移除；保留既有授权，禁止新授 |
-| `order:write` | both | api | 是 | 已弃用 | 订单演示域已移除；保留既有授权，禁止新授 |
-| `file:read` | both | api | 是 | 已弃用 | 文件演示域已移除；保留既有授权，禁止新授 |
-| `file:write` | both | api | 是 | 已弃用 | 文件演示域已移除；保留既有授权，禁止新授 |
+| `order:read` | both | api | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
+| `order:write` | both | api | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
+| `file:read` | both | api | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
+| `file:write` | both | api | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
 | `audit:read` | admin | api | 是 | 活跃 | 查询审计事件；敏感字段脱敏，批量导出需额外 `data:export` |
 | `data:export` | both | api | 是 | 活跃 | 批量导出业务数据；必须限流并记录导出审计 |
 | `config:read` | admin | api | 否 | 活跃 | 查看运行时配置；敏感项脱敏 |
@@ -54,7 +54,7 @@
 | `iam:change:request` | biz | api | 否 | 活跃 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
 | `iam:change:review` | biz | api | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
 
-> `order:*` / `file:*` 为演示域遗留权限点：目录条目与常量保留以解释历史授权与审计，
+> `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（见 `migrations/000008_retire_demo_permissions.up.sql`）。
 >
 > 当前基线无 `menu` / `button` 形态，前端菜单树由后续 PR 追加；追加时 `sort` 取当前最大值 + 10，且不得改动既有条目。

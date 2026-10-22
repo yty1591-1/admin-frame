@@ -1,8 +1,7 @@
 # 生产级与企业级平台能力差距评估（Production Readiness Gaps）
 
-> **状态**：评估完成（v0.3，2026-10-22）；基线 `dad8fc0`；演示域已清理
-> **定位**：本文只评估**平台级能力**——任何未来业务域都需要的身份、租户、数据、异步、多实例、运维、安全与交付能力；不把演示业务域的实现当作生产缺口
-> **演示域处理**：`internal/order/`、`internal/files/` 已按附录 C 完整移除（含路由、OpenAPI、迁移、测试与文档）；`order:*` / `file:*` 权限点保留为 `deprecated` 以解释历史授权与审计
+> **状态**：评估完成（v0.2，2026-10-22）；基线 `dad8fc0`
+> **定位**：本文只评估**平台级能力**——任何未来业务域都需要的身份、租户、数据、异步、多实例、运维、安全与交付能力；具体业务域的实现不在评估范围内
 > **适用范围**：`internal/platform/`、`internal/security/`、`internal/shared/`、`internal/iam/`、`cmd/`、`pkg/`、`migrations/`、`deploy/`、`tests/`、`.github/`、`docs/`
 > **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)、[standards-roadmap.md](./standards-roadmap.md)、[platform-remediation-plan.md](./platform-remediation-plan.md)、[rbac-iam.md](./rbac-iam.md)、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[RELIABILITY_STANDARDS.md](./RELIABILITY_STANDARDS.md)、[OBSERVABILITY_STANDARDS.md](./OBSERVABILITY_STANDARDS.md)、[AUDIT_STANDARDS.md](./AUDIT_STANDARDS.md)、[DATA_STANDARDS.md](./DATA_STANDARDS.md)、[RELEASE_STANDARDS.md](./RELEASE_STANDARDS.md)、[RUNBOOK_STANDARDS.md](./RUNBOOK_STANDARDS.md)、[TESTING_STANDARDS.md](./TESTING_STANDARDS.md)
 > **最后更新**：2026-10-22
@@ -81,7 +80,7 @@
 |---|---|
 | 代码基线 | `dad8fc0`（2026-10-22，工作区干净） |
 | 评估方法 | 平台与公共层走查 + 关键路径静态检索 + 现有测试与流水线盘点 + 既有文档对照 |
-| 证据原则 | 只把**平台 / 公共 / 运维层可验证的事实**列为现状；演示域实现不作为证据 |
+| 证据原则 | 只把**平台 / 公共 / 运维层可验证的事实**列为现状 |
 | 对照文档 | `ARCHITECTURE.md`、`platform-remediation-plan.md`（PLAT 已完成）、`rbac-iam.md`（M0～M4.7 已完成，M5 进行中）、18 份 `*_STANDARDS.md` |
 | 复核命令 | 见 [附录 A](#附录-a核对命令) |
 
@@ -102,13 +101,6 @@
 - **IAM**：角色 / 权限 / 绑定 / 数据范围 / 审批单 / 破玻璃 / 两级缓存 / MySQL 仓储 / 事务性 Outbox / UnitOfWork / 生产强制约束，可作为未来业务域的参考实现。
 - **公共能力**：`pkg/` 已覆盖 DB、Redis、缓存、MQ（内存）、Outbox、HTTP Client、重试、熔断、限流、JWT、密码哈希、加密、存储、短信 / 邮件 / 推送 / Webhook、分页、校验、脱敏、幂等。
 - **交付**：多阶段 Dockerfile、多架构镜像、迁移工具与 up/down 门禁、runbook 框架、发布 Checklist。
-
-### 2.4 边界与演示域处理
-
-- `internal/order/`、`internal/files/` 曾为演示代码，**已移除**；本文不以它们的实现状态作为评估依据。
-- 清理已连带完成其路由、OpenAPI、权限状态、迁移、测试与文档；执行项与结果见 [附录 C](#附录-c演示域移除清单)。
-- 演示域历史迁移未删除：`000007_drop_orders` 负责 contract，`000008_retire_demo_permissions` 将权限点置为 `deprecated`，均保留可回滚 down。
-- 未来业务域应复用本文要求的平台能力与 IAM 参考实现，而不是复制演示域写法。
 
 ---
 
@@ -211,7 +203,7 @@
 **现状证据**
 
 - `pkg/mq` 目前只有内存实现；`docs/pkg-roadmap.md:41` 明确 Kafka / NATS 尚未接入。
-- `cmd/worker/main.go` 已移除订单事件总线依赖，当前为生命周期骨架（配置加载 + 信号退出 + 心跳），等待平台级异步运行时接入。
+- `cmd/worker/main.go` 当前为生命周期骨架（配置加载 + 信号退出 + 心跳），等待平台级异步运行时接入。
 - IAM 的事务性 Outbox 已完整（`cmd/internal/iamruntime/runtime.go:111-136`），但**绑定在 IAM 装配内**，未沉淀为平台级、任何业务域可声明式接入的运行时。
 - `pkg/mq` 提供 Outbox 原语，但没有统一的发布调度、消费者注册、重试策略、DLQ 与事件版本治理。
 
@@ -472,8 +464,7 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 - 不在低流量阶段引入 Kafka；先以 DB Outbox 轮询满足可靠性，容量触发后再换；
 - 不把 IAM 扩成完整 IdP；登录 / MFA / SSO 放身份域，优先复用组织 OIDC；
 - 不在 v1 引入 ABAC 表达式引擎；
-- 不为每个能力单独建可执行文件，仍按模块化单体演进；
-- 不在演示域上继续投入或补测试，直接按 [附录 C](#附录-c演示域移除清单) 清理。
+- 不为每个能力单独建可执行文件，仍按模块化单体演进。
 
 ---
 
@@ -520,7 +511,6 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 | 密钥托管强依赖 | 本地开发受阻 | `SecretProvider` 接口 + env/file 本地实现，生产强制 Vault/KMS |
 | 部署清单与代码漂移 | 上线配置错误 | 清单入库 + `check-deploy` + staging 每次发布验证 |
 | 测试补齐全量铺开 | 拖慢交付 | 先覆盖登录、核心写路径、越权、Outbox、恢复五条主链路 |
-| 演示域清理不彻底 | 死代码、权限种子与 OpenAPI 漂移 | 按附录 C 清单一次性清理并加引用检查 |
 
 **实施原则**
 
@@ -568,9 +558,7 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 
 | 日期 | 事项 | 状态 | 备注 |
 |---|---|---|---|
-| 2026-10-22 | v0.1 基于 `dad8fc0` 完成首次评估（含演示域） | 已废弃 | 按用户要求删除；订单 / 文件为演示代码，不作为生产缺口依据 |
-| 2026-10-22 | v0.2 重写为平台级能力差距评估，排除 `internal/order/`、`internal/files/` | 完成 | 识别 P0 8 项、P1 10 项、P2 7 项 |
-| 2026-10-22 | v0.3 清理演示域：删除两域代码与装配，新增 000007/000008 迁移，OpenAPI 升 3.0.0，门禁泛化 | 完成 | `go build ./...`、`go test ./...`、`make ci` 全绿；权限点保留 deprecated |
+| 2026-10-22 | v0.2 完成平台级能力差距评估 | 完成 | 基线 `dad8fc0`；识别 P0 8 项、P1 10 项、P2 7 项 |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出 |
 
 ---
@@ -626,20 +614,7 @@ make ci
 | SBOM | 软件物料清单 |
 | RPO / RTO | 恢复点目标 / 恢复时间目标 |
 
-### 附录 C：演示域移除清单（已执行）
-
-> 2026-10-22 已按本清单完成清理；保留此表作为可复核记录。
-
-- [x] 删除 `internal/order/`、`internal/files/` 及其测试。
-- [x] 删除两域在 `cmd/admin-api`、`cmd/biz-api`、`cmd/c-api` 的装配与路由注册。
-- [x] 删除对应 OpenAPI 路径与契约；三端 `info.version` 升至 `3.0.0`。
-- [x] `order:*`、`file:*` 权限点保留并置为 `deprecated`，同步权限目录、PERMISSIONS.md 与角色示例。
-- [x] 新增 `000007_drop_orders`（contract）与 `000008_retire_demo_permissions`；未删除已应用的 000001 / 000003。
-- [x] 更新 README、TESTING/PERFORMANCE 规范、perf 基线、CODE_STYLE、storage / rbac / remediation 文档中的演示域示例。
-- [x] 全仓引用检查：代码中无 `internal/order`、`internal/files` 引用。
-- [x] `make ci` 全绿；TEST-03 必测函数切换为 IAM B 端隔离用例。
-
-### 附录 D：与现有路线图的关系
+### 附录 C：与现有路线图的关系
 
 | 文档 | 关系 |
 |---|---|

@@ -1,0 +1,75 @@
+package testkit
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	// 注册 MySQL database/sql 驱动（S-06：空白导入仅用于驱动注册）。
+	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/migrate"
+)
+
+// MySQL 打开测试 MySQL 并应用 migrations/ 下的全部迁移；未配置 TEST_MYSQL_DSN 时跳过用例。
+//
+// 连接池参数沿用 pkg/db 默认值；Cleanup 关闭连接池。
+// 生产环境迁移只允许 cmd/migrate 或部署 Job 执行，本函数仅服务于测试进程。
+func MySQL(t *testing.T) *db.DB {
+	t.Helper()
+	dsn := requireEnv(t, EnvMySQLDSN)
+	if !strings.Contains(dsn, "parseTime=true") {
+		t.Fatalf("%s must enable parseTime=true (and loc=UTC) so DATETIME(3) scans into time.Time", EnvMySQLDSN)
+	}
+
+	ctx := context.Background()
+	database, err := db.Open(ctx, db.Config{Driver: "mysql", DSN: dsn})
+	if err != nil {
+		t.Fatalf("open test mysql: %v", err)
+	}
+	t.Cleanup(func() {
+		// 关闭失败仅影响连接池回收，不覆盖测试断言结果。
+		_ = database.Close()
+	})
+
+	if err := Migrate(ctx, database.SQL()); err != nil {
+		t.Fatalf("migrate test mysql: %v", err)
+	}
+	return database
+}
+
+// Migrate 对给定连接执行仓库 migrations/ 下的全部迁移。
+func Migrate(ctx context.Context, sqlDB *sql.DB) error {
+	if sqlDB == nil {
+		return errors.New("testkit: nil *sql.DB")
+	}
+	root, err := RepoRoot()
+	if err != nil {
+		return err
+	}
+	migrations, err := migrate.LoadDir(filepath.Join(root, "migrations"), migrate.LoadOptions{})
+	if err != nil {
+		return fmt.Errorf("testkit: load migrations: %w", err)
+	}
+	runner, err := migrate.New(sqlDB, migrate.Config{
+		Migrations: migrations,
+		Dialect:    migrate.DialectMySQL,
+		Table:      "schema_migrations",
+	})
+	if err != nil {
+		return fmt.Errorf("testkit: new migration runner: %w", err)
+	}
+
+	migrateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if _, err := runner.Up(migrateCtx); err != nil {
+		return fmt.Errorf("testkit: apply migrations: %w", err)
+	}
+	return nil
+}

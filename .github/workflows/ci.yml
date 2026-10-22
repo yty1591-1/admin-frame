@@ -140,6 +140,25 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Tier B：真实 MySQL / Redis / MinIO 集成测试（ENT-16 前置切片）。
+  # 独立 job，保持 make ci 轻量；不注入 secrets，凭据均为 compose 测试默认值。
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Integration tests (MySQL + Redis + MinIO)
+        run: bash scripts/ci/run-integration-tests.sh
+
   vuln:
     name: vuln
     runs-on: ubuntu-latest

@@ -198,28 +198,20 @@ storage:
 5. 优先桶 SSE / KMS；应用层加密用 `pkg/crypto`。
 6. Trace/日志：禁止 Secret 与完整 signed query（SEC-05）。
 
-### 6.1 A 端 files API（已移除）
-
-原 `internal/files` 演示域及其 `/admin/v1/files*` 端点已随演示代码一并移除，`file:read` / `file:write`
-权限点保留为 `deprecated`（见 `migrations/000008_retire_demo_permissions.up.sql`）。
-
-`pkg/storage` 的能力（服务端中转上传、PresignPut/PresignGet、Multipart、多桶）保持不变；
-后续业务域接入时按 §6 的键与安全约束自行实现 Handler 并挂载权限中间件。
-
-### 6.2 Multipart（M5）
+### 6.1 Multipart（M5）
 
 - 契约：`pkg/storage.MultipartUploader`（`CreateMultipart` / `UploadPart` / `CompleteMultipart` / `AbortMultipart`）
 - 实现：`pkg/storage/s3`；`PrefixStore` 转发并改写键；经 `storage.AsMultipart(store)` 探测
 - 业务 Handler 尚未暴露 HTTP；大文件直传优先用 PresignPut
 
-### 6.3 多桶（M5）
+### 6.2 多桶（M5）
 
 - 装配：`platform.OpenStorageSet` → `StorageSet{Default, named…}`；`Get("default"|name)`
 - 配置：顶层 `storage` 为默认桶；`storage.buckets.<name>` 为附加桶（名不可为 `default`）
 - 健康：`StorageSet.ReadyAll`；admin-api 另注册 `storage:<name>`
 - 注入：业务按名取 Store（如 `stores.MustGet("public")`）；未指定时使用 `stores.Default`
 
-### 6.4 生命周期（M5）
+### 6.3 生命周期（M5）
 
 - 契约：`pkg/storage.LifecycleManager`（`PutLifecycle` / `GetLifecycle`）；`AsLifecycle` / `ApplyLifecycle`
 - 实现：`pkg/storage/s3`（空 rules = 删除桶生命周期）
@@ -236,7 +228,6 @@ storage:
 | **M1** | `pkg/storage/s3`（含 `minio`）+ `storagetest` + `docker-compose.storage.yml` | ✅；联调：`go test -tags=minio ./pkg/storage/s3/` |
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
 | **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
-| **M3b** | A 端 `internal/files`：服务端上传 + Presign 上传/下载（`file:read/write`） | ✅（演示域已移除，能力保留在 `pkg/storage`） |
 | **M4** | 各厂商 L2 原生 SDK（`native=true`） | ✅ OSS / COS / OBS |
 | **M5** | multipart、生命周期、多桶 | ✅ |
 

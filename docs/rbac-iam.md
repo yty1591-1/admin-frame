@@ -56,7 +56,7 @@
 | 认证主体 | `internal/shared/auth` | 已完成：`Principal`（channel / subject_id / merchant_id / roles / request_id） |
 | 角色表装配 | `cmd/admin-api/register.go`、`cmd/biz-api/register.go` | **两端均已切 IAM**：`cmd/internal/iamruntime` 统一装配，A 端挂 `/admin/v1/iam/*`，B 端挂 `/biz/v1/iam/*`；静态表仅在 `iam.mode=off` 作为回滚兜底 |
 | 审计动作 | `internal/shared/audit`、`docs/audit/EVENTS.md` | `rbac.role_change` / `rbac.binding_change` 已置 `active` 并接线（`app.SlogRecorder` + `observability.ChangeRecorder`） |
-| 权限点常量 | `internal/iam/perm.go` | 统一维护，`resource:action` 或 `domain:resource:action`；演示域权限已标记 deprecated |
+| 权限点常量 | `internal/iam/perm.go` | 统一维护，`resource:action` 或 `domain:resource:action` |
 
 ### 2.2 生产化差距
 
@@ -1896,10 +1896,10 @@ BenchmarkReplaceRolePermissions_Diff
 | `iam:change:review` | biz | api | 否 | 审批本商户变更（申请人不得自审） |
 | `iam:breakglass:request` | admin | api | 否 | 申请破玻璃 |
 | `iam:breakglass:approve` | admin | api | 否 | 审批破玻璃 |
-| `order:read` | both | api | 是 | 查询订单（演示域已移除，已弃用） |
-| `order:write` | both | api | 是 | 变更订单（演示域已移除，已弃用） |
-| `file:read` | both | api | 是 | 下载 / 查看文件（演示域已移除，已弃用） |
-| `file:write` | both | api | 是 | 上传 / 删除文件（演示域已移除，已弃用） |
+| `order:read` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
+| `order:write` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
+| `file:read` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
+| `file:write` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
 | `audit:read` | admin | api | 是 | 查询审计 |
 | `data:export` | both | api | 是 | 导出数据 |
 | `config:read` | admin | api | 否 | 查看配置 |
