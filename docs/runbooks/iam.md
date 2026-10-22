@@ -103,6 +103,48 @@
 - 每季度至少一次 staging 演练：停 Redis、停审计出口、注入 DB 超时，确认告警按「症状」触发并在 15 分钟内收敛。
 - 演练必须在变更窗口内执行，结束后确认 `iam_outbox_pending = 0`、`iam_shadow_mismatch_total` 无新增。
 
+## 备份与恢复
+
+- **范围**：`iam_permission`、`iam_role`、`iam_role_permission`、`iam_role_binding`、`iam_role_data_scope`、
+  `iam_change_request`、`iam_outbox`，以及迁移历史表 `schema_migrations`。备份频率、保留期与演练要求遵循
+  [DATA_STANDARDS §5](../DATA_STANDARDS.md)（DATA-07：每日全量、保留 ≥ 7 天、恢复演练 ≥ 每 6 个月一次）。
+- **备份**：优先随业务库整库备份；单独备份 IAM 表时必须在停写窗口执行并记录备份点：
+
+  ```bash
+  mysqldump --single-transaction --routines --triggers <db> \
+    iam_permission iam_role iam_role_permission iam_role_binding \
+    iam_role_data_scope iam_change_request iam_outbox schema_migrations
+  ```
+
+- **恢复步骤**：
+  1. 先切 `iam.mode=off`（或摘除 admin / biz 流量），停止 IAM 写入与 outbox 发布器；
+  2. 恢复备份。仅恢复 IAM 表时按依赖顺序导入：`iam_permission` → `iam_role` → `iam_role_permission` →
+     `iam_role_data_scope` → `iam_role_binding` → `iam_change_request` → `iam_outbox` → `schema_migrations`；
+  3. 校验：行数与备份点一致；启动期权限目录校验通过（`iam_permission` 与 `internal/iam/catalog` 一致）；
+     `SELECT status, COUNT(*) FROM iam_outbox GROUP BY status` 无异常堆积；
+  4. 恢复后 `pending` / `processing` 事件可能重复投递，审计出口必须按 `event_id` 去重；
+     `dead` / `failed` 行保留并按「缓解与恢复」第 5 条处理，**禁止手工改状态或删事件**；
+  5. 清空 IAM 缓存（L1 随进程重启；L2 删除 IAM key 前缀或等待 TTL），再切回原 `iam.mode`；
+  6. 冒烟：主体权限查询 → 授权 → 生效 → 撤销 闭环，并核对 `rbac.role_change` / `rbac.binding_change` 审计。
+- **记录与限制**：每次恢复演练记录备份点、起止时间、校验结果与偏差，写入变更记录；
+  生产备份禁止未脱敏恢复到共享开发环境（DATA-07）。
+
+## 季度访问复核
+
+- **频率与 Owner**：每季度一次，建议在季度末两周执行，由安全 Owner 发起、IAM / SRE 配合；
+  首次执行由安全 Owner 排期，`iam.mode=enforce` 灰度前应完成一次全量复核。
+- **范围**：A 端高权限角色（权限码含 `iam:*`、`data:export`、`config:*`）及其全部绑定（含已过期与即将过期）、
+  本季度破玻璃使用记录、B 端商户管理员绑定。
+- **数据来源**（只读）：`GET /admin/v1/iam/roles`、`GET /admin/v1/iam/bindings`（按 `subject` / `role` 过滤）、
+  `GET /admin/v1/iam/subjects/{subject_type}/{subject_id}/permissions`；批量导出可对 `iam_*` 表执行只读 SQL。
+- **步骤**：
+  1. 导出角色、绑定、有效期及最近变更审计（`rbac.role_change` / `rbac.binding_change` / `rbac.breakglass`）；
+  2. 安全 Owner 逐条复核：是否在职 / 是否仍需要、是否最小权限、`expires_at` 是否合理、是否存在长期未使用的绑定；
+  3. 需回收的绑定 / 权限走审批单（`iam.approval.enabled=true` 时禁止直写），应用后确认快照已失效；
+  4. 复核结论、差异与处置结果归档到审计存储或工单，保留期按审计策略执行；
+  5. 破玻璃使用后 24h 内由申请人提交复盘说明，纳入当季复核。
+- **离职 / 转岗**：24h 内解绑并依赖 `expires_at` 兜底；复核发现的越权或异常按安全事件升级。
+
 ## 升级
 
 - P1：15 分钟内无收敛 → L2 Owner → 必要时 L3 SRE；同时通知安全 Owner（授权面故障属安全事件）。

@@ -546,7 +546,7 @@ internal/
 │   ├── catalog/
 │   │   ├── catalog.go                # 权限目录唯一真相：格式 / 唯一性 / 排序校验
 │   │   └── catalog_test.go           # 与 perm.go / 种子迁移 / PERMISSIONS.md 一致性门禁
-│   ├── domain/                       # M1 已落地，覆盖率 94.7%
+│   ├── domain/                       # M1 已落地，覆盖率 90.8%
 │   │   ├── doc.go                    # 分层约束与 catalog 分工
 │   │   ├── role.go                   # 角色聚合：状态机、乐观锁、授权 / 数据范围替换
 │   │   ├── change_request.go         # M4.2：审批单聚合（SoD / 状态机 / 载荷校验）
@@ -708,7 +708,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 
 ### 6.6 领域不变量（M1 实现基线）
 
-`internal/iam/domain` 已实现，覆盖率 94.7%，下列不变量由聚合自身强制，**不依赖 handler 或 SQL**：
+`internal/iam/domain` 已实现，覆盖率 90.8%，下列不变量由聚合自身强制，**不依赖 handler 或 SQL**：
 
 | 不变量 | 实现位置 | 失败码 |
 |--------|----------|--------|
@@ -1344,12 +1344,12 @@ M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 
 
 | 层级 | 内容 | 门禁 |
 |------|------|------|
-| domain | 角色状态机、code 校验、通配符拒绝、数据范围、过期、SoD、目录格式 | 覆盖率 ≥ 70%（实测 97.9%，TEST-02） |
+| domain | 角色状态机、code 校验、通配符拒绝、数据范围、过期、SoD、目录格式 | 覆盖率 ≥ 70%（实测 90.8%，TEST-02） |
 | catalog | 权限目录格式 / 唯一性 / 排序；`perm.go` 常量、种子迁移、`PERMISSIONS.md` 三处一致 | `go test ./internal/iam/catalog/... -count=1` |
 | app | 事务、幂等、版本冲突、审计 Outbox、缓存删除、审批流 | 关键用例覆盖 |
 | `internal/security` | loader 错误 → 503、无 loader 兼容、跨端、超级角色、401/403 | 覆盖率 ≥ 80%（TEST-02c；实测 94.1%） |
-| `internal/iam/app`（快照） | singleflight、300ms 超时、失败关闭、negative cache、清洗与上限 | 覆盖率 ≥ 70%（实测 90.8%） |
-| `internal/iam/infrastructure/cache` | schema 版本、L2 降级、脏值删除、TTL、失效可观测 | 覆盖率 ≥ 70%（实测 90.5%） |
+| `internal/iam/app`（快照） | singleflight、300ms 超时、失败关闭、negative cache、清洗与上限 | 覆盖率 ≥ 70%（实测 76.6%） |
+| `internal/iam/infrastructure/cache` | schema 版本、L2 降级、脏值删除、TTL、失效可观测 | 覆盖率 ≥ 70%（实测 77.8%） |
 | infrastructure | SQL 条件、唯一约束、租户隔离、并发写入、分页 | `tests/integration/iam`（`IAM_TEST_MYSQL_DSN` + MySQL 8.0 service，§13.6） |
 | e2e | A 建角色 → 授权 → 绑定 → 鉴权；B 越权 404；撤销 ≤ 3s | `tests/e2e/{admin,biz}/` |
 | 契约 | OpenAPI validate + breaking | `make openapi`（API-01/07/08） |
@@ -1713,6 +1713,13 @@ BenchmarkReplaceRolePermissions_Diff
 | `BenchmarkReplaceRolePermissions_Diff`（200 权限全量替换） | ~39µs/op | ≤ 50ms |
 
 > 真实 SQL 回源的 P99 依赖索引与网络，必须在 staging 用压测确认（`iam_role_binding` 命中 `idx_iam_binding_subject`，`iam_role` 命中 `uk_iam_role_scope_code`）；本地微基准只证明「应用层开销可忽略」。
+>
+> **2026-10-22 本地替代验证**（Docker MySQL 8.0、回环网络，1000 角色 / 1 万主体 / 10 万绑定，热点主体 10 角色 × 10 权限）：
+> 串行回源 P50 2.7ms / P95 4.7ms / P99 5.6ms；4 / 8 / 16 / 32 并发时 P99 分别为 8.4 / 9.4 / 20.6 / 39.2ms，
+> 16 并发约 1.7k rps 且无连接池等待，32 并发开始超过 30ms 目标。`EXPLAIN` 显示绑定表按 `uk_iam_binding`
+> 前缀命中（rows=10）、`iam_role` 走主键，未出现 N+1 或全表扫描。Redis 停机演练：错误在 69～80ms 内返回，
+> 300ms 读超时内可降级回源 DB（配合 `TestAuthorizeServiceDegradesWhenL2Unavailable`）；容器已恢复。
+> 上述结果仅代表本机回环环境，staging 仍需按真实网络、数据分布与并发模型复测。
 
 **容量评估**（初始规模：1 万角色 / 10 万绑定 / 1 万主体）：
 
@@ -1730,7 +1737,7 @@ BenchmarkReplaceRolePermissions_Diff
 
 1. `iam.mode=shadow` 连续观察 ≥ 24h：`iam_shadow_mismatch_total` 必须为 0 或逐条解释后归零；
 2. `iam.mode=enforce` 灰度：鉴权 P99、`50300` 比率、`/readyz` 在 Redis 重启窗口的表现；
-3. 真实 SQL 回源压测：命中率、P99、连接池水位；
+3. 真实 SQL 回源压测：命中率、P99、连接池水位。（2026-10-22 本地 Docker MySQL 已完成替代压测：串行 P99 5.6ms、16 并发 P99 20.6ms、32 并发 P99 39.2ms；staging 仍需按真实网络与数据分布复测）
 4. Outbox 积压演练：停投递 → `iam_outbox_pending` 告警触发 → 恢复后自动追平；
 5. 发布 Checklist（§16）逐项签字。
 
@@ -1745,8 +1752,8 @@ BenchmarkReplaceRolePermissions_Diff
 | 阶段 | 交付 | 验收 | 回滚 |
 |------|------|------|------|
 | **M0 设计**（1～2d） | ADR、本文档、权限目录草案、OpenAPI 草案、威胁模型 | 架构 / 安全 Review 通过；目录无通配符（**ADR-0004 已接受，文档与 ADR 已完成；目录 / OpenAPI / 威胁模型评审待收口**） | 不涉及运行时代码 |
-| **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 97.9%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
-| **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 90.8% / cache 90.5% / security 94.1%；配置与 cmd 注入随 M3**） | 切回 `off` |
+| **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 90.8%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
+| **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 76.6% / cache 77.8% / security 94.1%（按当前全量代码实测）；配置与 cmd 注入随 M3**） | 切回 `off` |
 | **M3 A 端管理 API**（5～7d） | A 端角色 / 权限 / 绑定 API、审计接线、OpenAPI、配置装配 | A 端 15 个端点全链路可用；审计事件 `rbac.role_change` / `rbac.binding_change` 已 `active` 且 fail-closed（当前目标为 SlogEmitter，持久化 Outbox 待 M4）；`admin.yaml` 已含 IAM 契约；`go test ./...`、layering / test-gates / transport / audit / migrations / observability / config / openapi / perf / deps / licenses、`golangci-lint` 全绿（**已完成**）；staging `enforce` 稳定性待环境验证 | 切回 `off` + 清缓存 |
 | **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（**M4.5 已完成：`UnitOfWork` + context 传递 `*sql.Tx`，业务写入与审计同提交，嵌套复用**）、B 端审批（**M4.6 已完成：迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个端点、跨商户 404**）、高风险直写强制转审批（**M4.7 已完成：`iam.approval.enabled` + 7 个直写端点返回 40900、审批单 apply 不受影响、仅 A/B、prod 要求持久化 db**）；e2e 通过 | 关闭审批 / 破玻璃开关 |
 | **M5 生产加固**（3～5d） | 压测、故障演练、runbook、告警、容量评估、清理演示表 | SLO 达标；故障演练通过；`make ci` + 发布 Checklist 全绿（**M5 已完成代码侧：§13.7 可执行故障演练用例、`BenchmarkReplaceRolePermissions_Diff` 登记、容量评估、演示表清理确认；staging shadow 24h / enforce 灰度 / 真实 SQL 压测 / Outbox 积压演练待环境执行**） | 保留 `off` 开关一个版本 |
@@ -1838,11 +1845,11 @@ BenchmarkReplaceRolePermissions_Diff
 ### 17.2 实现阶段
 
 - [x] `internal/iam` 分层符合 ARCHITECTURE §五 / §六；domain 不 import app / transport / infrastructure / platform / database/sql（`make check-layering` 通过）。
-- [x] 领域不变量由聚合强制（端别 / 作用域 / 通配符 / 乐观锁 / 破玻璃时效 / 数据范围并集），domain 覆盖率 97.9%。
+- [x] 领域不变量由聚合强制（端别 / 作用域 / 通配符 / 乐观锁 / 破玻璃时效 / 数据范围并集），domain 覆盖率 90.8%。
 - [x] memory 仓储对齐端口语义（NotFound / Conflict / 不可变字段 / 幂等绑定 / 过期过滤 / 租户隔离 / 深拷贝），覆盖率 94.7%。
 - [x] MySQL 仓储对齐同一语义，`tests/integration/iam` 在 MySQL 8.0 上通过；CI 由 `mysql:8.0` service 注入 DSN（§13.6）。
 - [x] `pkg/rbac` 未被业务 / DB 逻辑污染（IAM 改动未触碰该包）。
-- [ ] 所有导出符号有 godoc，包有注释（C-01～C-10）。（新增包与导出符号已补注释，历史包仍待逐步补齐）
+- [x] 所有导出符号有 godoc，包有注释（C-01～C-10）。（revive `exported` / `package-comments` 已设为 error 级，`golangci-lint run ./...` 0 issue）
 - [ ] 错误处理、命名、context、并发符合 S-01～S-12。（`golangci-lint` 0 issue，人工 Review 仍待进行）
 - [x] 权限目录四处一致（`catalog.go` / `perm.go` / 种子 / `PERMISSIONS.md`）由 `internal/iam/catalog` 的 Go 测试强制，`-count=1` 通过。
 - [x] 迁移 `000002` / `000003` / `000005` / `000006` up/down 配对，`make check-migrations` 通过；`up` 未改写已应用的历史文件（新增权限点走追加式种子）。
@@ -1855,16 +1862,16 @@ BenchmarkReplaceRolePermissions_Diff
 - [x] 日志 / 指标 / Trace 符合 OBS：结构化日志含 `trace_id`；指标低基数（无 `subject_id` / `role_id`）；变更计数由审计装饰器产生；`/readyz` 注册 `iam_db` / `iam_cache`；请求级 span 由 `tracing.HTTPMiddleware` 统一产生。
 - [x] 配置 example（`iam` / `redis` 段）、`Validate`（`config_iam_test.go`）与环境变量文档同步。
 - [x] 告警与 runbook：`docs/runbooks/iam.md` + `ALERTS.md` 5 条 IAM 告警（含 `iam.outbox.backlog`），`make check-runbooks` 通过。
-- [ ] `make ci` 全绿：fmt / tidy / lint / test-ci / vuln / deps / transport / layering / debug / secrets / config / migrations / reliability / observability / git / release / runbooks / audit / license / codegen / perf / openapi / build。（除 `vuln` / `secrets` 等需联网项外已逐项验证，合入前以 CI 结果为准）
+- [x] `make ci` 全绿：fmt / tidy / lint / test-ci / vuln / deps / transport / layering / debug / secrets / config / migrations / reliability / observability / git / release / runbooks / audit / license / codegen / perf / openapi / build。（2026-10-22 本地逐项执行等价命令全部通过：fmt-check / tidy-check / lint / test-ci / vuln / secrets / 其余 16 项门禁 / build；正式流水线结果随 PR 校验）
 
 ### 17.3 生产就绪
 
 - [ ] `iam.mode=enforce` 在 staging 稳定 ≥ 1 周。
-- [ ] 压测达标：缓存命中 P99 ≤ 5ms，回源 P99 ≤ 30ms；无连接池耗尽。
-- [ ] 故障演练：Redis 故障、DB 超时、缓存删除失败、Outbox 积压均有预期行为。
+- [ ] 压测达标：缓存命中 P99 ≤ 5ms，回源 P99 ≤ 30ms；无连接池耗尽。（2026-10-22 本地 MySQL 8.0 实测：回源 P99 5.6ms@串行、20.6ms@16 并发、39.2ms@32 并发；前两档达标，32 并发超目标，staging 未执行）
+- [ ] 故障演练：Redis 故障、DB 超时、缓存删除失败、Outbox 积压均有预期行为。（代码侧用例已全部通过，见 §13.7；staging 演练待执行）
 - [ ] 告警与 runbook 上线；破玻璃演练完成。
-- [ ] 备份 / 恢复覆盖 IAM 表；恢复演练通过。
-- [ ] 访问复核流程与季度计划已建立。
+- [ ] 备份 / 恢复覆盖 IAM 表；恢复演练通过。（备份范围与恢复步骤见 `docs/runbooks/iam.md`「备份与恢复」；恢复演练尚未执行）
+- [ ] 访问复核流程与季度计划已建立。（流程与季度节拍已写入 `docs/runbooks/iam.md`「季度访问复核」；首次执行与 Owner 排期待确认）
 - [ ] 回滚演练：`enforce → off` 可在 1 次配置变更内完成。
 - [ ] 安全 Review、架构 Review、SRE Review 全部通过。
 
