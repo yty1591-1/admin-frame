@@ -77,6 +77,12 @@ func (rt *router) as(subjectID string) *router {
 // newRouter 装配真实用例 + 测试版鉴权中间件（仅注入 Principal，不做权限判定）。
 func newRouter(t *testing.T) *router {
 	t.Helper()
+	return newRouterWithApproval(t, false)
+}
+
+// newRouterWithApproval 同 newRouter，但可指定是否开启高风险直写强制审批。
+func newRouterWithApproval(t *testing.T, requireApproval bool) *router {
+	t.Helper()
 	subject := new(string)
 	*subject = "1001"
 	roles := persistence.NewMemoryRoleRepository()
@@ -105,6 +111,7 @@ func newRouter(t *testing.T) *router {
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
 		Changes: newChangeService(t, roleSvc, bindingSvc, ids), Channel: domain.ChannelAdmin,
+		RequireApproval: requireApproval,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -219,12 +219,13 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Roles:      roleSvc,
-		Bindings:   bindingSvc,
-		Query:      querySvc,
-		Changes:    changeSvc,
-		Breakglass: breakglassSvc,
-		Channel:    domain.Channel(cfg.Channel),
+		Roles:           roleSvc,
+		Bindings:        bindingSvc,
+		Query:           querySvc,
+		Changes:         changeSvc,
+		Breakglass:      breakglassSvc,
+		Channel:         domain.Channel(cfg.Channel),
+		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("iam handler: %w", err)

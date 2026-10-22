@@ -52,6 +52,8 @@ iam:
   breakglass:
     enabled: false               # 生产默认关闭；启用要求 mode=enforce，prod 必须配置 allowed_subjects
     allowed_subjects: []         # 允许申请的主体白名单；非空时名单外返回 40300
+  approval:
+    enabled: false               # true 时角色 / 绑定直写端点返回 40900，必须走 change-requests
   outbox:
     enabled: false               # prod/staging + enforce 必须 true，否则启动失败（审计不可只写日志）
     poll_interval: 1s            # 拉取间隔，[100ms, 1m]

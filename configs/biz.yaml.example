@@ -68,6 +68,8 @@ iam:
   breakglass:
     enabled: false               # B 端不可启用：配置校验要求 channel=admin
     allowed_subjects: []
+  approval:
+    enabled: false               # true 时角色 / 绑定直写端点返回 40900，必须走 change-requests
   outbox:
     enabled: false               # prod/staging + enforce 必须 true
     poll_interval: 1s

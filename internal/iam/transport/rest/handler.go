@@ -31,16 +31,20 @@ type HandlerConfig struct {
 	Changes    *app.ChangeRequestService
 	Breakglass *app.BreakglassService
 	Channel    domain.Channel
+	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
+	// （iam.approval.enabled）。
+	RequireApproval bool
 }
 
 // Handler 处理 IAM 管理端 HTTP 请求。
 type Handler struct {
-	roles      *app.RoleService
-	bindings   *app.BindingService
-	query      *app.QueryService
-	changes    *app.ChangeRequestService
-	breakglass *app.BreakglassService
-	channel    domain.Channel
+	roles           *app.RoleService
+	bindings        *app.BindingService
+	query           *app.QueryService
+	changes         *app.ChangeRequestService
+	breakglass      *app.BreakglassService
+	channel         domain.Channel
+	requireApproval bool
 }
 
 // NewHandler 构造 IAM Handler；缺失依赖时返回错误。
@@ -55,13 +59,32 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		return nil, err
 	}
 	return &Handler{
-		roles:      cfg.Roles,
-		bindings:   cfg.Bindings,
-		query:      cfg.Query,
-		changes:    cfg.Changes,
-		breakglass: cfg.Breakglass,
-		channel:    cfg.Channel,
+		roles:           cfg.Roles,
+		bindings:        cfg.Bindings,
+		query:           cfg.Query,
+		changes:         cfg.Changes,
+		breakglass:      cfg.Breakglass,
+		channel:         cfg.Channel,
+		requireApproval: cfg.RequireApproval,
 	}, nil
+}
+
+// rejectDirectWrite 在「高风险直写强制转审批」开启时写出 40900 并返回 true。
+//
+// 只拦截 HTTP 直写；审批单 apply 走用例内部调用，不受影响。
+func (h *Handler) rejectDirectWrite(w http.ResponseWriter, r *http.Request, action domain.ChangeAction) bool {
+	if !h.requireApproval {
+		return false
+	}
+	traceID := httpx.TraceIDFromContext(r.Context())
+	base := "/admin/v1/iam"
+	if h.channel == domain.ChannelBiz {
+		base = "/biz/v1/iam"
+	}
+	httpx.FromError(w, apperr.Conflict(
+		"high-risk change requires approval: submit action="+string(action)+" via POST "+base+"/change-requests",
+	), traceID)
+	return true
 }
 
 // ListPermissions GET /iam/permissions
@@ -167,6 +190,9 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleCreate) {
+		return
+	}
 	var req CreateRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -230,6 +256,9 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleUpdate) {
+		return
+	}
 	var req UpdateRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -262,6 +291,9 @@ func (h *Handler) ReplacePermissions(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRolePermissionReplace) {
 		return
 	}
 	var req ReplacePermissionsRequest
@@ -311,6 +343,9 @@ func (h *Handler) CloneRole(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleClone) {
+		return
+	}
 	var req CloneRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -335,6 +370,9 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleDelete) {
 		return
 	}
 	var req DeleteRoleRequest
@@ -405,6 +443,9 @@ func (h *Handler) CreateBinding(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionBindingCreate) {
+		return
+	}
 	var req CreateBindingRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -437,6 +478,9 @@ func (h *Handler) DeleteBinding(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionBindingDelete) {
 		return
 	}
 	var req UnbindRequest

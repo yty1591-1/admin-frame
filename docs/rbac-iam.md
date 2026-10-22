@@ -1,6 +1,6 @@
 # RBAC 权限管理服务（IAM）规划与设计
 
-> **状态**：实施中（v0.16；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（`iam_outbox` 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用）；M4.5 已完成：UnitOfWork（`pkg/db.WithinUnitOfWork` + `app.UnitOfWork`，业务写入与 outbox 同事务提交，嵌套复用外层事务）；M4.6 已完成：B 端审批单（迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个审批端点、跨商户 404）；M5 进行中：可执行故障演练用例 + `BenchmarkReplaceRolePermissions_Diff` 登记 + 容量评估（staging shadow/enforce 与真实 SQL 压测待环境执行））
+> **状态**：实施中（v0.16；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（`iam_outbox` 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用）；M4.5 已完成：UnitOfWork（`pkg/db.WithinUnitOfWork` + `app.UnitOfWork`，业务写入与 outbox 同事务提交，嵌套复用外层事务）；M4.6 已完成：B 端审批单（迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个审批端点、跨商户 404）；M4.7 已完成：高风险直写强制转审批（`iam.approval.enabled`；开启后角色 / 绑定直写端点统一返回 `40900`，审批单 apply 走用例内部调用不受影响）；M5 进行中：可执行故障演练用例 + `BenchmarkReplaceRolePermissions_Diff` 登记 + 容量评估（staging shadow/enforce 与真实 SQL 压测待环境执行））
 > **定位**：模块化单体中的 `internal/iam` 业务域，**不新增独立进程 / 微服务**
 > **适用范围**：A 端平台角色、B 端商户内角色与权限管理；C 端不接入 IAM
 > **决策记录**：[`docs/adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)（落位、失败关闭、`50300`、灰度路线）
@@ -387,7 +387,7 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
 >
 > **应用语义**：`apply` 失败时审批单保持 `approved`（可重试），不会标记 `applied`；新建类动作（`role_create` / `role_clone` / `binding_create`）在应用成功后把真实主键回填到 `target_id`。
 >
-> **尚未接线**：`iam.approval.enabled` 配置项与「高风险直写强制转审批」的拦截尚未实现——当前管理端的直接写端点（`PUT /roles/{id}/permissions` 等）仍可立即生效，审批流需调用方主动走 `/change-requests`。强制 gating 与配置开关随 M4.2 后续小步提交，避免一次性改动影响既有调用方。
+> **强制转审批（M4.7 已落地）**：`iam.approval.enabled=true` 时，角色创建 / 更新 / 删除 / 克隆 / 权限替换与绑定 / 解绑共 7 个直写端点在 transport 层统一返回 `40900`，消息给出对应的 `action` 与 `/change-requests` 路径；调用方须先提交审批单。审批单 `apply` 走应用服务内部调用，不经过 HTTP，因此不受该开关影响。开关默认关闭，存量调用方行为不变；开启时 A/B 端均可使用审批流，C 端与 worker 因无 IAM transport 会在配置校验阶段被拒绝。
 >
 > **租户隔离（迁移 000005）**：`merchant_id NOT NULL DEFAULT ''` + `idx_iam_change_merchant_status`；A 端单据 `merchant_id` 恒为空、B 端恒非空，由 `domain.validateChangeTenant` 在创建时强制。B 端申请的单据执行时目标角色 / 绑定必须同商户（`loadRoleForChange` / `UnbindCommand.MerchantID`），否则返回 `40400`；B 端载荷出现 `merchant_id` 返回 `40300`、`scope_type=platform` 在申请阶段即返回 `40000`（不把越权意图带上审批台）。破玻璃仍为 A 端专属：B 端创建 `breakglass_request` 与 B 端路由均直接拒绝。
 >
@@ -1275,10 +1275,7 @@ iam:
       - ["iam:breakglass:request", "iam:breakglass:approve"]
 
   approval:
-    enabled: true
-    required_permissions:
-      - "iam:role:grant"
-      - "iam:breakglass:request"
+    enabled: false       # true 时角色 / 绑定直写端点返回 40900，必须走 /change-requests
 
   breakglass:
     enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
@@ -1303,6 +1300,7 @@ iam:
 | `ADMIN_FRAME_IAM_CACHE_L2_TTL` | `iam.cache.l2_ttl` |
 | `ADMIN_FRAME_IAM_SECURITY_ALLOW_WILDCARD` | `iam.security.allow_wildcard` |
 | `ADMIN_FRAME_IAM_BREAKGLASS_ENABLED` | `iam.breakglass.enabled` |
+| `ADMIN_FRAME_IAM_APPROVAL_ENABLED` | `iam.approval.enabled` |
 | `ADMIN_FRAME_IAM_OUTBOX_ENABLED` | `iam.outbox.enabled` |
 | `ADMIN_FRAME_IAM_OUTBOX_POLL_INTERVAL` | `iam.outbox.poll_interval` |
 | `ADMIN_FRAME_IAM_OUTBOX_BATCH_SIZE` | `iam.outbox.batch_size` |
@@ -1310,7 +1308,7 @@ iam:
 
 > 数组 / 映射类字段（`sod_conflicts`、`allowed_subjects`、`required_permissions`）建议只走 yaml，不强行支持环境变量批量覆盖；如需支持，须在 CONFIG 专文登记并加 `Validate` 单测。
 
-> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。M4.3 已把 `breakglass.enabled` / `allowed_subjects` 接入 `Validate`（含 admin-only、enforce 与 prod 白名单要求）；M4.4 已把 `outbox.*` 接入 `applyIAMDefaults` / `validateIAM`（间隔、批量、重试次数边界，prod/staging enforce 强制启用，prod 强制持久化 `db.driver`）；`sod_*` / `approval` / `max_duration` 仍未实现，写了会被 `pkg/config` 严格模式拒绝。
+> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。M4.3 已把 `breakglass.enabled` / `allowed_subjects` 接入 `Validate`（含 admin-only、enforce 与 prod 白名单要求）；M4.4 已把 `outbox.*` 接入 `applyIAMDefaults` / `validateIAM`（间隔、批量、重试次数边界，prod/staging enforce 强制启用，prod 强制持久化 `db.driver`）；M4.7 已把 `approval.enabled` 接入 `applyIAMDefaults` / `validateIAM`；`approval.required_permissions` / `sod_*` / `max_duration` 仍未实现，写了会被 `pkg/config` 严格模式拒绝。
 
 ### 12.2 Validate 基线
 
@@ -1324,7 +1322,7 @@ iam:
 - 未知 `iam.mode` / `cache.driver` / 负值时长一律拒绝。
 - 配置错误时 `errors.Join` 聚合，启动失败并打印字段名，不打印值（CFG-03 / CFG-05）。
 
-M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 `allowed_subjects`）；M4.4 已落地：`iam.outbox.poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`max_attempts ∈ [1,20]`（零值视为默认，不误报），`env ∈ {prod,staging}` 且 `iam.mode=enforce` ⇒ `outbox.enabled=true`，`env=prod` 且启用 outbox ⇒ `db.driver≠memory`；`approval.enabled` / `sod_*` 仍未实现。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
+M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 `allowed_subjects`）；M4.4 已落地：`iam.outbox.poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`max_attempts ∈ [1,20]`（零值视为默认，不误报），`env ∈ {prod,staging}` 且 `iam.mode=enforce` ⇒ `outbox.enabled=true`，`env=prod` 且启用 outbox ⇒ `db.driver≠memory`；M4.7 已落地 `approval.enabled`（仅 A/B 端；prod 要求 `db.driver≠memory`），`approval.required_permissions` / `sod_*` 仍未实现。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
 
 ### 12.3 部署
 
@@ -1750,7 +1748,7 @@ BenchmarkReplaceRolePermissions_Diff
 | **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 97.9%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
 | **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 90.8% / cache 90.5% / security 94.1%；配置与 cmd 注入随 M3**） | 切回 `off` |
 | **M3 A 端管理 API**（5～7d） | A 端角色 / 权限 / 绑定 API、审计接线、OpenAPI、配置装配 | A 端 15 个端点全链路可用；审计事件 `rbac.role_change` / `rbac.binding_change` 已 `active` 且 fail-closed（当前目标为 SlogEmitter，持久化 Outbox 待 M4）；`admin.yaml` 已含 IAM 契约；`go test ./...`、layering / test-gates / transport / audit / migrations / observability / config / openapi / perf / deps / licenses、`golangci-lint` 全绿（**已完成**）；staging `enforce` 稳定性待环境验证 | 切回 `off` + 清缓存 |
-| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（**M4.5 已完成：`UnitOfWork` + context 传递 `*sql.Tx`，业务写入与审计同提交，嵌套复用**）、B 端审批（**M4.6 已完成：迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个端点、跨商户 404**）；e2e 通过 | 关闭审批 / 破玻璃开关 |
+| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（**M4.5 已完成：`UnitOfWork` + context 传递 `*sql.Tx`，业务写入与审计同提交，嵌套复用**）、B 端审批（**M4.6 已完成：迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个端点、跨商户 404**）、高风险直写强制转审批（**M4.7 已完成：`iam.approval.enabled` + 7 个直写端点返回 40900、审批单 apply 不受影响、仅 A/B、prod 要求持久化 db**）；e2e 通过 | 关闭审批 / 破玻璃开关 |
 | **M5 生产加固**（3～5d） | 压测、故障演练、runbook、告警、容量评估、清理演示表 | SLO 达标；故障演练通过；`make ci` + 发布 Checklist 全绿（**M5 已完成代码侧：§13.7 可执行故障演练用例、`BenchmarkReplaceRolePermissions_Diff` 登记、容量评估、演示表清理确认；staging shadow 24h / enforce 灰度 / 真实 SQL 压测 / Outbox 积压演练待环境执行**） | 保留 `off` 开关一个版本 |
 
 **依赖顺序**：M1 完成前不合并 M2 的运行时切换；M2 shadow 数据必须来自真实（脱敏）角色配置；M3 enforce 前必须完成审计接线。
@@ -1851,6 +1849,7 @@ BenchmarkReplaceRolePermissions_Diff
 - [x] 所有 IAM 表有表注释、所有字段有字段注释，枚举取值列全且与 domain 常量一致；写法统一为 MySQL 列内 `COMMENT`（`000002_create_iam_tables.up.sql`）。
 - [x] B 端租户条件在 SQL 与 app 双重落实；越权 404（`TestSQLBindingRepositoryTenantIsolation` / `TestUnbindHidesCrossMerchantBinding`）；B 端 HTTP 自助接口（19 个端点，含 6 个审批端点）已落地，跨商户 404、配额 40000、目录按端过滤均有传输层测试（`TestBiz*` / `TestBizChangeRequestTenantIsolation`）。
 - [x] 审批单租户隔离（M4.6）：迁移 `000005` 新增 `merchant_id` + 复合索引、`domain.validateChangeTenant` 强制端别 / 商户不变量、`ChangeScope` 由 transport 从 Principal 派生、B 端路由与破玻璃路由分离；SQL / memory 仓储与 HTTP 用例均覆盖跨商户不可见。
+- [x] 高风险直写强制转审批（M4.7）：`iam.approval.enabled` 开启后 7 个角色 / 绑定直写端点统一返回 `40900` 并提示 `/change-requests`，拦截发生在用例之前；审批单 `apply` 走用例内部调用不受影响；C 端 / worker 配置被拒绝；prod 要求持久化 `db.driver`（`TestApprovalRequiredRejectsDirectWrites` / `TestValidateIAMApprovalRules`）。
 - [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；`rbac.breakglass` 已在 M4.3 接线；持久化 Outbox（`iam_outbox` + 发布器 + 退避/死信 + 积压指标）已在 M4.4 落地。
 - [x] A 端管理 API 15 个端点、`RoleService` / `BindingService` / `QueryService` 单测与 HTTP 传输测试通过；OpenAPI（`api/openapi/admin.yaml`）已补齐 IAM 契约。
 - [x] 日志 / 指标 / Trace 符合 OBS：结构化日志含 `trace_id`；指标低基数（无 `subject_id` / `role_id`）；变更计数由审计装饰器产生；`/readyz` 注册 `iam_db` / `iam_cache`；请求级 span 由 `tracing.HTTPMiddleware` 统一产生。
@@ -1943,10 +1942,7 @@ iam:
       - ["iam:role:grant", "audit:read"]
       - ["iam:breakglass:request", "iam:breakglass:approve"]
   approval:
-    enabled: true
-    required_permissions:
-      - "iam:role:grant"
-      - "iam:breakglass:request"
+    enabled: false       # true 时角色 / 绑定直写端点返回 40900，必须走 /change-requests
   breakglass:
     enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
     allowed_subjects: []  # 允许申请的主体白名单；非空时名单外主体返回 40300

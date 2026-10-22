@@ -291,6 +291,52 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	}
 }
 
+func TestValidateIAMApprovalRules(t *testing.T) {
+	// local + memory 允许开启审批（待审批单可随进程重启丢失，仅用于开发）。
+	local := iamBaseConfig()
+	local.IAM.Approval.Enabled = true
+	if err := local.Validate(); err != nil {
+		t.Fatalf("local approval: %v", err)
+	}
+
+	// C 端 / worker 没有 IAM transport，开启审批必须拒绝启动。
+	cChannel := iamBaseConfig()
+	cChannel.Service = "c-api"
+	cChannel.Channel = "c"
+	cChannel.Auth.ExpectedChannel = "c"
+	cChannel.IAM.Mode = platform.IAMModeOff
+	cChannel.IAM.Approval.Enabled = true
+	if err := cChannel.Validate(); err == nil || !strings.Contains(err.Error(), "iam.approval.enabled is only supported") {
+		t.Fatalf("err=%v want channel rejection", err)
+	}
+
+	// prod 下待审批单必须持久化。
+	prodMemory := iamBaseConfig()
+	prodMemory.Env = "prod"
+	prodMemory.Auth = prodJWTConfig()
+	prodMemory.Storage.Driver = "s3"
+	prodMemory.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodMemory.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodMemory.IAM.Outbox.Enabled = true
+	prodMemory.IAM.Approval.Enabled = true
+	if err := prodMemory.Validate(); err == nil || !strings.Contains(err.Error(), "persistent db.driver") {
+		t.Fatalf("err=%v want persistent db requirement", err)
+	}
+
+	prodSQL := iamBaseConfig()
+	prodSQL.Env = "prod"
+	prodSQL.Auth = prodJWTConfig()
+	prodSQL.Storage.Driver = "s3"
+	prodSQL.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodSQL.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodSQL.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodSQL.IAM.Outbox.Enabled = true
+	prodSQL.IAM.Approval.Enabled = true
+	if err := prodSQL.Validate(); err != nil {
+		t.Fatalf("prod mysql approval: %v", err)
+	}
+}
+
 func TestRedisConfigRedaction(t *testing.T) {
 	cfg := platform.RedisConfig{Addr: "127.0.0.1:6379", Password: "p@ss", DB: 1}
 	out := cfg.LogValue().String()

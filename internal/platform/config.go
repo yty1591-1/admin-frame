@@ -109,6 +109,8 @@ type IAMConfig struct {
 	Security IAMSecurityConfig `yaml:"security"`
 	// Breakglass 破玻璃（限时超级权限）开关与允许主体。
 	Breakglass IAMBreakglassConfig `yaml:"breakglass"`
+	// Approval 高风险直写强制转审批开关。
+	Approval IAMApprovalConfig `yaml:"approval"`
 	// Outbox 事务性 Outbox 投递参数。
 	Outbox IAMOutboxConfig `yaml:"outbox"`
 }
@@ -162,6 +164,15 @@ type IAMBreakglassConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// AllowedSubjects 允许申请破玻璃的主体白名单；prod 启用时必填。
 	AllowedSubjects []string `yaml:"allowed_subjects"`
+}
+
+// IAMApprovalConfig 是「高风险直写强制转审批」开关；生产默认关闭。
+//
+// 启用后角色 / 绑定等直接写端点在 transport 层统一返回 40900，调用方必须改走
+// change-requests；审批单应用由用例内部调用，不经过 HTTP，因此不受此开关影响。
+type IAMApprovalConfig struct {
+	// Enabled 是否要求高风险变更必须经审批单。
+	Enabled bool `yaml:"enabled"`
 }
 
 // IAMSecurityConfig 是 IAM 安全开关。
@@ -728,7 +739,7 @@ func (c *Config) validateRateLimit() []error {
 func (c *Config) validateIAM() []error {
 	// 完全未配置 iam 段时保持历史行为（zero-value Config 直接调用 Validate 也不会误报）；
 	// 生产路径统一经 LoadConfig → applyDefaults，因此段内字段必然已填充。
-	if c.IAM.Mode == "" && c.IAM.Cache.Driver == "" && c.IAM.LoadTimeout == 0 {
+	if c.IAM.Mode == "" && c.IAM.Cache.Driver == "" && c.IAM.LoadTimeout == 0 && !c.IAM.Approval.Enabled {
 		return nil
 	}
 	var errs []error
@@ -806,6 +817,16 @@ func (c *Config) validateIAM() []error {
 			if strings.TrimSpace(subject) == "" {
 				errs = append(errs, fmt.Errorf("iam.breakglass.allowed_subjects[%d] must not be empty", i))
 			}
+		}
+	}
+	if c.IAM.Approval.Enabled {
+		// 审批单属于 A / B 端治理能力；C 端与 worker 没有 IAM transport。
+		if c.Channel == "c" || c.Channel == "worker" {
+			errs = append(errs, errors.New("iam.approval.enabled is only supported on channel=admin or biz"))
+		}
+		// 待审批单必须跨重启保留：内存仓储只用于 local / demo / 单测。
+		if isProdEnv(c.Env) && c.DB.Driver == "memory" {
+			errs = append(errs, errors.New("iam.approval.enabled requires a persistent db.driver when env=prod"))
 		}
 	}
 	// 零值表示「尚未经过 applyDefaults」，按默认值处理，不在这里误报；
