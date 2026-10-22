@@ -26,6 +26,8 @@ var (
 	ErrMerchantSetTooLarge = errors.New("merchant set too large")
 	// ErrVersionConflict 乐观锁版本不匹配。
 	ErrVersionConflict = errors.New("version conflict")
+	// ErrInvalidOutboxEvent outbox 事件字段 / 状态机非法。
+	ErrInvalidOutboxEvent = errors.New("invalid outbox event")
 	// ErrRoleNotActive 角色已停用或已删除，不能继续用于授权 / 绑定。
 	ErrRoleNotActive = errors.New("role not active")
 	// ErrRoleDeleted 角色已软删。

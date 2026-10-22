@@ -1,6 +1,6 @@
 # RBAC 权限管理服务（IAM）规划与设计
 
-> **状态**：实施中（v0.12；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4 待办：`iam_outbox`（M4.4）、B 端审批（需 `merchant_id` 迁移））
+> **状态**：实施中（v0.13；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（`iam_outbox` 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用）；M4 待办：Outbox 与业务写入共享单事务（UnitOfWork）、B 端审批（需 `merchant_id` 迁移））
 > **定位**：模块化单体中的 `internal/iam` 业务域，**不新增独立进程 / 微服务**
 > **适用范围**：A 端平台角色、B 端商户内角色与权限管理；C 端不接入 IAM
 > **决策记录**：[`docs/adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)（落位、失败关闭、`50300`、灰度路线）
@@ -25,7 +25,7 @@
 | D6 | **权限点目录代码所有、数据库只读同步** | 权限码是稳定契约，禁止在管理 API 中随意新建；目录由迁移种子入库，启动期校验，CI 校验唯一性与格式。 |
 | D7 | **`pkg/rbac` 保持纯判定** | 不把数据库、缓存、租户逻辑塞进 `pkg/rbac`；动态权限通过 `security.Authorizer` 的 `SnapshotLoader` 端口注入。 |
 | D8 | **两级缓存 + 有界陈旧** | L1 进程内 3s、L2 Redis 5m，写路径主动删除；权限撤销对外生效 ≤ 3s（L2 删除失败时告警，最坏 5m）。 |
-| D9 | **所有变更强审计** | 角色、授权、绑定、破玻璃操作全部走 `audit.Emitter`；生产环境审计事件与业务写入同事务落 Outbox，审计失败即回滚。 |
+| D9 | **所有变更强审计** | 角色、授权、绑定、破玻璃操作全部走 `audit.Emitter`；生产环境审计事件落 Outbox，写入失败即业务失败（M4.4 已持久化与失败关闭，同事务见 M4.5）。 |
 | D10 | **先影子、后强制** | `iam.mode=off\|shadow\|enforce` 三态；先在 staging 影子比对，再切 `enforce`；回滚只需切回 `off`，不依赖数据库回滚。 |
 
 **一句话**：以数据库为唯一真相，以「有效权限快照」为鉴权输入，以 `pkg/rbac` 做纯匹配，以审计、缓存、灰度与门禁保证生产可运营。
@@ -217,7 +217,7 @@ iam_outbox                审计与缓存失效事件
 | `iam_role_binding` | 主体 → 角色 | 唯一 `(channel, subject_type, subject_id, merchant_id, role_id)`；`expires_at` 可空 |
 | `iam_role_data_scope` | 角色数据范围 | 主键 `(role_id, resource)`；`scope_values` 为原生 JSON 类型 |
 | `iam_change_request` | 审批单（M4） | 状态机 `pending → approved/rejected → applied`；申请人与审批人不同 |
-| `iam_outbox` | 审计 / 缓存失效事件 | 与业务写入同事务；worker 投递；状态与重试次数 |
+| `iam_outbox` | 审计 / 缓存失效事件 | 业务请求内写入（失败即失败关闭）；发布器投递；状态、重试次数与死信（M4.4；单事务待 M4.5） |
 
 ### 5.3 DDL（MySQL 基线）
 
@@ -408,6 +408,16 @@ CREATE TABLE IF NOT EXISTS iam_outbox (
   COMMENT='IAM 事务性 Outbox：审计事件与缓存失效事件可靠投递，禁止绕过直接写日志冒充审计';
 ```
 
+> **M4.4 实现状态**：
+> - 聚合：`domain.OutboxEvent`（状态机 `pending → processing → succeeded`；失败回 `pending` 并 `attempts+1`，重试耗尽 `dead`；载荷永久不可解析标 `failed`），载荷必须是单个 JSON 对象且 ≤ 32KiB。
+> - 仓储：`persistence.MemoryOutboxRepository`（local / demo / 单测）与 `persistence.SQLOutboxRepository`（MySQL；`Claim` 用条件更新 `WHERE id=? AND status='pending'`，多实例并发只有一方成功，天然幂等）。
+> - 写入：`app.OutboxRecorder` 实现 `ChangeRecorder`，复用审计事件 ID 作为 outbox 主键；写入失败返回 `50000`（fail-closed，不静默丢审计）。
+> - 投递：`app.OutboxPublisher` + `app.AuditOutboxDeliverer`，按 `iam.outbox.poll_interval` 拉取，退避 1s 起、封顶 5m、默认 8 次；投递结果计入 `iam_outbox_delivery_total{result}`。
+> - 回收：`processing` 超过 2m 租约（`domain.OutboxProcessingLease`）会被回收为 `pending` 重投，覆盖「投递成功但标记失败时进程崩溃」；语义为至少一次，审计出口按 `event_id` 去重。
+> - 装配：`cmd/internal/iamruntime` 在 `iam.outbox.enabled=true` 时切换审计出口并注册后台任务，由 `platform.Deps.Background` 随进程生命周期启停（先停投递再关 DB）。
+>
+> **已知边界（M4.5）**：当前 outbox append 与业务写入在**同一请求内先后执行**，append 失败即业务返回 `50000`，但二者尚未共享同一个数据库事务（各仓储自行开启事务）。极端崩溃窗口内可能出现「业务已提交、审计未入队」。消除该窗口需要 UnitOfWork（把 `*sql.Tx` 经 context 传到仓储），作为下一小步落地；在此之前不得把 M4.4 描述为「与业务写入原子」。
+
 ### 5.3.8 PostgreSQL 写法（非基线，仅演进参考）
 
 > **当前不维护**：M1 基线为 MySQL 8.0.19+（§5.3），本节只用于记录「若未来切换引擎」的差异点，**不纳入 CI 门禁、不要求与 MySQL 迁移同步修改**。切换引擎必须先提交 ADR，并按 `migrations/mysql/`、`migrations/postgres/` 分目录，禁止在同一目录混放两种方言。
@@ -537,15 +547,15 @@ internal/
 │   │   ├── binding_service.go        # M3：绑定/解绑 + 主体上限 + 端别/商户隔离
 │   │   ├── query_service.go          # M3：目录树、角色详情、主体快照、模拟鉴权
 │   │   ├── audit.go                  # M3：ChangeRecorder（fail-closed）+ 审计事件构造
+│   │   ├── outbox.go                 # M4.4：OutboxRecorder（写入 fail-closed）+ OutboxPublisher（退避 / 死信）
 │   │   ├── rules.go                  # M3：授权校验 / 数据范围归一化
 │   │   ├── authorize_service.go      # M2 已落地：快照加载（cache → DB、singleflight、300ms 超时、清洗）
 │   │   ├── change_request_service.go  # 审批单用例（M4.2：创建 / 通过 / 拒绝 / 撤销 / 应用）
 │   │   ├── change_request_service_test.go
 │   │   └── *_test.go
 │   ├── infrastructure/
-│   │   ├── persistence/              # M1 已落地 memory（94.7%）+ MySQL 8.0 仓储；M3 补 memory_snapshot；M4.2 补 memory_change_request
-│   │   ├── cache/                    # M2 已落地：版本化 JSON + L1/L2 + negative_ttl + 失效；M3 补 Redis Store / Invalidator
-│   │   └── outbox/                   # iam_outbox 读写（M4.4；M3 审计走 ChangeRecorder 同步写）
+│   │   ├── persistence/              # M1 已落地 memory + MySQL 8.0 仓储；M3 补 memory_snapshot；M4.2 补 memory_change_request；M4.4 补 memory/mysql_outbox
+│   │   └── cache/                    # M2 已落地：版本化 JSON + L1/L2 + negative_ttl + 失效；M3 补 Redis Store / Invalidator
 │   ├── observability/                # M2 已落地：Prometheus 指标适配（缓存 / 加载 / 决策 / shadow）
 │   ├── transport/
 │   │   ├── rest/                     # M4.1：A/B 共用解析、DTO 转换与 handler（通道无关）
@@ -1109,7 +1119,7 @@ WHERE b.channel = ?
 
 同步更新 `internal/shared/audit/actions.go` 常量与 `KnownActions()`；`check-audit.sh` 必须通过（AUD-01/02/04）。
 
-> **M3 实现状态**：`RoleService` / `BindingService` 通过 `app.ChangeRecorder` 同步记录审计，写失败即回滚响应（fail-closed，`50000`）；`cmd/admin-api` 当前注入 `audit.SlogEmitter`（结构化日志落盘），**持久化 `iam_outbox` 与审计存储仍属 M4**。因此 §14 的「staging enforce 稳定」以「审计写入目标已持久化」为前提；在此之前只允许 shadow/local。
+> **M3/M4.4 实现状态**：`RoleService` / `BindingService` / `BreakglassService` / 审批应用统一通过 `app.ChangeRecorder` 记录审计，写失败即失败关闭（`50000`）。默认注入 `app.SlogRecorder`（结构化日志，M3）；`iam.outbox.enabled=true` 时切换为 `app.OutboxRecorder`，事件先持久化到 `iam_outbox`，再由进程内发布器投递到审计出口（M4.4）。§14 的「staging enforce 稳定」现由配置门禁强制：prod/staging + enforce 必须启用 outbox，且 prod 必须使用持久化 `db.driver`。
 
 ### 10.2 事件字段
 
@@ -1172,12 +1182,15 @@ WHERE b.channel = ?
 | `iam_role_changes_total` | Counter | `channel`、`operation`、`outcome` | M3 已落地：角色变更量与失败率（由审计装饰器计数） |
 | `iam_binding_changes_total` | Counter | `channel`、`operation`、`outcome` | M3 已落地：绑定变更量与失败率 |
 | `iam_bindings_total` | Gauge | `channel`、`scope_type` | 绑定规模，低基数（M4：需定期聚合，避免每请求查询） |
-| `iam_outbox_pending` | Gauge | — | 审计 / 失效事件积压（M4） |
-| `iam_outbox_lag_seconds` | Gauge | — | 投递延迟（M4） |
+| `iam_outbox_pending` | Gauge | — | M4.4 已落地：未投递事件数（含重试等待与死信） |
+| `iam_outbox_lag_seconds` | Gauge | — | M4.4 已落地：最老未投递事件的积压秒数 |
+| `iam_outbox_delivery_total` | Counter | `result=success\|retry\|dead\|poison` | M4.4 已落地：投递结果；`dead` / `poison` >0 必须告警 |
 | `iam_cache_invalidate_failed_total` | Counter | `layer` | 缓存删除失败 |
 | `iam_breakglass_active` | Gauge | — | 活跃破玻璃数（>0 告警，M4） |
 
 **标签纪律**：禁止把 `subject_id`、`role_id`、`permission`、`merchant_id` 作为 Prometheus 标签（高基数）。这些放日志 / Trace / 审计。
+
+> **实现注意（M4.4 修复）**：平台 `metrics.New` 会把 `service` / `channel` / `env` 注入为常量标签，而 IAM 指标自带 `channel` 变量标签；两者同名会被 Prometheus 拒绝（启动即失败）。因此 IAM 通过 `Metrics.RegistererWithoutChannel()` 注册（保留 `service` / `env` 常量标签），`cmd/internal/iamruntime` 有回归测试覆盖。
 
 ### 11.3 追踪
 
@@ -1199,11 +1212,11 @@ WHERE b.channel = ?
 | 鉴权延迟 | P99 > 50ms 持续 5m | P2 |
 | 缓存命中率下降 | < 95% 持续 10m | P2 |
 | 缓存删除失败 | `> 0` 持续 5m | P1 |
-| Outbox 积压 | pending > 1000 或 lag > 60s | P1 |
+| Outbox 积压 | `iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`（M4.4） | P1 |
 | 破玻璃活跃 | `iam_breakglass_active > 0` | P1（即时通知） |
 | 角色变更失败率 | > 1% 持续 10m | P2 |
 
-Runbook：`docs/runbooks/iam.md`（RB-01～RB-07），覆盖缓存故障、DB 故障、误授权回滚、破玻璃撤销、Outbox 积压、迁移回滚；`docs/runbooks/ALERTS.md` 已登记 4 条 IAM 告警。
+Runbook：`docs/runbooks/iam.md`（RB-01～RB-07），覆盖缓存故障、DB 故障、误授权回滚、破玻璃撤销、Outbox 积压（含 pending / retry / dead 三种分诊路径）、迁移回滚；`docs/runbooks/ALERTS.md` 已登记 5 条 IAM 告警（含 `iam.outbox.backlog`）。
 
 ---
 
@@ -1248,6 +1261,12 @@ iam:
     enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
     allowed_subjects: []  # 允许申请的主体白名单；非空时名单外主体返回 40300
     # 时长上限硬编码 2h（domain.MaxBreakglassDuration），不提供配置项，避免误改放大权限
+
+  outbox:
+    enabled: false        # 审计事件先持久化再投递；prod/staging + enforce 必须 true
+    poll_interval: 1s     # 拉取间隔，[100ms, 1m]
+    batch_size: 50        # 单轮拉取上限，[1, 500]
+    max_attempts: 8       # 投递次数上限，耗尽进死信，[1, 20]
 ```
 
 环境变量由 `pkg/config` 按 yaml tag 自动推导，例如：
@@ -1261,10 +1280,14 @@ iam:
 | `ADMIN_FRAME_IAM_CACHE_L2_TTL` | `iam.cache.l2_ttl` |
 | `ADMIN_FRAME_IAM_SECURITY_ALLOW_WILDCARD` | `iam.security.allow_wildcard` |
 | `ADMIN_FRAME_IAM_BREAKGLASS_ENABLED` | `iam.breakglass.enabled` |
+| `ADMIN_FRAME_IAM_OUTBOX_ENABLED` | `iam.outbox.enabled` |
+| `ADMIN_FRAME_IAM_OUTBOX_POLL_INTERVAL` | `iam.outbox.poll_interval` |
+| `ADMIN_FRAME_IAM_OUTBOX_BATCH_SIZE` | `iam.outbox.batch_size` |
+| `ADMIN_FRAME_IAM_OUTBOX_MAX_ATTEMPTS` | `iam.outbox.max_attempts` |
 
 > 数组 / 映射类字段（`sod_conflicts`、`allowed_subjects`、`required_permissions`）建议只走 yaml，不强行支持环境变量批量覆盖；如需支持，须在 CONFIG 专文登记并加 `Validate` 单测。
 
-> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。M4.3 已把 `breakglass.enabled` / `allowed_subjects` 接入 `Validate`（含 admin-only、enforce 与 prod 白名单要求）；`sod_*` / `approval` / `max_duration` 仍未实现，写了会被 `pkg/config` 严格模式拒绝。
+> **实施状态**：M2 已提供 `security.Mode` / `ParseMode`、`cache.Config`、`app.AuthorizeConfig` 与 `observability.NewMetrics`；M3 已把 `iam` / `redis` 段接入 `internal/platform.Config`（`applyIAMDefaults` + `validateIAM`）；M4.1 已把仓储 / 缓存 / 用例 / 传输层装配收敛到 `cmd/internal/iamruntime`，A / B 端共用同一实例。M4.3 已把 `breakglass.enabled` / `allowed_subjects` 接入 `Validate`（含 admin-only、enforce 与 prod 白名单要求）；M4.4 已把 `outbox.*` 接入 `applyIAMDefaults` / `validateIAM`（间隔、批量、重试次数边界，prod/staging enforce 强制启用，prod 强制持久化 `db.driver`）；`sod_*` / `approval` / `max_duration` 仍未实现，写了会被 `pkg/config` 严格模式拒绝。
 
 ### 12.2 Validate 基线
 
@@ -1278,7 +1301,7 @@ iam:
 - 未知 `iam.mode` / `cache.driver` / 负值时长一律拒绝。
 - 配置错误时 `errors.Join` 聚合，启动失败并打印字段名，不打印值（CFG-03 / CFG-05）。
 
-M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 `allowed_subjects`）；`approval.enabled` / `sod_*` 仍未实现。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
+M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 `allowed_subjects`）；M4.4 已落地：`iam.outbox.poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`max_attempts ∈ [1,20]`（零值视为默认，不误报），`env ∈ {prod,staging}` 且 `iam.mode=enforce` ⇒ `outbox.enabled=true`，`env=prod` 且启用 outbox ⇒ `db.driver≠memory`；`approval.enabled` / `sod_*` 仍未实现。B 端 `iam.limits.max_custom_roles_per_merchant` 已落地（仅 B 端生效，A 端平台角色不受此限）。
 
 ### 12.3 部署
 
@@ -1288,7 +1311,7 @@ M4.3 已落地：`breakglass.enabled`（仅 admin + enforce，prod 必须配置 
 | 迁移 | 仅 `cmd/migrate` / 发布流水线执行；expand → deploy → enforce → contract |
 | 依赖 | 复用现有 DB / Redis；不新增外部服务 |
 | 就绪 | `admin-api` / `biz-api` 注册 `iam_db`、`iam_cache` 检查器 |
-| Worker | 消费 `iam_outbox`，投递审计 / 缓存失效；支持重试 + DLQ + 告警 |
+| Worker | M4.4 起由启用 outbox 的 API 进程内发布器消费 `iam_outbox`（退避重试 + 死信 + 积压指标）；独立 worker 进程投递留待审计出口收敛后接入 |
 | 回滚 | 切 `iam.mode=off`（恢复演示 / 旧静态表）+ 清缓存；无需回滚 schema |
 | 容量 | 初始 1 万角色、10 万绑定；索引与分页保证管理接口不拖垮 DB |
 
@@ -1484,6 +1507,19 @@ TestBreakglassGuards                              # 开关 / 白名单 / 超时�
 TestBreakglassHTTPFlow                            # A 端全链路：自审 40300 → 换人审批 → 撤销
 TestBreakglassHTTPRejectsOverlongDuration
 TestSQLSnapshotBreakglassWildcard                 # MySQL：绑定期内 "*"，过期后不再展开（需 IAM_TEST_MYSQL_DSN）
+TestNewOutboxEvent / TestNewOutboxEventRejectsBadInput # 载荷 JSON 对象、32KiB 上限、必填字段
+TestOutboxEventStateMachine / TestOutboxEventRescheduleBacksOffUntilDead # 状态机与指数退避 / 死信
+TestOutboxRetryPolicyNormalizeAndCap              # 默认值、封顶、耗尽判定
+TestMemoryOutboxLifecycle / TestMemoryOutboxRetryVisibility / TestMemoryOutboxPoisonAndLimit # 认领原子性、退避可见性、毒消息、批量
+TestOutboxRecorderWritesPendingAuditEvent         # 审计事件落 outbox，重复写入 fail-closed
+TestOutboxPublisherDeliversAndMarksSucceeded     # 投递成功 + 指标 success + 不重复投递
+TestOutboxPublisherRetriesThenDeadLetters         # 退避重试 → 死信，且死信仍计入积压
+TestOutboxPublisherPoisonIsNotRetried             # 毒消息直接 failed，不无限重试
+TestOutboxPublisherCorruptPayloadIsPoison         # 载荷不可校验 → ErrOutboxPoison
+TestOutboxPublisherRunStopsOnContextCancel        # 后台任务随 ctx 退出
+TestMemoryOutboxReclaimsStaleProcessing / TestOutboxPublisherReclaimsStaleProcessing # 租约过期回收重投
+TestSQLOutboxLifecycle / TestSQLOutboxReclaimsStaleProcessing / TestSQLOutboxDeadAndPoisonStayVisible # MySQL：入队 / 认领 / 退避 / 回收 / 终态统计（需 IAM_TEST_MYSQL_DSN）
+TestValidateIAMOutboxRules                        # 配置边界、prod enforce 强制启用、prod 持久化要求
 ```
 
 ### 13.3 性能基准
@@ -1629,7 +1665,7 @@ BenchmarkReplaceRolePermissions_Diff
 | **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 97.9%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
 | **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 90.8% / cache 90.5% / security 94.1%；配置与 cmd 注入随 M3**） | 切回 `off` |
 | **M3 A 端管理 API**（5～7d） | A 端角色 / 权限 / 绑定 API、审计接线、OpenAPI、配置装配 | A 端 15 个端点全链路可用；审计事件 `rbac.role_change` / `rbac.binding_change` 已 `active` 且 fail-closed（当前目标为 SlogEmitter，持久化 Outbox 待 M4）；`admin.yaml` 已含 IAM 契约；`go test ./...`、layering / test-gates / transport / audit / migrations / observability / config / openapi / perf / deps / licenses、`golangci-lint` 全绿（**已完成**）；staging `enforce` 稳定性待环境验证 | 切回 `off` + 清缓存 |
-| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成：申请 / 审批 / 生效 / 撤销 + `iam_breakglass_active` + `rbac.breakglass`**）、Outbox 持久化（M4.4 待办）、B 端审批（需 `merchant_id` 迁移）；e2e 通过 | 关闭审批 / 破玻璃开关 |
+| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（M4.5 待办）、B 端审批（需 `merchant_id` 迁移）；e2e 通过 | 关闭审批 / 破玻璃开关 |
 | **M5 生产加固**（3～5d） | 压测、故障演练、runbook、告警、容量评估、清理演示表 | SLO 达标；故障演练通过；`make ci` + 发布 Checklist 全绿 | 保留 `off` 开关一个版本 |
 
 **依赖顺序**：M1 完成前不合并 M2 的运行时切换；M2 shadow 数据必须来自真实（脱敏）角色配置；M3 enforce 前必须完成审计接线。
@@ -1655,7 +1691,7 @@ BenchmarkReplaceRolePermissions_Diff
 2. 执行 `make migrate-up`（staging），校验目录种子与索引。
 3. 发布 `iam.mode=off`；确认启动校验、探针、指标正常。
 4. 切 `shadow`；导入真实角色 / 绑定（脱敏）；比对差异。
-5. 修复差异；切 `enforce`（staging）；跑 e2e + 压测。
+5. 修复差异；切 `enforce`（staging）并启用 `iam.outbox.enabled=true`（配置校验要求 `db.driver` 持久化 + Redis 缓存）；跑 e2e + 压测。
 6. 生产按同样顺序；先 A 端后 B 端，或按租户灰度（`iam.mode=enforce` + 商户白名单）。
 7. 观察 7 天；清理静态表与临时开关（保留 `off` 一个版本）。
 
@@ -1666,7 +1702,7 @@ BenchmarkReplaceRolePermissions_Diff
 | 鉴权误判 / 大面积 403 | 切 `iam.mode=off`；清 L1/L2 缓存 | 无 schema 变更 |
 | 缓存一致性异常 | 清 Redis `iam:*`；临时缩短 `l1_ttl` / `l2_ttl` | 无 |
 | 迁移失败 | 停止发布；按 `.down.sql` 回滚（非生产）或前向修复（生产） | 按迁移 |
-| 审计 Outbox 积压 | 降级为同步 Emitter + 告警；修复 worker 后补投 | 审计可能延迟，不可丢失 |
+| 审计 Outbox 积压 | 先修审计出口，事件按退避自动补投；必要时临时 `iam.outbox.enabled=false` 回落同步 Emitter 并告警，恢复后重新开启 | 审计可能延迟，不可丢失；禁止手工改事件状态 |
 | 破玻璃滥用 | 立即撤销临时绑定；清缓存；安全事件流程 | 审计留痕 |
 
 > 生产**禁止**直接 `UPDATE` / `DELETE` IAM 表作为常规回滚手段；应急操作须双人 + 工单 + 审计（DATA-04）。
@@ -1729,11 +1765,11 @@ BenchmarkReplaceRolePermissions_Diff
 - [x] 迁移 `000002` / `000003` up/down 配对，`make check-migrations` 通过；`up` 未改动历史文件。
 - [x] 所有 IAM 表有表注释、所有字段有字段注释，枚举取值列全且与 domain 常量一致；写法统一为 MySQL 列内 `COMMENT`（`000002_create_iam_tables.up.sql`）。
 - [x] B 端租户条件在 SQL 与 app 双重落实；越权 404（`TestSQLBindingRepositoryTenantIsolation` / `TestUnbindHidesCrossMerchantBinding`）；B 端 HTTP 自助接口（13 个端点）已落地，跨商户 404、配额 40000、目录按端过滤均有传输层测试（`TestBiz*`）。
-- [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；`rbac.breakglass` 已在 M4.3 接线；持久化 Outbox 留待 M4.4。
+- [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；`rbac.breakglass` 已在 M4.3 接线；持久化 Outbox（`iam_outbox` + 发布器 + 退避/死信 + 积压指标）已在 M4.4 落地。
 - [x] A 端管理 API 15 个端点、`RoleService` / `BindingService` / `QueryService` 单测与 HTTP 传输测试通过；OpenAPI（`api/openapi/admin.yaml`）已补齐 IAM 契约。
 - [x] 日志 / 指标 / Trace 符合 OBS：结构化日志含 `trace_id`；指标低基数（无 `subject_id` / `role_id`）；变更计数由审计装饰器产生；`/readyz` 注册 `iam_db` / `iam_cache`；请求级 span 由 `tracing.HTTPMiddleware` 统一产生。
 - [x] 配置 example（`iam` / `redis` 段）、`Validate`（`config_iam_test.go`）与环境变量文档同步。
-- [x] 告警与 runbook：`docs/runbooks/iam.md` + `ALERTS.md` 4 条 IAM 告警，`make check-runbooks` 通过。
+- [x] 告警与 runbook：`docs/runbooks/iam.md` + `ALERTS.md` 5 条 IAM 告警（含 `iam.outbox.backlog`），`make check-runbooks` 通过。
 - [ ] `make ci` 全绿：fmt / tidy / lint / test-ci / vuln / deps / transport / layering / debug / secrets / config / migrations / reliability / observability / git / release / runbooks / audit / license / codegen / perf / openapi / build。（除 `vuln` / `secrets` 等需联网项外已逐项验证，合入前以 CI 结果为准）
 
 ### 17.3 生产就绪
@@ -1825,6 +1861,12 @@ iam:
     enabled: false        # 生产默认关闭；启用要求 mode=enforce，prod 必填 allowed_subjects
     allowed_subjects: []  # 允许申请的主体白名单；非空时名单外主体返回 40300
     # 时长上限硬编码 2h（domain.MaxBreakglassDuration），不提供配置项，避免误改放大权限
+
+  outbox:
+    enabled: false        # 审计事件先持久化再投递；prod/staging + enforce 必须 true
+    poll_interval: 1s     # 拉取间隔，[100ms, 1m]
+    batch_size: 50        # 单轮拉取上限，[1, 500]
+    max_attempts: 8       # 投递次数上限，耗尽进死信，[1, 20]
 ```
 
 ---

@@ -2,10 +2,10 @@
 
 | 字段 | 内容 |
 |------|------|
-| 告警 ID | `iam.authz.unavailable` / `iam.authz.deny_rate_high` / `iam.cache.invalidate_failed` / `iam.shadow.mismatch` |
+| 告警 ID | `iam.authz.unavailable` / `iam.authz.deny_rate_high` / `iam.cache.invalidate_failed` / `iam.shadow.mismatch` / `iam.outbox.backlog` |
 | 级别 | P1（不可用、缓存删除失败）/ P2（拒绝率、延迟、shadow 差异） |
 | 服务 / 端 | admin-api / biz-api（`c-api`、`worker` 不启用 IAM） |
-| 最后更新 | 2026-10-21 |
+| 最后更新 | 2026-10-22 |
 
 ## 症状
 
@@ -51,8 +51,19 @@
    4. 核对审计：`rbac.role_change` / `rbac.binding_change` 中 `added` / `removed` 差量与操作人。
 4. **缓存删除失败**：确认失效任务是否持续报错；L1 TTL（默认 3s）与 L2 TTL（默认 5m）是最终兜底，
    最坏撤销延迟为两层 TTL 之和。恢复后确认 `iam_cache_invalidate_failed_total` 停止增长。
-5. **Outbox 积压（M4 起）**：`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`
-   时先确认 worker 消费位点，再决定扩容消费者；禁止手工删事件。
+5. **Outbox 积压（M4.4 起）**：`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`。
+   投递由启用 `iam.outbox.enabled` 的 API 进程内发布器执行（`poll_interval` 默认 1s），
+   先用 `SELECT status, COUNT(*) FROM iam_outbox GROUP BY status` 定位是待投递、重试还是死信：
+   - `pending` 增长但 `attempts` 不涨：发布器未运行（进程未启用 outbox 或已退出），
+     检查 `background_tasks` 启动日志与 `iam_outbox_delivery_total`。
+   - `pending` + `iam_outbox_delivery_total{result="retry"}` 增长：审计出口不可用（日志 / SIEM 管道），
+     修复出口后事件会在退避到期后自动补投，**禁止手工删事件或改状态**。
+   - `processing` 长期不降：上一个投递者已崩溃，超过 2m 租约后会被自动回收重投（至少一次语义）；
+     若持续堆积，检查是否有长事务锁住对应行。
+   - `dead` / `failed`：重试耗尽或毒消息，保留行并按 `aggregate_type/aggregate_id` 补审计；
+     排障结论写入事故记录，再决定是否人工重放（重放前必须先修数据）。
+   若积压由单实例吞吐不足引起，优先扩大 `batch_size`（≤500）或缩短 `poll_interval`（≥100ms），
+   再考虑多实例并行（认领是条件更新，天然幂等）。
 6. **破玻璃授权（`iam_breakglass_active > 0`）**：按 P1 安全事件处理。
    1. `GET /admin/v1/iam/change-requests?action=breakglass_request&status=applied` 核对申请人与审批人。
    2. 确认原因与影响面后，`POST /admin/v1/iam/breakglass/{id}/revoke`（body 带当前 `version`）提前收回。

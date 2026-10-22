@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/security"
@@ -38,6 +39,11 @@ type Deps struct {
 	RequirePermission auth.PermissionMiddleware
 	// Health 用于 Register 阶段追加就绪检查（如仓储 ping）。
 	Health *health.Handler
+	// Background 注册进程级后台任务（如 IAM outbox 投递）。
+	//
+	// 只允许在装配阶段（NewAuthorizer / Register）调用；任务在路由注册完成后启动，
+	// ctx 在进程退出、HTTP 优雅关闭开始后取消。任务返回错误只记录日志，不改变退出码。
+	Background func(task func(context.Context) error)
 }
 
 // Options 是 platform.Run 的装配参数。
@@ -142,16 +148,18 @@ func Run(ctx context.Context, opts Options) (err error) {
 		hh.Register("redis", redisClient.Checker())
 	}
 
+	background := &backgroundTasks{}
 	deps := &Deps{
-		Config:   cfg,
-		Logger:   logger,
-		Metrics:  met,
-		Tracer:   tp,
-		Storage:  stores,
-		Database: database,
-		Redis:    redisClient,
-		AuthMW:   authMW,
-		Health:   hh,
+		Config:     cfg,
+		Logger:     logger,
+		Metrics:    met,
+		Tracer:     tp,
+		Storage:    stores,
+		Database:   database,
+		Redis:      redisClient,
+		AuthMW:     authMW,
+		Health:     hh,
+		Background: background.add,
 	}
 
 	authorizer := security.NewAuthorizer(nil)
@@ -191,13 +199,64 @@ func Run(ctx context.Context, opts Options) (err error) {
 		return err
 	}
 
+	tasks := background.list()
+	stopBackground := startBackground(ctx, tasks, logger)
+	defer stopBackground()
+
 	logger.Info("process starting",
 		"service", cfg.Service,
 		"channel", cfg.Channel,
 		"env", cfg.Env,
 		"version", build.Version,
+		"background_tasks", len(tasks),
 	)
 	return ListenAndServe(ctx, cfg, pipeline(root), logger)
+}
+
+// backgroundTasks 收集装配期注册的后台任务；启动后不再接受注册。
+type backgroundTasks struct {
+	mu    sync.Mutex
+	tasks []func(context.Context) error
+}
+
+func (b *backgroundTasks) add(task func(context.Context) error) {
+	if task == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.tasks = append(b.tasks, task)
+}
+
+func (b *backgroundTasks) list() []func(context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]func(context.Context) error(nil), b.tasks...)
+}
+
+// startBackground 启动进程级后台任务，返回 stop：取消并等待全部退出。
+//
+// 任务错误只记录日志：后台任务失败不能把已经正常关闭的进程变成启动失败，
+// 但必须可观测（日志 + 对应业务指标），否则 outbox 停摆会静默丢审计。
+func startBackground(ctx context.Context, tasks []func(context.Context) error, logger *slog.Logger) func() {
+	bgCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(task func(context.Context) error) {
+			defer wg.Done()
+			if err := task(bgCtx); err != nil && bgCtx.Err() == nil {
+				logger.Error("background task stopped", "err", err)
+			}
+		}(task)
+	}
+	return func() {
+		cancel()
+		wg.Wait()
+	}
 }
 
 // registerStorageChecks 为默认桶与命名桶注册就绪探测。

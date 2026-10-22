@@ -10,10 +10,13 @@ import (
 
 // Metrics 是进程级指标门面：私有（或注入）Registry、HTTP RED、构建信息与工厂方法。
 type Metrics struct {
-	namespace  string
-	registerer prometheus.Registerer
-	gatherer   prometheus.Gatherer
-	http       *HTTP
+	namespace     string
+	registerer    prometheus.Registerer
+	rawRegisterer prometheus.Registerer
+	service       string
+	env           string
+	gatherer      prometheus.Gatherer
+	http          *HTTP
 }
 
 // New 创建 Metrics。Service 必填；默认注册 Go runtime 与 process 采集器。
@@ -50,9 +53,12 @@ func New(opts Options) (*Metrics, error) {
 	}
 
 	m := &Metrics{
-		namespace:  ns,
-		registerer: wrapped,
-		gatherer:   gatherer,
+		namespace:     ns,
+		registerer:    wrapped,
+		rawRegisterer: registerer,
+		service:       opts.Service,
+		env:           opts.Env,
+		gatherer:      gatherer,
 	}
 	httpMetrics, err := newHTTP(wrapped, ns)
 	if err != nil {
@@ -68,6 +74,24 @@ func (m *Metrics) Registerer() prometheus.Registerer {
 		return nil
 	}
 	return m.registerer
+}
+
+// RegistererWithoutChannel 返回只注入 service / env 常量标签的 Registerer。
+//
+// 供自带 channel 变量标签的指标集（如 IAM）使用：Prometheus 禁止同一指标既有
+// 常量标签 channel 又有变量标签 channel。使用本方法可保留端别维度而不启动失败。
+func (m *Metrics) RegistererWithoutChannel() prometheus.Registerer {
+	if m == nil {
+		return nil
+	}
+	labels := prometheus.Labels{}
+	if m.service != "" {
+		labels["service"] = m.service
+	}
+	if m.env != "" {
+		labels["env"] = m.env
+	}
+	return prometheus.WrapRegistererWith(labels, m.rawRegisterer)
 }
 
 // Gatherer 返回底层 Gatherer（供 Handler 与测试断言）。

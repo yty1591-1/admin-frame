@@ -45,3 +45,32 @@ tracing:
   exporter: none
   endpoint: ""
   insecure: false
+
+# B 端 IAM：只挂 /biz/v1/iam/*，审批端点不注册；破玻璃仅 A 端可用。
+iam:
+  mode: shadow                   # off|shadow|enforce；prod 建议 enforce
+  load_timeout: 300ms
+  cache:
+    driver: memory               # prod/staging + enforce 必须 redis
+    l1_ttl: 3s
+    l2_ttl: 5m
+    negative_ttl: 30s
+    key_prefix: iam
+    l1_max_entries: 10000
+  limits:
+    max_roles_per_subject: 20
+    max_permissions_per_role: 200
+    max_bindings_per_subject: 50
+    max_custom_roles_per_merchant: 50
+  security:
+    allow_wildcard: false
+    require_reason: true
+  breakglass:
+    enabled: false               # B 端不可启用：配置校验要求 channel=admin
+    allowed_subjects: []
+  outbox:
+    enabled: false               # prod/staging + enforce 必须 true
+    poll_interval: 1s
+    batch_size: 50
+    max_attempts: 8
+

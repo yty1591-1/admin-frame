@@ -31,6 +31,7 @@ type Metrics struct {
 	loadErrors     *prometheus.CounterVec
 	roleChanges    *prometheus.CounterVec
 	bindingChanges *prometheus.CounterVec
+	outboxDelivery *prometheus.CounterVec
 	registerer     prometheus.Registerer
 }
 
@@ -79,15 +80,24 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Name: "iam_binding_changes_total",
 			Help: "IAM 主体绑定变更次数，按端别、变更类型与结果分组。",
 		}, []string{"channel", "operation", "outcome"}),
+		outboxDelivery: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_outbox_delivery_total",
+			Help: "IAM 事务性 Outbox 投递结果，result=success|retry|dead|poison。",
+		}, []string{"result"}),
 	}
 	for _, collector := range []prometheus.Collector{
 		m.cacheTotal, m.loadDuration, m.snapshotSize, m.decisions,
 		m.invalidateFail, m.shadowMismatch, m.loadErrors,
-		m.roleChanges, m.bindingChanges,
+		m.roleChanges, m.bindingChanges, m.outboxDelivery,
 	} {
 		if err := registerer.Register(collector); err != nil {
 			return nil, fmt.Errorf("iam observability: register metrics: %w", err)
 		}
+	}
+	// 预创建投递结果标签，保证 iam_outbox_delivery_total 在无投递时也能被采集，
+	// 避免告警表达式因指标缺失而静默失效（尤其是 dead / poison）。
+	for _, result := range []string{"success", "retry", "dead", "poison"} {
+		m.outboxDelivery.WithLabelValues(result)
 	}
 	return m, nil
 }
@@ -115,6 +125,59 @@ func (m *Metrics) RegisterBreakglassGauge(counter func() (int, error)) error {
 	})
 	if err := m.registerer.Register(gauge); err != nil {
 		return fmt.Errorf("iam observability: register breakglass gauge: %w", err)
+	}
+	return nil
+}
+
+// OnOutboxDelivered 实现 app.OutboxObserver。
+func (m *Metrics) OnOutboxDelivered(_ context.Context, result string) {
+	if m == nil {
+		return
+	}
+	if result == "" {
+		result = "unknown"
+	}
+	m.outboxDelivery.WithLabelValues(result).Inc()
+}
+
+// RegisterOutboxGauges 注册 iam_outbox_pending 与 iam_outbox_lag_seconds。
+//
+// 两个 GaugeFunc 共用一次统计调用：查询失败按「不可观测」暴露 0，但投递失败
+// 会通过 iam_outbox_delivery_total{result=dead|poison} 与日志暴露，不依赖本指标。
+func (m *Metrics) RegisterOutboxGauges(stats func() (int, float64, error)) error {
+	if m == nil || m.registerer == nil {
+		return fmt.Errorf("iam observability: metrics is not initialized")
+	}
+	if stats == nil {
+		return fmt.Errorf("iam observability: outbox stats function is required")
+	}
+	pending := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "iam_outbox_pending",
+		Help: "IAM Outbox 未投递事件数（含重试等待与死信）；持续 >0 说明投递受阻。",
+	}, func() float64 {
+		count, _, err := stats()
+		if err != nil || count < 0 {
+			return 0
+		}
+		return float64(count)
+	})
+	lag := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "iam_outbox_lag_seconds",
+		Help: "IAM Outbox 最老未投递事件的积压秒数；持续增长触发 P2 告警。",
+	}, func() float64 {
+		_, seconds, err := stats()
+		if err != nil || seconds < 0 {
+			return 0
+		}
+		return seconds
+	})
+	for name, collector := range map[string]prometheus.Collector{
+		"pending": pending,
+		"lag":     lag,
+	} {
+		if err := m.registerer.Register(collector); err != nil {
+			return fmt.Errorf("iam observability: register outbox %s gauge: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -236,3 +299,6 @@ func (r ChangeRecorder) Record(ctx context.Context, event audit.Event) error {
 
 // 编译期断言：装饰器必须满足用例侧端口。
 var _ app.ChangeRecorder = ChangeRecorder{}
+
+// 编译期断言：指标集必须满足 outbox 投递观测端口。
+var _ app.OutboxObserver = (*Metrics)(nil)

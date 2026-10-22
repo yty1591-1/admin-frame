@@ -33,6 +33,10 @@ type Runtime struct {
 	Authorizer *security.Authorizer
 	// Handler 供各端 transport 注册 HTTP 路由；mode=off 时仍存在，便于先建授权。
 	Handler *rest.Handler
+	// Background 是随进程生命周期运行的后台任务（outbox 投递）；未启用时为空。
+	//
+	// 由 cmd 转交给 platform.Deps.Background，保证优雅关闭时先停投递再关数据库。
+	Background []func(context.Context) error
 }
 
 // Options 是 IAM 运行时装配参数。
@@ -72,7 +76,9 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 	registerHealth(deps)
 
-	iamMetrics, err := observability.NewMetrics(deps.Metrics.Registerer())
+	// IAM 指标自带 channel 变量标签，必须使用不注入 channel 常量标签的注册器，
+	// 否则 Prometheus 会以「常量标签与变量标签重名」拒绝注册导致进程启动失败。
+	iamMetrics, err := observability.NewMetrics(deps.Metrics.RegistererWithoutChannel())
 	if err != nil {
 		return nil, fmt.Errorf("iam metrics: %w", err)
 	}
@@ -95,9 +101,38 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 
 	ids := id.MustSnowflake(id.Options{NodeID: 1})
+	// 审计出口：默认直接落结构化日志（local / demo）；
+	// 启用 outbox 后先持久化事件、再由后台发布器投递，进程崩溃不丢审计。
+	auditEmitter := audit.SlogEmitter{Log: deps.Logger}
 	recorder := observability.ChangeRecorder{
-		Inner:   app.SlogRecorder{Emitter: audit.SlogEmitter{Log: deps.Logger}},
+		Inner:   app.SlogRecorder{Emitter: auditEmitter},
 		Metrics: iamMetrics,
+	}
+	var background []func(context.Context) error
+	if cfg.IAM.Outbox.Enabled {
+		outboxRepo := buildOutboxRepository(deps)
+		recorder = observability.ChangeRecorder{
+			Inner:   app.OutboxRecorder{Events: outboxRepo},
+			Metrics: iamMetrics,
+		}
+		publisher, pubErr := app.NewOutboxPublisher(app.OutboxPublisherOptions{
+			Events:    outboxRepo,
+			Deliver:   app.AuditOutboxDeliverer(auditEmitter),
+			Policy:    domain.OutboxRetryPolicy{MaxAttempts: cfg.IAM.Outbox.MaxAttempts},
+			BatchSize: cfg.IAM.Outbox.BatchSize,
+			Logger:    deps.Logger,
+			Observer:  iamMetrics,
+		})
+		if pubErr != nil {
+			return nil, fmt.Errorf("iam outbox publisher: %w", pubErr)
+		}
+		if gaugeErr := iamMetrics.RegisterOutboxGauges(outboxStatsCounter(outboxRepo)); gaugeErr != nil {
+			return nil, fmt.Errorf("iam outbox gauges: %w", gaugeErr)
+		}
+		interval := cfg.IAM.Outbox.PollInterval
+		background = append(background, func(ctx context.Context) error {
+			return publisher.Run(ctx, interval)
+		})
 	}
 	auditMeta := app.AuditMeta{Service: cfg.Service, ActorType: auditActorType(cfg.Channel)}
 	invalidator := iampcache.NewSubjectInvalidator(snapshotCache, cfg.Env)
@@ -195,7 +230,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			security.WithDecisionObserver(iamMetrics),
 		)
 	}
-	return &Runtime{Authorizer: authorizer, Handler: handler}, nil
+	return &Runtime{Authorizer: authorizer, Handler: handler, Background: background}, nil
 }
 
 // breakglassActiveCounter 统计当前有效破玻璃绑定数；角色未播种时返回 0。
@@ -246,6 +281,37 @@ func buildRepositories(deps *platform.Deps) (domain.RoleRepository, domain.Bindi
 		persistence.NewSQLBindingRepository(sqlDB),
 		persistence.NewSQLSnapshotRepository(sqlDB),
 		nil
+}
+
+// buildOutboxRepository 按 db.driver 选择 outbox 仓储。
+//
+// outbox 的可靠性依赖数据库持久化：内存实现只用于 local / demo / 单测，
+// 生产启用 require db.driver=mysql（配置校验已拒绝 prod + memory 组合）。
+func buildOutboxRepository(deps *platform.Deps) domain.OutboxRepository {
+	if deps.Database == nil {
+		return persistence.NewMemoryOutboxRepository()
+	}
+	return persistence.NewSQLOutboxRepository(deps.Database.SQL())
+}
+
+// outboxStatsCounter 采集积压数与最老事件延迟，供 GaugeFunc 实时查询。
+func outboxStatsCounter(repo domain.OutboxRepository) func() (int, float64, error) {
+	return func() (int, float64, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stats, err := repo.Stats(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		lag := 0.0
+		if !stats.OldestCreatedAt.IsZero() {
+			lag = time.Since(stats.OldestCreatedAt).Seconds()
+			if lag < 0 {
+				lag = 0
+			}
+		}
+		return stats.Pending, lag, nil
+	}
 }
 
 // buildChangeRequestRepository 按 db.driver 选择审批单仓储。

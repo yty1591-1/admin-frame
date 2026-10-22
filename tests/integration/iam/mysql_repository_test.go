@@ -112,6 +112,7 @@ func repositoryRoot() (string, error) {
 func reset(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
 	for _, stmt := range []string{
+		"DELETE FROM iam_outbox",
 		"DELETE FROM iam_change_request",
 		"DELETE FROM iam_role_binding",
 		"DELETE FROM iam_role_data_scope",

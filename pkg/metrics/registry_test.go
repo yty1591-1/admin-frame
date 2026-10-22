@@ -138,6 +138,52 @@ func TestExternalRegistry(t *testing.T) {
 	}
 }
 
+func TestRegistererWithoutChannelAllowsVariableChannel(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m, err := metrics.New(metrics.Options{
+		Service:         "admin-api",
+		Channel:         "admin",
+		Env:             "prod",
+		Registerer:      reg,
+		Gatherer:        reg,
+		RegisterRuntime: metrics.Bool(false),
+		RegisterProcess: metrics.Bool(false),
+	})
+	if err != nil {
+		t.Fatalf("metrics.New: %v", err)
+	}
+
+	// 与 IAM 指标同形：变量标签里也含 channel。
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "iam_style_total",
+		Help: "test",
+	}, []string{"channel", "result"})
+	if err := m.RegistererWithoutChannel().Register(counter); err != nil {
+		t.Fatalf("RegistererWithoutChannel must allow variable channel label: %v", err)
+	}
+	counter.WithLabelValues("admin", "allow").Inc()
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != "iam_style_total" {
+			continue
+		}
+		labels := family.GetMetric()[0].GetLabel()
+		values := map[string]string{}
+		for _, label := range labels {
+			values[label.GetName()] = label.GetValue()
+		}
+		if values["channel"] != "admin" || values["service"] != "admin-api" || values["env"] != "prod" {
+			t.Fatalf("labels = %v", values)
+		}
+		return
+	}
+	t.Fatal("iam_style_total not gathered")
+}
+
 func TestSanitizeNamespaceViaMetricName(t *testing.T) {
 	m, err := metrics.New(metrics.Options{
 		Namespace:       "my-app.v1",

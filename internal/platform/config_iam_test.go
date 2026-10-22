@@ -36,6 +36,11 @@ func iamBaseConfig() *platform.Config {
 				MaxBindingsPerSubject:     50,
 				MaxCustomRolesPerMerchant: 50,
 			},
+			Outbox: platform.IAMOutboxConfig{
+				PollInterval: time.Second,
+				BatchSize:    50,
+				MaxAttempts:  8,
+			},
 		},
 	}
 }
@@ -109,8 +114,10 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodRedis.Env = "prod"
 	prodRedis.Auth = prodJWTConfig()
 	prodRedis.Storage.Driver = "s3"
+	prodRedis.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prodRedis.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodRedis.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodRedis.IAM.Outbox.Enabled = true
 	if err := prodRedis.Validate(); err != nil {
 		t.Fatalf("prod redis enforce: %v", err)
 	}
@@ -124,6 +131,53 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodWildcard.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
 	if err := prodWildcard.Validate(); err == nil || !strings.Contains(err.Error(), "allow_wildcard") {
 		t.Fatalf("err=%v want prod wildcard rejection", err)
+	}
+}
+
+func TestValidateIAMOutboxRules(t *testing.T) {
+	baseline := iamBaseConfig()
+	if err := baseline.Validate(); err != nil {
+		t.Fatalf("outbox baseline: %v", err)
+	}
+
+	fastPoll := iamBaseConfig()
+	fastPoll.IAM.Outbox.PollInterval = 10 * time.Millisecond
+	if err := fastPoll.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.poll_interval") {
+		t.Fatalf("err=%v want poll_interval rejection", err)
+	}
+
+	bigBatch := iamBaseConfig()
+	bigBatch.IAM.Outbox.BatchSize = 501
+	if err := bigBatch.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.batch_size") {
+		t.Fatalf("err=%v want batch_size rejection", err)
+	}
+
+	manyAttempts := iamBaseConfig()
+	manyAttempts.IAM.Outbox.MaxAttempts = 21
+	if err := manyAttempts.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.max_attempts") {
+		t.Fatalf("err=%v want max_attempts rejection", err)
+	}
+
+	prodWithoutOutbox := iamBaseConfig()
+	prodWithoutOutbox.Env = "prod"
+	prodWithoutOutbox.Auth = prodJWTConfig()
+	prodWithoutOutbox.Storage.Driver = "s3"
+	prodWithoutOutbox.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodWithoutOutbox.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodWithoutOutbox.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	if err := prodWithoutOutbox.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.enabled must be true") {
+		t.Fatalf("err=%v want prod outbox requirement", err)
+	}
+
+	prodMemoryOutbox := iamBaseConfig()
+	prodMemoryOutbox.Env = "prod"
+	prodMemoryOutbox.Auth = prodJWTConfig()
+	prodMemoryOutbox.Storage.Driver = "s3"
+	prodMemoryOutbox.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodMemoryOutbox.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodMemoryOutbox.IAM.Outbox.Enabled = true
+	if err := prodMemoryOutbox.Validate(); err == nil || !strings.Contains(err.Error(), "persistent db.driver") {
+		t.Fatalf("err=%v want persistent db requirement", err)
 	}
 }
 
@@ -174,6 +228,10 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 	if cfg.IAM.Limits.MaxRolesPerSubject != 20 || cfg.IAM.Limits.MaxPermissionsPerRole != 200 {
 		t.Fatalf("limit defaults = %+v", cfg.IAM.Limits)
 	}
+	if cfg.IAM.Outbox.Enabled || cfg.IAM.Outbox.PollInterval != time.Second ||
+		cfg.IAM.Outbox.BatchSize != 50 || cfg.IAM.Outbox.MaxAttempts != 8 {
+		t.Fatalf("outbox defaults = %+v", cfg.IAM.Outbox)
+	}
 
 	t.Setenv("ADMIN_FRAME_IAM_MODE", "shadow")
 	cfg, err = platform.LoadConfig(path)
@@ -214,8 +272,10 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	prod.Env = "prod"
 	prod.Auth = prodJWTConfig()
 	prod.Storage.Driver = "s3"
+	prod.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prod.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prod.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prod.IAM.Outbox.Enabled = true
 	prod.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
 	if err := prod.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_subjects") {
 		t.Fatalf("err=%v want prod allowlist requirement", err)

@@ -109,6 +109,23 @@ type IAMConfig struct {
 	Security IAMSecurityConfig `yaml:"security"`
 	// Breakglass 破玻璃（限时超级权限）开关与允许主体。
 	Breakglass IAMBreakglassConfig `yaml:"breakglass"`
+	// Outbox 事务性 Outbox 投递参数。
+	Outbox IAMOutboxConfig `yaml:"outbox"`
+}
+
+// IAMOutboxConfig 是事务性 Outbox 的投递参数。
+//
+// 启用后审计事件先写入 iam_outbox，再由进程内发布器投递到审计出口：
+// 写入失败即业务失败（fail-closed），投递失败按退避重试并进入死信。
+type IAMOutboxConfig struct {
+	// Enabled 是否启用；prod/staging + enforce 必须启用（审计不能只写日志）。
+	Enabled bool `yaml:"enabled"`
+	// PollInterval 拉取间隔；(0, 1m]。
+	PollInterval time.Duration `yaml:"poll_interval"`
+	// BatchSize 单轮拉取上限；[1, 500]。
+	BatchSize int `yaml:"batch_size"`
+	// MaxAttempts 最大投递次数；重试耗尽进入死信；[1, 20]。
+	MaxAttempts int `yaml:"max_attempts"`
 }
 
 // IAMCacheConfig 是快照缓存参数。
@@ -509,6 +526,15 @@ func (c *Config) applyIAMDefaults() {
 	if c.IAM.Limits.MaxCustomRolesPerMerchant == 0 {
 		c.IAM.Limits.MaxCustomRolesPerMerchant = 50
 	}
+	if c.IAM.Outbox.PollInterval == 0 {
+		c.IAM.Outbox.PollInterval = time.Second
+	}
+	if c.IAM.Outbox.BatchSize == 0 {
+		c.IAM.Outbox.BatchSize = 50
+	}
+	if c.IAM.Outbox.MaxAttempts == 0 {
+		c.IAM.Outbox.MaxAttempts = 8
+	}
 }
 
 // normalize 在环境变量覆盖后、Validate 前补齐跨字段派生值。
@@ -781,6 +807,26 @@ func (c *Config) validateIAM() []error {
 				errs = append(errs, fmt.Errorf("iam.breakglass.allowed_subjects[%d] must not be empty", i))
 			}
 		}
+	}
+	// 零值表示「尚未经过 applyDefaults」，按默认值处理，不在这里误报；
+	// 只有显式配置越界才拒绝启动（CFG-03 快速失败）。
+	if c.IAM.Outbox.PollInterval != 0 &&
+		(c.IAM.Outbox.PollInterval < 100*time.Millisecond || c.IAM.Outbox.PollInterval > time.Minute) {
+		errs = append(errs, errors.New("iam.outbox.poll_interval must be in [100ms, 1m]"))
+	}
+	if c.IAM.Outbox.BatchSize != 0 && (c.IAM.Outbox.BatchSize < 1 || c.IAM.Outbox.BatchSize > 500) {
+		errs = append(errs, errors.New("iam.outbox.batch_size must be in [1, 500]"))
+	}
+	if c.IAM.Outbox.MaxAttempts != 0 && (c.IAM.Outbox.MaxAttempts < 1 || c.IAM.Outbox.MaxAttempts > 20) {
+		errs = append(errs, errors.New("iam.outbox.max_attempts must be in [1, 20]"))
+	}
+	// 审计持久化是 staging / prod enforce 的前置条件（§14）：只写进程日志的审计
+	// 在容器重建后不可追溯，因此这里直接拒绝启动，而不是降级告警。
+	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && !c.IAM.Outbox.Enabled {
+		errs = append(errs, errors.New("iam.outbox.enabled must be true when iam.mode=enforce in prod/staging"))
+	}
+	if c.IAM.Outbox.Enabled && c.DB.Driver == "memory" && isProdEnv(c.Env) {
+		errs = append(errs, errors.New("iam.outbox.enabled requires a persistent db.driver when env=prod"))
 	}
 	return errs
 }
