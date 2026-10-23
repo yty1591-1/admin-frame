@@ -8,8 +8,157 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 )
+
+// newMFATicketService 构造带解析器的 A 端令牌服务；票据校验依赖 parser。
+func newMFATicketService(t *testing.T, channel domain.Channel) (*app.TokenService, *jwt.Manager) {
+	t.Helper()
+	signer, err := jwt.NewHMAC(jwt.HMACConfig{
+		Issuer:   "https://identity.example.com",
+		Audience: []string{string(channel)},
+		Secret:   []byte("01234567890123456789012345678901"),
+		TTL:      time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("new signer: %v", err)
+	}
+	svc, err := app.NewTokenService(signer, channel, 15*time.Minute, 168*time.Hour, &seqIDs{}, app.WithTokenParser(signer))
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
+	return svc, signer
+}
+
+// TestMFATicketIssueAndParse 验证票据签发声明与解析结果（§7.2）。
+func TestMFATicketIssueAndParse(t *testing.T) {
+	svc, _ := newMFATicketService(t, domain.ChannelAdmin)
+	before := time.Now().UTC()
+
+	ticket, err := svc.IssueMFATicket("acct-1")
+	if err != nil {
+		t.Fatalf("issue mfa ticket: %v", err)
+	}
+	if ticket.Ticket == "" || ticket.JTI == "" {
+		t.Fatalf("ticket/jti must not be empty: %+v", ticket)
+	}
+	if got := ticket.ExpiresAt.Sub(before); got < app.MFATicketTTL-2*time.Second || got > app.MFATicketTTL+2*time.Second {
+		t.Fatalf("expiry = %s, want about %s", got, app.MFATicketTTL)
+	}
+
+	claims, err := svc.ParseMFATicket(ticket.Ticket)
+	if err != nil {
+		t.Fatalf("parse mfa ticket: %v", err)
+	}
+	if claims.Subject != "acct-1" || claims.ID != ticket.JTI {
+		t.Fatalf("unexpected claims: sub=%q jti=%q", claims.Subject, claims.ID)
+	}
+	if len(claims.Audience) != 1 || claims.Audience[0] != "admin" {
+		t.Fatalf("audience = %v, want [admin]", claims.Audience)
+	}
+	if claims.GetString("scope") != "mfa" || claims.GetString("channel") != "admin" {
+		t.Fatalf("scope/channel missing: %+v", claims.Extra)
+	}
+	// 票据不得携带 ver / sid，否则可被当作普通访问令牌使用。
+	if _, ok := claims.Extra["ver"]; ok {
+		t.Fatal("mfa ticket must not carry ver")
+	}
+	if _, ok := claims.Extra["sid"]; ok {
+		t.Fatal("mfa ticket must not carry sid")
+	}
+	if _, ok := claims.Extra["roles"]; ok {
+		t.Fatal("mfa ticket must not carry roles")
+	}
+
+	if _, err := svc.IssueMFATicket("  "); err == nil {
+		t.Fatal("empty account id must be rejected")
+	}
+}
+
+// TestMFATicketOnlyIssuedOnAdmin 验证票据只在 A 端签发。
+func TestMFATicketOnlyIssuedOnAdmin(t *testing.T) {
+	svc, _ := newMFATicketService(t, domain.ChannelBiz)
+	if _, err := svc.IssueMFATicket("acct-1"); err == nil {
+		t.Fatal("biz channel must not issue mfa tickets")
+	}
+}
+
+// TestMFATicketRejectsInvalidTokens 表驱动覆盖票据校验的拒绝分支。
+func TestMFATicketRejectsInvalidTokens(t *testing.T) {
+	svc, signer := newMFATicketService(t, domain.ChannelAdmin)
+	now := time.Now().UTC()
+
+	claims := func(extra map[string]any) jwt.Claims {
+		return jwt.Claims{
+			Subject:   "acct-1",
+			Audience:  []string{"admin"},
+			IssuedAt:  now,
+			ExpiresAt: now.Add(time.Minute),
+			ID:        "jti-1",
+			Extra:     extra,
+		}
+	}
+	sign := func(c jwt.Claims) string {
+		t.Helper()
+		raw, err := signer.Sign(c)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return raw
+	}
+
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{name: "empty", token: ""},
+		{name: "malformed", token: "not-a-jwt"},
+		{name: "wrong scope", token: sign(claims(map[string]any{"scope": "access", "channel": "admin"}))},
+		{name: "missing scope", token: sign(claims(map[string]any{"channel": "admin"}))},
+		{name: "wrong channel", token: sign(claims(map[string]any{"scope": "mfa", "channel": "biz"}))},
+		{name: "wrong audience", token: sign(jwt.Claims{
+			Subject:   "acct-1",
+			Audience:  []string{"biz"},
+			IssuedAt:  now,
+			ExpiresAt: now.Add(time.Minute),
+			ID:        "jti-1",
+			Extra:     map[string]any{"scope": "mfa", "channel": "admin"},
+		})},
+		{name: "expired", token: sign(jwt.Claims{
+			Subject:   "acct-1",
+			Audience:  []string{"admin"},
+			IssuedAt:  now.Add(-10 * time.Minute),
+			ExpiresAt: now.Add(-5 * time.Minute),
+			ID:        "jti-1",
+			Extra:     map[string]any{"scope": "mfa", "channel": "admin"},
+		})},
+		{name: "missing subject", token: sign(jwt.Claims{
+			Audience:  []string{"admin"},
+			IssuedAt:  now,
+			ExpiresAt: now.Add(time.Minute),
+			ID:        "jti-1",
+			Extra:     map[string]any{"scope": "mfa", "channel": "admin"},
+		})},
+		{name: "missing jti", token: sign(jwt.Claims{
+			Subject:   "acct-1",
+			Audience:  []string{"admin"},
+			IssuedAt:  now,
+			ExpiresAt: now.Add(time.Minute),
+			Extra:     map[string]any{"scope": "mfa", "channel": "admin"},
+		})},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := svc.ParseMFATicket(tc.token); err == nil {
+				t.Fatal("expected rejection")
+			} else {
+				requireAppCode(t, err, apperr.CodeUnauthorized)
+			}
+		})
+	}
+}
 
 // numericClaim 把 JSON 反序列化出的数字统一转成 int64，便于断言。
 func numericClaim(value any) int64 {

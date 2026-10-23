@@ -335,7 +335,7 @@ identity:
   mfa:
     admin_required: true
     issuer: AdminFrame
-    secret_key: ""                # 仅非生产；生产走 ENT-07 密钥托管
+    secret_key: ""                # 32 字节（raw/hex/base64），仅环境变量注入
   login_rate_limit:
     rps: 1
     burst: 5
@@ -929,7 +929,7 @@ deploy/helm/admin-frame/
 
 | ID | 优先级 | 波次 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|---|
-| ENT-01 | P0 | Wave 1 | 进行中（2026-10-23，阶段 1/2 已完成） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
+| ENT-01 | P0 | Wave 1 | 进行中（2026-10-23，阶段 1/2/3 已完成） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；broker 仅预留接口 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |

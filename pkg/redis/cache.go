@@ -52,6 +52,26 @@ func (c *Cache) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 	return nil
 }
 
+// SetNX 仅在 key 不存在时写入，用于一次性消费 / 互斥标记；返回是否写入成功。
+//
+// 与 Set 相同，ttl 必须 >0，避免无过期键堆积。
+func (c *Cache) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	if err := c.ready(); err != nil {
+		return false, err
+	}
+	if key == "" {
+		return false, fmt.Errorf("%w: cache key is required", ErrInvalidConfig)
+	}
+	if ttl <= 0 {
+		return false, fmt.Errorf("%w: cache ttl must be > 0", ErrInvalidConfig)
+	}
+	ok, err := c.client.rdb.SetNX(ctx, c.full(key), value, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis: cache setnx: %w", err)
+	}
+	return ok, nil
+}
+
 // Delete 删除一个或多个业务 key（自动加前缀）。
 func (c *Cache) Delete(ctx context.Context, keys ...string) error {
 	if err := c.ready(); err != nil {

@@ -61,7 +61,93 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if result.MFARequired {
+		httpx.OK(w, mfaChallengeResponse{MFARequired: true, MFATicket: result.MFATicket}, traceID)
+		return
+	}
 	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
+}
+
+// SetupMFA POST /admin/v1/auth/mfa/setup
+//
+// 返回 TOTP 密钥与恢复码，仅本次响应可见；再次调用在已绑定时返回 40900。
+func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	result, err := h.auth.SetupMFA(r.Context(), actor)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, mfaSetupResponse{
+		Secret:        result.Secret,
+		OTPAuthURI:    result.OTPAuthURI,
+		RecoveryCodes: result.RecoveryCodes,
+	}, traceID)
+}
+
+// VerifyMFA POST /admin/v1/auth/mfa/verify
+//
+// 带票据时完成两步登录并返回令牌；带 Authorization 时完成首次绑定确认。
+func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	var req mfaVerifyRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var actor app.SessionActor
+	if strings.TrimSpace(req.Ticket) == "" {
+		var actorErr error
+		actor, actorErr = actorFrom(r)
+		if actorErr != nil {
+			httpx.FromError(w, actorErr, traceID)
+			return
+		}
+	}
+	result, err := h.auth.VerifyMFA(r.Context(), app.MFAVerifyInput{
+		Ticket:  req.Ticket,
+		Code:    req.Code,
+		Actor:   actor,
+		IPHash:  app.HashClientRef(clientIP(r)),
+		UAHash:  app.HashClientRef(r.UserAgent()),
+		TraceID: traceID,
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if result.BindingConfirmed {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
+}
+
+// DisableMFA POST /admin/v1/auth/mfa/disable
+//
+// 校验动态码或恢复码后解绑，并撤销该账号全部会话。
+func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req mfaDisableRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if err := h.auth.DisableMFA(r.Context(), actor, req.Code); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Refresh POST /{channel}/v1/auth/refresh
@@ -166,6 +252,30 @@ type loginRequest struct {
 // refreshRequest 刷新请求。
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+// mfaChallengeResponse 密码正确但还需 MFA 时的响应；不包含任何令牌。
+type mfaChallengeResponse struct {
+	MFARequired bool   `json:"mfa_required"`
+	MFATicket   string `json:"mfa_ticket"`
+}
+
+// mfaSetupResponse 绑定初始化响应；密钥与恢复码只返回一次。
+type mfaSetupResponse struct {
+	Secret        string   `json:"secret"`
+	OTPAuthURI    string   `json:"otpauth_uri"`
+	RecoveryCodes []string `json:"recovery_codes"`
+}
+
+// mfaVerifyRequest 校验请求：票据用于两步登录，缺省时按已认证会话确认绑定。
+type mfaVerifyRequest struct {
+	Ticket string `json:"mfa_ticket,omitempty"`
+	Code   string `json:"code"`
+}
+
+// mfaDisableRequest 解绑请求。
+type mfaDisableRequest struct {
+	Code string `json:"code"`
 }
 
 // tokenResponse 登录 / 刷新成功响应；令牌原文只在此出现一次。

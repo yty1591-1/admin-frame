@@ -537,7 +537,7 @@ identity:
 | 必填 | `identity.enabled=true` 时 `auth.mode` 必须为 `jwt`，且 `auth.jwt.active_kid` 存在 |
 | 生产强制 | `auth.mode=jwt`；`identity.enabled=true`；`revocation.driver=redis`；`revocation.failure_mode=fail_closed`；A 端 `mfa.admin_required=true` |
 | 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空（C 端无可用登录方式） |
-| 密钥 | `secret_key` 不得写入示例配置；生产 `identity.mfa.secret_key` 为空时必须由密钥托管注入 |
+| 密钥 | `secret_key` 不得写入示例配置；`admin_required=true` 时必填，须为 32 字节（raw / hex / base64 / base64url）；生产由环境变量注入，ENT-07 接入密钥托管后再切换 |
 | 脱敏 | `LogValue` 输出 `secret_key` 为掩码；provider `client_secret` 只输出是否配置 |
 
 环境变量前缀统一 `ADMIN_FRAME_IDENTITY_<SECTION>_<KEY>`（如 `ADMIN_FRAME_IDENTITY_REVOCATION_FAILURE_MODE`）。
@@ -560,6 +560,7 @@ identity:
 | `auth.token.revoked` | 单会话 / 全端撤销 | `actor_id`、`session_id` 摘要 | 含管理员操作 |
 | `auth.mfa.bound` | MFA 绑定完成 | `actor_id` | 不记录密钥 / 恢复码 |
 | `auth.mfa.failed` | MFA 校验失败 | `actor_id`、`reason` | 计入锁定 |
+| `auth.mfa.disabled` | MFA 解绑 | `actor_id` | 同时递增 `token_version` 并撤销全部会话 |
 | `auth.account.locked` | 达到失败阈值 | `actor_id`、`channel` | 由系统触发 |
 | `auth.account.disabled` | 管理员停用账号 | 操作人 + 目标账号 | 同时撤销会话 |
 
@@ -584,7 +585,7 @@ identity:
 | A/B/C | `POST /{端}/v1/auth/logout` | Bearer | 撤销当前会话 |
 | A/B | `POST /{端}/v1/auth/logout-all` | Bearer | 递增 `token_version` |
 | A | `POST /admin/v1/auth/mfa/setup` | Bearer | 生成 TOTP 密钥 |
-| A | `POST /admin/v1/auth/mfa/verify` | 无（凭 `mfa_ticket`） | 完成两步登录或绑定确认 |
+| A | `POST /admin/v1/auth/mfa/verify` | 无（凭 `mfa_ticket`）/ Bearer（绑定确认） | 完成两步登录或绑定确认 |
 | A | `POST /admin/v1/auth/mfa/disable` | Bearer | 解绑（需二次验证） |
 | A | `GET /admin/v1/auth/sessions` | Bearer | 列出本账号会话 |
 | A | `DELETE /admin/v1/auth/sessions/{id}` | Bearer | 撤销指定会话 |
@@ -752,6 +753,6 @@ internal/identity/
 | 0 契约 | 进行中（本文档） |
 | 1 账号域 | 已完成 |
 | 2 令牌闭环 | 已完成 |
-| 3 MFA | 待做 |
+| 3 MFA | 已完成 |
 | 4 C 端 | 待做 |
 | 5 收口 | 待做 |

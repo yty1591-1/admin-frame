@@ -11,6 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
 // 默认空闲会话上限（docs/identity-authn.md §10）。
@@ -30,6 +31,16 @@ type AuthServiceConfig struct {
 	Audit       audit.Emitter
 	IDs         IDGenerator
 	Channel     domain.Channel
+	// MFA 是 TOTP 绑定仓储；admin_required=true 时必填。
+	MFA domain.MFAEnrollmentRepository
+	// MFACipher 是 TOTP 密钥的 AES-256-GCM 加解密器；未配置时 MFA 端点失败关闭。
+	MFACipher *crypto.AEAD
+	// MFATickets 是两步登录票据的一次性消费存储。
+	MFATickets MFATicketStore
+	// MFAIssuer 写入 otpauth URI；空值使用 DefaultMFAIssuer。
+	MFAIssuer string
+	// MFAAdminRequired 表示 A 端强制绑定 MFA。
+	MFAAdminRequired bool
 	// IdleTimeout 会话空闲上限；≤0 时使用 72h。
 	IdleTimeout time.Duration
 	// Service 写入审计事件的 service 字段。
@@ -59,6 +70,10 @@ type LoginResult struct {
 	SessionID string
 	// AccountID 账号主键。
 	AccountID string
+	// MFARequired 表示密码已通过、但需要完成 MFA 才能获得令牌。
+	MFARequired bool
+	// MFATicket 是两步登录票据；仅在 MFARequired 时返回。
+	MFATicket string
 }
 
 // RefreshInput 是刷新令牌入参。
@@ -105,6 +120,11 @@ type AuthService struct {
 	service     string
 	actorType   string
 	clock       Clock
+	mfa         domain.MFAEnrollmentRepository
+	mfaCipher   *crypto.AEAD
+	mfaTickets  MFATicketStore
+	mfaIssuer   string
+	mfaRequired bool
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -134,6 +154,15 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if clock == nil {
 		clock = realClock{}
 	}
+	if cfg.Channel == domain.ChannelAdmin && cfg.MFAAdminRequired {
+		if cfg.MFA == nil || cfg.MFACipher == nil || cfg.MFATickets == nil {
+			return nil, apperr.Internal("mfa dependencies are required when admin_required=true", nil)
+		}
+	}
+	mfaIssuer := strings.TrimSpace(cfg.MFAIssuer)
+	if mfaIssuer == "" {
+		mfaIssuer = DefaultMFAIssuer
+	}
 	svc := &AuthService{
 		accounts:    cfg.Accounts,
 		credentials: cfg.Credentials,
@@ -149,6 +178,11 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		service:     cfg.Service,
 		actorType:   actorType,
 		clock:       clock,
+		mfa:         cfg.MFA,
+		mfaCipher:   cfg.MFACipher,
+		mfaTickets:  cfg.MFATickets,
+		mfaIssuer:   mfaIssuer,
+		mfaRequired: cfg.MFAAdminRequired,
 	}
 	return svc, nil
 }
@@ -231,6 +265,21 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 		if saveErr := s.accounts.Save(ctx, account, expected); saveErr != nil {
 			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
 		}
+	}
+	required, err := s.mfaChallenge(ctx, account, now, in.TraceID)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if required {
+		ticket, issueErr := s.tokens.IssueMFATicket(account.ID)
+		if issueErr != nil {
+			return LoginResult{}, issueErr
+		}
+		return LoginResult{
+			AccountID:   account.ID,
+			MFARequired: true,
+			MFATicket:   ticket.Ticket,
+		}, nil
 	}
 	if err := s.guard.RecordSuccess(ctx, account, in.IPHash, in.UAHash, now); err != nil {
 		return LoginResult{}, apperr.Internal("record login success failed", err)

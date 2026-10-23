@@ -79,6 +79,10 @@ paths:
       description: |
         账号不存在、密码错误、账号停用与锁定统一返回 40100；真实原因只写审计。
         请求中的 `channel` / `roles` / `merchant_id` 一律拒绝（40000）。
+
+        A 端已绑定 MFA 时返回 `MFAChallenge`（不含任何令牌），需再调用
+        `POST /admin/v1/auth/mfa/verify` 完成第二步；A 端强制绑定但尚未完成绑定时
+        返回 40100（`mfa binding required`），不得签发管理令牌。
       operationId: adminAuthLogin
       security: []
       requestBody:
@@ -89,7 +93,7 @@ paths:
               $ref: "./components.yaml#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: ok
+          description: 令牌对，或需要完成 MFA 的挑战
           content:
             application/json:
               schema:
@@ -98,7 +102,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "./components.yaml#/components/schemas/TokenPair"
+                        oneOf:
+                          - $ref: "./components.yaml#/components/schemas/TokenPair"
+                          - $ref: "./components.yaml#/components/schemas/MFAChallenge"
         "400":
           $ref: "./components.yaml#/components/responses/BadRequest"
         "401":
@@ -242,6 +248,115 @@ paths:
           $ref: "./components.yaml#/components/responses/Unauthorized"
         "404":
           $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/mfa/setup:
+    post:
+      tags: [auth]
+      summary: 初始化 TOTP 绑定
+      description: |
+        生成 TOTP 密钥与 10 个一次性恢复码，保存未确认绑定。
+        密钥与恢复码只在本次响应出现；已确认绑定再次调用返回 40900。
+      operationId: adminAuthMFASetup
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 绑定初始化信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/MFASetupData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/mfa/verify:
+    post:
+      tags: [auth]
+      summary: 完成 MFA 校验
+      description: |
+        两种用法：
+
+        - 不携带 `Authorization`：使用登录返回的 `mfa_ticket` 完成两步登录，返回 `TokenPair`；
+          票据一次性消费，动态码错误同样消耗票据。
+        - 携带 `Authorization`：使用动态码或恢复码确认首次绑定，返回 204（无响应体）。
+
+        A 端未完成 MFA 校验前不得获得管理令牌（AC-ENT-01-4）。
+      operationId: adminAuthMFAVerify
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/MFAVerifyRequest"
+      responses:
+        "200":
+          description: 令牌对（两步登录）；绑定确认走 204
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/TokenPair"
+        "204":
+          description: no content
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "429":
+          $ref: "./components.yaml#/components/responses/TooManyRequests"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/mfa/disable:
+    post:
+      tags: [auth]
+      summary: 解绑 MFA
+      description: |
+        需提交当前动态码或一次性恢复码；成功后删除绑定并撤销该账号全部会话，
+        递增 `token_version` 使已签发管理令牌失效。
+      operationId: adminAuthMFADisable
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/MFADisableRequest"
+      responses:
+        "204":
+          description: no content
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "429":
+          $ref: "./components.yaml#/components/responses/TooManyRequests"
         "500":
           $ref: "./components.yaml#/components/responses/InternalError"
         "503":

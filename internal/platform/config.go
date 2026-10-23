@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -77,6 +79,44 @@ type IdentityConfig struct {
 	Lockout IdentityLockoutConfig `yaml:"lockout"`
 	// LoginRateLimit 登录限流参数。
 	LoginRateLimit IdentityLoginRateLimitConfig `yaml:"login_rate_limit"`
+	// MFA A 端多因素认证参数。
+	MFA IdentityMFAConfig `yaml:"mfa"`
+}
+
+// identityDefaultMFAIssuer 与 internal/identity/app.DefaultMFAIssuer 保持一致。
+const identityDefaultMFAIssuer = "AdminFrame"
+
+// IdentityMFAConfig 是 A 端多因素认证参数（docs/identity-authn.md §10）。
+type IdentityMFAConfig struct {
+	// AdminRequired 表示 A 端密码登录后必须完成 TOTP 才能获得管理令牌；生产强制开启。
+	AdminRequired bool `yaml:"admin_required"`
+	// Issuer 写入 otpauth URI，默认 AdminFrame。
+	Issuer string `yaml:"issuer"`
+	// SecretKey 是 TOTP 密钥的 AES-256 主密钥，仅允许通过环境变量注入（SEC-01）。
+	SecretKey string `yaml:"secret_key"`
+}
+
+// DecodeSecretKey 解码 mfa.secret_key；未配置时返回 nil，不做长度校验。
+//
+// 依次尝试 32 字节原始值、hex、标准 Base64、RawURL Base64，均失败返回错误。
+func (m IdentityMFAConfig) DecodeSecretKey() ([]byte, error) {
+	raw := strings.TrimSpace(m.SecretKey)
+	if raw == "" {
+		return nil, nil
+	}
+	if len(raw) == 32 {
+		return []byte(raw), nil
+	}
+	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	if decoded, err := base64.RawURLEncoding.DecodeString(raw); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	return nil, errors.New("identity.mfa.secret_key must be a 32-byte key encoded as raw, hex, base64 or base64url")
 }
 
 // IdentitySessionConfig 是会话策略参数。
@@ -556,6 +596,11 @@ func (c Config) LogValue() slog.Value {
 				slog.String("driver", c.Identity.Revocation.Driver),
 				slog.String("failure_mode", c.Identity.Revocation.FailureMode),
 			),
+			slog.Group("mfa",
+				slog.Bool("admin_required", c.Identity.MFA.AdminRequired),
+				slog.String("issuer", c.Identity.MFA.Issuer),
+				slog.Bool("secret_key_configured", strings.TrimSpace(c.Identity.MFA.SecretKey) != ""),
+			),
 		),
 	)
 }
@@ -763,6 +808,9 @@ func (c *Config) applyIdentityDefaults() {
 	}
 	if c.Identity.LoginRateLimit.Burst == 0 {
 		c.Identity.LoginRateLimit.Burst = 5
+	}
+	if c.Identity.MFA.Issuer == "" {
+		c.Identity.MFA.Issuer = identityDefaultMFAIssuer
 	}
 }
 
@@ -1261,6 +1309,20 @@ func (c *Config) validateIdentity() []error {
 	}
 	if c.Identity.LoginRateLimit.Burst < 1 {
 		errs = append(errs, errors.New("identity.login_rate_limit.burst must be >= 1"))
+	}
+	if isProdLikeEnv(c.Env) && !c.Identity.MFA.AdminRequired {
+		errs = append(errs, errors.New("identity.mfa.admin_required must be true in prod/staging"))
+	}
+	if c.Identity.MFA.AdminRequired {
+		key, err := c.Identity.MFA.DecodeSecretKey()
+		if err != nil {
+			errs = append(errs, err)
+		} else if key == nil {
+			errs = append(errs, errors.New("identity.mfa.secret_key is required when identity.mfa.admin_required=true"))
+		}
+	}
+	if strings.TrimSpace(c.Identity.MFA.Issuer) == "" {
+		errs = append(errs, errors.New("identity.mfa.issuer must not be empty"))
 	}
 	return errs
 }

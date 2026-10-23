@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"crypto/subtle"
 	"strings"
 	"time"
 )
@@ -85,4 +86,40 @@ func (m *MFAEnrollment) SetRecoveryCodes(hashes []string, now time.Time) error {
 	m.RecoveryCodeHashes = next
 	m.UpdatedAt = utcNow(now)
 	return nil
+}
+
+// HasRecoveryCode 报告恢复码哈希是否仍可使用；比较使用常量时间。
+func (m *MFAEnrollment) HasRecoveryCode(hash string) bool {
+	target := strings.TrimSpace(hash)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range m.RecoveryCodeHashes {
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(target)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// UseRecoveryCode 一次性消费恢复码哈希；成功时移除该哈希并刷新更新时间。
+//
+// 恢复码只允许使用一次，重复使用必须返回 false，由调用方按校验失败处理。
+func (m *MFAEnrollment) UseRecoveryCode(hash string, now time.Time) bool {
+	target := strings.TrimSpace(hash)
+	if target == "" {
+		return false
+	}
+	for i, candidate := range m.RecoveryCodeHashes {
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(target)) != 1 {
+			continue
+		}
+		m.RecoveryCodeHashes = append(m.RecoveryCodeHashes[:i], m.RecoveryCodeHashes[i+1:]...)
+		if m.RecoveryCodeHashes == nil {
+			m.RecoveryCodeHashes = []string{}
+		}
+		m.UpdatedAt = utcNow(now)
+		return true
+	}
+	return false
 }

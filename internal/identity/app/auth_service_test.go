@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 	"github.com/admin-frame/admin-frame/pkg/password"
 )
@@ -55,14 +56,20 @@ type authFixture struct {
 	credentials *persistence.MemoryCredentialRepository
 	sessions    *persistence.MemorySessionRepository
 	store       *cache.MemoryRevocationStore
+	mfa         *persistence.MemoryMFAEnrollmentRepository
+	mfaTickets  *cache.MemoryMFATicketStore
+	mfaCipher   *crypto.AEAD
 	signer      *jwt.Manager
 	clock       *fixedClock
 	ids         *seqIDs
 	channel     domain.Channel
 }
 
+// withAuthConfig 允许用例在构造时覆盖 AuthServiceConfig（MFA 等可选依赖）。
+type withAuthConfig func(*app.AuthServiceConfig)
+
 // newAuthFixture 构造启用真实令牌签发与内存仓储的认证服务。
-func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
+func newAuthFixture(t *testing.T, channel domain.Channel, opts ...withAuthConfig) *authFixture {
 	t.Helper()
 	clock := &fixedClock{now: time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)}
 	ids := &seqIDs{}
@@ -70,8 +77,14 @@ func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
 	credentials := persistence.NewMemoryCredentialRepository()
 	sessions := persistence.NewMemorySessionRepository()
 	attempts := persistence.NewMemoryLoginAttemptRepository()
+	mfa := persistence.NewMemoryMFAEnrollmentRepository()
+	mfaTickets := cache.NewMemoryMFATicketStore()
 	store := cache.NewMemoryRevocationStore()
 
+	mfaCipher, err := crypto.NewAES256GCM([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatalf("new mfa cipher: %v", err)
+	}
 	signer, err := jwt.NewHMAC(jwt.HMACConfig{
 		Issuer:   "https://identity.example.com",
 		Audience: []string{string(channel)},
@@ -82,7 +95,8 @@ func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
 	if err != nil {
 		t.Fatalf("new signer: %v", err)
 	}
-	tokens, err := app.NewTokenService(signer, channel, 15*time.Minute, 168*time.Hour, ids, app.WithTokenClock(clock))
+	tokens, err := app.NewTokenService(signer, channel, 15*time.Minute, 168*time.Hour, ids,
+		app.WithTokenClock(clock), app.WithTokenParser(signer))
 	if err != nil {
 		t.Fatalf("new token service: %v", err)
 	}
@@ -94,7 +108,7 @@ func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
 	if err != nil {
 		t.Fatalf("new login guard: %v", err)
 	}
-	svc, err := app.NewAuthService(app.AuthServiceConfig{
+	cfg := app.AuthServiceConfig{
 		Accounts:    accounts,
 		Credentials: credentials,
 		Sessions:    sessions,
@@ -108,7 +122,17 @@ func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
 		IdleTimeout: 72 * time.Hour,
 		Service:     "identity-test",
 		Clock:       clock,
-	})
+		MFA:         mfa,
+		MFACipher:   mfaCipher,
+		MFATickets:  mfaTickets,
+		MFAIssuer:   "identity-test",
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	svc, err := app.NewAuthService(cfg)
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -118,6 +142,9 @@ func newAuthFixture(t *testing.T, channel domain.Channel) *authFixture {
 		credentials: credentials,
 		sessions:    sessions,
 		store:       store,
+		mfa:         mfa,
+		mfaTickets:  mfaTickets,
+		mfaCipher:   mfaCipher,
 		signer:      signer,
 		clock:       clock,
 		ids:         ids,

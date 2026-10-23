@@ -73,7 +73,8 @@ components:
         新增码只追加；禁止复用已发布码的语义。
         该码表按 API-04 只增不减，故声明为可扩展开放集合（`x-extensible-enum`）：
         客户端必须对未知码按「未知错误」兜底，不得据此改变已实现分支。
-      x-extensible-enum: [40000, 40100, 40300, 40400, 40900, 42900, 50000, 50300]
+      x-extensible-enum:
+        [40000, 40100, 40300, 40400, 40900, 42900, 50000, 50300]
       x-enum-descriptions:
         - 请求参数非法
         - 未认证或令牌无效
@@ -136,6 +137,64 @@ components:
           type: integer
           minimum: 1
           description: 访问令牌有效期（秒）
+    MFAChallenge:
+      type: object
+      required: [mfa_required, mfa_ticket]
+      additionalProperties: false
+      description: |
+        密码已通过但需要完成第二步 MFA 的响应；不包含任何令牌。
+        `mfa_ticket` 为一次性短期票据（5 分钟），只能用于 `POST /admin/v1/auth/mfa/verify`。
+      properties:
+        mfa_required:
+          type: boolean
+          enum: [true]
+        mfa_ticket:
+          type: string
+          minLength: 1
+          description: 两步登录票据；一次性消费，禁止写日志
+    MFASetupData:
+      type: object
+      required: [secret, otpauth_uri, recovery_codes]
+      additionalProperties: false
+      description: TOTP 绑定初始化数据；密钥与恢复码只在本次响应出现。
+      properties:
+        secret:
+          type: string
+          description: Base32（无填充）TOTP 密钥
+        otpauth_uri:
+          type: string
+          description: otpauth:// URI，供客户端扫码录入
+        recovery_codes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: 一次性恢复码；库内只保存 SHA-256 哈希
+    MFAVerifyRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      description: |
+        两步登录时提交 `mfa_ticket`；绑定确认时省略该字段并携带 Bearer。
+        票据非空时始终按两步登录处理。
+      properties:
+        mfa_ticket:
+          type: string
+          description: 登录返回的一次性票据
+        code:
+          type: string
+          minLength: 6
+          description: 6 位 TOTP 动态码或一次性恢复码
+    MFADisableRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      description: 解绑需要当前动态码或一次性恢复码。
+      properties:
+        code:
+          type: string
+          minLength: 6
+          description: 6 位 TOTP 动态码或一次性恢复码
     AuthSession:
       type: object
       required: [id, current, status, created_at, last_used_at, expires_at]

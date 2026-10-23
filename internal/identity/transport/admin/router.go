@@ -5,6 +5,7 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 )
@@ -26,8 +27,26 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /admin/v1/auth/logout", authMW(http.HandlerFunc(h.Logout)))
 	mux.Handle("POST /admin/v1/auth/logout-all", authMW(http.HandlerFunc(h.LogoutAll)))
 
+	// MFA：setup / disable 必须已认证；verify 的条件鉴权见 mfaVerifyHandler。
+	mux.Handle("POST /admin/v1/auth/mfa/setup", authMW(http.HandlerFunc(h.SetupMFA)))
+	mux.HandleFunc("POST /admin/v1/auth/mfa/verify",
+		mfaVerifyHandler(http.HandlerFunc(h.VerifyMFA), authMW(http.HandlerFunc(h.VerifyMFA))))
+	mux.Handle("POST /admin/v1/auth/mfa/disable", authMW(http.HandlerFunc(h.DisableMFA)))
+
 	// 会话管理：列表、单会话撤销与全量撤销。
 	mux.Handle("GET /admin/v1/auth/sessions", authMW(http.HandlerFunc(h.ListSessions)))
 	mux.Handle("DELETE /admin/v1/auth/sessions/{id}", authMW(http.HandlerFunc(h.RevokeSession)))
 	mux.Handle("POST /admin/v1/auth/sessions/revoke-all", authMW(http.HandlerFunc(h.LogoutAll)))
+}
+
+// mfaVerifyHandler 按是否携带 Authorization 切换鉴权：
+// 无头走两步登录（凭 mfa_ticket），有头走绑定确认（凭 Access Token）。
+func mfaVerifyHandler(ticketPath, authPath http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+			ticketPath.ServeHTTP(w, r)
+			return
+		}
+		authPath.ServeHTTP(w, r)
+	}
 }

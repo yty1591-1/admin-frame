@@ -50,6 +50,11 @@ type TokenSigner interface {
 	Sign(claims jwt.Claims) (string, error)
 }
 
+// TokenParser 是短期票据校验端口；*jwt.Manager 直接满足。
+type TokenParser interface {
+	Parse(token string) (jwt.Claims, error)
+}
+
 // TokenPair 是一次签发产生的访问令牌与刷新令牌。
 //
 // RefreshHash 仅供仓储持久化，禁止返回给客户端或写入日志。
@@ -68,6 +73,7 @@ type TokenPair struct {
 //   - 刷新令牌只出现一次，库内只存 SHA-256 摘要。
 type TokenService struct {
 	signer     TokenSigner
+	parser     TokenParser
 	channel    domain.Channel
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -119,6 +125,15 @@ func WithTokenClock(clock Clock) TokenServiceOption {
 	return func(s *TokenService) {
 		if clock != nil {
 			s.clock = clock
+		}
+	}
+}
+
+// WithTokenParser 注入票据校验器；未注入时 ParseMFATicket 返回内部错误。
+func WithTokenParser(parser TokenParser) TokenServiceOption {
+	return func(s *TokenService) {
+		if parser != nil {
+			s.parser = parser
 		}
 	}
 }

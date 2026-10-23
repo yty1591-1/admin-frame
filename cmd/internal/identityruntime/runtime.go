@@ -19,6 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/password"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 )
@@ -49,11 +50,19 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	channel := domain.Channel(cfg.Channel)
 
-	accounts, credentials, sessions, attempts, err := buildRepositories(deps)
+	accounts, credentials, sessions, attempts, mfa, err := buildRepositories(deps)
 	if err != nil {
 		return nil, err
 	}
 	revocation, err := buildRevocationStore(deps)
+	if err != nil {
+		return nil, err
+	}
+	mfaCipher, err := buildMFACipher(cfg)
+	if err != nil {
+		return nil, err
+	}
+	tickets, err := buildMFATicketStore(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +105,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		cfg.Identity.AccessTTL,
 		cfg.Identity.RefreshTTL,
 		deps.IDs,
+		app.WithTokenParser(signer),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity token service: %w", err)
@@ -112,18 +122,23 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
-		Accounts:    accounts,
-		Credentials: credentials,
-		Sessions:    sessions,
-		Guard:       guard,
-		Password:    passwordSvc,
-		Tokens:      tokens,
-		Revocation:  revocation,
-		Audit:       audit.SlogEmitter{Log: deps.Logger},
-		IDs:         deps.IDs,
-		Channel:     channel,
-		IdleTimeout: cfg.Identity.Session.IdleTimeout,
-		Service:     cfg.Service,
+		Accounts:         accounts,
+		Credentials:      credentials,
+		Sessions:         sessions,
+		Guard:            guard,
+		Password:         passwordSvc,
+		Tokens:           tokens,
+		Revocation:       revocation,
+		Audit:            audit.SlogEmitter{Log: deps.Logger},
+		IDs:              deps.IDs,
+		Channel:          channel,
+		IdleTimeout:      cfg.Identity.Session.IdleTimeout,
+		Service:          cfg.Service,
+		MFA:              mfa,
+		MFACipher:        mfaCipher,
+		MFATickets:       tickets,
+		MFAIssuer:        cfg.Identity.MFA.Issuer,
+		MFAAdminRequired: cfg.Identity.MFA.AdminRequired,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity auth service: %w", err)
@@ -144,6 +159,7 @@ func buildRepositories(deps *platform.Deps) (
 	domain.CredentialRepository,
 	domain.SessionRepository,
 	domain.LoginAttemptRepository,
+	domain.MFAEnrollmentRepository,
 	error,
 ) {
 	if deps.Database == nil {
@@ -151,6 +167,7 @@ func buildRepositories(deps *platform.Deps) (
 			persistence.NewMemoryCredentialRepository(),
 			persistence.NewMemorySessionRepository(),
 			persistence.NewMemoryLoginAttemptRepository(),
+			persistence.NewMemoryMFAEnrollmentRepository(),
 			nil
 	}
 	sqlDB := deps.Database.SQL()
@@ -158,7 +175,37 @@ func buildRepositories(deps *platform.Deps) (
 		persistence.NewSQLCredentialRepository(sqlDB),
 		persistence.NewSQLSessionRepository(sqlDB),
 		persistence.NewSQLLoginAttemptRepository(sqlDB),
+		persistence.NewSQLMFAEnrollmentRepository(sqlDB),
 		nil
+}
+
+// buildMFACipher 解析 identity.mfa.secret_key；未配置时返回 nil（MFA 端点失败关闭）。
+func buildMFACipher(cfg *platform.Config) (*crypto.AEAD, error) {
+	key, err := cfg.Identity.MFA.DecodeSecretKey()
+	if err != nil {
+		return nil, fmt.Errorf("identity mfa secret key: %w", err)
+	}
+	if key == nil {
+		if cfg.Identity.MFA.AdminRequired {
+			return nil, apperr.Internal("identity.mfa.secret_key is required when admin_required=true", nil)
+		}
+		return nil, nil
+	}
+	aead, err := crypto.NewAES256GCM(key)
+	if err != nil {
+		return nil, fmt.Errorf("identity mfa cipher: %w", err)
+	}
+	return aead, nil
+}
+
+// buildMFATicketStore 构造两步登录票据存储。
+//
+// 票据必须跨副本原子消费；identity.revocation.driver=redis 已要求 Redis，缺失即装配失败。
+func buildMFATicketStore(deps *platform.Deps) (app.MFATicketStore, error) {
+	if deps.Redis == nil {
+		return nil, apperr.Internal("identity mfa ticket store requires redis", nil)
+	}
+	return identitycache.NewRedisMFATicketStore(deps.Redis.Cache()), nil
 }
 
 // buildRevocationStore 构造撤销存储；当前配置仅允许 redis（跨副本生效）。
