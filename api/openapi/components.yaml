@@ -92,6 +92,88 @@ components:
           type: integer
           minimum: 0
           description: 符合过滤条件的总条数（或当前页估计，须在实现中保持一致）
+    LoginRequest:
+      type: object
+      required: [subject, password]
+      additionalProperties: false
+      description: |
+        A/B 端密码登录请求。`channel` / `roles` / `merchant_id` 一律由服务端推导，
+        客户端传入会被拒绝（40000）。
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          description: 登录主体（账号或邮箱）
+          example: alice@example.com
+        password:
+          type: string
+          minLength: 1
+          format: password
+          description: 明文密码；仅通过 TLS 传输，服务端不落库、不写日志
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      description: 一次性刷新令牌；成功轮换后旧令牌立即失效，重放会撤销整条会话链。
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          description: Access JWT（不携带角色，权限以 IAM 快照为准）
+        refresh_token:
+          type: string
+          description: 一次性刷新令牌；只在签发响应中出现一次
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          minimum: 1
+          description: 访问令牌有效期（秒）
+    AuthSession:
+      type: object
+      required: [id, current, status, created_at, last_used_at, expires_at]
+      description: 会话视图；不包含任何令牌、IP 或 UA 原文。
+      properties:
+        id:
+          type: string
+        current:
+          type: boolean
+          description: 是否为当前请求使用的会话
+        status:
+          type: string
+          enum: [active, rotated, revoked, expired]
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: 空闲到期时间；无空闲策略时省略
+        revoked_at:
+          type: string
+          format: date-time
+          description: 撤销时间；未撤销时省略
+    AuthSessionListData:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthSession"
   responses:
     BadRequest:
       description: 参数非法

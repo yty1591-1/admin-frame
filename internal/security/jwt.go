@@ -1,8 +1,10 @@
 package security
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -31,6 +33,18 @@ const minHMACSecretBytes = 32
 // verifyTTL 仅用于满足 pkg/jwt 构造约束：API 进程只校验、不签发。
 const verifyTTL = time.Minute
 
+// JWTKeyConfig 是密钥环中的一项（docs/identity-authn.md §4.3）。
+//
+// 校验进程只需 public_key_file；签发进程额外挂载 private_key_file。
+type JWTKeyConfig struct {
+	// KID 密钥标识，与 Token header kid 对应。
+	KID string `yaml:"kid"`
+	// PublicKeyFile 公钥文件（PEM，PKIX / PKCS#1 / CERTIFICATE）。
+	PublicKeyFile string `yaml:"public_key_file"`
+	// PrivateKeyFile 私钥文件（PEM，PKCS#1 / PKCS#8）；仅签发进程配置。
+	PrivateKeyFile string `yaml:"private_key_file"`
+}
+
 // JWTConfig 是 JWT 鉴权的装配参数（yaml: auth.jwt）。
 //
 // 密钥与私钥不写入配置文件：Secret / Secrets 走环境变量
@@ -44,13 +58,17 @@ type JWTConfig struct {
 	Audience []string `yaml:"audience"`
 	// Leeway 校验时钟偏移容忍；默认 0。
 	Leeway time.Duration `yaml:"leeway"`
-	// Secret 当前 HMAC 密钥；仅 HS256，长度须 ≥32 字节。
+	// ActiveKID 当前签发使用的 kid；使用 Keys 密钥环时必填。
+	ActiveKID string `yaml:"active_kid"`
+	// Keys 密钥环；配置后按 kid 精确校验，旧单密钥字段不再生效。
+	Keys []JWTKeyConfig `yaml:"keys"`
+	// Secret 当前 HMAC 密钥；仅 HS256，长度须 ≥32 字节（兼容路径）。
 	Secret string `yaml:"secret"`
-	// Secrets 额外可接受的旧密钥（轮换期只校验）。
+	// Secrets 额外可接受的旧密钥（轮换期只校验，兼容路径）。
 	Secrets []string `yaml:"secrets"`
-	// PublicKeyFile RSA 公钥文件（PEM，PKIX 或 PKCS#1）；仅 RS256。
+	// PublicKeyFile RSA 公钥文件（PEM，PKIX 或 PKCS#1）；仅 RS256（兼容路径）。
 	PublicKeyFile string `yaml:"public_key_file"`
-	// PublicKeysFile 轮换期额外公钥文件（可含多个 PEM 块）；仅 RS256。
+	// PublicKeysFile 轮换期额外公钥文件（可含多个 PEM 块）；仅 RS256（兼容路径）。
 	PublicKeysFile string `yaml:"public_keys_file"`
 	// Clock 可注入时钟（测试用）；yaml:"-" 不参与配置绑定。
 	Clock jwt.Clock `yaml:"-"`
@@ -80,15 +98,58 @@ func (c JWTConfig) Validate(channel string) error {
 	}
 	switch alg {
 	case JWTAlgHS256:
+		if len(c.Keys) > 0 {
+			errs = append(errs, fmt.Errorf("auth.jwt.keys is only supported when alg=RS256"))
+			break
+		}
 		if err := c.validateHMACKeys(); err != nil {
 			errs = append(errs, err)
 		}
 	case JWTAlgRS256:
+		if len(c.Keys) > 0 {
+			errs = append(errs, c.validateKeyRing()...)
+			break
+		}
 		if strings.TrimSpace(c.PublicKeyFile) == "" && strings.TrimSpace(c.PublicKeysFile) == "" {
 			errs = append(errs, fmt.Errorf("auth.jwt.public_key_file is required when alg=RS256"))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateKeyRing 校验 kid 密钥环与旧字段互斥、active_kid 命中。
+func (c JWTConfig) validateKeyRing() []error {
+	var errs []error
+	if strings.TrimSpace(c.Secret) != "" || len(c.Secrets) > 0 ||
+		strings.TrimSpace(c.PublicKeyFile) != "" || strings.TrimSpace(c.PublicKeysFile) != "" {
+		errs = append(errs, fmt.Errorf("auth.jwt.keys cannot be combined with legacy key fields"))
+	}
+	active := strings.TrimSpace(c.ActiveKID)
+	if active == "" {
+		errs = append(errs, fmt.Errorf("auth.jwt.active_kid is required when auth.jwt.keys is set"))
+	}
+	seen := make(map[string]struct{}, len(c.Keys))
+	for i, key := range c.Keys {
+		kid := strings.TrimSpace(key.KID)
+		if kid == "" {
+			errs = append(errs, fmt.Errorf("auth.jwt.keys[%d].kid is required", i))
+			continue
+		}
+		if _, dup := seen[kid]; dup {
+			errs = append(errs, fmt.Errorf("auth.jwt.keys[%d].kid is duplicated", i))
+			continue
+		}
+		seen[kid] = struct{}{}
+		if strings.TrimSpace(key.PublicKeyFile) == "" {
+			errs = append(errs, fmt.Errorf("auth.jwt.keys[%d].public_key_file is required", i))
+		}
+	}
+	if active != "" {
+		if _, ok := seen[active]; !ok {
+			errs = append(errs, fmt.Errorf("auth.jwt.active_kid must exist in auth.jwt.keys"))
+		}
+	}
+	return errs
 }
 
 // normalizedAlg 返回规范化后的算法名；空值默认 HS256。
@@ -123,17 +184,47 @@ func containsFold(items []string, target string) bool {
 	return false
 }
 
+// RevocationChecker 由身份域实现，security 只依赖该接口（S-07）。
+//
+// 在签名 / 时间 / iss / aud / channel 校验通过后执行；
+// 返回 apperr.ErrUnavailable 时输出 50300，其余错误输出 40100。
+type RevocationChecker interface {
+	Check(ctx context.Context, claims jwt.Claims) error
+}
+
+// JWTAuthOption 配置 JWT 鉴权中间件。
+type JWTAuthOption func(*jwtAuthOptions)
+
+type jwtAuthOptions struct {
+	checker RevocationChecker
+}
+
+// WithRevocationChecker 注入撤销检查器（token_version / jti 黑名单）。
+func WithRevocationChecker(checker RevocationChecker) JWTAuthOption {
+	return func(o *jwtAuthOptions) {
+		if checker != nil {
+			o.checker = checker
+		}
+	}
+}
+
 // NewJWTAuth 构造 JWT 鉴权中间件；配置非法时返回 error（启动期失败）。
 //
-// 校验范围：签名、exp/nbf（含 leeway）、iss、aud。成功后把 claims 映射为
-// auth.Principal 并写入 contextx（sub → SubjectID，merchant_id / roles 可选）。
-func NewJWTAuth(cfg JWTConfig, expected auth.Channel) (func(http.Handler) http.Handler, error) {
+// 校验范围：签名、exp/nbf（含 leeway）、iss、aud，随后按需执行撤销检查。
+// 成功后把 claims 映射为 auth.Principal 并写入 contextx。
+func NewJWTAuth(cfg JWTConfig, expected auth.Channel, opts ...JWTAuthOption) (func(http.Handler) http.Handler, error) {
 	if err := cfg.Validate(string(expected)); err != nil {
 		return nil, err
 	}
 	mgr, err := cfg.manager()
 	if err != nil {
 		return nil, err
+	}
+	options := jwtAuthOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,18 +245,102 @@ func NewJWTAuth(cfg JWTConfig, expected auth.Channel) (func(http.Handler) http.H
 				httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
 				return
 			}
+			if options.checker != nil {
+				if err := options.checker.Check(r.Context(), claims); err != nil {
+					if errors.Is(err, apperr.ErrUnavailable) {
+						httpx.FromError(w, apperr.Unavailable("authentication dependency unavailable"), traceID)
+						return
+					}
+					httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
+					return
+				}
+			}
 			p.RequestID = traceID
 			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 		})
 	}, nil
 }
 
+// SigningManager 构造签发用 Manager；仅签发进程调用（需要私钥或 HMAC secret）。
+//
+// RS256 必须配置 auth.jwt.keys 且 active key 挂载 private_key_file；
+// 旧版单密钥字段仅支持 HS256 签发。
+func (c JWTConfig) SigningManager(channel string) (*jwt.Manager, error) {
+	if err := c.Validate(channel); err != nil {
+		return nil, err
+	}
+	if c.normalizedAlg() == JWTAlgRS256 {
+		if len(c.Keys) == 0 {
+			return nil, fmt.Errorf("auth.jwt.keys with private_key_file is required for token signing")
+		}
+		return c.rsaKeyRingManager(true)
+	}
+	return jwt.NewHMAC(jwt.HMACConfig{
+		Issuer:   c.Issuer,
+		Audience: c.Audience,
+		Secret:   []byte(c.Secret),
+		Secrets:  c.secretBytes(),
+		TTL:      verifyTTL,
+		Leeway:   c.Leeway,
+		Clock:    c.Clock,
+	})
+}
+
 // manager 按算法构造 pkg/jwt 校验器。
 func (c JWTConfig) manager() (*jwt.Manager, error) {
 	if c.normalizedAlg() == JWTAlgRS256 {
+		if len(c.Keys) > 0 {
+			return c.rsaKeyRingManager(false)
+		}
 		return c.rsaManager()
 	}
 	return c.hmacManager()
+}
+
+// rsaKeyRingManager 按 kid 密钥环构造 RS256 Manager。
+//
+// requirePrivate 为 true 时 active key 必须挂载私钥（签发进程）。
+func (c JWTConfig) rsaKeyRingManager(requirePrivate bool) (*jwt.Manager, error) {
+	keys := make([]jwt.RSAKey, 0, len(c.Keys))
+	for _, item := range c.Keys {
+		kid := strings.TrimSpace(item.KID)
+		pubs, err := loadPublicKeys(item.PublicKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("auth.jwt.keys[%s]: %w", kid, err)
+		}
+		if len(pubs) == 0 {
+			return nil, fmt.Errorf("auth.jwt.keys[%s]: no public key found", kid)
+		}
+		var priv *rsa.PrivateKey
+		if strings.TrimSpace(item.PrivateKeyFile) != "" {
+			priv, err = loadPrivateKey(item.PrivateKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("auth.jwt.keys[%s]: %w", kid, err)
+			}
+		}
+		if requirePrivate && strings.TrimSpace(item.KID) == strings.TrimSpace(c.ActiveKID) && priv == nil {
+			return nil, fmt.Errorf("auth.jwt.keys[%s].private_key_file is required for token signing", kid)
+		}
+		keys = append(keys, jwt.RSAKey{KID: kid, PublicKey: pubs[0], PrivateKey: priv})
+	}
+	return jwt.NewRSA(jwt.RSAConfig{
+		Issuer:   c.Issuer,
+		Audience: c.Audience,
+		KeyID:    strings.TrimSpace(c.ActiveKID),
+		Keys:     keys,
+		TTL:      verifyTTL,
+		Leeway:   c.Leeway,
+		Clock:    c.Clock,
+	})
+}
+
+// secretBytes 把轮换 secret 转为字节切片。
+func (c JWTConfig) secretBytes() [][]byte {
+	out := make([][]byte, 0, len(c.Secrets))
+	for _, s := range c.Secrets {
+		out = append(out, []byte(s))
+	}
+	return out
 }
 
 // hmacManager 构造 HS256 校验器（含轮换密钥）。
@@ -269,6 +444,38 @@ func parseRSAPublicKey(block *pem.Block) (*rsa.PublicKey, error) {
 	}
 }
 
+// loadPrivateKey 读取 PEM 私钥文件（PKCS#1 或 PKCS#8）。
+func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- 路径来自运维配置，非请求输入。
+	if err != nil {
+		return nil, fmt.Errorf("read private key file: %w", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("private key file contains no pem block")
+	}
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse rsa private key: %w", err)
+		}
+		return key, nil
+	case "PRIVATE KEY":
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse pkcs8 private key: %w", err)
+		}
+		key, ok := parsed.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("private key is not RSA")
+		}
+		return key, nil
+	default:
+		return nil, fmt.Errorf("unsupported private key pem block %q", block.Type)
+	}
+}
+
 // principalFromClaims 把 JWT 声明映射为统一 Principal。
 //
 // 校验约束：sub 必填；channel 声明若存在须与进程端别一致（防跨端冒用，SEC-03）。
@@ -281,9 +488,35 @@ func principalFromClaims(claims jwt.Claims, expected auth.Channel) (auth.Princip
 		return auth.Principal{}, apperr.ErrUnauthorized
 	}
 	return auth.Principal{
-		Channel:    expected,
-		SubjectID:  subject,
-		MerchantID: claims.GetString("merchant_id"),
-		Roles:      claims.GetStringSlice("roles"),
+		Channel:        expected,
+		SubjectID:      subject,
+		MerchantID:     claims.GetString("merchant_id"),
+		Roles:          claims.GetStringSlice("roles"),
+		SessionID:      claims.GetString("sid"),
+		TokenID:        claims.ID,
+		TokenVersion:   claimInt64(claims.Extra, "ver"),
+		TokenExpiresAt: claims.ExpiresAt,
 	}, nil
+}
+
+// claimInt64 从 Extra 读取整数声明；兼容 JSON 反序列化产生的 float64。
+func claimInt64(extra map[string]any, key string) int64 {
+	if extra == nil {
+		return 0
+	}
+	switch v := extra[key].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n
+		}
+		return 0
+	default:
+		return 0
+	}
 }

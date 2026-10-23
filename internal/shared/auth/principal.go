@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // Channel 业务端别，与架构文档一致。
@@ -33,6 +34,14 @@ type Principal struct {
 	MerchantID string
 	Roles      []string
 	RequestID  string
+	// SessionID 当前访问令牌绑定的会话（jti 之外的 sid 声明）；旧令牌为空。
+	SessionID string
+	// TokenID 当前访问令牌的 jti，用于单会话撤销。
+	TokenID string
+	// TokenVersion 令牌签发时的账号撤销版本（ver）。
+	TokenVersion int64
+	// TokenExpiresAt 令牌到期时间，用于计算 jti 黑名单 TTL。
+	TokenExpiresAt time.Time
 }
 
 type ctxKey struct{}

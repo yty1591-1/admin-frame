@@ -152,6 +152,29 @@ func (r *SQLSessionRepository) RevokeFamily(ctx context.Context, familyID string
 	return int(affected), nil
 }
 
+// RevokeByAccount 撤销账号下所有 active / rotated 会话，返回受影响条数。
+func (r *SQLSessionRepository) RevokeByAccount(ctx context.Context, accountID string, reason domain.RevokeReason, now time.Time) (int, error) {
+	if err := reason.Validate(); err != nil {
+		return 0, err
+	}
+	id, err := parseID(accountID)
+	if err != nil {
+		return 0, err
+	}
+	result, err := r.sql.ExecContext(ctx, `UPDATE identity_session
+		SET status = 'revoked', revoked_at = ?, revoked_reason = ?, updated_at = ?, version = version + 1
+		WHERE account_id = ? AND status IN ('active', 'rotated')`,
+		now.UTC(), string(reason), now.UTC(), id)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 // ListByAccount 返回账号全部会话，按创建时间倒序、ID 升序。
 func (r *SQLSessionRepository) ListByAccount(ctx context.Context, accountID string) ([]*domain.Session, error) {
 	id, err := parseID(accountID)

@@ -51,6 +51,8 @@ type SessionRepository interface {
 	Save(ctx context.Context, session *Session, expectedVersion int64) error
 	// RevokeFamily 撤销一个家庭下所有 active / rotated 会话，返回受影响条数。
 	RevokeFamily(ctx context.Context, familyID string, reason RevokeReason, now time.Time) (int, error)
+	// RevokeByAccount 撤销账号下全部 active / rotated 会话（logout-all / 停用）。
+	RevokeByAccount(ctx context.Context, accountID string, reason RevokeReason, now time.Time) (int, error)
 	// ListByAccount 返回账号全部会话，按创建时间倒序，供会话管理使用。
 	ListByAccount(ctx context.Context, accountID string) ([]*Session, error)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/health"
 	"github.com/admin-frame/admin-frame/pkg/id"
+	"github.com/admin-frame/admin-frame/pkg/jwt"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/storage"
@@ -54,12 +55,23 @@ type Deps struct {
 	Async *AsyncRuntime
 }
 
+// SessionValidator 是撤销检查的最小接口，方法签名与 security.RevocationChecker 一致。
+//
+// platform 只依赖该接口，不反向依赖 identity 域；由 cmd 在装配期注入实现。
+type SessionValidator interface {
+	Check(ctx context.Context, claims jwt.Claims) error
+}
+
 // Options 是 platform.Run 的装配参数。
 type Options struct {
 	// ConfigPath 是 yaml 路径；环境变量可覆盖其中字段（CFG-04）。
 	ConfigPath string
 	// Build 是构建身份；Service 为空时取配置中的 service。
 	Build BuildInfo
+	// NewSessionValidator 构造撤销检查器；identity.enabled=false 时返回 nil。
+	//
+	// 该回调在 AuthMW 构造前调用，使登录态校验能立即读取撤销状态。
+	NewSessionValidator func(*Deps) (SessionValidator, error)
 	// NewAuthorizer 构造权限校验器；返回 nil 或 nil 函数时默认拒绝所有权限点（fail-closed）。
 	//
 	// 参数为已装配的平台能力（配置 / 数据库 / Redis / 指标 / 健康检查），
@@ -147,11 +159,6 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}()
 
-	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env)
-	if err != nil {
-		return fmt.Errorf("auth: %w", err)
-	}
-
 	hh := health.New()
 	registerStorageChecks(hh, stores)
 	if database != nil {
@@ -171,10 +178,28 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Database:   database,
 		Redis:      redisClient,
 		IDs:        ids,
-		AuthMW:     authMW,
 		Health:     hh,
 		Background: background.add,
 	}
+
+	// 撤销检查必须在 AuthMW 构造前注入（docs/identity-authn.md §13.2）：
+	// 身份运行时同时持有仓储与撤销存储，登录态校验才能立即读取撤销状态。
+	var authOpts []security.JWTAuthOption
+	if opts.NewSessionValidator != nil {
+		validator, validatorErr := opts.NewSessionValidator(deps)
+		if validatorErr != nil {
+			return fmt.Errorf("session validator: %w", validatorErr)
+		}
+		if validator != nil {
+			authOpts = append(authOpts, security.WithRevocationChecker(validator))
+		}
+	}
+	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
+	if err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	deps.AuthMW = authMW
+
 	asyncRuntime, err := NewAsyncRuntime(deps)
 	if err != nil {
 		return fmt.Errorf("async runtime: %w", err)

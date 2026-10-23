@@ -312,6 +312,18 @@ func (a *Account) ChangePassword(now time.Time) error {
 	return nil
 }
 
+// BumpTokenVersion 递增账号撤销版本（logout-all / 全端撤销）。
+//
+// 不改变账号状态；调用方须在同一事务内撤销全部会话并写撤销缓存。
+func (a *Account) BumpTokenVersion(now time.Time) error {
+	if err := a.ensureNotDeleted(); err != nil {
+		return err
+	}
+	a.TokenVersion++
+	a.touch(now)
+	return nil
+}
+
 // CanAuthenticate 判断账号当前是否允许发起登录。
 //
 // pending 允许登录（首次登录成功后激活）；locked 在锁定期到期后允许重试，

@@ -4,6 +4,10 @@ package audit
 const (
 	ActionAuthLogin         = "auth.login"
 	ActionAuthLoginFailed   = "auth.login_failed"
+	ActionAuthLogout        = "auth.logout"
+	ActionAuthTokenRefresh  = "auth.token.refresh"
+	ActionAuthTokenReused   = "auth.token.reused"
+	ActionAuthTokenRevoked  = "auth.token.revoked"
 	ActionRBACRoleChange    = "rbac.role_change"
 	ActionRBACBindingChange = "rbac.binding_change"
 	ActionRBACBreakglass    = "rbac.breakglass"
@@ -19,6 +23,10 @@ func KnownActions() []string {
 	return []string{
 		ActionAuthLogin,
 		ActionAuthLoginFailed,
+		ActionAuthLogout,
+		ActionAuthTokenRefresh,
+		ActionAuthTokenReused,
+		ActionAuthTokenRevoked,
 		ActionRBACRoleChange,
 		ActionRBACBindingChange,
 		ActionRBACBreakglass,

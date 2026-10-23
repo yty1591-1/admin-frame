@@ -14,6 +14,10 @@ tags:
     description: 存活/就绪/版本（无需鉴权）
   - name: iam
     description: 本商户角色、授权与绑定（自助管理）
+  - name: auth
+    description: |
+      身份认证：密码登录、一次性刷新与登出。令牌不携带角色，权限以 IAM 快照为唯一来源；
+      错误码覆盖 40000 / 40100 / 42900 / 50300。
 paths:
   /healthz:
     get:
@@ -65,6 +69,110 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
+  /biz/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 密码登录
+      description: |
+        账号不存在、密码错误、账号停用与锁定统一返回 40100；`merchant_id` 由账号绑定推导，
+        令牌不得跨商户。
+      operationId: bizAuthLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/TokenPair"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "429":
+          $ref: "./components.yaml#/components/responses/TooManyRequests"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /biz/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: 刷新令牌（一次性轮换）
+      description: 旧令牌成功轮换后立即失效；已轮换令牌再次出现视为重放，撤销整条会话链。
+      operationId: bizAuthRefresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/TokenPair"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /biz/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出当前会话
+      description: 幂等；同时把当前访问令牌的 `jti` 加入黑名单。
+      operationId: bizAuthLogout
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /biz/v1/auth/logout-all:
+    post:
+      tags: [auth]
+      summary: 登出全部会话
+      description: 递增账号 `token_version`，使所有已签发访问令牌失效，并撤销全部会话。
+      operationId: bizAuthLogoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
   /biz/v1/iam/permissions:
     get:
       tags: [iam]

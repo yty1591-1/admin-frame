@@ -95,6 +95,26 @@ iam:
   approval:
     enabled: false               # true 时角色 / 绑定直写端点返回 40900，必须走 change-requests
 
+# 身份域认证端点（docs/identity-authn.md）；默认关闭，保持既有「只验签」行为。
+# 启用前置：auth.mode=jwt（A 端必须配置 auth.jwt.keys 与 active_kid）、redis.addr 非空。
+identity:
+  enabled: false
+  access_ttl: 15m                 # [5m, 1h]
+  refresh_ttl: 168h               # 必须大于 access_ttl
+  session:
+    idle_timeout: 72h             # (0, refresh_ttl]
+    max_per_account: 10
+  revocation:
+    driver: redis                 # redis 为生产唯一实现
+    failure_mode: fail_closed     # fail_closed|fail_open；prod/staging 强制 fail_closed
+  lockout:
+    max_failures: 5
+    window: 15m
+    duration: 15m
+  login_rate_limit:
+    rps: 1
+    burst: 5
+
 # Redis：iam.cache.driver=redis 时必填；密码走 ADMIN_FRAME_REDIS_PASSWORD。
 redis:
   addr: ""                       # 如 127.0.0.1:6379

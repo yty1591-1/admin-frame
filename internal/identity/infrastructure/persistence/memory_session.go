@@ -109,6 +109,31 @@ func (r *MemorySessionRepository) RevokeFamily(_ context.Context, familyID strin
 	return revoked, nil
 }
 
+// RevokeByAccount 撤销账号下所有 active / rotated 会话，返回受影响条数。
+func (r *MemorySessionRepository) RevokeByAccount(_ context.Context, accountID string, reason domain.RevokeReason, now time.Time) (int, error) {
+	if accountID == "" {
+		return 0, apperr.BadRequest("account id is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	revoked := 0
+	for id, session := range r.byID {
+		if session.AccountID != accountID {
+			continue
+		}
+		if session.Status != domain.SessionStatusActive && session.Status != domain.SessionStatusRotated {
+			continue
+		}
+		updated := cloneSession(session)
+		if err := updated.Revoke(reason, now); err != nil {
+			return revoked, err
+		}
+		r.byID[id] = updated
+		revoked++
+	}
+	return revoked, nil
+}
+
 // ListByAccount 返回账号全部会话，按创建时间倒序、ID 升序保证输出稳定。
 func (r *MemorySessionRepository) ListByAccount(_ context.Context, accountID string) ([]*domain.Session, error) {
 	r.mu.RLock()

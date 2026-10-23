@@ -22,6 +22,8 @@ var (
 	ErrMissingSecret = stderrors.New("jwt: missing hmac secret")
 	// ErrMissingKey 表示缺少 RSA 密钥。
 	ErrMissingKey = stderrors.New("jwt: missing rsa key")
+	// ErrUnknownKeyID 表示 Token header 的 kid 缺失或不在密钥环中。
+	ErrUnknownKeyID = stderrors.New("jwt: unknown key id")
 )
 
 // ValidationError 携带可判定的校验失败原因（可 errors.Is 到上述哨兵）。

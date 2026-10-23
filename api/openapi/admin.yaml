@@ -17,6 +17,10 @@ tags:
       RBAC / IAM 管理。写接口要求 `If-Match` 或 body `version` 与当前版本一致（乐观锁），
       冲突返回 40900；每次变更写审计事件 `rbac.role_change` / `rbac.binding_change`，
       审计失败即失败关闭（不落库）。
+  - name: auth
+    description: |
+      身份认证：密码登录、一次性刷新、登出与会话管理。令牌不携带角色，
+      权限以 IAM 快照为唯一来源；错误码覆盖 40000 / 40100 / 42900 / 50300。
 paths:
   /healthz:
     get:
@@ -68,6 +72,180 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
+  /admin/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 密码登录
+      description: |
+        账号不存在、密码错误、账号停用与锁定统一返回 40100；真实原因只写审计。
+        请求中的 `channel` / `roles` / `merchant_id` 一律拒绝（40000）。
+      operationId: adminAuthLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/TokenPair"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "429":
+          $ref: "./components.yaml#/components/responses/TooManyRequests"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: 刷新令牌（一次性轮换）
+      description: 旧令牌成功轮换后立即失效；已轮换令牌再次出现视为重放，撤销整条会话链。
+      operationId: adminAuthRefresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./components.yaml#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/TokenPair"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出当前会话
+      description: 幂等；同时把当前访问令牌的 `jti` 加入黑名单。
+      operationId: adminAuthLogout
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/logout-all:
+    post:
+      tags: [auth]
+      summary: 登出全部会话
+      description: 递增账号 `token_version`，使所有已签发访问令牌失效，并撤销全部会话。
+      operationId: adminAuthLogoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/sessions:
+    get:
+      tags: [auth]
+      summary: 列出本账号会话
+      description: 仅返回本账号会话；不下发任何令牌、IP 或 UA 原文。
+      operationId: adminAuthListSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "./components.yaml#/components/schemas/AuthSessionListData"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/sessions/revoke-all:
+    post:
+      tags: [auth]
+      summary: 撤销全部会话
+      description: 语义等同 `logout-all`，便于会话管理页调用。
+      operationId: adminAuthRevokeAllSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/auth/sessions/{id}:
+    delete:
+      tags: [auth]
+      summary: 撤销指定会话
+      description: 仅可撤销本账号会话；他人会话与不存在统一返回 40400，避免横向枚举。
+      operationId: adminAuthRevokeSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 会话 ID
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: no content
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
   /admin/v1/iam/permissions:
     get:
       tags: [iam]

@@ -1,15 +1,12 @@
 package security_test
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
-	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,318 +17,199 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 )
 
-// writePEM 把 PEM 块写入临时目录并返回路径。
-func writePEM(t *testing.T, name string, blocks ...*pem.Block) string {
+// writeRSAKeyPair 生成测试用 RSA 密钥对并返回 PEM 文件路径。
+func writeRSAKeyPair(t *testing.T) (publicPath, privatePath string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	var data []byte
-	for _, b := range blocks {
-		data = append(data, pem.EncodeToMemory(b)...)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-// rsaPublicPEM 生成 PKIX 格式的 RSA 公钥 PEM 块。
-func rsaPublicPEM(t *testing.T, key *rsa.PrivateKey) *pem.Block {
-	t.Helper()
-	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &pem.Block{Type: "PUBLIC KEY", Bytes: der}
-}
-
-// TestNewJWTAuthRS256KeyFormats 覆盖 PKIX / PKCS#1 / 证书三种公钥来源。
-func TestNewJWTAuthRS256KeyFormats(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("generate rsa key: %v", err)
 	}
-	pkcs1 := &pem.Block{Type: "RSA PUBLIC KEY", Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey)}
-	cert := selfSignedCertPEM(t, key)
+	dir := t.TempDir()
+	publicPath = filepath.Join(dir, "jwt.pub.pem")
+	privatePath = filepath.Join(dir, "jwt.key.pem")
+
+	publicDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	if err := os.WriteFile(publicPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: publicDER,
+	}), 0o600); err != nil {
+		t.Fatalf("write public key: %v", err)
+	}
+	if err := os.WriteFile(privatePath, pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	return publicPath, privatePath
+}
+
+// keyRingConfig 构造 RS256 kid 密钥环配置。
+func keyRingConfig(publicPath, privatePath string) security.JWTConfig {
+	return security.JWTConfig{
+		Alg:       security.JWTAlgRS256,
+		Issuer:    "https://identity.example.com",
+		Audience:  []string{"admin"},
+		ActiveKID: "2026-10",
+		Keys: []security.JWTKeyConfig{{
+			KID:            "2026-10",
+			PublicKeyFile:  publicPath,
+			PrivateKeyFile: privatePath,
+		}},
+	}
+}
+
+func TestJWTConfigKeyRingValidation(t *testing.T) {
+	publicPath, privatePath := writeRSAKeyPair(t)
 
 	cases := []struct {
-		name string
-		blk  *pem.Block
+		name   string
+		mutate func(*security.JWTConfig)
 	}{
-		{"pkix", rsaPublicPEM(t, key)},
-		{"pkcs1", pkcs1},
-		{"certificate", cert},
+		{
+			name: "keys with legacy secret",
+			mutate: func(c *security.JWTConfig) {
+				c.Secret = "01234567890123456789012345678901"
+			},
+		},
+		{
+			name: "missing active kid",
+			mutate: func(c *security.JWTConfig) {
+				c.ActiveKID = ""
+			},
+		},
+		{
+			name: "active kid not in ring",
+			mutate: func(c *security.JWTConfig) {
+				c.ActiveKID = "2026-11"
+			},
+		},
+		{
+			name: "duplicated kid",
+			mutate: func(c *security.JWTConfig) {
+				c.Keys = append(c.Keys, security.JWTKeyConfig{
+					KID:           "2026-10",
+					PublicKeyFile: publicPath,
+				})
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := writePEM(t, "pub.pem", tc.blk)
-			mw, err := security.NewJWTAuth(security.JWTConfig{
-				Alg:           security.JWTAlgRS256,
-				Issuer:        "issuer",
-				Audience:      []string{"admin"},
-				PublicKeyFile: path,
-			}, auth.ChannelAdmin)
-			if err != nil {
-				t.Fatalf("NewJWTAuth: %v", err)
-			}
-			if code := serve(t, mw, "Bearer "+signRS256(t, key)); code != http.StatusOK {
-				t.Fatalf("status=%d want 200", code)
+			cfg := keyRingConfig(publicPath, privatePath)
+			tc.mutate(&cfg)
+			if err := cfg.Validate("admin"); err == nil {
+				t.Fatal("expected validation error")
 			}
 		})
 	}
-}
 
-// TestNewJWTAuthRS256Rotation 验证轮换公钥文件中的旧密钥仍可校验。
-func TestNewJWTAuthRS256Rotation(t *testing.T) {
-	current, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotated, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	primary := writePEM(t, "current.pem", rsaPublicPEM(t, current))
-	rotation := writePEM(t, "rotation.pem", rsaPublicPEM(t, current), rsaPublicPEM(t, rotated))
-
-	mw, err := security.NewJWTAuth(security.JWTConfig{
-		Alg:            security.JWTAlgRS256,
-		Issuer:         "issuer",
-		Audience:       []string{"admin"},
-		PublicKeyFile:  primary,
-		PublicKeysFile: rotation,
-	}, auth.ChannelAdmin)
-	if err != nil {
-		t.Fatalf("NewJWTAuth: %v", err)
-	}
-	if code := serve(t, mw, "Bearer "+signRS256(t, rotated)); code != http.StatusOK {
-		t.Fatalf("rotated key status=%d want 200", code)
+	if err := keyRingConfig(publicPath, privatePath).Validate("admin"); err != nil {
+		t.Fatalf("valid key ring rejected: %v", err)
 	}
 }
 
-// TestNewJWTAuthRS256RejectsExpired 验证过期令牌被拒绝。
-func TestNewJWTAuthRS256RejectsExpired(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+func TestJWTKeyRingSignAndPrincipalMapping(t *testing.T) {
+	publicPath, privatePath := writeRSAKeyPair(t)
+	cfg := keyRingConfig(publicPath, privatePath)
+
+	signer, err := cfg.SigningManager("admin")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("signing manager: %v", err)
 	}
-	path := writePEM(t, "pub.pem", rsaPublicPEM(t, key))
-	mw, err := security.NewJWTAuth(security.JWTConfig{
-		Alg:           security.JWTAlgRS256,
-		Issuer:        "issuer",
-		Audience:      []string{"admin"},
-		PublicKeyFile: path,
-	}, auth.ChannelAdmin)
-	if err != nil {
-		t.Fatalf("NewJWTAuth: %v", err)
-	}
-	signer := newRSASigner(t, key)
 	now := time.Now().UTC()
 	token, err := signer.Sign(jwt.Claims{
-		Subject:   "admin-1",
-		IssuedAt:  now.Add(-2 * time.Hour),
-		ExpiresAt: now.Add(-time.Hour),
+		Subject:   "acct-1",
+		Audience:  []string{"admin"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Minute),
+		ID:        "jti-1",
+		Extra: map[string]any{
+			"ver":     int64(3),
+			"sid":     "sess-1",
+			"channel": "admin",
+		},
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("sign: %v", err)
 	}
-	if code := serve(t, mw, "Bearer "+token); code != http.StatusUnauthorized {
-		t.Fatalf("expired token status=%d want 401", code)
+
+	mw, err := security.NewJWTAuth(cfg, auth.ChannelAdmin)
+	if err != nil {
+		t.Fatalf("new jwt auth: %v", err)
+	}
+
+	var captured auth.Principal
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := auth.FromContext(r.Context())
+		if !ok {
+			t.Error("principal missing from context")
+			return
+		}
+		captured = p
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.SubjectID != "acct-1" || captured.SessionID != "sess-1" ||
+		captured.TokenID != "jti-1" || captured.TokenVersion != 3 {
+		t.Fatalf("unexpected principal: %+v", captured)
+	}
+	if captured.Channel != auth.ChannelAdmin {
+		t.Fatalf("channel = %q, want admin", captured.Channel)
+	}
+	if captured.TokenExpiresAt.IsZero() {
+		t.Fatal("token expiry must be mapped into principal")
 	}
 }
 
-// TestNewJWTAuthRS256InvalidKeyFiles 覆盖公钥文件的各类非法输入。
-func TestNewJWTAuthRS256InvalidKeyFiles(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func TestJWTKeyRingRejectsUnknownKID(t *testing.T) {
+	publicPath, privatePath := writeRSAKeyPair(t)
+	issuerCfg := keyRingConfig(publicPath, privatePath)
+	signer, err := issuerCfg.SigningManager("admin")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("signing manager: %v", err)
 	}
-	ecDER, err := x509.MarshalPKIXPublicKey(&ecKey.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name string
-		path func(t *testing.T) string
-	}{
-		{"missing file", func(t *testing.T) string {
-			return filepath.Join(t.TempDir(), "nope.pem")
-		}},
-		{"no pem block", func(t *testing.T) string {
-			return writePEM(t, "empty.pem")
-		}},
-		{"unsupported block", func(t *testing.T) string {
-			return writePEM(t, "unsupported.pem", &pem.Block{Type: "EC PRIVATE KEY", Bytes: []byte("x")})
-		}},
-		{"corrupt pkix", func(t *testing.T) string {
-			return writePEM(t, "corrupt.pem", &pem.Block{Type: "PUBLIC KEY", Bytes: []byte("not-der")})
-		}},
-		{"corrupt pkcs1", func(t *testing.T) string {
-			return writePEM(t, "corrupt1.pem", &pem.Block{Type: "RSA PUBLIC KEY", Bytes: []byte("not-der")})
-		}},
-		{"corrupt certificate", func(t *testing.T) string {
-			return writePEM(t, "corrupt-cert.pem", &pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-der")})
-		}},
-		{"non-rsa pkix", func(t *testing.T) string {
-			return writePEM(t, "ec.pem", &pem.Block{Type: "PUBLIC KEY", Bytes: ecDER})
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := security.NewJWTAuth(security.JWTConfig{
-				Alg:           security.JWTAlgRS256,
-				Issuer:        "issuer",
-				Audience:      []string{"admin"},
-				PublicKeyFile: tc.path(t),
-			}, auth.ChannelAdmin)
-			if err == nil {
-				t.Fatal("NewJWTAuth accepted invalid key file")
-			}
-		})
-	}
-}
-
-// TestNewJWTAuthRS256RejectsNonRSACertificate 覆盖证书公钥非 RSA 的分支。
-func TestNewJWTAuthRS256RejectsNonRSACertificate(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "ec"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &ecKey.PublicKey, ecKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := writePEM(t, "ec-cert.pem", &pem.Block{Type: "CERTIFICATE", Bytes: der})
-
-	_, err = security.NewJWTAuth(security.JWTConfig{
-		Alg:           security.JWTAlgRS256,
-		Issuer:        "issuer",
-		Audience:      []string{"admin"},
-		PublicKeyFile: path,
-	}, auth.ChannelAdmin)
-	if err == nil {
-		t.Fatal("NewJWTAuth accepted non-RSA certificate")
-	}
-}
-
-// TestNewJWTAuthRS256RotationFileInvalid 覆盖轮换公钥文件读取失败。
-func TestNewJWTAuthRS256RotationFileInvalid(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	primary := writePEM(t, "current.pem", rsaPublicPEM(t, key))
-	_, err = security.NewJWTAuth(security.JWTConfig{
-		Alg:            security.JWTAlgRS256,
-		Issuer:         "issuer",
-		Audience:       []string{"admin"},
-		PublicKeyFile:  primary,
-		PublicKeysFile: filepath.Join(t.TempDir(), "missing-rotation.pem"),
-	}, auth.ChannelAdmin)
-	if err == nil {
-		t.Fatal("NewJWTAuth accepted missing rotation file")
-	}
-}
-
-// TestNewJWTAuthRejectsInvalidConfig 验证启动期配置校验失败即返回错误。
-func TestNewJWTAuthRejectsInvalidConfig(t *testing.T) {
-	_, err := security.NewJWTAuth(security.JWTConfig{
-		Issuer:   "issuer",
-		Audience: []string{"admin"},
-		Secret:   "short",
-	}, auth.ChannelAdmin)
-	if err == nil {
-		t.Fatal("NewJWTAuth accepted short secret")
-	}
-}
-
-// TestNewJWTAuthRejectsShortRotationSecret 覆盖轮换密钥长度校验。
-func TestNewJWTAuthRejectsShortRotationSecret(t *testing.T) {
-	_, err := security.NewJWTAuth(security.JWTConfig{
-		Issuer:   "issuer",
-		Audience: []string{"admin"},
-		Secret:   testJWTSecret('s'),
-		Secrets:  []string{"short"},
-	}, auth.ChannelAdmin)
-	if err == nil {
-		t.Fatal("NewJWTAuth accepted short rotation secret")
-	}
-}
-
-// TestNewJWTAuthAcceptsRotationSecret 验证轮换密钥签发的令牌仍可校验。
-func TestNewJWTAuthAcceptsRotationSecret(t *testing.T) {
-	current := testJWTSecret('s')
-	old := testJWTSecret('o')
-	mw, err := security.NewJWTAuth(security.JWTConfig{
-		Issuer:   "issuer",
-		Audience: []string{"admin"},
-		Secret:   current,
-		Secrets:  []string{old},
-	}, auth.ChannelAdmin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldSigner, err := jwt.NewHMAC(jwt.HMACConfig{
-		Issuer:   "issuer",
-		Audience: []string{"admin"},
-		Secret:   []byte(old),
-		TTL:      time.Minute,
+	now := time.Now().UTC()
+	token, err := signer.Sign(jwt.Claims{
+		Subject:   "acct-1",
+		Audience:  []string{"admin"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Minute),
+		ID:        "jti-1",
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("sign: %v", err)
 	}
-	token, err := oldSigner.Sign(jwt.Claims{Subject: "admin-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := serve(t, mw, "Bearer "+token); code != http.StatusOK {
-		t.Fatalf("status=%d want 200", code)
-	}
-}
 
-// signRS256 用给定私钥签发 admin 端令牌。
-func signRS256(t *testing.T, key *rsa.PrivateKey) string {
-	t.Helper()
-	token, err := newRSASigner(t, key).Sign(jwt.Claims{Subject: "admin-1"})
+	// 校验端只认识另一个 kid：必须 401，而不是尝试其他公钥。
+	verifierCfg := keyRingConfig(publicPath, privatePath)
+	verifierCfg.ActiveKID = "2026-11"
+	verifierCfg.Keys[0].KID = "2026-11"
+	mw, err := security.NewJWTAuth(verifierCfg, auth.ChannelAdmin)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("new jwt auth: %v", err)
 	}
-	return token
-}
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
 
-// newRSASigner 构造与测试配置一致的 RS256 签发器。
-func newRSASigner(t *testing.T, key *rsa.PrivateKey) *jwt.Manager {
-	t.Helper()
-	signer, err := jwt.NewRSA(jwt.RSAConfig{
-		Issuer:     "issuer",
-		Audience:   []string{"admin"},
-		PrivateKey: key,
-		TTL:        time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return signer
-}
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 
-// selfSignedCertPEM 生成携带 RSA 公钥的自签名证书 PEM 块。
-func selfSignedCertPEM(t *testing.T, key *rsa.PrivateKey) *pem.Block {
-	t.Helper()
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "rsa"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &pem.Block{Type: "CERTIFICATE", Bytes: der}
 }

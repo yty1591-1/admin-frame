@@ -4,8 +4,12 @@
 
 | action | 端 | 说明 | 保留类别 | 最短保留 | status |
 |--------|----|------|----------|----------|--------|
-| `auth.login` | A/B/C | 登录成功 | 认证 | 180d | planned |
-| `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | planned |
+| `auth.login` | A/B/C | 登录成功 | 认证 | 180d | active |
+| `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | active |
+| `auth.logout` | A/B | 登出当前会话（幂等） | 认证 | 180d | active |
+| `auth.token.refresh` | A/B | 刷新令牌成功轮换 | 认证 | 180d | active |
+| `auth.token.reused` | A/B | 刷新令牌重放，触发整链撤销 | 认证 | 180d | active |
+| `auth.token.revoked` | A/B | 单会话 / 全端撤销 | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
 | `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
 | `rbac.breakglass` | A | 破玻璃申请 / 审批 / 生效 / 撤销 | 权限 | 180d | active |

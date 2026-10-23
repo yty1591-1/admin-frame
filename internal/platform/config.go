@@ -50,6 +50,62 @@ type Config struct {
 	Async           AsyncConfig       `yaml:"async"`
 	CORS            CORSConfig        `yaml:"cors"`
 	IAM             IAMConfig         `yaml:"iam"`
+	Identity        IdentityConfig    `yaml:"identity"`
+}
+
+// 身份域撤销存储驱动（identity.revocation.driver）。
+const (
+	// IdentityRevocationDriverRedis 跨副本共享撤销状态；生产唯一实现。
+	IdentityRevocationDriverRedis = "redis"
+)
+
+// IdentityConfig 是身份域认证参数（docs/identity-authn.md §10）。
+//
+// 默认 enabled=false：未显式开启时保持「只有验签」的既有行为，升级不改变鉴权来源。
+type IdentityConfig struct {
+	// Enabled 是否启用登录 / 刷新 / 登出端点与撤销检查。
+	Enabled bool `yaml:"enabled"`
+	// AccessTTL 访问令牌有效期；[5m, 1h]。
+	AccessTTL time.Duration `yaml:"access_ttl"`
+	// RefreshTTL 刷新令牌有效期；必须大于 AccessTTL。
+	RefreshTTL time.Duration `yaml:"refresh_ttl"`
+	// Session 会话策略。
+	Session IdentitySessionConfig `yaml:"session"`
+	// Revocation 撤销存储参数。
+	Revocation IdentityRevocationConfig `yaml:"revocation"`
+	// Lockout 登录失败锁定策略。
+	Lockout IdentityLockoutConfig `yaml:"lockout"`
+	// LoginRateLimit 登录限流参数。
+	LoginRateLimit IdentityLoginRateLimitConfig `yaml:"login_rate_limit"`
+}
+
+// IdentitySessionConfig 是会话策略参数。
+type IdentitySessionConfig struct {
+	// IdleTimeout 会话空闲上限；必须为正且不超过 refresh_ttl。
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
+	// MaxPerAccount 单账号最大活跃会话数。
+	MaxPerAccount int `yaml:"max_per_account"`
+}
+
+// IdentityRevocationConfig 是撤销存储参数。
+type IdentityRevocationConfig struct {
+	// Driver 驱动；当前仅 redis。
+	Driver string `yaml:"driver"`
+	// FailureMode Redis 故障策略：fail_closed（默认）| fail_open。
+	FailureMode string `yaml:"failure_mode"`
+}
+
+// IdentityLockoutConfig 是登录失败锁定参数。
+type IdentityLockoutConfig struct {
+	MaxFailures int           `yaml:"max_failures"`
+	Window      time.Duration `yaml:"window"`
+	Duration    time.Duration `yaml:"duration"`
+}
+
+// IdentityLoginRateLimitConfig 是登录限流参数。
+type IdentityLoginRateLimitConfig struct {
+	RPS   float64 `yaml:"rps"`
+	Burst int     `yaml:"burst"`
 }
 
 // ID 节点号来源（id.node_id_source）。
@@ -492,6 +548,15 @@ func (c Config) LogValue() slog.Value {
 			),
 			slog.Bool("allow_wildcard", c.IAM.Security.AllowWildcard),
 		),
+		slog.Group("identity",
+			slog.Bool("enabled", c.Identity.Enabled),
+			slog.Duration("access_ttl", c.Identity.AccessTTL),
+			slog.Duration("refresh_ttl", c.Identity.RefreshTTL),
+			slog.Group("revocation",
+				slog.String("driver", c.Identity.Revocation.Driver),
+				slog.String("failure_mode", c.Identity.Revocation.FailureMode),
+			),
+		),
 	)
 }
 
@@ -661,6 +726,44 @@ func (c *Config) applyDefaults() {
 	}
 	c.applyAsyncDefaults()
 	c.applyIAMDefaults()
+	c.applyIdentityDefaults()
+}
+
+// applyIdentityDefaults 填充身份域默认值；Enabled 保持 false（默认关闭）。
+func (c *Config) applyIdentityDefaults() {
+	if c.Identity.AccessTTL == 0 {
+		c.Identity.AccessTTL = 15 * time.Minute
+	}
+	if c.Identity.RefreshTTL == 0 {
+		c.Identity.RefreshTTL = 168 * time.Hour
+	}
+	if c.Identity.Session.IdleTimeout == 0 {
+		c.Identity.Session.IdleTimeout = 72 * time.Hour
+	}
+	if c.Identity.Session.MaxPerAccount == 0 {
+		c.Identity.Session.MaxPerAccount = 10
+	}
+	if c.Identity.Revocation.Driver == "" {
+		c.Identity.Revocation.Driver = IdentityRevocationDriverRedis
+	}
+	if c.Identity.Revocation.FailureMode == "" {
+		c.Identity.Revocation.FailureMode = RateLimitFailureClosed
+	}
+	if c.Identity.Lockout.MaxFailures == 0 {
+		c.Identity.Lockout.MaxFailures = 5
+	}
+	if c.Identity.Lockout.Window == 0 {
+		c.Identity.Lockout.Window = 15 * time.Minute
+	}
+	if c.Identity.Lockout.Duration == 0 {
+		c.Identity.Lockout.Duration = 15 * time.Minute
+	}
+	if c.Identity.LoginRateLimit.RPS == 0 {
+		c.Identity.LoginRateLimit.RPS = 1
+	}
+	if c.Identity.LoginRateLimit.Burst == 0 {
+		c.Identity.LoginRateLimit.Burst = 5
+	}
 }
 
 // applyAsyncDefaults 填充异步运行时默认值（默认关闭，保持现有行为）。
@@ -789,6 +892,7 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateIdempotency()...)
 	errs = append(errs, c.validateRateLimit()...)
 	errs = append(errs, c.validateIAM()...)
+	errs = append(errs, c.validateIdentity()...)
 	return errors.Join(errs...)
 }
 
@@ -1097,6 +1201,67 @@ func (c *Config) validateIAM() []error {
 		errs = append(errs, errors.New("async.enabled must be true when iam.mode=enforce in prod/staging"))
 	}
 	errs = append(errs, c.validateAsync()...)
+	return errs
+}
+
+// validateIdentity 校验身份域开关、TTL、撤销存储与端别约束（docs/identity-authn.md §10.2）。
+//
+// 未启用时不校验派生字段，保持历史配置可直接启动；错误只包含字段路径。
+func (c *Config) validateIdentity() []error {
+	if !c.Identity.Enabled {
+		return nil
+	}
+	var errs []error
+	if c.Auth.effectiveMode(c.Env) != AuthModeJWT {
+		errs = append(errs, errors.New("auth.mode must be jwt when identity.enabled=true"))
+	}
+	if c.Channel != "admin" && c.Channel != "biz" {
+		// C 端登录属于阶段 4；worker 不提供认证 transport。
+		errs = append(errs, errors.New("identity.enabled is only supported on channel=admin or biz"))
+	}
+	if c.Identity.AccessTTL < 5*time.Minute || c.Identity.AccessTTL > time.Hour {
+		errs = append(errs, errors.New("identity.access_ttl must be in [5m, 1h]"))
+	}
+	if c.Identity.RefreshTTL <= c.Identity.AccessTTL {
+		errs = append(errs, errors.New("identity.refresh_ttl must be greater than identity.access_ttl"))
+	}
+	if c.Identity.Session.IdleTimeout <= 0 || c.Identity.Session.IdleTimeout > c.Identity.RefreshTTL {
+		errs = append(errs, errors.New("identity.session.idle_timeout must be in (0, identity.refresh_ttl]"))
+	}
+	if c.Identity.Session.MaxPerAccount < 1 {
+		errs = append(errs, errors.New("identity.session.max_per_account must be >= 1"))
+	}
+	switch c.Identity.Revocation.Driver {
+	case IdentityRevocationDriverRedis:
+		if !c.Redis.Enabled() {
+			errs = append(errs, errors.New("redis.addr is required when identity.revocation.driver=redis"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.revocation.driver: %s", c.Identity.Revocation.Driver))
+	}
+	switch c.Identity.Revocation.FailureMode {
+	case RateLimitFailureClosed, RateLimitFailureOpen:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.revocation.failure_mode: %s", c.Identity.Revocation.FailureMode))
+	}
+	if isProdLikeEnv(c.Env) && c.Identity.Revocation.FailureMode == RateLimitFailureOpen {
+		errs = append(errs, errors.New("identity.revocation.failure_mode must be fail_closed in prod/staging"))
+	}
+	if c.Identity.Lockout.MaxFailures < 1 {
+		errs = append(errs, errors.New("identity.lockout.max_failures must be >= 1"))
+	}
+	if c.Identity.Lockout.Window <= 0 {
+		errs = append(errs, errors.New("identity.lockout.window must be > 0"))
+	}
+	if c.Identity.Lockout.Duration <= 0 {
+		errs = append(errs, errors.New("identity.lockout.duration must be > 0"))
+	}
+	if c.Identity.LoginRateLimit.RPS <= 0 {
+		errs = append(errs, errors.New("identity.login_rate_limit.rps must be > 0"))
+	}
+	if c.Identity.LoginRateLimit.Burst < 1 {
+		errs = append(errs, errors.New("identity.login_rate_limit.burst must be >= 1"))
+	}
 	return errs
 }
 
