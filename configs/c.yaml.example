@@ -24,6 +24,54 @@ auth:
   mode: demo
   expected_channel: c
 
+# 身份域（ENT-01 阶段 4）：默认关闭；启用时 auth.mode 必须为 jwt。
+# identity:
+#   enabled: true
+#   access_ttl: 15m
+#   refresh_ttl: 168h
+#   session:
+#     idle_timeout: 72h
+#     max_per_account: 10
+#   revocation:
+#     driver: redis              # 生产唯一实现
+#     failure_mode: fail_closed  # fail_closed|fail_open
+#   password:
+#     min_length: 12
+#     max_length: 128
+#     require_complexity: true
+#   lockout:
+#     max_failures: 5
+#     window: 15m
+#     duration: 15m
+#   login_rate_limit:
+#     rps: 1
+#     burst: 5
+#   sms:
+#     enabled: true
+#     driver: memory             # memory(本地) | aliyun(生产)
+#     template_id: auth_login_code
+#     sign_name: ""
+#     locale: zh-CN
+#     code_ttl: 5m
+#     max_attempts: 5
+#     resend_interval: 60s
+#     daily_per_phone: 10
+#     hourly_per_ip: 30
+#   oauth:
+#     auto_provision: false
+#     providers:
+#       - name: example
+#         client_id: ""
+#         client_secret_env: EXAMPLE_OAUTH_CLIENT_SECRET
+#         auth_url: https://idp.example.com/oauth2/authorize
+#         token_url: https://idp.example.com/oauth2/token
+#         userinfo_url: https://idp.example.com/oauth2/userinfo
+#         redirect_uri: https://c.example.com/c/v1/auth/oauth/example/callback
+#         scopes: [openid, profile]
+#         subject_field: sub
+# 说明：identity.sms.driver=aliyun 时，凭证只从环境变量
+# ALIYUN_SMS_ACCESS_KEY_ID / ALIYUN_SMS_ACCESS_KEY_SECRET 读取。
+
 # 雪花 ID 节点号：同一集群内必须唯一，重复会生成相同 ID（ENT-02）。
 id:
   node_id: 0                     # [0,1023]；prod/staging 非 worker 必须显式配置

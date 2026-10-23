@@ -52,6 +52,8 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	// ErrMFARequired 凭据已通过但 MFA 未完成。
 	ErrMFARequired = errors.New("mfa required")
+	// ErrInvalidOAuthIdentity 外部身份映射字段非法。
+	ErrInvalidOAuthIdentity = errors.New("invalid oauth identity")
 	// ErrTokenReplay 刷新令牌重放，需撤销整条会话链。
 	ErrTokenReplay = errors.New("refresh token replay")
 )

@@ -409,19 +409,23 @@ type RevocationChecker interface {
 ### 8.1 短信验证码
 
 - `POST /c/v1/auth/sms/send`：6 位数字验证码，Redis 存哈希，TTL 5 分钟。
+- 手机号必须为 E.164（`^\+[1-9]\d{2,14}$`）；账号定位使用 `subject = "phone:" + sha256(手机号)`（hex），库内不落明文手机号。
+- 短信驱动 `identity.sms.driver=memory|aliyun`：`memory` 仅本地 / 测试；生产禁止 `memory`，阿里云凭证只从 `ALIYUN_SMS_ACCESS_KEY_ID` / `ALIYUN_SMS_ACCESS_KEY_SECRET` 读取。
 - 限制：
   - 单手机号 60 秒内只能发送一次；
   - 单手机号每日上限、单 IP 每小时上限（`identity.sms.*`）；
   - 验证码最多尝试 5 次，超限作废并记审计；
   - 响应恒定（无论手机号是否存在），防枚举。
+- 未注册手机号不自动建号：验证码校验通过但账号不存在时返回 `40100`（与验证码错误一致）。
 - 日志与审计禁止出现完整手机号；只记录不可逆摘要。
 
 ### 8.2 OAuth 授权码
 
-- `POST /c/v1/auth/oauth/{provider}/callback`（或等价回调端点）：code + state → 换取 token → 校验 → 映射账号。
-- state / PKCE 存 Redis，一次性消费；provider 未配置时不注册路由。
+- `POST /c/v1/auth/oauth/{provider}/authorize`：服务端生成一次性 state 与 PKCE verifier（S256），返回授权地址；state 存 Redis，TTL 10 分钟，一次性消费。
+- `POST /c/v1/auth/oauth/{provider}/callback`：code + state → 换取 access_token → 读取 userinfo（`subject_field`，默认 `sub`）→ 映射账号。
+- provider 未配置时不注册路由；state 无效、provider 不匹配、授权码被拒与未映射身份统一返回 `40100`，IdP 故障返回 `50300`。
 - 账号映射表 `identity_oauth_identity`，`UNIQUE(provider, provider_subject)`。
-- 自动建号受 `identity.oauth.auto_provision` 控制，默认关闭。
+- 自动建号受 `identity.oauth.auto_provision` 控制，默认关闭；建号主体为 `subject = "oauth:<provider>:" + sha256(provider_subject)`，避免第三方主体含 PII 或超长。
 
 ### 8.3 限流与防刷
 
@@ -518,6 +522,10 @@ identity:
     burst: 5
   sms:
     enabled: false
+    driver: memory             # memory（本地 / 测试）| aliyun（生产必须）
+    template_id: auth_login_code
+    sign_name: ""
+    locale: zh-CN
     code_ttl: 5m
     max_attempts: 5
     resend_interval: 60s
@@ -525,7 +533,7 @@ identity:
     hourly_per_ip: 30
   oauth:
     auto_provision: false
-    providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, scopes}]
+    providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, userinfo_url, redirect_uri, scopes, subject_field}]
 ```
 
 ### 10.2 校验规则
@@ -591,6 +599,7 @@ identity:
 | A | `DELETE /admin/v1/auth/sessions/{id}` | Bearer | 撤销指定会话 |
 | A | `POST /admin/v1/auth/sessions/revoke-all` | Bearer | 撤销全部会话 |
 | C | `POST /c/v1/auth/sms/send` | 无 | 发送验证码 |
+| C | `POST /c/v1/auth/oauth/{provider}/authorize` | 无 | 发起授权，返回 state 与授权地址 |
 | C | `POST /c/v1/auth/oauth/{provider}/callback` | 无 | 授权码回调 |
 
 ### 12.2 请求 / 响应约束
@@ -754,5 +763,5 @@ internal/identity/
 | 1 账号域 | 已完成 |
 | 2 令牌闭环 | 已完成 |
 | 3 MFA | 已完成 |
-| 4 C 端 | 待做 |
+| 4 C 端 | 已完成 |
 | 5 收口 | 待做 |

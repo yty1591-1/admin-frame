@@ -144,9 +144,12 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	}
 	actorType := cfg.ActorType
 	if actorType == "" {
-		if cfg.Channel == domain.ChannelBiz {
+		switch cfg.Channel {
+		case domain.ChannelBiz:
 			actorType = "merchant_staff"
-		} else {
+		case domain.ChannelC:
+			actorType = "consumer"
+		default:
 			actorType = "staff"
 		}
 	}
@@ -281,16 +284,80 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 			MFATicket:   ticket.Ticket,
 		}, nil
 	}
-	if err := s.guard.RecordSuccess(ctx, account, in.IPHash, in.UAHash, now); err != nil {
+	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+}
+
+// VerifiedLoginInput 是外部验证（短信验证码 / OAuth）通过后的登录入参。
+type VerifiedLoginInput struct {
+	// AccountID 已通过外部验证的账号主键。
+	AccountID string
+	// IPHash / UAHash 客户端摘要；由 transport 计算。
+	IPHash string
+	UAHash string
+	// TraceID 请求关联 ID。
+	TraceID string
+}
+
+// CompleteVerifiedLogin 在短信 / OAuth 外部验证通过后完成登录。
+//
+// 只接受本端别账号；锁定 / 停用与密码登录一致地返回 40100 并记录失败。
+// C 端不触发 MFA。
+func (s *AuthService) CompleteVerifiedLogin(ctx context.Context, in VerifiedLoginInput) (LoginResult, error) {
+	accountID := strings.TrimSpace(in.AccountID)
+	if accountID == "" {
+		return LoginResult{}, invalidCredentials()
+	}
+	now := s.clock.Now().UTC()
+	account, err := s.accounts.FindByID(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return LoginResult{}, invalidCredentials()
+		}
+		return LoginResult{}, apperr.Internal("load account failed", err)
+	}
+	if account.Channel != s.channel {
+		// 外部验证结果只能登录其所属端别的账号，避免跨端提权。
+		return LoginResult{}, invalidCredentials()
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		reason := reasonFromAuthError(err)
+		if recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now); recordErr != nil {
+			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
+		}
+		_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+			audit.OutcomeFailure, reason, in.TraceID, nil)
+		return LoginResult{}, err
+	}
+	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+}
+
+// completeLogin 完成已通过主体验证的登录收口：激活 pending、记录成功、创建会话与审计。
+//
+// 调用方必须已完成 guard.Authorize；MFA 挑战由密码登录在调用前处理。
+func (s *AuthService) completeLogin(
+	ctx context.Context,
+	account *domain.Account,
+	now time.Time,
+	ipHash, uaHash, traceID string,
+) (LoginResult, error) {
+	if account.Status == domain.AccountStatusPending {
+		expected := account.Version
+		if activateErr := account.Activate(now); activateErr != nil {
+			return LoginResult{}, activateErr
+		}
+		if saveErr := s.accounts.Save(ctx, account, expected); saveErr != nil {
+			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
+		}
+	}
+	if err := s.guard.RecordSuccess(ctx, account, ipHash, uaHash, now); err != nil {
 		return LoginResult{}, apperr.Internal("record login success failed", err)
 	}
-
 	result, err := s.createSession(ctx, account, now)
 	if err != nil {
 		return LoginResult{}, err
 	}
 	if err := s.emitAudit(ctx, audit.ActionAuthLogin, account.ID, account.MerchantID, "session", result.SessionID,
-		audit.OutcomeSuccess, "", in.TraceID, nil); err != nil {
+		audit.OutcomeSuccess, "", traceID, nil); err != nil {
 		return LoginResult{}, err
 	}
 	return result, nil

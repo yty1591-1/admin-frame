@@ -185,6 +185,45 @@ func TestPrefixApplied(t *testing.T) {
 	}
 }
 
+func TestCacheIncr(t *testing.T) {
+	mr, c := startMini(t)
+	ctx := context.Background()
+	cacheStore := c.Cache()
+
+	for want := int64(1); want <= 3; want++ {
+		got, err := cacheStore.Incr(ctx, "cnt", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("got=%d want=%d", got, want)
+		}
+	}
+	if ttl := mr.TTL("test:admin:cache:cnt"); ttl != time.Minute {
+		t.Fatalf("ttl=%v want 1m", ttl)
+	}
+	// 已存在的 key 不重置 TTL。
+	mr.FastForward(30 * time.Second)
+	if _, err := cacheStore.Incr(ctx, "cnt", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if ttl := mr.TTL("test:admin:cache:cnt"); ttl != 30*time.Second {
+		t.Fatalf("ttl=%v want 30s", ttl)
+	}
+	if _, err := cacheStore.Incr(ctx, "cnt", 0); !errors.Is(err, redis.ErrInvalidConfig) {
+		t.Fatalf("ttl err=%v", err)
+	}
+	if _, err := cacheStore.Incr(ctx, "", time.Minute); !errors.Is(err, redis.ErrInvalidConfig) {
+		t.Fatalf("key err=%v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cacheStore.Incr(ctx, "cnt", time.Minute); !errors.Is(err, redis.ErrClosed) {
+		t.Fatalf("closed err=%v", err)
+	}
+}
+
 func TestCacheStoreAdapter(t *testing.T) {
 	_, c := startMini(t)
 	ctx := context.Background()

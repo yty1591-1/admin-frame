@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -61,6 +62,14 @@ const (
 	IdentityRevocationDriverRedis = "redis"
 )
 
+// 短信驱动（identity.sms.driver）。
+const (
+	// IdentitySMSDriverMemory 进程内驱动，仅用于 local / dev / test。
+	IdentitySMSDriverMemory = "memory"
+	// IdentitySMSDriverAliyun 阿里云短信驱动。
+	IdentitySMSDriverAliyun = "aliyun"
+)
+
 // IdentityConfig 是身份域认证参数（docs/identity-authn.md §10）。
 //
 // 默认 enabled=false：未显式开启时保持「只有验签」的既有行为，升级不改变鉴权来源。
@@ -81,6 +90,66 @@ type IdentityConfig struct {
 	LoginRateLimit IdentityLoginRateLimitConfig `yaml:"login_rate_limit"`
 	// MFA A 端多因素认证参数。
 	MFA IdentityMFAConfig `yaml:"mfa"`
+	// SMS C 端短信验证码参数。
+	SMS IdentitySMSConfig `yaml:"sms"`
+	// OAuth C 端第三方授权参数。
+	OAuth IdentityOAuthConfig `yaml:"oauth"`
+}
+
+// IdentitySMSConfig 是 C 端短信验证码参数（docs/identity-authn.md §8.1 / §10）。
+type IdentitySMSConfig struct {
+	// Enabled 是否启用短信验证码发送端点；仅 C 端允许开启。
+	Enabled bool `yaml:"enabled"`
+	// Driver 短信驱动：memory（本地/测试）| aliyun；生产禁止 memory。
+	Driver string `yaml:"driver"`
+	// TemplateID 厂商模板编码；启用时必填。
+	TemplateID string `yaml:"template_id"`
+	// SignName 短信签名；国际短信可为空。
+	SignName string `yaml:"sign_name"`
+	// Locale 语言/地区提示（如 zh-CN）。
+	Locale string `yaml:"locale"`
+	// CodeTTL 验证码有效期，默认 5m，上限 15m。
+	CodeTTL time.Duration `yaml:"code_ttl"`
+	// MaxAttempts 单个验证码允许的最大错误次数，默认 5。
+	MaxAttempts int `yaml:"max_attempts"`
+	// ResendInterval 同一手机号最小重发间隔，默认 60s。
+	ResendInterval time.Duration `yaml:"resend_interval"`
+	// DailyPerPhone 同一手机号每日发送上限，默认 10。
+	DailyPerPhone int `yaml:"daily_per_phone"`
+	// HourlyPerIP 同一 IP 每小时发送上限，默认 30。
+	HourlyPerIP int `yaml:"hourly_per_ip"`
+}
+
+// IdentityOAuthConfig 是 C 端 OAuth 授权码登录参数（docs/identity-authn.md §8.2 / §10）。
+type IdentityOAuthConfig struct {
+	// AutoProvision 未映射身份是否自动建号；默认关闭（失败关闭）。
+	AutoProvision bool `yaml:"auto_provision"`
+	// Providers 已配置的第三方身份提供方；为空时不注册 OAuth 路由。
+	Providers []IdentityOAuthProviderConfig `yaml:"providers"`
+}
+
+// IdentityOAuthProviderConfig 是单个 OAuth2 提供方参数。
+//
+// client_secret 只来自环境变量（由 ClientSecretEnv 指定变量名），禁止写入 YAML。
+type IdentityOAuthProviderConfig struct {
+	// Name 提供方名，写入路由与映射表；小写字母开头，允许 [a-z0-9_-]。
+	Name string `yaml:"name"`
+	// ClientID OAuth2 客户端 ID。
+	ClientID string `yaml:"client_id"`
+	// ClientSecretEnv 保存 client_secret 的环境变量名。
+	ClientSecretEnv string `yaml:"client_secret_env"`
+	// AuthURL 授权端点。
+	AuthURL string `yaml:"auth_url"`
+	// TokenURL 令牌端点。
+	TokenURL string `yaml:"token_url"`
+	// UserInfoURL 用户信息端点，用于读取外部主体标识。
+	UserInfoURL string `yaml:"userinfo_url"`
+	// RedirectURI 回调地址，须与 IdP 登记一致。
+	RedirectURI string `yaml:"redirect_uri"`
+	// Scopes 授权范围。
+	Scopes []string `yaml:"scopes"`
+	// SubjectField userinfo JSON 中主体标识字段名，默认 sub。
+	SubjectField string `yaml:"subject_field"`
 }
 
 // identityDefaultMFAIssuer 与 internal/identity/app.DefaultMFAIssuer 保持一致。
@@ -601,8 +670,29 @@ func (c Config) LogValue() slog.Value {
 				slog.String("issuer", c.Identity.MFA.Issuer),
 				slog.Bool("secret_key_configured", strings.TrimSpace(c.Identity.MFA.SecretKey) != ""),
 			),
+			slog.Group("sms",
+				slog.Bool("enabled", c.Identity.SMS.Enabled),
+				slog.String("driver", c.Identity.SMS.Driver),
+				slog.String("template_id", c.Identity.SMS.TemplateID),
+				slog.Duration("code_ttl", c.Identity.SMS.CodeTTL),
+				slog.Int("max_attempts", c.Identity.SMS.MaxAttempts),
+			),
+			slog.Group("oauth",
+				slog.Bool("auto_provision", c.Identity.OAuth.AutoProvision),
+				slog.Int("providers", len(c.Identity.OAuth.Providers)),
+				slog.Any("provider_names", oauthProviderNames(c.Identity.OAuth.Providers)),
+			),
 		),
 	)
+}
+
+// oauthProviderNames 返回 provider 名称列表，供日志输出（不含任何密钥）。
+func oauthProviderNames(providers []IdentityOAuthProviderConfig) []string {
+	names := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		names = append(names, provider.Name)
+	}
+	return names
 }
 
 // maskIfSet 在取值非空时返回占位符，避免泄露“密钥是否存在”以外的信息。
@@ -811,6 +901,29 @@ func (c *Config) applyIdentityDefaults() {
 	}
 	if c.Identity.MFA.Issuer == "" {
 		c.Identity.MFA.Issuer = identityDefaultMFAIssuer
+	}
+	if c.Identity.SMS.Driver == "" {
+		c.Identity.SMS.Driver = IdentitySMSDriverMemory
+	}
+	if c.Identity.SMS.CodeTTL == 0 {
+		c.Identity.SMS.CodeTTL = 5 * time.Minute
+	}
+	if c.Identity.SMS.MaxAttempts == 0 {
+		c.Identity.SMS.MaxAttempts = 5
+	}
+	if c.Identity.SMS.ResendInterval == 0 {
+		c.Identity.SMS.ResendInterval = time.Minute
+	}
+	if c.Identity.SMS.DailyPerPhone == 0 {
+		c.Identity.SMS.DailyPerPhone = 10
+	}
+	if c.Identity.SMS.HourlyPerIP == 0 {
+		c.Identity.SMS.HourlyPerIP = 30
+	}
+	for i := range c.Identity.OAuth.Providers {
+		if strings.TrimSpace(c.Identity.OAuth.Providers[i].SubjectField) == "" {
+			c.Identity.OAuth.Providers[i].SubjectField = "sub"
+		}
 	}
 }
 
@@ -1263,9 +1376,9 @@ func (c *Config) validateIdentity() []error {
 	if c.Auth.effectiveMode(c.Env) != AuthModeJWT {
 		errs = append(errs, errors.New("auth.mode must be jwt when identity.enabled=true"))
 	}
-	if c.Channel != "admin" && c.Channel != "biz" {
-		// C 端登录属于阶段 4；worker 不提供认证 transport。
-		errs = append(errs, errors.New("identity.enabled is only supported on channel=admin or biz"))
+	if c.Channel != "admin" && c.Channel != "biz" && c.Channel != "c" {
+		// worker 不提供认证 transport；C 端登录自阶段 4 起纳入。
+		errs = append(errs, errors.New("identity.enabled is only supported on channel=admin, biz or c"))
 	}
 	if c.Identity.AccessTTL < 5*time.Minute || c.Identity.AccessTTL > time.Hour {
 		errs = append(errs, errors.New("identity.access_ttl must be in [5m, 1h]"))
@@ -1310,21 +1423,151 @@ func (c *Config) validateIdentity() []error {
 	if c.Identity.LoginRateLimit.Burst < 1 {
 		errs = append(errs, errors.New("identity.login_rate_limit.burst must be >= 1"))
 	}
-	if isProdLikeEnv(c.Env) && !c.Identity.MFA.AdminRequired {
-		errs = append(errs, errors.New("identity.mfa.admin_required must be true in prod/staging"))
-	}
-	if c.Identity.MFA.AdminRequired {
-		key, err := c.Identity.MFA.DecodeSecretKey()
-		if err != nil {
-			errs = append(errs, err)
-		} else if key == nil {
-			errs = append(errs, errors.New("identity.mfa.secret_key is required when identity.mfa.admin_required=true"))
+	if c.Channel != "c" {
+		// MFA 只属于 A/B 端；C 端没有 TOTP 绑定，不参与强制校验。
+		if isProdLikeEnv(c.Env) && !c.Identity.MFA.AdminRequired {
+			errs = append(errs, errors.New("identity.mfa.admin_required must be true in prod/staging"))
+		}
+		if c.Identity.MFA.AdminRequired {
+			key, err := c.Identity.MFA.DecodeSecretKey()
+			if err != nil {
+				errs = append(errs, err)
+			} else if key == nil {
+				errs = append(errs, errors.New("identity.mfa.secret_key is required when identity.mfa.admin_required=true"))
+			}
 		}
 	}
 	if strings.TrimSpace(c.Identity.MFA.Issuer) == "" {
 		errs = append(errs, errors.New("identity.mfa.issuer must not be empty"))
 	}
+	errs = append(errs, c.validateIdentitySMS()...)
+	errs = append(errs, c.validateIdentityOAuth()...)
 	return errs
+}
+
+// validateIdentitySMS 校验短信验证码参数（docs/identity-authn.md §8.1 / §10.2）。
+func (c *Config) validateIdentitySMS() []error {
+	sms := c.Identity.SMS
+	var errs []error
+	if sms.Enabled && c.Channel != "c" {
+		errs = append(errs, errors.New("identity.sms.enabled is only supported on channel=c"))
+	}
+	// 空值等价于默认 memory（与 applyIdentityDefaults 保持一致）。
+	driver := sms.Driver
+	if driver == "" {
+		driver = IdentitySMSDriverMemory
+	}
+	switch driver {
+	case IdentitySMSDriverMemory, IdentitySMSDriverAliyun:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.sms.driver: %s", sms.Driver))
+	}
+	if !sms.Enabled {
+		return errs
+	}
+	if strings.TrimSpace(sms.TemplateID) == "" {
+		errs = append(errs, errors.New("identity.sms.template_id is required when identity.sms.enabled=true"))
+	}
+	if sms.CodeTTL <= 0 || sms.CodeTTL > 15*time.Minute {
+		errs = append(errs, errors.New("identity.sms.code_ttl must be in (0, 15m]"))
+	}
+	if sms.MaxAttempts < 1 || sms.MaxAttempts > 10 {
+		errs = append(errs, errors.New("identity.sms.max_attempts must be in [1, 10]"))
+	}
+	if sms.ResendInterval <= 0 || sms.ResendInterval > sms.CodeTTL {
+		errs = append(errs, errors.New("identity.sms.resend_interval must be in (0, identity.sms.code_ttl]"))
+	}
+	if sms.DailyPerPhone < 1 {
+		errs = append(errs, errors.New("identity.sms.daily_per_phone must be >= 1"))
+	}
+	if sms.HourlyPerIP < 1 {
+		errs = append(errs, errors.New("identity.sms.hourly_per_ip must be >= 1"))
+	}
+	if isProdLikeEnv(c.Env) && driver == IdentitySMSDriverMemory {
+		errs = append(errs, errors.New("identity.sms.driver must not be memory in prod/staging"))
+	}
+	return errs
+}
+
+// validateIdentityOAuth 校验 OAuth 提供方参数（docs/identity-authn.md §8.2 / §10.2）。
+func (c *Config) validateIdentityOAuth() []error {
+	providers := c.Identity.OAuth.Providers
+	var errs []error
+	if len(providers) > 0 && c.Channel != "c" {
+		errs = append(errs, errors.New("identity.oauth.providers is only supported on channel=c"))
+	}
+	if c.Channel == "c" && isProdLikeEnv(c.Env) &&
+		!c.Identity.SMS.Enabled && len(providers) == 0 {
+		errs = append(errs, errors.New("channel=c requires identity.sms.enabled or at least one identity.oauth.providers in prod/staging"))
+	}
+	seen := make(map[string]struct{}, len(providers))
+	for i, provider := range providers {
+		path := fmt.Sprintf("identity.oauth.providers[%d]", i)
+		name := strings.TrimSpace(provider.Name)
+		if !isOAuthProviderName(name) {
+			errs = append(errs, fmt.Errorf("%s.name must match ^[a-z][a-z0-9_-]{1,31}$", path))
+		} else if _, dup := seen[name]; dup {
+			errs = append(errs, fmt.Errorf("%s.name %q is duplicated", path, name))
+		}
+		seen[name] = struct{}{}
+		if strings.TrimSpace(provider.ClientID) == "" {
+			errs = append(errs, fmt.Errorf("%s.client_id is required", path))
+		}
+		if strings.TrimSpace(provider.ClientSecretEnv) == "" {
+			errs = append(errs, fmt.Errorf("%s.client_secret_env is required", path))
+		}
+		if strings.TrimSpace(provider.RedirectURI) == "" {
+			errs = append(errs, fmt.Errorf("%s.redirect_uri is required", path))
+		}
+		for field, raw := range map[string]string{
+			"auth_url":     provider.AuthURL,
+			"token_url":    provider.TokenURL,
+			"userinfo_url": provider.UserInfoURL,
+			"redirect_uri": provider.RedirectURI,
+		} {
+			if err := validateAbsoluteURL(raw, isProdLikeEnv(c.Env)); err != nil {
+				errs = append(errs, fmt.Errorf("%s.%s: %w", path, field, err))
+			}
+		}
+	}
+	return errs
+}
+
+// isOAuthProviderName 校验 provider 名：小写字母开头，允许 [a-z0-9_-]，长度 2-32。
+func isOAuthProviderName(name string) bool {
+	if len(name) < 2 || len(name) > 32 {
+		return false
+	}
+	if name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		ch := name[i]
+		if ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// validateAbsoluteURL 校验绝对 URL；requireHTTPS 为 true 时只接受 https。
+func validateAbsoluteURL(raw string, requireHTTPS bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if requireHTTPS {
+			return errors.New("must use https in prod/staging")
+		}
+		return nil
+	default:
+		return errors.New("scheme must be http or https")
+	}
 }
 
 // validateAsync 校验异步运行时配置；未启用时只校验显式越界值。

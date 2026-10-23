@@ -67,6 +67,16 @@ type MFAEnrollmentRepository interface {
 	Delete(ctx context.Context, accountID string) error
 }
 
+// OAuthIdentityRepository 是外部身份映射的持久化端口。
+//
+// 唯一约束为 (provider, provider_subject)：同一提供方主体只能映射一个账号。
+type OAuthIdentityRepository interface {
+	// FindByProviderSubject 按提供方 + 主体标识加载映射；不存在返回 apperr.NotFound。
+	FindByProviderSubject(ctx context.Context, provider, subject string) (*OAuthIdentity, error)
+	// Save 创建映射；唯一键冲突返回 apperr.Conflict。
+	Save(ctx context.Context, identity *OAuthIdentity) error
+}
+
 // LoginAttemptRepository 是登录尝试记录的持久化端口。
 //
 // 只追加，不更新：失败计数与审计关联都以历史记录为准；

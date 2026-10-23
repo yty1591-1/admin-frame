@@ -300,6 +300,99 @@ func TestAuthServiceLogin(t *testing.T) {
 	})
 }
 
+func TestAuthServiceCompleteVerifiedLogin(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("pending_account_activated_and_session_created", func(t *testing.T) {
+		f := newAuthFixture(t, domain.ChannelC)
+		f.seedAccount(t, "acct-c1", "phone:hash", "unused")
+
+		result, err := f.svc.CompleteVerifiedLogin(ctx, app.VerifiedLoginInput{
+			AccountID: "acct-c1",
+			IPHash:    app.HashClientRef("127.0.0.1"),
+			UAHash:    app.HashClientRef("ua"),
+			TraceID:   "trace-sms",
+		})
+		if err != nil {
+			t.Fatalf("complete verified login: %v", err)
+		}
+		if result.MFARequired || result.MFATicket != "" {
+			t.Fatalf("channel c must not require mfa: %+v", result)
+		}
+		if result.AccessToken == "" || result.RefreshToken == "" || result.SessionID == "" {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		loaded, err := f.accounts.FindByID(ctx, "acct-c1")
+		if err != nil {
+			t.Fatalf("load account: %v", err)
+		}
+		if loaded.Status != domain.AccountStatusActive {
+			t.Fatalf("status = %s, want active", loaded.Status)
+		}
+		session := f.sessionOf(t, result.SessionID)
+		if !session.IsActive(f.clock.Now()) || session.RefreshHash != result.RefreshHash {
+			t.Fatalf("unexpected session: %+v", session)
+		}
+	})
+
+	t.Run("locked_and_disabled_rejected", func(t *testing.T) {
+		f := newAuthFixture(t, domain.ChannelC)
+		locked := f.seedAccount(t, "acct-locked", "phone:locked", "unused")
+		if err := locked.Activate(f.clock.Now()); err != nil {
+			t.Fatalf("activate: %v", err)
+		}
+		if err := f.accounts.Save(ctx, locked, locked.Version-1); err != nil {
+			t.Fatalf("save active: %v", err)
+		}
+		if err := locked.Lock(f.clock.Now().Add(15*time.Minute), f.clock.Now()); err != nil {
+			t.Fatalf("lock: %v", err)
+		}
+		if err := f.accounts.Save(ctx, locked, locked.Version-1); err != nil {
+			t.Fatalf("save locked: %v", err)
+		}
+
+		disabled := f.seedAccount(t, "acct-disabled", "phone:disabled", "unused")
+		if err := disabled.Disable(f.clock.Now()); err != nil {
+			t.Fatalf("disable: %v", err)
+		}
+		if err := f.accounts.Save(ctx, disabled, disabled.Version-1); err != nil {
+			t.Fatalf("save disabled: %v", err)
+		}
+
+		for _, id := range []string{"acct-locked", "acct-disabled"} {
+			_, err := f.svc.CompleteVerifiedLogin(ctx, app.VerifiedLoginInput{AccountID: id, TraceID: "trace-denied"})
+			requireAppCode(t, err, apperr.CodeUnauthorized)
+			sessions, listErr := f.sessions.ListByAccount(ctx, id)
+			if listErr != nil {
+				t.Fatalf("list sessions: %v", listErr)
+			}
+			if len(sessions) != 0 {
+				t.Fatalf("%s: rejected login must not create sessions", id)
+			}
+		}
+	})
+
+	t.Run("missing_or_cross_channel_account_rejected", func(t *testing.T) {
+		f := newAuthFixture(t, domain.ChannelC)
+		adminAccount, err := domain.NewAccount(domain.NewAccountParams{
+			ID: "acct-admin", Channel: domain.ChannelAdmin, Subject: "alice", Now: f.clock.Now(),
+		})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := f.accounts.Save(ctx, adminAccount, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+
+		_, err = f.svc.CompleteVerifiedLogin(ctx, app.VerifiedLoginInput{AccountID: "missing", TraceID: "trace-missing"})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		_, err = f.svc.CompleteVerifiedLogin(ctx, app.VerifiedLoginInput{AccountID: "acct-admin", TraceID: "trace-cross"})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		_, err = f.svc.CompleteVerifiedLogin(ctx, app.VerifiedLoginInput{AccountID: " ", TraceID: "trace-empty"})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+	})
+}
+
 func TestAuthServiceRefreshRotatesAndRevokesReplay(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin)

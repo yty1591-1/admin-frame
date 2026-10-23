@@ -4,11 +4,17 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/http"
 	"os"
+	"sync"
 
+	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+
 	// 注册全部云存储驱动；C 端如需独立裁剪可只 import 所需驱动。
 	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
+	// 注册阿里云短信驱动，供 identity.sms.driver=aliyun 使用。
+	_ "github.com/admin-frame/admin-frame/pkg/sms/aliyun"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -28,10 +34,38 @@ func main() {
 }
 
 // run 只做装配声明；平台生命周期由 platform.Run 统一负责。
+//
+// 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
+// （NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
+	var (
+		identityOnce sync.Once
+		identityRT   *identityruntime.Runtime
+		identityErr  error
+	)
+	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
+		identityOnce.Do(func() { identityRT, identityErr = identityruntime.New(deps) })
+		return identityRT, identityErr
+	}
 	return platform.Run(context.Background(), platform.Options{
 		ConfigPath: configPath,
 		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
-		Register:   registerRoutes,
+		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
+			built, err := buildIdentity(deps)
+			if err != nil {
+				return nil, err
+			}
+			if built == nil || built.Checker == nil {
+				return nil, nil
+			}
+			return built.Checker, nil
+		},
+		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
+			built, err := buildIdentity(deps)
+			if err != nil {
+				return err
+			}
+			return registerRoutes(deps, mux, built)
+		},
 	})
 }

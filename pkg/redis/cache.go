@@ -72,6 +72,35 @@ func (c *Cache) SetNX(ctx context.Context, key string, value []byte, ttl time.Du
 	return ok, nil
 }
 
+// incrScript 在 key 首次创建时设置过期时间，保证计数窗口不会永不过期。
+//
+// INCR 与 PEXPIRE 在同一脚本内执行，避免进程中断导致无过期键。
+var incrScript = goredis.NewScript(`
+local v = redis.call('INCR', KEYS[1])
+if v == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return v
+`)
+
+// Incr 原子自增计数；key 首次创建时设置 ttl（必须 >0），否则保留原 TTL。
+func (c *Cache) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	if err := c.ready(); err != nil {
+		return 0, err
+	}
+	if key == "" {
+		return 0, fmt.Errorf("%w: cache key is required", ErrInvalidConfig)
+	}
+	if ttl <= 0 {
+		return 0, fmt.Errorf("%w: cache ttl must be > 0", ErrInvalidConfig)
+	}
+	val, err := incrScript.Run(ctx, c.client.rdb, []string{c.full(key)}, ttl.Milliseconds()).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis: cache incr: %w", err)
+	}
+	return val, nil
+}
+
 // Delete 删除一个或多个业务 key（自动加前缀）。
 func (c *Cache) Delete(ctx context.Context, keys ...string) error {
 	if err := c.ready(); err != nil {

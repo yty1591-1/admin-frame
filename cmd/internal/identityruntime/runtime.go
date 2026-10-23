@@ -1,4 +1,4 @@
-// Package identityruntime 负责身份域在 admin-api / biz-api 进程内的统一装配。
+// Package identityruntime 负责身份域在 admin-api / biz-api / c-api 进程内的统一装配。
 //
 // 装配顺序固定为：仓储 → 撤销存储 → 凭据 / 守卫 → 令牌签发 → 用例 → HTTP Handler。
 // NewSessionValidator 与 Register 必须复用同一实例，否则撤销检查读取的账号状态
@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -33,6 +34,8 @@ type Runtime struct {
 	Checker *app.RevocationChecker
 	// Handler 供各端 transport 注册认证路由；identity.enabled=false 时为 nil。
 	Handler *rest.Handler
+	// CHandler 供 C 端注册短信 / OAuth 登录路由；非 C 端或未启用时为 nil。
+	CHandler *identityc.Handler
 }
 
 // New 按配置装配身份域；identity.enabled=false 时返回空运行时（保持只验签）。
@@ -44,13 +47,15 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if !cfg.Identity.Enabled {
 		return &Runtime{}, nil
 	}
-	if cfg.Channel != string(domain.ChannelAdmin) && cfg.Channel != string(domain.ChannelBiz) {
-		// 配置校验已拒绝非 A/B 端启用，这里再兜底一次，防止绕过校验的装配路径。
-		return nil, apperr.Internal("identity is only supported on admin/biz channel", nil)
+	if cfg.Channel != string(domain.ChannelAdmin) &&
+		cfg.Channel != string(domain.ChannelBiz) &&
+		cfg.Channel != string(domain.ChannelC) {
+		// 配置校验已拒绝非 A/B/C 端启用，这里再兜底一次，防止绕过校验的装配路径。
+		return nil, apperr.Internal("identity is only supported on admin/biz/c channel", nil)
 	}
 	channel := domain.Channel(cfg.Channel)
 
-	accounts, credentials, sessions, attempts, mfa, err := buildRepositories(deps)
+	accounts, credentials, sessions, attempts, mfa, oauthIdentities, err := buildRepositories(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -58,13 +63,20 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	mfaCipher, err := buildMFACipher(cfg)
-	if err != nil {
-		return nil, err
-	}
-	tickets, err := buildMFATicketStore(deps)
-	if err != nil {
-		return nil, err
+	// C 端不使用 MFA：跳过密文与票据装配，避免本地无 Redis 时启动失败。
+	var (
+		mfaCipher *crypto.AEAD
+		tickets   app.MFATicketStore
+	)
+	if channel != domain.ChannelC {
+		mfaCipher, err = buildMFACipher(cfg)
+		if err != nil {
+			return nil, err
+		}
+		tickets, err = buildMFATicketStore(deps)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hasher, err := password.New(password.Config{})
@@ -121,6 +133,11 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("identity revocation checker: %w", err)
 	}
 
+	mfaAdminRequired := cfg.Identity.MFA.AdminRequired
+	if channel == domain.ChannelC {
+		mfaAdminRequired = false
+	}
+
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
 		Accounts:         accounts,
 		Credentials:      credentials,
@@ -138,7 +155,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		MFACipher:        mfaCipher,
 		MFATickets:       tickets,
 		MFAIssuer:        cfg.Identity.MFA.Issuer,
-		MFAAdminRequired: cfg.Identity.MFA.AdminRequired,
+		MFAAdminRequired: mfaAdminRequired,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity auth service: %w", err)
@@ -149,8 +166,17 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("identity handler: %w", err)
 	}
 
+	runtime := &Runtime{Checker: checker, Handler: handler}
+	if channel == domain.ChannelC {
+		cHandler, cErr := buildChannelC(deps, cfg, accounts, oauthIdentities, guard, authSvc, handler)
+		if cErr != nil {
+			return nil, cErr
+		}
+		runtime.CHandler = cHandler
+	}
+
 	registerHealth(deps)
-	return &Runtime{Checker: checker, Handler: handler}, nil
+	return runtime, nil
 }
 
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
@@ -160,6 +186,7 @@ func buildRepositories(deps *platform.Deps) (
 	domain.SessionRepository,
 	domain.LoginAttemptRepository,
 	domain.MFAEnrollmentRepository,
+	domain.OAuthIdentityRepository,
 	error,
 ) {
 	if deps.Database == nil {
@@ -168,6 +195,7 @@ func buildRepositories(deps *platform.Deps) (
 			persistence.NewMemorySessionRepository(),
 			persistence.NewMemoryLoginAttemptRepository(),
 			persistence.NewMemoryMFAEnrollmentRepository(),
+			persistence.NewMemoryOAuthIdentityRepository(),
 			nil
 	}
 	sqlDB := deps.Database.SQL()
@@ -176,6 +204,7 @@ func buildRepositories(deps *platform.Deps) (
 		persistence.NewSQLSessionRepository(sqlDB),
 		persistence.NewSQLLoginAttemptRepository(sqlDB),
 		persistence.NewSQLMFAEnrollmentRepository(sqlDB),
+		persistence.NewSQLOAuthIdentityRepository(sqlDB),
 		nil
 }
 

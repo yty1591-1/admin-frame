@@ -137,6 +137,48 @@ components:
           type: integer
           minimum: 1
           description: 访问令牌有效期（秒）
+    SMSSendRequest:
+      type: object
+      required: [phone]
+      additionalProperties: false
+      description: |
+        发送短信验证码请求。手机号必须为 E.164；无论账号是否存在都返回 204，
+        防止手机号枚举。受重发间隔、单手机号日限与单 IP 时限约束（超限 42900）。
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{2,14}$'
+          example: "+8613800138000"
+    SMSLoginRequest:
+      type: object
+      required: [phone, code]
+      additionalProperties: false
+      description: |
+        短信验证码登录请求。验证码 6 位数字，有效期与最大错误次数由服务端配置；
+        验证码错误、过期与账号不存在统一返回 40100。
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{2,14}$'
+          example: "+8613800138000"
+        code:
+          type: string
+          pattern: '^\d{6}$'
+          example: "123456"
+    OAuthAuthorizeResult:
+      type: object
+      required: [authorize_url, state]
+      additionalProperties: false
+      description: 授权发起结果；`state` 一次性有效，回调必须原样带回。
+      properties:
+        authorize_url:
+          type: string
+          format: uri
+          description: 第三方授权地址（含 PKCE S256 challenge）
+        state:
+          type: string
+          minLength: 1
+          description: 一次性 state，禁止复用或写入日志
     MFAChallenge:
       type: object
       required: [mfa_required, mfa_ticket]
