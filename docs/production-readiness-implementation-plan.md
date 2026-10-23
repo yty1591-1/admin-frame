@@ -276,24 +276,26 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 ### ENT-01 身份闭环：账号域与令牌生命周期
 
+**状态**：`进行中（2026-10-23，拆解完成）`；领域模型、令牌与撤销语义、配置与迁移编号详见 [`identity-authn.md`](./identity-authn.md)。
+
 **目标**：让平台能接入真实用户，令牌可刷新、可撤销、可失效，A 端具备 MFA，三端身份严格隔离。
 
 **前置依赖**：`ENT-16` 前置切片（集成测试基座）、`ENT-02`（撤销状态需共享存储）。
 
 **任务分解**
 
-| 序号 | 任务 | 产出 | 验收要点 |
-|---|---|---|---|
-| T1 | 身份域建模 | `internal/identity/domain`：`Account`、`Credential`、`Session`、`MFAEnrollment`、状态机 | 状态迁移表驱动用例；禁用 / 锁定不可登录 |
-| T2 | 持久化 | `identity_account`、`identity_credential`、`identity_session`、`identity_mfa`、`identity_login_attempt`；迁移 `000009_create_identity_tables` | up/down 可执行；唯一键 `(channel, subject)`、`(account_id, jti)` |
-| T3 | 凭据与策略 | Argon2id（复用 `pkg/password`）、密码强度、失败锁定、登录限流 | 5 次失败锁定；统一错误文案；审计事件 |
-| T4 | 令牌签发 | Access JWT + 一次性 Refresh Token；claims `sub/aud/iss/exp/iat/jti/ver/channel/merchant_id` | 三端 issuer / audience / 密钥隔离；`kid` 支持轮换 |
-| T5 | 撤销 | Redis `authn:revoked:<jti>`（TTL = 剩余寿命）与 `authn:ver:<account_id>`；`security` 中间件注入 `RevocationChecker` | 禁用 / 登出 ≤ 60s 生效；Redis 不可用时按 `fail_closed` 返回 `50300` |
-| T6 | 认证端点 | A / B / C 三端 `login`、`refresh`、`logout`；A 端 `mfa/setup|verify`、`sessions` 列表与撤销 | OpenAPI 三端契约；刷新令牌一次性，重放触发全量撤销 |
-| T7 | C 端登录 | 短信验证码（复用 `pkg/sms`）+ OAuth / OIDC 回调；验证码哈希存储、尝试次数限制 | 防枚举、防刷；验证码 5 分钟过期 |
-| T8 | A 端 MFA 与 SSO | TOTP 绑定 / 校验；OIDC 接入预留（优先复用组织 IdP） | 未完成 MFA 不得获得管理令牌 |
-| T9 | 审计接入 | `authn.login.*`、`authn.logout`、`authn.token.refresh`、`authn.token.revoked`、`authn.mfa.bound` | 事件目录、字段、Outbox 事务 |
-| T10 | 与 IAM 边界 | 令牌只承载身份；角色 / 权限仍由 IAM `Authorizer` 解析 | 不在令牌中固化角色，避免撤销滞后 |
+| 序号 | 任务 | 产出 | 验收要点 | 阶段 |
+|---|---|---|---|---|
+| T1 | 身份域建模 | `internal/identity/domain`：`Account`、`Credential`、`Session`、`MFAEnrollment`、`LoginAttempt`、状态机 | 状态迁移表驱动用例；禁用 / 锁定不可登录 | 1 |
+| T2 | 持久化 | `identity_account`、`identity_credential`、`identity_session`、`identity_mfa`、`identity_login_attempt`、`identity_oauth_identity`；迁移 `000011_create_identity_tables`（`000009/000010` 已被 ENT-03 占用） | up/down 可执行；唯一键 `(channel, subject)`、`refresh_token_hash`、`(provider, provider_subject)` | 1 |
+| T3 | 凭据与策略 | Argon2id（复用 `pkg/password`）、密码强度、失败锁定、登录限流 | 5 次失败锁定；统一错误文案；审计事件 | 1 |
+| T4 | 令牌签发 | Access JWT + 一次性 Refresh Token；claims `sub/aud/iss/exp/iat/jti/ver/channel/merchant_id`；`pkg/jwt` 支持 `kid` 密钥环 | 三端 issuer / audience / 密钥隔离；`kid` 支持轮换，未知 `kid` 失败关闭 | 2 |
+| T5 | 撤销 | Redis `authn:revoked:<jti>`（TTL = 剩余寿命）与 `authn:ver:<account_id>`；`security` 中间件注入 `RevocationChecker` | 禁用 / 登出 ≤ 60s 生效；Redis 不可用时按 `fail_closed` 返回 `50300` | 2 |
+| T6 | 认证端点 | A / B / C 三端 `login`、`refresh`、`logout`；A 端 `mfa/setup|verify|disable`、`sessions` 列表与撤销 | OpenAPI 三端契约；刷新令牌一次性，重放触发全链撤销 | 2 / 4 |
+| T7 | C 端登录 | 短信验证码（复用 `pkg/sms`）+ OAuth / OIDC 回调；验证码哈希存储、尝试次数限制 | 防枚举、防刷；验证码 5 分钟过期 | 4 |
+| T8 | A 端 MFA 与 SSO | TOTP 绑定 / 校验（`pkg/totp`）；OIDC 接入预留（优先复用组织 IdP） | 未完成 MFA 不得获得管理令牌 | 3 |
+| T9 | 审计接入 | `auth.login`、`auth.logout`、`auth.token.refresh`、`auth.token.reused`、`auth.token.revoked`、`auth.mfa.bound`、`auth.account.locked` | 事件目录、字段、Outbox 事务 | 5 |
+| T10 | 与 IAM 边界 | 令牌只承载身份；角色 / 权限仍由 IAM `Authorizer` 解析；`Principal` 增补 `SessionID` / `TokenVersion` | 不在令牌中固化角色，避免撤销滞后 | 2 |
 
 **配置规划**
 
@@ -303,20 +305,28 @@ auth:
   expected_channel: admin
   jwt:
     alg: RS256
-    issuer: https://iam.example.com
+    issuer: https://identity.example.com
     audience: [admin]
     active_kid: "2026-10"
     leeway: 30s
+    keys:
+      - kid: "2026-10"
+        public_key_file: /etc/admin-frame/jwt-2026-10.pub.pem
+        private_key_file: /etc/admin-frame/jwt-2026-10.key.pem  # 仅签发进程挂载
 
 identity:
   enabled: true
   access_ttl: 15m
   refresh_ttl: 168h
+  session:
+    idle_timeout: 72h
+    max_per_account: 10
   revocation:
     driver: redis
     failure_mode: fail_closed     # fail_closed|fail_open
   password:
     min_length: 12
+    max_length: 128
     require_complexity: true
   lockout:
     max_failures: 5
@@ -324,9 +334,19 @@ identity:
     duration: 15m
   mfa:
     admin_required: true
+    issuer: AdminFrame
+    secret_key: ""                # 仅非生产；生产走 ENT-07 密钥托管
   login_rate_limit:
     rps: 1
     burst: 5
+  sms:
+    enabled: false
+    code_ttl: 5m
+    max_attempts: 5
+    resend_interval: 60s
+  oauth:
+    auto_provision: false
+    providers: []                 # [{name, client_id, client_secret_env, auth_url, token_url, scopes}]
 ```
 
 **验收与门禁**
@@ -830,7 +850,7 @@ deploy/helm/admin-frame/
 
 | 条目 | 需同步更新 |
 |---|---|
-| ENT-01 | `SECURITY_STANDARDS.md` §10.1、`API_STANDARDS.md`、`CONFIG_STANDARDS.md`、三端 OpenAPI、`docs/audit/EVENTS.md` |
+| ENT-01 | `identity-authn.md`、`SECURITY_STANDARDS.md` §10.1、`API_STANDARDS.md`、`CONFIG_STANDARDS.md`、三端 OpenAPI、`docs/audit/EVENTS.md` |
 | ENT-02 | `ARCHITECTURE.md` §11 / §18、`CONFIG_STANDARDS.md`、`RELIABILITY_STANDARDS.md`、部署清单 |
 | ENT-03 | `RELIABILITY_STANDARDS.md`、`ARCHITECTURE.md` §15、`docs/audit/EVENTS.md`、`pkg-roadmap.md` |
 | ENT-04 | `AUDIT_STANDARDS.md`、`docs/audit/FIELDS.md`、`docs/audit/EVENTS.md`、`API_STANDARDS.md` |
@@ -909,7 +929,7 @@ deploy/helm/admin-frame/
 
 | ID | 优先级 | 波次 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|---|
-| ENT-01 | P0 | Wave 1 | 待做 | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效 |
+| ENT-01 | P0 | Wave 1 | 进行中（2026-10-23，拆解完成） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；broker 仅预留接口 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
