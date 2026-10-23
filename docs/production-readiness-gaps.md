@@ -53,7 +53,7 @@
 |---|---|---|---|
 | `ENT-01` | 身份闭环缺失：无登录 / 刷新 / 登出 / 撤销 / 账号域 | 无法接入真实用户；令牌泄露只能等过期 | `internal/security/` 仅验签；全仓无身份令牌端点 |
 | `ENT-02` | ~~多实例语义未闭环~~ **已关闭（2026-10-22）** | NodeID 配置化、Redis 幂等 / 限流、worker 独立发布器 | `internal/platform/id.go`、`pkg/idempotency/redis.go`、`pkg/ratelimit/redis.go` |
-| `ENT-03` | 无通用异步基础设施：broker 只有内存实现，worker 仅为生命周期骨架 | 未来业务域无法可靠投递事件 / 任务 | `pkg/mq` 仅内存；`cmd/worker/main.go` |
+| `ENT-03` | ~~无通用异步基础设施~~ **已关闭（2026-10-22）** | 通用 Outbox / 消费运行时 / DLQ；IAM 已完成迁移 | `pkg/outbox`、`internal/platform/async.go`、`cmd/worker/main.go` |
 | `ENT-04` | 审计只写结构化日志，不可查询 / 保留 | 无法满足取证、合规与 180 天留存 | `internal/shared/audit/emitter.go:14`；`audit:read` 无查询端点 |
 | `ENT-05` | 无部署制品与环境基线 | 无法可重复部署、无法做资源与滚动安全 | `deploy/README.md:1-9` 仅说明文字 |
 | `ENT-06` | 告警规则 / 看板 / SLO 未代码化 | 只有告警目录，监控系统不会真正触发 | `docs/runbooks/ALERTS.md:5-17`；无 PrometheusRule / Grafana 文件 |
@@ -172,7 +172,8 @@
 
 - ~~Snowflake 节点号固定为 1~~：`cmd/internal/iamruntime/runtime.go` 与 IAM 用例已改为消费 `platform.Deps.IDs`，缺失即失败关闭；`internal/platform/id.go` 支持显式 NodeID 与 StatefulSet ordinal。
 - ~~限流为进程内令牌桶~~：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`rate_limit.driver=redis` 时两副本共享配额。
-- ~~IAM Outbox 发布器只在 API 进程内~~：`iam.outbox.publish_in_api` 控制 API 侧发布器，`cmd/worker` 已装配独立发布循环。
+- ~~IAM Outbox 发布器只在 API 进程内~~：ENT-03 起统一为平台事务性 Outbox（`async_outbox`），
+  `async.outbox.publish_in_api=false` 时仅 `cmd/worker` 的 `AsyncRuntime` 投递，IAM 指标由 Observer 映射。
 - ~~`pkg/idempotency` 无统一装配点~~：`internal/platform/pipeline.go` 在写方法前统一挂载，Redis Store 支持跨副本回放。
 
 **落地证据**
@@ -180,7 +181,7 @@
 - ID：`internal/platform/id.go`、`internal/platform/config.go`（`validateID`）、`platform.Deps.IDs`。
 - 幂等：`pkg/idempotency/redis.go`、`internal/platform/pipeline.go`（`newIdempotency`）。
 - 限流：`pkg/ratelimit/redis.go`、`pkg/middleware/ratelimit.go`（`Buckets` 接口）。
-- Outbox：`cmd/internal/iamruntime/outbox.go`、`cmd/worker/main.go`。
+- Outbox：`internal/platform/async.go`（`AsyncRuntime`）、`pkg/outbox`、`cmd/internal/iamruntime/runtime.go`（`RegisterAsync`）、`cmd/worker/main.go`。
 - 用例：`tests/integration/multiinstance/multiinstance_test.go`；门禁：`scripts/ci/check-idempotency.sh`。
 
 **验收标准**
@@ -197,7 +198,9 @@
 
 ### ENT-03 通用异步基础设施：Outbox、Broker 与消费运行时
 
-**现状证据**
+**状态**：`已关闭（2026-10-22，代码、门禁与真实 MySQL 集成用例闭环；broker 适配按 T7 仅预留接口）`
+
+**原缺口证据（已修复）**
 
 - `pkg/mq` 目前只有内存实现；`docs/pkg-roadmap.md:41` 明确 Kafka / NATS 尚未接入。
 - `cmd/worker/main.go` 当前为生命周期骨架（配置加载 + 信号退出 + 心跳），等待平台级异步运行时接入。
@@ -220,13 +223,25 @@
 
 **验收标准**
 
-- [ ] `AC-ENT-03-1`：示例业务域在「事务已提交、发布前」杀进程，重启后事件仍被投递。
-- [ ] `AC-ENT-03-2`：重复投递不产生重复副作用；消费幂等用例通过。
-- [ ] `AC-ENT-03-3`：毒消息进入 DLQ 并告警；积压 / 滞后指标可见。
-- [ ] `AC-ENT-03-4`：worker 可消费由 API 进程写入的事件（跨进程验证）。
-- [ ] `AC-ENT-03-5`：新增业务域接入异步能力不需要修改平台核心代码。
+- [x] `AC-ENT-03-1`：示例业务域在「事务已提交、发布前」杀进程，重启后事件仍被投递。
+  （`tests/integration/async/async_test.go:TestOutboxResumeAfterRestart`）
+- [x] `AC-ENT-03-2`：重复投递不产生重复副作用；消费幂等用例通过。
+  （`pkg/outbox/dedupe_test.go`、`TestOutboxConcurrentReplicasDeliverOnce`）
+- [x] `AC-ENT-03-3`：毒消息进入 DLQ 并告警；积压 / 滞后指标可见。
+  （`TestOutboxPermanentFailureWritesDLQ`、`TestOutboxRetryExhaustedWritesDLQ`、`internal/platform/async_metrics.go`）
+- [x] `AC-ENT-03-4`：worker 可消费由 API 进程写入的事件（跨进程验证）。
+  （`TestOutboxCrossProcessDelivery`，两条独立连接模拟 API / worker）
+- [x] `AC-ENT-03-5`：新增业务域接入异步能力不需要修改平台核心代码。
+  （`pkg/outbox/router_test.go`，仅 `Router.Register` 接入；platform 无业务分支）
 
-**门禁**：集成测试（真实 DB / broker）、`make check-observability`（积压指标断言）。
+**落地证据**
+
+- 运行时：`pkg/outbox`（Event / Store / MySQLStore / Relay / Router / Deduper / DeadLetterReplayer）、`internal/platform/async.go`（`AsyncRuntime`）。
+- 迁移：`migrations/000009_create_async_outbox.*`、`000010_migrate_iam_outbox.*`。
+- worker：`cmd/worker/main.go`（Relay 宿主 + `-replay-dlq`）。
+- IAM 迁移：`internal/iam/app/outbox.go`（`OutboxRecorder` 写 `async_outbox`）、`cmd/internal/iamruntime/runtime.go`（`RegisterAsync`）。
+
+**门禁**：`scripts/ci/check-outbox.sh`、集成测试（真实 MySQL）、`make check-observability`（积压指标断言）。
 
 ---
 
@@ -527,7 +542,7 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 |---|---|---|---|
 | ENT-01 | P0 | 待做 | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效 |
 | ENT-02 | P0 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；staging 实测随 ENT-05 补 |
-| ENT-03 | P0 | 待做 | 通用 Outbox + broker 适配 + 消费运行时 + DLQ |
+| ENT-03 | P0 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ；broker 适配按 T7 预留接口，容量触发再评估 |
 | ENT-04 | P0 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | 待做 | Helm/Kustomize + 探针 + 资源 + Secret 注入 |
 | ENT-06 | P0 | 待做 | 告警规则 / 看板 / SLO 代码化并演练 |

@@ -129,7 +129,7 @@ func (m *Metrics) RegisterBreakglassGauge(counter func() (int, error)) error {
 	return nil
 }
 
-// OnOutboxDelivered 实现 app.OutboxObserver。
+// OnOutboxDelivered 实现 app.AuditTopicObserver 依赖的指标出口。
 func (m *Metrics) OnOutboxDelivered(_ context.Context, result string) {
 	if m == nil {
 		return
@@ -299,6 +299,3 @@ func (r ChangeRecorder) Record(ctx context.Context, event audit.Event) error {
 
 // 编译期断言：装饰器必须满足用例侧端口。
 var _ app.ChangeRecorder = ChangeRecorder{}
-
-// 编译期断言：指标集必须满足 outbox 投递观测端口。
-var _ app.OutboxObserver = (*Metrics)(nil)

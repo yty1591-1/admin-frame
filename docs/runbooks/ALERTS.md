@@ -14,7 +14,7 @@
 | `iam.authz.deny_rate_high` | P2 | 鉴权拒绝率突增，疑似误授权或客户端异常 | [iam.md](./iam.md) |
 | `iam.shadow.mismatch` | P2 | shadow 判定与静态表不一致，enforce 前必须归零 | [iam.md](./iam.md) |
 | `iam.breakglass.active` | P1 | 存在有效破玻璃授权（`iam_breakglass_active > 0`） | [iam.md](./iam.md) |
-| `iam.outbox.backlog` | P1 | Outbox 积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），审计延迟且可能丢失 | [iam.md](./iam.md) |
+| `iam.outbox.backlog` | P1 | 平台 Outbox 中 IAM 主题积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），通常为 `cmd/worker` 未运行或审计出口不可用，审计延迟且可能丢失 | [iam.md](./iam.md) |
 
 P3 示例（鼓励登记，CI 不强制链接）：
 

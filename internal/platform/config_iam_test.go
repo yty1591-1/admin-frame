@@ -36,11 +36,6 @@ func iamBaseConfig() *platform.Config {
 				MaxBindingsPerSubject:     50,
 				MaxCustomRolesPerMerchant: 50,
 			},
-			Outbox: platform.IAMOutboxConfig{
-				PollInterval: time.Second,
-				BatchSize:    50,
-				MaxAttempts:  8,
-			},
 		},
 	}
 }
@@ -124,7 +119,7 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodRedis.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prodRedis.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodRedis.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	prodRedis.IAM.Outbox.Enabled = true
+	prodRedis.Async.Enabled = true
 	if err := prodRedis.Validate(); err != nil {
 		t.Fatalf("prod redis enforce: %v", err)
 	}
@@ -142,50 +137,30 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	}
 }
 
-func TestValidateIAMOutboxRules(t *testing.T) {
-	baseline := iamBaseConfig()
-	if err := baseline.Validate(); err != nil {
-		t.Fatalf("outbox baseline: %v", err)
+func TestValidateIAMEnforceRequiresAsync(t *testing.T) {
+	prodWithoutAsync := iamBaseConfig()
+	prodWithoutAsync.Env = "prod"
+	prodWithoutAsync.Auth = prodJWTConfig()
+	prodWithoutAsync.ID = prodIDConfig()
+	prodWithoutAsync.Storage.Driver = "s3"
+	prodWithoutAsync.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodWithoutAsync.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodWithoutAsync.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	if err := prodWithoutAsync.Validate(); err == nil || !strings.Contains(err.Error(), "async.enabled must be true") {
+		t.Fatalf("err=%v want prod async requirement", err)
 	}
 
-	fastPoll := iamBaseConfig()
-	fastPoll.IAM.Outbox.PollInterval = 10 * time.Millisecond
-	if err := fastPoll.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.poll_interval") {
-		t.Fatalf("err=%v want poll_interval rejection", err)
-	}
-
-	bigBatch := iamBaseConfig()
-	bigBatch.IAM.Outbox.BatchSize = 501
-	if err := bigBatch.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.batch_size") {
-		t.Fatalf("err=%v want batch_size rejection", err)
-	}
-
-	manyAttempts := iamBaseConfig()
-	manyAttempts.IAM.Outbox.MaxAttempts = 21
-	if err := manyAttempts.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.max_attempts") {
-		t.Fatalf("err=%v want max_attempts rejection", err)
-	}
-
-	prodWithoutOutbox := iamBaseConfig()
-	prodWithoutOutbox.Env = "prod"
-	prodWithoutOutbox.Auth = prodJWTConfig()
-	prodWithoutOutbox.Storage.Driver = "s3"
-	prodWithoutOutbox.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prodWithoutOutbox.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodWithoutOutbox.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	if err := prodWithoutOutbox.Validate(); err == nil || !strings.Contains(err.Error(), "iam.outbox.enabled must be true") {
-		t.Fatalf("err=%v want prod outbox requirement", err)
-	}
-
-	prodMemoryOutbox := iamBaseConfig()
-	prodMemoryOutbox.Env = "prod"
-	prodMemoryOutbox.Auth = prodJWTConfig()
-	prodMemoryOutbox.Storage.Driver = "s3"
-	prodMemoryOutbox.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodMemoryOutbox.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	prodMemoryOutbox.IAM.Outbox.Enabled = true
-	if err := prodMemoryOutbox.Validate(); err == nil || !strings.Contains(err.Error(), "persistent db.driver") {
-		t.Fatalf("err=%v want persistent db requirement", err)
+	prodWithAsync := iamBaseConfig()
+	prodWithAsync.Env = "prod"
+	prodWithAsync.Auth = prodJWTConfig()
+	prodWithAsync.ID = prodIDConfig()
+	prodWithAsync.Storage.Driver = "s3"
+	prodWithAsync.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodWithAsync.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	prodWithAsync.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodWithAsync.Async.Enabled = true
+	if err := prodWithAsync.Validate(); err != nil {
+		t.Fatalf("prod enforce with async: %v", err)
 	}
 }
 
@@ -236,9 +211,10 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 	if cfg.IAM.Limits.MaxRolesPerSubject != 20 || cfg.IAM.Limits.MaxPermissionsPerRole != 200 {
 		t.Fatalf("limit defaults = %+v", cfg.IAM.Limits)
 	}
-	if cfg.IAM.Outbox.Enabled || cfg.IAM.Outbox.PollInterval != time.Second ||
-		cfg.IAM.Outbox.BatchSize != 50 || cfg.IAM.Outbox.MaxAttempts != 8 {
-		t.Fatalf("outbox defaults = %+v", cfg.IAM.Outbox)
+	if cfg.Async.Enabled || cfg.Async.Driver != platform.AsyncDriverDB ||
+		cfg.Async.Outbox.PollInterval != time.Second ||
+		cfg.Async.Outbox.BatchSize != 100 || cfg.Async.Outbox.MaxAttempts != 10 {
+		t.Fatalf("async defaults = %+v", cfg.Async)
 	}
 
 	t.Setenv("ADMIN_FRAME_IAM_MODE", "shadow")
@@ -283,7 +259,7 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	prod.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prod.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prod.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	prod.IAM.Outbox.Enabled = true
+	prod.Async.Enabled = true
 	prod.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
 	if err := prod.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_subjects") {
 		t.Fatalf("err=%v want prod allowlist requirement", err)
@@ -326,7 +302,6 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodMemory.Storage.Driver = "s3"
 	prodMemory.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodMemory.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	prodMemory.IAM.Outbox.Enabled = true
 	prodMemory.IAM.Approval.Enabled = true
 	if err := prodMemory.Validate(); err == nil || !strings.Contains(err.Error(), "persistent db.driver") {
 		t.Fatalf("err=%v want persistent db requirement", err)
@@ -340,7 +315,7 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodSQL.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prodSQL.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodSQL.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	prodSQL.IAM.Outbox.Enabled = true
+	prodSQL.Async.Enabled = true
 	prodSQL.IAM.Approval.Enabled = true
 	if err := prodSQL.Validate(); err != nil {
 		t.Fatalf("prod mysql approval: %v", err)

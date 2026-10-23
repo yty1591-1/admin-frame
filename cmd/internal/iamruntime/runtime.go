@@ -23,6 +23,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
 
@@ -32,10 +33,6 @@ type Runtime struct {
 	Authorizer *security.Authorizer
 	// Handler 供各端 transport 注册 HTTP 路由；mode=off 时仍存在，便于先建授权。
 	Handler *rest.Handler
-	// Background 是随进程生命周期运行的后台任务（outbox 投递）；未启用时为空。
-	//
-	// 由 cmd 转交给 platform.Deps.Background，保证优雅关闭时先停投递再关数据库。
-	Background []func(context.Context) error
 }
 
 // Options 是 IAM 运行时装配参数。
@@ -105,29 +102,28 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	// 审计出口：默认直接落结构化日志（local / demo）；
-	// 启用 outbox 后先持久化事件、再由后台发布器投递，进程崩溃不丢审计。
+	// async 启用后先写入通用 Outbox、再由 Relay 投递，进程崩溃不丢审计。
 	auditEmitter := audit.SlogEmitter{Log: deps.Logger}
 	recorder := observability.ChangeRecorder{
 		Inner:   app.SlogRecorder{Emitter: auditEmitter},
 		Metrics: iamMetrics,
 	}
-	var background []func(context.Context) error
-	if cfg.IAM.Outbox.Enabled {
-		outboxRepo := buildOutboxRepository(deps)
+	if deps.Async != nil {
+		store := deps.Async.Store()
+		stats, ok := store.(outbox.TopicStatReader)
+		if !ok {
+			return nil, fmt.Errorf("iam async: outbox store does not support topic stats")
+		}
 		recorder = observability.ChangeRecorder{
-			Inner:   app.OutboxRecorder{Events: outboxRepo},
+			Inner:   app.OutboxRecorder{Events: store},
 			Metrics: iamMetrics,
 		}
-		if gaugeErr := iamMetrics.RegisterOutboxGauges(outboxStatsCounter(outboxRepo)); gaugeErr != nil {
+		if gaugeErr := iamMetrics.RegisterOutboxGauges(topicStatsCounter(stats, app.TopicAudit)); gaugeErr != nil {
 			return nil, fmt.Errorf("iam outbox gauges: %w", gaugeErr)
 		}
-		// 迁移期可用 publish_in_api=false 把投递交给 worker；写入 outbox 不受影响。
-		if cfg.IAM.Outbox.PublishInAPIEnabled() {
-			task, taskErr := outboxTask(deps, outboxRepo, iamMetrics)
-			if taskErr != nil {
-				return nil, taskErr
-			}
-			background = append(background, task)
+		deps.Async.AddObserver(app.AuditTopicObserver{Metrics: iamMetrics})
+		if registerErr := RegisterAsync(deps); registerErr != nil {
+			return nil, registerErr
 		}
 	}
 	auditMeta := app.AuditMeta{Service: cfg.Service, ActorType: auditActorType(cfg.Channel)}
@@ -236,7 +232,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			security.WithDecisionObserver(iamMetrics),
 		)
 	}
-	return &Runtime{Authorizer: authorizer, Handler: handler, Background: background}, nil
+	return &Runtime{Authorizer: authorizer, Handler: handler}, nil
 }
 
 // breakglassActiveCounter 统计当前有效破玻璃绑定数；角色未播种时返回 0。
@@ -289,23 +285,29 @@ func buildRepositories(deps *platform.Deps) (domain.RoleRepository, domain.Bindi
 		nil
 }
 
-// buildOutboxRepository 按 db.driver 选择 outbox 仓储。
+// RegisterAsync 注册 IAM 异步 topic handler（API 与 worker 共用）。
 //
-// outbox 的可靠性依赖数据库持久化：内存实现只用于 local / demo / 单测，
-// 生产启用 require db.driver=mysql（配置校验已拒绝 prod + memory 组合）。
-func buildOutboxRepository(deps *platform.Deps) domain.OutboxRepository {
-	if deps.Database == nil {
-		return persistence.NewMemoryOutboxRepository()
+// 审计事件由本 handler 投递到审计出口；历史 cache.invalidate 事件按无操作消费，
+// 避免迁移后残留事件反复进入死信。
+func RegisterAsync(deps *platform.Deps) error {
+	if deps == nil || deps.Async == nil {
+		return nil
 	}
-	return persistence.NewSQLOutboxRepository(deps.Database.SQL())
+	handler := app.AuditEventHandler(audit.SlogEmitter{Log: deps.Logger})
+	for _, topic := range []string{app.TopicAudit, app.TopicCache} {
+		if err := deps.Async.Register(topic, handler); err != nil {
+			return fmt.Errorf("iam async handler %s: %w", topic, err)
+		}
+	}
+	return nil
 }
 
-// outboxStatsCounter 采集积压数与最老事件延迟，供 GaugeFunc 实时查询。
-func outboxStatsCounter(repo domain.OutboxRepository) func() (int, float64, error) {
+// topicStatsCounter 采集 IAM 主题积压数与最老事件延迟，供 GaugeFunc 实时查询。
+func topicStatsCounter(reader outbox.TopicStatReader, topic string) func() (int, float64, error) {
 	return func() (int, float64, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		stats, err := repo.Stats(ctx)
+		stats, err := reader.TopicStats(ctx, topic)
 		if err != nil {
 			return 0, 0, err
 		}

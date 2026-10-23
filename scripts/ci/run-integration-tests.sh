@@ -57,6 +57,6 @@ docker compose -f "${COMPOSE_FILE}" up -d --wait --wait-timeout 120 mysql redis 
 echo "==> create test bucket"
 docker compose -f "${COMPOSE_FILE}" run --rm minio-init
 
-# 各包共用同一套 MySQL 实例，且 IAM 用例会清空 iam_outbox；串行执行包避免相互清表。
+# 各包共用同一套 MySQL 实例，且 IAM 用例会清空 async 表；串行执行包避免相互清表。
 echo "==> go test -count=1 -p 1 ./tests/integration/..."
 go test -count=1 -p 1 ./tests/integration/...

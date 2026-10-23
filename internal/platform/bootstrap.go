@@ -47,6 +47,11 @@ type Deps struct {
 	// 只允许在装配阶段（NewAuthorizer / Register）调用；任务在路由注册完成后启动，
 	// ctx 在进程退出、HTTP 优雅关闭开始后取消。任务返回错误只记录日志，不改变退出码。
 	Background func(task func(context.Context) error)
+	// Async 是通用异步基础设施（ENT-03）；async.enabled=false 时为 nil。
+	//
+	// 业务域通过 Async.Register 声明 topic 与 handler；API 进程仅在
+	// async.outbox.publish_in_api=true 时启动 Relay。
+	Async *AsyncRuntime
 }
 
 // Options 是 platform.Run 的装配参数。
@@ -169,6 +174,14 @@ func Run(ctx context.Context, opts Options) (err error) {
 		AuthMW:     authMW,
 		Health:     hh,
 		Background: background.add,
+	}
+	asyncRuntime, err := NewAsyncRuntime(deps)
+	if err != nil {
+		return fmt.Errorf("async runtime: %w", err)
+	}
+	deps.Async = asyncRuntime
+	if asyncRuntime != nil && asyncRuntime.PublishInAPI() {
+		background.add(asyncRuntime.Run)
 	}
 
 	authorizer := security.NewAuthorizer(nil)

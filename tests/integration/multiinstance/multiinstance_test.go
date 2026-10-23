@@ -10,12 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/iam/app"
-	"github.com/admin-frame/admin-frame/internal/iam/domain"
-	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/idempotency"
+	"github.com/admin-frame/admin-frame/pkg/mq"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
@@ -159,11 +158,11 @@ func TestSharedRateLimitQuota(t *testing.T) {
 	}
 }
 
-// TestOutboxRestartNoLossNoDuplicate 验证发布器重启后已完成事件不重投、未完成事件不丢失（AC-ENT-02-4）。
+// TestOutboxRestartNoLossNoDuplicate 验证 Relay 重启后已完成事件不重投、未完成事件不丢失（AC-ENT-02-4 / AC-ENT-03-1）。
 func TestOutboxRestartNoLossNoDuplicate(t *testing.T) {
 	database := testkit.MySQL(t)
 	ctx := context.Background()
-	repo := persistence.NewSQLOutboxRepository(database.SQL())
+	store := outbox.NewMySQLStore(database.SQL())
 
 	now := time.Now().UTC()
 	suffix := now.UnixNano()
@@ -173,18 +172,23 @@ func TestOutboxRestartNoLossNoDuplicate(t *testing.T) {
 		fmt.Sprintf("91%016d", suffix%1e15+3),
 	}
 	for _, eventID := range ids {
-		event, err := domain.NewOutboxEvent(domain.NewOutboxEventParams{
-			ID:            eventID,
-			Type:          domain.OutboxEventAudit,
+		event, err := outbox.NewEvent(outbox.NewEventParams{
+			Topic: "iam.audit",
+			Envelope: mq.Envelope{
+				EventID:    eventID,
+				EventType:  "audit.event",
+				Version:    "v1",
+				OccurredAt: now,
+				Payload:    []byte(fmt.Sprintf(`{"event_id":%q,"action":"rbac.role.change"}`, eventID)),
+			},
 			AggregateType: "iam_role",
 			AggregateID:   "3001",
-			Payload:       []byte(fmt.Sprintf(`{"event_id":%q,"action":"rbac.role.change"}`, eventID)),
 			Now:           now,
 		})
 		if err != nil {
-			t.Fatalf("NewOutboxEvent: %v", err)
+			t.Fatalf("NewEvent: %v", err)
 		}
-		if err := repo.Append(ctx, event); err != nil {
+		if err := store.Append(ctx, event); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
@@ -193,27 +197,26 @@ func TestOutboxRestartNoLossNoDuplicate(t *testing.T) {
 		mu        sync.Mutex
 		delivered = make(map[string]int)
 	)
-	deliver := func(_ context.Context, event *domain.OutboxEvent) error {
+	handler := func(_ context.Context, event *outbox.Event) error {
 		mu.Lock()
 		defer mu.Unlock()
-		delivered[event.ID]++
+		delivered[event.EventID]++
 		return nil
-	}
-	options := app.OutboxPublisherOptions{
-		Events:    repo,
-		Deliver:   deliver,
-		Policy:    domain.OutboxRetryPolicy{MaxAttempts: 3},
-		BatchSize: 100,
 	}
 
 	drainUntilDelivered := func() {
-		publisher, err := app.NewOutboxPublisher(options)
+		relay, err := outbox.NewRelay(outbox.RelayOptions{
+			Store:     store,
+			Handler:   handler,
+			Policy:    outbox.RetryPolicy{MaxAttempts: 3},
+			BatchSize: 100,
+		})
 		if err != nil {
-			t.Fatalf("NewOutboxPublisher: %v", err)
+			t.Fatalf("NewRelay: %v", err)
 		}
 		for attempt := 0; attempt < 10; attempt++ {
-			if _, err := publisher.Drain(ctx); err != nil {
-				t.Fatalf("Drain: %v", err)
+			if _, err := relay.DrainOnce(ctx); err != nil {
+				t.Fatalf("DrainOnce: %v", err)
 			}
 			mu.Lock()
 			complete := true
@@ -232,7 +235,7 @@ func TestOutboxRestartNoLossNoDuplicate(t *testing.T) {
 	}
 
 	drainUntilDelivered()
-	// 模拟滚动重启：新发布器实例只应看到已成功事件，不得重投。
+	// 模拟滚动重启：新 Relay 实例只应看到已成功事件，不得重投。
 	drainUntilDelivered()
 
 	mu.Lock()

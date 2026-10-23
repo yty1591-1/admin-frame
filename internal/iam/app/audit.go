@@ -40,7 +40,7 @@ const AttrOperation = attrOperation
 
 // ChangeRecorder 是 IAM 变更的审计出口。
 //
-// 生产实现应把事件写入 iam_outbox 并与业务写入同事务（docs/rbac-iam.md D9）；
+// 生产实现应把事件写入平台 Outbox（async_outbox，topic=iam.audit）并与业务写入同事务（docs/rbac-iam.md D9）；
 // local / demo 可用 SlogRecorder 直接落结构化日志。Record 返回错误时调用方必须
 // 让业务写入失败（fail-closed），不得只记日志后继续。
 type ChangeRecorder interface {

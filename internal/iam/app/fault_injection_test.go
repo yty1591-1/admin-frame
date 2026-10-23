@@ -11,8 +11,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	iampcache "github.com/admin-frame/admin-frame/internal/iam/infrastructure/cache"
-	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
 // 本文件是 M5「故障演练」的可执行版本：把 runbook 里承诺的降级行为固化成测试，
@@ -135,49 +135,51 @@ func TestRoleServiceWriteSurvivesInvalidationFailure(t *testing.T) {
 	}
 }
 
-// TestOutboxPublisherDrainsBacklogAfterTransientFailure 验证出口抖动后积压能自动追平。
+// TestOutboxRelayDrainsBacklogAfterTransientFailure 验证出口抖动后积压能自动追平。
 //
-// 演练目标：失败一轮后 iam_outbox_pending 仍为 1（可告警），退避到期后下一轮
+// 演练目标：失败一轮后 async_outbox_pending 仍为 1（可告警），退避到期后下一轮
 // 投递成功并把 pending 归零，避免「告警但永不恢复」的假活。
-func TestOutboxPublisherDrainsBacklogAfterTransientFailure(t *testing.T) {
+func TestOutboxRelayDrainsBacklogAfterTransientFailure(t *testing.T) {
 	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
+	store := outbox.NewMemoryStore()
 	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	if err := (app.OutboxRecorder{Events: repo}).Record(ctx, testAuditEvent(t)); err != nil {
+	if err := (app.OutboxRecorder{Events: store}).Record(ctx, testAuditEvent(t)); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 
 	var (
-		mu     sync.Mutex
-		calls  int
-		clock  = now
-		failed = errors.New("audit sink timeout")
+		mu    sync.Mutex
+		calls int
+		clock = now
 	)
-	observer := &outboxObserver{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events: repo,
-		Deliver: func(context.Context, *domain.OutboxEvent) error {
+	var results []string
+	relay, err := outbox.NewRelay(outbox.RelayOptions{
+		Store: store,
+		Handler: func(context.Context, *outbox.Event) error {
 			mu.Lock()
 			defer mu.Unlock()
 			calls++
 			if calls == 1 {
-				return failed
+				return errors.New("audit sink timeout")
 			}
 			return nil
 		},
-		Policy:   domain.OutboxRetryPolicy{MaxAttempts: 3},
-		Observer: observer,
-		Now:      func() time.Time { mu.Lock(); defer mu.Unlock(); return clock },
+		Policy: outbox.RetryPolicy{Base: time.Second, MaxAttempts: 3},
+		Observer: outbox.ObserverFunc(func(_ context.Context, _, result string) {
+			mu.Lock()
+			results = append(results, result)
+			mu.Unlock()
+		}),
+		Now: func() time.Time { mu.Lock(); defer mu.Unlock(); return clock },
 	})
 	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
+		t.Fatalf("NewRelay: %v", err)
 	}
 
-	delivered, drainErr := publisher.Drain(ctx)
-	if delivered != 0 || drainErr == nil {
-		t.Fatalf("first drain delivered=%d err=%v, want 0 + error", delivered, drainErr)
+	if _, drainErr := relay.DrainOnce(ctx); drainErr != nil {
+		t.Fatalf("first drain: %v", drainErr)
 	}
-	stats, err := repo.Stats(ctx)
+	stats, err := store.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
@@ -189,18 +191,19 @@ func TestOutboxPublisherDrainsBacklogAfterTransientFailure(t *testing.T) {
 	mu.Lock()
 	clock = now.Add(2 * time.Second)
 	mu.Unlock()
-	delivered, drainErr = publisher.Drain(ctx)
-	if delivered != 1 || drainErr != nil {
-		t.Fatalf("second drain delivered=%d err=%v, want 1 + nil", delivered, drainErr)
+	if _, drainErr := relay.DrainOnce(ctx); drainErr != nil {
+		t.Fatalf("second drain: %v", drainErr)
 	}
-	stats, err = repo.Stats(ctx)
+	stats, err = store.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
 	if stats.Pending != 0 {
 		t.Fatalf("pending = %d, want 0 after recovery", stats.Pending)
 	}
-	if results := observer.results(); len(results) != 2 || results[0] != "retry" || results[1] != "success" {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(results) != 2 || results[0] != "retry" || results[1] != "success" {
 		t.Fatalf("results = %v, want [retry success]", results)
 	}
 }

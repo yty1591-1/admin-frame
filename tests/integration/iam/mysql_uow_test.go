@@ -6,13 +6,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/mq"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
+
+// newSQLOutboxEvent 构造一条 IAM 审计事件（topic=iam.audit）。
+func newSQLOutboxEvent(t *testing.T, eventID string, now time.Time) *outbox.Event {
+	t.Helper()
+	event, err := outbox.NewEvent(outbox.NewEventParams{
+		Topic: app.TopicAudit,
+		Envelope: mq.Envelope{
+			EventID:    eventID,
+			EventType:  app.EventTypeAudit,
+			Version:    "v1",
+			OccurredAt: now,
+			Payload:    []byte(`{"action":"rbac.role.change"}`),
+		},
+		AggregateType: "iam_role",
+		AggregateID:   "2001",
+		Now:           now,
+	})
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+	return event
+}
 
 // newUnsavedRole 构造一个尚未落库的 A 端角色（Write + Read 两个权限点）。
 //
@@ -54,7 +80,7 @@ func TestSQLUnitOfWorkCommitsRoleAndOutboxTogether(t *testing.T) {
 	sqlDB := testDB(t)
 	ctx := context.Background()
 	roleRepo := persistence.NewSQLRoleRepository(sqlDB)
-	outboxRepo := persistence.NewSQLOutboxRepository(sqlDB)
+	outboxStore := outbox.NewMySQLStore(sqlDB)
 	uow := persistence.NewSQLUnitOfWork(sqlDB)
 
 	role := newUnsavedRole(t, "3101", "uow_commit")
@@ -64,7 +90,7 @@ func TestSQLUnitOfWorkCommitsRoleAndOutboxTogether(t *testing.T) {
 		if err := roleRepo.Save(ctx, role, 0); err != nil {
 			return err
 		}
-		return outboxRepo.Append(ctx, event)
+		return outboxStore.Append(ctx, event)
 	}); err != nil {
 		t.Fatalf("WithinTx: %v", err)
 	}
@@ -76,11 +102,11 @@ func TestSQLUnitOfWorkCommitsRoleAndOutboxTogether(t *testing.T) {
 	if len(loaded.PermissionCodes()) != 2 {
 		t.Fatalf("permissions = %v, want 2", loaded.PermissionCodes())
 	}
-	due, err := outboxRepo.ListDue(ctx, time.Now().UTC().Add(time.Minute), 10)
+	due, err := outboxStore.ClaimBatch(ctx, time.Now().UTC().Add(time.Minute), time.Minute, 10)
 	if err != nil {
-		t.Fatalf("ListDue: %v", err)
+		t.Fatalf("ClaimBatch: %v", err)
 	}
-	if len(due) != 1 || due[0].ID != event.ID {
+	if len(due) != 1 || due[0].EventID != event.EventID {
 		t.Fatalf("outbox must be committed with role: %+v", due)
 	}
 }
@@ -93,13 +119,13 @@ func TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails(t *testing.T) {
 	sqlDB := testDB(t)
 	ctx := context.Background()
 	roleRepo := persistence.NewSQLRoleRepository(sqlDB)
-	outboxRepo := persistence.NewSQLOutboxRepository(sqlDB)
+	outboxStore := outbox.NewMySQLStore(sqlDB)
 	uow := persistence.NewSQLUnitOfWork(sqlDB)
 
 	now := time.Now().UTC()
 	role := newUnsavedRole(t, "3201", "uow_rollback")
 	// 先独立落一条同 ID 事件，使事务内的 Append 命中唯一键冲突而失败。
-	if err := outboxRepo.Append(ctx, newSQLOutboxEvent(t, "3202", now)); err != nil {
+	if err := outboxStore.Append(ctx, newSQLOutboxEvent(t, "3202", now)); err != nil {
 		t.Fatalf("seed outbox: %v", err)
 	}
 
@@ -107,10 +133,11 @@ func TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails(t *testing.T) {
 		if saveErr := roleRepo.Save(ctx, role, 0); saveErr != nil {
 			return saveErr
 		}
-		return outboxRepo.Append(ctx, newSQLOutboxEvent(t, "3202", now))
+		return outboxStore.Append(ctx, newSQLOutboxEvent(t, "3202", now))
 	})
-	if !errors.Is(err, apperr.ErrConflict) {
-		t.Fatalf("err = %v, want conflict from duplicate outbox id", err)
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1062 {
+		t.Fatalf("err = %v, want duplicate outbox id", err)
 	}
 
 	if _, findErr := roleRepo.FindByID(ctx, role.ID); !errors.Is(findErr, apperr.ErrNotFound) {
@@ -123,9 +150,9 @@ func TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails(t *testing.T) {
 	if orphans != 0 {
 		t.Fatalf("permission rows leaked after rollback: %d", orphans)
 	}
-	due, err := outboxRepo.ListDue(ctx, now.Add(time.Minute), 10)
+	due, err := outboxStore.ClaimBatch(ctx, now.Add(time.Minute), time.Minute, 10)
 	if err != nil {
-		t.Fatalf("ListDue: %v", err)
+		t.Fatalf("ClaimBatch: %v", err)
 	}
 	if len(due) != 1 || due[0].Attempts != 0 {
 		t.Fatalf("seeded outbox row must stay untouched: %+v", due)

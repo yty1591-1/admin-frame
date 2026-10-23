@@ -203,7 +203,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 |---|---|
 | 身份 | `auth.mode=jwt`、`identity.revocation.failure_mode=fail_closed`、A 端 `identity.mfa.admin_required=true` |
 | 多实例 | 禁止默认 `NodeID=1`；`idempotency.driver=redis`；`rate_limit.driver=redis` |
-| 异步 | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`iam.outbox.enabled=true` |
+| 异步 | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`iam.mode=enforce` 时强制 `async.enabled=true` |
 | 审计 | `audit.store=db`；`audit.retention_days ≥ 180`；`audit.critical_fail_closed=true` |
 | 密钥 | `secrets.provider ∈ {vault, kms}`；禁止仅 env 注入生产密钥 |
 | 备份 | `backup.enabled=true`；`backup.retention_days > 0` |
@@ -408,7 +408,7 @@ rate_limit:
 - T3：`pkg/idempotency.RedisStore` 以 Lua 原子完成 `Begin/Complete/Release`；`internal/platform/pipeline.go` 在 `RateLimit → Idempotency → Handler` 挂载，`40900` 冲突 / `40901` 处理中 / `50300` 存储不可用由 `httpx.FromError` 统一信封。
 - T4：`Idempotency-Key` 已在 `api/openapi/components.yaml` 定义；平台级挂载覆盖三端写路由。逐 operation 标注延后，避免未经客户端协调的强制头升级。
 - T5/T6：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`failure_mode` 默认 `fail_open`；分键支持 `channel / channel_user / channel_tenant_user / client`，超限继续 `42900` + `Retry-After`。
-- T7：`iam.outbox.publish_in_api`（默认 true）控制 API 侧发布器；`cmd/worker` 打开数据库并运行 `iamruntime.NewOutboxTask`，退出时等待发布循环收敛。
+- T7：ENT-03 已改为平台统一异步基础设施（`async.*`）：`async.outbox.publish_in_api` 控制 API 侧是否内嵌 Relay，默认由 `cmd/worker` 的 `AsyncRuntime` 投递，退出时等待循环收敛；IAM 审计写入 `async_outbox`，指标通过 `AuditTopicObserver` 映射。
 - T8：`tests/integration/multiinstance` 覆盖 NodeID 唯一性、跨副本幂等、共享限流与 outbox 重启不重投；`scripts/ci/check-idempotency.sh` 校验挂载、配置样例、固定 NodeID 与 OpenAPI 契约。
 - 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
 
@@ -425,6 +425,8 @@ rate_limit:
 **目标**：提供平台级 Outbox Relay、消费运行时与事件 envelope，让未来业务域声明式接入，不重复实现可靠性逻辑。
 
 **前置依赖**：`ENT-02`（发布器独立进程与幂等存储）。
+
+**实施状态**：`已完成（2026-10-22）`。T1～T6、T8 已落地；T7 仅预留 `Broker` 接口与 `async.driver=db` 校验，未引入外部 broker。详细拆解见 [ENT-03 实施文档](../.trae/documents/ENT-03-async-infrastructure-implementation.md)。
 
 **任务分解**
 
@@ -443,7 +445,8 @@ rate_limit:
 
 ```yaml
 async:
-  driver: db                    # db|nats；默认 db
+  enabled: false                # prod/staging + iam.mode=enforce 强制 true
+  driver: db                    # 仅 db；nats/kafka 未实现，Validate 拒绝
   outbox:
     publish_in_api: false
     poll_interval: 1s
@@ -908,7 +911,7 @@ deploy/helm/admin-frame/
 |---|---|---|---|---|
 | ENT-01 | P0 | Wave 1 | 待做 | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效 |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
-| ENT-03 | P0 | Wave 1 | 待做 | 通用 Outbox + 消费运行时 + DLQ + 积压指标 |
+| ENT-03 | P0 | Wave 1 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；broker 仅预留接口 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | Wave 2 | 待做 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
 | ENT-06 | P0 | Wave 2 | 待做 | 告警规则 / 看板 / SLO 代码化并演练 |
@@ -938,6 +941,7 @@ deploy/helm/admin-frame/
 |---|---|---|---|
 | 2026-10-22 | 规划文档创建（v0.1） | 完成 | 基于差距评估 v0.2；拆分为 Wave 0～4 与 25 个任务包 |
 | 2026-10-22 | ENT-02 多实例运行语义落地 | 完成 | NodeID 配置化 + Deps.IDs、Redis 幂等存储、Redis 令牌桶、`publish_in_api` / worker 发布器、multiinstance 集成用例与 `check-idempotency` 门禁；T4 逐 operation 标注单独跟进 |
+| 2026-10-22 | ENT-03 通用异步基础设施落地 | 完成 | `pkg/outbox`（Store/Relay/Router/Deduper/DLQ）、`AsyncRuntime`、`async.*` 配置、IAM 完整迁移（迁移 000010）、`check-outbox` 门禁与 `async-dlq` runbook；集成用例覆盖 AC-ENT-03-1～5 |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---

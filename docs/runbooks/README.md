@@ -12,6 +12,7 @@
 | [db-connection-pool.md](./db-connection-pool.md) | 连接池耗尽 |
 | [release-rollback.md](./release-rollback.md) | 发版回滚 |
 | [iam.md](./iam.md) | IAM 鉴权不可用 / 拒绝率异常 / 误授权回滚 |
+| [async-dlq.md](./async-dlq.md) | 异步死信积压与重放 |
 
 ## 值班与升级（基线）
 

@@ -5,7 +5,7 @@
 //   - 投递语义默认至少一次；业务 Handler 必须幂等
 //   - 可重试错误回队；耗尽或永久错误进 DLQ（DeadLetter）
 //   - 事件须版本化（HeaderSchemaVersion）；载荷含 merchant_id / user_id 等隔离键（见 Headers）
-//   - Transactional Outbox 接口见 OutboxStore；持久化实现留业务仓储，本包提供 Memory 便于测试
+//   - 事务性 Outbox 见 pkg/outbox；本包只保留信封、Broker 与消费原语
 //   - 禁止在日志中打印完整敏感载荷（SEC-05）
 //
 // 典型用法：

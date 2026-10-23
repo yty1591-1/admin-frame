@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
-	"github.com/admin-frame/admin-frame/internal/iam/domain"
-	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/mq"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
+	"github.com/admin-frame/admin-frame/pkg/retry"
 )
 
 // capturedEmitter 记录投递到审计出口的事件，可注入失败。
@@ -59,35 +60,27 @@ func testAuditEvent(t *testing.T) audit.Event {
 	return event
 }
 
-// listOutbox 返回 now 之后到期的事件（按 ID 升序），用于断言状态。
-func listOutbox(t *testing.T, repo *persistence.MemoryOutboxRepository, now time.Time) []*domain.OutboxEvent {
-	t.Helper()
-	events, err := repo.ListDue(context.Background(), now.Add(time.Hour), 100)
-	if err != nil {
-		t.Fatalf("ListDue: %v", err)
-	}
-	return events
-}
-
 func TestOutboxRecorderWritesPendingAuditEvent(t *testing.T) {
 	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	recorder := app.OutboxRecorder{Events: repo}
+	store := outbox.NewMemoryStore()
+	recorder := app.OutboxRecorder{Events: store}
 
 	event := testAuditEvent(t)
 	if err := recorder.Record(ctx, event); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
-	due := listOutbox(t, repo, time.Now().UTC())
-	if len(due) != 1 {
-		t.Fatalf("outbox size = %d, want 1", len(due))
+	stored, ok := store.Event(event.EventID)
+	if !ok {
+		t.Fatal("outbox must contain the audit event")
 	}
-	stored := due[0]
-	if stored.ID != event.EventID || stored.Type != domain.OutboxEventAudit {
-		t.Fatalf("stored = %+v", stored)
+	if stored.Topic != app.TopicAudit || stored.EventType != app.EventTypeAudit {
+		t.Fatalf("routing = %s/%s", stored.Topic, stored.EventType)
 	}
 	if stored.AggregateType != event.ResourceType || stored.AggregateID != event.ResourceID {
 		t.Fatalf("aggregate = %s/%s", stored.AggregateType, stored.AggregateID)
+	}
+	if stored.Status != outbox.StatusPending {
+		t.Fatalf("status = %s, want pending", stored.Status)
 	}
 	var decoded audit.Event
 	if err := json.Unmarshal(stored.Payload, &decoded); err != nil {
@@ -103,264 +96,131 @@ func TestOutboxRecorderWritesPendingAuditEvent(t *testing.T) {
 	}
 }
 
-func TestOutboxRecorderRequiresRepository(t *testing.T) {
+func TestOutboxRecorderRequiresStore(t *testing.T) {
 	recorder := app.OutboxRecorder{}
 	if err := recorder.Record(context.Background(), testAuditEvent(t)); err == nil {
-		t.Fatal("nil repository must fail, not silently drop audit")
+		t.Fatal("nil store must fail, not silently drop audit")
 	}
 }
 
 func TestOutboxRecorderRejectsInvalidEvent(t *testing.T) {
-	repo := persistence.NewMemoryOutboxRepository()
+	store := outbox.NewMemoryStore()
 	event := testAuditEvent(t)
 	event.TraceID = ""
-	if err := (app.OutboxRecorder{Events: repo}).Record(context.Background(), event); err == nil {
+	if err := (app.OutboxRecorder{Events: store}).Record(context.Background(), event); err == nil {
 		t.Fatal("invalid audit event must be rejected")
 	}
-	if len(listOutbox(t, repo, time.Now().UTC())) != 0 {
-		t.Fatal("invalid event must not be enqueued")
-	}
-}
-
-func TestOutboxPublisherDeliversAndMarksSucceeded(t *testing.T) {
-	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	if err := (app.OutboxRecorder{Events: repo}).Record(ctx, testAuditEvent(t)); err != nil {
-		t.Fatalf("Record: %v", err)
-	}
-
-	emitter := &capturedEmitter{}
-	observer := &outboxObserver{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:   repo,
-		Deliver:  app.AuditOutboxDeliverer(emitter),
-		Observer: observer,
-		Now:      func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
-	}
-	delivered, err := publisher.Drain(ctx)
-	if err != nil {
-		t.Fatalf("Drain: %v", err)
-	}
-	if delivered != 1 || emitter.count() != 1 {
-		t.Fatalf("delivered=%d emitted=%d", delivered, emitter.count())
-	}
-	if got := observer.results(); len(got) != 1 || got[0] != "success" {
-		t.Fatalf("observer = %v", got)
-	}
-	stats, err := repo.Stats(ctx)
+	stats, err := store.Stats(context.Background())
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
 	if stats.Pending != 0 {
-		t.Fatalf("pending after delivery = %d", stats.Pending)
-	}
-	// 已投递事件不会被再次拉取。
-	if again, err := publisher.Drain(ctx); err != nil || again != 0 {
-		t.Fatalf("second drain = %d, %v", again, err)
+		t.Fatal("invalid event must not be enqueued")
 	}
 }
 
-func TestOutboxPublisherRetriesThenDeadLetters(t *testing.T) {
-	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	if err := (app.OutboxRecorder{Events: repo}).Record(ctx, testAuditEvent(t)); err != nil {
-		t.Fatalf("Record: %v", err)
-	}
-	emitter := &capturedEmitter{err: errors.New("audit sink down")}
-	observer := &outboxObserver{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:    repo,
-		Deliver:   app.AuditOutboxDeliverer(emitter),
-		Policy:    domain.OutboxRetryPolicy{Base: time.Second, Max: time.Minute, MaxAttempts: 2},
-		BatchSize: 10,
-		Observer:  observer,
-		Now:       func() time.Time { return now },
-	})
+func TestAuditEventHandlerDeliversAuditEvent(t *testing.T) {
+	event := testAuditEvent(t)
+	payload, err := json.Marshal(event)
 	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
+		t.Fatalf("marshal: %v", err)
 	}
-
-	if _, err := publisher.Drain(ctx); err == nil {
-		t.Fatal("first failure must be reported")
-	}
-	// 事件回到 pending，且退避未到期时不会被再次拉取。
-	if due := listOutbox(t, repo, now); len(due) != 1 || due[0].Attempts != 1 || due[0].NextRetryAt == nil {
-		t.Fatalf("after first failure: %+v", due)
-	}
-
-	now = now.Add(2 * time.Second)
-	if _, err := publisher.Drain(ctx); err == nil {
-		t.Fatal("second failure must be reported")
-	}
-	if due := listOutbox(t, repo, now); len(due) != 0 {
-		t.Fatalf("dead letter must not be listed as due: %+v", due)
-	}
-	stats, err := repo.Stats(ctx)
-	if err != nil {
-		t.Fatalf("Stats: %v", err)
-	}
-	if stats.Pending != 1 {
-		t.Fatalf("dead letter must stay in pending gauge: %+v", stats)
-	}
-	if got := observer.results(); len(got) != 2 || got[0] != "retry" || got[1] != "dead" {
-		t.Fatalf("observer = %v", got)
-	}
-}
-
-func TestOutboxPublisherReclaimsStaleProcessing(t *testing.T) {
-	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	if err := (app.OutboxRecorder{Events: repo}).Record(ctx, testAuditEvent(t)); err != nil {
-		t.Fatalf("Record: %v", err)
-	}
-	// 模拟上一个 worker 认领后崩溃：processing 且 updated_at 早于租约。
-	old := now.Add(-3 * domain.OutboxProcessingLease)
-	if _, err := repo.Claim(ctx, testAuditEvent(t).EventID, old); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-
 	emitter := &capturedEmitter{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:  repo,
-		Deliver: app.AuditOutboxDeliverer(emitter),
-		Now:     func() time.Time { return now },
+	handler := app.AuditEventHandler(emitter)
+
+	if err := handler(context.Background(), &outbox.Event{
+		Envelope: envelope(event.EventID, app.EventTypeAudit, payload),
+		Topic:    app.TopicAudit,
+	}); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if emitter.count() != 1 {
+		t.Fatalf("emitted = %d, want 1", emitter.count())
+	}
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if emitter.events[0].EventID != event.EventID {
+		t.Fatalf("emitted event = %+v", emitter.events[0])
+	}
+}
+
+func TestAuditEventHandlerRetriesEmitterFailure(t *testing.T) {
+	event := testAuditEvent(t)
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	handler := app.AuditEventHandler(&capturedEmitter{err: errors.New("audit sink down")})
+
+	err = handler(context.Background(), &outbox.Event{
+		Envelope: envelope(event.EventID, app.EventTypeAudit, payload),
+		Topic:    app.TopicAudit,
 	})
-	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
+	if err == nil {
+		t.Fatal("emitter failure must surface as retryable error")
 	}
-	delivered, err := publisher.Drain(ctx)
-	if err != nil {
-		t.Fatalf("Drain: %v", err)
-	}
-	if delivered != 1 || emitter.count() != 1 {
-		t.Fatalf("stale processing event must be redelivered: delivered=%d emitted=%d", delivered, emitter.count())
+	if retry.IsPermanent(err) {
+		t.Fatalf("emitter failure must stay retryable, got permanent: %v", err)
 	}
 }
 
-func TestOutboxPublisherPoisonIsNotRetried(t *testing.T) {
-	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	poison, err := domain.NewOutboxEvent(domain.NewOutboxEventParams{
-		ID:            "3001",
-		Type:          domain.OutboxEventCacheInvalidate,
-		AggregateType: "iam_binding",
-		AggregateID:   "4001",
-		Payload:       []byte(`{"subject":"1"}`),
-		Now:           now,
+func TestAuditEventHandlerPoisonsCorruptPayload(t *testing.T) {
+	handler := app.AuditEventHandler(&capturedEmitter{})
+	err := handler(context.Background(), &outbox.Event{
+		Envelope: envelope("2001", app.EventTypeAudit, []byte(`{`)),
+		Topic:    app.TopicAudit,
 	})
-	if err != nil {
-		t.Fatalf("NewOutboxEvent: %v", err)
+	if err == nil || !retry.IsPermanent(err) {
+		t.Fatalf("corrupt payload must be a permanent failure, got %v", err)
 	}
-	if err := repo.Append(ctx, poison); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	observer := &outboxObserver{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:   repo,
-		Deliver:  app.AuditOutboxDeliverer(&capturedEmitter{}),
-		Observer: observer,
-		Now:      func() time.Time { return now },
+}
+
+func TestAuditEventHandlerPoisonsUnknownEventType(t *testing.T) {
+	handler := app.AuditEventHandler(&capturedEmitter{})
+	err := handler(context.Background(), &outbox.Event{
+		Envelope: envelope("3001", "iam.unknown", []byte(`{}`)),
+		Topic:    app.TopicAudit,
 	})
-	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
-	}
-	if _, err := publisher.Drain(ctx); err == nil {
-		t.Fatal("poison event must surface an error")
-	}
-	if due := listOutbox(t, repo, now); len(due) != 0 {
-		t.Fatalf("poison event must not be retried: %+v", due)
-	}
-	if got := observer.results(); len(got) != 1 || got[0] != "poison" {
-		t.Fatalf("observer = %v", got)
+	if err == nil || !retry.IsPermanent(err) {
+		t.Fatalf("unknown event type must be a permanent failure, got %v", err)
 	}
 }
 
-func TestOutboxPublisherCorruptPayloadIsPoison(t *testing.T) {
-	ctx := context.Background()
-	repo := persistence.NewMemoryOutboxRepository()
-	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	event, err := domain.NewOutboxEvent(domain.NewOutboxEventParams{
-		ID:            "3002",
-		Type:          domain.OutboxEventAudit,
-		AggregateType: "iam_role",
-		AggregateID:   "4002",
-		// 合法 JSON 对象但缺少审计必填字段 → 永久不可投递。
-		Payload: []byte(`{"action":""}`),
-		Now:     now,
-	})
-	if err != nil {
-		t.Fatalf("NewOutboxEvent: %v", err)
-	}
-	if err := repo.Append(ctx, event); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:  repo,
-		Deliver: app.AuditOutboxDeliverer(&capturedEmitter{}),
-		Now:     func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
-	}
-	if _, err := publisher.Drain(ctx); !errors.Is(err, app.ErrOutboxPoison) {
-		t.Fatalf("err=%v, want ErrOutboxPoison", err)
+func TestAuditEventHandlerIgnoresLegacyCacheInvalidation(t *testing.T) {
+	handler := app.AuditEventHandler(&capturedEmitter{})
+	if err := handler(context.Background(), &outbox.Event{
+		Envelope: envelope("4001", app.EventTypeCacheInvalidate, []byte(`{"subject":"1"}`)),
+		Topic:    app.TopicCache,
+	}); err != nil {
+		t.Fatalf("legacy cache invalidation must be a no-op, got %v", err)
 	}
 }
 
-func TestOutboxPublisherRunStopsOnContextCancel(t *testing.T) {
-	repo := persistence.NewMemoryOutboxRepository()
-	emitter := &capturedEmitter{}
-	publisher, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-		Events:  repo,
-		Deliver: app.AuditOutboxDeliverer(emitter),
-	})
-	if err != nil {
-		t.Fatalf("NewOutboxPublisher: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- publisher.Run(ctx, 10*time.Millisecond) }()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("publisher must stop when context is cancelled")
+func TestAuditTopicObserverFiltersOtherTopics(t *testing.T) {
+	recorder := &deliveryRecorder{}
+	observer := app.AuditTopicObserver{Metrics: recorder}
+	observer.OnOutboxDelivered(context.Background(), app.TopicAudit, "success")
+	observer.OnOutboxDelivered(context.Background(), "order.created", "success")
+	if len(recorder.results) != 1 || recorder.results[0] != "success" {
+		t.Fatalf("results = %v, want only iam.audit", recorder.results)
 	}
 }
 
-func TestNewOutboxPublisherRequiresDependencies(t *testing.T) {
-	if _, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{Deliver: func(context.Context, *domain.OutboxEvent) error { return nil }}); err == nil {
-		t.Fatal("missing repository must error")
+type deliveryRecorder struct {
+	results []string
+}
+
+func (r *deliveryRecorder) OnOutboxDelivered(_ context.Context, result string) {
+	r.results = append(r.results, result)
+}
+
+func envelope(eventID, eventType string, payload []byte) mq.Envelope {
+	return mq.Envelope{
+		EventID:    eventID,
+		EventType:  eventType,
+		Version:    "v1",
+		OccurredAt: time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC),
+		TraceID:    "trace-1",
+		Payload:    payload,
 	}
-	if _, err := app.NewOutboxPublisher(app.OutboxPublisherOptions{Events: persistence.NewMemoryOutboxRepository()}); err == nil {
-		t.Fatal("missing deliver function must error")
-	}
-}
-
-// outboxObserver 记录投递结果。
-type outboxObserver struct {
-	mu      sync.Mutex
-	records []string
-}
-
-func (o *outboxObserver) OnOutboxDelivered(_ context.Context, result string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.records = append(o.records, result)
-}
-
-func (o *outboxObserver) results() []string {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]string(nil), o.records...)
 }

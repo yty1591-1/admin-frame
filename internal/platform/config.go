@@ -47,6 +47,7 @@ type Config struct {
 	ID              IDConfig          `yaml:"id"`
 	Idempotency     IdempotencyConfig `yaml:"idempotency"`
 	RateLimit       RateLimitConfig   `yaml:"rate_limit"`
+	Async           AsyncConfig       `yaml:"async"`
 	CORS            CORSConfig        `yaml:"cors"`
 	IAM             IAMConfig         `yaml:"iam"`
 }
@@ -120,6 +121,57 @@ const (
 // maxNodeID 与 pkg/id 的雪花节点号上限一致。
 const maxNodeID = 1023
 
+// 异步驱动与退避策略（async.driver / async.consumer.retry_backoff）。
+const (
+	// AsyncDriverDB 使用数据库事务性 Outbox（默认，也是本轮唯一实现）。
+	AsyncDriverDB = "db"
+	// AsyncBackoffExponential 指数退避。
+	AsyncBackoffExponential = "exponential"
+	// AsyncBackoffFixed 固定间隔重试。
+	AsyncBackoffFixed = "fixed"
+)
+
+// AsyncConfig 是平台级异步基础设施参数（ENT-03）。
+//
+// 默认关闭；启用后由 Relay 消费 async_outbox，消费方须幂等。
+// broker（NATS/Kafka）仅预留扩展点，本轮不提供实现。
+type AsyncConfig struct {
+	// Enabled 是否启用异步运行时；默认 false。
+	Enabled bool `yaml:"enabled"`
+	// Driver 驱动；本轮仅支持 db。
+	Driver string `yaml:"driver"`
+	// Outbox 投递参数。
+	Outbox AsyncOutboxConfig `yaml:"outbox"`
+	// Consumer 消费运行时参数。
+	Consumer AsyncConsumerConfig `yaml:"consumer"`
+}
+
+// AsyncOutboxConfig 是 Outbox Relay 参数。
+type AsyncOutboxConfig struct {
+	// PublishInAPI 是否在 API 进程内启动 Relay；生产强制 false，由 worker 独占。
+	PublishInAPI bool `yaml:"publish_in_api"`
+	// PollInterval 无到期事件时的休眠；[100ms, 1m]。
+	PollInterval time.Duration `yaml:"poll_interval"`
+	// BatchSize 单 worker 每轮认领上限；[1, 500]。
+	BatchSize int `yaml:"batch_size"`
+	// Lease processing 租约；[5s, 10m]。
+	Lease time.Duration `yaml:"lease"`
+	// MaxAttempts 最大投递次数；重试耗尽进入死信；[1, 20]。
+	MaxAttempts int `yaml:"max_attempts"`
+	// Concurrency Relay 并发 worker 数；[1, 16]。
+	Concurrency int `yaml:"concurrency"`
+}
+
+// AsyncConsumerConfig 是消费运行时参数。
+type AsyncConsumerConfig struct {
+	// Concurrency 消费并发度；[1, 32]。
+	Concurrency int `yaml:"concurrency"`
+	// VisibilityTimeout 消费幂等记录的处理中接管窗口；[5s, 30m]。
+	VisibilityTimeout time.Duration `yaml:"visibility_timeout"`
+	// RetryBackoff exponential | fixed。
+	RetryBackoff string `yaml:"retry_backoff"`
+}
+
 // RedisConfig 是共享缓存 / 锁的 Redis 连接参数（可选）。
 //
 // Addr 为空表示本进程不启用 Redis；IAM `cache.driver=redis` 时必须配置。
@@ -182,35 +234,6 @@ type IAMConfig struct {
 	Breakglass IAMBreakglassConfig `yaml:"breakglass"`
 	// Approval 高风险直写强制转审批开关。
 	Approval IAMApprovalConfig `yaml:"approval"`
-	// Outbox 事务性 Outbox 投递参数。
-	Outbox IAMOutboxConfig `yaml:"outbox"`
-}
-
-// IAMOutboxConfig 是事务性 Outbox 的投递参数。
-//
-// 启用后审计事件先写入 iam_outbox，再由进程内发布器投递到审计出口：
-// 写入失败即业务失败（fail-closed），投递失败按退避重试并进入死信。
-type IAMOutboxConfig struct {
-	// Enabled 是否启用；prod/staging + enforce 必须启用（审计不能只写日志）。
-	Enabled bool `yaml:"enabled"`
-	// PollInterval 拉取间隔；(0, 1m]。
-	PollInterval time.Duration `yaml:"poll_interval"`
-	// BatchSize 单轮拉取上限；[1, 500]。
-	BatchSize int `yaml:"batch_size"`
-	// MaxAttempts 最大投递次数；重试耗尽进入死信；[1, 20]。
-	MaxAttempts int `yaml:"max_attempts"`
-	// PublishInAPI 是否在 API 进程内启动发布器；默认 true（迁移期保持旧行为）。
-	//
-	// 迁移到 worker 独立发布后应设为 false，避免 API 与 worker 同时投递。
-	PublishInAPI *bool `yaml:"publish_in_api"`
-}
-
-// PublishInAPIEnabled 报告 API 进程是否承担 outbox 投递；未配置时默认 true。
-func (c IAMOutboxConfig) PublishInAPIEnabled() bool {
-	if c.PublishInAPI == nil {
-		return true
-	}
-	return *c.PublishInAPI
 }
 
 // IAMCacheConfig 是快照缓存参数。
@@ -447,6 +470,17 @@ func (c Config) LogValue() slog.Value {
 			slog.Float64("rps", c.RateLimit.RPS),
 			slog.Int("burst", c.RateLimit.Burst),
 		),
+		slog.Group("async",
+			slog.Bool("enabled", c.Async.Enabled),
+			slog.String("driver", c.Async.Driver),
+			slog.Bool("publish_in_api", c.Async.Outbox.PublishInAPI),
+			slog.Duration("poll_interval", c.Async.Outbox.PollInterval),
+			slog.Int("batch_size", c.Async.Outbox.BatchSize),
+			slog.Duration("lease", c.Async.Outbox.Lease),
+			slog.Int("outbox_concurrency", c.Async.Outbox.Concurrency),
+			slog.Int("consumer_concurrency", c.Async.Consumer.Concurrency),
+			slog.String("retry_backoff", c.Async.Consumer.RetryBackoff),
+		),
 		slog.Group("iam",
 			slog.String("mode", normalizeIAMMode(c.IAM.Mode)),
 			slog.Duration("load_timeout", c.IAM.LoadTimeout),
@@ -625,7 +659,39 @@ func (c *Config) applyDefaults() {
 	if c.RateLimit.IdleTTL == 0 {
 		c.RateLimit.IdleTTL = 10 * time.Minute
 	}
+	c.applyAsyncDefaults()
 	c.applyIAMDefaults()
+}
+
+// applyAsyncDefaults 填充异步运行时默认值（默认关闭，保持现有行为）。
+func (c *Config) applyAsyncDefaults() {
+	if c.Async.Driver == "" {
+		c.Async.Driver = AsyncDriverDB
+	}
+	if c.Async.Outbox.PollInterval == 0 {
+		c.Async.Outbox.PollInterval = time.Second
+	}
+	if c.Async.Outbox.BatchSize == 0 {
+		c.Async.Outbox.BatchSize = 100
+	}
+	if c.Async.Outbox.Lease == 0 {
+		c.Async.Outbox.Lease = 30 * time.Second
+	}
+	if c.Async.Outbox.MaxAttempts == 0 {
+		c.Async.Outbox.MaxAttempts = 10
+	}
+	if c.Async.Outbox.Concurrency == 0 {
+		c.Async.Outbox.Concurrency = 2
+	}
+	if c.Async.Consumer.Concurrency == 0 {
+		c.Async.Consumer.Concurrency = 4
+	}
+	if c.Async.Consumer.VisibilityTimeout == 0 {
+		c.Async.Consumer.VisibilityTimeout = 60 * time.Second
+	}
+	if c.Async.Consumer.RetryBackoff == "" {
+		c.Async.Consumer.RetryBackoff = AsyncBackoffExponential
+	}
 }
 
 // applyIAMDefaults 填充 IAM 默认值；Mode 保持空串，由 normalize 统一为 off。
@@ -662,19 +728,6 @@ func (c *Config) applyIAMDefaults() {
 	}
 	if c.IAM.Limits.MaxCustomRolesPerMerchant == 0 {
 		c.IAM.Limits.MaxCustomRolesPerMerchant = 50
-	}
-	if c.IAM.Outbox.PollInterval == 0 {
-		c.IAM.Outbox.PollInterval = time.Second
-	}
-	if c.IAM.Outbox.BatchSize == 0 {
-		c.IAM.Outbox.BatchSize = 50
-	}
-	if c.IAM.Outbox.MaxAttempts == 0 {
-		c.IAM.Outbox.MaxAttempts = 8
-	}
-	if c.IAM.Outbox.PublishInAPI == nil {
-		enabled := true
-		c.IAM.Outbox.PublishInAPI = &enabled
 	}
 }
 
@@ -1040,25 +1093,59 @@ func (c *Config) validateIAM() []error {
 			errs = append(errs, errors.New("iam.approval.enabled requires a persistent db.driver when env=prod"))
 		}
 	}
-	// 零值表示「尚未经过 applyDefaults」，按默认值处理，不在这里误报；
-	// 只有显式配置越界才拒绝启动（CFG-03 快速失败）。
-	if c.IAM.Outbox.PollInterval != 0 &&
-		(c.IAM.Outbox.PollInterval < 100*time.Millisecond || c.IAM.Outbox.PollInterval > time.Minute) {
-		errs = append(errs, errors.New("iam.outbox.poll_interval must be in [100ms, 1m]"))
+	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && !c.Async.Enabled {
+		errs = append(errs, errors.New("async.enabled must be true when iam.mode=enforce in prod/staging"))
 	}
-	if c.IAM.Outbox.BatchSize != 0 && (c.IAM.Outbox.BatchSize < 1 || c.IAM.Outbox.BatchSize > 500) {
-		errs = append(errs, errors.New("iam.outbox.batch_size must be in [1, 500]"))
+	errs = append(errs, c.validateAsync()...)
+	return errs
+}
+
+// validateAsync 校验异步运行时配置；未启用时只校验显式越界值。
+func (c *Config) validateAsync() []error {
+	var errs []error
+	switch c.Async.Driver {
+	case "", AsyncDriverDB:
+	default:
+		errs = append(errs, fmt.Errorf("async.driver %q is not implemented (only db is supported)", c.Async.Driver))
 	}
-	if c.IAM.Outbox.MaxAttempts != 0 && (c.IAM.Outbox.MaxAttempts < 1 || c.IAM.Outbox.MaxAttempts > 20) {
-		errs = append(errs, errors.New("iam.outbox.max_attempts must be in [1, 20]"))
+	if c.Async.Outbox.PollInterval != 0 &&
+		(c.Async.Outbox.PollInterval < 100*time.Millisecond || c.Async.Outbox.PollInterval > time.Minute) {
+		errs = append(errs, errors.New("async.outbox.poll_interval must be in [100ms, 1m]"))
 	}
-	// 审计持久化是 staging / prod enforce 的前置条件（§14）：只写进程日志的审计
-	// 在容器重建后不可追溯，因此这里直接拒绝启动，而不是降级告警。
-	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && !c.IAM.Outbox.Enabled {
-		errs = append(errs, errors.New("iam.outbox.enabled must be true when iam.mode=enforce in prod/staging"))
+	if c.Async.Outbox.BatchSize != 0 && (c.Async.Outbox.BatchSize < 1 || c.Async.Outbox.BatchSize > 500) {
+		errs = append(errs, errors.New("async.outbox.batch_size must be in [1, 500]"))
 	}
-	if c.IAM.Outbox.Enabled && c.DB.Driver == "memory" && isProdEnv(c.Env) {
-		errs = append(errs, errors.New("iam.outbox.enabled requires a persistent db.driver when env=prod"))
+	if c.Async.Outbox.Lease != 0 &&
+		(c.Async.Outbox.Lease < 5*time.Second || c.Async.Outbox.Lease > 10*time.Minute) {
+		errs = append(errs, errors.New("async.outbox.lease must be in [5s, 10m]"))
+	}
+	if c.Async.Outbox.MaxAttempts != 0 &&
+		(c.Async.Outbox.MaxAttempts < 1 || c.Async.Outbox.MaxAttempts > 20) {
+		errs = append(errs, errors.New("async.outbox.max_attempts must be in [1, 20]"))
+	}
+	if c.Async.Outbox.Concurrency != 0 &&
+		(c.Async.Outbox.Concurrency < 1 || c.Async.Outbox.Concurrency > 16) {
+		errs = append(errs, errors.New("async.outbox.concurrency must be in [1, 16]"))
+	}
+	if c.Async.Consumer.Concurrency != 0 &&
+		(c.Async.Consumer.Concurrency < 1 || c.Async.Consumer.Concurrency > 32) {
+		errs = append(errs, errors.New("async.consumer.concurrency must be in [1, 32]"))
+	}
+	if c.Async.Consumer.VisibilityTimeout != 0 &&
+		(c.Async.Consumer.VisibilityTimeout < 5*time.Second ||
+			c.Async.Consumer.VisibilityTimeout > 30*time.Minute) {
+		errs = append(errs, errors.New("async.consumer.visibility_timeout must be in [5s, 30m]"))
+	}
+	switch c.Async.Consumer.RetryBackoff {
+	case "", AsyncBackoffExponential, AsyncBackoffFixed:
+	default:
+		errs = append(errs, errors.New("async.consumer.retry_backoff must be exponential or fixed"))
+	}
+	if c.Async.Enabled && c.DB.Driver == "memory" {
+		errs = append(errs, errors.New("async.enabled requires a persistent db.driver"))
+	}
+	if isProdLikeEnv(c.Env) && c.IAM.Mode == IAMModeEnforce && c.Async.Enabled && c.Async.Outbox.PublishInAPI {
+		errs = append(errs, errors.New("async.outbox.publish_in_api must be false in prod/staging with iam.mode=enforce"))
 	}
 	return errs
 }

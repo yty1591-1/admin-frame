@@ -1,5 +1,10 @@
 # ENT-02 多实例运行语义实施计划
 
+> **历史文档（部分已被取代）**：文中的 `iam.outbox.*`、`iamruntime.NewOutboxTask` 与 API 内发布器已于
+> ENT-03 T8 迁移到平台 `async.*` + `cmd/worker` 的 `AsyncRuntime`（实现见
+> [ENT-03-async-infrastructure-implementation.md](./ENT-03-async-infrastructure-implementation.md)）。
+> 当前配置与装配以 `docs/rbac-iam.md` §12 与 `docs/CONFIG_STANDARDS.md` 为准。
+
 ## Context
 
 Wave 0（集成基座 + 门禁骨架）已提交（`df422e3`）。当前 `docs/production-readiness-implementation-plan.md` 中 ENT-02 仍为「待做」，实际缺口：

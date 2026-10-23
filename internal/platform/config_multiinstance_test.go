@@ -17,7 +17,7 @@ func prodBaseConfig() *platform.Config {
 	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	cfg.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	cfg.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	cfg.IAM.Outbox.Enabled = true
+	cfg.Async.Enabled = true
 	cfg.ID = prodIDConfig()
 	return cfg
 }
@@ -63,7 +63,6 @@ func TestValidateIDRules(t *testing.T) {
 	worker.ID = platform.IDConfig{}
 	worker.IAM.Mode = platform.IAMModeOff
 	worker.IAM.Cache.Driver = platform.IAMCacheDriverMemory
-	worker.IAM.Outbox.Enabled = false
 	if err := worker.Validate(); err != nil {
 		t.Fatalf("worker prod config without node_id: %v", err)
 	}
@@ -90,7 +89,6 @@ func TestValidateIdempotencyRules(t *testing.T) {
 	missingRedis.Redis = platform.RedisConfig{}
 	missingRedis.IAM.Cache.Driver = platform.IAMCacheDriverMemory
 	missingRedis.IAM.Mode = platform.IAMModeOff
-	missingRedis.IAM.Outbox.Enabled = false
 	missingRedis.Idempotency = platform.IdempotencyConfig{
 		Enabled: true, Driver: platform.IdempotencyDriverRedis, Header: "Idempotency-Key", TTL: 24 * time.Hour,
 	}

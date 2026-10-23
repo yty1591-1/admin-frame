@@ -54,6 +54,22 @@ rate_limit:
   burst: 200
   idle_ttl: 10m
 
+# 异步基础设施：事务性 Outbox + 消费运行时（ENT-03）。
+async:
+  enabled: false                 # 默认关闭；启用要求 db.driver 非 memory
+  driver: db                     # db（唯一实现）；broker(NATS/Kafka) 仅预留接口
+  outbox:
+    publish_in_api: false        # prod/staging + iam.mode=enforce 必须 false（由 worker 独占投递）
+    poll_interval: 1s            # 拉取间隔，[100ms, 1m]
+    batch_size: 100              # 单 worker 每轮认领上限，[1, 500]
+    lease: 30s                   # processing 租约，[5s, 10m]
+    max_attempts: 10             # 重试耗尽进死信，[1, 20]
+    concurrency: 2               # Relay 并发 worker，[1, 16]
+  consumer:
+    concurrency: 4               # 消费并发度，[1, 32]
+    visibility_timeout: 60s      # 幂等记录处理中接管窗口，[5s, 30m]
+    retry_backoff: exponential   # exponential|fixed
+
 # RBAC / IAM（internal/iam）。off=不启用；shadow=只比对不拦截；enforce=拦截。
 iam:
   mode: shadow                   # off|shadow|enforce；prod 建议 enforce
@@ -78,12 +94,6 @@ iam:
     allowed_subjects: []         # 允许申请的主体白名单；非空时名单外返回 40300
   approval:
     enabled: false               # true 时角色 / 绑定直写端点返回 40900，必须走 change-requests
-  outbox:
-    enabled: false               # prod/staging + enforce 必须 true，否则启动失败（审计不可只写日志）
-    poll_interval: 1s            # 拉取间隔，[100ms, 1m]
-    batch_size: 50               # 单轮拉取上限，[1, 500]
-    max_attempts: 8              # 投递次数上限，耗尽进死信，[1, 20]
-    publish_in_api: true         # API 进程内投递；双写期可关闭，改由 cmd/worker 独立投递
 
 # Redis：iam.cache.driver=redis 时必填；密码走 ADMIN_FRAME_REDIS_PASSWORD。
 redis:

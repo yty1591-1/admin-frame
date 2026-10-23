@@ -55,10 +55,6 @@ func run(configPath string) error {
 			if err != nil {
 				return nil, err
 			}
-			// outbox 投递等后台任务随进程生命周期运行，关闭时先停投递再关数据库。
-			for _, task := range built.Background {
-				deps.Background(task)
-			}
 			return built.Authorizer, nil
 		},
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {

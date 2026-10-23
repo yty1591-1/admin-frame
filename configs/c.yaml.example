@@ -48,6 +48,22 @@ rate_limit:
   burst: 200
   idle_ttl: 10m
 
+# 异步基础设施：事务性 Outbox + 消费运行时（ENT-03）。
+async:
+  enabled: false                 # 默认关闭；启用要求 db.driver 非 memory
+  driver: db                     # db（唯一实现）；broker(NATS/Kafka) 仅预留接口
+  outbox:
+    publish_in_api: false        # prod/staging + iam.mode=enforce 必须 false（由 worker 独占投递）
+    poll_interval: 1s
+    batch_size: 100
+    lease: 30s
+    max_attempts: 10
+    concurrency: 2
+  consumer:
+    concurrency: 4
+    visibility_timeout: 60s
+    retry_backoff: exponential   # exponential|fixed
+
 db:
   driver: memory
   dsn: ""

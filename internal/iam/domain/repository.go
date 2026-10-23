@@ -118,41 +118,6 @@ type ChangeRequestFilter struct {
 	Offset int
 }
 
-// OutboxRepository 是事务性 Outbox 的持久化端口（docs/rbac-iam.md §5.3.7）。
-//
-// 约定：
-//   - Append 必须与业务写入处于同一请求，失败即失败关闭（不得只记日志）；
-//   - Claim 必须是原子的（pending → processing），保证多实例不重复投递；
-//   - ListDue 只返回 pending 且 next_retry_at 已到期的事件，按 ID 升序保证 FIFO。
-type OutboxRepository interface {
-	// Append 写入一条 pending 事件。
-	Append(ctx context.Context, event *OutboxEvent) error
-	// ListDue 返回到期可投递的事件，limit 上限 500。
-	ListDue(ctx context.Context, now time.Time, limit int) ([]*OutboxEvent, error)
-	// Claim 原子认领事件；返回 false 表示已被其它 worker 认领或状态已变。
-	Claim(ctx context.Context, id string, now time.Time) (bool, error)
-	// ReclaimStale 把租约过期的 processing 事件回收为 pending，返回回收条数。
-	ReclaimStale(ctx context.Context, staleBefore, now time.Time) (int, error)
-	// MarkSucceeded 标记投递成功。
-	MarkSucceeded(ctx context.Context, id string, now time.Time) error
-	// Reschedule 记录失败并把事件放回 pending，等待退避重试。
-	Reschedule(ctx context.Context, id string, attempts int, nextRetryAt, now time.Time) error
-	// MarkDead 标记重试耗尽（死信）。
-	MarkDead(ctx context.Context, id string, now time.Time) error
-	// MarkPoison 标记载荷永久不可投递。
-	MarkPoison(ctx context.Context, id string, now time.Time) error
-	// Stats 返回积压统计，用于 iam_outbox_pending / iam_outbox_lag_seconds。
-	Stats(ctx context.Context) (OutboxStats, error)
-}
-
-// OutboxStats 是 outbox 积压统计。
-type OutboxStats struct {
-	// Pending 未投递事件数（含等待重试与死信）。
-	Pending int
-	// OldestCreatedAt 最老未投递事件的创建时间；零值表示无积压。
-	OldestCreatedAt time.Time
-}
-
 // SnapshotRepository 是鉴权快照的只读端口。
 //
 // 实现必须用一条 SQL 展开角色、权限与数据范围（禁止 N+1，§8.3）；

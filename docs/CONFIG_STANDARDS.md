@@ -110,6 +110,17 @@ cp configs/admin.yaml.example configs/admin.yaml
 | `ADMIN_FRAME_IDEMPOTENCY_TTL` | `idempotency.ttl` |
 | `ADMIN_FRAME_IDEMPOTENCY_REQUIRED` | `idempotency.required` |
 | `ADMIN_FRAME_IDEMPOTENCY_MAX_BODY_BYTES` | `idempotency.max_body_bytes` |
+| `ADMIN_FRAME_ASYNC_ENABLED` | `async.enabled`（默认 false；启用要求 `db.driver ≠ memory`） |
+| `ADMIN_FRAME_ASYNC_DRIVER` | `async.driver`（本轮仅 `db`） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_PUBLISH_IN_API` | `async.outbox.publish_in_api`（prod/staging + IAM enforce 必须 false） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_POLL_INTERVAL` | `async.outbox.poll_interval`（[100ms, 1m]） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_BATCH_SIZE` | `async.outbox.batch_size`（[1, 500]） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_LEASE` | `async.outbox.lease`（processing 租约，[5s, 10m]） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_MAX_ATTEMPTS` | `async.outbox.max_attempts`（[1, 20]） |
+| `ADMIN_FRAME_ASYNC_OUTBOX_CONCURRENCY` | `async.outbox.concurrency`（[1, 16]） |
+| `ADMIN_FRAME_ASYNC_CONSUMER_CONCURRENCY` | `async.consumer.concurrency`（[1, 32]） |
+| `ADMIN_FRAME_ASYNC_CONSUMER_VISIBILITY_TIMEOUT` | `async.consumer.visibility_timeout`（[5s, 30m]） |
+| `ADMIN_FRAME_ASYNC_CONSUMER_RETRY_BACKOFF` | `async.consumer.retry_backoff`（exponential / fixed） |
 | `ADMIN_FRAME_REDIS_ADDR` | `redis.addr`（限流 / 幂等 / IAM 缓存 driver=redis 时必填） |
 | `ADMIN_FRAME_REDIS_USERNAME` | `redis.username` |
 | `ADMIN_FRAME_REDIS_PASSWORD` | `redis.password`（禁止写文件） |
@@ -158,6 +169,9 @@ cp configs/admin.yaml.example configs/admin.yaml
 - `env ∈ {prod, staging}` 且 `channel ≠ worker` ⇒ 非 statefulset 时必须显式 `id.node_id`（避免多副本重复 ID）
 - `idempotency.enabled=true` ⇒ `driver ∈ {memory, redis}`、`ttl > 0`、`header` 非空；`driver=redis` ⇒ `redis.addr` 必填
 - `env ∈ {prod, staging}` 且启用幂等或限流 ⇒ `driver` 必须为 `redis`（否则配额/去重被副本数放大）
+- `async.driver` 本轮仅支持 `db`（broker 适配仅预留接口）；`poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`lease ∈ [5s,10m]`、`max_attempts ∈ [1,20]`、`outbox.concurrency ∈ [1,16]`、`consumer.concurrency ∈ [1,32]`、`visibility_timeout ∈ [5s,30m]`、`retry_backoff ∈ {exponential, fixed}`
+- `async.enabled=true` ⇒ `db.driver ≠ memory`（Outbox 必须持久化）
+- `env ∈ {prod, staging}` 且 `iam.mode=enforce` 且 `async.enabled=true` ⇒ `async.outbox.publish_in_api=false`（由 worker 独占投递，避免重复）
 - `env` 为空或 ∈ {local, dev, test, staging, prod}
 - `tracing.exporter` ∈ {none, otlp, stdout, noop}；`otlp` 时 `endpoint` 必填；`env=prod` 禁止 `stdout`
 
@@ -176,7 +190,7 @@ cp configs/admin.yaml.example configs/admin.yaml
 | local | local | 可用 `auth.mode=demo`、memory DB |
 | dev / test | dev / test | 可销毁数据；禁止生产凭据 |
 | staging | staging | 拓扑近似生产；密钥隔离；必须 `auth.mode=jwt`；多副本时显式 `id.node_id` 或 `statefulset`，幂等/限流用 `redis` |
-| prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启；多副本同上，`iam.outbox.publish_in_api` 与 worker 部署按迁移节奏切换 |
+| prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启；多副本同上，`async.enabled=true` 且 `async.outbox.publish_in_api=false`，投递统一由 `cmd/worker` 承担（IAM enforce 强制 `async.enabled=true`） |
 
 ---
 

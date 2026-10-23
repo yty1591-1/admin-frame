@@ -827,7 +827,9 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - 失败：可重试错误进重试队列；毒消息进死信（DLQ）并告警。
 - 发布与本地事务：优先 Transactional Outbox，避免「库已写、事件未发」。
 - 事件载荷含必要的 `merchant_id` / `user_id`，供消费者做隔离与幂等键。
-- 生产/消费抽象见 `pkg/mq`（`Producer` / `Consumer` / `Wrap` / `OutboxStore`）；进程内 `Memory` 供测试；Kafka/NATS 实现接口后由 platform 注入。
+- 生产/消费抽象：事件信封在 `pkg/mq`；事务性 Outbox / Relay / 消费路由 / 去重 / DLQ 在 `pkg/outbox`；
+  平台由 `internal/platform/async.go` 的 `AsyncRuntime` 装配，生产环境由 `cmd/worker` 独占投递
+  （`async.outbox.publish_in_api=false`）。Kafka/NATS 实现 `pkg/mq.Broker` 后再接入，默认 `async.driver=db`。
 
 ---
 

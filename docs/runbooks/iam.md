@@ -51,19 +51,21 @@
    4. 核对审计：`rbac.role_change` / `rbac.binding_change` 中 `added` / `removed` 差量与操作人。
 4. **缓存删除失败**：确认失效任务是否持续报错；L1 TTL（默认 3s）与 L2 TTL（默认 5m）是最终兜底，
    最坏撤销延迟为两层 TTL 之和。恢复后确认 `iam_cache_invalidate_failed_total` 停止增长。
-5. **Outbox 积压（M4.4 起）**：`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`。
-   投递由启用 `iam.outbox.enabled` 的 API 进程内发布器执行（`poll_interval` 默认 1s），
-   先用 `SELECT status, COUNT(*) FROM iam_outbox GROUP BY status` 定位是待投递、重试还是死信：
-   - `pending` 增长但 `attempts` 不涨：发布器未运行（进程未启用 outbox 或已退出），
-     检查 `background_tasks` 启动日志与 `iam_outbox_delivery_total`。
+5. **Outbox 积压（ENT-03 起）**：`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`。
+   投递由 `cmd/worker` 的平台 `AsyncRuntime` 执行（`async.outbox.poll_interval` 默认 1s）；
+   先用 `SELECT status, COUNT(*) FROM async_outbox WHERE topic = 'iam.audit' GROUP BY status`
+   定位是待投递、重试还是死信：
+   - `pending` 增长但 `attempts` 不涨：worker 未运行（`async.enabled=false` 或进程已退出），
+     检查 `worker` 启动日志与 `iam_outbox_delivery_total`。
    - `pending` + `iam_outbox_delivery_total{result="retry"}` 增长：审计出口不可用（日志 / SIEM 管道），
      修复出口后事件会在退避到期后自动补投，**禁止手工删事件或改状态**。
-   - `processing` 长期不降：上一个投递者已崩溃，超过 2m 租约后会被自动回收重投（至少一次语义）；
+   - `processing` 长期不降：上一个投递者已崩溃，租约（`async.outbox.lease`，默认 30s）过期后会被自动回收重投（至少一次语义）；
      若持续堆积，检查是否有长事务锁住对应行。
-   - `dead` / `failed`：重试耗尽或毒消息，保留行并按 `aggregate_type/aggregate_id` 补审计；
-     排障结论写入事故记录，再决定是否人工重放（重放前必须先修数据）。
-   若积压由单实例吞吐不足引起，优先扩大 `batch_size`（≤500）或缩短 `poll_interval`（≥100ms），
-   再考虑多实例并行（认领是条件更新，天然幂等）。
+   - `dead` / `failed`：重试耗尽或毒消息，对应 `async_dlq` 也会有一条未重放记录；
+     保留行并按 `aggregate_type/aggregate_id` 补审计，修好 handler 后用 `cmd/worker -replay-dlq <event_id|all>` 重放
+     （详见 [async-dlq.md](./async-dlq.md)）。
+   若积压由单实例吞吐不足引起，优先扩大 `async.outbox.batch_size`（≤500）或缩短 `async.outbox.poll_interval`（≥100ms），
+   再考虑多 worker 并行（认领是条件更新，天然幂等）。
 6. **破玻璃授权（`iam_breakglass_active > 0`）**：按 P1 安全事件处理。
    1. `GET /admin/v1/iam/change-requests?action=breakglass_request&status=applied` 核对申请人与审批人。
    2. 确认原因与影响面后，`POST /admin/v1/iam/breakglass/{id}/revoke`（body 带当前 `version`）提前收回。
@@ -71,7 +73,7 @@
    4. 核对 `rbac.breakglass` 的 request / approve / revoke 三条审计，缺失即升级安全 Owner。
 7. **写入事务与审计一致性（M4.5 起）**：业务变更与审计事件在同一个数据库事务内提交，
    正常不应出现「变更成功但审计缺失」。若怀疑 M4.4 及更早版本的历史窗口存在缺口，
-   按业务行 `updated_at` 时间窗与 `iam_outbox.aggregate_id`、审计目的地 `event_id` 三方对照：
+   按业务行 `updated_at` 时间窗与 `async_outbox.aggregate_id`、审计目的地 `event_id` 三方对照：
    - 业务行存在、outbox 与审计目的地都没有对应记录：属历史缺口，补录审计并记录事故；
    - outbox 为 `dead` / `failed`：按第 5 条处理，**禁止直接改业务行来掩盖审计缺失**；
    - 变更请求整体返回 `50000` 且无任何副作用：通常是事务未能建立或提交失败（DB 故障），
@@ -87,10 +89,11 @@
    - 应用失败（`approved` 不转 `applied`）：目标角色 / 绑定可能不属于该商户（`40400`）
      或已被删除；修正目标后按当前 `version` 重试，**禁止直接改审批单状态**。
    - 破玻璃不走 B 端：B 端创建 `breakglass_request` 与 B 端路由均拒绝，属预期行为。
-9. **迁移回滚**：`migrate down 000006` → `migrate down 000005` → `migrate down 000004` →
-   `migrate down 000003` → `migrate down 000002`，仅在非生产环境执行；
+9. **迁移回滚**：先 `migrate down 000010`（把 IAM 主题事件搬回 `iam_outbox`，供旧发布器使用）→
+   `migrate down 000006` → `migrate down 000005` → `migrate down 000004` → `migrate down 000003` →
+   `migrate down 000002`，仅在非生产环境执行；`000010` 与 `000009` 的回滚顺序不可颠倒；
    `000005` 的回滚会丢失商户归属，回滚前必须确认没有 pending / approved 的 B 端单据。
-   生产回滚只切配置（`iam.mode=off`），不回滚 schema。
+   生产回滚只切配置（`iam.mode=off` + `async.enabled=false`），不回滚 schema。
 10. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
 
 ## 演练与验证
@@ -99,29 +102,31 @@
   矩阵见 [docs/rbac-iam.md §13.7](../rbac-iam.md)）：
   - Redis 不可用 → 回源 DB 仍可鉴权（`TestAuthorizeServiceDegradesWhenL2Unavailable`）；
   - 缓存失效失败 → 授权写入仍成功，由 TTL 兜底（`TestRoleServiceWriteSurvivesInvalidationFailure`）；
-  - 审计出口抖动 → 积压可见并在退避后自动追平（`TestOutboxPublisherDrainsBacklogAfterTransientFailure`）。
-- 每季度至少一次 staging 演练：停 Redis、停审计出口、注入 DB 超时，确认告警按「症状」触发并在 15 分钟内收敛。
+  - 审计出口抖动 → 积压可见并在退避后自动追平（`TestOutboxRelayDrainsBacklogAfterTransientFailure`）。
+- 每季度至少一次 staging 演练：停 Redis、停 worker / 审计出口、注入 DB 超时，确认告警按「症状」触发并在 15 分钟内收敛。
 - 演练必须在变更窗口内执行，结束后确认 `iam_outbox_pending = 0`、`iam_shadow_mismatch_total` 无新增。
 
 ## 备份与恢复
 
 - **范围**：`iam_permission`、`iam_role`、`iam_role_permission`、`iam_role_binding`、`iam_role_data_scope`、
-  `iam_change_request`、`iam_outbox`，以及迁移历史表 `schema_migrations`。备份频率、保留期与演练要求遵循
+  `iam_change_request`，以及平台异步表 `async_outbox`、`async_dlq`、`async_consumed` 和迁移历史表
+  `schema_migrations`（ENT-03 起 IAM 审计 / 缓存事件写入 `async_outbox`）。备份频率、保留期与演练要求遵循
   [DATA_STANDARDS §5](../DATA_STANDARDS.md)（DATA-07：每日全量、保留 ≥ 7 天、恢复演练 ≥ 每 6 个月一次）。
 - **备份**：优先随业务库整库备份；单独备份 IAM 表时必须在停写窗口执行并记录备份点：
 
   ```bash
   mysqldump --single-transaction --routines --triggers <db> \
     iam_permission iam_role iam_role_permission iam_role_binding \
-    iam_role_data_scope iam_change_request iam_outbox schema_migrations
+    iam_role_data_scope iam_change_request async_outbox async_dlq async_consumed schema_migrations
   ```
 
 - **恢复步骤**：
-  1. 先切 `iam.mode=off`（或摘除 admin / biz 流量），停止 IAM 写入与 outbox 发布器；
-  2. 恢复备份。仅恢复 IAM 表时按依赖顺序导入：`iam_permission` → `iam_role` → `iam_role_permission` →
-     `iam_role_data_scope` → `iam_role_binding` → `iam_change_request` → `iam_outbox` → `schema_migrations`；
+  1. 先切 `iam.mode=off`（或摘除 admin / biz 流量），并停掉 `cmd/worker`（Relay 投递者），避免恢复期间继续认领事件；
+  2. 恢复备份。仅恢复 IAM 相关表时按依赖顺序导入：`iam_permission` → `iam_role` → `iam_role_permission` →
+     `iam_role_data_scope` → `iam_role_binding` → `iam_change_request` → `async_outbox` → `async_dlq` →
+     `async_consumed` → `schema_migrations`；
   3. 校验：行数与备份点一致；启动期权限目录校验通过（`iam_permission` 与 `internal/iam/catalog` 一致）；
-     `SELECT status, COUNT(*) FROM iam_outbox GROUP BY status` 无异常堆积；
+     `SELECT status, COUNT(*) FROM async_outbox WHERE topic IN ('iam.audit','iam.cache') GROUP BY status` 无异常堆积；
   4. 恢复后 `pending` / `processing` 事件可能重复投递，审计出口必须按 `event_id` 去重；
      `dead` / `failed` 行保留并按「缓解与恢复」第 5 条处理，**禁止手工改状态或删事件**；
   5. 清空 IAM 缓存（L1 随进程重启；L2 删除 IAM key 前缀或等待 TTL），再切回原 `iam.mode`；

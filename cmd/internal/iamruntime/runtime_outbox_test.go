@@ -11,22 +11,31 @@ import (
 
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 )
 
-// newDeps 构造不依赖外部服务的装配参数（db.driver=memory）。
-func newDeps(t *testing.T, outbox platform.IAMOutboxConfig) *platform.Deps {
+// newDeps 构造不依赖外部服务的装配参数（db.driver=memory 或 SkipPing 的 mysql）。
+func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platform.Deps {
 	t.Helper()
-	met, err := metrics.New(metrics.Options{Service: "admin-api", Channel: "admin", Env: "local"})
+	registry := prometheus.NewRegistry()
+	met, err := metrics.New(metrics.Options{
+		Service:    "admin-api",
+		Channel:    "admin",
+		Env:        "local",
+		Registerer: registry,
+		Gatherer:   registry,
+	})
 	if err != nil {
 		t.Fatalf("metrics.New: %v", err)
 	}
-	return &platform.Deps{
+	deps := &platform.Deps{
 		Config: &platform.Config{
 			Env:     "local",
 			Service: "admin-api",
 			Channel: "admin",
+			Async:   async,
 			IAM: platform.IAMConfig{
 				Mode:        platform.IAMModeShadow,
 				LoadTimeout: 300 * time.Millisecond,
@@ -43,93 +52,104 @@ func newDeps(t *testing.T, outbox platform.IAMOutboxConfig) *platform.Deps {
 					MaxBindingsPerSubject:     50,
 					MaxCustomRolesPerMerchant: 50,
 				},
-				Outbox: outbox,
 			},
 		},
 		Logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		Metrics: met,
 		IDs:     id.MustSnowflake(id.Options{NodeID: 1}),
 	}
+	if !withDatabase {
+		return deps
+	}
+	database, err := db.Open(context.Background(), db.Config{
+		Driver:   "mysql",
+		DSN:      "iam:iam@tcp(127.0.0.1:3306)/iam",
+		SkipPing: true,
+	})
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	deps.Database = database
+	rt, err := platform.NewAsyncRuntime(deps)
+	if err != nil {
+		t.Fatalf("NewAsyncRuntime: %v", err)
+	}
+	deps.Async = rt
+	return deps
 }
 
-// TestRuntimeOutboxDisabledHasNoBackgroundTasks 验证默认装配不启动后台投递。
-func TestRuntimeOutboxDisabledHasNoBackgroundTasks(t *testing.T) {
-	rt, err := iamruntime.New(newDeps(t, platform.IAMOutboxConfig{}), iamruntime.Options{})
-	if err != nil {
+// TestRuntimeWithoutAsyncKeepsSlogRecorder 验证未启用 async 时装配成功且不注册异步指标。
+func TestRuntimeWithoutAsyncKeepsSlogRecorder(t *testing.T) {
+	deps := newDeps(t, platform.AsyncConfig{}, false)
+	if deps.Async != nil {
+		t.Fatal("async runtime must be nil when disabled")
+	}
+	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
-	if len(rt.Background) != 0 {
-		t.Fatalf("background tasks = %d, want 0 when outbox disabled", len(rt.Background))
+	if err := iamruntime.RegisterAsync(deps); err != nil {
+		t.Fatalf("RegisterAsync must be a no-op when disabled: %v", err)
 	}
 }
 
-// TestRuntimeOutboxEnabledStartsPublisher 验证启用后注册后台任务并暴露积压指标。
-func TestRuntimeOutboxEnabledStartsPublisher(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	met, err := metrics.New(metrics.Options{
-		Service:    "admin-api",
-		Channel:    "admin",
-		Env:        "local",
-		Registerer: registry,
-		Gatherer:   registry,
-	})
-	if err != nil {
-		t.Fatalf("metrics.New: %v", err)
+// TestRuntimeAsyncRegistersIAMHandlers 验证启用 async 后 IAM 主题已在路由中注册。
+func TestRuntimeAsyncRegistersIAMHandlers(t *testing.T) {
+	deps := newDeps(t, platform.AsyncConfig{
+		Enabled: true,
+		Driver:  platform.AsyncDriverDB,
+		Outbox: platform.AsyncOutboxConfig{
+			PollInterval: time.Second,
+			BatchSize:    10,
+			Lease:        30 * time.Second,
+			MaxAttempts:  3,
+			Concurrency:  1,
+		},
+		Consumer: platform.AsyncConsumerConfig{
+			Concurrency:       2,
+			VisibilityTimeout: time.Minute,
+			RetryBackoff:      platform.AsyncBackoffExponential,
+		},
+	}, true)
+	if deps.Async == nil {
+		t.Fatal("async runtime must be assembled when enabled")
 	}
-	deps := newDeps(t, platform.IAMOutboxConfig{
-		Enabled:      true,
-		PollInterval: 10 * time.Millisecond,
-		BatchSize:    10,
-		MaxAttempts:  3,
-	})
-	deps.Metrics = met
-
-	rt, err := iamruntime.New(deps, iamruntime.Options{})
-	if err != nil {
+	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
-	if len(rt.Background) != 1 {
-		t.Fatalf("background tasks = %d, want 1 publisher", len(rt.Background))
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- rt.Background[0](ctx) }()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("publisher stopped with error: %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("publisher did not stop after context cancellation")
-	}
 }
 
-// TestRuntimeOutboxGaugesRegistered 验证两个积压指标可在 /metrics 中被采集。
-func TestRuntimeOutboxGaugesRegistered(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	met, err := metrics.New(metrics.Options{
-		Service:    "admin-api",
-		Channel:    "admin",
-		Env:        "local",
-		Registerer: registry,
-		Gatherer:   registry,
-	})
-	if err != nil {
-		t.Fatalf("metrics.New: %v", err)
-	}
-	deps := newDeps(t, platform.IAMOutboxConfig{Enabled: true, PollInterval: time.Second, BatchSize: 10, MaxAttempts: 3})
-	deps.Metrics = met
+// TestRuntimeAsyncGaugesRegistered 验证 IAM 积压指标与投递指标可在 /metrics 中被采集。
+func TestRuntimeAsyncGaugesRegistered(t *testing.T) {
+	deps := newDeps(t, platform.AsyncConfig{
+		Enabled: true,
+		Driver:  platform.AsyncDriverDB,
+		Outbox: platform.AsyncOutboxConfig{
+			PollInterval: time.Second,
+			BatchSize:    10,
+			Lease:        30 * time.Second,
+			MaxAttempts:  3,
+			Concurrency:  1,
+		},
+		Consumer: platform.AsyncConsumerConfig{
+			Concurrency:       2,
+			VisibilityTimeout: time.Minute,
+			RetryBackoff:      platform.AsyncBackoffExponential,
+		},
+	}, true)
 	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
 
-	families, err := registry.Gather()
+	families, err := deps.Metrics.Gatherer().Gather()
 	if err != nil {
 		t.Fatalf("gather: %v", err)
 	}
-	wanted := map[string]bool{"iam_outbox_pending": false, "iam_outbox_lag_seconds": false, "iam_outbox_delivery_total": false}
+	wanted := map[string]bool{
+		"iam_outbox_pending":        false,
+		"iam_outbox_lag_seconds":    false,
+		"iam_outbox_delivery_total": false,
+	}
 	for _, family := range families {
 		if _, ok := wanted[family.GetName()]; ok {
 			wanted[family.GetName()] = true

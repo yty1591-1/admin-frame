@@ -12,7 +12,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-transport check-debug check-openapi check-deps check-config \
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
-	check-license check-codegen check-perf check-idempotency secrets \
+	check-license check-codegen check-perf check-idempotency check-outbox secrets \
 	gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -158,6 +158,10 @@ check-codegen:
 check-idempotency:
 	bash scripts/ci/check-idempotency.sh
 
+# ENT-03：异步信封 / Outbox / Relay / 指标 / 迁移 / 配置契约。
+check-outbox:
+	bash scripts/ci/check-outbox.sh
+
 # PERF-01/02：关键路径 Benchmark 登记与抽检。
 check-perf:
 	bash scripts/ci/check-perf.sh
@@ -174,7 +178,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

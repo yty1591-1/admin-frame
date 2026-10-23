@@ -3,7 +3,6 @@ package mq_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,45 +157,6 @@ func TestMiddlewareChain(t *testing.T) {
 	_ = h(context.Background(), mq.Message{Topic: "t"})
 	if len(order) != 3 || order[0] != 1 || order[1] != 2 || order[2] != 0 {
 		t.Fatalf("order=%v", order)
-	}
-}
-
-func TestOutboxRelay(t *testing.T) {
-	broker := mq.NewMemory(mq.MemoryConfig{})
-	defer func() { _ = broker.Close() }()
-	box := mq.NewMemoryOutbox()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var got sync.Map
-	_ = broker.Consumer().Subscribe("evt", func(_ context.Context, msg mq.Message) error {
-		got.Store(msg.ID, string(msg.Body))
-		cancel()
-		return nil
-	})
-	go func() { _ = broker.Consumer().Run(ctx) }()
-
-	_ = box.Enqueue(context.Background(), mq.OutboxRecord{
-		ID:      "ob-1",
-		Message: mq.Message{ID: "m-1", Topic: "evt", Body: []byte("hello")},
-	})
-
-	relay := &mq.OutboxRelay{
-		Store:     box,
-		Producer:  broker.Producer(),
-		BatchSize: 10,
-		IdleWait:  10 * time.Millisecond,
-	}
-	go func() { _ = relay.Run(ctx) }()
-
-	select {
-	case <-ctx.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-	if v, ok := got.Load("m-1"); !ok || v.(string) != "hello" {
-		t.Fatalf("got=%v ok=%v", v, ok)
 	}
 }
 
