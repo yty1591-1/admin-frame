@@ -14,6 +14,38 @@ auth:
   mode: demo
   expected_channel: worker
 
+# 雪花 ID 节点号：worker 不生成业务 ID，但共享同一配置结构（prod 非必填）。
+id:
+  node_id: 0                     # [0,1023]；多副本部署须唯一
+  node_id_source: env            # env|config|statefulset
+
+# 写请求幂等：worker 不对外提供 HTTP，保持默认关闭。
+idempotency:
+  enabled: false
+  driver: memory
+  header: Idempotency-Key
+  ttl: 24h
+  required: false
+  max_body_bytes: 1048576
+
+# 请求限流：worker 不对外提供 HTTP，保持默认关闭。
+rate_limit:
+  enabled: false
+  driver: memory
+  key: channel
+  failure_mode: fail_open
+  rps: 100
+  burst: 200
+  idle_ttl: 10m
+
+# 由 worker 独占 IAM Outbox 投递；API 侧须配置 iam.outbox.publish_in_api=false。
+iam:
+  outbox:
+    enabled: true
+    poll_interval: 1s
+    batch_size: 50
+    max_attempts: 8
+
 db:
   driver: memory
   dsn: ""

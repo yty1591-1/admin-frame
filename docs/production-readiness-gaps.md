@@ -39,7 +39,7 @@
 | 身份与访问 | **L1～L2** | 只有 JWT 校验；无登录、刷新、撤销、账号域 |
 | 租户模型 | **L1** | 只有 `merchant_id` 透传，无租户注册、状态、配额与退出机制 |
 | 异步与事件基础设施 | **L1～L2** | IAM Outbox 完整；通用发布 / 消费运行时与生产级 broker 缺失 |
-| 多实例运行 | **L1** | ID 节点号固定、幂等与限流为进程内实现 |
+| 多实例运行 | **L2** | ID 节点号可配置、幂等与限流支持 Redis 共享；待 staging 多副本验收 |
 | 可观测性 | **L2** | 指标 / 追踪 / 结构化日志齐备；告警规则与看板未落地 |
 | 部署与运维 | **L1** | 只有部署说明文档；无 K8s / Helm / 环境基线 |
 | 安全与合规 | **L1～L2** | 校验与扫描强；密钥托管、审计留存、数据生命周期缺失 |
@@ -52,7 +52,7 @@
 | ID | 缺口 | 直接后果 | 现状证据 |
 |---|---|---|---|
 | `ENT-01` | 身份闭环缺失：无登录 / 刷新 / 登出 / 撤销 / 账号域 | 无法接入真实用户；令牌泄露只能等过期 | `internal/security/` 仅验签；全仓无身份令牌端点 |
-| `ENT-02` | 多实例语义未闭环：NodeID 固定、幂等 / 限流进程内 | ID 冲突、幂等失效、限流被副本数放大 | `cmd/internal/iamruntime/runtime.go:103`、`internal/platform/pipeline.go:101` |
+| `ENT-02` | ~~多实例语义未闭环~~ **已关闭（2026-10-22）** | NodeID 配置化、Redis 幂等 / 限流、worker 独立发布器 | `internal/platform/id.go`、`pkg/idempotency/redis.go`、`pkg/ratelimit/redis.go` |
 | `ENT-03` | 无通用异步基础设施：broker 只有内存实现，worker 仅为生命周期骨架 | 未来业务域无法可靠投递事件 / 任务 | `pkg/mq` 仅内存；`cmd/worker/main.go` |
 | `ENT-04` | 审计只写结构化日志，不可查询 / 保留 | 无法满足取证、合规与 180 天留存 | `internal/shared/audit/emitter.go:14`；`audit:read` 无查询端点 |
 | `ENT-05` | 无部署制品与环境基线 | 无法可重复部署、无法做资源与滚动安全 | `deploy/README.md:1-9` 仅说明文字 |
@@ -113,7 +113,7 @@
 | 租户模型 | L1 | L2 / L3 | 无租户注册、状态、配额、退出与数据隔离契约 | P1 |
 | 平台可扩展性 | L2 | L3 | 未来业务域缺少统一脚手架与契约测试 | P1 |
 | 异步与事件 | L1～L2 | L2 / L3 | 无生产级 broker 适配与通用消费运行时 | **P0** |
-| 多实例与容量 | L1 | L2 / L3 | NodeID 固定、幂等 / 限流进程内、无压测基线 | **P0 / P1** |
+| 多实例与容量 | L2 | L2 / L3 | 多实例语义已闭环；缺压测基线与容量模型 | P1 |
 | 可观测性 | L2 | L3 | 告警规则 / 看板 / SLO / 日志聚合未落地 | **P0** |
 | 部署与运维 | L1 | L2 / L3 | 无 K8s / Helm、无环境基线、无 CD | **P0** |
 | 安全与合规 | L1～L2 | L2 / L3 | 密钥托管、审计留存、数据生命周期、边缘防护 | **P0 / P1 / P2** |
@@ -166,35 +166,32 @@
 
 ### ENT-02 多实例运行语义
 
-**现状证据**
+**状态**：`已关闭（2026-10-22，代码与门禁闭环；staging 两副本验收待部署环境）`
 
-- Snowflake 节点号固定为 1：`cmd/internal/iamruntime/runtime.go:103`；多副本部署即共享同一节点号。
-- 限流为进程内令牌桶：`internal/platform/pipeline.go:101-121`，副本数增加即总配额翻倍。
-- IAM Outbox 发布器在每个 API 进程内启动：`cmd/internal/iamruntime/runtime.go:133-135`，缺少独立 worker 与容量治理。
-- `pkg/idempotency` 已实现，但 `internal/platform` 无统一装配点，未来业务域需自行接入，容易漏挂。
+**原缺口证据（已修复）**
 
-**缺口**
+- ~~Snowflake 节点号固定为 1~~：`cmd/internal/iamruntime/runtime.go` 与 IAM 用例已改为消费 `platform.Deps.IDs`，缺失即失败关闭；`internal/platform/id.go` 支持显式 NodeID 与 StatefulSet ordinal。
+- ~~限流为进程内令牌桶~~：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`rate_limit.driver=redis` 时两副本共享配额。
+- ~~IAM Outbox 发布器只在 API 进程内~~：`iam.outbox.publish_in_api` 控制 API 侧发布器，`cmd/worker` 已装配独立发布循环。
+- ~~`pkg/idempotency` 无统一装配点~~：`internal/platform/pipeline.go` 在写方法前统一挂载，Redis Store 支持跨副本回放。
 
-1. 多副本下 ID 冲突风险；滚动扩缩容无法保证节点号唯一。
-2. 幂等键不跨副本、不持久，重试路由到另一 Pod 会重复执行。
-3. 限流 / 配额不是全局语义；无法按租户或接口做统一限流。
-4. 后台任务与 API 同进程，缺少独立扩缩与故障隔离。
+**落地证据**
 
-**目标态**
-
-- 节点号来自环境 / StatefulSet ordinal / 实例注册；或改用 UUIDv7 作为主键。
-- 幂等存储落 Redis 或数据库唯一键，带 TTL 与请求指纹；平台提供统一中间件与装配开关。
-- 分布式限流（Redis 滑动窗口）或网关层统一限流；按 channel / tenant / user 分键。
-- 后台发布、消费、定时任务归入 `cmd/worker`，支持独立副本与优雅退出。
+- ID：`internal/platform/id.go`、`internal/platform/config.go`（`validateID`）、`platform.Deps.IDs`。
+- 幂等：`pkg/idempotency/redis.go`、`internal/platform/pipeline.go`（`newIdempotency`）。
+- 限流：`pkg/ratelimit/redis.go`、`pkg/middleware/ratelimit.go`（`Buckets` 接口）。
+- Outbox：`cmd/internal/iamruntime/outbox.go`、`cmd/worker/main.go`。
+- 用例：`tests/integration/multiinstance/multiinstance_test.go`；门禁：`scripts/ci/check-idempotency.sh`。
 
 **验收标准**
 
-- [ ] `AC-ENT-02-1`：两个副本使用不同 NodeID 启动，批量创建无 ID 冲突。
-- [ ] `AC-ENT-02-2`：同一 `Idempotency-Key` 打到不同副本返回同一结果。
-- [ ] `AC-ENT-02-3`：两个副本共享同一限流配额；超限统一返回 `42900`。
-- [ ] `AC-ENT-02-4`：滚动重启期间无事件丢失、无重复副作用。
+- [x] `AC-ENT-02-1`：两个副本使用不同 NodeID 启动，批量创建无 ID 冲突（已由 multiinstance 用例覆盖）。
+- [x] `AC-ENT-02-2`：同一 `Idempotency-Key` 打到不同副本返回同一结果（Redis Store + 管线用例覆盖）。
+- [x] `AC-ENT-02-3`：两个副本共享同一限流配额；超限统一返回 `42900`。
+- [x] `AC-ENT-02-4`：滚动重启期间无事件丢失、无重复副作用（MySQL outbox 重启用例覆盖）。
+- [ ] staging 两副本环境实测记录（需部署制品，随 `ENT-05` 补）。
 
-**门禁**：多副本集成测试；配置校验禁止生产使用默认 NodeID。
+**门禁**：`make check-idempotency`（挂载 / 配置 / 固定 NodeID / OpenAPI 契约）；`check-config` 校验生产 NodeID 与 Redis 强制项。
 
 ---
 
@@ -529,7 +526,7 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 | ID | 优先级 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|
 | ENT-01 | P0 | 待做 | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效 |
-| ENT-02 | P0 | 待做 | 多副本 ID 唯一、幂等与限流共享 |
+| ENT-02 | P0 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；staging 实测随 ENT-05 补 |
 | ENT-03 | P0 | 待做 | 通用 Outbox + broker 适配 + 消费运行时 + DLQ |
 | ENT-04 | P0 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | 待做 | Helm/Kustomize + 探针 + 资源 + Secret 注入 |

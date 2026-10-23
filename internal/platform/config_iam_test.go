@@ -102,6 +102,12 @@ func prodJWTConfig() platform.AuthConfig {
 	}
 }
 
+// prodIDConfig 返回满足生产必填项的最小 ID 配置。
+func prodIDConfig() platform.IDConfig {
+	nodeID := int64(7)
+	return platform.IDConfig{NodeID: &nodeID}
+}
+
 func TestValidateIAMProductionRules(t *testing.T) {
 	memoryEnforce := iamBaseConfig()
 	memoryEnforce.Env = "prod"
@@ -113,6 +119,7 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodRedis := iamBaseConfig()
 	prodRedis.Env = "prod"
 	prodRedis.Auth = prodJWTConfig()
+	prodRedis.ID = prodIDConfig()
 	prodRedis.Storage.Driver = "s3"
 	prodRedis.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prodRedis.IAM.Cache.Driver = platform.IAMCacheDriverRedis
@@ -125,6 +132,7 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodWildcard := iamBaseConfig()
 	prodWildcard.Env = "prod"
 	prodWildcard.Auth = prodJWTConfig()
+	prodWildcard.ID = prodIDConfig()
 	prodWildcard.Storage.Driver = "s3"
 	prodWildcard.IAM.Security.AllowWildcard = true
 	prodWildcard.IAM.Cache.Driver = platform.IAMCacheDriverRedis
@@ -314,6 +322,7 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodMemory := iamBaseConfig()
 	prodMemory.Env = "prod"
 	prodMemory.Auth = prodJWTConfig()
+	prodMemory.ID = prodIDConfig()
 	prodMemory.Storage.Driver = "s3"
 	prodMemory.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodMemory.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
@@ -326,6 +335,7 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodSQL := iamBaseConfig()
 	prodSQL.Env = "prod"
 	prodSQL.Auth = prodJWTConfig()
+	prodSQL.ID = prodIDConfig()
 	prodSQL.Storage.Driver = "s3"
 	prodSQL.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	prodSQL.IAM.Cache.Driver = platform.IAMCacheDriverRedis

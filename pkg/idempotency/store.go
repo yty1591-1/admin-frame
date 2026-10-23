@@ -18,13 +18,13 @@ const (
 
 // Record 是存储中的幂等记录。
 type Record struct {
-	Key         string
-	Fingerprint string
-	State       State
-	StatusCode  int
-	Header      http.Header
-	Body        []byte
-	ExpiresAt   time.Time
+	Key         string      `json:"key"`
+	Fingerprint string      `json:"fingerprint"`
+	State       State       `json:"state"`
+	StatusCode  int         `json:"status_code,omitempty"`
+	Header      http.Header `json:"header,omitempty"`
+	Body        []byte      `json:"body,omitempty"`
+	ExpiresAt   time.Time   `json:"expires_at"`
 }
 
 // Clone 深拷贝 Header/Body，避免调用方篡改存储。

@@ -107,7 +107,7 @@ func NewChangeRequestService(cfg ChangeRequestServiceConfig) (*ChangeRequestServ
 		return nil, apperr.Internal("iam change applicator is required", nil)
 	}
 	if cfg.IDs == nil {
-		cfg.IDs = id.MustSnowflake(id.Options{NodeID: 1})
+		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	logger := cfg.Logger
 	if logger == nil {

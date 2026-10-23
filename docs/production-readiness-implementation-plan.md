@@ -352,6 +352,8 @@ identity:
 
 **目标**：多副本部署下 ID 不冲突、幂等跨副本、限流为全局语义、后台任务与 API 隔离。
 
+**状态**：`已完成`（2026-10-22，T1～T3、T5～T8；T4 的逐 operation 标注作为独立契约变更跟进）。
+
 **前置依赖**：`ENT-16` 集成基座；`pkg/redis` 可用的生产实例。
 
 **任务分解**
@@ -372,14 +374,15 @@ identity:
 ```yaml
 id:
   node_id: 0
-  node_id_source: env          # config|env|statefulset|registry
+  node_id_source: env          # config|env|statefulset；registry 暂不支持
 
 idempotency:
   enabled: true
   driver: redis                # memory|redis
   header: Idempotency-Key
   ttl: 24h
-  fingerprint: sha256
+  required: false
+  max_body_bytes: 1048576
 
 rate_limit:
   enabled: true
@@ -388,6 +391,7 @@ rate_limit:
   failure_mode: fail_open      # 登录端点固定 fail_closed
   rps: 50
   burst: 100
+  idle_ttl: 10m
 ```
 
 **验收与门禁**
@@ -397,6 +401,16 @@ rate_limit:
 - 新增 `make check-idempotency`：扫描三端写路由是否挂载幂等或声明唯一键。
 - `make check-config` 增加生产 NodeID / Redis 强制校验。
 - 多副本用例进入 CI 集成 job；本地可用 compose 复现。
+
+**落地说明（2026-10-22）**
+
+- T1/T2：`internal/platform/id.go` 从 `id.node_id` 或 StatefulSet ordinal 解析 NodeID，`platform.Deps.IDs` 统一注入；`iamruntime` 与 IAM 用例删除固定 `NodeID: 1`，缺生成器直接失败关闭。prod/staging 非 worker 未显式配置或使用 statefulset 时启动失败。
+- T3：`pkg/idempotency.RedisStore` 以 Lua 原子完成 `Begin/Complete/Release`；`internal/platform/pipeline.go` 在 `RateLimit → Idempotency → Handler` 挂载，`40900` 冲突 / `40901` 处理中 / `50300` 存储不可用由 `httpx.FromError` 统一信封。
+- T4：`Idempotency-Key` 已在 `api/openapi/components.yaml` 定义；平台级挂载覆盖三端写路由。逐 operation 标注延后，避免未经客户端协调的强制头升级。
+- T5/T6：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`failure_mode` 默认 `fail_open`；分键支持 `channel / channel_user / channel_tenant_user / client`，超限继续 `42900` + `Retry-After`。
+- T7：`iam.outbox.publish_in_api`（默认 true）控制 API 侧发布器；`cmd/worker` 打开数据库并运行 `iamruntime.NewOutboxTask`，退出时等待发布循环收敛。
+- T8：`tests/integration/multiinstance` 覆盖 NodeID 唯一性、跨副本幂等、共享限流与 outbox 重启不重投；`scripts/ci/check-idempotency.sh` 校验挂载、配置样例、固定 NodeID 与 OpenAPI 契约。
+- 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
 
 **回滚与风险**
 
@@ -893,7 +907,7 @@ deploy/helm/admin-frame/
 | ID | 优先级 | 波次 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|---|
 | ENT-01 | P0 | Wave 1 | 待做 | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效 |
-| ENT-02 | P0 | Wave 1 | 待做 | 多副本 ID 唯一、幂等与限流共享 |
+| ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 待做 | 通用 Outbox + 消费运行时 + DLQ + 积压指标 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | Wave 2 | 待做 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
@@ -923,6 +937,7 @@ deploy/helm/admin-frame/
 | 日期 | 事项 | 状态 | 备注 |
 |---|---|---|---|
 | 2026-10-22 | 规划文档创建（v0.1） | 完成 | 基于差距评估 v0.2；拆分为 Wave 0～4 与 25 个任务包 |
+| 2026-10-22 | ENT-02 多实例运行语义落地 | 完成 | NodeID 配置化 + Deps.IDs、Redis 幂等存储、Redis 令牌桶、`publish_in_api` / worker 发布器、multiinstance 集成用例与 `check-idempotency` 门禁；T4 逐 operation 标注单独跟进 |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---

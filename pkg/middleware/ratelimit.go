@@ -10,11 +10,16 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 )
 
+// Buckets 是按 key 分桶的限流器；内存 Keyed 与 Redis 实现均满足。
+type Buckets interface {
+	Allow(key string) ratelimit.Result
+}
+
 // RateLimitConfig 配置限流中间件。
 type RateLimitConfig struct {
-	// Keyed 按 key 分桶的限流器；与 Limiter 二选一（优先 Keyed）。
-	Keyed *ratelimit.Keyed
-	// Limiter 全局单桶；Keyed 非空时忽略。
+	// Buckets 按 key 分桶的限流器；与 Limiter 二选一（优先 Buckets）。
+	Buckets Buckets
+	// Limiter 全局单桶；Buckets 非空时忽略。
 	Limiter ratelimit.Limiter
 	// KeyFunc 从请求生成 key；nil 时用空串（全局）。
 	KeyFunc func(*http.Request) string
@@ -41,12 +46,12 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 }
 
 func allow(cfg RateLimitConfig, r *http.Request) ratelimit.Result {
-	if cfg.Keyed != nil {
+	if cfg.Buckets != nil {
 		key := ""
 		if cfg.KeyFunc != nil {
 			key = cfg.KeyFunc(r)
 		}
-		return cfg.Keyed.Allow(key)
+		return cfg.Buckets.Allow(key)
 	}
 	if cfg.Limiter != nil {
 		return cfg.Limiter.Allow()

@@ -11,6 +11,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 )
 
@@ -47,6 +48,7 @@ func newDeps(t *testing.T, outbox platform.IAMOutboxConfig) *platform.Deps {
 		},
 		Logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		Metrics: met,
+		IDs:     id.MustSnowflake(id.Options{NodeID: 1}),
 	}
 }
 

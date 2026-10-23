@@ -85,7 +85,7 @@ func NewRoleService(cfg RoleServiceConfig) (*RoleService, error) {
 		return nil, apperr.Internal("iam change recorder is required", nil)
 	}
 	if cfg.IDs == nil {
-		cfg.IDs = id.MustSnowflake(id.Options{NodeID: 1})
+		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	if cfg.Limits.MaxPermissionsPerRole <= 0 {
 		cfg.Limits.MaxPermissionsPerRole = 200

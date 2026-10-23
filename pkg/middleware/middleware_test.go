@@ -150,3 +150,49 @@ func TestRateLimit(t *testing.T) {
 		t.Fatalf("c1=%d c2=%d limited=%d", rr1.Code, rr2.Code, limited)
 	}
 }
+
+// keyedStub 记录中间件传入的分桶键，并固定返回预设结果。
+type keyedStub struct {
+	keys   []string
+	result ratelimit.Result
+}
+
+func (s *keyedStub) Allow(key string) ratelimit.Result {
+	s.keys = append(s.keys, key)
+	return s.result
+}
+
+// TestRateLimitUsesBuckets 验证 Buckets 优先于 Limiter 且 KeyFunc 结果被透传。
+func TestRateLimitUsesBuckets(t *testing.T) {
+	stub := &keyedStub{result: ratelimit.Result{Allowed: true}}
+	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), middleware.RateLimit(middleware.RateLimitConfig{
+		Buckets: stub,
+		KeyFunc: func(*http.Request) string { return "admin|user-1" },
+	}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code=%d", rr.Code)
+	}
+	if len(stub.keys) != 1 || stub.keys[0] != "admin|user-1" {
+		t.Fatalf("keys=%v, want key from KeyFunc", stub.keys)
+	}
+}
+
+// TestRateLimitBucketsRejected 验证 Buckets 拒绝时返回 429 与 Retry-After。
+func TestRateLimitBucketsRejected(t *testing.T) {
+	stub := &keyedStub{result: ratelimit.Result{Allowed: false, RetryAfter: 1500 * time.Millisecond}}
+	h := middleware.Chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("handler must not run when limited")
+	}), middleware.RateLimit(middleware.RateLimitConfig{Buckets: stub}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("code=%d want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") != "2" {
+		t.Fatalf("retry-after=%q want 2", rr.Header().Get("Retry-After"))
+	}
+}

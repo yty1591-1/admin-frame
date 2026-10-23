@@ -53,6 +53,9 @@ func NewBreakglassService(cfg BreakglassServiceConfig) (*BreakglassService, erro
 	if cfg.Changes == nil {
 		return nil, apperr.Internal("iam change request service is required for breakglass", nil)
 	}
+	if cfg.IDs == nil {
+		return nil, apperr.Internal("iam id generator is required", nil)
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()

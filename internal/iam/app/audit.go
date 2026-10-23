@@ -91,11 +91,8 @@ type auditBuilder struct {
 	meta AuditMeta
 }
 
-// newAuditBuilder 构造审计事件工厂；ids 为 nil 时使用雪花（单实例/测试）。
+// newAuditBuilder 构造审计事件工厂；调用方已保证 ids 非 nil。
 func newAuditBuilder(ids id.Generator, meta AuditMeta) auditBuilder {
-	if ids == nil {
-		ids = id.MustSnowflake(id.Options{NodeID: 1})
-	}
 	if meta.Service == "" {
 		meta.Service = "admin-frame"
 	}

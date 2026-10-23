@@ -80,6 +80,7 @@ case "${job}" in
     bash scripts/ci/check-license.sh
     bash scripts/ci/check-codegen.sh
     bash scripts/ci/check-perf.sh
+    bash scripts/ci/check-idempotency.sh
     ;;
   secrets)
     bash scripts/ci/check-debug-endpoints.sh

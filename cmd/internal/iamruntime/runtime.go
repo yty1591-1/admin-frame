@@ -23,7 +23,6 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
-	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
 
@@ -100,7 +99,11 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("iam authorize service: %w", err)
 	}
 
-	ids := id.MustSnowflake(id.Options{NodeID: 1})
+	// 多副本必须使用平台注入的节点号；未注入时失败关闭，禁止回退固定节点。
+	ids := deps.IDs
+	if ids == nil {
+		return nil, apperr.Internal("iam id generator is required", nil)
+	}
 	// 审计出口：默认直接落结构化日志（local / demo）；
 	// 启用 outbox 后先持久化事件、再由后台发布器投递，进程崩溃不丢审计。
 	auditEmitter := audit.SlogEmitter{Log: deps.Logger}
@@ -115,24 +118,17 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			Inner:   app.OutboxRecorder{Events: outboxRepo},
 			Metrics: iamMetrics,
 		}
-		publisher, pubErr := app.NewOutboxPublisher(app.OutboxPublisherOptions{
-			Events:    outboxRepo,
-			Deliver:   app.AuditOutboxDeliverer(auditEmitter),
-			Policy:    domain.OutboxRetryPolicy{MaxAttempts: cfg.IAM.Outbox.MaxAttempts},
-			BatchSize: cfg.IAM.Outbox.BatchSize,
-			Logger:    deps.Logger,
-			Observer:  iamMetrics,
-		})
-		if pubErr != nil {
-			return nil, fmt.Errorf("iam outbox publisher: %w", pubErr)
-		}
 		if gaugeErr := iamMetrics.RegisterOutboxGauges(outboxStatsCounter(outboxRepo)); gaugeErr != nil {
 			return nil, fmt.Errorf("iam outbox gauges: %w", gaugeErr)
 		}
-		interval := cfg.IAM.Outbox.PollInterval
-		background = append(background, func(ctx context.Context) error {
-			return publisher.Run(ctx, interval)
-		})
+		// 迁移期可用 publish_in_api=false 把投递交给 worker；写入 outbox 不受影响。
+		if cfg.IAM.Outbox.PublishInAPIEnabled() {
+			task, taskErr := outboxTask(deps, outboxRepo, iamMetrics)
+			if taskErr != nil {
+				return nil, taskErr
+			}
+			background = append(background, task)
+		}
 	}
 	auditMeta := app.AuditMeta{Service: cfg.Service, ActorType: auditActorType(cfg.Channel)}
 	invalidator := iampcache.NewSubjectInvalidator(snapshotCache, cfg.Env)

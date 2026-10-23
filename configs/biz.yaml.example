@@ -25,6 +25,30 @@ auth:
   mode: demo
   expected_channel: biz
 
+# 雪花 ID 节点号：同一集群内必须唯一，重复会生成相同 ID（ENT-02）。
+id:
+  node_id: 0                     # [0,1023]；prod/staging 非 worker 必须显式配置
+  node_id_source: env            # env|config|statefulset；statefulset 由 HOSTNAME 末位序号推导
+
+# 写请求幂等：仅对写方法生效（ENT-02）。
+idempotency:
+  enabled: false                 # 默认关闭；prod/staging 启用必须 driver=redis
+  driver: memory                 # memory|redis
+  header: Idempotency-Key
+  ttl: 24h
+  required: false                # true 时写请求缺少幂等键直接拒绝
+  max_body_bytes: 1048576        # 参与指纹/缓存的请求体上限（1 MiB）
+
+# 请求限流：按端开启（REL-05 / ENT-02）。
+rate_limit:
+  enabled: false
+  driver: memory                 # memory|redis；prod/staging 启用必须 redis
+  key: channel                   # channel|channel_user|channel_tenant_user|client
+  failure_mode: fail_open        # Redis 故障时 fail_open|fail_closed
+  rps: 100
+  burst: 200
+  idle_ttl: 10m
+
 db:
   driver: memory
   dsn: ""
@@ -75,4 +99,4 @@ iam:
     poll_interval: 1s
     batch_size: 50
     max_attempts: 8
-
+    publish_in_api: true         # API 进程内投递；双写期可关闭，改由 cmd/worker 独立投递

@@ -7,9 +7,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 
 	// 消费端按需访问对象存储；不需要时可移除该 import 以缩小二进制。
@@ -55,9 +57,38 @@ func run(configPath string) error {
 		}
 	}()
 
+	database, err := platform.OpenDatabase(ctx, cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := database.Close(); closeErr != nil {
+			logger.Warn("db close", "err", closeErr)
+		}
+	}()
+
+	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database}
+	outboxTask, err := iamruntime.NewOutboxTask(deps)
+	if err != nil {
+		return fmt.Errorf("iam outbox: %w", err)
+	}
+	var wg sync.WaitGroup
+	if outboxTask != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if runErr := outboxTask(ctx); runErr != nil && ctx.Err() == nil {
+				logger.Error("iam outbox publisher stopped", "err", runErr)
+			}
+		}()
+	}
+	defer wg.Wait()
+
 	logger.Info("worker started",
 		"poll_interval", cfg.Worker.PollInterval.String(),
 		"storage_driver", cfg.Storage.Driver,
+		"db_driver", cfg.DB.Driver,
+		"outbox_enabled", outboxTask != nil,
 		"version", version,
 		"commit", commit,
 		"build_time", buildTime,

@@ -204,6 +204,107 @@ func TestPipelineCORSPreflight(t *testing.T) {
 	}
 }
 
+// TestPipelineIdempotencyReplay 验证同键同请求只执行一次并回放首次响应（AC-ENT-02-2）。
+func TestPipelineIdempotencyReplay(t *testing.T) {
+	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
+		Idempotency: platform.IdempotencyConfig{
+			Enabled: true,
+			Driver:  platform.IdempotencyDriverMemory,
+			Header:  "Idempotency-Key",
+			TTL:     time.Minute,
+		},
+	}, platform.PipelineDeps{Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	h := pipeline(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"1"}`))
+	}))
+
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/iam/roles", strings.NewReader(`{"name":"ops"}`))
+		req.Header.Set("Idempotency-Key", "key-replay-1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := send()
+	second := send()
+	if calls != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls)
+	}
+	if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+		t.Fatalf("status = %d/%d, want 201", first.Code, second.Code)
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Fatalf("body = %q/%q, want replay", first.Body.String(), second.Body.String())
+	}
+}
+
+// TestPipelineIdempotencyConflict 验证同键不同载荷返回 40900（REL-04）。
+func TestPipelineIdempotencyConflict(t *testing.T) {
+	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
+		Idempotency: platform.IdempotencyConfig{
+			Enabled: true,
+			Driver:  platform.IdempotencyDriverMemory,
+			Header:  "Idempotency-Key",
+			TTL:     time.Minute,
+		},
+	}, platform.PipelineDeps{Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := pipeline(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	first := httptest.NewRequest(http.MethodPost, "/admin/v1/iam/roles", strings.NewReader(`{"name":"ops"}`))
+	first.Header.Set("Idempotency-Key", "key-conflict-1")
+	h.ServeHTTP(httptest.NewRecorder(), first)
+
+	second := httptest.NewRequest(http.MethodPost, "/admin/v1/iam/roles", strings.NewReader(`{"name":"dev"}`))
+	second.Header.Set("Idempotency-Key", "key-conflict-1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, second)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "40900") {
+		t.Fatalf("status=%d body=%s want 40900", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPipelineIdempotencyRequired 验证强制幂等键缺失时拒绝写请求。
+func TestPipelineIdempotencyRequired(t *testing.T) {
+	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
+		Idempotency: platform.IdempotencyConfig{
+			Enabled:  true,
+			Driver:   platform.IdempotencyDriverMemory,
+			Header:   "Idempotency-Key",
+			TTL:      time.Minute,
+			Required: true,
+		},
+	}, platform.PipelineDeps{Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	h := pipeline(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/admin/v1/iam/roles", strings.NewReader(`{}`)))
+	if called {
+		t.Fatal("handler must not be called without idempotency key")
+	}
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "40000") {
+		t.Fatalf("status=%d body=%s want 40000", rec.Code, rec.Body.String())
+	}
+}
+
 // TestPipelineInvalidRateLimit 验证非法限流参数在装配期失败。
 func TestPipelineInvalidRateLimit(t *testing.T) {
 	if _, err := platform.NewPipeline(platform.PipelineConfig{

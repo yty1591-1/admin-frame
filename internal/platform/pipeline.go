@@ -4,14 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/contextx"
+	"github.com/admin-frame/admin-frame/pkg/idempotency"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/middleware"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
+	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
@@ -21,8 +26,12 @@ type PipelineConfig struct {
 	Timeout time.Duration
 	// BodyLimitBytes 请求体上限；≤0 不限制。
 	BodyLimitBytes int64
+	// Channel 本进程端别，用于限流分键。
+	Channel string
 	// RateLimit 限流参数；Enabled=false 时不挂载。
 	RateLimit RateLimitConfig
+	// Idempotency 幂等参数；Enabled=false 时不挂载。
+	Idempotency IdempotencyConfig
 	// CORS 跨域参数；AllowOrigins 为空时不挂载。
 	CORS CORSConfig
 }
@@ -32,6 +41,8 @@ type PipelineDeps struct {
 	Logger  *slog.Logger
 	Metrics *metrics.Metrics
 	Tracer  *tracing.Provider
+	// Redis 共享客户端；限流 / 幂等 driver=redis 时必需。
+	Redis *redis.Client
 }
 
 // NewPipeline 按固定顺序装配入口中间件。
@@ -39,7 +50,7 @@ type PipelineDeps struct {
 // 顺序（外 → 内）：
 //
 //	Recover → Trace → RequestID → Metrics → AccessLog → CORS
-//	→ Timeout → BodyLimit → RateLimit → Handler
+//	→ Timeout → BodyLimit → RateLimit → Idempotency → Handler
 //
 // Recover 在最外层，保证任何 panic 都转成统一信封；TraceID 必须在 RequestID
 // 之前，RequestID 才能复用 OTel TraceID（OBS-05）。
@@ -69,12 +80,19 @@ func NewPipeline(cfg PipelineConfig, deps PipelineDeps) (func(http.Handler) http
 	if cfg.BodyLimitBytes > 0 {
 		mws = append(mws, bodyLimit(cfg.BodyLimitBytes))
 	}
-	limited, err := newRateLimit(cfg.RateLimit)
+	limited, err := newRateLimit(cfg.RateLimit, cfg.Channel, deps.Redis)
 	if err != nil {
 		return nil, err
 	}
 	if limited != nil {
 		mws = append(mws, limited)
+	}
+	idem, err := newIdempotency(cfg.Idempotency, deps.Redis)
+	if err != nil {
+		return nil, err
+	}
+	if idem != nil {
+		mws = append(mws, idem)
 	}
 	return func(next http.Handler) http.Handler {
 		return middleware.Chain(next, mws...)
@@ -99,26 +117,43 @@ func bodyLimit(limit int64) middleware.Middleware {
 }
 
 // newRateLimit 构造按调用方分桶的令牌桶限流中间件。
-func newRateLimit(cfg RateLimitConfig) (middleware.Middleware, error) {
+func newRateLimit(cfg RateLimitConfig, channel string, redisClient *redis.Client) (middleware.Middleware, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
 	if cfg.RPS <= 0 || cfg.Burst < 1 {
 		return nil, errors.New("platform: rate_limit requires rps > 0 and burst >= 1")
 	}
-	rps, burst := cfg.RPS, cfg.Burst
-	keyed, err := ratelimit.NewKeyed(
-		func() (ratelimit.Limiter, error) {
-			return ratelimit.NewTokenBucket(rps, burst)
-		},
-		ratelimit.WithIdleTTL(cfg.IdleTTL),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("platform: rate limiter: %w", err)
+	var buckets middleware.Buckets
+	switch cfg.Driver {
+	case "", RateLimitDriverMemory:
+		keyed, err := ratelimit.NewKeyed(
+			func() (ratelimit.Limiter, error) {
+				return ratelimit.NewTokenBucket(cfg.RPS, cfg.Burst)
+			},
+			ratelimit.WithIdleTTL(cfg.IdleTTL),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("platform: rate limiter: %w", err)
+		}
+		buckets = keyed
+	case RateLimitDriverRedis:
+		shared, err := ratelimit.NewRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
+			RPS:         cfg.RPS,
+			Burst:       cfg.Burst,
+			IdleTTL:     cfg.IdleTTL,
+			FailureMode: cfg.FailureMode,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("platform: redis rate limiter: %w", err)
+		}
+		buckets = shared
+	default:
+		return nil, fmt.Errorf("platform: unsupported rate_limit.driver %q", cfg.Driver)
 	}
 	return middleware.RateLimit(middleware.RateLimitConfig{
-		Keyed:   keyed,
-		KeyFunc: middleware.DefaultRateLimitKey,
+		Buckets: buckets,
+		KeyFunc: rateLimitKeyFunc(cfg.Key, channel),
 		OnLimited: func(w http.ResponseWriter, r *http.Request, result ratelimit.Result) {
 			if result.RetryAfter > 0 {
 				w.Header().Set("Retry-After", middleware.RetryAfterSeconds(result.RetryAfter))
@@ -126,4 +161,72 @@ func newRateLimit(cfg RateLimitConfig) (middleware.Middleware, error) {
 			httpx.FromError(w, apperr.TooManyRequests("too many requests"), httpx.TraceIDFromContext(r.Context()))
 		},
 	}), nil
+}
+
+// newIdempotency 按配置构造幂等中间件；存储不可用失败关闭。
+func newIdempotency(cfg IdempotencyConfig, redisClient *redis.Client) (middleware.Middleware, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	var store idempotency.Store
+	switch cfg.Driver {
+	case "", IdempotencyDriverMemory:
+		store = idempotency.NewMemoryStore()
+	case IdempotencyDriverRedis:
+		shared, err := idempotency.NewRedisStore(redisClient)
+		if err != nil {
+			return nil, fmt.Errorf("platform: redis idempotency store: %w", err)
+		}
+		store = shared
+	default:
+		return nil, fmt.Errorf("platform: unsupported idempotency.driver %q", cfg.Driver)
+	}
+	return idempotency.Middleware(idempotency.Config{
+		Store:        store,
+		TTL:          cfg.TTL,
+		Header:       cfg.Header,
+		Required:     cfg.Required,
+		MaxBodyBytes: cfg.MaxBodyBytes,
+		OnError: func(w http.ResponseWriter, r *http.Request, err error) {
+			httpx.FromError(w, err, httpx.TraceIDFromContext(r.Context()))
+		},
+	}), nil
+}
+
+// rateLimitKeyFunc 按策略生成限流键；身份未建立时回退客户端 IP，避免匿名流量共享单桶。
+func rateLimitKeyFunc(strategy, channel string) func(*http.Request) string {
+	return func(r *http.Request) string {
+		ip := clientIP(r)
+		identity := contextx.IdentityFrom(r.Context())
+		switch strategy {
+		case RateLimitKeyClient:
+			return ip
+		case RateLimitKeyChannelUser:
+			if identity.UserID != "" {
+				return channel + "|" + identity.UserID
+			}
+			return channel + "|" + ip
+		case RateLimitKeyChannelTenantUser:
+			if identity.UserID != "" {
+				return channel + "|" + identity.MerchantID + "|" + identity.UserID
+			}
+			return channel + "|" + ip
+		default:
+			return channel
+		}
+	}
+}
+
+// clientIP 返回客户端 IP；代理场景取 X-Forwarded-For 首段。
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+			return first
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

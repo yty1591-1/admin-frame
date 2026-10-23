@@ -96,8 +96,25 @@ cp configs/admin.yaml.example configs/admin.yaml
 | `ADMIN_FRAME_AUTH_JWT_SECRET` | `auth.jwt.secret`（HS256，≥32 字节；禁止写文件） |
 | `ADMIN_FRAME_AUTH_JWT_PUBLIC_KEY_FILE` | `auth.jwt.public_key_file`（RS256） |
 | `ADMIN_FRAME_RATE_LIMIT_ENABLED` | `rate_limit.enabled` |
+| `ADMIN_FRAME_RATE_LIMIT_DRIVER` | `rate_limit.driver`（memory / redis） |
+| `ADMIN_FRAME_RATE_LIMIT_KEY` | `rate_limit.key`（channel / channel_user / channel_tenant_user / client） |
+| `ADMIN_FRAME_RATE_LIMIT_FAILURE_MODE` | `rate_limit.failure_mode`（fail_open / fail_closed） |
 | `ADMIN_FRAME_RATE_LIMIT_RPS` | `rate_limit.rps` |
 | `ADMIN_FRAME_RATE_LIMIT_BURST` | `rate_limit.burst` |
+| `ADMIN_FRAME_RATE_LIMIT_IDLE_TTL` | `rate_limit.idle_ttl` |
+| `ADMIN_FRAME_ID_NODE_ID` | `id.node_id`（[0,1023]；prod/staging 非 worker 必填） |
+| `ADMIN_FRAME_ID_NODE_ID_SOURCE` | `id.node_id_source`（env / config / statefulset） |
+| `ADMIN_FRAME_IDEMPOTENCY_ENABLED` | `idempotency.enabled` |
+| `ADMIN_FRAME_IDEMPOTENCY_DRIVER` | `idempotency.driver`（memory / redis） |
+| `ADMIN_FRAME_IDEMPOTENCY_HEADER` | `idempotency.header`（默认 `Idempotency-Key`） |
+| `ADMIN_FRAME_IDEMPOTENCY_TTL` | `idempotency.ttl` |
+| `ADMIN_FRAME_IDEMPOTENCY_REQUIRED` | `idempotency.required` |
+| `ADMIN_FRAME_IDEMPOTENCY_MAX_BODY_BYTES` | `idempotency.max_body_bytes` |
+| `ADMIN_FRAME_REDIS_ADDR` | `redis.addr`（限流 / 幂等 / IAM 缓存 driver=redis 时必填） |
+| `ADMIN_FRAME_REDIS_USERNAME` | `redis.username` |
+| `ADMIN_FRAME_REDIS_PASSWORD` | `redis.password`（禁止写文件） |
+| `ADMIN_FRAME_REDIS_DB` | `redis.db` |
+| `ADMIN_FRAME_REDIS_KEY_PREFIX` | `redis.key_prefix` |
 | `ADMIN_FRAME_CORS_ALLOW_ORIGINS` | `cors.allow_origins`（逗号分隔；生产禁止 `*` + credentials） |
 | `ADMIN_FRAME_DB_DRIVER` | `db.driver` |
 | `ADMIN_FRAME_DB_DSN` | `db.dsn` |
@@ -136,7 +153,11 @@ cp configs/admin.yaml.example configs/admin.yaml
 - `storage.driver` ∈ {memory, local, s3, minio, oss, cos, obs}；`local` 时 `storage.local.root` 必填；`env=prod` 禁止 `memory`；命名桶内禁止嵌套 `buckets`
 - `log.level` ∈ {debug, info, warn, error}；`log.format` ∈ {json, text}；`env=prod` 禁止 `text`（避免 `logger.Must` panic）
 - `http.read_header_timeout` / `max_header_bytes` / `timeout` / `body_limit_bytes` ≥ 0；`env=prod` 时 `http.timeout > 0`
-- `rate_limit.enabled=true` ⇒ `rps > 0` 且 `burst ≥ 1`
+- `rate_limit.enabled=true` ⇒ `driver ∈ {memory, redis}`、`key ∈ {channel, channel_user, channel_tenant_user, client}`、`rps > 0`、`burst ≥ 1`；`driver=redis` ⇒ `redis.addr` 必填
+- `id.node_id` ∈ [0,1023]；`id.node_id_source ∈ {env, config, statefulset}`；`statefulset` 与显式 `node_id` 互斥，`registry` 暂不支持（启动失败）
+- `env ∈ {prod, staging}` 且 `channel ≠ worker` ⇒ 非 statefulset 时必须显式 `id.node_id`（避免多副本重复 ID）
+- `idempotency.enabled=true` ⇒ `driver ∈ {memory, redis}`、`ttl > 0`、`header` 非空；`driver=redis` ⇒ `redis.addr` 必填
+- `env ∈ {prod, staging}` 且启用幂等或限流 ⇒ `driver` 必须为 `redis`（否则配额/去重被副本数放大）
 - `env` 为空或 ∈ {local, dev, test, staging, prod}
 - `tracing.exporter` ∈ {none, otlp, stdout, noop}；`otlp` 时 `endpoint` 必填；`env=prod` 禁止 `stdout`
 
@@ -154,8 +175,8 @@ cp configs/admin.yaml.example configs/admin.yaml
 |------|-------|------|
 | local | local | 可用 `auth.mode=demo`、memory DB |
 | dev / test | dev / test | 可销毁数据；禁止生产凭据 |
-| staging | staging | 拓扑近似生产；密钥隔离；必须 `auth.mode=jwt` |
-| prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启 |
+| staging | staging | 拓扑近似生产；密钥隔离；必须 `auth.mode=jwt`；多副本时显式 `id.node_id` 或 `statefulset`，幂等/限流用 `redis` |
+| prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启；多副本同上，`iam.outbox.publish_in_api` 与 worker 部署按迁移节奏切换 |
 
 ---
 

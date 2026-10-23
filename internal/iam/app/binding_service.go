@@ -63,7 +63,7 @@ func NewBindingService(cfg BindingServiceConfig) (*BindingService, error) {
 		return nil, apperr.Internal("iam change recorder is required", nil)
 	}
 	if cfg.IDs == nil {
-		cfg.IDs = id.MustSnowflake(id.Options{NodeID: 1})
+		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	if cfg.Limits.MaxBindingsPerSubject <= 0 {
 		cfg.Limits.MaxBindingsPerSubject = 50

@@ -13,6 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/health"
+	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/storage"
@@ -33,6 +34,8 @@ type Deps struct {
 	Database *db.DB
 	// Redis 是共享缓存客户端；未配置 redis.addr 时为 nil。
 	Redis *redis.Client
+	// IDs 是进程级分布式 ID 生成器（多副本必须使用不同 NodeID）。
+	IDs id.Generator
 	// AuthMW 是已按 channel 绑定的鉴权中间件。
 	AuthMW func(http.Handler) http.Handler
 	// RequirePermission 是权限中间件工厂，由 cmd 注入的 Authorizer 提供。
@@ -75,6 +78,11 @@ func Run(ctx context.Context, opts Options) (err error) {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logger := NewLogger(cfg)
+
+	ids, nodeID, err := NewIDGenerator(cfg.ID)
+	if err != nil {
+		return fmt.Errorf("id generator: %w", err)
+	}
 
 	met, err := metrics.New(metrics.Options{
 		Service: cfg.Service,
@@ -157,6 +165,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Storage:    stores,
 		Database:   database,
 		Redis:      redisClient,
+		IDs:        ids,
 		AuthMW:     authMW,
 		Health:     hh,
 		Background: background.add,
@@ -188,12 +197,15 @@ func Run(ctx context.Context, opts Options) (err error) {
 	pipeline, err := NewPipeline(PipelineConfig{
 		Timeout:        cfg.HTTP.Timeout,
 		BodyLimitBytes: cfg.HTTP.BodyLimitBytes,
+		Channel:        cfg.Channel,
 		RateLimit:      cfg.RateLimit,
+		Idempotency:    cfg.Idempotency,
 		CORS:           cfg.CORS,
 	}, PipelineDeps{
 		Logger:  logger,
 		Metrics: met,
 		Tracer:  tp,
+		Redis:   redisClient,
 	})
 	if err != nil {
 		return err
@@ -208,6 +220,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 		"channel", cfg.Channel,
 		"env", cfg.Env,
 		"version", build.Version,
+		"node_id", nodeID,
 		"background_tasks", len(tasks),
 	)
 	return ListenAndServe(ctx, cfg, pipeline(root), logger)
