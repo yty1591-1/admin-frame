@@ -12,8 +12,8 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-transport check-debug check-openapi check-deps check-config \
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
-	check-license check-codegen check-perf check-idempotency check-outbox secrets \
-	check-authn gitee-job ci mock migrate-up vuln docker docker-admin docker-push
+        check-license check-codegen check-perf check-idempotency check-outbox secrets \
+        check-authn check-deploy check-alerts check-backup gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -170,6 +170,18 @@ check-perf:
 check-authn:
 	bash scripts/ci/check-authn.sh
 
+# ENT-05：Helm Chart 结构、渲染、明文密钥与 digest（helm 缺失时仅静态检查）。
+check-deploy:
+	bash scripts/ci/check-deploy.sh
+
+# ENT-06：ALERTS.md ↔ 规则 ↔ runbook ↔ 看板一致性（promtool 可选）。
+check-alerts:
+	bash scripts/ci/check-alerts.sh
+
+# ENT-08：备份脚本、CronJob、RPO/RTO 与演练 runbook。
+check-backup:
+	bash scripts/ci/check-backup.sh
+
 # mockery（GEN-04）；需已安装 mockery，配置见 .mockery.yaml。
 MOCKERY ?= mockery
 mock:
@@ -182,7 +194,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
@@ -201,6 +213,7 @@ docker:
 	docker build --target biz-api --build-arg CMD=biz-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/biz-api:local .
 	docker build --target c-api --build-arg CMD=c-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/c-api:local .
 	docker build --target worker --build-arg CMD=worker --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/worker:local .
+	docker build --target migrate --build-arg CMD=migrate --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/migrate:local .
 
 docker-admin:
 	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .
@@ -215,7 +228,7 @@ docker-push:
 		echo "error: set VERSION=<semver|sha>; the local tag must not be pushed (RELS-01/§9)" >&2; \
 		exit 1; \
 	fi
-	@set -e; for cmd in admin-api biz-api c-api worker; do \
+	@set -e; for cmd in admin-api biz-api c-api worker migrate; do \
 		img="$(IMAGE_REGISTRY)/$(IMAGE_NAMESPACE)/$$cmd:$(VERSION)"; \
 		echo "==> push $$img"; \
 		docker build --target $$cmd \

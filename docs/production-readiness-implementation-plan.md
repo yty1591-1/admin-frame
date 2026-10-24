@@ -546,6 +546,11 @@ audit:
 
 **目标**：提供可重复部署的 Helm Chart、三套环境 values、完整探针 / 资源 / 安全上下文 / 迁移 Job。
 
+**实施状态**：`制品已入库（2026-10-24）`。T1～T7 完成：Chart、三套 values、探针/资源/安全上下文、HPA/PDB、
+NetworkPolicy、ServiceMonitor、migrate Job（含 `migrate` 镜像与 migrations 内置）；T8 的 staging
+`kubectl --dry-run=server` 与滚动/回滚演练待在目标环境执行。门禁：`make check-deploy`
+（CI job `deploy` 安装 Helm 后执行）。
+
 **前置依赖**：`ENT-06` 规则文件路径需与 Chart 对齐；`ENT-07` Secret 注入方式需确定。
 
 **任务分解**
@@ -606,6 +611,10 @@ deploy/helm/admin-frame/
 ### ENT-06 告警规则、看板与 SLO 落地
 
 **目标**：把 `ALERTS.md` 中的告警从文档变为可执行规则，并建立 SLO / 错误预算与看板。
+
+**实施状态**：`规则/看板已入库（2026-10-24）`。T1～T4、T7 完成：`api/iam/async/db/slo/release`
+规则组、四张 Grafana 看板、OTel Collector 与采样策略；T5 提供 Alertmanager 基线（接收端待接入）；
+T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy` job 安装 promtool）。
 
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 
@@ -674,6 +683,10 @@ deploy/helm/admin-frame/
 ### ENT-08 备份、恢复与灾备演练
 
 **目标**：建立可验证的备份、PITR 恢复与季度演练机制，明确 RPO / RTO。
+
+**实施状态**：`脚本/CronJob/runbook 已入库（2026-10-24）`。T1～T3、T5～T7 完成：
+`scripts/backup/{backup,restore,verify}.sh`、`deploy/backup/cronjob.yaml`、`backup-restore.md`
+（RPO ≤ 5min / RTO ≤ 60min 为基线，待业务确认）；T4/AC-ENT-08-1 的 staging 全量 + PITR 恢复演练待执行。
 
 **前置依赖**：`ENT-05`（CronJob / Job 部署）、`ENT-07`（备份加密密钥托管）。
 
@@ -933,10 +946,10 @@ deploy/helm/admin-frame/
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
-| ENT-05 | P0 | Wave 2 | 待做 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
-| ENT-06 | P0 | Wave 2 | 待做 | 告警规则 / 看板 / SLO 代码化并演练 |
+| ENT-05 | P0 | Wave 2 | 进行中（制品已入库 2026-10-24；待 staging 演练） | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
+| ENT-06 | P0 | Wave 2 | 进行中（规则/看板已入库 2026-10-24；待故障注入） | 告警规则 / 看板 / SLO 代码化并演练 |
 | ENT-07 | P0 | Wave 2 | 待做 | 密钥托管 + 不停机轮换演练 |
-| ENT-08 | P0 | Wave 2 | 待做 | 备份 + PITR 恢复演练 + RPO/RTO |
+| ENT-08 | P0 | Wave 2 | 进行中（脚本/CronJob 已入库 2026-10-24；待恢复演练） | 备份 + PITR 恢复演练 + RPO/RTO |
 | ENT-09 | P1 | Wave 3 | 待做 | 租户生命周期与 IAM / 令牌联动 |
 | ENT-10 | P1 | Wave 3 | 待做 | 通知 / Webhook 投递编排与状态 |
 | ENT-11 | P1 | Wave 3 | 待做 | 特性开关与灰度可运营 |

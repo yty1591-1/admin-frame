@@ -259,3 +259,27 @@ jobs:
           go build -ldflags "-s -w" -o bin/c-api ./cmd/c-api
           go build -ldflags "-s -w" -o bin/worker ./cmd/worker
           go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
+
+  # ENT-05/ENT-06：Chart 渲染、告警规则与看板一致性（helm/promtool 由 job 安装）。
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Install promtool
+        run: |
+          curl -fsSL https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz | tar -xz
+          echo "${PWD}/prometheus-2.55.1.linux-amd64" >> "${GITHUB_PATH}"
+
+      - name: Helm template + alert rules
+        run: |
+          bash scripts/ci/check-deploy.sh
+          bash scripts/ci/check-alerts.sh

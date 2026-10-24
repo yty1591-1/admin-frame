@@ -160,13 +160,14 @@
 ## 7. 部署流程
 
 1. **构建镜像**
-   - 使用 [image.yml](../.github/workflows/image.yml) 产出多架构镜像；标签只用 `sha-*` / semver，禁止 `latest`。
-   - 镜像以非 root（uid 10001）运行，`CGO_ENABLED=0`，含 `ca-certificates` 与 `tzdata`。
+   - 使用 [image.yml](../.github/workflows/image.yml) 产出多架构镜像（含 `migrate`）；标签只用 `sha-*` / semver，禁止 `latest`。
+   - 镜像以非 root（uid 10001）运行，`CGO_ENABLED=0`，含 `ca-certificates` 与 `tzdata`；`migrations/` 已内置于镜像 `/app/migrations`。
 2. **准备配置**
    - 以 `configs/<service>.yaml.example` 为模板生成各环境配置，挂载到容器 `/app/configs/<service>.yaml`。
    - 容器内只有 `.example`，不挂载真实配置文件时进程会因找不到配置而退出。
 3. **执行迁移（独立 Job）**
-   - 先 `-action status` 与 `-action up -dry-run` 查看计划，再 `-action up`。
+   - K8s 推荐使用 Helm Chart 的 `migrate.enabled=true`（post-install/post-upgrade Hook），发布命令必须带 `--atomic --wait`；失败自动回滚。
+   - 手工执行时先 `-action status` 与 `-action up -dry-run` 查看计划，再 `-action up`。
    - 使用迁移专用账号与 `ADMIN_FRAME_DB_DSN`；严禁 API 进程自动迁移。
 4. **启动 worker**
    - 生产 `iam.mode=enforce` 要求 `async.enabled=true` 且 API 不投递，`worker` 必须先于 API 就绪，避免 Outbox 积压。
@@ -179,9 +180,12 @@
 
 ## 8. Kubernetes 建议
 
+交付物见 [`helm/admin-frame`](./helm/admin-frame/README.md)（三端 API + worker + migrate Job，
+含探针、HPA、PDB、NetworkPolicy、ServiceMonitor）。
+
 | 项 | 建议 |
 |---|---|
-| 工作负载 | 每端独立 Deployment + Service + Ingress 前缀 `/admin` `/biz` `/c` |
+| 工作负载 | Helm 默认 Deployment；staging/prod 多副本启用 `statefulset.enabled=true`（`id.node_id_source=statefulset`） |
 | 探针 | liveness `GET /healthz`（period 10s）；readiness `GET /readyz`（period 5s，失败阈值 3）；建议加 startupProbe |
 | 优雅停机 | `terminationGracePeriodSeconds ≥ 30`，大于 `shutdown_timeout`（默认 15s） |
 | 资源 | requests 按 §4 下限，limits 为 requests 的 1.5–2 倍；`/metrics` 不计入业务超时 |
@@ -208,8 +212,16 @@
 
 **日志与追踪**
 - 统一 JSON 日志，保留 `trace_id`、`request_id`、`channel`；审计事件单独落到不可篡改存储。
-- `tracing.exporter=otlp`，`endpoint` 指向 Collector（如 `http://otel-collector:4318`，内网可用 `insecure: true`）；生产采样率从 10% 起调。
+- `tracing.exporter=otlp`，`endpoint` 指向 Collector（如 `http://otel-collector:4318`，内网可用 `insecure: true`）。
+- 采样：应用侧 `sample_ratio=1.0`，由 Collector 尾部采样（错误/慢请求 100%、正常 10%）；未部署 Collector 时应用侧 5%–10%。
 - `otlp` 导出失败不得阻塞业务请求（SDK 异步导出）。
+
+**规则、SLO 与看板**
+
+- 告警规则：[`deploy/observability/prometheus/rules`](./observability/prometheus/rules)；SLO 与燃烧率见 `slo.yaml`。
+- Alertmanager：[`alertmanager.yaml`](./observability/alertmanager/alertmanager.yaml)（P1 立即呼叫、P2 工单、抑制规则）。
+- 看板：[`deploy/observability/grafana/dashboards`](./observability/grafana/dashboards)（RED / IAM / Async / DB）。
+- 入口说明：[`deploy/observability/README.md`](./observability/README.md)；告警 ↔ runbook：[`docs/runbooks/ALERTS.md`](../docs/runbooks/ALERTS.md)。
 
 ## 10. 可靠性与容量
 
@@ -221,8 +233,8 @@
 | 限流语义 | `rate_limit.failure_mode=fail_open`：Redis 故障时放行，避免全站不可用，但需监控 |
 | 幂等 | 启用后必须 Redis 驱动；Redis 数据丢失会产生重复写窗口，关键写接口建议同时保留数据库唯一键兜底 |
 | Outbox | 单条 `lease=30s`、`batch_size=100`、`max_attempts=10`；多 worker 副本依靠租约安全认领；死信需人工/定时重放 |
-| 备份 | MySQL 每日全备 + binlog（PITR ≥ 7 天）；对象存储开启版本化；Redis 可重建，但幂等与会话状态需评估持久化 |
-| 恢复演练 | 每季度至少一次从备份恢复到独立环境，验证迁移版本与数据一致性 |
+| 备份 | MySQL 每日全备 + binlog（PITR ≥ 7 天）；对象存储开启版本化；脚本与 CronJob 见 [`scripts/backup`](../scripts/backup) 与 [`deploy/backup/cronjob.yaml`](./backup/cronjob.yaml)；目标 RPO ≤ 5min、RTO ≤ 60min |
+| 恢复演练 | 每季度至少一次从备份恢复到独立环境，验证迁移版本与数据一致性；步骤见 [`docs/runbooks/backup-restore.md`](../docs/runbooks/backup-restore.md) |
 | 发布回滚 | 镜像不可变 + semver；回滚使用上一版本镜像；数据库变更遵循「先兼容、后清理」两阶段 |
 
 ## 11. 常见部署坑（本项目实测约束）
@@ -248,6 +260,10 @@
 - [ ] `storage.driver` 非 `memory`，密钥由 Secret 注入，桶权限最小化
 - [ ] `worker` 先于 API 启动，Outbox 无积压，死信监控已接入
 - [ ] 若启用 `async.driver=nats`：broker 已 TLS、stream/DLQ subject 已建、`async_broker_*` 指标已告警
+- [ ] Helm Chart 已通过 `helm lint` + 三套 values `helm template`；生产镜像使用 digest
+- [ ] OTel Collector 已就绪，Tempo/Jaeger 可查 `service.name`，采样策略已确认
+- [ ] Prometheus 规则 + Alertmanager 已加载，P1/P2 告警可触达值班
+- [ ] 备份 CronJob 已运行成功，`verify.sh` 通过，恢复演练完成并归档
 - [ ] `/healthz`、`/readyz`、`/metrics` 探针与网络策略验证通过
 - [ ] JSON 日志与 trace 已进入集中平台，审计事件可检索
 - [ ] 备份、恢复演练、回滚镜像与 Runbook 已就绪

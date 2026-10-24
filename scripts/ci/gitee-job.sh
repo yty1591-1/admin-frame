@@ -83,6 +83,8 @@ case "${job}" in
     bash scripts/ci/check-idempotency.sh
     bash scripts/ci/check-outbox.sh
     bash scripts/ci/check-authn.sh
+    bash scripts/ci/check-alerts.sh
+    bash scripts/ci/check-backup.sh
     ;;
   secrets)
     bash scripts/ci/check-debug-endpoints.sh

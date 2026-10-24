@@ -55,6 +55,8 @@
 
 **发版镜像（不在 PR 必跑，见 §3.5）**：`image` job 在 push `main`/`master` 与 `v*` tag 时构建多架构镜像、推送并用 Trivy 扫描；命中 `CRITICAL/HIGH` 即失败，该 digest 不得上生产。
 
+**部署制品门禁（ENT-05/ENT-06）**：job `deploy` 安装 Helm + promtool，执行 `check-deploy.sh`（`helm lint`、三套 values `helm template`、明文密钥与 digest 断言）与 `check-alerts.sh`（告警目录 ↔ 规则 ↔ runbook ↔ 看板一致性）。
+
 **尚未纳入必跑、但已规划**：集成测试容器常态化。启用后须更新本表与各平台流水线。
 
 ---
