@@ -1,0 +1,110 @@
+# 数据库备份 CronJob（ENT-08 T3）
+#
+# 前置：
+#   1) 构建备份镜像（须包含 bash/gzip/sha256sum/mysqldump 或 pg_dump；可选 gpg、aws cli），
+#      并把 scripts/backup/*.sh 放到 /opt/backup/；
+#   2) 创建 Secret admin-frame-db（key=dsn）与可选 admin-frame-backup（key=encrypt_key、S3 凭证）；
+#   3) 备份目录挂载 PVC 或直接上传对象存储（BACKUP_S3_URI）。
+#
+# 校验：backup 完成后运行 verify.sh（可用独立 CronJob 或备份镜像内串联）。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: admin-frame-db-backup
+  labels:
+    app.kubernetes.io/name: admin-frame
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 3 * * *" # 每日 03:00（UTC），按业务低峰调整
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: admin-frame
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          serviceAccountName: admin-frame-backup
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: ghcr.io/admin-frame/db-backup:1.0.0 # 由运维构建；不可用 latest
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  /opt/backup/backup.sh
+                  latest="$(ls -1t /var/backups/admin-frame/*.dump.gz* | head -1)"
+                  /opt/backup/verify.sh "${latest}"
+              env:
+                - name: DB_DRIVER
+                  value: mysql
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: admin-frame-db
+                      key: dsn
+                - name: BACKUP_DIR
+                  value: /var/backups/admin-frame
+                - name: BACKUP_RETENTION_DAYS
+                  value: "7"
+                - name: BACKUP_S3_URI
+                  value: "" # 如 s3://admin-frame-backup/prod/
+                - name: BACKUP_ENCRYPT_KEY
+                  value: /etc/backup/encrypt_key
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              volumeMounts:
+                - name: backups
+                  mountPath: /var/backups/admin-frame
+                - name: backup-key
+                  mountPath: /etc/backup
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: admin-frame-backup
+            - name: backup-key
+              secret:
+                secretName: admin-frame-backup
+                optional: true
+            - name: tmp
+              emptyDir: {}
+---
+# 最小权限：不使用 Kubernetes API（automount=false），仅挂载 Secret/PVC。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-frame-backup
+  labels:
+    app.kubernetes.io/name: admin-frame
+    app.kubernetes.io/component: backup
+automountServiceAccountToken: false
