@@ -163,7 +163,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 | 租户域 `ENT-09` | `internal/tenant/{domain,app,infrastructure,transport}` | 租户生命周期、配额、成员 | 不得复制 IAM 角色模型 |
 | 通知中心 `ENT-10` | `internal/notification/{domain,app,infrastructure}` | 模板、偏好、投递编排、状态 | 渠道实现继续用 `pkg/sms` / `email` / `push` / `webhook` |
 | 特性开关 `ENT-11` | `internal/featureflag/{domain,app,infrastructure,transport}` | 规则、灰度、审计、到期清理 | 不得读取业务域内部状态 |
-| 异步运行时 `ENT-03` | `pkg/outbox`、`pkg/mq/<broker>`、`internal/platform/async.go` | Relay、消费注册、重试、DLQ、指标 | `pkg/` 不得 import `internal/` |
+| 异步运行时 `ENT-03` | `pkg/outbox`、`pkg/mq`、`internal/platform/async.go`、`internal/platform/async_nats.go` | Relay、消费注册、重试、DLQ、指标、JetStream 适配 | `pkg/` 不得 import `internal/` |
 | 测试基座 `ENT-16` | `pkg/testkit/`、`tests/integration/`、`tests/e2e/` | 容器化依赖、测试数据、E2E 驱动 | 不得依赖固定端口、固定路径、真实云凭据 |
 
 > 目录归属在实施时若需调整，须在本文件与 `ARCHITECTURE.md` §5 同 MR 更新；**禁止**继续把新能力塞进 `internal/platform`（PLAT-15 的拆分触发条件仍有效）。
@@ -203,7 +203,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 |---|---|
 | 身份 | `auth.mode=jwt`、`identity.revocation.failure_mode=fail_closed`、A 端 `identity.mfa.admin_required=true` |
 | 多实例 | 禁止默认 `NodeID=1`；`idempotency.driver=redis`；`rate_limit.driver=redis` |
-| 异步 | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`iam.mode=enforce` 时强制 `async.enabled=true` |
+| 异步 | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`async.driver=nats` 时 `async.broker.url` 必须 `tls://`/`wss://`；`iam.mode=enforce` 时强制 `async.enabled=true` |
 | 审计 | `audit.store=db`；`audit.retention_days ≥ 180`；`audit.critical_fail_closed=true` |
 | 密钥 | `secrets.provider ∈ {vault, kms}`；禁止仅 env 注入生产密钥 |
 | 备份 | `backup.enabled=true`；`backup.retention_days > 0` |
@@ -446,7 +446,7 @@ rate_limit:
 
 **前置依赖**：`ENT-02`（发布器独立进程与幂等存储）。
 
-**实施状态**：`已完成（2026-10-22）`。T1～T6、T8 已落地；T7 仅预留 `Broker` 接口与 `async.driver=db` 校验，未引入外部 broker。详细拆解见 [ENT-03 实施文档](../.trae/documents/ENT-03-async-infrastructure-implementation.md)。
+**实施状态**：`已完成（2026-10-22；T7 于 2026-10-24 补齐 NATS JetStream 适配器）`。T1～T8 已落地；`async.driver=nats` 为可选驱动，默认仍为 `db`。详细拆解见 [ENT-03 实施文档](../.trae/documents/ENT-03-async-infrastructure-implementation.md)。
 
 **任务分解**
 
@@ -458,7 +458,7 @@ rate_limit:
 | T4 | 消费运行时 | 注册 handler、至少一次、幂等键、并发度、优雅退出 | 重复投递无重复副作用 |
 | T5 | DLQ | `async_dlq` 表 + 重放命令；毒消息告警 | `AC-ENT-03-3` |
 | T6 | worker 装配 | `cmd/worker` 消费 API 写入的事件；生命周期与平台一致 | 跨进程消费验证 |
-| T7 | broker 适配预留 | `pkg/mq` 生产 broker 接口与一个可选适配（建议 NATS JetStream）；默认 `db` 驱动 | 不引入 Kafka；容量触发再评估 |
+| T7 | broker 适配 | `internal/platform/async_nats.go` 实现 `pkg/mq.Broker`（JetStream、MsgId 去重、DLQ subject）；默认仍是 `db` 驱动 | 不引入 Kafka；容量触发再评估 |
 | T8 | IAM 复用 | IAM Outbox 迁移到通用 Relay 或保持适配层 | 行为不回归；指标不丢失 |
 
 **配置规划**
@@ -931,7 +931,7 @@ deploy/helm/admin-frame/
 |---|---|---|---|---|
 | ENT-01 | P0 | Wave 1 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
-| ENT-03 | P0 | Wave 1 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；broker 仅预留接口 |
+| ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | Wave 2 | 待做 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
 | ENT-06 | P0 | Wave 2 | 待做 | 告警规则 / 看板 / SLO 代码化并演练 |
@@ -1045,7 +1045,7 @@ deploy/helm/admin-frame/
 | `internal/security/**` | 变更 | ENT-01（撤销检查、kid） |
 | `internal/shared/auth/principal.go` | 变更 | ENT-12（scope） |
 | `pkg/outbox/**` | 新增 | ENT-03 |
-| `pkg/mq/<broker>/**` | 新增（可选） | ENT-03 |
+| `internal/platform/async_nats.go` | 新增 | ENT-03（T7 NATS JetStream 适配器） |
 | `pkg/ratelimit/**` | 变更 | ENT-02 / ENT-14 |
 | `pkg/testkit/**` | 新增 | ENT-16 |
 | `cmd/worker/main.go` | 变更 | ENT-03 / ENT-08 / ENT-15 |

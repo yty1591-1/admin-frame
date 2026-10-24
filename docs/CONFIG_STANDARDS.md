@@ -169,7 +169,8 @@ cp configs/admin.yaml.example configs/admin.yaml
 - `env ∈ {prod, staging}` 且 `channel ≠ worker` ⇒ 非 statefulset 时必须显式 `id.node_id`（避免多副本重复 ID）
 - `idempotency.enabled=true` ⇒ `driver ∈ {memory, redis}`、`ttl > 0`、`header` 非空；`driver=redis` ⇒ `redis.addr` 必填
 - `env ∈ {prod, staging}` 且启用幂等或限流 ⇒ `driver` 必须为 `redis`（否则配额/去重被副本数放大）
-- `async.driver` 本轮仅支持 `db`（broker 适配仅预留接口）；`poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`lease ∈ [5s,10m]`、`max_attempts ∈ [1,20]`、`outbox.concurrency ∈ [1,16]`、`consumer.concurrency ∈ [1,32]`、`visibility_timeout ∈ [5s,30m]`、`retry_backoff ∈ {exponential, fixed}`
+- `async.driver ∈ {db, nats}`：`db`（默认）只走 DB Outbox；`nats` 在其之上把事件发布到 NATS JetStream（Outbox 仍是事实源）；`poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`lease ∈ [5s,10m]`、`max_attempts ∈ [1,20]`、`outbox.concurrency ∈ [1,16]`、`consumer.concurrency ∈ [1,32]`、`visibility_timeout ∈ [5s,30m]`、`retry_backoff ∈ {exponential, fixed}`
+- `async.driver=nats` 且 `async.enabled=true` ⇒ `async.broker.url` 必填且以 `nats://`、`tls://`、`ws://`、`wss://` 开头；`env ∈ {prod, staging}` 时必须 `tls://` 或 `wss://`；`broker.stream` 仅允许 `[A-Za-z0-9_-]`（默认 `async`）；`broker.subject_prefix` 禁止通配符、空白与空层（默认 `async`）；`broker.ack_wait ∈ [1s,30m]`（默认 `30s`）、`broker.max_deliver ∈ [1,100]`（默认 `10`）；连接凭证建议走 `ADMIN_FRAME_ASYNC_BROKER_URL`
 - `async.enabled=true` ⇒ `db.driver ≠ memory`（Outbox 必须持久化）
 - `env ∈ {prod, staging}` 且 `iam.mode=enforce` 且 `async.enabled=true` ⇒ `async.outbox.publish_in_api=false`（由 worker 独占投递，避免重复）
 - `env` 为空或 ∈ {local, dev, test, staging, prod}

@@ -18,8 +18,10 @@ const asyncStatsTimeout = 3 * time.Second
 // 与 IAM 自有指标的关系：`async_*` 描述通用 Relay，IAM 审计投递仍由
 // `iam_outbox_*` 暴露，两者共享同一 Registry。
 type AsyncMetrics struct {
-	delivery   *prometheus.CounterVec
-	registerer prometheus.Registerer
+	delivery      *prometheus.CounterVec
+	brokerPublish *prometheus.CounterVec
+	brokerConsume *prometheus.CounterVec
+	registerer    prometheus.Registerer
 }
 
 // NewAsyncMetrics 创建并注册 async_* 指标；重复注册视为装配错误（fail-fast）。
@@ -33,13 +35,29 @@ func NewAsyncMetrics(registerer prometheus.Registerer) (*AsyncMetrics, error) {
 			Name: "async_outbox_delivery_total",
 			Help: "Outbox 投递结果，result=success|retry|dead|poison。",
 		}, []string{"result"}),
+		brokerPublish: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "async_broker_publish_total",
+			Help: "外部 broker 发布结果，result=success|error。",
+		}, []string{"result"}),
+		brokerConsume: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "async_broker_consume_total",
+			Help: "外部 broker 消费结果，result=ack|retry|dead。",
+		}, []string{"result"}),
 	}
-	if err := registerer.Register(m.delivery); err != nil {
-		return nil, fmt.Errorf("async metrics: register delivery counter: %w", err)
+	for _, collector := range []prometheus.Collector{m.delivery, m.brokerPublish, m.brokerConsume} {
+		if err := registerer.Register(collector); err != nil {
+			return nil, fmt.Errorf("async metrics: register: %w", err)
+		}
 	}
 	// 预创建结果标签，保证无投递时也能被采集，避免告警表达式因指标缺失静默失效。
 	for _, result := range []string{"success", "retry", "dead", "poison"} {
 		m.delivery.WithLabelValues(result)
+	}
+	for _, result := range []string{"success", "error"} {
+		m.brokerPublish.WithLabelValues(result)
+	}
+	for _, result := range []string{"ack", "retry", "dead"} {
+		m.brokerConsume.WithLabelValues(result)
 	}
 	return m, nil
 }
@@ -53,6 +71,28 @@ func (m *AsyncMetrics) OnOutboxDelivered(_ context.Context, _, result string) {
 		result = "unknown"
 	}
 	m.delivery.WithLabelValues(result).Inc()
+}
+
+// OnBrokerPublish 实现 BrokerObserver。
+func (m *AsyncMetrics) OnBrokerPublish(_ context.Context, result string) {
+	if m == nil {
+		return
+	}
+	if result == "" {
+		result = "unknown"
+	}
+	m.brokerPublish.WithLabelValues(result).Inc()
+}
+
+// OnBrokerConsume 实现 BrokerObserver。
+func (m *AsyncMetrics) OnBrokerConsume(_ context.Context, result string) {
+	if m == nil {
+		return
+	}
+	if result == "" {
+		result = "unknown"
+	}
+	m.brokerConsume.WithLabelValues(result).Inc()
 }
 
 // RegisterGauges 注册 async_outbox_pending / async_outbox_lag_seconds / async_dlq_depth。

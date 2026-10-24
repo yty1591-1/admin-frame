@@ -1,5 +1,7 @@
 # 部署说明
 
+完整的技术栈清单、资源基线、生产必配项与上线检查清单见 [tech-stack-deployment.md](./tech-stack-deployment.md)。
+
 三端 API 与 worker 可独立 Deployment / HPA。示例清单可按环境补充 Helm 或 Kustomize。
 
 建议：

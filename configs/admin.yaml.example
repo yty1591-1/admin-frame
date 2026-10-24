@@ -57,7 +57,13 @@ rate_limit:
 # 异步基础设施：事务性 Outbox + 消费运行时（ENT-03）。
 async:
   enabled: false                 # 默认关闭；启用要求 db.driver 非 memory
-  driver: db                     # db（唯一实现）；broker(NATS/Kafka) 仅预留接口
+  driver: db                     # db|nats；nats 时下方 broker 必填
+  broker:                        # 仅 driver=nats 生效（NATS JetStream）
+    url: ""                      # nats://|tls://|ws://|wss://；prod/staging 必须 tls|wss
+    stream: async                # JetStream 流名，[A-Za-z0-9_-]
+    subject_prefix: async        # 主题前缀，最终 subject=<prefix>.<topic>
+    ack_wait: 30s                # 确认超时，[1s, 30m]
+    max_deliver: 10              # 最大投递次数，超限进 <prefix>.dlq.<topic>，[1, 100]
   outbox:
     publish_in_api: false        # prod/staging + iam.mode=enforce 必须 false（由 worker 独占投递）
     poll_interval: 1s            # 拉取间隔，[100ms, 1m]

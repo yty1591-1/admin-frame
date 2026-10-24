@@ -288,8 +288,10 @@ const maxNodeID = 1023
 
 // 异步驱动与退避策略（async.driver / async.consumer.retry_backoff）。
 const (
-	// AsyncDriverDB 使用数据库事务性 Outbox（默认，也是本轮唯一实现）。
+	// AsyncDriverDB 使用数据库事务性 Outbox（默认）。
 	AsyncDriverDB = "db"
+	// AsyncDriverNATS 在 DB Outbox 之上把事件发布到 NATS JetStream。
+	AsyncDriverNATS = "nats"
 	// AsyncBackoffExponential 指数退避。
 	AsyncBackoffExponential = "exponential"
 	// AsyncBackoffFixed 固定间隔重试。
@@ -299,16 +301,35 @@ const (
 // AsyncConfig 是平台级异步基础设施参数（ENT-03）。
 //
 // 默认关闭；启用后由 Relay 消费 async_outbox，消费方须幂等。
-// broker（NATS/Kafka）仅预留扩展点，本轮不提供实现。
+// driver=nats 时 Relay 仍以 DB Outbox 为事实源，额外把事件发布到 JetStream。
 type AsyncConfig struct {
 	// Enabled 是否启用异步运行时；默认 false。
 	Enabled bool `yaml:"enabled"`
-	// Driver 驱动；本轮仅支持 db。
+	// Driver 驱动；db（默认）| nats。
 	Driver string `yaml:"driver"`
+	// Broker 外部消息驱动参数；driver=nats 时生效。
+	Broker AsyncBrokerConfig `yaml:"broker"`
 	// Outbox 投递参数。
 	Outbox AsyncOutboxConfig `yaml:"outbox"`
 	// Consumer 消费运行时参数。
 	Consumer AsyncConsumerConfig `yaml:"consumer"`
+}
+
+// AsyncBrokerConfig 是 NATS JetStream 连接与投递参数。
+//
+// URL 可包含用户名/口令，生产建议通过 ADMIN_FRAME_ASYNC_BROKER_URL 注入，
+// 避免把凭证写入 yaml（CFG-06）。
+type AsyncBrokerConfig struct {
+	// URL NATS 服务地址；driver=nats 时必填，支持 nats:// / tls:// / ws:// / wss://。
+	URL string `yaml:"url"`
+	// Stream JetStream 流名称；空值取 async。
+	Stream string `yaml:"stream"`
+	// SubjectPrefix 主题前缀；空值取 async，最终主题为 <prefix>.<topic>。
+	SubjectPrefix string `yaml:"subject_prefix"`
+	// AckWait 单条消息确认超时；[1s, 30m]，空值取 30s。
+	AckWait time.Duration `yaml:"ack_wait"`
+	// MaxDeliver 最大投递次数；超过后进入 DLQ；[1, 100]，空值取 10。
+	MaxDeliver int `yaml:"max_deliver"`
 }
 
 // AsyncOutboxConfig 是 Outbox Relay 参数。
@@ -956,6 +977,18 @@ func (c *Config) applyAsyncDefaults() {
 	if c.Async.Consumer.RetryBackoff == "" {
 		c.Async.Consumer.RetryBackoff = AsyncBackoffExponential
 	}
+	if c.Async.Broker.Stream == "" {
+		c.Async.Broker.Stream = "async"
+	}
+	if c.Async.Broker.SubjectPrefix == "" {
+		c.Async.Broker.SubjectPrefix = "async"
+	}
+	if c.Async.Broker.AckWait == 0 {
+		c.Async.Broker.AckWait = 30 * time.Second
+	}
+	if c.Async.Broker.MaxDeliver == 0 {
+		c.Async.Broker.MaxDeliver = 10
+	}
 }
 
 // applyIAMDefaults 填充 IAM 默认值；Mode 保持空串，由 normalize 统一为 off。
@@ -1575,8 +1608,12 @@ func (c *Config) validateAsync() []error {
 	var errs []error
 	switch c.Async.Driver {
 	case "", AsyncDriverDB:
+	case AsyncDriverNATS:
+		if c.Async.Enabled {
+			errs = append(errs, c.validateAsyncBroker()...)
+		}
 	default:
-		errs = append(errs, fmt.Errorf("async.driver %q is not implemented (only db is supported)", c.Async.Driver))
+		errs = append(errs, fmt.Errorf("async.driver %q is not implemented (only db and nats are supported)", c.Async.Driver))
 	}
 	if c.Async.Outbox.PollInterval != 0 &&
 		(c.Async.Outbox.PollInterval < 100*time.Millisecond || c.Async.Outbox.PollInterval > time.Minute) {
@@ -1618,4 +1655,63 @@ func (c *Config) validateAsync() []error {
 		errs = append(errs, errors.New("async.outbox.publish_in_api must be false in prod/staging with iam.mode=enforce"))
 	}
 	return errs
+}
+
+// validateAsyncBroker 校验 NATS JetStream 连接与投递参数（async.driver=nats）。
+func (c *Config) validateAsyncBroker() []error {
+	var errs []error
+	rawURL := strings.TrimSpace(c.Async.Broker.URL)
+	if rawURL == "" {
+		errs = append(errs, errors.New("async.broker.url is required when async.driver=nats"))
+	} else {
+		switch {
+		case strings.HasPrefix(rawURL, "nats://"), strings.HasPrefix(rawURL, "tls://"),
+			strings.HasPrefix(rawURL, "ws://"), strings.HasPrefix(rawURL, "wss://"):
+		default:
+			errs = append(errs, errors.New("async.broker.url must start with nats://, tls://, ws:// or wss://"))
+		}
+		if isProdLikeEnv(c.Env) &&
+			!strings.HasPrefix(rawURL, "tls://") && !strings.HasPrefix(rawURL, "wss://") {
+			errs = append(errs, errors.New("async.broker.url must use tls:// or wss:// in prod/staging"))
+		}
+	}
+	if !validNATSStreamName(c.Async.Broker.Stream) {
+		errs = append(errs, errors.New("async.broker.stream must be a non-empty ASCII alphanumeric/dash/underscore name"))
+	}
+	if !validNATSSubjectRoot(c.Async.Broker.SubjectPrefix) {
+		errs = append(errs, errors.New("async.broker.subject_prefix must be a valid NATS subject prefix"))
+	}
+	if c.Async.Broker.AckWait != 0 &&
+		(c.Async.Broker.AckWait < time.Second || c.Async.Broker.AckWait > 30*time.Minute) {
+		errs = append(errs, errors.New("async.broker.ack_wait must be in [1s, 30m]"))
+	}
+	if c.Async.Broker.MaxDeliver != 0 &&
+		(c.Async.Broker.MaxDeliver < 1 || c.Async.Broker.MaxDeliver > 100) {
+		errs = append(errs, errors.New("async.broker.max_deliver must be in [1, 100]"))
+	}
+	return errs
+}
+
+// validNATSStreamName 校验 JetStream 流名称（NATS 不允许点号与通配符）。
+func validNATSStreamName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validNATSSubjectRoot 校验主题前缀：允许点号分层，但禁止通配符、空白与空层。
+func validNATSSubjectRoot(prefix string) bool {
+	if prefix == "" || strings.ContainsAny(prefix, " \t\r\n*>") {
+		return false
+	}
+	return !strings.HasPrefix(prefix, ".") && !strings.HasSuffix(prefix, ".") &&
+		!strings.Contains(prefix, "..")
 }

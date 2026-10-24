@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/mq"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
@@ -15,7 +16,8 @@ import (
 // 职责边界：
 //   - 构造 Store / Deduper / Router（不 import 任何业务域）；
 //   - 业务域通过 Register 声明 topic 与 handler；
-//   - Run 启动 Relay 直到 ctx 取消，等待在途 handler 收敛。
+//   - Run 启动 Relay 直到 ctx 取消，等待在途 handler 收敛；
+//   - driver=nats 时额外把每条事件发布到 JetStream（Outbox 仍是事实源）。
 type AsyncRuntime struct {
 	cfg      *Config
 	logger   *slog.Logger
@@ -23,6 +25,7 @@ type AsyncRuntime struct {
 	deduper  outbox.Deduper
 	router   *outbox.Router
 	observer outbox.Observer
+	broker   mq.Broker
 }
 
 // NewAsyncRuntime 按 async 配置装配通用异步组件；未启用时返回 (nil, nil)。
@@ -36,8 +39,8 @@ func NewAsyncRuntime(deps *Deps) (*AsyncRuntime, error) {
 	if !cfg.Async.Enabled {
 		return nil, nil
 	}
-	if cfg.Async.Driver != "" && cfg.Async.Driver != AsyncDriverDB {
-		return nil, fmt.Errorf("async runtime: driver %q is not implemented (only db is supported)", cfg.Async.Driver)
+	if cfg.Async.Driver != "" && cfg.Async.Driver != AsyncDriverDB && cfg.Async.Driver != AsyncDriverNATS {
+		return nil, fmt.Errorf("async runtime: driver %q is not implemented (only db and nats are supported)", cfg.Async.Driver)
 	}
 	if deps.Database == nil {
 		return nil, fmt.Errorf("async runtime: enabled requires a persistent database")
@@ -54,6 +57,7 @@ func NewAsyncRuntime(deps *Deps) (*AsyncRuntime, error) {
 		deduper: NewAsyncDeduper(deps.Database),
 		router:  outbox.NewRouter(),
 	}
+	var brokerObserver BrokerObserver
 	if deps.Metrics != nil {
 		metrics, err := NewAsyncMetrics(deps.Metrics.RegistererWithoutChannel())
 		if err != nil {
@@ -63,6 +67,24 @@ func NewAsyncRuntime(deps *Deps) (*AsyncRuntime, error) {
 			return nil, err
 		}
 		rt.observer = metrics
+		brokerObserver = metrics
+	}
+	if cfg.Async.Driver == AsyncDriverNATS {
+		broker, err := NewNATSBroker(NATSBrokerOptions{
+			URL:           cfg.Async.Broker.URL,
+			Stream:        cfg.Async.Broker.Stream,
+			SubjectPrefix: cfg.Async.Broker.SubjectPrefix,
+			Durable:       cfg.Service,
+			AckWait:       cfg.Async.Broker.AckWait,
+			MaxDeliver:    cfg.Async.Broker.MaxDeliver,
+			MaxAckPending: cfg.Async.Consumer.Concurrency * 2,
+			Logger:        logger,
+			Observer:      brokerObserver,
+		})
+		if err != nil {
+			return nil, err
+		}
+		rt.broker = broker
 	}
 	return rt, nil
 }
@@ -116,6 +138,14 @@ func (r *AsyncRuntime) PublishInAPI() bool {
 	return r != nil && r.cfg.Async.Outbox.PublishInAPI
 }
 
+// Broker 返回外部消息驱动；driver=db 时为 nil。
+func (r *AsyncRuntime) Broker() mq.Broker {
+	if r == nil {
+		return nil
+	}
+	return r.broker
+}
+
 // Register 注册 topic 对应的 handler，并自动包裹消费幂等。
 //
 // 消费幂等记录按 topic 隔离：同一事件被不同 topic 消费互不影响；
@@ -142,6 +172,13 @@ func (r *AsyncRuntime) Run(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
+	if r.broker != nil {
+		defer func() {
+			if err := r.broker.Close(); err != nil {
+				r.logger.Warn("async broker close", "err", err)
+			}
+		}()
+	}
 	policy := outbox.DefaultRetryPolicy()
 	policy.MaxAttempts = r.cfg.Async.Outbox.MaxAttempts
 	if r.cfg.Async.Consumer.RetryBackoff == AsyncBackoffFixed {
@@ -149,7 +186,7 @@ func (r *AsyncRuntime) Run(ctx context.Context) error {
 	}
 	relay, err := outbox.NewRelay(outbox.RelayOptions{
 		Store:        r.store,
-		Handler:      r.limitedHandler(),
+		Handler:      r.handlerChain(),
 		Policy:       policy,
 		BatchSize:    r.cfg.Async.Outbox.BatchSize,
 		Lease:        r.cfg.Async.Outbox.Lease,
@@ -171,6 +208,25 @@ func (r *AsyncRuntime) Run(ctx context.Context) error {
 		return fmt.Errorf("async relay: %w", err)
 	}
 	return nil
+}
+
+// handlerChain 组合「发布到 broker（可选）」与「本地 handler 分发」。
+//
+// 顺序为先发布后本地：发布失败由 Outbox 重试；发布成功但本地失败会重复发布，
+// 消费方按 EventID / IdempotencyKey 幂等收敛（at-least-once）。
+func (r *AsyncRuntime) handlerChain() outbox.Handler {
+	handler := r.limitedHandler()
+	if r.broker == nil {
+		return handler
+	}
+	publish := r.broker.Producer()
+	return func(ctx context.Context, event *outbox.Event) error {
+		topic := outbox.NormalizeTopic(event.Topic, event.EventType)
+		if err := publish.Publish(ctx, event.ToMessage(topic)); err != nil {
+			return fmt.Errorf("async broker publish %s: %w", topic, err)
+		}
+		return handler(ctx, event)
+	}
 }
 
 // limitedHandler 用 async.consumer.concurrency 限制并发执行的 handler 数。

@@ -38,7 +38,7 @@
 | P3 | `pkg/db` | DB 连接池、事务 helper、健康检查 | 已完成 | database/sql；驱动由 platform 注册；无 migrate |
 | P3 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | 已完成 | go-redis；单实例锁；Cache-Aside KV |
 | P3 | `pkg/cache` | 本地/多级缓存抽象 | 已完成 | Store + Memory LRU + Multi + Cache-Aside |
-| P3 | `pkg/mq` | 消息生产/消费通用封装 | 已完成 | 接口 + Memory；事件信封；Broker 预留；Kafka/NATS 后接 |
+| P3 | `pkg/mq` | 消息生产/消费通用封装 | 已完成 | 接口 + Memory；事件信封；NATS JetStream 适配器在 `internal/platform/async_nats.go`；Kafka 后接 |
 | P3 | `pkg/outbox` | 事务性 Outbox 与投递 Relay | 已完成（ENT-03） | 条件认领/租约回收/指数退避/DLQ；MySQL + Memory Store |
 | P3 | `pkg/httpclient` | 带超时、重试、tracing 的 HTTP Client | 已完成 | 强制超时；幂等重试；OTel 出站 |
 | P4 | `pkg/config` | 配置加载与校验 | 已完成 | 通用 Loader/BindEnv/Watcher；platform 业务字段装配待迁移 |
@@ -88,7 +88,7 @@
 |--------|------|--------|------|
 | `pkg/db` / `pkg/sqlx` | DB 连接池、事务 helper、健康检查 | P3 | 已完成（`pkg/db`） |
 | `pkg/redis` | Redis 客户端、分布式锁、缓存封装 | P3 | 已完成 |
-| `pkg/mq` / `pkg/kafka` | 消息生产/消费通用封装 | P3 | 已完成（`pkg/mq`；Kafka 后接） |
+| `pkg/mq` / `pkg/kafka` | 消息生产/消费通用封装 | P3 | 已完成（`pkg/mq` + NATS JetStream 适配器；Kafka 后接） |
 | `pkg/outbox` | 事务性 Outbox：状态机、MySQL/Memory Store、并发 Relay、DLQ | P3 | 已完成（ENT-03；`async_outbox`/`async_dlq`） |
 | `pkg/cache` | 本地/多级缓存抽象 | P3 | 已完成 |
 | `pkg/oss` / `pkg/storage` | 对象存储上传下载（多云可插拔） | P4 | 已完成（`storage`+`s3/oss/cos/obs`；见 [`storage-s3-oss.md`](./storage-s3-oss.md)） |
@@ -141,7 +141,7 @@
 | db | `pkg/db` | 保持；platform 注册驱动并装配 Config；就绪挂 `Checker()` |
 | redis | `pkg/redis` | 保持；platform 装配 Addr/口令/前缀；就绪挂 `Checker()` |
 | cache | `pkg/cache` | 保持；L1 Memory + L2 `redis.Cache.Store()` 由 platform 组合 |
-| mq | `pkg/mq` | 保持；Kafka/NATS 实现 Broker 接口后注入；事件信封与 Header 契约 |
+| mq | `pkg/mq` | 保持；NATS JetStream 由 platform 适配（`async.driver=nats`）；Kafka 实现 Broker 接口后注入；事件信封与 Header 契约 |
 | outbox | `pkg/outbox` | 保持；平台装配 Store/Relay，业务只注册 Handler；DLQ 走 runbook |
 | httpclient | `pkg/httpclient` | 保持；下游 HTTP 禁止 DefaultClient，统一本包 |
 | logger | `pkg/logger` | 保持；`platform.NewLogger` 薄封装；AccessLog 仍在 platform |
@@ -185,7 +185,7 @@
 4. platform 已用 `internal/security` + `pkg/jwt` 接入真实鉴权（`auth.mode=jwt`）；敏感字段落库可挂 `pkg/crypto`；日志字段统一 `pkg/mask`。
 5. 接入真实存储时：platform `NewDB` 挂 `pkg/db.Open`，`/readyz` 注册 `Checker()`；扩展 yaml 池参数。
 6. 接入 Redis 时：platform 挂 `pkg/redis.Open`；热点读可用 `pkg/cache` Multi(L1 Memory + redis.Store)。
-7. worker 消费挂 `pkg/mq`；领域事件经 `pkg/outbox`（事务性 Outbox → Relay → Handler）；Kafka/NATS 驱动按需实现 `pkg/mq.Broker`。
+7. worker 消费挂 `pkg/mq`；领域事件经 `pkg/outbox`（事务性 Outbox → Relay → Handler）；跨团队消费需求出现时切 `async.driver=nats`（JetStream 适配器已落地），Kafka 驱动按需实现 `pkg/mq.Broker`。
 8. `pkg/storage` M0–M5 已落地（含 OSS/COS/OBS L2 原生）；细节见 [`storage-s3-oss.md`](./storage-s3-oss.md)。
 9. 下游调用按「重试包住熔断」还是「熔断包住重试」明确策略后接入 `pkg/circuitbreaker`；金额换算统一 `pkg/decimal`/`pkg/money`，禁止 float64。
 10. `internal/platform.LoadConfig` 已改为 `pkg/config.Loader` 装配（默认值/`normalize`/`Validate` 保留在 platform）：严格 YAML、环境变量解析失败即报错、历史存储变量名兼容。`pkg/config.Watcher` 已具备热更新能力，但 `pkg/logger` 尚不支持运行时改级别，接入前须先引入 `slog.LevelVar`；且连接池/存储等资源不做热重建。

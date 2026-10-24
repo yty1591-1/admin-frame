@@ -111,16 +111,22 @@ CONFIG="internal/platform/config.go"
 if ! grep -q 'AsyncDriverDB' "${CONFIG}"; then
   echo "ERROR: ${CONFIG} must define AsyncDriverDB" >&2
   FAIL=1
-elif ! grep -q 'is not implemented (only db is supported)' "${CONFIG}"; then
-  echo "ERROR: ${CONFIG} must reject async.driver other than db" >&2
+elif ! grep -q 'AsyncDriverNATS' "${CONFIG}"; then
+  echo "ERROR: ${CONFIG} must define AsyncDriverNATS" >&2
+  FAIL=1
+elif ! grep -q 'is not implemented (only db and nats are supported)' "${CONFIG}"; then
+  echo "ERROR: ${CONFIG} must reject async.driver other than db and nats" >&2
+  FAIL=1
+elif ! grep -q 'validateAsyncBroker' "${CONFIG}"; then
+  echo "ERROR: ${CONFIG} must validate async.broker when driver=nats" >&2
   FAIL=1
 else
-  echo "    OK: only db driver accepted"
+  echo "    OK: db and nats drivers accepted, unknown drivers rejected"
 fi
 
 echo "==> ENT-03: async metrics must be registered"
 METRICS="internal/platform/async_metrics.go"
-for metric in async_outbox_delivery_total async_outbox_pending async_outbox_lag_seconds async_dlq_depth; do
+for metric in async_outbox_delivery_total async_outbox_pending async_outbox_lag_seconds async_dlq_depth async_broker_publish_total async_broker_consume_total; do
   if ! grep -q "${metric}" "${METRICS}"; then
     echo "ERROR: ${METRICS} missing metric ${metric}" >&2
     FAIL=1
