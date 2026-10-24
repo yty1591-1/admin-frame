@@ -24,6 +24,7 @@
 - [ ] 统一信封 / 稳定错误码 / 分页（`page_size`≤100）符合规范
 - [ ] 若有 breaking：对应端 `info.version` major 已提升，并写明弃用与迁移
 - [ ] C 端写路径含 `Idempotency-Key`；无内部字段进入 C 契约
+- [ ] 契约有变更时已附 `make openapi-changelog` 摘要，并通知前端锁定/升级 tag 或 commit
 
 ## 测试自检（TESTING_STANDARDS）
 

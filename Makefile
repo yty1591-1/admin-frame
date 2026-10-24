@@ -9,7 +9,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
-	check-transport check-debug check-openapi check-deps check-config \
+	check-transport check-debug check-openapi openapi-docs openapi-client openapi-changelog openapi-artifacts check-deps check-config \
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
@@ -109,6 +109,22 @@ secrets:
 # API-01/07/08：分端 OpenAPI validate + breaking（见 scripts/ci/check-openapi.sh）。
 check-openapi openapi:
 	bash scripts/ci/check-openapi.sh
+
+# 契约分发产物（dev/CI 专用，输出到 dist/，不入库、不进镜像；SEC-08）。
+openapi-docs:
+	bash scripts/openapi/build-docs.sh
+
+openapi-client:
+	bash scripts/openapi/gen-client.sh
+
+# BASE_REF 可选；未指定时由脚本按 origin/main 等顺序解析。
+openapi-changelog:
+	bash scripts/openapi/changelog.sh $(BASE_REF)
+
+# 产物附带当前 commit，供前端锁定契约版本（API_STANDARDS §3.2）。
+openapi-artifacts: openapi-docs openapi-client openapi-changelog
+	@mkdir -p dist/openapi
+	@git rev-parse HEAD >dist/openapi/contract-commit.txt 2>/dev/null || echo unknown >dist/openapi/contract-commit.txt
 
 # DEP-01/03/05：go.sum、replace、许可证（govulncheck 见 vuln）。
 check-deps:

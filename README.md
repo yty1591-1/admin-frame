@@ -106,6 +106,10 @@ make check-codegen        # 生成物 MANIFEST
 make check-perf           # 关键路径 Benchmark
 make lint                 # 需已安装 golangci-lint
 make openapi              # 分端 OpenAPI validate + breaking
+make openapi-docs         # 渲染分端 HTML 文档（dist/openapi/docs）
+make openapi-client       # 生成 TypeScript 类型（dist/openapi/client）
+make openapi-changelog    # 相对基线生成变更日志（dist/openapi/changelog）
+make openapi-artifacts    # 一次生成以上三类契约产物（需 Node.js 20+）
 make ci                   # 本地对齐托管平台必跑项
 ```
 

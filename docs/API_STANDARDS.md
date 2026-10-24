@@ -1,11 +1,11 @@
 # 工程化 API 契约规范（硬约束）
 
-> **状态**：生效中（Normative）  
-> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
-> **适用范围**：本仓库全部对外 HTTP API（A/B/C）及对应 OpenAPI 契约  
-> **关联**：架构 §十六；安全见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`  
-> **执行方式**：oasdiff validate + oasdiff breaking + MR 模板 + Review  
-> **最后更新**：2026-10-13  
+> **状态**：生效中（Normative）
+> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
+> **适用范围**：本仓库全部对外 HTTP API（A/B/C）及对应 OpenAPI 契约
+> **关联**：架构 §十六；安全见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
+> **执行方式**：oasdiff validate + oasdiff breaking + MR 模板 + Review
+> **最后更新**：2026-10-13
 > **变更方式**：修改本规范须同步更新 `api/openapi/**`、`scripts/ci/check-openapi.sh`、流水线与架构 §十六，经架构 Owner Review
 
 ---
@@ -49,6 +49,25 @@
 - 共享信封、分页参数、标准错误响应只维护在 `api/openapi/components.yaml`，各端 `$ref` 引用。
 - 错误码枚举与实现以 `internal/shared/apperr` 为准；契约中的 `ErrorCode` 须与之同步。
 - 错误码表**只增不减**：`ErrorCode` 以 `x-extensible-enum` 声明为开放集合，新增码不得触发 oasdiff breaking；客户端须对未知码按「未知错误」兜底（API-04）。
+
+### 3.1 环境地址（与 `deploy/helm` 对齐）
+
+各端 `servers` 必须覆盖本地与集群环境；主机名以 `deploy/helm/admin-frame/values-*.yaml` 的 `ingress.host` 为准：
+
+| 端 | 本地直连 | dev | staging | prod |
+|----|----------|-----|---------|------|
+| A | `http://localhost:8081` | `http://admin.localhost` | `https://admin.staging.example.com` | `https://admin.example.com` |
+| B | `http://localhost:8082` | `http://biz.localhost` | `https://biz.staging.example.com` | `https://biz.example.com` |
+| C | `http://localhost:8083` | `http://c.localhost` | `https://c.staging.example.com` | `https://c.example.com` |
+
+- Ingress 的 `/admin`、`/biz`、`/c` 前缀**原样转发**，而契约路径本身已含该前缀；因此 `servers` 只写域名，调用方不得再拼一次 `/admin`。
+- 若某环境未启用 TLS，以该环境实际入口为准；生产入口按 SEC-10 强制 TLS。
+
+### 3.2 契约分发与前端订阅
+
+- **分发物**：`make openapi-docs`（HTML）、`make openapi-client`（TypeScript 类型）、`make openapi-changelog`（相对基线变更日志）与 `contract-commit.txt`（产物对应的 commit），统一输出到 `dist/openapi/`，由 CI job `openapi-docs` 作为 artifact 上传；产物不入库、不进镜像、不在生产进程挂载（SEC-08）。
+- **订阅方式**：前端仓库锁定本仓库的 tag 或 commit（以产物中的 `contract-commit.txt` 核对），升级时以该版本的 `api/openapi/**` 与 changelog 为准；禁止依赖运行中的服务做接口探测。
+- **变更通知**：契约有变更的 MR 必须附 changelog 摘要；breaking / 弃用须写入发布说明并主动通知前端，不得等联调时暴露（API-02、API-07、API-09）。
 
 ---
 
@@ -106,26 +125,26 @@
 
 流程：
 
-1. 在契约中标记弃用（API-09），保留期内双写或兼容读取。  
-2. 发布说明 / CHANGELOG 写明影响端与迁移方式。  
-3. 提升对应端 OpenAPI `info.version` 的 **major**（semver，如 `1.2.0` → `2.0.0`）。  
-4. CI：相对基线仍报告 breaking；**仅当 major 已提升时允许合入**（见脚本）。  
+1. 在契约中标记弃用（API-09），保留期内双写或兼容读取。
+2. 发布说明 / CHANGELOG 写明影响端与迁移方式。
+3. 提升对应端 OpenAPI `info.version` 的 **major**（semver，如 `1.2.0` → `2.0.0`）。
+4. CI：相对基线仍报告 breaking；**仅当 major 已提升时允许合入**（见脚本）。
 5. 到期删除前用指标或调用方白名单确认流量。
 
 ### 5.3 版本字段
 
-- `info.version` 使用 semver（`MAJOR.MINOR.PATCH`）。  
+- `info.version` 使用 semver（`MAJOR.MINOR.PATCH`）。
 - 路径级 `/v1` → `/v2` 用于无法在同前缀下平滑迁移的大改，与 `info.version` major 同步规划。
 
 ---
 
 ## 6. MUST NOT
 
-- 三端共用一份「万能」OpenAPI，或在契约中混挂他端路径。  
-- 未更新契约即合并公开 API 行为变更。  
-- 复用已发布业务错误码表达新语义。  
-- 在 C 端契约或 DTO 中暴露 `remark` / `cost_cent` 等内部字段。  
-- 用 allowlist / ignore 文件长期屏蔽真实 breaking（临时豁免须 Owner + 到期日）。  
+- 三端共用一份「万能」OpenAPI，或在契约中混挂他端路径。
+- 未更新契约即合并公开 API 行为变更。
+- 复用已发布业务错误码表达新语义。
+- 在 C 端契约或 DTO 中暴露 `remark` / `cost_cent` 等内部字段。
+- 用 allowlist / ignore 文件长期屏蔽真实 breaking（临时豁免须 Owner + 到期日）。
 - 生产开启 Swagger UI 作为「契约浏览」替代品（见 SEC-08）。
 
 ---
@@ -134,39 +153,42 @@
 
 ```bash
 make openapi          # API-01/07/08：validate + 相对基线 breaking
-make ci               # 含 openapi
+make openapi-docs     # 渲染分端 HTML 文档（dist/openapi/docs）
+make openapi-client   # 生成 TypeScript 类型（dist/openapi/client）
+make openapi-changelog # 相对基线生成 markdown changelog（dist/openapi/changelog）
+make ci               # 含 openapi（产物生成不并入 make ci，避免引入 Node 依赖）
 ```
 
 | 平台 | 入口 |
 |------|------|
-| GitHub Actions | job `openapi` |
+| GitHub Actions | job `openapi`（门禁）+ job `openapi-docs`（artifact，非合并门禁） |
 | Gitee Go | step `openapi`（`gitee-job.sh openapi`） |
 | MR | PR 模板「API 自检」 |
 
-工具钉扎：oasdiff **v1.33.0**（`github.com/oasdiff/oasdiff`，见 `scripts/ci/check-openapi.sh`）。  
+工具钉扎：oasdiff **v1.33.0**（`github.com/oasdiff/oasdiff`，见 `scripts/ci/check-openapi.sh`）。
 严重级别覆盖：`api/openapi/.oasdiff-severity.txt`。
 
-基线引用解析顺序：`OPENAPI_BASE_REF` → `GITHUB_BASE_REF`（`origin/<name>`）→ `origin/main` → `origin/master` → `main` → `master`。  
+基线引用解析顺序：`OPENAPI_BASE_REF` → `GITHUB_BASE_REF`（`origin/<name>`）→ `origin/main` → `origin/master` → `main` → `master`。
 浅克隆须 `fetch-depth: 0`（或等价取得基线对象）。无法解析基线时仅跑 validate，并打印告警（本地新仓库可接受；受保护分支 CI 应总能解析）。
 
 ---
 
 ## 8. 例外
 
-1. **有意 breaking**：提升该端 `info.version` major，MR 说明迁移与弃用期；Owner Approve。  
-2. **oasdiff 误报**：在 MR 说明规则 ID 与原因，经 Owner 同意后可于 `err-ignore` **临时**忽略并设到期日；禁止无到期日的全局忽略。  
+1. **有意 breaking**：提升该端 `info.version` major，MR 说明迁移与弃用期；Owner Approve。
+2. **oasdiff 误报**：在 MR 说明规则 ID 与原因，经 Owner 同意后可于 `err-ignore` **临时**忽略并设到期日；禁止无到期日的全局忽略。
 3. **紧急热修**：绕过分支保护后 24h 内补跑 `make openapi` / `make ci` 全绿，并补契约。
 
 ---
 
 ## 9. Review 清单
 
-- [ ] 影响端的 OpenAPI 已更新，路径前缀与权限正确  
-- [ ] 信封与错误码未另起炉灶；新错误码已追加到 `apperr` 与 `components.yaml`  
-- [ ] 列表含分页；`page_size` 上限 100  
-- [ ] C 端无内部字段；写路径有 `Idempotency-Key`  
-- [ ] 若存在 breaking：对应端 major 已提升，弃用与发布说明已写  
-- [ ] `make openapi` 通过  
+- [ ] 影响端的 OpenAPI 已更新，路径前缀与权限正确
+- [ ] 信封与错误码未另起炉灶；新错误码已追加到 `apperr` 与 `components.yaml`
+- [ ] 列表含分页；`page_size` 上限 100
+- [ ] C 端无内部字段；写路径有 `Idempotency-Key`
+- [ ] 若存在 breaking：对应端 major 已提升，弃用与发布说明已写
+- [ ] `make openapi` 通过
 
 ---
 
@@ -174,10 +196,13 @@ make ci               # 含 openapi
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `api/openapi/{admin,biz,c}.yaml` | 分端契约 |
+| `api/openapi/{admin,biz,c}.yaml` | 分端契约（含多环境 `servers`） |
 | `api/openapi/components.yaml` | 共享信封/分页/错误响应 |
 | `api/openapi/.oasdiff-severity.txt` | 版本策略严重级别 |
 | `scripts/ci/check-openapi.sh` | validate + breaking |
+| `scripts/openapi/build-docs.sh` | Redocly 渲染 HTML 文档（dev/CI 产物） |
+| `scripts/openapi/gen-client.sh` | 生成 TypeScript 类型（dev/CI 产物） |
+| `scripts/openapi/changelog.sh` | 相对基线生成变更日志（发布说明/前端订阅） |
 | `pkg/httpx` | 可复用信封、分页、错误写响应 |
 | `internal/shared/httpx` | 本仓库薄封装（挂接 apperr 契约码） |
 | `internal/shared/apperr` | 稳定业务码 |

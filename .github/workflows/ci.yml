@@ -237,6 +237,39 @@ jobs:
           OPENAPI_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: bash scripts/ci/gitee-job.sh openapi
 
+  # 非合并门禁：产出契约文档 / TS 类型 / changelog，供前端与发布说明消费。
+  openapi-docs:
+    name: openapi-docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch PR base for changelog
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+
+      - name: Build OpenAPI artifacts
+        env:
+          OPENAPI_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: make openapi-artifacts
+
+      - name: Upload OpenAPI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-artifacts
+          path: dist/openapi/
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: build
     runs-on: ubuntu-latest

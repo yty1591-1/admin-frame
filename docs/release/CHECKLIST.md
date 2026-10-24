@@ -16,6 +16,8 @@
 - [ ] 目标 commit 上 CI 全绿（含 arch / secrets / openapi / test）
 - [ ] 无已知高危漏洞未缓解（`govulncheck` / 镜像扫描）
 - [ ] OpenAPI / 迁移说明已在 MR 写明
+- [ ] 契约有变更时：已生成 `make openapi-changelog` 并附入发布说明
+- [ ] 已通知前端本次契约的 tag / commit 与 breaking / 弃用项（API_STANDARDS §3.2）
 
 ## 迁移（如有）
 

@@ -1,10 +1,10 @@
 # 工程化 CI 流水线规范（硬约束）
 
-> **状态**：生效中（Normative）  
-> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
-> **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）  
-> **执行方式**：见下文「多平台」；本地统一 `make ci`  
-> **最后更新**：2026-10-21（纳入发版镜像流水线 `image`；LIC/GEN/PERF 已于 2026-10-13 纳入）  
+> **状态**：生效中（Normative）
+> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
+> **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）
+> **执行方式**：见下文「多平台」；本地统一 `make ci`
+> **最后更新**：2026-10-21（纳入发版镜像流水线 `image`；LIC/GEN/PERF 已于 2026-10-13 纳入）
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -83,6 +83,7 @@
 | CI-09 + DATA…AUD + LIC/GEN/PERF | `arch` | `arch` | `make check-transport` + 各 standards 检查脚本（见 gitee-job arch） |
 | SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
+| API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
 | RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make docker-push` + `make check-release` |
 
@@ -96,6 +97,7 @@
 - 并行 job + `concurrency` 取消旧 run
 - `permissions: contents: read`
 - Go 版本：`actions/setup-go` 读取 `go.mod`
+- `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
 
 ### 3.3 Gitee Go
 
@@ -108,14 +110,14 @@
 - 代理：默认 `GOPROXY=https://goproxy.cn,direct`
 - **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
   1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或
-  2. 升级组织提供的 Golang 构建镜像；  
+  2. 升级组织提供的 Golang 构建镜像；
   **禁止**为迁就过旧插件而擅自降低 `go.mod` 语言版本（除非 ADR 批准）。
 
 开通清单：
 
-1. 仓库启用 Gitee Go  
-2. 确认 `.workflow` 三个文件生效（或控制台从代码库导入）  
-3. 调整 `golangVersion`  
+1. 仓库启用 Gitee Go
+2. 确认 `.workflow` 三个文件生效（或控制台从代码库导入）
+3. 调整 `golangVersion`
 4. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
 
 详见 [`.workflow/README.md`](../.workflow/README.md)。
@@ -212,16 +214,16 @@ make ci
 
 ### GitHub
 
-1. 保护 `main`（或默认分支）  
-2. Require a pull request before merging  
-3. Require status checks：勾选 `CI` workflow 全部必跑 job  
-4. 限制无检查强推；应急绕过须事后补跑  
+1. 保护 `main`（或默认分支）
+2. Require a pull request before merging
+3. Require status checks：勾选 `CI` workflow 全部必跑 job
+4. 限制无检查强推；应急绕过须事后补跑
 
 ### Gitee
 
-1. 保护默认分支 / 设置合并规则  
-2. 要求关联 PR 流水线（`PR CI` / `pr-pipeline`）通过后方可合并  
-3. 限制管理员绕过；应急流程同 GitHub  
+1. 保护默认分支 / 设置合并规则
+2. 要求关联 PR 流水线（`PR CI` / `pr-pipeline`）通过后方可合并
+3. 限制管理员绕过；应急流程同 GitHub
 
 未完成分支保护前，流水线文件合入仍视为「门禁未闭环」。
 
@@ -244,26 +246,26 @@ make ci
 
 ## 8. 缓存、性能与成本
 
-- GitHub：`setup-go` cache；golangci-lint-action 缓存  
-- Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载  
-- 不在 PR 构建/推送镜像；仅在 push `main`/`master` 与 `v*` tag 触发 `image`（§3.5），避免重复构建与成本  
-- 不可用路径过滤跳过 fmt/lint/test/vuln  
+- GitHub：`setup-go` cache；golangci-lint-action 缓存
+- Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载
+- 不在 PR 构建/推送镜像；仅在 push `main`/`master` 与 `v*` tag 触发 `image`（§3.5），避免重复构建与成本
+- 不可用路径过滤跳过 fmt/lint/test/vuln
 
 ---
 
 ## 9. 安全（CI 面）
 
-- 不 `echo` secrets；不把平台 Token 打进日志  
-- Fork/外部 PR 不授予写权限、不暴露组织密钥  
-- 第三方 Action / 插件钉扎版本，升级看 release notes  
+- 不 `echo` secrets；不把平台 Token 打进日志
+- Fork/外部 PR 不授予写权限、不暴露组织密钥
+- 第三方 Action / 插件钉扎版本，升级看 release notes
 
 ---
 
 ## 10. 例外与豁免
 
-1. **临时跳过某检查**：禁止对 CI-03～CI-09 使用「失败继续」，除非 Owner 书面批准且设到期日。  
-2. **紧急热修**：绕过保护后 24h 内补跑全绿，并在变更单注明。  
-3. **govuln 误报/无修复**：ADR 记录 CVE、影响面、缓解与复查日期。  
+1. **临时跳过某检查**：禁止对 CI-03～CI-09 使用「失败继续」，除非 Owner 书面批准且设到期日。
+2. **紧急热修**：绕过保护后 24h 内补跑全绿，并在变更单注明。
+3. **govuln 误报/无修复**：ADR 记录 CVE、影响面、缓解与复查日期。
 
 ---
 
@@ -271,11 +273,11 @@ make ci
 
 改动 `.github/workflows/**`、`.workflow/**`、`scripts/ci/gitee-job.sh` 或本专文时：
 
-- [ ] CI-03～CI-09 在 **GitHub 与 Gitee**（若都启用）仍失败即失败  
-- [ ] 两边检查命令与 `make ci` / `gitee-job.sh` 一致  
-- [ ] 版本仍钉扎；权限未被放宽  
-- [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）  
-- [ ] 已更新本专文映射表（若有增删 job）  
+- [ ] CI-03～CI-09 在 **GitHub 与 Gitee**（若都启用）仍失败即失败
+- [ ] 两边检查命令与 `make ci` / `gitee-job.sh` 一致
+- [ ] 版本仍钉扎；权限未被放宽
+- [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）
+- [ ] 已更新本专文映射表（若有增删 job）
 
 ---
 

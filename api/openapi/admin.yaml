@@ -9,6 +9,13 @@ info:
     3.0.0：移除历史订单契约（破坏性）。
 servers:
   - url: http://localhost:8081
+    description: 本地直连（make run-admin）
+  - url: http://admin.localhost
+    description: 开发集群（deploy values-dev.yaml）。Ingress path /admin 原样转发，路径已含 /admin/v1，勿重复拼接
+  - url: https://admin.staging.example.com
+    description: 预发（deploy values-staging.yaml）
+  - url: https://admin.example.com
+    description: 生产（deploy values-prod.yaml）
 tags:
   - name: probe
     description: 存活/就绪/版本（无需鉴权）

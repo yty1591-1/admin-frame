@@ -1,19 +1,19 @@
 # 工程化代码生成规范（硬约束）
 
-> **状态**：生效中（Normative）  
-> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**  
-> **适用范围**：OpenAPI、sqlc、mockery 及其它 `go generate` 产物的目录、提交与修改策略  
-> **关联**：API 见 `API_STANDARDS.md`；测试 mock 见 `TESTING_STANDARDS.md`；架构工具链  
-> **执行方式**：[`docs/codegen/MANIFEST.md`](./codegen/MANIFEST.md) + `check-codegen.sh` + Review  
-> **最后更新**：2026-10-13  
+> **状态**：生效中（Normative）
+> **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
+> **适用范围**：OpenAPI、sqlc、mockery 及其它 `go generate` 产物的目录、提交与修改策略
+> **关联**：API 见 `API_STANDARDS.md`；测试 mock 见 `TESTING_STANDARDS.md`；架构工具链
+> **执行方式**：[`docs/codegen/MANIFEST.md`](./codegen/MANIFEST.md) + `check-codegen.sh` + Review
+> **最后更新**：2026-10-13
 > **变更方式**：修改本规范须同步更新 MANIFEST、生成配置与 `scripts/ci/check-codegen.sh`，经架构 Owner Review
 
 ---
 
 ## 1. 目标
 
-1. **源唯一体**：契约与 schema 只在约定源文件修改；生成物可复现。  
-2. **禁手改**：带生成标记的文件禁止人工编辑业务逻辑。  
+1. **源唯一体**：契约与 schema 只在约定源文件修改；生成物可复现。
+2. **禁手改**：带生成标记的文件禁止人工编辑业务逻辑。
 3. **可核对**：清单登记生成路径与命令；CI 可发现失控文件。
 
 ---
@@ -37,11 +37,16 @@
 | 产物 | 源 | 生成命令（示例） | 是否提交 | 手改 |
 |------|----|------------------|----------|------|
 | OpenAPI | `api/openapi/*.yaml` | （无） | **是（源）** | 允许改源；禁与实现长期不一致 |
+| OpenAPI 文档 | `api/openapi/*.yaml` | `make openapi-docs`（Redocly） | **否**（`dist/`） | 不适用（未入库） |
+| OpenAPI TS 类型 | `api/openapi/*.yaml` | `make openapi-client`（openapi-typescript） | **否**（`dist/`） | 不适用（未入库） |
+| OpenAPI changelog | 分端契约 + git 基线 | `make openapi-changelog`（oasdiff） | **否**（`dist/`） | 不适用（未入库） |
 | mockery | 接口定义 | `make mock` / `mockery` | **是** | **禁止** |
 | sqlc | schema + queries | `sqlc generate` | **是** | **禁止** |
 | 其它 `go:generate` | 标注处 | `go generate` | 按 MANIFEST | 按是否带生成头 |
 
 未引入 sqlc/mockery 前，MANIFEST 可标 `status: reserved`；一旦添加输出文件，必须改为 `active` 并满足 GEN-02。
+
+`入库=no` 的 OpenAPI 派生产物（文档 / TS 类型 / changelog）只允许输出到 `dist/`（已 gitignore），不进镜像、不进生产进程；脚本必须钉扎工具版本，保证本地与 CI 可复现。
 
 ---
 
@@ -61,10 +66,10 @@ docs/codegen/MANIFEST.md     # 清单（GEN-01）
 
 ## 5. MUST NOT
 
-- 在 `Code generated` / `DO NOT EDIT` 文件中修补业务逻辑。  
-- 提交无 MANIFEST 登记的生成目录作为「临时拷贝」。  
-- 删除生成头以绕过 GEN-02。  
-- 将 OpenAPI 当作「生成后可丢」的产物而不入库。  
+- 在 `Code generated` / `DO NOT EDIT` 文件中修补业务逻辑。
+- 提交无 MANIFEST 登记的生成目录作为「临时拷贝」。
+- 删除生成头以绕过 GEN-02。
+- 将 OpenAPI 当作「生成后可丢」的产物而不入库。
 
 ---
 
@@ -86,18 +91,18 @@ make ci
 
 ## 7. 例外
 
-1. **紧急热修生成物**：仅限生产事故；24h 内必须回到「改源 + 再生」并还原手改。  
-2. **vendor 式第三方生成代码**：若必须修改，fork + replace（走 DEP）或包装适配层，不直接改 vendor。  
+1. **紧急热修生成物**：仅限生产事故；24h 内必须回到「改源 + 再生」并还原手改。
+2. **vendor 式第三方生成代码**：若必须修改，fork + replace（走 DEP）或包装适配层，不直接改 vendor。
 3. **实验分支**：可 gitignore 生成物，合入 main 前须按 MANIFEST 决策入库或 CI 再生。
 
 ---
 
 ## 8. Review 清单
 
-- [ ] 若有生成文件 diff：来自再生而非手改  
-- [ ] MANIFEST 已更新  
-- [ ] 生成头完整；mock/sqlc 路径正确  
-- [ ] `make check-codegen` 通过  
+- [ ] 若有生成文件 diff：来自再生而非手改
+- [ ] MANIFEST 已更新
+- [ ] 生成头完整；mock/sqlc 路径正确
+- [ ] `make check-codegen` 通过
 
 ---
 
