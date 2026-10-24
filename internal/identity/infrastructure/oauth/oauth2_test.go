@@ -49,7 +49,7 @@ func testProvider(t *testing.T, server *httptest.Server, subjectField string) *O
 }
 
 func TestNewOAuth2ProviderValidation(t *testing.T) {
-	base := Config{
+	base := Config{ //nolint:gosec // G101: 测试用假凭证
 		Name: "test", ClientID: "id", ClientSecret: "secret",
 		AuthURL: "https://idp/auth", TokenURL: "https://idp/token",
 		UserInfoURL: "https://idp/userinfo", RedirectURI: "https://c/callback",
@@ -78,7 +78,7 @@ func TestNewOAuth2ProviderValidation(t *testing.T) {
 }
 
 func TestOAuth2ProviderAuthorizationURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	t.Cleanup(server.Close)
 	provider := testProvider(t, server, "")
 
@@ -196,7 +196,7 @@ func TestOAuth2ProviderExchange(t *testing.T) {
 }
 
 func TestOAuth2ProviderExchangeMissingArgs(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	t.Cleanup(server.Close)
 	provider := testProvider(t, server, "")
 

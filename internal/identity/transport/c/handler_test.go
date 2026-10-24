@@ -118,7 +118,7 @@ func TestRegisterRoutes(t *testing.T) {
 func TestRegisterNilHandler(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, nil, passthrough)
-	_, pattern := mux.Handler(httptest.NewRequest(http.MethodPost, "/c/v1/auth/login", nil))
+	_, pattern := mux.Handler(httptest.NewRequest(http.MethodPost, "/c/v1/auth/login", http.NoBody))
 	if pattern != "" {
 		t.Fatalf("nil handler must not register routes, got pattern %q", pattern)
 	}

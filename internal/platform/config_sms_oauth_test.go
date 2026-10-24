@@ -100,7 +100,7 @@ func cProdConfig() *platform.Config {
 
 // oauthProvider 返回满足校验的最小 OAuth 提供方配置。
 func oauthProvider(name string) platform.IdentityOAuthProviderConfig {
-	return platform.IdentityOAuthProviderConfig{
+	return platform.IdentityOAuthProviderConfig{ //nolint:gosec // G101: 测试用假凭证与环境变量名
 		Name:            name,
 		ClientID:        "client-id",
 		ClientSecretEnv: "OAUTH_CLIENT_SECRET",

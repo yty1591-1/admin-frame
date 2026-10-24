@@ -55,10 +55,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	channel := domain.Channel(cfg.Channel)
 
-	accounts, credentials, sessions, attempts, mfa, oauthIdentities, err := buildRepositories(deps)
-	if err != nil {
-		return nil, err
-	}
+	repos := buildRepositories(deps)
 	revocation, err := buildRevocationStore(deps)
 	if err != nil {
 		return nil, err
@@ -93,8 +90,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, err
 	}
 	guard, err := app.NewLoginGuard(
-		accounts,
-		attempts,
+		repos.accounts,
+		repos.attempts,
 		deps.IDs,
 		app.LockoutPolicy{
 			MaxFailures: cfg.Identity.Lockout.MaxFailures,
@@ -124,7 +121,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	checker, err := app.NewRevocationChecker(
-		accounts,
+		repos.accounts,
 		revocation,
 		cfg.Identity.Revocation.FailureMode,
 		cfg.Identity.AccessTTL+time.Minute,
@@ -150,9 +147,9 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
-		Accounts:         accounts,
-		Credentials:      credentials,
-		Sessions:         sessions,
+		Accounts:         repos.accounts,
+		Credentials:      repos.credentials,
+		Sessions:         repos.sessions,
 		Guard:            guard,
 		Password:         passwordSvc,
 		Tokens:           tokens,
@@ -163,7 +160,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		UoW:              uow,
 		IdleTimeout:      cfg.Identity.Session.IdleTimeout,
 		Service:          cfg.Service,
-		MFA:              mfa,
+		MFA:              repos.mfa,
 		MFACipher:        mfaCipher,
 		MFATickets:       tickets,
 		MFAIssuer:        cfg.Identity.MFA.Issuer,
@@ -180,7 +177,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 
 	runtime := &Runtime{Checker: checker, Handler: handler}
 	if channel == domain.ChannelC {
-		cHandler, cErr := buildChannelC(deps, cfg, accounts, oauthIdentities, guard, authSvc, handler)
+		cHandler, cErr := buildChannelC(deps, cfg, repos.accounts, repos.oauthIdentities, guard, authSvc, handler)
 		if cErr != nil {
 			return nil, cErr
 		}
@@ -209,33 +206,37 @@ func RegisterAsync(deps *platform.Deps) error {
 	return nil
 }
 
+// repositories 汇总身份域六个仓储，避免装配函数返回过多位置参数。
+type repositories struct {
+	accounts        domain.AccountRepository
+	credentials     domain.CredentialRepository
+	sessions        domain.SessionRepository
+	attempts        domain.LoginAttemptRepository
+	mfa             domain.MFAEnrollmentRepository
+	oauthIdentities domain.OAuthIdentityRepository
+}
+
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
-func buildRepositories(deps *platform.Deps) (
-	domain.AccountRepository,
-	domain.CredentialRepository,
-	domain.SessionRepository,
-	domain.LoginAttemptRepository,
-	domain.MFAEnrollmentRepository,
-	domain.OAuthIdentityRepository,
-	error,
-) {
+func buildRepositories(deps *platform.Deps) repositories {
 	if deps.Database == nil {
-		return persistence.NewMemoryAccountRepository(),
-			persistence.NewMemoryCredentialRepository(),
-			persistence.NewMemorySessionRepository(),
-			persistence.NewMemoryLoginAttemptRepository(),
-			persistence.NewMemoryMFAEnrollmentRepository(),
-			persistence.NewMemoryOAuthIdentityRepository(),
-			nil
+		return repositories{
+			accounts:        persistence.NewMemoryAccountRepository(),
+			credentials:     persistence.NewMemoryCredentialRepository(),
+			sessions:        persistence.NewMemorySessionRepository(),
+			attempts:        persistence.NewMemoryLoginAttemptRepository(),
+			mfa:             persistence.NewMemoryMFAEnrollmentRepository(),
+			oauthIdentities: persistence.NewMemoryOAuthIdentityRepository(),
+		}
 	}
 	sqlDB := deps.Database.SQL()
-	return persistence.NewSQLAccountRepository(sqlDB),
-		persistence.NewSQLCredentialRepository(sqlDB),
-		persistence.NewSQLSessionRepository(sqlDB),
-		persistence.NewSQLLoginAttemptRepository(sqlDB),
-		persistence.NewSQLMFAEnrollmentRepository(sqlDB),
-		persistence.NewSQLOAuthIdentityRepository(sqlDB),
-		nil
+	return repositories{
+		accounts:        persistence.NewSQLAccountRepository(sqlDB),
+		credentials:     persistence.NewSQLCredentialRepository(sqlDB),
+		sessions:        persistence.NewSQLSessionRepository(sqlDB),
+		attempts:        persistence.NewSQLLoginAttemptRepository(sqlDB),
+		mfa:             persistence.NewSQLMFAEnrollmentRepository(sqlDB),
+		oauthIdentities: persistence.NewSQLOAuthIdentityRepository(sqlDB),
+	}
 }
 
 // buildMFACipher 解析 identity.mfa.secret_key；未配置时返回 nil（MFA 端点失败关闭）。

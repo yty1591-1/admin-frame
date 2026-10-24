@@ -14,7 +14,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
-// 默认空闲会话上限（docs/identity-authn.md §10）。
+// DefaultSessionIdleTimeout 是默认空闲会话上限（docs/identity-authn.md §10）。
 const DefaultSessionIdleTimeout = 72 * time.Hour
 
 // AuthServiceConfig 是认证用例的装配参数。
@@ -345,7 +345,7 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
 		}
 	}
-	required, err := s.mfaChallenge(ctx, account, now, in.TraceID)
+	required, err := s.mfaChallenge(ctx, account, in.TraceID)
 	if err != nil {
 		return LoginResult{}, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -206,15 +205,4 @@ func claimVersion(claims jwt.Claims) (int64, bool) {
 // invalidToken 构造统一的 40100 错误（不暴露具体撤销原因）。
 func invalidToken() error {
 	return apperr.Unauthorized("invalid token")
-}
-
-// enforceRevocationMode 校验故障策略；空值按 fail_closed 处理。
-func enforceRevocationMode(mode string) (string, error) {
-	if mode == "" {
-		return RevocationFailClosed, nil
-	}
-	if mode != RevocationFailClosed && mode != RevocationFailOpen {
-		return "", fmt.Errorf("unsupported revocation failure mode: %s", mode)
-	}
-	return mode, nil
 }

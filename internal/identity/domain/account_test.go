@@ -30,16 +30,6 @@ func mustAccount(t *testing.T, mutate func(*NewAccountParams)) *Account {
 	return account
 }
 
-// mustActiveAccount 构造已激活账号。
-func mustActiveAccount(t *testing.T, mutate func(*NewAccountParams)) *Account {
-	t.Helper()
-	account := mustAccount(t, mutate)
-	if err := account.Activate(baseTime); err != nil {
-		t.Fatalf("Activate() error = %v", err)
-	}
-	return account
-}
-
 func TestNewAccountValidation(t *testing.T) {
 	tests := []struct {
 		name    string

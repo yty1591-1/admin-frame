@@ -72,11 +72,3 @@ func errConflict(sentinel error, format string, args ...any) error {
 	msg := fmt.Sprintf(format, args...)
 	return apperr.New(apperr.CodeConflict, msg, errors.Join(sentinel, apperr.ErrConflict))
 }
-
-// errUnauthorized 构造统一认证失败错误（HTTP 401 / 业务码 40100）。
-//
-// 对外文案必须保持统一，真实原因只通过 errors.Is 在进程内区分并写入审计。
-func errUnauthorized(sentinel error, format string, args ...any) error {
-	msg := fmt.Sprintf(format, args...)
-	return apperr.New(apperr.CodeUnauthorized, msg, errors.Join(sentinel, apperr.ErrUnauthorized))
-}

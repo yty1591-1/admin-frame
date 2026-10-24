@@ -1,3 +1,4 @@
+// Package oauth 适配 OAuth2 授权码 + PKCE 登录（docs/identity-authn.md §8.2）。
 package oauth
 
 import (
@@ -158,7 +159,7 @@ func (p *OAuth2Provider) exchangeToken(ctx context.Context, code, codeVerifier s
 
 // fetchUserInfo 读取 userinfo 并按 subject_field 解析主体标识。
 func (p *OAuth2Provider) fetchUserInfo(ctx context.Context, accessToken string) (app.OAuthIdentityInfo, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserInfoURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.UserInfoURL, http.NoBody)
 	if err != nil {
 		return app.OAuthIdentityInfo{}, fmt.Errorf("build oauth userinfo request: %w", err)
 	}

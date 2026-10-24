@@ -151,7 +151,7 @@ func NewPasswordService(hasher PasswordHasher, policy PasswordPolicy) (*Password
 func (s *PasswordService) Policy() PasswordPolicy { return s.policy }
 
 // Hash 校验强度后哈希明文，返回编码串与算法标识。
-func (s *PasswordService) Hash(plain string) (encoded string, algorithm string, err error) {
+func (s *PasswordService) Hash(plain string) (encoded, algorithm string, err error) {
 	if err := s.policy.ValidatePassword(plain); err != nil {
 		return "", "", err
 	}

@@ -153,7 +153,7 @@ func TestJWTKeyRingSignAndPrincipalMapping(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -204,7 +204,7 @@ func TestJWTKeyRingRejectsUnknownKID(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/iam/me/permissions", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

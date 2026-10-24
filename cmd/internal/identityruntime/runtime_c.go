@@ -20,7 +20,7 @@ import (
 // C 端短信驱动凭证的环境变量名；禁止写入 YAML（D7）。
 const (
 	aliyunSMSAccessKeyIDEnv     = "ALIYUN_SMS_ACCESS_KEY_ID"
-	aliyunSMSAccessKeySecretEnv = "ALIYUN_SMS_ACCESS_KEY_SECRET"
+	aliyunSMSAccessKeySecretEnv = "ALIYUN_SMS_ACCESS_KEY_SECRET" //nolint:gosec // G101: 环境变量名，不是凭证值
 )
 
 // buildChannelC 装配 C 端短信 / OAuth 登录栈并构造 C 端 Handler。

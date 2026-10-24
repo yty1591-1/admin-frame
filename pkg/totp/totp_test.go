@@ -1,6 +1,7 @@
 package totp
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -34,10 +35,11 @@ func TestValidateRFCVectors(t *testing.T) {
 
 func TestValidateWindow(t *testing.T) {
 	now := time.Unix(1111111111, 0).UTC()
-	current := hotp(rfcSecret, uint64(now.Unix()/30))
-	previous := hotp(rfcSecret, uint64(now.Unix()/30)-1)
-	next := hotp(rfcSecret, uint64(now.Unix()/30)+1)
-	outside := hotp(rfcSecret, uint64(now.Unix()/30)+2)
+	counter := uint64(now.Unix() / 30) //nolint:gosec // G115: 测试时间戳固定为正，不存在溢出
+	current := hotp(rfcSecret, counter)
+	previous := hotp(rfcSecret, counter-1)
+	next := hotp(rfcSecret, counter+1)
+	outside := hotp(rfcSecret, counter+2)
 
 	if !Validate(rfcSecret, current, now) {
 		t.Fatal("current window code should be valid")
@@ -88,7 +90,7 @@ func TestGenerateSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSecret() error = %v", err)
 	}
-	if string(secret) == string(another) {
+	if bytes.Equal(secret, another) {
 		t.Fatal("two generated secrets must differ")
 	}
 }
@@ -98,7 +100,7 @@ func TestEncodeSecretAndProvisioningURI(t *testing.T) {
 	if strings.Contains(encoded, "=") {
 		t.Fatalf("encoded secret %q must not contain padding", encoded)
 	}
-	if decoded, err := base32NoPadding.DecodeString(encoded); err != nil || string(decoded) != string(rfcSecret) {
+	if decoded, err := base32NoPadding.DecodeString(encoded); err != nil || !bytes.Equal(decoded, rfcSecret) {
 		t.Fatalf("encoded secret is not decodable: %q, err = %v", encoded, err)
 	}
 

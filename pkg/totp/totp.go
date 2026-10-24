@@ -3,7 +3,7 @@ package totp
 import (
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G505: RFC 6238 规定 TOTP 使用 HMAC-SHA1
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
@@ -58,13 +58,14 @@ func Validate(secret []byte, code string, now time.Time) bool {
 			return false
 		}
 	}
-	counter := uint64(now.UTC().Unix() / int64(Period/time.Second))
+	seconds := now.UTC().Unix() / int64(Period/time.Second)
 	for offset := -Window; offset <= Window; offset++ {
+		candidateSeconds := seconds + int64(offset)
 		// 计数器为无符号数：负偏移在 Unix 纪元附近会下溢，直接跳过。
-		if offset < 0 && counter < uint64(-offset) {
+		if candidateSeconds < 0 {
 			continue
 		}
-		candidate := hotp(secret, uint64(int64(counter)+int64(offset)))
+		candidate := hotp(secret, uint64(candidateSeconds))
 		if subtle.ConstantTimeCompare([]byte(candidate), []byte(normalized)) == 1 {
 			return true
 		}

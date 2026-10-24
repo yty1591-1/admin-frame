@@ -15,7 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
-// 默认 OAuth state 有效期（docs/identity-authn.md §8.2）。
+// DefaultOAuthStateTTL 是默认 OAuth state 有效期（docs/identity-authn.md §8.2）。
 const DefaultOAuthStateTTL = 10 * time.Minute
 
 // oauthSecretBytes 是 state / PKCE verifier 的随机字节长度。

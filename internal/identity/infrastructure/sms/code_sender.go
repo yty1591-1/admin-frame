@@ -1,3 +1,4 @@
+// Package sms 把 C 端验证码交给 pkg/sms 驱动发送。
 package sms
 
 import (

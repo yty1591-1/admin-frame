@@ -3,7 +3,7 @@ package app_test
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G505: RFC 6238 规定 TOTP 使用 HMAC-SHA1，测试需自行生成参考码
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
@@ -29,7 +29,7 @@ func totpCodeAt(t *testing.T, secretBase32 string, now time.Time) string {
 		t.Fatalf("decode totp secret: %v", err)
 	}
 	var counter [8]byte
-	binary.BigEndian.PutUint64(counter[:], uint64(now.Unix()/int64(totp.Period/time.Second)))
+	binary.BigEndian.PutUint64(counter[:], uint64(now.Unix()/int64(totp.Period/time.Second))) //nolint:gosec // G115: 测试时间戳固定为正，不存在溢出
 
 	mac := hmac.New(sha1.New, secret)
 	if _, err := mac.Write(counter[:]); err != nil {
@@ -42,7 +42,7 @@ func totpCodeAt(t *testing.T, secretBase32 string, now time.Time) string {
 }
 
 // bindMFA 完成绑定初始化与首次确认，返回密钥与恢复码。
-func bindMFA(t *testing.T, f *authFixture, accountID string) (string, []string) {
+func bindMFA(t *testing.T, f *authFixture, accountID string) (secret string, recoveryCodes []string) {
 	t.Helper()
 	ctx := context.Background()
 	setup, err := f.svc.SetupMFA(ctx, app.SessionActor{AccountID: accountID, TraceID: "trace-setup"})

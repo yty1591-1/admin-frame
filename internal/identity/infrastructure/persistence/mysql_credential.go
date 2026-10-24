@@ -11,7 +11,7 @@ import (
 )
 
 // credentialSelectColumns 是凭据表的显式列清单。
-const credentialSelectColumns = `id, account_id, credential_type, credential_hash, algorithm, created_at, updated_at`
+const credentialSelectColumns = `id, account_id, credential_type, credential_hash, algorithm, created_at, updated_at` //nolint:gosec // G101: SQL 列名，不是凭证
 
 // SQLCredentialRepository 是 MySQL 8.0 的凭据仓储实现。
 //

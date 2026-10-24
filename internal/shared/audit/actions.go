@@ -7,9 +7,9 @@ const (
 	ActionAuthAccountLocked   = "auth.account.locked"
 	ActionAuthAccountDisabled = "auth.account.disabled"
 	ActionAuthLogout          = "auth.logout"
-	ActionAuthTokenRefresh    = "auth.token.refresh"
-	ActionAuthTokenReused     = "auth.token.reused"
-	ActionAuthTokenRevoked    = "auth.token.revoked"
+	ActionAuthTokenRefresh    = "auth.token.refresh" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthTokenReused     = "auth.token.reused"  //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthTokenRevoked    = "auth.token.revoked" //nolint:gosec // G101: 审计动作名，不是凭证
 	ActionAuthMFABound        = "auth.mfa.bound"
 	ActionAuthMFAFailed       = "auth.mfa.failed"
 	ActionAuthMFADisabled     = "auth.mfa.disabled"

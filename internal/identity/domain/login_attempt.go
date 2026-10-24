@@ -44,7 +44,7 @@ func (o LoginOutcome) String() string { return string(o) }
 // 登录原因常量；进入审计与失败计数，不对外暴露。
 const (
 	// LoginReasonBadCredential 账号不存在或凭据错误，对外统一文案。
-	LoginReasonBadCredential = "bad_credential"
+	LoginReasonBadCredential = "bad_credential" //nolint:gosec // G101: 登录失败原因字面量，不是凭证
 	// LoginReasonLocked 账号处于锁定期。
 	LoginReasonLocked = "locked"
 	// LoginReasonDisabled 账号已停用或软删。

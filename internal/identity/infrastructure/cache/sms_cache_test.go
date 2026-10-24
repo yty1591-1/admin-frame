@@ -44,13 +44,13 @@ func TestSMSCodeStore(t *testing.T) {
 	}{
 		{
 			name: "memory",
-			build: func(t *testing.T, clock *testClock) (app.SMSCodeStore, func(time.Duration)) {
+			build: func(_ *testing.T, clock *testClock) (app.SMSCodeStore, func(time.Duration)) {
 				return NewMemorySMSCodeStore(clock), clock.advance
 			},
 		},
 		{
 			name: "redis",
-			build: func(t *testing.T, clock *testClock) (app.SMSCodeStore, func(time.Duration)) {
+			build: func(t *testing.T, _ *testClock) (app.SMSCodeStore, func(time.Duration)) {
 				client, mr := newRedisCache(t)
 				return NewRedisSMSCodeStore(client), mr.FastForward
 			},
@@ -123,7 +123,7 @@ func TestSMSRateLimiter(t *testing.T) {
 	}{
 		{
 			name: "memory",
-			build: func(t *testing.T, clock *testClock) (app.SMSRateLimiter, func(time.Duration)) {
+			build: func(_ *testing.T, clock *testClock) (app.SMSRateLimiter, func(time.Duration)) {
 				return NewMemorySMSRateLimiter(clock), clock.advance
 			},
 		},
@@ -194,13 +194,13 @@ func TestOAuthStateStore(t *testing.T) {
 	}{
 		{
 			name: "memory",
-			build: func(t *testing.T, clock *testClock) (app.OAuthStateStore, func(time.Duration)) {
+			build: func(_ *testing.T, clock *testClock) (app.OAuthStateStore, func(time.Duration)) {
 				return NewMemoryOAuthStateStore(clock), clock.advance
 			},
 		},
 		{
 			name: "redis",
-			build: func(t *testing.T, clock *testClock) (app.OAuthStateStore, func(time.Duration)) {
+			build: func(t *testing.T, _ *testClock) (app.OAuthStateStore, func(time.Duration)) {
 				client, mr := newRedisCache(t)
 				return NewRedisOAuthStateStore(client), mr.FastForward
 			},

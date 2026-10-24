@@ -220,7 +220,6 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 func (s *AuthService) mfaChallenge(
 	ctx context.Context,
 	account *domain.Account,
-	now time.Time,
 	traceID string,
 ) (bool, error) {
 	if s.channel != domain.ChannelAdmin {
@@ -456,9 +455,9 @@ func (s *AuthService) saveRevocationState(ctx context.Context, account *domain.A
 }
 
 // generateRecoveryCodes 生成一次性恢复码与其 SHA-256 哈希。
-func generateRecoveryCodes() ([]string, []string, error) {
-	codes := make([]string, 0, recoveryCodeCount)
-	hashes := make([]string, 0, recoveryCodeCount)
+func generateRecoveryCodes() (codes, hashes []string, err error) {
+	codes = make([]string, 0, recoveryCodeCount)
+	hashes = make([]string, 0, recoveryCodeCount)
 	for i := 0; i < recoveryCodeCount; i++ {
 		buf := make([]byte, 5)
 		if _, err := rand.Read(buf); err != nil {
