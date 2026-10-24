@@ -1,0 +1,52 @@
+# 开发 / 本地预览：全内存依赖，无需数据库与 Redis。
+# 用法：helm template demo deploy/helm/admin-frame -f deploy/helm/admin-frame/values-dev.yaml
+image:
+  tag: dev
+
+config:
+  env: dev
+  auth:
+    mode: demo
+  db:
+    driver: memory
+    dsn: ""
+  redis:
+    addr: ""
+  storage:
+    driver: memory
+    key_prefix: "local/"
+  tracing:
+    enabled: true
+    exporter: none
+    endpoint: ""
+    insecure: true
+  async:
+    enabled: false
+  iam:
+    mode: off
+
+workloads:
+  admin:
+    ingress:
+      enabled: true
+      className: nginx
+      host: admin.localhost
+      path: /admin
+  biz:
+    ingress:
+      enabled: true
+      className: nginx
+      host: biz.localhost
+      path: /biz
+  c:
+    ingress:
+      enabled: true
+      className: nginx
+      host: c.localhost
+      path: /c
+  # 内存 DB 不满足 async.enabled 的持久化要求，开发环境默认不跑 worker。
+  worker:
+    enabled: false
+
+migrate:
+  enabled: false

@@ -1,0 +1,294 @@
+# admin-frame Chart 默认值（开发基线）。
+# 环境差异只允许出现在 values-<env>.yaml，禁止在模板中写死。
+# 密钥一律通过 Secret / env 注入，禁止写入本文件或 ConfigMap。
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ghcr.io
+  namespace: admin-frame
+  # 空则回退 Chart.AppVersion；生产用 values-prod 覆盖为 digest。
+  tag: ""
+  # 形如 sha256:<64 hex>；设置后优先于 tag（AC-ENT-05-3）。
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# 渲染到每个 workload ConfigMap 的应用配置。
+# service / channel / addr / id 由 workload 注入，无需在此声明。
+config:
+  env: dev
+  shutdown_timeout: 15s
+  log:
+    level: info
+    format: json
+  http:
+    read_header_timeout: 5s
+    read_timeout: 15s
+    write_timeout: 30s
+    idle_timeout: 60s
+    timeout: 30s
+  auth:
+    mode: demo
+  db:
+    driver: memory
+    dsn: ""
+  redis:
+    addr: ""
+    username: ""
+    password: ""
+    db: 0
+    key_prefix: "admin-frame/"
+  storage:
+    driver: memory
+    key_prefix: "local/"
+  tracing:
+    enabled: true
+    exporter: none
+    endpoint: ""
+    insecure: true
+  async:
+    enabled: false
+  iam:
+    mode: off
+  identity:
+    enabled: false
+
+# JWT 公钥挂载（RS256 必需）；Secret 由组织创建，Chart 不渲染密钥值。
+jwtPublicKey:
+  enabled: false
+  secretName: ""
+  key: public.pem
+
+# 额外环境变量（Secret 引用示例见 values-prod.yaml）。
+env: []
+envFrom: []
+
+workloads:
+  admin:
+    enabled: true
+    serviceName: admin-api
+    channel: admin
+    nodeID: 1
+    image:
+      repository: admin-api
+    port: 8080
+    replicas: 1
+    # 多副本 + 雪花 ID 时启用 StatefulSet（node_id 由 HOSTNAME ordinal 派生）。
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    probes:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: false
+      minAvailable: 1
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: admin.localhost
+      path: /admin
+      pathType: Prefix
+      tls: []
+
+  biz:
+    enabled: true
+    serviceName: biz-api
+    channel: biz
+    nodeID: 2
+    image:
+      repository: biz-api
+    port: 8080
+    replicas: 1
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    probes:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: false
+      minAvailable: 1
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: biz.localhost
+      path: /biz
+      pathType: Prefix
+      tls: []
+
+  c:
+    enabled: true
+    serviceName: c-api
+    channel: c
+    nodeID: 3
+    image:
+      repository: c-api
+    port: 8080
+    replicas: 1
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    probes:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: false
+      minAvailable: 1
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: c.localhost
+      path: /c
+      pathType: Prefix
+      tls: []
+
+  worker:
+    enabled: true
+    serviceName: worker
+    channel: worker
+    nodeID: 4
+    image:
+      repository: worker
+    port: 8090
+    replicas: 1
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    # worker 不提供 HTTP 探针，依赖进程存活与积压告警（见 README）。
+    probes:
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: false
+      minAvailable: 1
+    service:
+      enabled: false
+      port: 80
+    ingress:
+      enabled: false
+
+# 迁移 Job：post-install/post-upgrade 执行，失败阻断（需 helm --atomic --wait）。
+migrate:
+  enabled: false
+  image:
+    repository: migrate
+    tag: ""
+    digest: ""
+  dir: /app/migrations
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+
+networkPolicy:
+  enabled: false
+  # Ingress 控制器所在命名空间的标签；按实际安装调整。
+  ingressNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  # 允许出站的依赖端口（DB/Redis/OTel）。
+  egressPorts:
+    - port: 3306
+      protocol: TCP
+    - port: 5432
+      protocol: TCP
+    - port: 6379
+      protocol: TCP
+    - port: 4317
+      protocol: TCP
+    - port: 4318
+      protocol: TCP

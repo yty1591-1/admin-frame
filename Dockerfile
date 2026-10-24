@@ -26,6 +26,7 @@ RUN adduser -D -u 10001 appuser \
 WORKDIR /app
 COPY --from=builder /out/app /app/app
 COPY configs/*.yaml.example /app/configs/
+COPY migrations /app/migrations
 USER appuser
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -36,3 +37,5 @@ FROM runtime AS admin-api
 FROM runtime AS biz-api
 FROM runtime AS c-api
 FROM runtime AS worker
+# 迁移 Job 专用镜像（ENT-05 T7）；与 API 共用运行时基座与迁移文件。
+FROM runtime AS migrate

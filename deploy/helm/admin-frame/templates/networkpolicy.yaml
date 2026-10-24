@@ -1,0 +1,61 @@
+{{- if .Values.networkPolicy.enabled }}
+# 默认拒绝：覆盖本 Release 的全部 Pod，再按需放行。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-default-deny
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: ["Ingress", "Egress"]
+---
+# 允许 Ingress 控制器访问 API 的 http 端口。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-allow-api-ingress
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "") | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["admin", "biz", "c"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 允许 DNS 与依赖端口出站（DB / Redis / OTel）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-allow-egress
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        {{- toYaml .Values.networkPolicy.egressPorts | nindent 8 }}
+{{- end }}

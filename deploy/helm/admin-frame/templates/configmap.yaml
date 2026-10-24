@@ -1,0 +1,15 @@
+{{/* 每个 workload 一份 ConfigMap；service/channel/addr/id 由 workload 注入。*/}}
+{{- range $key, $w := .Values.workloads }}
+{{- if $w.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "admin-frame.configMapName" (dict "root" $ "key" $key) }}
+  labels:
+    {{- include "admin-frame.labels" (dict "root" $ "component" $key) | nindent 4 }}
+data:
+  config.yaml: |
+    {{- include "admin-frame.appConfig" (dict "root" $ "key" $key) | nindent 4 }}
+{{- end }}
+{{- end }}

@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cmd: [admin-api, biz-api, c-api, worker]
+        cmd: [admin-api, biz-api, c-api, worker, migrate]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

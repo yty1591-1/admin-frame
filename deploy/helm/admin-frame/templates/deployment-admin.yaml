@@ -1,0 +1,1 @@
+{{ include "admin-frame.workload" (dict "root" $ "key" "admin") }}

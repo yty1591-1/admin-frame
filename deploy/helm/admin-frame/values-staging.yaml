@@ -1,0 +1,108 @@
+# 预发基线：真实依赖、2 副本、StatefulSet（雪花 node_id 由 ordinal 派生）。
+image:
+  tag: ""
+
+config:
+  env: staging
+  auth:
+    mode: jwt
+    jwt:
+      alg: RS256
+      issuer: admin-frame
+      audience: [admin, biz, c, worker]
+      public_key_file: /etc/admin-frame/jwt/public.pem
+  db:
+    driver: mysql
+    dsn: "" # ADMIN_FRAME_DB_DSN 由 Secret 注入
+  redis:
+    addr: redis-master.redis.svc.cluster.local:6379
+    key_prefix: "admin-frame/staging/"
+  storage:
+    driver: s3
+    key_prefix: "staging/"
+    s3:
+      endpoint: https://minio.storage.svc.cluster.local:9000
+      region: us-east-1
+      bucket: admin-frame-staging
+      force_path_style: true
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: otel-collector.observability.svc.cluster.local:4318
+    sample_ratio: 1.0 # 交给 Collector 尾部采样
+    insecure: true
+  async:
+    enabled: true
+    driver: db
+    outbox:
+      publish_in_api: false
+  iam:
+    mode: shadow
+    cache:
+      driver: redis
+
+jwtPublicKey:
+  enabled: true
+  secretName: admin-frame-jwt
+  key: public.pem
+
+env:
+  - name: ADMIN_FRAME_DB_DSN
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-db
+        key: dsn
+  - name: ADMIN_FRAME_REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-redis
+        key: password
+        optional: true
+
+workloads:
+  admin:
+    replicas: 2
+    statefulset:
+      enabled: true
+    ingress:
+      enabled: true
+      className: nginx
+      host: admin.staging.example.com
+      path: /admin
+  biz:
+    replicas: 2
+    statefulset:
+      enabled: true
+    ingress:
+      enabled: true
+      className: nginx
+      host: biz.staging.example.com
+      path: /biz
+  c:
+    replicas: 2
+    statefulset:
+      enabled: true
+    configOverrides:
+      iam:
+        mode: off
+    ingress:
+      enabled: true
+      className: nginx
+      host: c.staging.example.com
+      path: /c
+  worker:
+    replicas: 1
+    statefulset:
+      enabled: true
+    configOverrides:
+      iam:
+        mode: off
+
+migrate:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+
+networkPolicy:
+  enabled: true
