@@ -1,0 +1,94 @@
+# OpenTelemetry Collector（traces 入口）
+#
+# 拓扑：应用（OTLP/HTTP :4318） → Collector → Tempo / Jaeger
+# 采样：应用侧 tracing.sample_ratio=1.0（Head）→ Collector 尾部采样
+#       （错误、慢请求全留；正常流量 10%）。原因：Tail Sampling 只能看到已进入
+#       Collector 的 span，应用侧再降采样会让错误样本在入口就被丢弃。
+# 说明：tail_sampling / otlp exporter 需要 Collector Contrib 发行版（otel/opentelemetry-collector-contrib）。
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 8
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins: []
+
+processors:
+  # 先限流再采样：避免 Collector 自身 OOM 拖垮链路。
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 200
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow-requests
+        type: latency
+        latency:
+          threshold_ms: 500
+      - name: baseline
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+exporters:
+  # 默认后端：Grafana Tempo（OTLP gRPC）。同命名空间内用集群服务名。
+  otlp/tempo:
+    endpoint: tempo.observability.svc.cluster.local:4317
+    tls:
+      insecure: true
+    retry:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 2m
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+  # 备选后端：Jaeger（原生支持 OTLP）。切换时把 service.pipelines.traces.exporters 改为 otlp/jaeger。
+  otlp/jaeger:
+    endpoint: jaeger-collector.observability.svc.cluster.local:4317
+    tls:
+      insecure: true
+  # 排障用：临时打开可看到采样后 span 结构，禁止长期在生产开启。
+  # debug:
+  #   verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 127.0.0.1:1777
+  zpages:
+    endpoint: 127.0.0.1:55679
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlp/tempo]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888

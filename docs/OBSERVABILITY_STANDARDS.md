@@ -83,6 +83,11 @@ HTTP `route` 标签须使用低基数模板（ServeMux `Pattern` 或显式映射
 | `async_outbox_pending` | Gauge | 未完成事件数（含重试等待与死信）；持续 >0 说明投递受阻 |
 | `async_outbox_lag_seconds` | Gauge | 最老未完成事件积压秒数；持续增长触发 P2 |
 | `async_dlq_depth` | Gauge | 未重放死信数；>0 需按 `docs/runbooks/async-dlq.md` 处理 |
+| `db_pool_open_connections` / `db_pool_in_use_connections` / `db_pool_max_open_connections` | Gauge | 连接池使用率；`in_use/max > 90%` 触发 P1（`internal/platform/db_metrics.go`） |
+| `db_pool_wait_total` / `db_pool_wait_duration_seconds_total` | Counter | 等待连接次数与耗时；持续增长说明池容量或慢查询问题 |
+
+告警规则、SLO 与看板制品见 [`deploy/observability/README.md`](../deploy/observability/README.md)；
+告警 ↔ runbook 目录见 [`docs/runbooks/ALERTS.md`](./runbooks/ALERTS.md)。
 
 IAM 审计投递仍保留 `iam_outbox_delivery_total` / `iam_outbox_pending` / `iam_outbox_lag_seconds`，
 由 IAM 观测适配器映射到同一 Registry；两套指标不得互相替代。

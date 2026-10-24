@@ -1,0 +1,33 @@
+# 数据库连接池告警（ENT-06 T1/T2）。
+# 指标来源：internal/platform/db_metrics.go（db_pool_*，常量标签 service/env）。
+groups:
+  - name: admin-frame-db
+    rules:
+      - alert: DBPoolExhaustion
+        expr: |
+          max by (service) (db_pool_max_open_connections) > 0
+          and
+          (
+            max by (service) (db_pool_in_use_connections)
+            /
+            max by (service) (db_pool_max_open_connections)
+          ) > 0.9
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: db.pool.exhaustion
+        annotations:
+          summary: "{{ $labels.service }} 数据库连接池使用率超过 90%"
+          description: "检查慢查询、长事务与连接泄漏；必要时临时提高 max_open_conns 并扩容 DB。"
+          runbook_url: docs/runbooks/db-connection-pool.md
+
+      - alert: DBPoolWaitHigh
+        expr: sum by (service) (rate(db_pool_wait_duration_seconds_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: db.pool.wait_high
+        annotations:
+          summary: "{{ $labels.service }} 等待 DB 连接耗时升高"
+          description: "累计等待速率 {{ $value }}s/s；对照 db_pool_in_use_connections 与慢查询。"
+          runbook_url: docs/runbooks/db-connection-pool.md

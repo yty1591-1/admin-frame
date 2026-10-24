@@ -13,6 +13,9 @@
 | [release-rollback.md](./release-rollback.md) | 发版回滚 |
 | [iam.md](./iam.md) | IAM 鉴权不可用 / 拒绝率异常 / 误授权回滚 |
 | [async-dlq.md](./async-dlq.md) | 异步死信积压与重放 |
+| [slo-error-budget.md](./slo-error-budget.md) | SLO 燃烧率与错误预算冻结 |
+| [backup-restore.md](./backup-restore.md) | 备份失败、全量/PITR 恢复与季度演练 |
+| [tracing-pipeline.md](./tracing-pipeline.md) | OTel Collector / Tempo / Jaeger 断链处置 |
 
 ## 值班与升级（基线）
 

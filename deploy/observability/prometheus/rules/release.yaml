@@ -1,0 +1,38 @@
+# 发布与备份健康告警（ENT-05/ENT-08 联动）。
+# 依赖 kube-state-metrics（kube_job_status_failed / kube_deployment_status_replicas_unavailable）。
+groups:
+  - name: admin-frame-release
+    rules:
+      - alert: ReleaseHealthFailed
+        expr: |
+          (
+            max by (namespace, deployment) (
+              kube_deployment_status_replicas_unavailable{namespace="admin-frame"} > 0
+            )
+          )
+          or
+          (
+            max by (namespace, statefulset) (
+              kube_statefulset_status_replicas_ready{namespace="admin-frame"}
+              < on (namespace, statefulset) kube_statefulset_spec_replicas{namespace="admin-frame"}
+            )
+          )
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: release.health_failed
+        annotations:
+          summary: "{{ $labels.deployment }} 发布后不可用副本持续存在"
+          description: "readiness 未通过或滚动更新受阻；按 runbook 回滚到上一 revision。"
+          runbook_url: docs/runbooks/release-rollback.md
+
+      - alert: BackupFailed
+        expr: max by (job_name) (kube_job_status_failed{job_name=~"admin-frame-db-backup.*"} > 0)
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: backup.failed
+        annotations:
+          summary: "数据库备份 Job 失败"
+          description: "RPO 有风险；检查 Secret、PVC 与 mysqldump/pg_dump 日志，按 runbook 手工补备份。"
+          runbook_url: docs/runbooks/backup-restore.md

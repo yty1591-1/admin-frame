@@ -1,0 +1,83 @@
+# IAM 层告警（ENT-06 T1/T2）：鉴权可用性、缓存失效、误授权与审计积压。
+# 指标来源：internal/iam/observability（iam_*，常量标签 service/env）。
+groups:
+  - name: admin-frame-iam
+    rules:
+      - alert: IAMAuthzUnavailable
+        expr: |
+          (
+            sum(rate(iam_authz_decisions_total{result="unavailable"}[5m]))
+            /
+            clamp_min(sum(rate(iam_authz_decisions_total[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: iam.authz.unavailable
+        annotations:
+          summary: "IAM 鉴权不可用比例超过 5%"
+          description: "检查 Redis、IAM 快照来源与 iam_authz_load_errors_total{stage}。"
+          runbook_url: docs/runbooks/iam.md
+
+      - alert: IAMCacheInvalidateFailed
+        expr: sum(increase(iam_cache_invalidate_failed_total[10m])) > 0
+        for: 2m
+        labels:
+          severity: P1
+          alert_id: iam.cache.invalidate_failed
+        annotations:
+          summary: "IAM 缓存删除失败，撤销/授权可能延迟"
+          description: "当前 {{ $value }} 次；失效兜底依赖 TTL，先确认 Redis 可用性。"
+          runbook_url: docs/runbooks/iam.md
+
+      - alert: IAMAuthzDenyRateHigh
+        expr: |
+          (
+            sum(rate(iam_authz_decisions_total{result="deny"}[10m]))
+            /
+            clamp_min(sum(rate(iam_authz_decisions_total[10m])), 1e-9)
+          ) > 0.3
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: iam.authz.deny_rate_high
+        annotations:
+          summary: "IAM 鉴权拒绝率超过 30%"
+          description: "疑似误授权或客户端异常；按 channel 拆分后检查角色与绑定。"
+          runbook_url: docs/runbooks/iam.md
+
+      - alert: IAMShadowMismatch
+        expr: sum(increase(iam_shadow_mismatch_total[1h])) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: iam.shadow.mismatch
+        annotations:
+          summary: "IAM shadow 判定与静态角色表不一致"
+          description: "切换 enforce 前必须归零；按 static_allow / iam_allow 组合定位。"
+          runbook_url: docs/runbooks/iam.md
+
+      - alert: IAMBreakglassActive
+        expr: max by (service) (iam_breakglass_active) > 0
+        for: 1m
+        labels:
+          severity: P1
+          alert_id: iam.breakglass.active
+        annotations:
+          summary: "存在活跃破玻璃授权"
+          description: "确认审批与到期时间；未登记的使用按安全事件处置。"
+          runbook_url: docs/runbooks/iam.md
+
+      - alert: IAMOutboxBacklog
+        expr: |
+          max by (service) (iam_outbox_pending) > 1000
+          or
+          max by (service) (iam_outbox_lag_seconds) > 60
+        for: 10m
+        labels:
+          severity: P1
+          alert_id: iam.outbox.backlog
+        annotations:
+          summary: "IAM 审计 Outbox 积压（pending/lag 超阈值）"
+          description: "通常为 worker 未运行或审计出口不可用；审计延迟可能影响合规。"
+          runbook_url: docs/runbooks/iam.md

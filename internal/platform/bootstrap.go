@@ -148,6 +148,9 @@ func Run(ctx context.Context, opts Options) (err error) {
 			err = fmt.Errorf("db close: %w", closeErr)
 		}
 	}()
+	if err := RegisterDBMetrics(met.RegistererWithoutChannel(), database); err != nil {
+		return fmt.Errorf("db metrics: %w", err)
+	}
 
 	redisClient, err := OpenRedis(ctx, cfg.Redis)
 	if err != nil {

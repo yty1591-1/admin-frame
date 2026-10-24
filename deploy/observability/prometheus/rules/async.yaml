@@ -1,0 +1,62 @@
+# 异步基础设施告警（ENT-06 T1/T2）：Outbox 积压、DLQ、broker 投递失败。
+# 指标来源：internal/platform/async_metrics.go（async_*，常量标签 service/env）。
+groups:
+  - name: admin-frame-async
+    rules:
+      - alert: AsyncOutboxBacklog
+        expr: |
+          max by (service) (async_outbox_pending) > 1000
+          or
+          max by (service) (async_outbox_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: P1
+          alert_id: async.outbox.backlog
+        annotations:
+          summary: "通用 Outbox 积压超过阈值"
+          description: "确认 cmd/worker 运行、handler 未阻塞；积压期间审计与通知会延迟。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: AsyncDLQDepth
+        expr: max by (service) (async_dlq_depth) > 0
+        for: 1m
+        labels:
+          severity: P2
+          alert_id: async.dlq.depth
+        annotations:
+          summary: "存在未重放的死信事件"
+          description: "按 runbook 定位毒消息，修复后使用 worker -replay-dlq 重放。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: AsyncOutboxDeadGrowth
+        expr: sum by (service) (increase(async_outbox_delivery_total{result=~"dead|poison"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: async.outbox.dead
+        annotations:
+          summary: "Outbox 出现新的死信/毒消息"
+          description: "查看 async_dlq.last_error 与对应 topic handler。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: AsyncBrokerPublishErrors
+        expr: sum by (service) (rate(async_broker_publish_total{result="error"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: async.broker.publish_error
+        annotations:
+          summary: "NATS JetStream 发布失败率升高（>0.1/s）"
+          description: "检查 broker 连通性、TLS 证书与 stream 配额；Outbox 会重试不会丢事件。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: AsyncBrokerConsumeDead
+        expr: sum by (service) (increase(async_broker_consume_total{result="dead"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: async.broker.consume_dead
+        annotations:
+          summary: "broker 消费者转入 DLQ"
+          description: "按 <prefix>.dlq.<topic> 查看 mq.dlq_cause 并修复消费者。"
+          runbook_url: docs/runbooks/async-dlq.md

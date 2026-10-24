@@ -1,0 +1,45 @@
+# API 层告警（ENT-06 T1/T2）：RED 与 worker 积压。
+# 指标来源：pkg/metrics（http_server_*，常量标签 service/channel/env）与 async_*。
+groups:
+  - name: admin-frame-api
+    rules:
+      - alert: API5xxRateHigh
+        expr: |
+          (
+            sum by (service) (rate(http_server_requests_total{code=~"5.."}[5m]))
+            /
+            clamp_min(sum by (service) (rate(http_server_requests_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: api.5xx.rate_high
+        annotations:
+          summary: "{{ $labels.service }} 5xx 比率超过 1%"
+          description: "当前 5xx 比率 {{ $value | humanizePercentage }}；先看 AccessLog 的 route 与下游依赖。"
+          runbook_url: docs/runbooks/api-5xx-spike.md
+
+      - alert: APILatencyP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum by (service, le) (rate(http_server_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: api.latency.p99_high
+        annotations:
+          summary: "{{ $labels.service }} P99 延迟超过 1s"
+          description: "当前 P99 {{ $value }}s；对照 DB 池等待与下游 P99。"
+          runbook_url: docs/runbooks/api-5xx-spike.md
+
+      - alert: WorkerQueueLag
+        expr: max by (service) (async_outbox_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: worker.queue_lag
+        annotations:
+          summary: "{{ $labels.service }} Outbox 最老事件积压超过 5 分钟"
+          description: "确认 worker 是否运行、handler 是否阻塞；积压持续增长按 async-dlq 处置。"
+          runbook_url: docs/runbooks/async-dlq.md

@@ -1,0 +1,83 @@
+# SLO 记录规则与多窗口燃烧率告警（ENT-06 T3）。
+# SLO（待业务确认，未确认前只记录不阻断）：
+#   - 可用性：非 5xx 请求占比 ≥ 99.9%（滚动 30 天）
+#   - 时延：P99 < 1s（与 api.latency.p99_high 对齐）
+# 燃烧率 = 错误率 / 错误预算（0.1%）；14.4x ≈ 1 小时耗尽 2% 预算。
+groups:
+  - name: admin-frame-slo-recording
+    interval: 30s
+    rules:
+      - record: service:slo_availability:ratio_5m
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_total{code=~"5.."}[5m]))
+            /
+            clamp_min(sum by (service) (rate(http_server_requests_total[5m])), 1e-9)
+          )
+      - record: service:slo_availability:ratio_1h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_total{code=~"5.."}[1h]))
+            /
+            clamp_min(sum by (service) (rate(http_server_requests_total[1h])), 1e-9)
+          )
+      - record: service:slo_availability:ratio_6h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_total{code=~"5.."}[6h]))
+            /
+            clamp_min(sum by (service) (rate(http_server_requests_total[6h])), 1e-9)
+          )
+      - record: service:slo_availability:ratio_1d
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_total{code=~"5.."}[1d]))
+            /
+            clamp_min(sum by (service) (rate(http_server_requests_total[1d])), 1e-9)
+          )
+      - record: service:slo_latency_p99:5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (service, le) (rate(http_server_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: admin-frame-slo-alerts
+    rules:
+      - alert: SLOAvailabilityBurnFast
+        expr: |
+          (1 - service:slo_availability:ratio_5m) > 14.4 * 0.001
+          and
+          (1 - service:slo_availability:ratio_1h) > 14.4 * 0.001
+        for: 2m
+        labels:
+          severity: P1
+          alert_id: slo.availability.burn_fast
+        annotations:
+          summary: "{{ $labels.service }} 可用性错误预算快速燃烧（1h 窗口 > 14.4x）"
+          description: "按当前速率约 1 小时消耗 2% 月度预算；立即按 api-5xx runbook 处置。"
+          runbook_url: docs/runbooks/slo-error-budget.md
+
+      - alert: SLOAvailabilityBurnSlow
+        expr: |
+          (1 - service:slo_availability:ratio_1h) > 6 * 0.001
+          and
+          (1 - service:slo_availability:ratio_6h) > 6 * 0.001
+        for: 15m
+        labels:
+          severity: P2
+          alert_id: slo.availability.burn_slow
+        annotations:
+          summary: "{{ $labels.service }} 可用性错误预算持续燃烧（6h 窗口 > 6x）"
+          description: "按当前速率约 5 天耗尽月度预算；排期修复而非立即救火。"
+          runbook_url: docs/runbooks/slo-error-budget.md
+
+      - alert: SLOLatencyP99High
+        expr: service:slo_latency_p99:5m > 1
+        for: 15m
+        labels:
+          severity: P2
+          alert_id: slo.latency.p99_high
+        annotations:
+          summary: "{{ $labels.service }} P99 时延超过 SLO（1s）"
+          description: "对照 DB 池等待、下游依赖 P99 与 GC 指标。"
+          runbook_url: docs/runbooks/api-5xx-spike.md
