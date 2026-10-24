@@ -7,6 +7,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // credentialSelectColumns 是凭据表的显式列清单。
@@ -28,13 +29,18 @@ func NewSQLCredentialRepository(sqlDB *sql.DB) *SQLCredentialRepository {
 	return &SQLCredentialRepository{sql: sqlDB}
 }
 
+// exec 返回当前请求应使用的执行器：事务上下文优先。
+func (r *SQLCredentialRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
+}
+
 // FindByAccount 返回账号指定类型的凭据。
 func (r *SQLCredentialRepository) FindByAccount(ctx context.Context, accountID string, typ domain.CredentialType) (*domain.Credential, error) {
 	id, err := parseID(accountID)
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+credentialSelectColumns+` FROM identity_credential WHERE account_id = ? AND credential_type = ?`,
 		id, string(typ))
 	credential, err := scanCredential(row)
@@ -50,7 +56,7 @@ func (r *SQLCredentialRepository) ListByAccount(ctx context.Context, accountID s
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.sql.QueryContext(ctx,
+	rows, err := r.exec(ctx).QueryContext(ctx,
 		`SELECT `+credentialSelectColumns+` FROM identity_credential WHERE account_id = ? ORDER BY credential_type`, id)
 	if err != nil {
 		return nil, err
@@ -84,12 +90,12 @@ func (r *SQLCredentialRepository) Save(ctx context.Context, credential *domain.C
 		return err
 	}
 	var existingID int64
-	err = r.sql.QueryRowContext(ctx,
+	err = r.exec(ctx).QueryRowContext(ctx,
 		`SELECT id FROM identity_credential WHERE account_id = ? AND credential_type = ?`,
 		accountID, string(credential.Type)).Scan(&existingID)
 	switch {
 	case err == nil:
-		_, err = r.sql.ExecContext(ctx,
+		_, err = r.exec(ctx).ExecContext(ctx,
 			`UPDATE identity_credential SET credential_hash = ?, algorithm = ?, updated_at = ? WHERE id = ?`,
 			credential.Hash, credential.Algorithm, credential.UpdatedAt.UTC(), existingID)
 		return err
@@ -98,7 +104,7 @@ func (r *SQLCredentialRepository) Save(ctx context.Context, credential *domain.C
 		if parseErr != nil {
 			return parseErr
 		}
-		_, err = r.sql.ExecContext(ctx, `INSERT INTO identity_credential
+		_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_credential
 			(id, account_id, credential_type, credential_hash, algorithm, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			newID, accountID, string(credential.Type), credential.Hash, credential.Algorithm,
@@ -115,7 +121,7 @@ func (r *SQLCredentialRepository) Delete(ctx context.Context, accountID string, 
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx,
+	_, err = r.exec(ctx).ExecContext(ctx,
 		`DELETE FROM identity_credential WHERE account_id = ? AND credential_type = ?`, id, string(typ))
 	return err
 }

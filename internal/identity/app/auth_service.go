@@ -31,6 +31,8 @@ type AuthServiceConfig struct {
 	Audit       audit.Emitter
 	IDs         IDGenerator
 	Channel     domain.Channel
+	// UoW 是事务边界；nil 退化为 NoopUnitOfWork（内存模式与单测）。
+	UoW UnitOfWork
 	// MFA 是 TOTP 绑定仓储；admin_required=true 时必填。
 	MFA domain.MFAEnrollmentRepository
 	// MFACipher 是 TOTP 密钥的 AES-256-GCM 加解密器；未配置时 MFA 端点失败关闭。
@@ -116,6 +118,7 @@ type AuthService struct {
 	audit       audit.Emitter
 	ids         IDGenerator
 	channel     domain.Channel
+	uow         UnitOfWork
 	idleTimeout time.Duration
 	service     string
 	actorType   string
@@ -166,6 +169,10 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if mfaIssuer == "" {
 		mfaIssuer = DefaultMFAIssuer
 	}
+	uow := cfg.UoW
+	if uow == nil {
+		uow = NoopUnitOfWork{}
+	}
 	svc := &AuthService{
 		accounts:    cfg.Accounts,
 		credentials: cfg.Credentials,
@@ -177,6 +184,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		audit:       cfg.Audit,
 		ids:         cfg.IDs,
 		channel:     cfg.Channel,
+		uow:         uow,
 		idleTimeout: idle,
 		service:     cfg.Service,
 		actorType:   actorType,
@@ -190,10 +198,61 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	return svc, nil
 }
 
+// withinTx 在事务中执行 fn；未配置 UnitOfWork 时直接执行（内存仓储无法回滚）。
+func (s *AuthService) withinTx(ctx context.Context, fn func(context.Context) error) error {
+	if s.uow == nil {
+		return fn(ctx)
+	}
+	return s.uow.WithinTx(ctx, fn)
+}
+
+// runTx 统一事务语义：基础设施错误回滚并返回；401 业务拒绝提交后返回原错误。
+//
+// 失败路径（登录失败尝试、重放撤销、MFA 失败）必须先落库再返回 401，
+// 因此拒绝错误在事务内被吞掉以触发提交，事务外再原样返回。
+func (s *AuthService) runTx(ctx context.Context, fn func(context.Context) error) error {
+	var rejection error
+	err := s.withinTx(ctx, func(txCtx context.Context) error {
+		if fnErr := fn(txCtx); fnErr != nil {
+			if isRejected(fnErr) {
+				rejection = fnErr
+				return nil
+			}
+			return fnErr
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return rejection
+}
+
+// isRejected 报告错误是否为需要落库的业务拒绝（统一为 40100）。
+func isRejected(err error) bool {
+	return err != nil && errors.Is(err, apperr.ErrUnauthorized)
+}
+
 // Login 校验密码并签发令牌；失败时不创建会话。
 //
 // 账号不存在、密码错误、停用与锁定统一返回 40100 文案，真实原因只写审计。
 func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, error) {
+	var result LoginResult
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, err := s.loginInTx(txCtx, in)
+		if err != nil {
+			return err
+		}
+		result = res
+		return nil
+	}); err != nil {
+		return LoginResult{}, err
+	}
+	return result, nil
+}
+
+// loginInTx 是 Login 的事务内实现：失败尝试、审计与成功写入同一事务。
+func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult, error) {
 	now := s.clock.Now().UTC()
 	subject := domain.NormalizeSubject(in.Subject)
 	if subject == "" || strings.TrimSpace(in.Password) == "" {
@@ -208,8 +267,10 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
 			// 账号不存在与密码错误必须返回同一文案，不写登录尝试（无账号主键）。
-			_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
-				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil)
+			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
+				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
+				return LoginResult{}, auditErr
+			}
 			return LoginResult{}, invalidCredentials()
 		}
 		return LoginResult{}, apperr.Internal("load account failed", err)
@@ -220,8 +281,13 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 		if recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now); recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
-		_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-			audit.OutcomeFailure, reason, in.TraceID, nil)
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+			audit.OutcomeFailure, reason, in.TraceID, nil); auditErr != nil {
+			return LoginResult{}, auditErr
+		}
+		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
+			return LoginResult{}, lockedErr
+		}
 		return LoginResult{}, err
 	}
 
@@ -231,8 +297,13 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 			if recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now); recordErr != nil {
 				return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 			}
-			_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil)
+			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
+				return LoginResult{}, auditErr
+			}
+			if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
+				return LoginResult{}, lockedErr
+			}
 			return LoginResult{}, invalidCredentials()
 		}
 		return LoginResult{}, apperr.Internal("load credential failed", err)
@@ -243,8 +314,13 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 		if recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now); recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
-		_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-			audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil)
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+			audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
+			return LoginResult{}, auditErr
+		}
+		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
+			return LoginResult{}, lockedErr
+		}
 		return LoginResult{}, err
 	}
 
@@ -303,6 +379,22 @@ type VerifiedLoginInput struct {
 // 只接受本端别账号；锁定 / 停用与密码登录一致地返回 40100 并记录失败。
 // C 端不触发 MFA。
 func (s *AuthService) CompleteVerifiedLogin(ctx context.Context, in VerifiedLoginInput) (LoginResult, error) {
+	var result LoginResult
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, err := s.completeVerifiedLoginInTx(txCtx, in)
+		if err != nil {
+			return err
+		}
+		result = res
+		return nil
+	}); err != nil {
+		return LoginResult{}, err
+	}
+	return result, nil
+}
+
+// completeVerifiedLoginInTx 是 CompleteVerifiedLogin 的事务内实现。
+func (s *AuthService) completeVerifiedLoginInTx(ctx context.Context, in VerifiedLoginInput) (LoginResult, error) {
 	accountID := strings.TrimSpace(in.AccountID)
 	if accountID == "" {
 		return LoginResult{}, invalidCredentials()
@@ -324,8 +416,13 @@ func (s *AuthService) CompleteVerifiedLogin(ctx context.Context, in VerifiedLogi
 		if recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now); recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
-		_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-			audit.OutcomeFailure, reason, in.TraceID, nil)
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+			audit.OutcomeFailure, reason, in.TraceID, nil); auditErr != nil {
+			return LoginResult{}, auditErr
+		}
+		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
+			return LoginResult{}, lockedErr
+		}
 		return LoginResult{}, err
 	}
 	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
@@ -367,6 +464,22 @@ func (s *AuthService) completeLogin(
 //
 // 已 rotated 的令牌再次出现视为重放：撤销整条家庭链并记 auth.token.reused。
 func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, error) {
+	var pair TokenPair
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, err := s.refreshInTx(txCtx, in)
+		if err != nil {
+			return err
+		}
+		pair = res
+		return nil
+	}); err != nil {
+		return TokenPair{}, err
+	}
+	return pair, nil
+}
+
+// refreshInTx 是 Refresh 的事务内实现：重放撤销与新会话签发同一事务。
+func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (TokenPair, error) {
 	if !RefreshPrefixMatches(s.channel, in.RefreshToken) {
 		return TokenPair{}, invalidToken()
 	}
@@ -384,8 +497,10 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, 
 	}
 	if session.Status == domain.SessionStatusRotated {
 		s.revokeFamily(ctx, session, now)
-		_ = s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
-			audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil)
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
+			audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil); auditErr != nil {
+			return TokenPair{}, auditErr
+		}
 		return TokenPair{}, invalidToken()
 	}
 	if !session.IsActive(now) {
@@ -414,8 +529,10 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, 
 		if errors.Is(saveErr, apperr.ErrConflict) {
 			// 并发刷新只有一个请求能完成 active → rotated，其余按重放处理。
 			s.revokeFamily(ctx, session, now)
-			_ = s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
-				audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil)
+			if auditErr := s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
+				audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil); auditErr != nil {
+				return TokenPair{}, auditErr
+			}
 			return TokenPair{}, invalidToken()
 		}
 		return TokenPair{}, apperr.Internal("rotate session failed", saveErr)
@@ -433,73 +550,94 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, 
 }
 
 // Logout 撤销当前会话并把当前 jti 加入黑名单；重复登出幂等。
+//
+// 会话撤销与审计在同一事务内；jti 黑名单不可回滚，放在提交后执行。
 func (s *AuthService) Logout(ctx context.Context, actor SessionActor) error {
-	now := s.clock.Now().UTC()
 	if actor.AccountID == "" || actor.SessionID == "" {
 		return invalidToken()
 	}
-	session, err := s.sessions.FindByID(ctx, actor.SessionID)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
-			return s.revokeCurrentToken(ctx, actor, now)
+	now := s.clock.Now().UTC()
+	revokeToken := false
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		session, err := s.sessions.FindByID(txCtx, actor.SessionID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				// 会话已不存在：仍需拉黑当前访问令牌，保持幂等。
+				revokeToken = true
+				return nil
+			}
+			return apperr.Internal("load session failed", err)
 		}
-		return apperr.Internal("load session failed", err)
-	}
-	if session.AccountID != actor.AccountID {
-		return invalidToken()
-	}
-	expected := session.Version
-	if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
-		return apperr.Internal("revoke session failed", revokeErr)
-	}
-	if saveErr := s.sessions.Save(ctx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
-		return apperr.Internal("save session failed", saveErr)
-	}
-	if err := s.revokeCurrentToken(ctx, actor, now); err != nil {
+		if session.AccountID != actor.AccountID {
+			return invalidToken()
+		}
+		expected := session.Version
+		if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
+			return apperr.Internal("revoke session failed", revokeErr)
+		}
+		if saveErr := s.sessions.Save(txCtx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
+			return apperr.Internal("save session failed", saveErr)
+		}
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthLogout, actor.AccountID, actor.MerchantID, "session", actor.SessionID,
+			audit.OutcomeSuccess, "", actor.TraceID, nil); auditErr != nil {
+			return auditErr
+		}
+		revokeToken = true
+		return nil
+	}); err != nil {
 		return err
 	}
-	return s.emitAudit(ctx, audit.ActionAuthLogout, actor.AccountID, actor.MerchantID, "session", actor.SessionID,
-		audit.OutcomeSuccess, "", actor.TraceID, nil)
+	if !revokeToken {
+		return nil
+	}
+	return s.revokeCurrentToken(ctx, actor, now)
 }
 
 // LogoutAll 递增 token_version 并撤销账号全部会话。
+//
+// 账号版本、会话撤销与审计在同一事务内；撤销快照与 jti 黑名单在提交后写入。
 func (s *AuthService) LogoutAll(ctx context.Context, actor SessionActor) error {
-	now := s.clock.Now().UTC()
 	if actor.AccountID == "" {
 		return invalidToken()
 	}
-	account, err := s.accounts.FindByID(ctx, actor.AccountID)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
+	now := s.clock.Now().UTC()
+	var state *AccountState
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		account, err := s.accounts.FindByID(txCtx, actor.AccountID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return invalidToken()
+			}
+			return apperr.Internal("load account failed", err)
+		}
+		if account.IsDeleted() || account.Status == domain.AccountStatusDisabled {
 			return invalidToken()
 		}
-		return apperr.Internal("load account failed", err)
+		expected := account.Version
+		if bumpErr := account.BumpTokenVersion(now); bumpErr != nil {
+			return apperr.Internal("bump token version failed", bumpErr)
+		}
+		if saveErr := s.accounts.Save(txCtx, account, expected); saveErr != nil {
+			return apperr.Internal("save account failed", saveErr)
+		}
+		if _, revokeErr := s.sessions.RevokeByAccount(txCtx, account.ID, domain.RevokeReasonLogoutAll, now); revokeErr != nil {
+			return apperr.Internal("revoke account sessions failed", revokeErr)
+		}
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "account", actor.AccountID,
+			audit.OutcomeSuccess, string(domain.RevokeReasonLogoutAll), actor.TraceID, nil); auditErr != nil {
+			return auditErr
+		}
+		state = &AccountState{Version: account.TokenVersion, Status: account.Status}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if account.IsDeleted() || account.Status == domain.AccountStatusDisabled {
-		return invalidToken()
-	}
-	expected := account.Version
-	if bumpErr := account.BumpTokenVersion(now); bumpErr != nil {
-		return apperr.Internal("bump token version failed", bumpErr)
-	}
-	if saveErr := s.accounts.Save(ctx, account, expected); saveErr != nil {
-		return apperr.Internal("save account failed", saveErr)
-	}
-	if _, err := s.sessions.RevokeByAccount(ctx, account.ID, domain.RevokeReasonLogoutAll, now); err != nil {
-		return apperr.Internal("revoke account sessions failed", err)
-	}
-	if s.revocation != nil {
-		state := AccountState{Version: account.TokenVersion, Status: account.Status}
-		ttl := s.accountStateTTL()
-		if err := s.revocation.SaveAccountState(ctx, account.ID, state, ttl); err != nil {
+	if s.revocation != nil && state != nil {
+		if err := s.revocation.SaveAccountState(ctx, actor.AccountID, *state, s.accountStateTTL()); err != nil {
 			return apperr.Internal("refresh revocation state failed", err)
 		}
 	}
-	if err := s.revokeCurrentToken(ctx, actor, now); err != nil {
-		return err
-	}
-	return s.emitAudit(ctx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "account", actor.AccountID,
-		audit.OutcomeSuccess, string(domain.RevokeReasonLogoutAll), actor.TraceID, nil)
+	return s.revokeCurrentToken(ctx, actor, now)
 }
 
 // ListSessions 返回账号全部会话，供 A 端会话管理使用。
@@ -528,39 +666,49 @@ func (s *AuthService) ListSessions(ctx context.Context, actor SessionActor) ([]S
 }
 
 // RevokeSession 撤销账号下的指定会话；已被撤销时幂等返回。
+//
+// 会话撤销与审计在同一事务内；撤销当前会话时 jti 黑名单在提交后写入。
 func (s *AuthService) RevokeSession(ctx context.Context, actor SessionActor, sessionID string) error {
 	if actor.AccountID == "" || strings.TrimSpace(sessionID) == "" {
 		return apperr.BadRequest("session id is required")
 	}
 	now := s.clock.Now().UTC()
-	session, err := s.sessions.FindByID(ctx, sessionID)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
+	revokeToken := false
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		session, err := s.sessions.FindByID(txCtx, sessionID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return apperr.NotFound("session not found")
+			}
+			return apperr.Internal("load session failed", err)
+		}
+		if session.AccountID != actor.AccountID {
+			// 不区分「不存在」与「不属于本账号」，避免横向枚举他人会话。
 			return apperr.NotFound("session not found")
 		}
-		return apperr.Internal("load session failed", err)
-	}
-	if session.AccountID != actor.AccountID {
-		// 不区分「不存在」与「不属于本账号」，避免横向枚举他人会话。
-		return apperr.NotFound("session not found")
-	}
-	expected := session.Version
-	if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
-		if errors.Is(revokeErr, domain.ErrSessionExpired) {
-			return nil
+		expected := session.Version
+		if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
+			if errors.Is(revokeErr, domain.ErrSessionExpired) {
+				return nil
+			}
+			return apperr.Internal("revoke session failed", revokeErr)
 		}
-		return apperr.Internal("revoke session failed", revokeErr)
-	}
-	if saveErr := s.sessions.Save(ctx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
-		return apperr.Internal("save session failed", saveErr)
-	}
-	if sessionID == actor.SessionID {
-		if err := s.revokeCurrentToken(ctx, actor, now); err != nil {
-			return err
+		if saveErr := s.sessions.Save(txCtx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
+			return apperr.Internal("save session failed", saveErr)
 		}
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "session", sessionID,
+			audit.OutcomeSuccess, string(domain.RevokeReasonLogout), actor.TraceID, nil); auditErr != nil {
+			return auditErr
+		}
+		revokeToken = sessionID == actor.SessionID
+		return nil
+	}); err != nil {
+		return err
 	}
-	return s.emitAudit(ctx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "session", sessionID,
-		audit.OutcomeSuccess, string(domain.RevokeReasonLogout), actor.TraceID, nil)
+	if !revokeToken {
+		return nil
+	}
+	return s.revokeCurrentToken(ctx, actor, now)
 }
 
 // createSession 创建新会话并签发令牌。
@@ -710,6 +858,17 @@ func (s *AuthService) emitAudit(
 		return apperr.Internal("emit audit event failed", err)
 	}
 	return nil
+}
+
+// emitAccountLockedIfNeeded 在失败计数触发锁定时补发 auth.account.locked。
+//
+// RecordFailure 达阈值会把账号原地置为 locked，因此事后判断状态即可。
+func (s *AuthService) emitAccountLockedIfNeeded(ctx context.Context, account *domain.Account, traceID string) error {
+	if account == nil || account.Status != domain.AccountStatusLocked {
+		return nil
+	}
+	return s.emitAudit(ctx, audit.ActionAuthAccountLocked, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeFailure, domain.LoginReasonLocked, traceID, nil)
 }
 
 // HashClientRef 返回客户端 IP / UA 的不可逆摘要；空值返回空串。

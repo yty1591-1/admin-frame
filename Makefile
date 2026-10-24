@@ -13,7 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
 	check-license check-codegen check-perf check-idempotency check-outbox secrets \
-	gitee-job ci mock migrate-up vuln docker docker-admin docker-push
+	check-authn gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -166,6 +166,10 @@ check-outbox:
 check-perf:
 	bash scripts/ci/check-perf.sh
 
+# ENT-01：身份认证生产配置、三端契约、撤销路径、迁移、审计与密钥。
+check-authn:
+	bash scripts/ci/check-authn.sh
+
 # mockery（GEN-04）；需已安装 mockery，配置见 .mockery.yaml。
 MOCKERY ?= mockery
 mock:
@@ -178,7 +182,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
@@ -72,6 +73,9 @@ func run(configPath, replayDLQ string) error {
 	deps.Async = asyncRuntime
 	if err := iamruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register async handlers: %w", err)
+	}
+	if err := identityruntime.RegisterAsync(deps); err != nil {
+		return fmt.Errorf("register identity async handlers: %w", err)
 	}
 
 	logger.Info("worker started",

@@ -276,7 +276,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 ### ENT-01 身份闭环：账号域与令牌生命周期
 
-**状态**：`进行中（2026-10-23，阶段 1/2/3/4 已完成）`；领域模型、令牌与撤销语义、配置与迁移编号详见 [`identity-authn.md`](./identity-authn.md)。
+**状态**：`已完成（2026-10-23，阶段 1–5）`；领域模型、令牌与撤销语义、配置与迁移编号详见 [`identity-authn.md`](./identity-authn.md)。
 
 **目标**：让平台能接入真实用户，令牌可刷新、可撤销、可失效，A 端具备 MFA，三端身份严格隔离。
 
@@ -294,8 +294,8 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 | T6 | 认证端点 | A / B / C 三端 `login`、`refresh`、`logout`；A 端 `mfa/setup|verify|disable`、`sessions` 列表与撤销 | OpenAPI 三端契约；刷新令牌一次性，重放触发全链撤销 | 2 / 4 |
 | T7 | C 端登录 | 短信验证码（复用 `pkg/sms`）+ OAuth / OIDC 回调；验证码哈希存储、尝试次数限制 | 防枚举、防刷；验证码 5 分钟过期 | 4 |
 | T8 | A 端 MFA 与 SSO | TOTP 绑定 / 校验（`pkg/totp`）；OIDC 接入预留（优先复用组织 IdP） | 未完成 MFA 不得获得管理令牌 | 3 |
-| T9 | 审计接入 | `auth.login`、`auth.logout`、`auth.token.refresh`、`auth.token.reused`、`auth.token.revoked`、`auth.mfa.bound`、`auth.account.locked` | 事件目录、字段、Outbox 事务 | 5 |
-| T10 | 与 IAM 边界 | 令牌只承载身份；角色 / 权限仍由 IAM `Authorizer` 解析；`Principal` 增补 `SessionID` / `TokenVersion` | 不在令牌中固化角色，避免撤销滞后 | 2 |
+| T9 | 审计接入（已完成） | `auth.login`、`auth.logout`、`auth.token.refresh`、`auth.token.reused`、`auth.token.revoked`、`auth.mfa.bound`、`auth.account.locked` | 事件目录、字段、Outbox 事务 | 5 |
+| T10 | 与 IAM 边界（已完成） | 令牌只承载身份；角色 / 权限仍由 IAM `Authorizer` 解析；`Principal` 增补 `SessionID` / `TokenVersion` | 不在令牌中固化角色，避免撤销滞后 | 2 |
 
 **配置规划**
 
@@ -929,7 +929,7 @@ deploy/helm/admin-frame/
 
 | ID | 优先级 | 波次 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|---|
-| ENT-01 | P0 | Wave 1 | 进行中（2026-10-23，阶段 1/2/3 已完成） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
+| ENT-01 | P0 | Wave 1 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；broker 仅预留接口 |
 | ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |

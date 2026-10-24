@@ -216,7 +216,9 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 			_ = s.codes.Delete(ctx, phoneHash)
 			_ = s.codes.ResetAttempts(ctx, phoneHash)
 		}
-		s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, in.TraceID)
+		if err := s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, in.TraceID); err != nil {
+			return LoginResult{}, err
+		}
 		return LoginResult{}, smsInvalidCode()
 	}
 	_ = s.codes.Delete(ctx, phoneHash)
@@ -226,7 +228,9 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
 			// D3：未注册手机号不自动建号，保持与错误验证码一致的响应。
-			s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, in.TraceID)
+			if auditErr := s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, in.TraceID); auditErr != nil {
+				return LoginResult{}, auditErr
+			}
 			return LoginResult{}, smsInvalidCode()
 		}
 		return LoginResult{}, apperr.Internal("load account failed", err)
@@ -240,9 +244,13 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 }
 
 // RecordExternalLoginFailure 记录外部登录失败审计；actor 使用不可逆账号摘要。
-func (s *AuthService) RecordExternalLoginFailure(ctx context.Context, accountRef, reason, traceID string) {
-	_ = s.emitAudit(ctx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
-		audit.OutcomeFailure, reason, traceID, nil)
+//
+// 审计写入失败必须向调用方传播，由调用方失败关闭（5xx），禁止静默丢弃。
+func (s *AuthService) RecordExternalLoginFailure(ctx context.Context, accountRef, reason, traceID string) error {
+	return s.runTx(ctx, func(txCtx context.Context) error {
+		return s.emitAudit(txCtx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
+			audit.OutcomeFailure, reason, traceID, nil)
+	})
 }
 
 // phoneSubject 返回手机号在身份域的登录主体：摘要前缀 + 哈希，库内不落明文。

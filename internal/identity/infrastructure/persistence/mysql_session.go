@@ -8,6 +8,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // sessionSelectColumns 是会话表的显式列清单。
@@ -30,13 +31,18 @@ func NewSQLSessionRepository(sqlDB *sql.DB) *SQLSessionRepository {
 	return &SQLSessionRepository{sql: sqlDB}
 }
 
+// exec 返回当前请求应使用的执行器：事务上下文优先。
+func (r *SQLSessionRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
+}
+
 // FindByID 按主键加载会话。
 func (r *SQLSessionRepository) FindByID(ctx context.Context, id string) (*domain.Session, error) {
 	sessionID, err := parseID(id)
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+sessionSelectColumns+` FROM identity_session WHERE id = ?`, sessionID)
 	session, err := scanSession(row)
 	if err != nil {
@@ -47,7 +53,7 @@ func (r *SQLSessionRepository) FindByID(ctx context.Context, id string) (*domain
 
 // FindByRefreshHash 按刷新令牌摘要加载会话。
 func (r *SQLSessionRepository) FindByRefreshHash(ctx context.Context, hash string) (*domain.Session, error) {
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+sessionSelectColumns+` FROM identity_session WHERE refresh_token_hash = ?`, hash)
 	session, err := scanSession(row)
 	if err != nil {
@@ -84,7 +90,7 @@ func (r *SQLSessionRepository) insert(ctx context.Context, session *domain.Sessi
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx, `INSERT INTO identity_session
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_session
 		(id, account_id, family_id, refresh_token_hash, status, token_version, version,
 		 expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -102,7 +108,7 @@ func (r *SQLSessionRepository) update(ctx context.Context, session *domain.Sessi
 	if err != nil {
 		return err
 	}
-	result, err := r.sql.ExecContext(ctx, `UPDATE identity_session
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session
 		SET status = ?, version = ?, last_used_at = ?, revoked_at = ?, revoked_reason = ?, updated_at = ?
 		WHERE id = ? AND version = ?`,
 		string(session.Status), session.Version, session.LastUsedAt.UTC(),
@@ -119,7 +125,7 @@ func (r *SQLSessionRepository) update(ctx context.Context, session *domain.Sessi
 		return nil
 	}
 	var current int64
-	err = r.sql.QueryRowContext(ctx, `SELECT version FROM identity_session WHERE id = ?`, sessionID).Scan(&current)
+	err = r.exec(ctx).QueryRowContext(ctx, `SELECT version FROM identity_session WHERE id = ?`, sessionID).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apperr.NotFound("session not found")
 	}
@@ -138,7 +144,7 @@ func (r *SQLSessionRepository) RevokeFamily(ctx context.Context, familyID string
 	if err != nil {
 		return 0, err
 	}
-	result, err := r.sql.ExecContext(ctx, `UPDATE identity_session
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session
 		SET status = 'revoked', revoked_at = ?, revoked_reason = ?, updated_at = ?, version = version + 1
 		WHERE family_id = ? AND status IN ('active', 'rotated')`,
 		now.UTC(), string(reason), now.UTC(), family)
@@ -161,7 +167,7 @@ func (r *SQLSessionRepository) RevokeByAccount(ctx context.Context, accountID st
 	if err != nil {
 		return 0, err
 	}
-	result, err := r.sql.ExecContext(ctx, `UPDATE identity_session
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session
 		SET status = 'revoked', revoked_at = ?, revoked_reason = ?, updated_at = ?, version = version + 1
 		WHERE account_id = ? AND status IN ('active', 'rotated')`,
 		now.UTC(), string(reason), now.UTC(), id)
@@ -181,7 +187,7 @@ func (r *SQLSessionRepository) ListByAccount(ctx context.Context, accountID stri
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.sql.QueryContext(ctx,
+	rows, err := r.exec(ctx).QueryContext(ctx,
 		`SELECT `+sessionSelectColumns+` FROM identity_session WHERE account_id = ?
 		 ORDER BY created_at DESC, id ASC`, id)
 	if err != nil {

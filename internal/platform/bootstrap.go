@@ -182,6 +182,17 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Background: background.add,
 	}
 
+	// 异步运行时必须先于身份运行时构造：身份域启用时审计写入 identity.audit Outbox，
+	// 装配期需要可见 deps.Async（禁用时为空操作）。
+	asyncRuntime, err := NewAsyncRuntime(deps)
+	if err != nil {
+		return fmt.Errorf("async runtime: %w", err)
+	}
+	deps.Async = asyncRuntime
+	if asyncRuntime != nil && asyncRuntime.PublishInAPI() {
+		background.add(asyncRuntime.Run)
+	}
+
 	// 撤销检查必须在 AuthMW 构造前注入（docs/identity-authn.md §13.2）：
 	// 身份运行时同时持有仓储与撤销存储，登录态校验才能立即读取撤销状态。
 	var authOpts []security.JWTAuthOption
@@ -199,15 +210,6 @@ func Run(ctx context.Context, opts Options) (err error) {
 		return fmt.Errorf("auth: %w", err)
 	}
 	deps.AuthMW = authMW
-
-	asyncRuntime, err := NewAsyncRuntime(deps)
-	if err != nil {
-		return fmt.Errorf("async runtime: %w", err)
-	}
-	deps.Async = asyncRuntime
-	if asyncRuntime != nil && asyncRuntime.PublishInAPI() {
-		background.add(asyncRuntime.Run)
-	}
 
 	authorizer := security.NewAuthorizer(nil)
 	if opts.NewAuthorizer != nil {

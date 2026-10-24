@@ -7,6 +7,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // mfaSelectColumns 是 MFA 绑定表的显式列清单。
@@ -25,13 +26,18 @@ func NewSQLMFAEnrollmentRepository(sqlDB *sql.DB) *SQLMFAEnrollmentRepository {
 	return &SQLMFAEnrollmentRepository{sql: sqlDB}
 }
 
+// exec 返回当前请求应使用的执行器：事务上下文优先。
+func (r *SQLMFAEnrollmentRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
+}
+
 // FindByAccount 返回账号绑定。
 func (r *SQLMFAEnrollmentRepository) FindByAccount(ctx context.Context, accountID string) (*domain.MFAEnrollment, error) {
 	id, err := parseID(accountID)
 	if err != nil {
 		return nil, err
 	}
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+mfaSelectColumns+` FROM identity_mfa WHERE account_id = ?`, id)
 	enrollment, err := scanMFAEnrollment(row)
 	if err != nil {
@@ -56,7 +62,7 @@ func (r *SQLMFAEnrollmentRepository) Save(ctx context.Context, enrollment *domai
 	if err != nil {
 		return apperr.Internal("encode recovery code hashes failed", err)
 	}
-	_, err = r.sql.ExecContext(ctx, `INSERT INTO identity_mfa
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_mfa
 		(account_id, secret_ciphertext, confirmed_at, recovery_code_hashes, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		AS new ON DUPLICATE KEY UPDATE
@@ -75,7 +81,7 @@ func (r *SQLMFAEnrollmentRepository) Delete(ctx context.Context, accountID strin
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx, `DELETE FROM identity_mfa WHERE account_id = ?`, id)
+	_, err = r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_mfa WHERE account_id = ?`, id)
 	return err
 }
 

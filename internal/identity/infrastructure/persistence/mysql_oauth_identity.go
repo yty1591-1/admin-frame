@@ -6,6 +6,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // oauthIdentitySelectColumns 是外部身份映射表的显式列清单。
@@ -24,9 +25,14 @@ func NewSQLOAuthIdentityRepository(sqlDB *sql.DB) *SQLOAuthIdentityRepository {
 	return &SQLOAuthIdentityRepository{sql: sqlDB}
 }
 
+// exec 返回当前请求应使用的执行器：事务上下文优先。
+func (r *SQLOAuthIdentityRepository) exec(ctx context.Context) db.Querier {
+	return resolveExecutor(ctx, r.sql)
+}
+
 // FindByProviderSubject 按提供方 + 主体标识加载映射。
 func (r *SQLOAuthIdentityRepository) FindByProviderSubject(ctx context.Context, provider, subject string) (*domain.OAuthIdentity, error) {
-	row := r.sql.QueryRowContext(ctx,
+	row := r.exec(ctx).QueryRowContext(ctx,
 		`SELECT `+oauthIdentitySelectColumns+` FROM identity_oauth_identity WHERE provider = ? AND provider_subject = ?`,
 		provider, subject)
 	identity, err := scanOAuthIdentity(row)
@@ -52,7 +58,7 @@ func (r *SQLOAuthIdentityRepository) Save(ctx context.Context, identity *domain.
 	if err != nil {
 		return err
 	}
-	_, err = r.sql.ExecContext(ctx, `INSERT INTO identity_oauth_identity
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_oauth_identity
 		(id, account_id, provider, provider_subject, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		id, accountID, identity.Provider, identity.ProviderSubject,

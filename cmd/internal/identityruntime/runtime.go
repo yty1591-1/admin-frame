@@ -138,6 +138,17 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		mfaAdminRequired = false
 	}
 
+	// 审计出口：启用异步时写入 identity.audit Outbox（与业务写入同事务），
+	// 内存模式下退化为进程日志；禁止静默丢弃。
+	var auditEmitter audit.Emitter = audit.SlogEmitter{Log: deps.Logger}
+	if deps.Async != nil {
+		auditEmitter = app.OutboxEmitter{Events: deps.Async.Store()}
+	}
+	var uow app.UnitOfWork = app.NoopUnitOfWork{}
+	if deps.Database != nil {
+		uow = persistence.NewSQLUnitOfWork(deps.Database.SQL())
+	}
+
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
 		Accounts:         accounts,
 		Credentials:      credentials,
@@ -146,9 +157,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		Password:         passwordSvc,
 		Tokens:           tokens,
 		Revocation:       revocation,
-		Audit:            audit.SlogEmitter{Log: deps.Logger},
+		Audit:            auditEmitter,
 		IDs:              deps.IDs,
 		Channel:          channel,
+		UoW:              uow,
 		IdleTimeout:      cfg.Identity.Session.IdleTimeout,
 		Service:          cfg.Service,
 		MFA:              mfa,
@@ -176,7 +188,25 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	registerHealth(deps)
+	if deps.Async != nil {
+		if err := RegisterAsync(deps); err != nil {
+			return nil, fmt.Errorf("identity async handlers: %w", err)
+		}
+	}
 	return runtime, nil
+}
+
+// RegisterAsync 注册身份域异步 topic handler（API 与 worker 共用）。
+//
+// 审计事件由本 handler 投递到审计出口；deps.Async 未启用时为空操作。
+func RegisterAsync(deps *platform.Deps) error {
+	if deps == nil || deps.Async == nil {
+		return nil
+	}
+	if err := deps.Async.Register(app.TopicAudit, app.AuditEventHandler(audit.SlogEmitter{Log: deps.Logger})); err != nil {
+		return fmt.Errorf("identity async handler %s: %w", app.TopicAudit, err)
+	}
+	return nil
 }
 
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。

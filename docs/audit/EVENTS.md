@@ -6,9 +6,11 @@
 |--------|----|------|----------|----------|--------|
 | `auth.login` | A/B/C | 登录成功 | 认证 | 180d | active |
 | `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | active |
-| `auth.logout` | A/B | 登出当前会话（幂等） | 认证 | 180d | active |
-| `auth.token.refresh` | A/B | 刷新令牌成功轮换 | 认证 | 180d | active |
-| `auth.token.reused` | A/B | 刷新令牌重放，触发整链撤销 | 认证 | 180d | active |
+| `auth.account.locked` | A/B/C | 登录失败达阈值触发账号锁定 | 认证 | 180d | active |
+| `auth.account.disabled` | A | 管理员停用账号 | 认证 | 180d | planned |
+| `auth.logout` | A/B/C | 登出当前会话（幂等） | 认证 | 180d | active |
+| `auth.token.refresh` | A/B/C | 刷新令牌成功轮换 | 认证 | 180d | active |
+| `auth.token.reused` | A/B/C | 刷新令牌重放，触发整链撤销 | 认证 | 180d | active |
 | `auth.token.revoked` | A/B | 单会话 / 全端撤销 | 认证 | 180d | active |
 | `auth.mfa.bound` | A | MFA 绑定完成 | 认证 | 180d | active |
 | `auth.mfa.failed` | A | MFA 动态码 / 恢复码校验失败 | 认证 | 180d | active |

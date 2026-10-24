@@ -124,6 +124,22 @@ func (s *AuthService) SetupMFA(ctx context.Context, actor SessionActor) (MFASetu
 // 票据优先：只要 Ticket 非空就按两步登录处理，忽略 Actor，避免请求同时携带
 // 两种凭据时出现语义歧义。
 func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
+	var result MFAVerifyResult
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, err := s.verifyMFAInTx(txCtx, in)
+		if err != nil {
+			return err
+		}
+		result = res
+		return nil
+	}); err != nil {
+		return MFAVerifyResult{}, err
+	}
+	return result, nil
+}
+
+// verifyMFAInTx 是 VerifyMFA 的事务内实现。
+func (s *AuthService) verifyMFAInTx(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
 	if s.channel != domain.ChannelAdmin {
 		return MFAVerifyResult{}, apperr.BadRequest("mfa is only supported on admin channel")
 	}
@@ -140,6 +156,8 @@ func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVeri
 }
 
 // DisableMFA 校验动态码后解绑，并强制撤销账号全部会话。
+//
+// 解绑、会话撤销与审计在同一事务内；撤销快照在提交后写入。
 func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code string) error {
 	if s.channel != domain.ChannelAdmin {
 		return apperr.BadRequest("mfa is only supported on admin channel")
@@ -151,41 +169,51 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 		return invalidToken()
 	}
 	now := s.clock.Now().UTC()
-	account, err := s.accounts.FindByID(ctx, actor.AccountID)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
+	var account *domain.Account
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		loaded, err := s.accounts.FindByID(txCtx, actor.AccountID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return invalidToken()
+			}
+			return apperr.Internal("load account failed", err)
+		}
+		if authErr := s.guard.Authorize(loaded, now); authErr != nil {
+			return authErr
+		}
+		enrollment, err := s.mfa.FindByAccount(txCtx, loaded.ID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return invalidToken()
+			}
+			return apperr.Internal("load mfa enrollment failed", err)
+		}
+		if !enrollment.IsConfirmed() {
 			return invalidToken()
 		}
-		return apperr.Internal("load account failed", err)
-	}
-	if err := s.guard.Authorize(account, now); err != nil {
-		return err
-	}
-	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
-			return invalidToken()
+		ok, err := s.verifyEnrollmentCode(txCtx, enrollment, code, now, true)
+		if err != nil {
+			return err
 		}
-		return apperr.Internal("load mfa enrollment failed", err)
-	}
-	if !enrollment.IsConfirmed() {
-		return invalidToken()
-	}
-	ok, err := s.verifyEnrollmentCode(ctx, enrollment, code, now, true)
-	if err != nil {
+		if !ok {
+			return s.mfaFailure(txCtx, loaded, "", "", actor.TraceID)
+		}
+		if err := s.mfa.Delete(txCtx, loaded.ID); err != nil {
+			return apperr.Internal("delete mfa enrollment failed", err)
+		}
+		if err := s.revokeAllSessionsInTx(txCtx, loaded, now); err != nil {
+			return err
+		}
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthMFADisabled, loaded.ID, loaded.MerchantID, "account", loaded.ID,
+			audit.OutcomeSuccess, "", actor.TraceID, nil); auditErr != nil {
+			return auditErr
+		}
+		account = loaded
+		return nil
+	}); err != nil {
 		return err
 	}
-	if !ok {
-		return s.mfaFailure(ctx, account, "", "", actor.TraceID)
-	}
-	if err := s.mfa.Delete(ctx, account.ID); err != nil {
-		return apperr.Internal("delete mfa enrollment failed", err)
-	}
-	if err := s.revokeAllSessions(ctx, account, now); err != nil {
-		return err
-	}
-	return s.emitAudit(ctx, audit.ActionAuthMFADisabled, account.ID, account.MerchantID, "account", account.ID,
-		audit.OutcomeSuccess, "", actor.TraceID, nil)
+	return s.saveRevocationState(ctx, account)
 }
 
 // mfaChallenge 判断登录是否需要 MFA，并在强制绑定时返回稳定错误。
@@ -394,11 +422,14 @@ func (s *AuthService) mfaFailure(
 		audit.OutcomeFailure, domain.LoginReasonMFAFailed, traceID, nil); err != nil {
 		return err
 	}
+	if err := s.emitAccountLockedIfNeeded(ctx, account, traceID); err != nil {
+		return err
+	}
 	return invalidToken()
 }
 
-// revokeAllSessions 递增 token_version、撤销全部会话并刷新撤销缓存。
-func (s *AuthService) revokeAllSessions(ctx context.Context, account *domain.Account, now time.Time) error {
+// revokeAllSessionsInTx 递增 token_version 并撤销全部会话（事务内）。
+func (s *AuthService) revokeAllSessionsInTx(ctx context.Context, account *domain.Account, now time.Time) error {
 	expected := account.Version
 	if err := account.BumpTokenVersion(now); err != nil {
 		return apperr.Internal("bump token version failed", err)
@@ -409,11 +440,17 @@ func (s *AuthService) revokeAllSessions(ctx context.Context, account *domain.Acc
 	if _, err := s.sessions.RevokeByAccount(ctx, account.ID, domain.RevokeReasonLogoutAll, now); err != nil {
 		return apperr.Internal("revoke account sessions failed", err)
 	}
-	if s.revocation != nil {
-		state := AccountState{Version: account.TokenVersion, Status: account.Status}
-		if err := s.revocation.SaveAccountState(ctx, account.ID, state, s.accountStateTTL()); err != nil {
-			return apperr.Internal("refresh revocation state failed", err)
-		}
+	return nil
+}
+
+// saveRevocationState 在事务提交后刷新账号撤销快照；Redis 写入不可回滚。
+func (s *AuthService) saveRevocationState(ctx context.Context, account *domain.Account) error {
+	if s.revocation == nil || account == nil {
+		return nil
+	}
+	state := AccountState{Version: account.TokenVersion, Status: account.Status}
+	if err := s.revocation.SaveAccountState(ctx, account.ID, state, s.accountStateTTL()); err != nil {
+		return apperr.Internal("refresh revocation state failed", err)
 	}
 	return nil
 }
