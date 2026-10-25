@@ -2,13 +2,11 @@ import { isAppError, type AdminIamApi, type Permission } from '@admin-frame/api-
 import type { Channel } from '@admin-frame/shared';
 import {
   Button,
-  Card,
-  ErrorState,
   Input,
   Select,
   Space,
   StatusTag,
-  Table,
+  TableShell,
   Typography,
   type TableColumnsType,
 } from '@admin-frame/ui';
@@ -28,8 +26,6 @@ const CHANNEL_OPTIONS = [
   { value: 'admin', label: 'A 端' },
   { value: 'biz', label: 'B 端' },
 ] as const;
-
-const PAGE_SIZE_OPTIONS = ['20', '50', '100'];
 
 const columns: TableColumnsType<Permission> = [
   {
@@ -84,88 +80,81 @@ export function PermissionCatalogPanel({ api }: { api: AdminIamApi }) {
     setKeyword(filters.keyword ?? '');
   }, [filters.keyword]);
 
-  if (query.isError) {
-    return (
-      <ErrorState
-        title="权限目录加载失败"
-        description="请检查筛选条件或稍后重试。"
-        traceId={isAppError(query.error) ? query.error.traceId : undefined}
-        onRetry={() => {
-          void query.refetch();
-        }}
-      />
-    );
-  }
-
   return (
-    <Card>
-      <Space wrap style={{ marginBottom: 16 }}>
-        <Input
-          aria-label="权限关键字"
-          allowClear
-          placeholder="搜索权限码或名称"
-          style={{ width: 280 }}
-          value={keyword}
-          onChange={(event) => {
-            const next = event.target.value;
-            setKeyword(next);
-            if (next === '') {
-              setFilter('keyword', null);
+    <TableShell<Permission>
+      columns={columns}
+      rows={query.data?.items}
+      rowKey="code"
+      total={query.data?.total ?? 0}
+      page={page}
+      pageSize={pageSize}
+      loading={query.isFetching}
+      error={
+        query.isError
+          ? {
+              message: '权限目录加载失败，请检查筛选条件或稍后重试。',
+              traceId: isAppError(query.error) ? query.error.traceId : undefined,
             }
-          }}
-          onPressEnter={() => {
-            setFilter('keyword', keyword);
-          }}
-        />
-        <Button
-          type="primary"
-          onClick={() => {
-            setFilter('keyword', keyword);
-          }}
-        >
-          查询
-        </Button>
-        <Select<string>
-          aria-label="端别"
-          allowClear
-          placeholder="全部端别"
-          style={{ width: 160 }}
-          options={[...CHANNEL_OPTIONS]}
-          value={filters.channel ?? null}
-          onChange={(value) => {
-            setFilter('channel', value ?? null);
-          }}
-        />
-        <Button
-          onClick={() => {
-            resetFilters();
-          }}
-        >
-          重置
-        </Button>
-      </Space>
-      <Table<Permission>
-        rowKey="code"
-        size="middle"
-        columns={columns}
-        dataSource={query.data?.items ?? []}
-        loading={query.isPending}
-        pagination={{
-          current: page,
-          pageSize,
-          total: query.data?.total ?? 0,
-          showSizeChanger: true,
-          pageSizeOptions: PAGE_SIZE_OPTIONS,
-          showTotal: (total) => `共 ${total} 条`,
-          onChange: (nextPage, nextPageSize) => {
-            if (nextPageSize !== pageSize) {
-              setPageSize(nextPageSize);
-              return;
-            }
-            setPage(nextPage);
-          },
-        }}
-      />
-    </Card>
+          : null
+      }
+      emptyText="暂无权限点"
+      toolbar={
+        <Space wrap>
+          <Input
+            aria-label="权限关键字"
+            allowClear
+            placeholder="搜索权限码或名称"
+            style={{ width: 280 }}
+            value={keyword}
+            onChange={(event) => {
+              const next = event.target.value;
+              setKeyword(next);
+              if (next === '') {
+                setFilter('keyword', null);
+              }
+            }}
+            onPressEnter={() => {
+              setFilter('keyword', keyword);
+            }}
+          />
+          <Button
+            type="primary"
+            onClick={() => {
+              setFilter('keyword', keyword);
+            }}
+          >
+            查询
+          </Button>
+          <Select<string>
+            aria-label="端别"
+            allowClear
+            placeholder="全部端别"
+            style={{ width: 160 }}
+            options={[...CHANNEL_OPTIONS]}
+            value={filters.channel ?? null}
+            onChange={(value) => {
+              setFilter('channel', value ?? null);
+            }}
+          />
+          <Button
+            onClick={() => {
+              resetFilters();
+            }}
+          >
+            重置
+          </Button>
+        </Space>
+      }
+      onPageChange={(nextPage, nextPageSize) => {
+        if (nextPageSize !== pageSize) {
+          setPageSize(nextPageSize);
+          return;
+        }
+        setPage(nextPage);
+      }}
+      onRetry={() => {
+        void query.refetch();
+      }}
+    />
   );
 }

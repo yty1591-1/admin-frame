@@ -12,6 +12,8 @@ export { PageSkeleton } from './page-skeleton';
 export type { PageSkeletonProps } from './page-skeleton';
 export { StatusTag } from './status-tag';
 export type { StatusTagProps, StatusTone } from './status-tag';
+export { TableShell } from './table-shell';
+export type { TableShellError, TableShellProps } from './table-shell';
 export { ThemeProvider } from './theme-provider';
 export type { ThemeProviderProps } from './theme-provider';
 export { themeTokens } from './tokens';
