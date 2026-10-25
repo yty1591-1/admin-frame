@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider } from 'react-router';
-import { ThemeProvider } from '@admin-frame/ui';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
+import { ThemeProvider } from '@admin-frame/ui';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
+import { RouterProvider } from 'react-router';
 import { AppErrorBoundary } from './AppErrorBoundary';
+import { AuthProvider } from './auth/AuthProvider';
 import { createAppRouter } from './router';
 
 export function App({ config }: { config: AppRuntimeConfig }) {
@@ -26,7 +27,9 @@ export function App({ config }: { config: AppRuntimeConfig }) {
     <AppErrorBoundary>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
+          <AuthProvider config={config}>
+            <RouterProvider router={router} />
+          </AuthProvider>
         </QueryClientProvider>
       </ThemeProvider>
     </AppErrorBoundary>

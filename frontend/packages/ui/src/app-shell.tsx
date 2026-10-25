@@ -12,6 +12,8 @@ export type AppShellProps = {
   menus?: readonly AppShellMenuEntry[] | undefined;
   selectedKey?: string | undefined;
   onSelect?: ((key: string) => void) | undefined;
+  /** 顶栏右侧操作区（如退出登录、账号信息）。 */
+  actions?: ReactNode;
   children: ReactNode;
 };
 
@@ -30,6 +32,7 @@ export function AppShell({
   menus = [],
   selectedKey,
   onSelect,
+  actions,
   children,
 }: AppShellProps) {
   const { Header, Sider, Content } = Layout;
@@ -62,6 +65,7 @@ export function AppShell({
             {title}
           </Typography.Title>
           {subtitle ? <Typography.Text type="secondary">{subtitle}</Typography.Text> : null}
+          {actions ? <div style={{ marginLeft: 'auto' }}>{actions}</div> : null}
         </Header>
         <Content style={{ padding: 24 }}>{children}</Content>
       </Layout>

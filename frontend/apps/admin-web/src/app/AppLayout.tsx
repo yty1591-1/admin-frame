@@ -1,12 +1,14 @@
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
-import { AppShell, type AppShellMenuEntry } from '@admin-frame/ui';
+import { AppShell, Button, type AppShellMenuEntry } from '@admin-frame/ui';
+import { useAuth } from './auth/auth-context';
 
 const ADMIN_MENUS: readonly AppShellMenuEntry[] = [{ key: '/', label: '工作台' }];
 
 export function AppLayout({ config }: { config: AppRuntimeConfig }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { signOut } = useAuth();
 
   return (
     <AppShell
@@ -17,6 +19,15 @@ export function AppLayout({ config }: { config: AppRuntimeConfig }) {
       onSelect={(key) => {
         void navigate(key);
       }}
+      actions={
+        <Button
+          onClick={() => {
+            void signOut();
+          }}
+        >
+          退出登录
+        </Button>
+      }
     >
       <Outlet />
     </AppShell>
