@@ -14,15 +14,46 @@ export const mfaChallengeSchema = z.object({
   mfa_ticket: z.string().min(1),
 });
 
+/** 密码已通过但尚未绑定 MFA：只携带绑定票据，不含任何业务令牌（§7.2.1）。 */
+export const mfaBindingRequiredSchema = z.object({
+  mfa_binding_required: z.literal(true),
+  mfa_setup_ticket: z.string().min(1),
+});
+
 export const loginOutcomeSchema = z.union([
   tokenPairSchema.transform((tokens): LoginOutcome => ({ kind: 'tokens', tokens })),
   mfaChallengeSchema.transform((challenge): LoginOutcome => ({ kind: 'mfa', challenge })),
+  mfaBindingRequiredSchema.transform((challenge): LoginOutcome => ({
+    kind: 'mfaSetup',
+    challenge,
+  })),
 ]);
 
 const dataScopeSchema = z.object({
   resource: z.string(),
   scope_type: z.enum(['all', 'merchant', 'self', 'merchant_set']),
   merchant_ids: z.array(z.string()).optional(),
+});
+
+export const mfaSetupDataSchema = z.object({
+  secret: z.string().min(1),
+  otpauth_uri: z.string().min(1),
+  recovery_codes: z.array(z.string().min(1)).min(1),
+});
+
+const authSessionSchema = z.object({
+  id: z.string().min(1),
+  current: z.boolean(),
+  status: z.enum(['active', 'rotated', 'revoked', 'expired']),
+  created_at: z.string(),
+  last_used_at: z.string(),
+  expires_at: z.string(),
+  idle_expires_at: z.string().optional(),
+  revoked_at: z.string().optional(),
+});
+
+export const authSessionListDataSchema = z.object({
+  items: z.array(authSessionSchema),
 });
 
 export const subjectPermissionsSchema = z.object({

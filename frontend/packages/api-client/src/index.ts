@@ -11,10 +11,14 @@ export type { AdminIamApi } from './endpoints/admin/iam.api';
 export type { BizAuthApi } from './endpoints/biz/auth.api';
 export type { BizIamApi } from './endpoints/biz/iam.api';
 export type {
+  AuthSession,
+  AuthSessionListData,
   BizSubjectPermissions,
   LoginOutcome,
   LoginRequest,
+  MFABindingRequired,
   MFAChallenge,
+  MFASetupData,
   SubjectPermissions,
   TokenPair,
 } from './types';
