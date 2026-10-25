@@ -11,3 +11,9 @@ export {
   type PermissionState,
 } from './permission-context';
 export { permissionSnapshotKeys } from './query-keys';
+export {
+  permissionChannelMeta,
+  permissionKindMeta,
+  permissionStatusMeta,
+  type PermissionMeta,
+} from './status';

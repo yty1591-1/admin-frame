@@ -7,12 +7,17 @@ import {
   Input,
   Select,
   Space,
+  StatusTag,
   Table,
-  Tag,
   Typography,
   type TableColumnsType,
 } from '@admin-frame/ui';
 import { useEffect, useState } from 'react';
+import {
+  permissionChannelMeta,
+  permissionKindMeta,
+  permissionStatusMeta,
+} from '../../entities/permission';
 import { useListParams } from '../../shared';
 import { usePermissionCatalog } from './use-permission-catalog';
 
@@ -23,18 +28,6 @@ const CHANNEL_OPTIONS = [
   { value: 'admin', label: 'A 端' },
   { value: 'biz', label: 'B 端' },
 ] as const;
-
-const CHANNEL_LABELS: Record<Permission['channel'], string> = {
-  admin: 'A 端',
-  biz: 'B 端',
-  both: '双端',
-};
-
-const KIND_LABELS: Record<Permission['kind'], string> = {
-  api: '接口',
-  menu: '菜单',
-  button: '按钮',
-};
 
 const PAGE_SIZE_OPTIONS = ['20', '50', '100'];
 
@@ -52,22 +45,26 @@ const columns: TableColumnsType<Permission> = [
     dataIndex: 'channel',
     key: 'channel',
     width: 100,
-    render: (channel: Permission['channel']) => CHANNEL_LABELS[channel],
+    render: (channel: Permission['channel']) => permissionChannelMeta[channel].label,
   },
   {
     title: '类型',
     dataIndex: 'kind',
     key: 'kind',
     width: 100,
-    render: (kind: Permission['kind']) => KIND_LABELS[kind],
+    render: (kind: Permission['kind']) => permissionKindMeta[kind].label,
   },
   {
     title: '状态',
     dataIndex: 'status',
     key: 'status',
     width: 100,
-    render: (status: Permission['status']) =>
-      status === 'active' ? <Tag color="green">启用</Tag> : <Tag>已废弃</Tag>,
+    render: (status: Permission['status']) => (
+      <StatusTag
+        tone={permissionStatusMeta[status].tone}
+        label={permissionStatusMeta[status].label}
+      />
+    ),
   },
 ];
 
