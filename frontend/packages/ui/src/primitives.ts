@@ -18,3 +18,6 @@ export {
   Tooltip,
   Typography,
 } from 'antd';
+
+/** 表格类型随组件一同从设计系统出口导出，避免业务代码直接依赖 antd（§11.1）。 */
+export type { TableColumnsType, TableProps } from 'antd';
