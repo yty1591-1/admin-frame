@@ -7,7 +7,9 @@ export type HttpClientOptions = {
   baseUrl: string;
   channel: Channel;
   getAccessToken?: (() => string | null) | undefined;
-  /** 40100 时触发上层单飞刷新（由 auth 包装配）。 */
+  /** 40100 时触发上层单飞刷新（由 auth 包装配）；返回 null 表示刷新失败。 */
+  refreshAccessToken?: (() => Promise<string | null>) | undefined;
+  /** 40100 的同步通知；保留给需要登出跳转的装配层。 */
   onUnauthorized?: (() => void) | undefined;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -79,6 +81,7 @@ export class HttpClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly getAccessToken: (() => string | null) | undefined;
+  private readonly refreshAccessToken: (() => Promise<string | null>) | undefined;
   private readonly onUnauthorized: (() => void) | undefined;
 
   constructor(options: HttpClientOptions) {
@@ -87,6 +90,7 @@ export class HttpClient {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.getAccessToken = options.getAccessToken;
+    this.refreshAccessToken = options.refreshAccessToken;
     this.onUnauthorized = options.onUnauthorized;
   }
 
@@ -158,7 +162,11 @@ export class HttpClient {
     throw lastError ?? new AppError({ kind: 'unknown', code: 0, message: '请求失败' });
   }
 
-  private async attempt(path: string, options: RequestOptions): Promise<Envelope> {
+  private async attempt(
+    path: string,
+    options: RequestOptions,
+    allowRefresh = true,
+  ): Promise<Envelope> {
     const url = this.buildUrl(path, options.query);
     const controller = new AbortController();
     const timeoutMs = options.timeoutMs ?? this.timeoutMs;
@@ -198,7 +206,7 @@ export class HttpClient {
         init.body = JSON.stringify(options.body);
       }
       const response = await this.fetchImpl(url, init);
-      return await this.parseResponse(response);
+      return await this.parseResponse(response, path, options, allowRefresh);
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -234,7 +242,12 @@ export class HttpClient {
     return url.toString();
   }
 
-  private async parseResponse(response: Response): Promise<Envelope> {
+  private async parseResponse(
+    response: Response,
+    path: string,
+    options: RequestOptions,
+    allowRefresh: boolean,
+  ): Promise<Envelope> {
     if (response.status === 204) {
       return {
         code: 0,
@@ -274,6 +287,13 @@ export class HttpClient {
       const errorCode = code !== 0 ? code : codeFromStatus(response.status);
       if (code === 40100) {
         this.onUnauthorized?.();
+        if (allowRefresh && options.auth !== false) {
+          const refreshed = await this.tryRefresh();
+          if (refreshed) {
+            // 单飞刷新成功后仅重放当前请求一次，避免刷新令牌重放（§10.3）。
+            return this.attempt(path, options, false);
+          }
+        }
       }
       throw new AppError({
         kind: code !== 0 ? kindFromCode(code) : kindFromStatus(response.status),
@@ -292,5 +312,17 @@ export class HttpClient {
       traceId,
       httpStatus: response.status,
     };
+  }
+
+  /** 刷新失败即视为会话失效；由 RefreshManager 负责清理与通知。 */
+  private async tryRefresh(): Promise<string | null> {
+    if (!this.refreshAccessToken) {
+      return null;
+    }
+    try {
+      return await this.refreshAccessToken();
+    } catch {
+      return null;
+    }
   }
 }

@@ -90,6 +90,63 @@ describe('HttpClient', () => {
     expect(outcome.kind).toBe('tokens');
   });
 
+  it('会话列表按契约解析', async () => {
+    server.use(
+      mswHttp.get(`${BASE_URL}/admin/v1/auth/sessions`, () =>
+        ok({
+          items: [
+            {
+              id: 'session-1',
+              current: true,
+              status: 'active',
+              created_at: '2026-01-01T00:00:00Z',
+              last_used_at: '2026-01-01T00:00:00Z',
+              expires_at: '2026-01-01T01:00:00Z',
+            },
+          ],
+        }),
+      ),
+    );
+    const client = createAdminClient({ baseUrl: BASE_URL, getAccessToken: () => 'access-1' });
+
+    const sessions = await client.auth.listSessions();
+
+    expect(sessions.items).toHaveLength(1);
+    expect(sessions.items[0]?.current).toBe(true);
+  });
+
+  it('MFA 绑定初始化返回密钥与恢复码', async () => {
+    server.use(
+      mswHttp.post(`${BASE_URL}/admin/v1/auth/mfa/setup`, () =>
+        ok({
+          secret: 'JBSWY3DPEHPK3PXP',
+          otpauth_uri: 'otpauth://totp/admin?secret=JBSWY3DPEHPK3PXP',
+          recovery_codes: ['code-1', 'code-2'],
+        }),
+      ),
+    );
+    const client = createAdminClient({ baseUrl: BASE_URL, getAccessToken: () => 'access-1' });
+
+    const setup = await client.auth.setupMfa();
+
+    expect(setup.recovery_codes).toEqual(['code-1', 'code-2']);
+  });
+
+  it('两步 MFA 校验以票据换取令牌', async () => {
+    server.use(
+      mswHttp.post(`${BASE_URL}/admin/v1/auth/mfa/verify`, async ({ request }) => {
+        const body = (await request.json()) as { mfa_ticket?: string; code?: string };
+        expect(body).toEqual({ mfa_ticket: 'ticket-1', code: '123456' });
+        return ok(tokenPairPayload);
+      }),
+    );
+    const client = createAdminClient({ baseUrl: BASE_URL });
+
+    const tokens = await client.auth.verifyMfaLogin('ticket-1', '123456');
+
+    expect(tokens.access_token).toBe('access-1');
+  });
+
   it('业务错误映射为 AppError 并保留 trace_id', async () => {
     server.use(mswHttp.get(`${BASE_URL}/admin/v1/iam/me/permissions`, () => fail(40300, 403)));
     const client = createAdminClient({ baseUrl: BASE_URL });
@@ -111,6 +168,52 @@ describe('HttpClient', () => {
 
     await expect(client.iam.mePermissions()).rejects.toBeInstanceOf(AppError);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('40100 刷新成功后重放当前请求一次', async () => {
+    let calls = 0;
+    server.use(
+      mswHttp.get(`${BASE_URL}/admin/v1/iam/me/permissions`, ({ request }) => {
+        calls += 1;
+        return request.headers.get('authorization') === 'Bearer access-2'
+          ? ok(permissionsPayload)
+          : fail(40100, 401);
+      }),
+    );
+    let accessToken = 'access-1';
+    const refreshAccessToken = vi.fn(() => {
+      accessToken = 'access-2';
+      return Promise.resolve(accessToken);
+    });
+    const client = createAdminClient({
+      baseUrl: BASE_URL,
+      getAccessToken: () => accessToken,
+      refreshAccessToken,
+    });
+
+    const snapshot = await client.iam.mePermissions();
+
+    expect(calls).toBe(2);
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(snapshot.subject_id).toBe('staff-1');
+  });
+
+  it('刷新失败时保持 40100 且不无限重放', async () => {
+    let calls = 0;
+    server.use(
+      mswHttp.get(`${BASE_URL}/admin/v1/iam/me/permissions`, () => {
+        calls += 1;
+        return fail(40100, 401);
+      }),
+    );
+    const client = createAdminClient({
+      baseUrl: BASE_URL,
+      getAccessToken: () => 'access-1',
+      refreshAccessToken: () => Promise.reject(new Error('replay detected')),
+    });
+
+    await expect(client.iam.mePermissions()).rejects.toMatchObject({ code: 40100 });
+    expect(calls).toBe(1);
   });
 
   it('响应数据不符合契约时按服务端错误处理', async () => {
