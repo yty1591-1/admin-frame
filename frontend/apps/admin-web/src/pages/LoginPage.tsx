@@ -1,10 +1,11 @@
-import { isAppError } from '@admin-frame/api-client';
 import type { MFASetupData } from '@admin-frame/api-client';
+import { isAppError } from '@admin-frame/api-client';
 import {
   Alert,
   Button,
   Card,
   Divider,
+  FormField,
   Input,
   PageLoading,
   Space,
@@ -26,6 +27,11 @@ type LoginValues = z.infer<typeof loginSchema>;
 type LoginError = {
   message: string;
   traceId: string | undefined;
+};
+
+type LoginFieldErrors = {
+  subject?: string | undefined;
+  password?: string | undefined;
 };
 
 /** credentials：密码步骤；mfa：两步登录；mfaSetup：登录前强制绑定（§7.2.1）。 */
@@ -60,8 +66,6 @@ const pageStyle: CSSProperties = {
   justifyContent: 'center',
   background: '#f5f5f5',
 };
-
-const fieldStyle: CSSProperties = { display: 'block', marginBottom: 4 };
 
 const recoveryListStyle: CSSProperties = {
   display: 'grid',
@@ -128,6 +132,7 @@ export default function LoginPage() {
   const [setup, setSetup] = useState<MFASetupData | null>(null);
   const [recoverySaved, setRecoverySaved] = useState(false);
   const [error, setError] = useState<LoginError | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const { register, handleSubmit, formState } = useForm<LoginValues>({
@@ -149,14 +154,21 @@ export default function LoginPage() {
     setSetup(null);
     setRecoverySaved(false);
     setCode('');
+    setFieldErrors({});
   };
 
   const submit = handleSubmit(async (values) => {
     const parsed = loginSchema.safeParse(values);
     if (!parsed.success) {
+      const paths = parsed.error.issues.map((issue) => issue.path[0]);
+      setFieldErrors({
+        ...(paths.includes('subject') ? { subject: '请输入账号' } : {}),
+        ...(paths.includes('password') ? { password: '请输入密码' } : {}),
+      });
       setError({ message: '请输入账号和密码', traceId: undefined });
       return;
     }
+    setFieldErrors({});
     setError(null);
     try {
       const result = await runtime.login(parsed.data.subject, parsed.data.password);
@@ -236,18 +248,22 @@ export default function LoginPage() {
         {showCodeForm ? (
           <form onSubmit={(event) => void submitCode(event)} noValidate>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <label htmlFor="mfa-code" style={fieldStyle}>
-                动态码
-              </label>
-              <Input
-                id="mfa-code"
-                autoComplete="one-time-code"
-                inputMode="numeric"
-                value={code}
-                onChange={(event) => {
-                  setCode(event.target.value);
-                }}
-              />
+              <FormField
+                label="动态码"
+                htmlFor="mfa-code"
+                required
+                hint="6 位数字动态码或一次性恢复码"
+              >
+                <Input
+                  id="mfa-code"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  value={code}
+                  onChange={(event) => {
+                    setCode(event.target.value);
+                  }}
+                />
+              </FormField>
               <Button type="primary" htmlType="submit" block loading={verifying}>
                 验证
               </Button>
@@ -284,18 +300,21 @@ export default function LoginPage() {
         {step === 'credentials' ? (
           <form onSubmit={(event) => void submit(event)} noValidate>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <label htmlFor="login-subject" style={fieldStyle}>
-                账号
-              </label>
-              <Input id="login-subject" autoComplete="username" {...register('subject')} />
-              <label htmlFor="login-password" style={fieldStyle}>
-                密码
-              </label>
-              <Input.Password
-                id="login-password"
-                autoComplete="current-password"
-                {...register('password')}
-              />
+              <FormField label="账号" htmlFor="login-subject" required error={fieldErrors.subject}>
+                <Input id="login-subject" autoComplete="username" {...register('subject')} />
+              </FormField>
+              <FormField
+                label="密码"
+                htmlFor="login-password"
+                required
+                error={fieldErrors.password}
+              >
+                <Input.Password
+                  id="login-password"
+                  autoComplete="current-password"
+                  {...register('password')}
+                />
+              </FormField>
               <Button type="primary" htmlType="submit" block loading={formState.isSubmitting}>
                 登录
               </Button>

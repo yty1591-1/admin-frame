@@ -4,7 +4,7 @@ import { afterEach } from 'vitest';
 
 // jsdom 未实现 matchMedia，antd 响应式组件（Table 分页等）依赖它。
 if (typeof window.matchMedia !== 'function') {
-  window.matchMedia = ((query: string) => ({
+  window.matchMedia = (query: string) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -13,10 +13,9 @@ if (typeof window.matchMedia !== 'function') {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
     dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
+  });
 }
 
 afterEach(() => {
   cleanup();
 });
-
