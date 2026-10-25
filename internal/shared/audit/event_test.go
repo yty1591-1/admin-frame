@@ -72,6 +72,7 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 	want := map[string]bool{
 		audit.ActionAuthLogin:           true,
 		audit.ActionAuthLoginFailed:     true,
+		audit.ActionAuthAccountCreated:  true,
 		audit.ActionAuthLogout:          true,
 		audit.ActionAuthTokenRefresh:    true,
 		audit.ActionAuthTokenReused:     true,

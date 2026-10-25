@@ -4,6 +4,7 @@ package audit
 const (
 	ActionAuthLogin           = "auth.login"
 	ActionAuthLoginFailed     = "auth.login_failed"
+	ActionAuthAccountCreated  = "auth.account.created"
 	ActionAuthAccountLocked   = "auth.account.locked"
 	ActionAuthAccountDisabled = "auth.account.disabled"
 	ActionAuthLogout          = "auth.logout"
@@ -28,6 +29,7 @@ func KnownActions() []string {
 	return []string{
 		ActionAuthLogin,
 		ActionAuthLoginFailed,
+		ActionAuthAccountCreated,
 		ActionAuthAccountLocked,
 		ActionAuthAccountDisabled,
 		ActionAuthLogout,
