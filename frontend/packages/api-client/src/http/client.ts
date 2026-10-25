@@ -11,6 +11,8 @@ export type HttpClientOptions = {
   refreshAccessToken?: (() => Promise<string | null>) | undefined;
   /** 40100 的同步通知；保留给需要登出跳转的装配层。 */
   onUnauthorized?: (() => void) | undefined;
+  /** 40300 的同步通知，装配层据此强制刷新权限快照（§7.2）。 */
+  onForbidden?: ((path: string) => void) | undefined;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
@@ -83,6 +85,7 @@ export class HttpClient {
   private readonly getAccessToken: (() => string | null) | undefined;
   private readonly refreshAccessToken: (() => Promise<string | null>) | undefined;
   private readonly onUnauthorized: (() => void) | undefined;
+  private readonly onForbidden: ((path: string) => void) | undefined;
 
   constructor(options: HttpClientOptions) {
     this.channel = options.channel;
@@ -92,6 +95,7 @@ export class HttpClient {
     this.getAccessToken = options.getAccessToken;
     this.refreshAccessToken = options.refreshAccessToken;
     this.onUnauthorized = options.onUnauthorized;
+    this.onForbidden = options.onForbidden;
   }
 
   /** 成功时返回契约类型 T；失败统一抛 AppError。 */
@@ -294,6 +298,10 @@ export class HttpClient {
             return this.attempt(path, options, false);
           }
         }
+      }
+      if (errorCode === 40300) {
+        // 权限可能刚被收回：通知装配层刷新快照，而不是在这里自动重试（§7.2）。
+        this.onForbidden?.(path);
       }
       throw new AppError({
         kind: code !== 0 ? kindFromCode(code) : kindFromStatus(response.status),

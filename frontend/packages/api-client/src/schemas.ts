@@ -56,6 +56,24 @@ export const authSessionListDataSchema = z.object({
   items: z.array(authSessionSchema),
 });
 
+const permissionSchema = z.object({
+  code: z.string().min(1),
+  name: z.string(),
+  channel: z.enum(['admin', 'biz', 'both']),
+  kind: z.enum(['api', 'menu', 'button']),
+  data_bearing: z.boolean(),
+  status: z.enum(['active', 'deprecated']),
+  sort: z.number().int(),
+  parent_code: z.string().optional(),
+  path: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const permissionListDataSchema = z.object({
+  items: z.array(permissionSchema),
+  total: z.number().int().nonnegative(),
+});
+
 export const subjectPermissionsSchema = z.object({
   channel: z.enum(['admin', 'biz']),
   subject_type: z.enum(['staff', 'merchant_staff']),

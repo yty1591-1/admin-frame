@@ -288,6 +288,56 @@ describe('HttpClient', () => {
     ).rejects.toMatchObject({ kind: 'validation', code: 40000 });
   });
 
+  it('40300 触发权限快照刷新回调', async () => {
+    server.use(mswHttp.get(`${BASE_URL}/admin/v1/iam/permissions`, () => fail(40300, 403)));
+    const onForbidden = vi.fn();
+    const client = createAdminClient({
+      baseUrl: BASE_URL,
+      getAccessToken: () => 'access-1',
+      onForbidden,
+    });
+
+    await expect(client.iam.listPermissions()).rejects.toMatchObject({ code: 40300 });
+    expect(onForbidden).toHaveBeenCalledWith('/admin/v1/iam/permissions');
+  });
+
+  it('权限目录按分页参数请求并解析契约', async () => {
+    server.use(
+      mswHttp.get(`${BASE_URL}/admin/v1/iam/permissions`, ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get('page')).toBe('2');
+        expect(url.searchParams.get('page_size')).toBe('50');
+        expect(url.searchParams.get('keyword')).toBe('iam');
+        expect(url.searchParams.get('channel')).toBe('admin');
+        return ok({
+          items: [
+            {
+              code: 'iam:role:read',
+              name: '查看角色',
+              channel: 'both',
+              kind: 'api',
+              data_bearing: false,
+              status: 'active',
+              sort: 10,
+            },
+          ],
+          total: 1,
+        });
+      }),
+    );
+    const client = createAdminClient({ baseUrl: BASE_URL, getAccessToken: () => 'access-1' });
+
+    const page = await client.iam.listPermissions({
+      channel: 'admin',
+      keyword: 'iam',
+      page: 2,
+      pageSize: 50,
+    });
+
+    expect(page.total).toBe(1);
+    expect(page.items[0]?.code).toBe('iam:role:read');
+  });
+
   it('204 无响应体按空结果处理', async () => {
     server.use(
       mswHttp.post(
