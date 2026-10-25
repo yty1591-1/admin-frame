@@ -86,7 +86,7 @@
 | 单元/组件测试 | Vitest + Testing Library + MSW | MSW 处理器与契约类型对齐 |
 | E2E | Playwright | 按端分目录，复用后端真实进程或契约 Mock |
 | 代码质量 | ESLint 9 Flat + typescript-eslint（type-checked）+ jsx-a11y + 边界插件 | `--max-warnings=0` |
-| 格式 | Prettier + Stylelint | 只检查不写回的门禁模式与后端 `fmt-check` 对齐 |
+| 格式 | Prettier | 只检查不写回的门禁模式与后端 `fmt-check` 对齐；样式文件同样由 Prettier 处理 |
 | 安全 | CSP、内存优先 Token、单飞刷新、无第三方脚本 | 细则见第十章 |
 | 部署 | 静态资源 + 同源 Ingress + Nginx 非 root 镜像 | 与 API_STANDARDS §3.1 域名/前缀对齐 |
 | 仓库 | 同仓 `frontend/` monorepo | 与 OpenAPI 源、CI 同 commit 锁定，契约零漂移 |
@@ -144,26 +144,31 @@ apps/biz-web  ─┼─► packages/api-client ─► packages/shared
 ```text
 frontend/
 ├── pnpm-workspace.yaml
-├── package.json                     # 根脚本：lint / typecheck / test / build / gen:api / size
+├── package.json                     # 根脚本：format / lint / typecheck / boundaries / test / build / gen:api / size / license / audit / e2e
 ├── pnpm-lock.yaml                   # 必须入库，CI 使用 --frozen-lockfile
 ├── .npmrc                           # save-exact=true；strict-peer-dependencies=true
 ├── tsconfig.base.json               # strict 基线，供各包 extends
+├── tsconfig.json                    # 根解决方案配置（供 IDE 与 ESLint 解析）
 ├── eslint.config.js                 # Flat Config 入口（引用 packages/config）
-├── .prettierrc.json
-├── dependency-cruiser.js            # 分层/跨包边界规则
+├── prettier.config.mjs              # 格式配置（.prettierignore 为排除清单）
+├── dependency-cruiser.cjs           # 分层/跨包边界规则
+├── playwright.config.ts             # E2E 配置
+├── vitest.config.ts                 # 单测配置
+├── vitest.setup.ts                  # 单测全局 setup
+├── license-allowlist.json           # 许可证白名单（FE-17 / LIC）
+├── scripts/                         # gen-api.mjs / check-size.mjs / check-licenses.mjs
 ├── apps/
 │   ├── admin-web/                   # A 端：平台运营
 │   │   ├── index.html
 │   │   ├── vite.config.ts
 │   │   ├── tsconfig.json
-│   │   ├── .env.example             # 仅非敏感项
-│   │   ├── src/
-│   │   │   ├── app/                 # 启动、Provider、路由、布局：只装配不写业务
-│   │   │   ├── pages/               # 路由级页面组合（login、iam、audit、sessions…）
-│   │   │   ├── features/            # 业务能力切片（auth、iam-roles、iam-bindings、approval…）
-│   │   │   ├── entities/            # 业务实体类型与展示（principal、role、permission…）
-│   │   │   └── shared/              # 本端通用 hooks/lib/constants（无业务语义）
-│   │   └── tests/                   # setup、MSW server、渲染辅助
+│   │   ├── public/config.js         # 运行期配置（非敏感，部署时可覆盖）
+│   │   └── src/
+│   │       ├── app/                 # 启动、Provider、路由、布局：只装配不写业务
+│   │       ├── pages/               # 路由级页面组合（login、iam、audit、sessions…）
+│   │       ├── features/            # 业务能力切片（auth、iam-roles、iam-bindings、approval…）
+│   │       ├── entities/            # 业务实体类型与展示（principal、role、permission…）
+│   │       └── shared/              # 本端通用 hooks/lib/constants（无业务语义）
 │   └── biz-web/                     # B 端：商户后台（结构同上，差异仅在装配与页面）
 │       └── ...
 ├── packages/
@@ -171,19 +176,23 @@ frontend/
 │   │   └── src/
 │   │       ├── generated/           # 生成物（入库、带生成头、禁止手改）
 │   │       ├── http/                # fetch 封装、超时、重试、错误归一、trace_id
-│   │       ├── endpoints/admin/     # A 端接口函数
-│   │       ├── endpoints/biz/       # B 端接口函数
-│   │       └── errors/              # 业务错误码映射
+│   │       ├── endpoints/admin/     # A 端接口函数（*.api.ts）
+│   │       ├── endpoints/biz/       # B 端接口函数（*.api.ts）
+│   │       ├── errors/              # 业务错误码映射
+│   │       ├── admin-client.ts      # createAdminClient（A 端工厂）
+│   │       ├── biz-client.ts        # createBizClient（B 端工厂）
+│   │       └── types.ts             # 面向业务的领域类型别名
 │   ├── auth/                        # 令牌存储、单飞刷新、登录态、权限守卫原语
 │   ├── ui/                          # 设计令牌、基础组件封装、状态组件
-│   ├── shared/                      # 环境、日期、金额、脱敏、通用工具（无业务）
-│   ├── config/                      # tsconfig / eslint / prettier / vitest 预设
+│   ├── shared/                      # 运行期配置、日期、金额、脱敏、通用工具（无业务）
+│   ├── config/                      # ESLint / Vitest 预设（tsconfig 基线在根 tsconfig.base.json）
 │   └── testing/                     # MSW handlers、fixtures、renderWithProviders
 └── e2e/
     ├── admin/                       # Playwright 用例（A 端）
-    ├── biz/                         # Playwright 用例（B 端）
-    └── fixtures/
+    └── biz/                         # Playwright 用例（B 端）
 ```
+
+> `features/`、`entities/`、`shared/` 与 `e2e/fixtures/` 自 P1 起按需创建，P0 仅落地 `app` 与 `pages`。测试渲染辅助统一放在 `packages/testing`，各 app 不再单设 `tests/` 目录。
 
 **命名约定**
 
@@ -198,6 +207,7 @@ frontend/
 | 常量 | 全大写 + 下划线（导出） | `MAX_PAGE_SIZE` |
 
 > 组件文件用 PascalCase 是为了与 React DevTools 一致；其余文件统一 kebab-case，避免 Windows/macOS 大小写不敏感导致的重命名冲突。
+> `packages/ui` 内的基础组件沿用 kebab-case 文件名（如 `empty-state.tsx`），对外导出名保持 PascalCase，属于 FE-05 的既有例外。
 
 ---
 
@@ -224,7 +234,7 @@ app → pages → features → entities → shared
 
 - 同层不允许横向 import：`features/iam-roles` **不得** import `features/iam-bindings`。需要组合时由 `pages` 组合，或把共用部分下沉到 `entities`/`shared`。
 - 每个 feature 必须有 `index.ts` 公共出口；跨层只能从出口导入，禁止深链 `features/x/internal/...`。
-- `packages` 内部依赖图固定为：`shared ← ui`、`shared ← api-client ← auth`、`api-client ← testing`；禁止反向或成环。
+- `packages` 内部依赖图固定为：`shared ← api-client ← auth`、`api-client ← testing`、`ui ← testing`（测试渲染辅助）；`ui` 不依赖接口与鉴权包。禁止反向或成环。
 
 ### 5.3 强制手段
 
@@ -255,7 +265,7 @@ app → pages → features → entities → shared
 
 **Channel 固定**
 
-- `VITE_CHANNEL` 在构建期注入（`admin` / `biz`），启动时与允许值比对，不一致直接渲染致命错误页并上报。
+- `__CHANNEL__` 由 Vite `define` 在构建期注入（`admin` / `biz`）；启动时与运行期 `config.js` 的 `channel` 比对，不一致直接渲染致命错误页并上报（`loadRuntimeConfig`）。
 - 禁止通过 URL、localStorage 或运行时参数切换端别；与后端“装配期固定 Channel”保持一致，防止跨端提权。
 - `packages/api-client` 提供 `createAdminClient()` / `createBizClient()` 两个工厂，类型与路径在编译期分离；app 只能使用对应工厂。
 
@@ -296,7 +306,7 @@ type RouteMeta = {
 
 - 权限快照 60s 内复用；收到 `40300` 时强制刷新一次快照并重新判定，仍失败则 403。
 - 权限接口不可用（`50300`/网络失败）时 **fail-closed**：显示不可用页，不允许“先放行再补校验”。
-- 菜单由静态路由表 + 权限快照过滤生成；后端尚未提供菜单树（见第十八章），不请求不存在的接口。
+- 菜单由静态路由表 + 权限快照过滤生成；后端 `/{channel}/v1/iam/permissions/tree` 提供权限点树（`kind` 含 `menu`/`button`），可作为权限目录与授权页的数据源，但不含图标/排序/布局等菜单元数据，因此菜单结构仍以路由表为准。
 
 ### 7.3 按钮级与高风险操作
 
@@ -373,7 +383,7 @@ features/*/hooks（TanStack Query）
 - 生成命令固定版本，生成物按 GEN-02 带 `Code generated` / `DO NOT EDIT` 头并入库；CI 在 `typecheck`/`build` 前重新生成并执行 `git diff --exit-code`，发现漂移即阻断（GEN-01/GEN-03）。
 - 生成目录在 [MANIFEST](./codegen/MANIFEST.md) 登记为 `frontend-api-ts`；首次产出文件时将状态由 `reserved` 改为 `active`。
 - `packages/api-client` 的公共出口只导出**领域类型别名**与 endpoint 函数；业务代码禁止直接 import `generated/*`。
-- 同仓即同 commit：构建时注入 `VITE_CONTRACT_COMMIT=$(git rev-parse --short HEAD)`，在“关于/诊断”页展示；跨仓部署时以 `dist/openapi/contract-commit.txt` 核对（API_STANDARDS §3.2）。
+- 同仓即同 commit：构建时由 Vite `define` 注入 `__CONTRACT_COMMIT__`（取自 `git rev-parse --short HEAD`），在“关于/诊断”页展示；跨仓部署时以 `dist/openapi/contract-commit.txt` 核对（API_STANDARDS §3.2）。
 - 契约有 breaking 时，前端升级必须与后端 major 版本同 MR 或同发布窗口，禁止“先合并前端、后补后端”。
 
 ### 9.2 HTTP 管线（唯一出口）
@@ -451,14 +461,14 @@ type AppError = {
 
 - **禁止 `localStorage` 存储任何令牌**，避免长期暴露于 XSS。
 - 过渡方案必须在发布说明中标注风险与到期时间；后端支持 HttpOnly Cookie 后，通过 `TokenStore` 适配器切换，业务代码零改动。
-- A 端可配置 `VITE_TOKEN_MODE=memory`，实现“刷新页面即重新登录”的最高安全模式。
+- `TokenStore` 支持 `memory` / `session` 两种模式（构造参数），A 端可在装配层切换为 `memory`，实现“刷新页面即重新登录”的最高安全模式；默认按过渡方案使用 `session`。
 
 ### 10.3 单飞刷新与多标签页
 
 后端刷新令牌是**一次性轮换**，旧令牌再次出现会撤销整条会话链。因此：
 
 - 任意时刻只允许一个刷新请求（**single-flight**）；其余 401 请求排队等待刷新结果。
-- 多标签页通过 `BroadcastChannel` 同步令牌更新与登出事件；使用 `navigator.locks`（可用时）做跨 Tab 刷新互斥，避免两个 Tab 同时轮换导致重放。
+- 多标签页跨 Tab 刷新互斥使用 `navigator.locks`（可用时），避免两个 Tab 同时轮换导致重放；`BroadcastChannel` 令牌更新与登出事件同步为 P1 落地项，当前尚未接入。
 - 刷新失败、收到 `40100`（非登录接口）或检测到会话被撤销：清理内存/存储、清空 Query 缓存、广播登出、跳转登录页。
 - 登出：调用 `logout`（幂等）→ 清理本地会话 → `queryClient.clear()` → 跳转；安全事件使用 `logout-all`。
 
@@ -481,7 +491,7 @@ type AppError = {
 | 点击劫持 | `frame-ancestors 'none'` + `X-Frame-Options: DENY` |
 | 引用策略 | `Referrer-Policy: strict-origin-when-cross-origin`；`Permissions-Policy` 关闭摄像头/麦克风/定位（按需显式开启） |
 | Source Map | 生产不公开；仅上传私有监控平台 |
-| 敏感信息 | `VITE_*` 全部视为公开；禁止任何密钥、内部地址、测试账号进入前端产物 |
+| 敏感信息 | 构建期常量与运行期 `config.js` 全部视为公开；禁止任何密钥、内部地址、测试账号进入前端产物 |
 | 依赖 | 锁文件入库；高危漏洞阻断；许可证白名单；SBOM 可选 |
 
 ### 10.6 会话与账号安全交互
@@ -564,8 +574,8 @@ type AppError = {
 
 | 指标 | A 端 | B 端 | 测量方式 |
 |---|---|---|---|
-| 首屏 JS（gzip） | ≤ 300 KB | ≤ 260 KB | `size-limit` |
-| 单路由 chunk（gzip） | ≤ 120 KB | ≤ 120 KB | `size-limit` / 构建报告 |
+| 首屏 JS（gzip） | ≤ 300 KB | ≤ 260 KB | `scripts/check-size.mjs`（统计 index.html 直接引用的入口与 preload chunk） |
+| 单路由 chunk（gzip） | ≤ 120 KB | ≤ 120 KB | `scripts/check-size.mjs`（逐 chunk gzip 校验） |
 | LCP（P75，4G） | ≤ 2.5s | ≤ 2.5s | Lighthouse CI |
 | INP（P75） | ≤ 200ms | ≤ 200ms | RUM |
 | CLS | ≤ 0.1 | ≤ 0.1 | Lighthouse CI |
@@ -575,7 +585,7 @@ type AppError = {
 ### 13.2 优化要求
 
 - 路由级懒加载 + 组件级懒加载（重型编辑器、图表）。
-- `manualChunks` 拆分 React、AntD、业务公共依赖；避免单 chunk 过大。
+- `manualChunks` 只拆分入口必然加载的 vendor（React、React Router、Zod、TanStack Query、Zustand）；Ant Design 等按需组件保持随路由懒加载自然分片，禁止为通过体积门禁把 `antd` 提前并入入口 chunk。
 - 列表翻页使用 `placeholderData` 保留旧数据，避免闪烁。
 - 图片走 CDN，按需 `avif/webp`、`loading="lazy"`、明确宽高。
 - 预取：菜单 hover / 路由 intent 预取代码与关键查询。
@@ -589,7 +599,7 @@ type AppError = {
 
 | 类型 | 工具 | 范围 | 门禁 |
 |---|---|---|---|
-| 单元测试 | Vitest | 纯函数、格式化、权限判定、错误映射 | 覆盖率 ≥ 70%（行），关键包 ≥ 85% |
+| 单元测试 | Vitest | 纯函数、格式化、权限判定、错误映射 | 覆盖率 ≥ 70%（行/函数/分支/语句，统计范围 `packages/*`） |
 | 组件测试 | Vitest + RTL + user-event | 表单校验、表格交互、权限隐藏、错误态 | 同上 |
 | 契约 Mock | MSW | 基于生成类型构造响应；覆盖成功/4xx/5xx/超时 | CI 必须通过 |
 | E2E | Playwright | 登录/MFA、菜单权限、IAM 审批、B 端租户隔离、关键 CRUD | PR 跑 smoke；全量 nightly |
@@ -634,13 +644,13 @@ type AppError = {
 | FE-13 | 生产禁止 `console.*`、`debugger`、公开 Source Map | ESLint + 构建配置 |
 | FE-14 | 禁止 `dangerouslySetInnerHTML`；必要时白名单净化并注释理由 | ESLint + Review |
 | FE-15 | 可访问性：表单 label、焦点管理、对比度、键盘可达 | axe + Review |
-| FE-16 | `VITE_*` 不得包含任何密钥/内部地址/测试账号 | gitleaks + Review |
+| FE-16 | 构建期常量与运行期配置不得包含任何密钥/内部地址/测试账号 | gitleaks + Review |
 | FE-17 | 依赖精确版本 + 锁文件；新增依赖须说明用途与许可证 | `pnpm-lock` + license 门禁 |
 | FE-18 | 覆盖率与必测场景达标；禁止无 issue 的 skip | `pnpm test:ci` |
-| FE-19 | 体积预算达标 | `size-limit` |
+| FE-19 | 体积预算达标 | `pnpm size`（`scripts/check-size.mjs`） |
 | FE-20 | 架构/契约/安全变更同步更新本文、ADR 与 README 引用 | Review |
 
-> 前端门禁 ID 沿用后端“硬约束编号”风格，落地后在 CI_STANDARDS 增补映射表，保持本地与平台一致。
+> 前端门禁 ID 沿用后端“硬约束编号”风格；[CI_STANDARDS](./CI_STANDARDS.md) 已建立 FE-01～FE-20 映射，新增或调整约束时须同步更新两处，保持本地与平台一致。
 
 ---
 
@@ -657,8 +667,8 @@ make frontend-typecheck   # tsc --noEmit（全部 workspace）
 make frontend-boundaries  # dependency-cruiser
 make frontend-test        # vitest run --coverage
 make frontend-build       # 两个 app 生产构建
-make frontend-size        # size-limit
-make frontend-audit       # OSV/pnpm audit + 许可证
+make frontend-size        # 体积预算（scripts/check-size.mjs）
+make frontend-audit       # pnpm audit --audit-level=high + 许可证白名单
 make frontend-e2e         # Playwright（可选，需本地后端）
 make frontend-ci          # 以上必跑项聚合
 ```
@@ -675,9 +685,9 @@ make frontend-ci          # 以上必跑项聚合
 | 类型 | `pnpm typecheck` | 是 |
 | 测试 | `pnpm test:ci`（coverage + 阈值） | 是 |
 | 构建 | `pnpm build`（admin + biz） | 是 |
-| 体积 | `pnpm size` | 是 |
-| 依赖安全 | OSV-Scanner / `pnpm audit --audit-level=high` | 是 |
-| 许可证 | `license-checker` + 仓库允许/禁止列表 | 是 |
+| 体积 | `pnpm size`（gzip 体积预算脚本） | 是 |
+| 依赖安全 | `pnpm audit --audit-level=high` | 是 |
+| 许可证 | `pnpm license`（`pnpm licenses list` + `license-allowlist.json`） | 是 |
 | E2E smoke | Playwright（admin 登录 + 权限 + biz 隔离） | 是（可拆独立 job） |
 
 - Node 20（与现有 `openapi-docs` job 一致）；pnpm 版本由根 `packageManager` 字段钉扎。
@@ -691,8 +701,8 @@ make frontend-ci          # 以上必跑项聚合
 
 - 静态产物：部署到 CDN/对象存储或 Nginx 镜像；镜像 tag 使用 semver/sha，禁止 `latest`（RELS-01）。
 - 镜像扫描：Trivy 检查 OS 包与静态文件；命中 `CRITICAL/HIGH` 失败（RELS-06）。
-- 版本注入：`VITE_APP_VERSION` / `VITE_CONTRACT_COMMIT` / 构建时间；“关于”页可核对。
-- Helm：`deploy/helm/admin-frame` 增加前端 Deployment/Ingress（或外部静态托管配置），与 A/B API 独立发布、独立回滚。
+- 版本注入：`__APP_VERSION__` / `__CONTRACT_COMMIT__` / 构建时间（Vite `define`）；“关于”页可核对。
+- Helm：`deploy/helm/admin-frame` 增加前端 Deployment/Ingress（或外部静态托管配置），与 A/B API 独立发布、独立回滚；当前模板尚无前端工作负载，P4 落地。
 - 发布顺序：后端先发布兼容契约 → 前端再发布；回滚时前端回退到上一静态版本，`index.html` 禁止长缓存。
 
 ---
@@ -703,13 +713,13 @@ make frontend-ci          # 以上必跑项聚合
 
 | 层 | 内容 | 是否敏感 |
 |---|---|---|
-| 构建期 `VITE_*` | `VITE_CHANNEL`、`VITE_APP_NAME`、`VITE_TOKEN_MODE`、监控采样率 | 否（全部公开） |
-| 运行期 `/config.js` | `apiBaseUrl`、`env`、功能开关、监控 DSN | 否 |
+| 构建期常量（Vite `define`） | `__CHANNEL__`、`__APP_VERSION__`、`__CONTRACT_COMMIT__` | 否（全部公开） |
+| 运行期 `/config.js` | `apiBaseUrl`、`env`、`channel`、功能开关 `features`、监控 `monitoring`（DSN/采样率） | 否 |
 | 服务端注入 | CSP nonce、缓存头 | 否 |
 
 - 禁止把环境差异打进多份构建产物；同一产物通过 `config.js` 适配 dev/staging/prod。
 - `config.js` 以 `Cache-Control: no-store` 提供；加载失败时 fail-closed，展示配置错误页。
-- 环境变量优先级：运行期配置 > 构建期默认值；禁止业务代码散落 `import.meta.env` 读取（统一封装）。
+- 配置优先级：运行期 `config.js` > 构建期默认值；禁止业务代码散落读取 `import.meta.env` 或 `window.__APP_CONFIG__`，统一经 `packages/shared` 的 `loadRuntimeConfig` 校验后再使用。
 
 ### 17.2 环境矩阵
 
@@ -750,7 +760,7 @@ https://admin.example.com/
 |---|---|---|---|
 | 无 `GET /{channel}/v1/auth/me` | 页面无法获得主体名称/商户名称等展示信息 | 新增只读端点，返回 `subject_id`、显示名、`channel`、`merchant_id`、会话摘要 | 解析 Access Token 的 `sub`/`channel`/`merchant_id` 仅用于展示，不用于授权 |
 | 刷新令牌通过响应体下发 | 无法使用 HttpOnly Cookie，存在 XSS 读取风险 | 增加 `Set-Cookie HttpOnly` 刷新模式（保留 body 模式一个版本） | `TokenStore` 适配器 + `sessionStorage` 过渡 + 严格 CSP |
-| 无菜单/按钮权限树 | 菜单只能由前端静态路由表生成 | 在权限目录中增加 `menu` / `button` 形态或独立菜单端点 | 路由 `meta.permission` 作为单一来源，落库后平滑替换 |
+| 权限树缺少菜单展示元数据 | `menu` 类权限点无图标/排序/分组/路由映射，菜单仍需前端静态路由表维护 | 若需服务端下发菜单，扩展 `PermissionTreeNode` 或新增菜单视图契约 | 路由 `meta` 保持单一来源，契约就绪后平滑切换 |
 | IAM 审批开启仅以 `40900` 表达 | 前端难以区分“普通冲突”与“需审批” | 契约增加 `x-approval-required` 或专用业务码/202 响应 | 对 IAM 写端点做路径级映射与审批引导 |
 | 审批应用失败保持 `approved` | 用户可能重复点击“应用” | 契约明确可重试语义与版本字段 | 仅允许幂等重试，成功后失效列表 |
 | 无前端可用的配置/功能开关端点 | 灰度与紧急关闭依赖发版 | 提供只读 `config` 或 feature flag 端点（A 端 `config:read`） | 运行期 `config.js` 开关，默认关闭 |
@@ -779,15 +789,15 @@ https://admin.example.com/
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 刷新令牌重放检测 + 多标签页并发刷新 | 整条会话链被撤销，用户被强制登出 | 单飞刷新 + `navigator.locks` + `BroadcastChannel`；E2E 覆盖并发 401 |
+| 刷新令牌重放检测 + 多标签页并发刷新 | 整条会话链被撤销，用户被强制登出 | 单飞刷新 + `navigator.locks`（`BroadcastChannel` 同步为 P1 项）；E2E 覆盖并发 401 |
 | `sessionStorage` 存刷新令牌 | XSS 可窃取 | 严格 CSP、无第三方脚本、最短 TTL、目标切换 HttpOnly Cookie |
-| AntD 体积过大 | 首屏超预算 | 路由分包、按需图标、`manualChunks`、size-limit 阻断 |
+| AntD 体积过大 | 首屏超预算 | 路由分包、按需图标、`manualChunks` 仅切入口 vendor、体积预算脚本阻断 |
 | 同源路径冲突（`/admin` 既是 API 又是页面） | 路由/接口 404 | 页面路由避开前缀；Nginx/Ingress 顺序与回退规则固化 |
 | 前后端发布不同步 | 字段缺失/类型不匹配 | 同 commit 契约、兼容发布顺序、`contract_commit` 可视化 |
 | 审批语义仅靠 `40900` | 误把审批当冲突重试 | 路径级映射 + 明确引导；推动契约增强 |
 | 权限快照缓存过期 | 按钮可见但操作被拒 | 403 时强制刷新一次；以服务端裁决为准，不追求“完全一致” |
 | 共享包膨胀成“万能包” | 边界腐化 | 包职责单一；新增能力走 ADR；dependency-cruiser 阻断反向依赖 |
-| 前端覆盖率虚高 | 关键路径缺测 | 必测场景清单 + 关键包 85% 阈值 + E2E 兜底 |
+| 前端覆盖率虚高 | 关键路径缺测 | 必测场景清单 + 70% 四项指标阈值 + E2E 兜底 |
 
 ---
 
