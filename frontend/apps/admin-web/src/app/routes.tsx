@@ -26,6 +26,7 @@ type ShellRoute = {
 
 const HomePage = lazy(async () => import('../pages/HomePage'));
 const PermissionCatalogPage = lazy(async () => import('../pages/PermissionCatalogPage'));
+const IamRoleListPage = lazy(async () => import('../pages/IamRoleListPage'));
 const ForbiddenPage = lazy(async () => import('../pages/ForbiddenPage'));
 const NotFoundPage = lazy(async () => import('../pages/NotFoundPage'));
 
@@ -47,6 +48,16 @@ const SHELL_ROUTES: readonly ShellRoute[] = [
       permission: 'iam:permission:read',
       menu: true,
       menuOrder: 20,
+    },
+  },
+  {
+    path: 'iam/roles',
+    Page: IamRoleListPage,
+    meta: {
+      title: '角色管理',
+      permission: 'iam:role:read',
+      menu: true,
+      menuOrder: 30,
     },
   },
 ];

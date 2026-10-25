@@ -98,3 +98,11 @@ export class AppError extends Error {
 export function isAppError(error: unknown): error is AppError {
   return error instanceof AppError;
 }
+
+/**
+ * 40900 表示 IAM 高风险写操作需转审批（§7.3、D2-05）：
+ * 必须走审批引导，禁止按普通冲突自动重试。
+ */
+export function isApprovalRequired(error: unknown): boolean {
+  return isAppError(error) && error.code === 40900;
+}

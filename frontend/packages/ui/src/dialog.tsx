@@ -8,6 +8,8 @@ export type ConfirmDialogProps = {
   confirmText?: string | undefined;
   danger?: boolean | undefined;
   loading?: boolean | undefined;
+  /** 仅告知、无需取消入口时隐藏取消按钮。 */
+  hideCancel?: boolean | undefined;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -23,6 +25,7 @@ export function ConfirmDialog({
   confirmText = '确定',
   danger = false,
   loading = false,
+  hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -33,9 +36,11 @@ export function ConfirmDialog({
       onCancel={onCancel}
       destroyOnHidden
       footer={[
-        <Button key="cancel" onClick={onCancel} disabled={loading}>
-          取消
-        </Button>,
+        hideCancel ? null : (
+          <Button key="cancel" onClick={onCancel} disabled={loading}>
+            取消
+          </Button>
+        ),
         <Button key="confirm" type="primary" danger={danger} loading={loading} onClick={onConfirm}>
           {confirmText}
         </Button>,

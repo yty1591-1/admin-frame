@@ -1,5 +1,7 @@
 export { AppShell } from './app-shell';
 export type { AppShellMenuEntry, AppShellProps } from './app-shell';
+export { DangerActionConfirm } from './danger-action';
+export type { DangerActionError, DangerActionProps } from './danger-action';
 export { ConfirmDialog } from './dialog';
 export type { ConfirmDialogProps } from './dialog';
 export { EmptyState } from './empty-state';

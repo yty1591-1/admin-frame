@@ -1,7 +1,7 @@
 # S2 阶段基础设施实施方案（UI 基座与交互）
 
-> **版本**：v0.1（评审稿）
-> **状态**：待评审
+> **版本**：v1.0（已实施）
+> **状态**：S2-1～S2-5 已落地；`format/lint/typecheck/test/boundaries/build/size/license/e2e` 本地通过
 > **基线**：2026-10-25，`main` 分支 `53f0488`（S1 权限与数据层已落地）
 > **范围**：`frontend-infrastructure-plan.md` §5.3 + §5.5，对应 INF-UI-03～08、INF-IAM-06
 > **规范依据**：[前端架构与工程规范](./frontend-architecture.md) §11、[规划与差距评估](./frontend-infrastructure-plan.md) §4.5
@@ -16,12 +16,12 @@
 
 ### 1.2 退出标准（S2 完成）
 
-- [ ] 业务页面从 `@admin-frame/ui` 导入组件率为 100%，无 `antd` 直接引用（ESLint 已强制）。
-- [ ] 权限目录页完成改造，成为 TableShell + PageHeader + StatusTag 的接入范例。
-- [ ] 新增一个「角色删除」写操作示例：`Idempotency-Key` + 危险确认 + 原因 + `40900` 审批引导，全链路走通且 **40900 不自动重试**。
-- [ ] 全局通知（成功/失败）统一出口；失败提示带可复制 `trace_id`。
-- [ ] 新增组件均有 RTL 单测；`pnpm size` 路由 chunk 仍 ≤ 120 KB（gzip）、入口 ≤ 300 KB。
-- [ ] 关键组件键盘可达（Enter/Space 触发、Esc 关闭、焦点回到触发元素）。
+- [x] 业务页面从 `@admin-frame/ui` 导入组件率为 100%，无 `antd` 直接引用（ESLint 已强制）。
+- [x] 权限目录页完成改造，成为 TableShell + PageHeader + StatusTag 的接入范例。
+- [x] 新增一个「角色删除」写操作示例：`Idempotency-Key` + 危险确认 + 原因 + `40900` 审批引导，全链路走通且 **40900 不自动重试**。
+- [x] 全局通知（成功/失败）统一出口；失败提示带可复制 `trace_id`。
+- [x] 新增组件均有 RTL 单测；`pnpm size` 路由 chunk 仍 ≤ 120 KB（gzip）、入口 ≤ 300 KB。
+- [x] 关键组件键盘可达（Enter/Space 触发、Esc 关闭、焦点回到触发元素）。
 
 ### 1.3 不在 S2 范围
 
@@ -171,6 +171,7 @@ function useToast(): ToastApi;
 - 基于 antd `App.useApp()` 的 `message`，在 `ThemeProvider` 内再包一层 `App` 上下文。
 - 失败 toast 使用 `duration: 6` 并在描述中提供可复制 `trace_id`；**禁止**页面直接使用 `message`/`notification`（它们不在 ui 白名单出口中）。
 - 装配位置：`App.tsx` → `ThemeProvider` → `ToastProvider` → `QueryClientProvider`（顺序见 §4）。
+- **已知偏差**：B 端接入 `ToastProvider` 后首屏 260.9 KB 超出 260 KB 预算，按门禁规则未放宽预算，B 端暂未接线；B 端首个业务页面开工时随页面 chunk 一并接入。
 
 **验收**：错误上报 `trace_id` 可复制；RTL 断言成功/失败文案。
 

@@ -507,7 +507,7 @@ type AppError = {
 
 ### 11.1 设计系统边界
 
-- `packages/ui` 封装 Ant Design 5：主题令牌、基础组件、状态组件（`PageLoading`、`EmptyState`、`ErrorState`）、表单布局、表格容器。
+- `packages/ui` 封装 Ant Design 5：主题令牌、基础组件、状态组件（`PageLoading`、`EmptyState`、`ErrorState`）、页面骨架（`PageHeader`、`PageSkeleton`、`StatusTag`）、表格容器（`TableShell`）、表单布局（`FormSection`/`FormField`）、确认弹窗（`ConfirmDialog`、`DangerActionConfirm`）与全局通知（`ToastProvider`/`useToast`）。
 - 业务 feature 只从 `@admin-frame/ui` 导入；**禁止**在页面中直接 `import { Table } from 'antd'`（由 ESLint 限制），以便未来统一替换或升级。
 - 主题通过 `ConfigProvider` + CSS 变量实现；颜色、圆角、间距、字号只在 `packages/ui/src/tokens` 定义。
 - 图标按需引入（`@ant-design/icons/es/icons/XxxOutlined`），禁止整包导入。
@@ -520,7 +520,8 @@ type AppError = {
 | 空态 | 统一 `EmptyState`，区分“无数据”与“无权限/不可访问” |
 | 错误 | 页面级 `ErrorState` + 重试；操作级 toast + 可复制 `trace_id` |
 | 表单 | 标签在上/左统一；必填标识；提交中禁用；离开未保存提示 |
-| 危险操作 | 红色主按钮 + 二次确认 + 影响范围说明 + 操作原因 |
+| 危险操作 | 红色主按钮 + 二次确认 + 影响范围说明 + 操作原因（IAM 写操作必填，≤200 字） |
+| 审批 | IAM 写操作返回 `40900` 转审批引导，禁止自动重试；申请人不得审批自己的申请（SoD） |
 | 分页 | 服务端分页；默认 20；上限 100；切换筛选重置到第 1 页 |
 | 时间 | 传输/存储 UTC（RFC3339）；展示按用户时区；统一 `dayjs` 封装 |
 | 金额/数字 | 统一格式化工具，禁止页面内自行 `toFixed` 拼接 |

@@ -1,4 +1,4 @@
-import type { SubjectPermissions, TokenPair } from '@admin-frame/api-client';
+import type { RoleListData, SubjectPermissions, TokenPair } from '@admin-frame/api-client';
 
 export const tokenPairFixture: TokenPair = {
   access_token: 'test-access',
@@ -16,4 +16,24 @@ export const subjectPermissionsFixture: SubjectPermissions = {
   data_scopes: [{ resource: '*', scope_type: 'all' }],
   snapshot_version: 1,
   generated_at: '2026-01-01T00:00:00Z',
+};
+
+export const roleListFixture: RoleListData = {
+  items: [
+    {
+      id: 'role-ops',
+      channel: 'admin',
+      scope_type: 'admin',
+      code: 'ops',
+      name: '运营',
+      role_type: 'custom',
+      status: 'active',
+      version: 1,
+      permissions: ['iam:role:read'],
+      data_scopes: [{ resource: 'iam', scope_type: 'all' }],
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    },
+  ],
+  total: 1,
 };

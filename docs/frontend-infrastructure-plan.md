@@ -53,8 +53,8 @@
 | 工程治理（Monorepo/TS/Lint/格式/边界/CI） | **L3** | 已具备，后续只需增量维护 |
 | 契约与请求管线 | **L2** | 生成、校验、超时、重试、幂等、401 重放已闭环；Query Key/URL 列表状态/幂等键约定已落地；错误码文案映射待 S3 |
 | 认证与会话 | **L2** | 登录、两步 MFA、强制绑定、单飞刷新、登出、启动恢复已闭环；缺跨标签页同步、空闲超时、会话管理页 |
-| 权限与审批 | **L2（权限）/ L1（审批）** | 快照 Provider、`meta.permission` 守卫、菜单过滤、fail-closed 与列表数据层约定已落地；审批引导与 SoD 待 S2 |
-| UI 设计系统与交互基座 | **L1** | 令牌、主题、状态组件、AppShell 已有；表格/表单/弹窗/通知等业务高频件缺失 |
+| 权限与审批 | **L2（权限/审批）** | 快照 Provider、`meta.permission` 守卫、菜单过滤、fail-closed 与列表数据层约定已落地；40900 审批引导与 SoD 说明已落地，审批页与自审禁用待 S5 |
+| UI 设计系统与交互基座 | **L2** | 令牌、主题、状态组件、AppShell 已有；表格/表单/弹窗/通知/危险操作套件已落地（S2），列设置与虚拟滚动待 P2 |
 | 可观测与前端安全 | **L1** | 错误模型与根错误边界已有；logger、OTel 上报通道、Web Vitals、CSP 注入缺失（选型已定） |
 | 性能 | **L2** | 体积门禁、路由懒加载、manualChunks 已生效；缺 Lighthouse/RUM 与预取 |
 | 测试与质量 | **L2** | 单测/MSW/E2E 骨架已有；**apps 测试未纳入 Vitest**、无 axe、无契约夹具沉淀 |
@@ -81,13 +81,13 @@
 | 认证装配 | 登录页、两步 MFA、登录前强制绑定（密钥/恢复码一次展示）、启动恢复、登录守卫、403、退出登录 | `frontend/apps/admin-web/src/app/auth/*`、`frontend/apps/admin-web/src/pages/LoginPage.tsx` |
 | UI 基础 | 设计令牌、主题、Empty/Error/PageLoading、AppShell、原子组件白名单 | `frontend/packages/ui/src/*` |
 | 工具函数 | 时间/金额格式化、分页上限、运行期配置校验 | `frontend/packages/shared/src/*` |
-| 测试 | 62 个单测用例，覆盖率门禁 70%，MSW 契约 Mock，2 条 admin E2E | `frontend/packages/*/src/*.test.*`、`frontend/e2e/admin/shell.spec.ts` |
+| 测试 | 97 个单测用例，覆盖率门禁 70%，MSW 契约 Mock，2 条 admin E2E | `frontend/packages/*/src/*.test.*`、`frontend/e2e/admin/shell.spec.ts` |
 | 门禁 | format/lint/boundaries/typecheck/test/build/size/license/audit/E2E 均有本地与 CI 入口 | `frontend/package.json`、`scripts/ci/check-frontend.sh`、`.github/workflows/ci.yml` |
 
 **已确认的空白**
 
 - `vitest` 的 `include` 仅覆盖 `packages/*/src`，**apps 内组件测试不会被执行**（见 `frontend/packages/config/src/vitest-base.ts`）。
-- MSW 仅覆盖 admin 登录/刷新/登出/权限快照 4 个端点，无会话/MFA/异常流夹具。
+- MSW 覆盖登录/刷新/登出/权限快照/角色列表/角色删除（含 40900 夹具），无会话与 MFA 异常流夹具。
 - 运行期 `config.features` 已解析但无消费封装；无 feature flag 读取入口。
 - `ThemeProvider` 支持 CSP nonce，但入口未从运行期配置注入。
 - 无 logger、无错误上报 SDK、无 Web Vitals 采集。
@@ -145,7 +145,7 @@
 | INF-IAM-03 | 按钮级权限 | L2（已落地） | L2 | `usePermission` / `<Can>` 统一实现；禁止页面散落权限码 | **P0** |
 | INF-IAM-04 | 菜单生成 | L2（已落地） | L2 | 静态路由表 + 权限快照过滤；B 端不出现 A 端权限码 | **P0** |
 | INF-IAM-05 | 权限不可用 fail-closed | L2（已落地） | L2 | 50300/网络失败展示不可用页，禁止先放行 | **P0** |
-| INF-IAM-06 | 40900 审批引导 | L0 | L2 | IAM 写操作映射为“需审批”，预填审批单，禁止自动重试 | **P0** |
+| INF-IAM-06 | 40900 审批引导 | L2（S2 已落地） | L2 | IAM 写操作映射为“需审批”，预填审批单，禁止自动重试 | **P0** |
 | INF-IAM-07 | 审批职责分离（SoD） | L0 | L2 | 申请人不得操作自己的通过/拒绝按钮 | P1 |
 | INF-IAM-08 | 数据范围 UI 约束 | L0 | L2 | 明显越界的批量操作禁用；跨商户按 404 处理 | P1 |
 
@@ -155,12 +155,12 @@
 |---|---|---|---|---|---|
 | INF-UI-01 | 设计令牌与主题 | L2 | L3 | 颜色/圆角/字号只来自 `packages/ui`；禁止页面散落常量 | 已具备 |
 | INF-UI-02 | 状态组件 | L2 | L3 | Loading/Empty/Error/403/404 统一；错误带 trace_id | 已具备 |
-| INF-UI-03 | 表格容器 | L0 | L2 | 服务端分页、筛选栏、列设置、空/错/加载态、`placeholderData` | **P0** |
-| INF-UI-04 | 表单基座 | L1 | L2 | RHF + Zod 统一接入；标签布局、字段错误、未保存离开提示 | **P0** |
-| INF-UI-05 | 弹窗与确认 | L0 | L2 | Modal/Drawer/Popconfirm 薄封装；危险操作红色主按钮 + 影响说明 | **P0** |
-| INF-UI-06 | 全局通知 | L0 | L2 | 成功/失败 toast；失败可复制 trace_id；禁止页面直接调 message | **P0** |
-| INF-UI-07 | 页面骨架 | L0 | L2 | PageHeader/面包屑/Skeleton/筛选区布局统一 | **P0** |
-| INF-UI-08 | 状态与枚举展示 | L1 | L2 | 状态 Tag、字典映射集中；禁止页面写死颜色与中文 | **P0** |
+| INF-UI-03 | 表格容器 | L2（S2 已落地；列设置待 P2） | L2 | 服务端分页、筛选栏、列设置、空/错/加载态、`placeholderData` | **P0** |
+| INF-UI-04 | 表单基座 | L2（S2 已落地；离开提示待 S3） | L2 | RHF + Zod 统一接入；标签布局、字段错误、未保存离开提示 | **P0** |
+| INF-UI-05 | 弹窗与确认 | L2（S2 已落地） | L2 | Modal/Drawer/Popconfirm 薄封装；危险操作红色主按钮 + 影响说明 | **P0** |
+| INF-UI-06 | 全局通知 | L2（S2 已落地） | L2 | 成功/失败 toast；失败可复制 trace_id；禁止页面直接调 message | **P0** |
+| INF-UI-07 | 页面骨架 | L2（S2 已落地） | L2 | PageHeader/面包屑/Skeleton/筛选区布局统一 | **P0** |
+| INF-UI-08 | 状态与枚举展示 | L2（S2 已落地） | L2 | 状态 Tag、字典映射集中；禁止页面写死颜色与中文 | **P0** |
 | INF-UI-09 | 大表格与虚拟滚动 | L0 | L2 | 超过 200 行启用虚拟滚动；列设置可持久化（非敏感） | P2 |
 | INF-UI-10 | 上传/日期/导出组件 | L0 | L2 | 统一封装；导出走服务端任务，禁止前端循环翻页 | P2 |
 
@@ -306,7 +306,7 @@ main.tsx
 | 阶段 | 范围 | 退出标准 | 依赖 |
 |---|---|---|---|
 | **S1 权限与数据层** | 5.1 + 5.2 | 权限守卫与菜单可用；示例列表页按 Query/URL 规范接入（**已落地**） | 认证切片（已完成，含强制绑定） |
-| **S2 UI 基座与交互** | 5.3 + 5.5 | 表格/表单/弹窗/通知/危险操作套件可用 | S1 |
+| **S2 UI 基座与交互** | 5.3 + 5.5 | 表格/表单/弹窗/通知/危险操作套件可用（**已落地**） | S1 |
 | **S3 错误、可观测与 i18n** | 5.4 + 5.6 | 错误码映射、logger、trace_id、文案字典就绪 | S1 |
 | **S4 测试与发布硬化** | 5.7 + 4.8/4.9 | apps 测试纳入、axe、缓存头、镜像/Helm、回滚演练 | S2 |
 | **S5 会话与 MFA 管理** | 4.3 的 P1 项 | 会话页、已登录下 MFA 绑定/解绑、空闲超时、跨标签页同步 | S1 |

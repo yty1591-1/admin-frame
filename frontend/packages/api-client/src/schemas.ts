@@ -74,6 +74,31 @@ export const permissionListDataSchema = z.object({
   total: z.number().int().nonnegative(),
 });
 
+const roleSchema = z.object({
+  id: z.string().min(1),
+  channel: z.enum(['admin', 'biz']),
+  scope_type: z.enum(['admin', 'merchant']),
+  merchant_id: z.string().optional(),
+  code: z.string().min(1),
+  name: z.string(),
+  description: z.string().optional(),
+  role_type: z.enum(['system', 'custom', 'breakglass']),
+  status: z.enum(['active', 'disabled']),
+  version: z.number().int(),
+  permissions: z.array(z.string()),
+  data_scopes: z.array(dataScopeSchema),
+  binding_count: z.number().int().optional(),
+  created_by: z.string().optional(),
+  updated_by: z.string().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+export const roleListDataSchema = z.object({
+  items: z.array(roleSchema),
+  total: z.number().int().nonnegative(),
+});
+
 export const subjectPermissionsSchema = z.object({
   channel: z.enum(['admin', 'biz']),
   subject_type: z.enum(['staff', 'merchant_staff']),
