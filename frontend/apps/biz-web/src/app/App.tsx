@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider } from 'react-router';
-import { ThemeProvider } from '@admin-frame/ui';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
+import { ThemeProvider } from '@admin-frame/ui';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
+import { RouterProvider } from 'react-router';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { createAppRouter } from './router';
 
