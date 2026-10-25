@@ -1,0 +1,13 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 12：依赖安装脚本白名单（esbuild 需 postinstall 落二进制；unrs-resolver 供 import 解析）。
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+
+# 与 .npmrc 对齐（pnpm 12 以 pnpm-workspace.yaml 为工作区设置事实源）。
+saveExact: true
+strictPeerDependencies: true
+autoInstallPeers: false

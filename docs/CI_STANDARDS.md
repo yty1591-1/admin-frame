@@ -85,9 +85,13 @@
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
+| FE-01～FE-20（前端，仅 `frontend/`/契约变更触发） | `frontend` + `changes` | `frontend` | `make frontend-ci` |
+| FE-18 E2E smoke（前端，§14.1） | `frontend-e2e` | —（Gitee 待接入） | `make frontend-e2e` |
 | RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make docker-push` + `make check-release` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
+
+**前端门禁映射（FE-01～FE-20）**：统一入口 [`scripts/ci/check-frontend.sh`](../scripts/ci/check-frontend.sh)（本地 `make frontend-ci`）按序执行 FE-03 格式 → FE-02 Lint → FE-04 边界 → FE-01 类型 → FE-18 测试/覆盖率 → FE-12 构建 → FE-19 体积 → FE-17 许可证 → 依赖漏洞审计；FE-08 生成物漂移由 `pnpm gen:api` + `git diff --exit-code` 校验。约束正文见 [前端架构 §15](./frontend-architecture.md#十五代码规范硬约束)。
 
 **服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN`；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
 
@@ -98,6 +102,7 @@
 - `permissions: contents: read`
 - Go 版本：`actions/setup-go` 读取 `go.mod`
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
+- `frontend` / `frontend-e2e` job（FE-01～FE-20）：由 `changes` job（`dorny/paths-filter`）路径过滤，`frontend/**`、`api/openapi/**`、本 workflow 或 `scripts/ci/check-frontend*.sh` 变更时触发；Node 20 + pnpm（版本由 `frontend/package.json` 的 `packageManager` 钉扎）+ pnpm store 缓存；E2E 独立 job 安装 Chromium 后跑静态产物 smoke
 
 ### 3.3 Gitee Go
 
@@ -106,7 +111,7 @@
   - `PRPipeline.yml`：PR 目标为 `main`/`master`
   - `MasterPipeline.yml`：push 到 `main`/`master`
   - `BranchPipeline.yml`：其它分支 push（排除主干，避免重复）
-- 插件：`build@golang`；阶段 `strategy: fast`（一失败则快速失败）
+- 插件：`build@golang`（后端 job）、`build@nodejs`（`frontend` step，Node 20）；阶段 `strategy: fast`（一失败则快速失败）
 - 代理：默认 `GOPROXY=https://goproxy.cn,direct`
 - **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
   1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或

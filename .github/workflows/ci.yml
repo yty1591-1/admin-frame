@@ -20,6 +20,28 @@ env:
   GOLANGCI_LINT_VERSION: v2.14.0
 
 jobs:
+  # 前端路径过滤：仅 frontend/ 或共享契约变更时触发 frontend job（仍应设为必需检查）。
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect frontend changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - 'api/openapi/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/ci/check-frontend*.sh'
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -316,3 +338,64 @@ jobs:
         run: |
           bash scripts/ci/check-deploy.sh
           bash scripts/ci/check-alerts.sh
+
+  # FE-01～FE-20：前端门禁（仅 frontend/ 或契约变更触发，见 docs/frontend-architecture.md §15/§16.2）。
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.10.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Frontend gates
+        run: bash scripts/ci/check-frontend.sh
+
+  # E2E smoke（FE-18 / §14.1）：独立 job，只依赖静态产物与 config.js，不依赖真实后端。
+  frontend-e2e:
+    name: frontend-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.10.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build and run E2E smoke
+        working-directory: frontend
+        run: pnpm build && pnpm e2e

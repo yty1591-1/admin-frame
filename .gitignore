@@ -11,6 +11,12 @@ configs/*.yaml
 .env
 # 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
 /tmp*
+# 前端工作区产物（构建、覆盖率、E2E 报告；依赖见 frontend/.gitignore）
+/frontend/node_modules/
+/frontend/**/dist/
+/frontend/coverage/
+/frontend/playwright-report/
+/frontend/test-results/
 .idea/
 .vscode/
 *.swp

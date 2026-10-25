@@ -8,7 +8,10 @@
 | `MasterPipeline.yml` | push 到 `main` / `master` |
 | `BranchPipeline.yml` | push 到其它分支 |
 
-命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi）。
+命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi、frontend）。
+
+前端门禁（FE-01～FE-20）由 `build@nodejs` step 执行 `scripts/ci/gitee-job.sh frontend`，等价本地 `make frontend-ci`；
+E2E smoke 与发版镜像暂只在 GitHub 侧执行。
 
 ## 发版镜像（当前仅 GitHub）
 

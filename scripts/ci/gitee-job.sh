@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐各 STANDARDS 门禁）。
-# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>
+# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend>
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,15 +13,20 @@ GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.1.4}"
 
 export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
-export PATH="$(go env GOPATH)/bin:${PATH}"
+# frontend job 运行在 Node 构建机上，Go 可选；其余 job 缺少 Go 时会由命令自身报错。
+if command -v go >/dev/null 2>&1; then
+  export PATH="$(go env GOPATH)/bin:${PATH}"
+fi
 
 job="${1:-}"
 if [[ -z "${job}" ]]; then
-  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>" >&2
+  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend>" >&2
   exit 2
 fi
 
-echo "==> go version: $(go version)"
+if command -v go >/dev/null 2>&1; then
+  echo "==> go version: $(go version)"
+fi
 echo "==> job: ${job}"
 
 case "${job}" in
@@ -101,6 +106,10 @@ case "${job}" in
     go build -ldflags "-s -w" -o bin/c-api ./cmd/c-api
     go build -ldflags "-s -w" -o bin/worker ./cmd/worker
     go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
+    ;;
+  frontend)
+    # FE-01～FE-20：统一入口（与 GitHub frontend job、make frontend-ci 一致）。
+    bash scripts/ci/check-frontend.sh
     ;;
   *)
     echo "unknown job: ${job}" >&2
