@@ -68,7 +68,9 @@ export interface paths {
          *
          *     A 端已绑定 MFA 时返回 `MFAChallenge`（不含任何令牌），需再调用
          *     `POST /admin/v1/auth/mfa/verify` 完成第二步；A 端强制绑定但尚未完成绑定时
-         *     返回 40100（`mfa binding required`），不得签发管理令牌。
+         *     返回 `MFABindingRequired`（不含任何令牌），需先用 `POST /admin/v1/auth/mfa/setup`
+         *     与 `POST /admin/v1/auth/mfa/verify` 完成绑定，绑定成功后直接签发令牌。
+         *     两种中间态都不得签发管理令牌（AC-ENT-01-4、AC-ENT-01-6）。
          *
          */
         post: operations["adminAuthLogin"];
@@ -212,6 +214,14 @@ export interface paths {
          * @description 生成 TOTP 密钥与 10 个一次性恢复码，保存未确认绑定。
          *     密钥与恢复码只在本次响应出现；已确认绑定再次调用返回 40900。
          *
+         *     两种入口：
+         *
+         *     - 携带 `Authorization`：为已登录账号（重新）初始化绑定；
+         *     - 不携带 `Authorization`：在请求体提交登录返回的 `mfa_setup_ticket`，
+         *       用于「强制绑定但尚未绑定」的登录前引导（§7.2.1）。
+         *
+         *     票据路径只校验票据本身，不签发任何业务令牌；重复调用覆盖未确认绑定。
+         *
          */
         post: operations["adminAuthMFASetup"];
         delete?: never;
@@ -231,13 +241,16 @@ export interface paths {
         put?: never;
         /**
          * 完成 MFA 校验
-         * @description 两种用法：
+         * @description 三种用法：
          *
-         *     - 不携带 `Authorization`：使用登录返回的 `mfa_ticket` 完成两步登录，返回 `TokenPair`；
+         *     - 不携带 `Authorization` 且提交 `mfa_ticket`：完成两步登录，返回 `TokenPair`；
          *       票据一次性消费，动态码错误同样消耗票据。
+         *     - 不携带 `Authorization` 且提交 `mfa_setup_ticket`：完成强制绑定并直接签发
+         *       `TokenPair`（不要求重新登录）；票据一次性消费，首码错误同样作废。
          *     - 携带 `Authorization`：使用动态码或恢复码确认首次绑定，返回 204（无响应体）。
          *
-         *     A 端未完成 MFA 校验前不得获得管理令牌（AC-ENT-01-4）。
+         *     `mfa_ticket` 与 `mfa_setup_ticket` 互斥，同时提交返回 40000。
+         *     A 端未完成 MFA 校验前不得获得管理令牌（AC-ENT-01-4、AC-ENT-01-6）。
          *
          */
         post: operations["adminAuthMFAVerify"];
@@ -1106,6 +1119,17 @@ export interface components {
             /** @description 两步登录票据；一次性消费，禁止写日志 */
             mfa_ticket: string;
         };
+        /** @description 密码已通过、但账号尚未完成 MFA 绑定且 A 端强制绑定时返回；不包含任何业务令牌。
+         *     `mfa_setup_ticket` 为一次性短期票据（10 分钟），只能用于
+         *     `POST /admin/v1/auth/mfa/setup` 与 `POST /admin/v1/auth/mfa/verify`
+         *     （§7.2.1，AC-ENT-01-6）。绑定完成后由 `mfa/verify` 直接签发 `TokenPair`。
+         *      */
+        MFABindingRequired: {
+            /** @enum {boolean} */
+            mfa_binding_required: true;
+            /** @description 强制绑定票据；scope=mfa_setup，一次性消费，禁止写日志 */
+            mfa_setup_ticket: string;
+        };
         /** @description 稳定业务错误码（`internal/shared/apperr`）。
          *     新增码只追加；禁止复用已发布码的语义。
          *     该码表按 API-04 只增不减，故声明为可扩展开放集合（`x-extensible-enum`）：
@@ -1150,6 +1174,13 @@ export interface components {
         AuthSessionListData: {
             items: components["schemas"]["AuthSession"][];
         };
+        /** @description 绑定初始化请求。已登录绑定可省略整个请求体；
+         *     登录前强制绑定时必须提交登录返回的 `mfa_setup_ticket`，且不携带 `Authorization`。
+         *      */
+        MFASetupRequest: {
+            /** @description 强制绑定票据；scope=mfa_setup，禁止写日志 */
+            mfa_setup_ticket?: string;
+        };
         /** @description TOTP 绑定初始化数据；密钥与恢复码只在本次响应出现。 */
         MFASetupData: {
             /** @description Base32（无填充）TOTP 密钥 */
@@ -1159,12 +1190,14 @@ export interface components {
             /** @description 一次性恢复码；库内只保存 SHA-256 哈希 */
             recovery_codes: string[];
         };
-        /** @description 两步登录时提交 `mfa_ticket`；绑定确认时省略该字段并携带 Bearer。
-         *     票据非空时始终按两步登录处理。
+        /** @description `mfa_ticket` 用于两步登录，`mfa_setup_ticket` 用于强制绑定（§7.2.1）；
+         *     两者互斥，同时提交返回 40000。都省略时按已认证会话确认绑定。
          *      */
         MFAVerifyRequest: {
-            /** @description 登录返回的一次性票据 */
+            /** @description 两步登录票据；登录返回的一次性 `mfa_ticket` */
             mfa_ticket?: string;
+            /** @description 强制绑定票据；登录返回的一次性 `mfa_setup_ticket` */
+            mfa_setup_ticket?: string;
             /** @description 6 位 TOTP 动态码或一次性恢复码 */
             code: string;
         };
@@ -1357,14 +1390,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 令牌对，或需要完成 MFA 的挑战 */
+            /** @description 令牌对，或需要完成 MFA 校验 / 绑定的中间态 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope"] & {
-                        data?: components["schemas"]["TokenPair"] | components["schemas"]["MFAChallenge"];
+                        data?: components["schemas"]["TokenPair"] | components["schemas"]["MFAChallenge"] | components["schemas"]["MFABindingRequired"];
                     };
                 };
             };
@@ -1525,7 +1558,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MFASetupRequest"];
+            };
+        };
         responses: {
             /** @description 绑定初始化信息 */
             200: {
@@ -1558,7 +1595,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 令牌对（两步登录）；绑定确认走 204 */
+            /** @description 令牌对（两步登录 / 强制绑定完成）；已登录绑定确认走 204 */
             200: {
                 headers: {
                     [name: string]: unknown;

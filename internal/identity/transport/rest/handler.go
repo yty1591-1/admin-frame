@@ -6,6 +6,8 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -61,6 +63,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if result.MFABindingRequired {
+		httpx.OK(w, mfaBindingResponse{MFABindingRequired: true, MFASetupTicket: result.MFASetupTicket}, traceID)
+		return
+	}
 	if result.MFARequired {
 		httpx.OK(w, mfaChallengeResponse{MFARequired: true, MFATicket: result.MFATicket}, traceID)
 		return
@@ -70,15 +76,29 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 // SetupMFA POST /admin/v1/auth/mfa/setup
 //
-// 返回 TOTP 密钥与恢复码，仅本次响应可见；再次调用在已绑定时返回 40900。
+// 两种入口：Bearer（已登录绑定）或请求体中的 mfa_setup_ticket（登录前强制绑定）。
+// 返回 TOTP 密钥与恢复码，仅本次响应可见；已绑定时返回 40900。
 func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	actor, err := actorFrom(r)
-	if err != nil {
+	var req mfaSetupRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	result, err := h.auth.SetupMFA(r.Context(), actor)
+	var actor app.SessionActor
+	if strings.TrimSpace(req.SetupTicket) == "" {
+		var actorErr error
+		actor, actorErr = actorFrom(r)
+		if actorErr != nil {
+			httpx.FromError(w, actorErr, traceID)
+			return
+		}
+	}
+	result, err := h.auth.SetupMFA(r.Context(), app.MFASetupInput{
+		SetupTicket: req.SetupTicket,
+		Actor:       actor,
+		IPHash:      app.HashClientRef(clientIP(r)),
+	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -92,7 +112,8 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 
 // VerifyMFA POST /admin/v1/auth/mfa/verify
 //
-// 带票据时完成两步登录并返回令牌；带 Authorization 时完成首次绑定确认。
+// 三种模式：mfa_ticket 完成两步登录；mfa_setup_ticket 完成强制绑定并签发令牌；
+// 两者都不带时凭 Authorization 完成已登录账号的绑定确认（204）。
 func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req mfaVerifyRequest
@@ -101,7 +122,7 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var actor app.SessionActor
-	if strings.TrimSpace(req.Ticket) == "" {
+	if strings.TrimSpace(req.Ticket) == "" && strings.TrimSpace(req.SetupTicket) == "" {
 		var actorErr error
 		actor, actorErr = actorFrom(r)
 		if actorErr != nil {
@@ -110,12 +131,13 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	result, err := h.auth.VerifyMFA(r.Context(), app.MFAVerifyInput{
-		Ticket:  req.Ticket,
-		Code:    req.Code,
-		Actor:   actor,
-		IPHash:  app.HashClientRef(clientIP(r)),
-		UAHash:  app.HashClientRef(r.UserAgent()),
-		TraceID: traceID,
+		Ticket:      req.Ticket,
+		SetupTicket: req.SetupTicket,
+		Code:        req.Code,
+		Actor:       actor,
+		IPHash:      app.HashClientRef(clientIP(r)),
+		UAHash:      app.HashClientRef(r.UserAgent()),
+		TraceID:     traceID,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -260,6 +282,17 @@ type mfaChallengeResponse struct {
 	MFATicket   string `json:"mfa_ticket"`
 }
 
+// mfaBindingResponse 密码正确但仍需完成首次绑定时的响应；同样不包含业务令牌。
+type mfaBindingResponse struct {
+	MFABindingRequired bool   `json:"mfa_binding_required"`
+	MFASetupTicket     string `json:"mfa_setup_ticket"`
+}
+
+// mfaSetupRequest 绑定初始化请求；已登录绑定时可省略整个请求体。
+type mfaSetupRequest struct {
+	SetupTicket string `json:"mfa_setup_ticket,omitempty"`
+}
+
 // mfaSetupResponse 绑定初始化响应；密钥与恢复码只返回一次。
 type mfaSetupResponse struct {
 	Secret        string   `json:"secret"`
@@ -267,10 +300,12 @@ type mfaSetupResponse struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
-// mfaVerifyRequest 校验请求：票据用于两步登录，缺省时按已认证会话确认绑定。
+// mfaVerifyRequest 校验请求：mfa_ticket 用于两步登录，mfa_setup_ticket 用于强制绑定；
+// 两者都缺省时按已认证会话确认绑定。
 type mfaVerifyRequest struct {
-	Ticket string `json:"mfa_ticket,omitempty"`
-	Code   string `json:"code"`
+	Ticket      string `json:"mfa_ticket,omitempty"`
+	SetupTicket string `json:"mfa_setup_ticket,omitempty"`
+	Code        string `json:"code"`
 }
 
 // mfaDisableRequest 解绑请求。
@@ -317,6 +352,22 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		return apperr.BadRequest("invalid request body")
+	}
+	return nil
+}
+
+// decodeOptionalJSON 解码可选请求体：空 body 视为「未提供」，保持向后兼容。
+func decodeOptionalJSON(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return nil
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		return apperr.BadRequest("invalid request body")
 	}
 	return nil

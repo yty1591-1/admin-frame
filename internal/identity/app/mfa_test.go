@@ -45,7 +45,7 @@ func totpCodeAt(t *testing.T, secretBase32 string, now time.Time) string {
 func bindMFA(t *testing.T, f *authFixture, accountID string) (secret string, recoveryCodes []string) {
 	t.Helper()
 	ctx := context.Background()
-	setup, err := f.svc.SetupMFA(ctx, app.SessionActor{AccountID: accountID, TraceID: "trace-setup"})
+	setup, err := f.svc.SetupMFA(ctx, app.MFASetupInput{Actor: app.SessionActor{AccountID: accountID, TraceID: "trace-setup"}})
 	if err != nil {
 		t.Fatalf("setup mfa: %v", err)
 	}
@@ -96,13 +96,23 @@ func (f *authFixture) mustSecret(t *testing.T, accountID string) string {
 	return totp.EncodeSecret(plain)
 }
 
+// mustListSessions 读取账号会话（测试专用），用于断言失败路径无副作用。
+func mustListSessions(t *testing.T, f *authFixture, accountID string) []*domain.Session {
+	t.Helper()
+	sessions, err := f.sessions.ListByAccount(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	return sessions
+}
+
 func TestMFASetupAndBindingConfirmation(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin)
 	f.seedAccount(t, "acct-mfa", "admin@example.com", "Correct#Passw0rd")
 	f.login(t, "admin@example.com", "Correct#Passw0rd")
 
-	setup, err := f.svc.SetupMFA(ctx, app.SessionActor{AccountID: "acct-mfa", TraceID: "trace-setup"})
+	setup, err := f.svc.SetupMFA(ctx, app.MFASetupInput{Actor: app.SessionActor{AccountID: "acct-mfa", TraceID: "trace-setup"}})
 	if err != nil {
 		t.Fatalf("setup mfa: %v", err)
 	}
@@ -144,7 +154,7 @@ func TestMFASetupAndBindingConfirmation(t *testing.T) {
 	})
 
 	t.Run("second setup returns conflict", func(t *testing.T) {
-		_, err := f.svc.SetupMFA(ctx, app.SessionActor{AccountID: "acct-mfa"})
+		_, err := f.svc.SetupMFA(ctx, app.MFASetupInput{Actor: app.SessionActor{AccountID: "acct-mfa"}})
 		requireAppCode(t, err, apperr.CodeConflict)
 	})
 }
@@ -228,7 +238,8 @@ func TestMFATwoStepLogin(t *testing.T) {
 	})
 }
 
-// TestMFABindingRequiredForAdmin 覆盖 AC-ENT-01-4：A 端未完成 MFA 不得获得管理令牌。
+// TestMFABindingRequiredForAdmin 覆盖 AC-ENT-01-4 / AC-ENT-01-6：
+// A 端未完成绑定时登录返回 200 + mfa_setup_ticket，绑定完成后直接签发令牌（§7.2.1）。
 func TestMFABindingRequiredForAdmin(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
@@ -236,43 +247,136 @@ func TestMFABindingRequiredForAdmin(t *testing.T) {
 	})
 	f.seedAccount(t, "acct-required", "admin@example.com", "Correct#Passw0rd")
 
-	result, err := f.svc.Login(ctx, app.LoginInput{
-		Subject: "admin@example.com", Password: "Correct#Passw0rd", TraceID: "trace-required",
-	})
-	requireAppCode(t, err, apperr.CodeUnauthorized)
-	if result.AccessToken != "" || result.RefreshToken != "" || result.SessionID != "" {
-		t.Fatalf("unbound admin must not receive tokens: %+v", result)
+	login := func(t *testing.T) app.LoginResult {
+		t.Helper()
+		result, err := f.svc.Login(ctx, app.LoginInput{
+			Subject: "admin@example.com", Password: "Correct#Passw0rd", TraceID: "trace-required",
+		})
+		if err != nil {
+			t.Fatalf("login: %v", err)
+		}
+		return result
 	}
-	if !errors.Is(err, domain.ErrMFARequired) {
-		t.Fatalf("error %v must wrap domain.ErrMFARequired", err)
+	setup := func(t *testing.T, ticket string) app.MFASetupResult {
+		t.Helper()
+		result, err := f.svc.SetupMFA(ctx, app.MFASetupInput{SetupTicket: ticket, IPHash: "ip-hash"})
+		if err != nil {
+			t.Fatalf("setup mfa: %v", err)
+		}
+		return result
+	}
+	verify := func(t *testing.T, ticket, code string) (app.MFAVerifyResult, error) {
+		t.Helper()
+		return f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+			SetupTicket: ticket, Code: code, IPHash: "ip-hash", UAHash: "ua-hash", TraceID: "trace-setup-verify",
+		})
 	}
 
-	if _, err := f.svc.SetupMFA(ctx, app.SessionActor{AccountID: "acct-required"}); err != nil {
-		t.Fatalf("setup mfa: %v", err)
+	first := login(t)
+	if !first.MFABindingRequired || first.MFASetupTicket == "" {
+		t.Fatalf("expected binding ticket, got %+v", first)
 	}
-	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
-		Code:    totpCodeAt(t, f.mustSecret(t, "acct-required"), f.clock.Now()),
-		Actor:   app.SessionActor{AccountID: "acct-required"},
-		TraceID: "trace-confirm-required",
-	}); err != nil {
-		t.Fatalf("confirm binding: %v", err)
+	if first.MFARequired || first.AccessToken != "" || first.RefreshToken != "" || first.SessionID != "" {
+		t.Fatalf("unbound admin must not receive tokens: %+v", first)
+	}
+
+	// 绑定票据不能当作两步登录票据使用，两步登录票据也不能用于绑定。
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{Ticket: first.MFASetupTicket, Code: "000000"}); err == nil {
+		t.Fatal("setup ticket must not be accepted as mfa_ticket")
+	}
+
+	pending := setup(t, first.MFASetupTicket)
+	if pending.Secret == "" || !strings.HasPrefix(pending.OTPAuthURI, "otpauth://totp/") {
+		t.Fatalf("unexpected setup result: %+v", pending)
+	}
+	// 重复 setup 覆盖未确认绑定，不消耗票据。
+	latest := setup(t, first.MFASetupTicket)
+	if latest.Secret == pending.Secret {
+		t.Fatal("repeat setup must rotate the pending secret")
+	}
+
+	// 首码错误：票据作废、绑定保持未确认。
+	_, err := verify(t, first.MFASetupTicket, "000000")
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+	_, err = verify(t, first.MFASetupTicket, "123456")
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+
+	// 重新登录获取新票据，首码正确后直接拿到令牌。
+	second := login(t)
+	if !second.MFABindingRequired || second.MFASetupTicket == "" {
+		t.Fatalf("expected a fresh binding ticket, got %+v", second)
+	}
+	fresh := setup(t, second.MFASetupTicket)
+	result, err := verify(t, second.MFASetupTicket, totpCodeAt(t, fresh.Secret, f.clock.Now()))
+	if err != nil {
+		t.Fatalf("complete mfa setup: %v", err)
+	}
+	if result.BindingConfirmed {
+		t.Fatal("setup ticket path must return tokens, not 204")
+	}
+	if result.AccessToken == "" || result.RefreshToken == "" || result.SessionID == "" {
+		t.Fatalf("binding completion must issue tokens: %+v", result)
 	}
 	enrollment, err := f.mfa.FindByAccount(ctx, "acct-required")
 	if err != nil {
 		t.Fatalf("load enrollment: %v", err)
 	}
 	if !enrollment.IsConfirmed() {
-		t.Fatal("binding must be confirmed before two-step login")
+		t.Fatal("binding must be confirmed after successful setup verify")
 	}
+
+	// 重放同一张绑定票据：40100 且无副作用（不新增会话、不改变 token_version）。
+	sessionCountBefore := len(mustListSessions(t, f, "acct-required"))
+	if _, err := verify(t, second.MFASetupTicket, totpCodeAt(t, fresh.Secret, f.clock.Now())); err == nil {
+		t.Fatal("replayed setup ticket must be rejected")
+	}
+	if got := len(mustListSessions(t, f, "acct-required")); got != sessionCountBefore {
+		t.Fatalf("replayed setup ticket must not create sessions: %d -> %d", sessionCountBefore, got)
+	}
+
+	// 后续登录进入正常两步登录。
+	challenge := login(t)
+	if !challenge.MFARequired || challenge.MFATicket == "" || challenge.MFABindingRequired {
+		t.Fatalf("expected two-step challenge, got %+v", challenge)
+	}
+}
+
+// TestMFASetupTicketExpiryAndScopeIsolation 覆盖绑定票据的有效期与 scope 隔离。
+func TestMFASetupTicketExpiryAndScopeIsolation(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAAdminRequired = true
+	})
+	f.seedAccount(t, "acct-scope", "admin@example.com", "Correct#Passw0rd")
+
 	challenge, err := f.svc.Login(ctx, app.LoginInput{
-		Subject: "admin@example.com", Password: "Correct#Passw0rd", TraceID: "trace-pending",
+		Subject: "admin@example.com", Password: "Correct#Passw0rd", TraceID: "trace-scope",
 	})
 	if err != nil {
-		t.Fatalf("login after setup: %v", err)
+		t.Fatalf("login: %v", err)
 	}
-	if !challenge.MFARequired {
-		t.Fatalf("expected MFA challenge, got %+v", challenge)
+
+	// 过期票据（>10 分钟）在 setup 与 verify 两侧都必须被拒绝。
+	f.clock.Advance(app.MFASetupTicketTTL + time.Second)
+	if _, err := f.svc.SetupMFA(ctx, app.MFASetupInput{SetupTicket: challenge.MFASetupTicket}); err == nil {
+		t.Fatal("expired setup ticket must be rejected by setup")
 	}
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+		SetupTicket: challenge.MFASetupTicket, Code: "123456",
+	}); err == nil {
+		t.Fatal("expired setup ticket must be rejected by verify")
+	}
+
+	// 已绑定账号的两步登录票据不能用于绑定。
+	f.clock.Advance(-(app.MFASetupTicketTTL + time.Second))
+	secret, _ := bindMFA(t, f, "acct-scope")
+	_ = secret
+	login := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !login.MFARequired || login.MFATicket == "" {
+		t.Fatalf("expected two-step challenge, got %+v", login)
+	}
+	_, err = f.svc.SetupMFA(ctx, app.MFASetupInput{SetupTicket: login.MFATicket})
+	requireAppCode(t, err, apperr.CodeUnauthorized)
 }
 
 func TestMFADisable(t *testing.T) {
@@ -331,6 +435,6 @@ func TestMFASetupRejectedOnBizChannel(t *testing.T) {
 	}
 	f.login(t, "staff@example.com", "Correct#Passw0rd")
 
-	_, err = f.svc.SetupMFA(ctx, app.SessionActor{AccountID: "acct-biz"})
+	_, err = f.svc.SetupMFA(ctx, app.MFASetupInput{Actor: app.SessionActor{AccountID: "acct-biz"}})
 	requireAppCode(t, err, apperr.CodeBadRequest)
 }

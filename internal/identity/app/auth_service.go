@@ -76,6 +76,10 @@ type LoginResult struct {
 	MFARequired bool
 	// MFATicket 是两步登录票据；仅在 MFARequired 时返回。
 	MFATicket string
+	// MFABindingRequired 表示密码已通过、但账号尚未绑定 MFA 且 A 端强制绑定（§7.2.1）。
+	MFABindingRequired bool
+	// MFASetupTicket 是强制绑定票据；仅在 MFABindingRequired 时返回。
+	MFASetupTicket string
 }
 
 // RefreshInput 是刷新令牌入参。
@@ -345,11 +349,22 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
 		}
 	}
-	required, err := s.mfaChallenge(ctx, account, in.TraceID)
+	gate, err := s.mfaChallenge(ctx, account, in.TraceID)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	if required {
+	switch gate {
+	case mfaGateBind:
+		ticket, issueErr := s.tokens.IssueMFASetupTicket(account.ID)
+		if issueErr != nil {
+			return LoginResult{}, issueErr
+		}
+		return LoginResult{
+			AccountID:          account.ID,
+			MFABindingRequired: true,
+			MFASetupTicket:     ticket.Ticket,
+		}, nil
+	case mfaGateVerify:
 		ticket, issueErr := s.tokens.IssueMFATicket(account.ID)
 		if issueErr != nil {
 			return LoginResult{}, issueErr
@@ -359,8 +374,9 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			MFARequired: true,
 			MFATicket:   ticket.Ticket,
 		}, nil
+	default:
+		return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
 	}
-	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
 }
 
 // VerifiedLoginInput 是外部验证（短信验证码 / OAuth）通过后的登录入参。

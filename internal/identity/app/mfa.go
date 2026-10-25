@@ -31,12 +31,27 @@ type MFASetupResult struct {
 	RecoveryCodes []string
 }
 
-// MFAVerifyInput 是 mfa/verify 的两种模式入参。
+// MFASetupInput 是 mfa/setup 的两种模式入参（docs/identity-authn.md §7.2.1）。
 //
-// Ticket 非空时执行两步登录（不需要 Actor）；否则使用 Actor 完成绑定确认。
+// SetupTicket 非空时按「登录前强制绑定」处理（不需要 Actor）；否则使用 Actor 完成已登录绑定。
+type MFASetupInput struct {
+	// SetupTicket 登录返回的强制绑定票据原文。
+	SetupTicket string
+	// Actor 已登录会话；SetupTicket 为空时使用。
+	Actor SessionActor
+	// IPHash 客户端摘要；由 transport 计算，用于绑定限流。
+	IPHash string
+}
+
+// MFAVerifyInput 是 mfa/verify 的三种模式入参。
+//
+// Ticket 非空时执行两步登录；SetupTicket 非空时执行强制绑定并直接签发令牌；
+// 两者都为空时使用 Actor 确认已登录账号的首次绑定。两种票据互斥。
 type MFAVerifyInput struct {
 	// Ticket 两步登录票据原文。
 	Ticket string
+	// SetupTicket 强制绑定票据原文。
+	SetupTicket string
 	// Code 6 位动态码或一次性恢复码。
 	Code string
 	// Actor 绑定确认时的已认证上下文。
@@ -59,25 +74,18 @@ type MFAVerifyResult struct {
 }
 
 // SetupMFA 生成 TOTP 密钥与恢复码，保存未确认绑定并返回一次性录入信息。
-func (s *AuthService) SetupMFA(ctx context.Context, actor SessionActor) (MFASetupResult, error) {
+//
+// 登录前强制绑定凭 SetupTicket，已登录绑定凭 Actor；已确认绑定再次调用返回 40900。
+func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupResult, error) {
 	if s.channel != domain.ChannelAdmin {
 		return MFASetupResult{}, apperr.BadRequest("mfa is only supported on admin channel")
 	}
 	if s.mfa == nil || s.mfaCipher == nil {
 		return MFASetupResult{}, apperr.Unavailable("mfa is not configured")
 	}
-	if strings.TrimSpace(actor.AccountID) == "" {
-		return MFASetupResult{}, invalidToken()
-	}
 	now := s.clock.Now().UTC()
-	account, err := s.accounts.FindByID(ctx, actor.AccountID)
+	account, err := s.mfaSetupAccount(ctx, in, now)
 	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
-			return MFASetupResult{}, invalidToken()
-		}
-		return MFASetupResult{}, apperr.Internal("load account failed", err)
-	}
-	if err := s.guard.Authorize(account, now); err != nil {
 		return MFASetupResult{}, err
 	}
 	existing, err := s.mfa.FindByAccount(ctx, account.ID)
@@ -119,10 +127,51 @@ func (s *AuthService) SetupMFA(ctx context.Context, actor SessionActor) (MFASetu
 	}, nil
 }
 
-// VerifyMFA 完成两步登录或绑定确认。
+// mfaSetupAccount 解析绑定目标账号：票据优先，其次已认证会话。
 //
-// 票据优先：只要 Ticket 非空就按两步登录处理，忽略 Actor，避免请求同时携带
-// 两种凭据时出现语义歧义。
+// 票据路径每次重新读取账号状态，禁用 / 锁定立即失效，不依赖票据内的快照。
+func (s *AuthService) mfaSetupAccount(ctx context.Context, in MFASetupInput, now time.Time) (*domain.Account, error) {
+	if strings.TrimSpace(in.SetupTicket) != "" {
+		if s.mfaTickets == nil {
+			return nil, apperr.Unavailable("mfa is not configured")
+		}
+		claims, err := s.tokens.ParseMFASetupTicket(in.SetupTicket)
+		if err != nil {
+			return nil, err
+		}
+		if claims.ExpiresAt.IsZero() || !claims.ExpiresAt.After(now) {
+			return nil, invalidToken()
+		}
+		if err := s.guard.CheckRateLimit(mfaSetupRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+			return nil, err
+		}
+		return s.loadMFAAccount(ctx, claims.Subject, now)
+	}
+	if strings.TrimSpace(in.Actor.AccountID) != "" {
+		return s.loadMFAAccount(ctx, in.Actor.AccountID, now)
+	}
+	return nil, invalidToken()
+}
+
+// loadMFAAccount 加载并校验账号可执行 MFA 操作。
+func (s *AuthService) loadMFAAccount(ctx context.Context, accountID string, now time.Time) (*domain.Account, error) {
+	account, err := s.accounts.FindByID(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, invalidToken()
+		}
+		return nil, apperr.Internal("load account failed", err)
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		return nil, err
+	}
+	return account, nil
+}
+
+// VerifyMFA 完成两步登录、强制绑定或已登录绑定确认。
+//
+// 票据优先且互斥：Ticket 非空按两步登录；SetupTicket 非空按强制绑定；
+// 两者同时出现返回 40000，避免请求语义歧义。
 func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
 	var result MFAVerifyResult
 	if err := s.runTx(ctx, func(txCtx context.Context) error {
@@ -146,8 +195,16 @@ func (s *AuthService) verifyMFAInTx(ctx context.Context, in MFAVerifyInput) (MFA
 	if s.mfa == nil || s.mfaCipher == nil || s.mfaTickets == nil {
 		return MFAVerifyResult{}, apperr.Unavailable("mfa is not configured")
 	}
-	if strings.TrimSpace(in.Ticket) != "" {
+	hasTicket := strings.TrimSpace(in.Ticket) != ""
+	hasSetupTicket := strings.TrimSpace(in.SetupTicket) != ""
+	if hasTicket && hasSetupTicket {
+		return MFAVerifyResult{}, apperr.BadRequest("mfa_ticket and mfa_setup_ticket are mutually exclusive")
+	}
+	if hasTicket {
 		return s.completeMFALogin(ctx, in)
+	}
+	if hasSetupTicket {
+		return s.completeMFASetup(ctx, in)
 	}
 	if strings.TrimSpace(in.Actor.AccountID) != "" {
 		return s.confirmMFABinding(ctx, in)
@@ -216,51 +273,63 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 	return s.saveRevocationState(ctx, account)
 }
 
-// mfaChallenge 判断登录是否需要 MFA，并在强制绑定时返回稳定错误。
+// mfaGate 是密码校验通过后的 MFA 闸门结论。
+type mfaGate int
+
+const (
+	// mfaGateNotRequired 无需 MFA，可直接签发令牌。
+	mfaGateNotRequired mfaGate = iota
+	// mfaGateVerify 已绑定，需要完成两步校验。
+	mfaGateVerify
+	// mfaGateBind 强制绑定但尚未完成，需要先绑定。
+	mfaGateBind
+)
+
+// mfaChallenge 判断登录后的 MFA 闸门，并在强制绑定时写失败审计。
 func (s *AuthService) mfaChallenge(
 	ctx context.Context,
 	account *domain.Account,
 	traceID string,
-) (bool, error) {
+) (mfaGate, error) {
 	if s.channel != domain.ChannelAdmin {
-		return false, nil
+		return mfaGateNotRequired, nil
 	}
 	if s.mfa == nil {
 		if s.mfaRequired {
-			return false, s.mfaBindingRequired(ctx, account, traceID)
+			// 强制绑定但 MFA 依赖未装配：失败关闭，避免把用户引入必然失败的重置流程。
+			return mfaGateNotRequired, apperr.Unavailable("mfa is not configured")
 		}
-		return false, nil
+		return mfaGateNotRequired, nil
 	}
 	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
 			if s.mfaRequired {
-				return false, s.mfaBindingRequired(ctx, account, traceID)
+				return mfaGateBind, s.recordMFABindingPending(ctx, account, traceID)
 			}
-			return false, nil
+			return mfaGateNotRequired, nil
 		}
-		return false, apperr.Internal("load mfa enrollment failed", err)
+		return mfaGateNotRequired, apperr.Internal("load mfa enrollment failed", err)
 	}
 	if !enrollment.IsConfirmed() {
 		if s.mfaRequired {
-			return false, s.mfaBindingRequired(ctx, account, traceID)
+			return mfaGateBind, s.recordMFABindingPending(ctx, account, traceID)
 		}
-		return false, nil
+		return mfaGateNotRequired, nil
 	}
 	if s.mfaCipher == nil || s.mfaTickets == nil {
-		return false, apperr.Unavailable("mfa is not configured")
+		return mfaGateNotRequired, apperr.Unavailable("mfa is not configured")
 	}
-	return true, nil
+	return mfaGateVerify, nil
 }
 
-// mfaBindingRequired 记录「需要绑定 MFA」的失败审计并返回稳定 40100。
-func (s *AuthService) mfaBindingRequired(ctx context.Context, account *domain.Account, traceID string) error {
-	if err := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-		audit.OutcomeDenied, domain.LoginReasonMFAPending, traceID, nil); err != nil {
-		return err
-	}
-	return apperr.New(apperr.CodeUnauthorized, "mfa binding required",
-		errors.Join(domain.ErrMFARequired, apperr.ErrUnauthorized))
+// recordMFABindingPending 记录「密码已通过但需要绑定 MFA」的审计。
+//
+// 这是认证未完成而非失败：对外返回 200 + mfa_setup_ticket（§7.2.1），
+// 因此不返回错误，仅保证审计写入失败时整体失败关闭。
+func (s *AuthService) recordMFABindingPending(ctx context.Context, account *domain.Account, traceID string) error {
+	return s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeDenied, domain.LoginReasonMFAPending, traceID, nil)
 }
 
 // completeMFALogin 校验票据与动态码，成功后创建正式会话并签发令牌。
@@ -329,6 +398,83 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 	return MFAVerifyResult{
 		TokenPair: result.TokenPair,
 		SessionID: result.SessionID,
+		AccountID: account.ID,
+	}, nil
+}
+
+// completeMFASetup 校验强制绑定票据与首码：确认绑定并直接签发令牌（§7.2.1）。
+//
+// 票据一次性消费，首码错误同样作废，与两步登录保持一致；前端需回到密码步骤重新登录。
+// 绑定成功即完成登录，不再要求第二次密码输入。
+func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
+	now := s.clock.Now().UTC()
+	claims, err := s.tokens.ParseMFASetupTicket(in.SetupTicket)
+	if err != nil {
+		return MFAVerifyResult{}, err
+	}
+	if claims.ExpiresAt.IsZero() || !claims.ExpiresAt.After(now) {
+		return MFAVerifyResult{}, invalidToken()
+	}
+	account, err := s.accounts.FindByID(ctx, claims.Subject)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return MFAVerifyResult{}, invalidToken()
+		}
+		return MFAVerifyResult{}, apperr.Internal("load account failed", err)
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		return MFAVerifyResult{}, err
+	}
+	if err := s.guard.CheckRateLimit(mfaSetupRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+		return MFAVerifyResult{}, err
+	}
+
+	ttl := claims.ExpiresAt.Sub(now)
+	consumed, err := s.mfaTickets.Consume(ctx, mfaSetupTicketStoreKey(claims.ID), ttl)
+	if err != nil {
+		return MFAVerifyResult{}, apperr.New(apperr.CodeServiceUnavailable,
+			"mfa ticket store unavailable", errors.Join(apperr.ErrUnavailable, err))
+	}
+	if !consumed {
+		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
+	}
+
+	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
+		}
+		return MFAVerifyResult{}, apperr.Internal("load mfa enrollment failed", err)
+	}
+	if enrollment.IsConfirmed() {
+		// 票据签发后绑定已被其他请求确认：不再重复确认，直接按失败关闭处理。
+		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
+	}
+	ok, err := s.verifyEnrollmentCode(ctx, enrollment, in.Code, now, false)
+	if err != nil {
+		return MFAVerifyResult{}, err
+	}
+	if !ok {
+		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
+	}
+	if err := enrollment.Confirm(now); err != nil {
+		return MFAVerifyResult{}, err
+	}
+	if err := s.mfa.Save(ctx, enrollment); err != nil {
+		return MFAVerifyResult{}, apperr.Internal("save mfa enrollment failed", err)
+	}
+	if err := s.emitAudit(ctx, audit.ActionAuthMFABound, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeSuccess, "", in.TraceID, nil); err != nil {
+		return MFAVerifyResult{}, err
+	}
+
+	login, err := s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	if err != nil {
+		return MFAVerifyResult{}, err
+	}
+	return MFAVerifyResult{
+		TokenPair: login.TokenPair,
+		SessionID: login.SessionID,
 		AccountID: account.ID,
 	}, nil
 }
@@ -488,4 +634,20 @@ func mfaRateKey(channel domain.Channel, jti, ipHash string) string {
 		return string(channel) + ":mfa:" + jti
 	}
 	return string(channel) + ":mfa:" + jti + ":" + ipHash
+}
+
+// mfaSetupRateKey 构造强制绑定流程的限流键，与两步登录分桶（§7.2.1）。
+func mfaSetupRateKey(channel domain.Channel, jti, ipHash string) string {
+	if ipHash == "" {
+		return string(channel) + ":mfa_setup:" + jti
+	}
+	return string(channel) + ":mfa_setup:" + jti + ":" + ipHash
+}
+
+// mfaSetupTicketStoreKey 把绑定票据的 jti 放入独立命名空间。
+//
+// 一次性消费存储只接收 jti 字符串，前缀隔离避免两类票据共用同一键空间；
+// 即使 jti 碰撞也不会互相消费（§7.2.1「键与 mfa_ticket 隔离」）。
+func mfaSetupTicketStoreKey(jti string) string {
+	return "setup:" + jti
 }

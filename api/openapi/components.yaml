@@ -194,6 +194,34 @@ components:
           type: string
           minLength: 1
           description: 两步登录票据；一次性消费，禁止写日志
+    MFABindingRequired:
+      type: object
+      required: [mfa_binding_required, mfa_setup_ticket]
+      additionalProperties: false
+      description: |
+        密码已通过、但账号尚未完成 MFA 绑定且 A 端强制绑定时返回；不包含任何业务令牌。
+        `mfa_setup_ticket` 为一次性短期票据（10 分钟），只能用于
+        `POST /admin/v1/auth/mfa/setup` 与 `POST /admin/v1/auth/mfa/verify`
+        （§7.2.1，AC-ENT-01-6）。绑定完成后由 `mfa/verify` 直接签发 `TokenPair`。
+      properties:
+        mfa_binding_required:
+          type: boolean
+          enum: [true]
+        mfa_setup_ticket:
+          type: string
+          minLength: 1
+          description: 强制绑定票据；scope=mfa_setup，一次性消费，禁止写日志
+    MFASetupRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        绑定初始化请求。已登录绑定可省略整个请求体；
+        登录前强制绑定时必须提交登录返回的 `mfa_setup_ticket`，且不携带 `Authorization`。
+      properties:
+        mfa_setup_ticket:
+          type: string
+          minLength: 1
+          description: 强制绑定票据；scope=mfa_setup，禁止写日志
     MFASetupData:
       type: object
       required: [secret, otpauth_uri, recovery_codes]
@@ -217,12 +245,15 @@ components:
       required: [code]
       additionalProperties: false
       description: |
-        两步登录时提交 `mfa_ticket`；绑定确认时省略该字段并携带 Bearer。
-        票据非空时始终按两步登录处理。
+        `mfa_ticket` 用于两步登录，`mfa_setup_ticket` 用于强制绑定（§7.2.1）；
+        两者互斥，同时提交返回 40000。都省略时按已认证会话确认绑定。
       properties:
         mfa_ticket:
           type: string
-          description: 登录返回的一次性票据
+          description: 两步登录票据；登录返回的一次性 `mfa_ticket`
+        mfa_setup_ticket:
+          type: string
+          description: 强制绑定票据；登录返回的一次性 `mfa_setup_ticket`
         code:
           type: string
           minLength: 6
