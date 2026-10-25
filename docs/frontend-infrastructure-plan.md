@@ -1,9 +1,9 @@
 # 前端基础设施规划与差距评估（A/B 双端）
 
-> **版本**：v0.1（评审稿）
-> **状态**：待评审（Draft for Review）
+> **版本**：v0.2（评审修订）
+> **状态**：评审通过，D-01～D-09 均已结论化；S1 权限与数据层已落地
 > **适用范围**：`frontend/` 下 A 端 `admin-web`、B 端 `biz-web` 与共享 `packages/*`
-> **基线**：2026-10-25，`main` 分支 `5262feb` + 未提交的 A 端认证切片
+> **基线**：2026-10-25，`main` 分支 `f985338`（认证切片与强制绑定 MFA 已合入）
 > **关联文档**：[前端架构与工程规范](./frontend-architecture.md)、[ADR-0005](./adr/0005-frontend-monorepo-react.md)、[CI 流水线规范](./CI_STANDARDS.md)、[安全规范](./SECURITY_STANDARDS.md)、[测试规范](./TESTING_STANDARDS.md)
 > **定位**：本文回答“写业务页面前还必须具备什么”，不替代 `frontend-architecture.md` 的规范性约束；两者冲突时以架构文档为准。
 
@@ -36,6 +36,14 @@
 | L2 标准化 | 有统一入口、约定与测试，页面可按规范接入 |
 | L3 可治理 | 有度量、自动化门禁与回归，可防止退化 |
 
+### 1.4 评审结论（2026-10-25）
+
+| 议题 | 结论 | 对本文的影响 |
+|---|---|---|
+| P0 范围 | **不收缩**，7 项 P0 全部保留 | i18n 维持 P0，且约束所有新增页面，不接受“只约束新页面”的降级 |
+| D-01 监控选型 | **已定**：OpenTelemetry Web + 自有 collector | 可观测能力按 OTel 语义约定落地，禁止并行引入第二套上报 SDK |
+| D-08 强制绑定 MFA | **已关闭**：后端已补齐契约，前端已接入 | `MFABindingRequired` + `mfa_setup_ticket` 两步流程可用，INF-AUTH-08 不再是阻塞项 |
+
 ---
 
 ## 二、结论摘要
@@ -43,11 +51,11 @@
 | 领域 | 现状 | 结论 |
 |---|---|---|
 | 工程治理（Monorepo/TS/Lint/格式/边界/CI） | **L3** | 已具备，后续只需增量维护 |
-| 契约与请求管线 | **L2** | 生成、校验、超时、重试、幂等、401 重放已闭环；缺业务侧数据层约定 |
-| 认证与会话 | **L2** | 登录、两步 MFA、单飞刷新、登出、启动恢复已闭环；缺跨标签页同步、空闲超时、会话管理页 |
-| 权限与审批 | **L1** | 仅有纯函数 `PermissionChecker`；快照、守卫、菜单、审批引导全部缺失 |
+| 契约与请求管线 | **L2** | 生成、校验、超时、重试、幂等、401 重放已闭环；Query Key/URL 列表状态/幂等键约定已落地；错误码文案映射待 S3 |
+| 认证与会话 | **L2** | 登录、两步 MFA、强制绑定、单飞刷新、登出、启动恢复已闭环；缺跨标签页同步、空闲超时、会话管理页 |
+| 权限与审批 | **L2（权限）/ L1（审批）** | 快照 Provider、`meta.permission` 守卫、菜单过滤、fail-closed 与列表数据层约定已落地；审批引导与 SoD 待 S2 |
 | UI 设计系统与交互基座 | **L1** | 令牌、主题、状态组件、AppShell 已有；表格/表单/弹窗/通知等业务高频件缺失 |
-| 可观测与前端安全 | **L1** | 错误模型与根错误边界已有；logger、上报通道、Web Vitals、CSP 注入缺失 |
+| 可观测与前端安全 | **L1** | 错误模型与根错误边界已有；logger、OTel 上报通道、Web Vitals、CSP 注入缺失（选型已定） |
 | 性能 | **L2** | 体积门禁、路由懒加载、manualChunks 已生效；缺 Lighthouse/RUM 与预取 |
 | 测试与质量 | **L2** | 单测/MSW/E2E 骨架已有；**apps 测试未纳入 Vitest**、无 axe、无契约夹具沉淀 |
 | 发布与运行 | **L1** | 静态构建可用；缺镜像/Helm、缓存头、Source Map 私有化、回滚演练 |
@@ -69,11 +77,11 @@
 | 类型与规范 | TS strict 全开；ESLint type-checked + a11y + 禁止直连 antd/fetch/localStorage | `frontend/tsconfig.base.json`、`frontend/packages/config/src/eslint-base.mjs` |
 | 契约生成 | openapi-typescript 7.4.0 生成 admin/biz，CI 校验无漂移，MANIFEST 已 active | `frontend/scripts/gen-api.mjs`、[MANIFEST](./codegen/MANIFEST.md) |
 | 请求管线 | 统一信封、错误归一、15s 超时、幂等重试、401 刷新后单次重放 | `frontend/packages/api-client/src/http/client.ts` |
-| 认证能力 | 内存 Access Token、sessionStorage Refresh、单飞刷新 + `navigator.locks`、MFA 票据仅内存 | `frontend/packages/auth/src/*` |
-| 认证装配 | 登录页、两步 MFA、启动恢复、登录守卫、403、退出登录 | `frontend/apps/admin-web/src/app/auth/*`、`frontend/apps/admin-web/src/pages/LoginPage.tsx` |
+| 认证能力 | 内存 Access Token、sessionStorage Refresh、单飞刷新 + `navigator.locks`、MFA/绑定票据仅内存且一次性消费 | `frontend/packages/auth/src/*` |
+| 认证装配 | 登录页、两步 MFA、登录前强制绑定（密钥/恢复码一次展示）、启动恢复、登录守卫、403、退出登录 | `frontend/apps/admin-web/src/app/auth/*`、`frontend/apps/admin-web/src/pages/LoginPage.tsx` |
 | UI 基础 | 设计令牌、主题、Empty/Error/PageLoading、AppShell、原子组件白名单 | `frontend/packages/ui/src/*` |
 | 工具函数 | 时间/金额格式化、分页上限、运行期配置校验 | `frontend/packages/shared/src/*` |
-| 测试 | 53 个单测用例，覆盖率门禁 70%，MSW 契约 Mock，2 条 admin E2E | `frontend/packages/*/src/*.test.*`、`frontend/e2e/admin/shell.spec.ts` |
+| 测试 | 62 个单测用例，覆盖率门禁 70%，MSW 契约 Mock，2 条 admin E2E | `frontend/packages/*/src/*.test.*`、`frontend/e2e/admin/shell.spec.ts` |
 | 门禁 | format/lint/boundaries/typecheck/test/build/size/license/audit/E2E 均有本地与 CI 入口 | `frontend/package.json`、`scripts/ci/check-frontend.sh`、`.github/workflows/ci.yml` |
 
 **已确认的空白**
@@ -108,10 +116,10 @@
 |---|---|---|---|---|---|
 | INF-DATA-01 | 契约类型唯一来源 | L2 | L3 | 业务代码零手写响应结构；生成物禁止手改 | 已具备 |
 | INF-DATA-02 | 错误码 → 用户文案映射 | L1 | L2 | 40000/40100/40300/40400/40900/42900/50000/50300 各有统一文案与展示位置 | **P0** |
-| INF-DATA-03 | Query Key 约定与工厂 | L0 | L2 | 按「端别/领域/资源/形态/参数」生成；禁止散落字符串 | **P0** |
-| INF-DATA-04 | 列表 URL 状态同步 | L1 | L2 | 分页/筛选/排序写入 URL；切换筛选重置页码；上限 100 | **P0** |
-| INF-DATA-05 | 写操作幂等键 | L1 | L2 | 统一生成 UUIDv4；同一次提交重试复用；缺失时开发环境抛错 | **P0** |
-| INF-DATA-06 | 请求取消与竞态 | L1 | L2 | 路由切换/参数变化通过 `AbortSignal` 取消；列表翻页保留旧数据 | **P0** |
+| INF-DATA-03 | Query Key 约定与工厂 | L1（已落地 feature 工厂） | L2 | 按「端别/领域/资源/形态/参数」生成；禁止散落字符串 | **P0** |
+| INF-DATA-04 | 列表 URL 状态同步 | L2（已落地） | L2 | 分页/筛选/排序写入 URL；切换筛选重置页码；上限 100 | **P0** |
+| INF-DATA-05 | 写操作幂等键 | L1（工具已备） | L2 | 统一生成 UUIDv4；同一次提交重试复用；缺失时开发环境抛错 | **P0** |
+| INF-DATA-06 | 请求取消与竞态 | L2（已落地） | L2 | 路由切换/参数变化通过 `AbortSignal` 取消；列表翻页保留旧数据 | **P0** |
 | INF-DATA-07 | 服务端状态边界 | L1 | L2 | 服务端数据只进 TanStack Query；Zustand 仅存 UI 元信息 | **P0** |
 
 ### 4.3 认证与会话
@@ -120,23 +128,23 @@
 |---|---|---|---|---|---|
 | INF-AUTH-01 | 令牌存储隔离 | L3 | 保持 | 仅 `packages/auth` 访问存储；无 localStorage；无令牌入 URL/日志 | 已具备 |
 | INF-AUTH-02 | 单飞刷新 | L3 | 保持 | 并发 401 只刷新一次；失败清会话并跳登录 | 已具备 |
-| INF-AUTH-03 | 登录与两步 MFA | L2 | L3 | 登录/MFA/失败重登/票据一次性消费有单测 | 已具备 |
+| INF-AUTH-03 | 登录、两步 MFA 与强制绑定 | L2 | L3 | 密码/MFA/强制绑定/失败重登/票据一次性消费均有单测；补 E2E | 已具备（补 E2E） |
 | INF-AUTH-04 | 多标签页会话同步 | L0 | L2 | `BroadcastChannel` 同步登录/登出/刷新；并发轮换不触发重放 | P1 |
 | INF-AUTH-05 | 空闲超时 | L0 | L2 | 30 分钟告警、60 分钟强制登出；与后端 Token 有效期匹配 | P1 |
 | INF-AUTH-06 | 会话管理页 | L1 | L2 | 列表/撤销单会话/登出全部；不展示 IP/UA 原文 | P1 |
 | INF-AUTH-07 | MFA 绑定与解绑页 | L0 | L2 | 密钥/恢复码只展示一次；解绑需动态码；成功后撤销全部会话 | P1 |
-| INF-AUTH-08 | 强制绑定 MFA 流程 | L0 | L2 | 登录前绑定引导可用（契约已定稿，见 `identity-authn.md` §7.2.1） | P1 |
+| INF-AUTH-08 | 强制绑定 MFA 流程 | L2 | L2 | 登录返回 `mfa_setup_ticket` → 初始化密钥/恢复码 → 首码换令牌；票据一次性消费 | 已具备（补 E2E） |
 | INF-AUTH-09 | 刷新令牌 HttpOnly 适配 | L0 | L2 | `TokenStore` 适配器切换，业务零改动 | P2 |
 
 ### 4.4 权限与审批
 
 | 编号 | 能力 | 现状 | 目标 | 验收标准 | 优先级 |
 |---|---|---|---|---|---|
-| INF-IAM-01 | 权限快照 Provider | L1 | L2 | `/iam/me/permissions` 统一查询；60s 复用；403 强制刷新一次 | **P0** |
-| INF-IAM-02 | 路由权限 meta | L0 | L2 | `meta.permission` 驱动守卫；未授权渲染 403 且保留导航上下文 | **P0** |
-| INF-IAM-03 | 按钮级权限 | L1 | L2 | `usePermission` / `<Can>` 统一实现；禁止页面散落权限码 | **P0** |
-| INF-IAM-04 | 菜单生成 | L0 | L2 | 静态路由表 + 权限快照过滤；B 端不出现 A 端权限码 | **P0** |
-| INF-IAM-05 | 权限不可用 fail-closed | L0 | L2 | 50300/网络失败展示不可用页，禁止先放行 | **P0** |
+| INF-IAM-01 | 权限快照 Provider | L2（已落地） | L2 | `/iam/me/permissions` 统一查询；60s 复用；403 强制刷新一次 | **P0** |
+| INF-IAM-02 | 路由权限 meta | L2（已落地） | L2 | `meta.permission` 驱动守卫；未授权渲染 403 且保留导航上下文 | **P0** |
+| INF-IAM-03 | 按钮级权限 | L2（已落地） | L2 | `usePermission` / `<Can>` 统一实现；禁止页面散落权限码 | **P0** |
+| INF-IAM-04 | 菜单生成 | L2（已落地） | L2 | 静态路由表 + 权限快照过滤；B 端不出现 A 端权限码 | **P0** |
+| INF-IAM-05 | 权限不可用 fail-closed | L2（已落地） | L2 | 50300/网络失败展示不可用页，禁止先放行 | **P0** |
 | INF-IAM-06 | 40900 审批引导 | L0 | L2 | IAM 写操作映射为“需审批”，预填审批单，禁止自动重试 | **P0** |
 | INF-IAM-07 | 审批职责分离（SoD） | L0 | L2 | 申请人不得操作自己的通过/拒绝按钮 | P1 |
 | INF-IAM-08 | 数据范围 UI 约束 | L0 | L2 | 明显越界的批量操作禁用；跨商户按 404 处理 | P1 |
@@ -161,12 +169,14 @@
 | 编号 | 能力 | 现状 | 目标 | 验收标准 | 优先级 |
 |---|---|---|---|---|---|
 | INF-OBS-01 | 统一 logger | L0 | L2 | 生产禁用 console；默认脱敏；仅装配层可输出诊断 | **P0** |
-| INF-OBS-02 | 错误上报通道 | L0 | L2 | 上报 release/commit/路由/trace_id；不含表单内容与令牌 | **P0** |
+| INF-OBS-02 | 错误上报通道 | L0 | L2 | **OTel Web + 自有 collector**：上报 release/commit/路由/trace_id；不含表单内容与令牌 | **P0** |
 | INF-OBS-03 | 路由级错误边界 | L1 | L2 | 区块级局部重试；chunk 加载失败自动刷新一次 | **P0** |
-| INF-OBS-04 | Web Vitals 采集 | L0 | L2 | LCP/INP/CLS/TTFB 按采样率上报 | P1 |
+| INF-OBS-04 | Web Vitals 采集 | L0 | L2 | LCP/INP/CLS/TTFB 按采样率上报（同一 OTel pipeline） | P1 |
 | INF-OBS-05 | 发布标识可视化 | L1 | L2 | 关于/诊断页展示版本与 contract_commit | P1 |
 | INF-OBS-06 | CSP 与安全头 | L1 | L2 | 部署期 nonce 注入；`frame-ancestors 'none'`；生产无 Source Map | P1 |
 | INF-OBS-07 | 敏感信息防泄漏 | L2 | L3 | gitleaks + Review 覆盖；日志/URL/存储无令牌与票据 | P1 |
+
+> **选型已定（D-01）**：统一使用 OpenTelemetry Web SDK 与后端 trace 语义对齐，自建 collector 满足私有化；不引入 Sentry 等第二套上报链路。
 
 ### 4.7 性能与体验
 
@@ -237,7 +247,7 @@
 
 - **问题**：`AppError` 只有 kind 分类，无统一用户文案；错误展示散落；无上报通道。
 - **影响**：用户看到后端原始 message；线上问题无法定位。
-- **范围**：`error-code-map`、`logger`（默认脱敏）、`reportError` 抽象、全局错误提示组件。
+- **范围**：`error-code-map`、`logger`（默认脱敏）、基于 OTel Web 的 `reportError`、全局错误提示组件。
 - **验收**：8 个错误码均有文案与展示位置；错误提示可复制 trace_id；生产无 `console.*`。
 
 ### 5.5 高风险操作套件
@@ -271,7 +281,7 @@ main.tsx
       └─ App
           ├─ AppErrorBoundary（根）
           ├─ ThemeProvider（令牌 + CSP nonce）
-          ├─ ObservabilityProvider（logger / Web Vitals / 上报）
+          ├─ ObservabilityProvider（OTel logger / Web Vitals / 上报）
           ├─ I18nProvider（zh-CN 字典）
           ├─ QueryClientProvider（重试/缓存/取消规范）
           ├─ AuthProvider（TokenStore + RefreshManager + SessionRuntime）
@@ -295,11 +305,11 @@ main.tsx
 
 | 阶段 | 范围 | 退出标准 | 依赖 |
 |---|---|---|---|
-| **S1 权限与数据层** | 5.1 + 5.2 | 权限守卫与菜单可用；示例列表页按 Query/URL 规范接入 | 认证切片（已完成） |
+| **S1 权限与数据层** | 5.1 + 5.2 | 权限守卫与菜单可用；示例列表页按 Query/URL 规范接入（**已落地**） | 认证切片（已完成，含强制绑定） |
 | **S2 UI 基座与交互** | 5.3 + 5.5 | 表格/表单/弹窗/通知/危险操作套件可用 | S1 |
 | **S3 错误、可观测与 i18n** | 5.4 + 5.6 | 错误码映射、logger、trace_id、文案字典就绪 | S1 |
 | **S4 测试与发布硬化** | 5.7 + 4.8/4.9 | apps 测试纳入、axe、缓存头、镜像/Helm、回滚演练 | S2 |
-| **S5 会话与 MFA 管理** | 4.3 的 P1 项 | 会话页、MFA 绑定/解绑、空闲超时、跨标签页同步 | S1 |
+| **S5 会话与 MFA 管理** | 4.3 的 P1 项 | 会话页、已登录下 MFA 绑定/解绑、空闲超时、跨标签页同步 | S1 |
 | **S6 B 端** | 4.10 + 4.4 租户隔离 | B 端登录/IAM 可用；不发送 `merchant_id`；跨商户 404 | S1～S3 |
 
 > 建议业务页面在 **S1 + S2 完成后开工**；S3 可与首批页面并行，但错误提示与文案规范必须先定。
@@ -308,17 +318,17 @@ main.tsx
 
 ## 八、评审需决策项
 
-| 编号 | 决策 | 选项 | 建议 |
+| 编号 | 决策 | 选项 | 状态与结论 |
 |---|---|---|---|
-| D-01 | 监控选型 | Sentry / OpenTelemetry Web + 自有 collector | 优先 OTel Web，满足私有化与后端 trace 对齐 |
-| D-02 | i18n 深度 | 仅 zh-CN 字典 / 完整多语言切换 | 首期只做字典与 `t()`，切换能力等有明确诉求再引入 |
-| D-03 | 权限快照策略 | 每次路由进入 / Provider 缓存 60s | Provider 缓存 + 403 强制刷新一次 |
-| D-04 | 菜单来源 | 路由表 / 后端菜单接口 | 路由表为准；契约补齐菜单元数据后再评估切换 |
-| D-05 | UI 封装深度 | 薄封装 / 自建组件 DSL | 薄封装 + 组合式页面模板，避免维护第二套组件库 |
-| D-06 | Storybook / 视觉回归 | 现在引入 / 组件 ≥30 再评估 | 延后，先保证 axe 与组件测试 |
-| D-07 | 刷新令牌 HttpOnly | 继续 sessionStorage / 推动后端 Cookie | 推动后端，前端保留 `TokenStore` 适配器 |
-| D-08 | 强制绑定 MFA 契约 | 临时票据 / 专用错误码 | **已定稿**：登录 200 新分支 + `mfa_setup_ticket`，首个管理员由 `identity-seed` 开通；详见 [`identity-authn.md`](./identity-authn.md) §7.2.1 |
-| D-09 | B 端启动时点 | 与 A 端并行 / A 端首批页面后 | A 端 S1/S2 完成后启动，复用 Provider |
+| D-01 | 监控选型 | Sentry / OpenTelemetry Web + 自有 collector | **已定**：OTel Web + 自建 collector，与后端 trace 对齐 |
+| D-02 | i18n 深度 | 仅 zh-CN 字典 / 完整多语言切换 | **已采纳建议**：首期 `zh-CN` 字典 + `t()`；P0 范围不收缩 |
+| D-03 | 权限快照策略 | 每次路由进入 / Provider 缓存 60s | **已采纳建议**：Provider 缓存 60s + 403 强制刷新一次 |
+| D-04 | 菜单来源 | 路由表 / 后端菜单接口 | **已采纳建议**：路由表为单一来源，权限快照过滤 |
+| D-05 | UI 封装深度 | 薄封装 / 自建组件 DSL | **已采纳建议**：薄封装 + 组合式页面模板 |
+| D-06 | Storybook / 视觉回归 | 现在引入 / 组件 ≥30 再评估 | **已采纳建议**：延后，先保证 axe 与组件测试 |
+| D-07 | 刷新令牌 HttpOnly | 继续 sessionStorage / 推动后端 Cookie | **已采纳建议**：推动后端，前端保留 `TokenStore` 适配器 |
+| D-08 | 强制绑定 MFA 契约 | 临时票据 / 专用错误码 | **已关闭**：登录 200 新分支 + `mfa_setup_ticket`，首个管理员由 `identity-seed` 开通；详见 [`identity-authn.md`](./identity-authn.md) §7.2.1 |
+| D-09 | B 端启动时点 | 与 A 端并行 / A 端首批页面后 | **已采纳建议**：A 端 S1/S2 完成后启动，复用 Provider |
 
 ---
 
@@ -387,6 +397,7 @@ make frontend-ci
 | 日期 | 版本 | 说明 |
 |---|---|---|
 | 2026-10-25 | v0.1 | 初稿：基于 P0 底座与认证切片的现状评估，提出 7 项 P0 前置能力 |
+| 2026-10-25 | v0.2 | 记录评审结论：P0 不收缩；D-01 定为 OTel Web；D-08 随契约补齐关闭；D-02～D-07、D-09 采纳建议 |
 
 ---
 
