@@ -12,7 +12,7 @@ export const subjectPermissionsFixture: SubjectPermissions = {
   subject_type: 'staff',
   subject_id: 'staff-1',
   roles: ['platform-admin'],
-  permissions: ['iam:role:read'],
+  permissions: ['iam:role:read', 'iam:permission:read'],
   data_scopes: [{ resource: '*', scope_type: 'all' }],
   snapshot_version: 1,
   generated_at: '2026-01-01T00:00:00Z',
