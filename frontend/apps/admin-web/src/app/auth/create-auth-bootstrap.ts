@@ -18,12 +18,14 @@ export type AuthBootstrap = {
 export function createAuthBootstrap(
   config: AppRuntimeConfig,
   onSessionLost: () => void,
+  onForbidden?: (path: string) => void,
 ): AuthBootstrap {
   const store = new TokenStore({ namespace: ADMIN_SESSION_NAMESPACE });
   let refreshManager: RefreshManager | null = null;
   const client = createAdminClient({
     baseUrl: config.apiBaseUrl,
     getAccessToken: () => store.getAccessToken(),
+    onForbidden,
     refreshAccessToken: async () => {
       if (!refreshManager) {
         return null;

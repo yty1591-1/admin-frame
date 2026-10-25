@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { RouterProvider } from 'react-router';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { AuthProvider } from './auth/AuthProvider';
+import { PermissionProvider } from './permission/PermissionProvider';
 import { createAppRouter } from './router';
 
 export function App({ config }: { config: AppRuntimeConfig }) {
@@ -28,7 +29,9 @@ export function App({ config }: { config: AppRuntimeConfig }) {
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider config={config}>
-            <RouterProvider router={router} />
+            <PermissionProvider>
+              <RouterProvider router={router} />
+            </PermissionProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ThemeProvider>

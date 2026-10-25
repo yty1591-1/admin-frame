@@ -1,14 +1,12 @@
-import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
-import { createBrowserRouter, type RouteObject } from 'react-router';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
 import { PageLoading } from '@admin-frame/ui';
+import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
+import { createBrowserRouter, type RouteObject } from 'react-router';
 import { AppLayout } from './AppLayout';
 import { RequireAuth } from './auth/RequireAuth';
+import { buildShellRouteObjects } from './routes';
 
-const HomePage = lazy(async () => import('../pages/HomePage'));
 const LoginPage = lazy(async () => import('../pages/LoginPage'));
-const ForbiddenPage = lazy(async () => import('../pages/ForbiddenPage'));
-const NotFoundPage = lazy(async () => import('../pages/NotFoundPage'));
 
 function lazyPage(Page: ComponentType): ReactNode {
   return (
@@ -18,7 +16,7 @@ function lazyPage(Page: ComponentType): ReactNode {
   );
 }
 
-/** 路由即权限/菜单/懒加载的单一描述源（§7.1）；权限 meta 在 P1 后续切片补齐。 */
+/** 路由即权限/菜单/懒加载的单一描述源（§7.1）；外壳子路由见 app/routes.tsx。 */
 export function createAppRouter(config: AppRuntimeConfig) {
   const routes: RouteObject[] = [
     {
@@ -32,11 +30,7 @@ export function createAppRouter(config: AppRuntimeConfig) {
           <AppLayout config={config} />
         </RequireAuth>
       ),
-      children: [
-        { index: true, element: lazyPage(HomePage) },
-        { path: '403', element: lazyPage(ForbiddenPage) },
-        { path: '*', element: lazyPage(NotFoundPage) },
-      ],
+      children: buildShellRouteObjects(),
     },
   ];
   return createBrowserRouter(routes);
