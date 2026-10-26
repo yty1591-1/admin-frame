@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成相对基线的 OpenAPI 变更日志（markdown），用于发布说明与前端契约订阅。
+# 生成相对基线的 OpenAPI 变更日志（markdown），用于发布说明与契约订阅。
 # 用法: bash scripts/openapi/changelog.sh [base-ref]
 # 基线解析顺序：$1 -> OPENAPI_BASE_REF -> origin/main -> origin/master -> main -> master
 set -euo pipefail

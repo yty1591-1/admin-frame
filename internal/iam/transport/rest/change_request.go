@@ -24,7 +24,7 @@ import (
 // ChangeRequestDTO 是审批单响应；payload 原样返回，便于审批人核对申请意图。
 //
 // merchant_id 只对 A 端回显（平台运营需要定位租户）；B 端回显一个自己已知的值
-// 没有信息增益，反而把租户标识扩散到前端日志，因此 B 端置空。
+// 没有信息增益，反而把租户标识扩散到客户端日志，因此 B 端置空。
 type ChangeRequestDTO struct {
 	ID          string          `json:"id"`
 	Channel     string          `json:"channel"`
@@ -66,7 +66,7 @@ type DecideChangeRequestRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// toChangeRequestDTO 转换审批单聚合；空载荷归一为 {}，避免前端出现 null。
+// toChangeRequestDTO 转换审批单聚合；空载荷归一为 {}，避免客户端出现 null。
 //
 // includeMerchant=false 时不回显商户（B 端视角，见 ChangeRequestDTO 注释）。
 func toChangeRequestDTO(request *domain.ChangeRequest, includeMerchant bool) *ChangeRequestDTO {

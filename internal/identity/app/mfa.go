@@ -404,7 +404,7 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 
 // completeMFASetup 校验强制绑定票据与首码：确认绑定并直接签发令牌（§7.2.1）。
 //
-// 票据一次性消费，首码错误同样作废，与两步登录保持一致；前端需回到密码步骤重新登录。
+// 票据一次性消费，首码错误同样作废，与两步登录保持一致；客户端需回到密码步骤重新登录。
 // 绑定成功即完成登录，不再要求第二次密码输入。
 func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
 	now := s.clock.Now().UTC()

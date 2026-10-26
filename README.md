@@ -59,21 +59,6 @@ curl -s http://127.0.0.1:8083/readyz
 - `internal/platform`、`internal/security`：进程生命周期、配置、鉴权中间件
 - `api/openapi/{admin,biz,c}.yaml`：分端契约
 - `migrations/`：可回滚 SQL
-- `frontend/`：A/B 双端 Web monorepo（pnpm workspace），见 [前端架构与工程规范](docs/frontend-architecture.md)
-
-## 前端
-
-```bash
-cd frontend
-corepack enable && pnpm install --frozen-lockfile
-
-pnpm dev:admin            # A 端 http://127.0.0.1:5171（/admin 代理到 :8081）
-pnpm dev:biz              # B 端 http://127.0.0.1:5172（/biz 代理到 :8082）
-pnpm gen:api              # 由 api/openapi/{admin,biz}.yaml 生成 TS 类型（入库）
-```
-
-工作区：`apps/admin-web`、`apps/biz-web`、`packages/{api-client,auth,ui,shared,config,testing}`。
-运行期配置由部署注入 `public/config.js`（`window.__APP_CONFIG__`），构建期固定端别；A/B 独立 Token 域与存储命名空间。
 
 ## 工程规范
 
@@ -99,8 +84,6 @@ pnpm gen:api              # 由 api/openapi/{admin,biz}.yaml 生成 TS 类型（
 - **许可证硬约束**：[docs/LICENSE_STANDARDS.md](docs/LICENSE_STANDARDS.md)（LIC-01～LIC-07）
 - **代码生成硬约束**：[docs/CODEGEN_STANDARDS.md](docs/CODEGEN_STANDARDS.md)（GEN-01～GEN-07）
 - **性能硬约束**：[docs/PERFORMANCE_STANDARDS.md](docs/PERFORMANCE_STANDARDS.md)（PERF-01～PERF-07）
-- **前端架构与工程规范**：[docs/frontend-architecture.md](docs/frontend-architecture.md)（A/B 双端 monorepo；FE-01～FE-20）
-  - 决策记录：[ADR-0005](docs/adr/0005-frontend-monorepo-react.md)
 - **硬约束专文路线图**：[docs/standards-roadmap.md](docs/standards-roadmap.md)（P0～P4 已完成；分支保护待管理员勾选）
 - pkg 路线图：[docs/pkg-roadmap.md](docs/pkg-roadmap.md)
 
@@ -127,8 +110,6 @@ make openapi-docs         # 渲染分端 HTML 文档（dist/openapi/docs）
 make openapi-client       # 生成 TypeScript 类型（dist/openapi/client）
 make openapi-changelog    # 相对基线生成变更日志（dist/openapi/changelog）
 make openapi-artifacts    # 一次生成以上三类契约产物（需 Node.js 20+）
-make frontend-ci          # 前端全量门禁（FE-01～FE-20：格式/lint/文案/边界/类型/测试/构建/体积/许可证/审计）
-make frontend-e2e         # 前端 Playwright smoke（需先构建并安装浏览器）
 make ci                   # 本地对齐托管平台必跑项
 ```
 

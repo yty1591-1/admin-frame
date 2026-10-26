@@ -391,14 +391,13 @@ type RevocationChecker interface {
 - `mfa_ticket` 是短期 JWT：`aud=admin`、`scope=mfa`、`exp=5m`、`jti` 独立；只允许调用 `mfa/verify`。
 - `mfa/verify` 校验票据与动态码后签发正式 Access / Refresh。
 - `identity.mfa.admin_required=true` 时：
-  - 未绑定 MFA 的 A 端账号登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`，不签发管理令牌，由前端就地引导绑定（§7.2.1）；
+  - 未绑定 MFA 的 A 端账号登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`，不签发管理令牌，由客户端就地引导绑定（§7.2.1）；
   - 已绑定但两步未完成，绝不签发管理令牌（`AC-ENT-01-4`）。
 - `mfa_ticket` 重放：一次性消费（Redis `SETNX`），失败次数计入锁定。
 
 ### 7.2.1 强制绑定 MFA 的契约与首个管理员 bootstrap
 
 > **状态**：已定稿并落地（D1=①、D2=①、D3=①、D4=① seed CLI、D5 按建议实现）。
-> 前端 `INF-AUTH-08`（登录前绑定引导）解锁条件已满足。
 
 **落地前的问题（代码事实）**
 
@@ -407,8 +406,8 @@ type RevocationChecker interface {
 | 1 | 未绑定 MFA 且 `admin_required=true` 时返回 `401 / 40100`，`message` 为自由文本 `mfa binding required`，与「账号不存在 / 密码错误 / 锁定 / 停用」**同一业务码**；错误信封无子码字段，客户端无法结构化判定 | [`mfa.go`](../internal/identity/app/mfa.go) |
 | 2 | `mfa/setup`、`mfa/disable` 均挂在 `authMW` 之后，没有令牌就不可能完成首次绑定 | [`router.go`](../internal/identity/transport/admin/router.go) |
 | 3 | prod / staging **强制** `identity.mfa.admin_required=true`，而仓库内不存在账号或 MFA 绑定的初始化入口 → 新环境首个管理员没有任何可用登录路径（bootstrap 死锁），只能人工改库 | [`config.go`](../internal/platform/config.go) |
-| 4 | 契约闭合：`MFAChallenge` 为 `additionalProperties: false` 且 `required: [mfa_required, mfa_ticket]`；登录 200 为 `TokenPair \| MFAChallenge` 的 `oneOf`；前端 `loginOutcomeSchema` 同样只有两支。后端若直接加字段而不改契约，前端会报「响应格式非法」 | [`components.yaml`](../api/openapi/components.yaml)、[`schemas.ts`](../frontend/packages/api-client/src/schemas.ts) |
-| 5 | 前端把 `40100` 统一映射为「账号或密码错误」，用户会反复重试密码直到锁定 | [`LoginPage.tsx`](../frontend/apps/admin-web/src/pages/LoginPage.tsx) |
+| 4 | 契约闭合：`MFAChallenge` 为 `additionalProperties: false` 且 `required: [mfa_required, mfa_ticket]`；登录 200 为 `TokenPair \| MFAChallenge` 的 `oneOf`。后端若直接加字段而不改契约，消费方会报「响应格式非法」 | [`components.yaml`](../api/openapi/components.yaml) |
+| 5 | 消费方可能把 `40100` 统一映射为「账号或密码错误」，用户会反复重试密码直到锁定 | 契约语义见 [`components.yaml`](../api/openapi/components.yaml) |
 
 **已拍板结论**
 
@@ -436,7 +435,7 @@ type RevocationChecker interface {
 - 校验顺序：每次使用都重新读取账号状态，禁用 / 锁定立即失效，不依赖票据内的快照。
 - 限流沿用 `mfa/verify` 的票据维度分桶（`channel + jti + IP`，绑定流程使用独立前缀 `mfa_setup`）；绑定失败计入锁定并写 `auth.mfa.failed`；成功写 `auth.mfa.bound`。
 - `setup` 重复调用：覆盖未确认绑定（旧的未确认 enrollment 作废），已确认绑定仍返回 `40900`。
-- 成功绑定：返回 `TokenPair`（与两步登录同形），前端无需二次输密码。
+- 成功绑定：返回 `TokenPair`（与两步登录同形），客户端无需二次输密码。
 - 审计：`auth.login_failed` 的 `reason` 对「需绑定」继续使用 `mfa_pending`，不新增 reason。
 
 状态机：
@@ -446,7 +445,7 @@ type RevocationChecker interface {
 setup_required --mfa/setup--> pending（密钥与恢复码仅本次可见）
 pending --mfa/verify 首码正确--> bound + TokenPair
 pending --mfa/verify 失败 N 次--> locked（按锁定策略）
-setup_required / pending --票据过期、重放、账号禁用--> 40100，前端回登录页
+setup_required / pending --票据过期、重放、账号禁用--> 40100，客户端回登录页
 ```
 
 **OpenAPI 变更（已合入）**
@@ -503,16 +502,6 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，前�
 +        - 携带 `Authorization`：使用动态码或恢复码确认首次绑定，返回 204（无响应体）。
 +        - 携带 `mfa_setup_ticket`（且无 `Authorization`）：强制绑定流程，成功后返回 `TokenPair`。
 ```
-
-**前端解锁项**（已解锁）
-
-| 变更点 | 内容 |
-|---|---|
-| `LoginOutcome` | 增加 `{ kind: 'mfaSetup'; ticket }`，`schemas.ts` 同步三分支 |
-| `SessionRuntime` | 增加 `beginMfaSetup()` / `confirmMfaSetup(code)`；票据仍只驻留内存，禁止入存储与日志 |
-| `LoginPage` | 增加「展示密钥 / otpauth → 保存恢复码 → 首码确认」步骤；恢复码只展示一次 |
-| 错误分流 | 不再依赖 `message` 字符串，按结构化字段进入绑定流程 |
-| 契约测试 | 覆盖三分支、票据过期、重放、绑定失败锁定 |
 
 **首个管理员 bootstrap（D4=① `cmd/identity-seed`）**
 
@@ -845,7 +834,7 @@ internal/identity/
 | `AC-ENT-01-3` | 三端 issuer / audience / 密钥隔离，跨端令牌互不通过 | `internal/security/jwt_keys_test.go`、`internal/identity/app/token_test.go` | `go test ./internal/security/...` |
 | `AC-ENT-01-4` | 登录失败限流与锁定生效；A 端未完成 MFA 不得获得管理令牌 | `internal/identity/app/lockout_test.go`、`internal/identity/app/mfa_test.go` | 同上 |
 | `AC-ENT-01-5` | 登录、登出、失败、锁定、MFA 绑定均产生审计事件 | `internal/identity/app/audit_test.go`、`docs/audit/EVENTS.md` | `bash scripts/ci/check-audit.sh` |
-| `AC-ENT-01-6` | `admin_required=true` 下未绑定账号可凭 `mfa_setup_ticket` 完成绑定并直接获得令牌 | `internal/identity/app/mfa_test.go`、`frontend/packages/auth/src/session-runtime.test.ts` | `go test ./internal/identity/...`；`pnpm -C frontend test` |
+| `AC-ENT-01-6` | `admin_required=true` 下未绑定账号可凭 `mfa_setup_ticket` 完成绑定并直接获得令牌 | `internal/identity/app/mfa_test.go` | `go test ./internal/identity/...` |
 | `AC-ENT-01-7` | 首个管理员可由 `cmd/identity-seed` 幂等开通，口令与 TOTP 密钥不入日志 / 命令行 | `cmd/identity-seed/main_test.go` | `go test ./cmd/identity-seed/...` |
 
 补充用例要求：

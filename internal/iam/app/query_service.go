@@ -11,7 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
-// 模拟鉴权原因码（稳定值，便于前端展示与排障）。
+// 模拟鉴权原因码（稳定值，便于客户端展示与排障）。
 const (
 	ReasonAllowed           = "permission_granted"
 	ReasonPermissionNotHeld = "permission_not_granted"
