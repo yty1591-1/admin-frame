@@ -1,18 +1,21 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
-import { AppShell, type AppShellMenuEntry } from '@admin-frame/ui';
+import { AppShell } from '@admin-frame/ui';
 
-const BIZ_MENUS: readonly AppShellMenuEntry[] = [{ key: '/', label: '商户工作台' }];
+const BIZ_MENU_KEYS = [{ key: '/', titleKey: 'nav.bizHome' }] as const;
 
 export function AppLayout({ config }: { config: AppRuntimeConfig }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
+  const menus = BIZ_MENU_KEYS.map((entry) => ({ key: entry.key, label: t(entry.titleKey) }));
 
   return (
     <AppShell
-      title="B 端商户后台"
-      subtitle={`环境：${config.env}`}
-      menus={BIZ_MENUS}
+      title={t('common.appNameBiz')}
+      subtitle={t('common.envLabel', { env: config.env })}
+      menus={menus}
       selectedKey={location.pathname}
       onSelect={(key) => {
         void navigate(key);

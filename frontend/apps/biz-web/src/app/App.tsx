@@ -1,3 +1,4 @@
+import { I18nProvider } from '@admin-frame/i18n';
 import type { AppRuntimeConfig } from '@admin-frame/shared';
 import { ThemeProvider } from '@admin-frame/ui';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -25,9 +26,11 @@ export function App({ config }: { config: AppRuntimeConfig }) {
   return (
     <AppErrorBoundary>
       <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
+        <I18nProvider>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </I18nProvider>
       </ThemeProvider>
     </AppErrorBoundary>
   );
