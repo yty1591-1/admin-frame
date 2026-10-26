@@ -85,7 +85,6 @@ scene: git_message
 | 后端域 | `identity`、`iam`、`platform`、`security`、`shared` |
 | 通用包 | 包名本身（如 `db`、`redis`、`mq`、`outbox`、`httpx`、`jwt`、`storage`、`observability`）；跨多个包时用 `pkg` |
 | 契约 | `api`、`openapi` |
-| 前端 | `frontend`、`admin-web`、`biz-web`、`api-client`、`auth`、`ui`、`e2e` |
 | 交付 | `deploy`、`ci`、`scripts`、`migrations`、`deps`、`docs` |
 
 规则：
@@ -93,7 +92,7 @@ scene: git_message
 - 小写、短横线分隔，不超过两级（禁止 `identity/app/service`）。
 - 禁止使用 `misc`、`all`、`*`、`tmp`、人名、分支名、文件名作为 scope。
 - 纯仓库级变更（许可证、README 顶层、格式化）可省略 scope，写成 `docs: …`。
-- 一个提交原则上只出现一个 scope；跨域变更应拆分，确需合并时用更上层的 scope（`frontend`、`pkg`）或省略。
+- 一个提交原则上只出现一个 scope；跨域变更应拆分，确需合并时用更上层的 scope（`pkg`）或省略。
 
 ---
 
@@ -189,7 +188,7 @@ Refs: API-07
 
 - `!` 放在 `type(scope)` 之后、`:` 之前。
 - 必须写清迁移路径（谁、改什么、何时完成）。
-- 必须同步更新 OpenAPI major、前端契约类型与 README 的升级说明。
+- 必须同步更新 OpenAPI major、契约类型与 README 的升级说明。
 
 ---
 
