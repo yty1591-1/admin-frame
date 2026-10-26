@@ -99,15 +99,6 @@ stages:
           - git fetch --no-tags --depth=1 origin main master 2>/dev/null || true
           - bash scripts/ci/gitee-job.sh openapi
 
-      # 前端门禁（FE-01～FE-20；docs/frontend-architecture.md §15/§16.2）。
-      - step: build@nodejs
-        name: frontend
-        displayName: frontend
-        nodeVersion: "20"
-        commands:
-          - set -euo pipefail
-          - bash scripts/ci/gitee-job.sh frontend
-
       - step: build@golang
         name: build
         displayName: build

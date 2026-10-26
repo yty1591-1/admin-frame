@@ -85,13 +85,9 @@
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
-| FE-01～FE-20（前端，仅 `frontend/`/契约变更触发） | `frontend` + `changes` | `frontend` | `make frontend-ci` |
-| FE-18 E2E smoke（前端，§14.1） | `frontend-e2e` | —（Gitee 待接入） | `make frontend-e2e` |
 | RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make docker-push` + `make check-release` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
-
-**前端门禁映射（FE-01～FE-20）**：统一入口 [`scripts/ci/check-frontend.sh`](../scripts/ci/check-frontend.sh)（本地 `make frontend-ci`）按序执行 FE-03 格式 → FE-02 Lint → FE-04 边界 → FE-01 类型 → FE-18 测试/覆盖率 → FE-12 构建 → FE-19 体积 → FE-17 许可证 → 依赖漏洞审计；FE-08 生成物漂移由 `pnpm gen:api` + `git diff --exit-code` 校验。约束正文见 [前端架构 §15](./frontend-architecture.md#十五代码规范硬约束)。
 
 **服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN`；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
 
@@ -102,7 +98,6 @@
 - `permissions: contents: read`
 - Go 版本：`actions/setup-go` 读取 `go.mod`
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
-- `frontend` / `frontend-e2e` job（FE-01～FE-20）：由 `changes` job（`dorny/paths-filter`）路径过滤，`frontend/**`、`api/openapi/**`、本 workflow 或 `scripts/ci/check-frontend*.sh` 变更时触发；Node 20 + pnpm（版本由 `frontend/package.json` 的 `packageManager` 钉扎）+ pnpm store 缓存；E2E 独立 job 安装 Chromium 后跑静态产物 smoke
 
 ### 3.3 Gitee Go
 
@@ -111,7 +106,7 @@
   - `PRPipeline.yml`：PR 目标为 `main`/`master`
   - `MasterPipeline.yml`：push 到 `main`/`master`
   - `BranchPipeline.yml`：其它分支 push（排除主干，避免重复）
-- 插件：`build@golang`（后端 job）、`build@nodejs`（`frontend` step，Node 20）；阶段 `strategy: fast`（一失败则快速失败）
+- 插件：`build@golang`（全部 job）；阶段 `strategy: fast`（一失败则快速失败）
 - 代理：默认 `GOPROXY=https://goproxy.cn,direct`
 - **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
   1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或
@@ -141,12 +136,12 @@
 |----|------|
 | 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
 | 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
-| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05）；前端 `admin-web` / `biz-web` 由独立 `frontend-image` job 产出（INF-REL-03） |
+| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05） |
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
-| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译；前端构建阶段在 QEMU 下执行 `pnpm build` |
-| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03）；前端：版本与运行期配置由 `config.js` 提供，镜像不注入密钥 |
-| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 / Nginx 静态站点 |
-| 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起）；前端固定 `nginxinc/nginx-unprivileged:<major>.<minor>-alpine` 并以 UID 101 运行，`check-release.sh` 静态拦截 `:latest`、缺失 `HEALTHCHECK` 与非 root `USER`（RELS-02/§3） |
+| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
+| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
+| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
+| 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
 
 - 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备）。

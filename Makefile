@@ -13,9 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup gitee-job ci mock migrate-up vuln docker docker-admin docker-push \
-	frontend-install frontend-gen frontend-lint frontend-format frontend-typecheck frontend-boundaries \
-	frontend-test frontend-build frontend-size frontend-audit frontend-e2e frontend-ci
+        check-authn check-deploy check-alerts check-backup gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate build-seed
 
@@ -126,7 +124,7 @@ openapi-client:
 openapi-changelog:
 	bash scripts/openapi/changelog.sh $(BASE_REF)
 
-# 产物附带当前 commit，供前端锁定契约版本（API_STANDARDS §3.2）。
+# 产物附带当前 commit，供消费方锁定契约版本（API_STANDARDS §3.2）。
 openapi-artifacts: openapi-docs openapi-client openapi-changelog
 	@mkdir -p dist/openapi
 	@git rev-parse HEAD >dist/openapi/contract-commit.txt 2>/dev/null || echo unknown >dist/openapi/contract-commit.txt
@@ -211,55 +209,11 @@ mock:
 
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
-	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend"; exit 2; fi
+	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
 ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup build
-
-# ===== 前端门禁（FE-01～FE-20；docs/frontend-architecture.md §16.1）=====
-FRONTEND_DIR := frontend
-PNPM ?= pnpm
-
-frontend-install:
-	corepack enable >/dev/null 2>&1 || true
-	cd $(FRONTEND_DIR) && $(PNPM) install --frozen-lockfile
-
-frontend-gen:
-	cd $(FRONTEND_DIR) && $(PNPM) gen:api
-
-frontend-lint:
-	cd $(FRONTEND_DIR) && $(PNPM) lint
-	cd $(FRONTEND_DIR) && $(PNPM) lint:i18n
-
-frontend-format:
-	cd $(FRONTEND_DIR) && $(PNPM) format:check
-
-frontend-typecheck:
-	cd $(FRONTEND_DIR) && $(PNPM) typecheck
-
-frontend-boundaries:
-	bash scripts/ci/check-frontend-boundaries.sh
-
-frontend-test:
-	cd $(FRONTEND_DIR) && $(PNPM) test:ci
-
-frontend-build:
-	cd $(FRONTEND_DIR) && $(PNPM) build
-
-frontend-size:
-	cd $(FRONTEND_DIR) && $(PNPM) size
-
-frontend-audit:
-	cd $(FRONTEND_DIR) && $(PNPM) audit --audit-level=high
-	cd $(FRONTEND_DIR) && $(PNPM) license
-
-frontend-e2e:
-	cd $(FRONTEND_DIR) && $(PNPM) e2e
-
-# 与 CI frontend job、Gitee frontend step 同一入口。
-frontend-ci:
-	bash scripts/ci/check-frontend.sh
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
