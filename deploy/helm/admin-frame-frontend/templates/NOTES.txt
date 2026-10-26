@@ -1,0 +1,18 @@
+前端已发布（admin-frame-frontend）。
+
+工作负载：
+{{- range $key, $w := .Values.workloads }}
+{{- if $w.enabled }}
+  - {{ $key }}: {{ include "admin-frame-frontend.fullname" $ }}-{{ $key }}（replicas={{ $w.replicas }}，镜像 {{ include "admin-frame-frontend.image" (dict "root" $ "workload" $w) }}）
+{{- end }}
+{{- end }}
+
+发布后自检（缓存头必须符合预期）：
+  1) kubectl -n <ns> rollout status deploy/{{ include "admin-frame-frontend.fullname" . }}-admin
+  2) curl -sSI https://<host>/index.html | grep -i cache-control     # 期望 no-store
+  3) curl -sSI https://<host>/config.js  | grep -i cache-control     # 期望 no-store
+  4) curl -sSI https://<host>/assets/<hash>.js | grep -i cache-control  # 期望 immutable
+  5) 浏览器硬刷新后登录，确认 __APP_CONFIG__ 与目标环境一致
+
+回滚：helm rollback {{ .Release.Name }} <REVISION> --wait
+详见 docs/runbooks/frontend-rollback.md。

@@ -1,0 +1,133 @@
+# 前端 Chart 默认值（开发基线）。
+# 环境差异只允许出现在 values-<env>.yaml；生产必须用 digest 固定镜像。
+# 运行期配置渲染为 config.js（非敏感），密钥/令牌一律不得写入。
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ghcr.io
+  namespace: admin-frame
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+podAnnotations: {}
+podLabels: {}
+
+# 非 root + 只读根文件系统；Nginx 仅需 /tmp 可写（emptyDir）。
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+workloads:
+  admin:
+    enabled: true
+    image:
+      repository: admin-web
+      # 空则回退 Chart.AppVersion；生产用 values-prod 覆盖为 digest。
+      tag: ""
+      digest: ""
+    replicas: 2
+    # 渲染为 /usr/share/nginx/html/config.js，禁止写入任何密钥。
+    # apiBaseUrl 留空表示同源；同源部署时必须由 Ingress 先按 /admin、/biz 前缀
+    # 转发到后端 API，否则 SPA 回退会把接口请求吞掉。
+    runtime:
+      apiBaseUrl: ""
+      env: prod
+      channel: admin
+      features: {}
+      monitoring:
+        dsn: null
+        sampleRate: 0
+        release: null
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    probes:
+      enabled: true
+      path: /healthz
+      initialDelaySeconds: 3
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: admin.localhost
+      path: /
+      pathType: Prefix
+      tls: []
+    pdb:
+      enabled: false
+      minAvailable: 1
+
+  biz:
+    enabled: true
+    image:
+      repository: biz-web
+      tag: ""
+      digest: ""
+    replicas: 2
+    # 渲染为 /usr/share/nginx/html/config.js，禁止写入任何密钥。
+    # apiBaseUrl 留空表示同源；同源部署时必须由 Ingress 先按 /admin、/biz 前缀
+    # 转发到后端 API，否则 SPA 回退会把接口请求吞掉。
+    runtime:
+      apiBaseUrl: ""
+      env: prod
+      channel: biz
+      features: {}
+      monitoring:
+        dsn: null
+        sampleRate: 0
+        release: null
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    probes:
+      enabled: true
+      path: /healthz
+      initialDelaySeconds: 3
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: biz.localhost
+      path: /
+      pathType: Prefix
+      tls: []
+    pdb:
+      enabled: false
+      minAvailable: 1

@@ -1,0 +1,16 @@
+{{- range $key, $w := .Values.workloads }}
+{{- if and $w.enabled $w.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "admin-frame-frontend.fullname" $ }}-{{ $key }}
+  labels:
+    {{- include "admin-frame-frontend.labels" (dict "root" $ "component" $key) | nindent 4 }}
+spec:
+  minAvailable: {{ $w.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "admin-frame-frontend.selectorLabels" (dict "root" $ "component" $key) | nindent 6 }}
+{{- end }}
+{{- end }}

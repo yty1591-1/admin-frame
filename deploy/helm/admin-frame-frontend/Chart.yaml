@@ -1,0 +1,11 @@
+apiVersion: v2
+name: admin-frame-frontend
+description: Admin Frame 前端静态站点（A 端 admin-web / B 端 biz-web），非 root Nginx 运行
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - frontend
+  - nginx
+  - spa

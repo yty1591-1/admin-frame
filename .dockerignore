@@ -1,0 +1,15 @@
+# 构建上下文为仓库根目录时生效（前端镜像 + 后端镜像共用）。
+# 后端 Dockerfile 使用 COPY . .，因此只排除确定不参与编译的产物与元数据。
+.git
+.github
+.trae
+.cursor
+docs
+deploy/*
+!deploy/frontend
+**/node_modules
+**/dist
+**/coverage
+coverage.out
+coverage-convert
+*.exe
