@@ -156,7 +156,7 @@ frontend/
 ├── vitest.config.ts                 # 单测配置
 ├── vitest.setup.ts                  # 单测全局 setup
 ├── license-allowlist.json           # 许可证白名单（FE-17 / LIC）
-├── scripts/                         # gen-api.mjs / check-size.mjs / check-licenses.mjs
+├── scripts/                         # gen-api.mjs / check-size.mjs / check-licenses.mjs / check-i18n.mjs
 ├── apps/
 │   ├── admin-web/                   # A 端：平台运营
 │   │   ├── index.html
@@ -183,7 +183,9 @@ frontend/
 │   │       ├── biz-client.ts        # createBizClient（B 端工厂）
 │   │       └── types.ts             # 面向业务的领域类型别名
 │   ├── auth/                        # 令牌存储、单飞刷新、登录态、权限守卫原语
-│   ├── ui/                          # 设计令牌、基础组件封装、状态组件
+│   ├── ui/                          # 设计令牌、基础组件封装、状态组件（依赖 i18n 字典）
+│   ├── i18n/                        # zh-CN 字典、`t()` 翻译器、错误码文案映射（零运行时依赖）
+│   ├── observability/               # 脱敏 logger、trace_id、错误上报、chunk 刷新去重、OTel 动态加载
 │   ├── shared/                      # 运行期配置、日期、金额、脱敏、通用工具（无业务）
 │   ├── config/                      # ESLint / Vitest 预设（tsconfig 基线在根 tsconfig.base.json）
 │   └── testing/                     # MSW handlers、fixtures、renderWithProviders
@@ -229,12 +231,12 @@ frontend/
 ```text
 app → pages → features → entities → shared
   │        │        │         │
-  └────────┴────────┴─────────┴──────► packages/{ui,api-client,auth,shared}
+  └────────┴────────┴─────────┴──────► packages/{ui,api-client,auth,shared,i18n,observability}
 ```
 
 - 同层不允许横向 import：`features/iam-roles` **不得** import `features/iam-bindings`。需要组合时由 `pages` 组合，或把共用部分下沉到 `entities`/`shared`。
 - 每个 feature 必须有 `index.ts` 公共出口；跨层只能从出口导入，禁止深链 `features/x/internal/...`。
-- `packages` 内部依赖图固定为：`shared ← api-client ← auth`、`api-client ← testing`、`ui ← testing`（测试渲染辅助）；`ui` 不依赖接口与鉴权包。禁止反向或成环。
+- `packages` 内部依赖图固定为：`shared ← api-client ← auth`、`api-client ← testing`、`ui ← testing`（测试渲染辅助）、`i18n ← ui`（组件内置文案取字典）；`ui` 不依赖接口与鉴权包。`i18n` 与 `observability` 为叶子包，不得依赖其他 workspace 包（`observability` 可按需动态导入 OTel SDK）。禁止反向或成环。
 
 ### 5.3 强制手段
 
@@ -537,9 +539,11 @@ type AppError = {
 
 ### 11.4 国际化
 
-- 默认 `zh-CN`，文案统一走 i18n key；业务组件禁止硬编码中文文案（ESLint 自定义规则或 review 约束）。
-- 与后端 `message` 的关系：前端以业务码映射自己的文案，后端 `message` 只作为诊断信息保留在 `trace_id` 详情中。
-- 时区、数字、货币格式统一走 `packages/shared` 的格式化函数。
+- 首期仅 `zh-CN` 单字典，落在 `packages/i18n`（零运行时依赖，React 仅 peer）；`messages/zh-CN.ts` 以 `as const` 扁平结构导出，`MessageKey = keyof typeof zhCN` 提供编译期校验。
+- 取文案统一走 `useI18n().t(key, params)`；`packages/ui` 内置文案同样取字典（`ui → i18n`），无 `I18nProvider` 时回退默认翻译器。插值只支持 `{name}` 占位，禁止函数式/富文本插值。
+- 与后端 `message` 的关系：前端以业务码经 `describeError` 映射自己的文案，后端 `message` 只作为诊断信息保留在 `trace_id` 详情中。
+- 硬编码中文由 `pnpm lint:i18n`（`scripts/check-i18n.mjs`）扫描 `apps/*/src` 与 `packages/ui/src` 拦截，整行 `// i18n-ignore <理由>` 为唯一豁免方式；不修改 `eslint` 规则。
+- 多语言切换、语言包懒加载与 `en-US` 字典不在首期范围；时区、数字、货币格式统一走 `packages/shared` 的格式化函数。
 
 ---
 
@@ -548,24 +552,26 @@ type AppError = {
 ### 12.1 错误边界
 
 ```text
-根 ErrorBoundary（致命错误页 + 重试 + 上报）
-  └─ 路由级 ErrorBoundary（保留导航与布局）
-       └─ 页面/区块级错误态（局部重试，不拖垮整页）
+根 AppErrorBoundary（致命错误页 + 重试 + logger.error/reportError）
+  └─ RouteErrorBoundary（包 AppLayout 的 Outlet，保留导航与布局）
+       └─ 页面/区块级错误态（描述统一取 describeError，局部重试，不拖垮整页）
 ```
 
-- 未捕获异常必须上报（含 release/commit、路由、`trace_id`），但不得上报表单内容、Token、密码等敏感数据。
-- Chunk 加载失败（发布后旧页面）自动刷新一次；仍失败展示“请刷新页面”。
+- 错误分类与文案由 `packages/i18n` 的 `describeError` 给出（`code → kind → unknown`；`40900 → approval` 且 `retryable=false`），边界只负责渲染与上报，不复制判定逻辑。
+- 未捕获异常经 `packages/observability` 的 `logger.error`（字段白名单 + 脱敏 + 环形缓冲 50 条）与 `reportError` 上报，携带 `release`、路由与 `trace_id`；生产构建禁止 `console.*`（ESLint 全域 `no-console`）。
+- Chunk 加载失败（发布后旧页面）自动刷新一次，去重键存 `sessionStorage`（`admin_frame_chunk_reload_guard`，唯一例外）；仍失败展示“请刷新页面”。
 
 ### 12.2 前端可观测
 
 | 维度 | 要求 |
 |---|---|
-| 错误监控 | Sentry 或 OpenTelemetry Web（自建/私有部署优先）；采样率按环境配置 |
-| 发布标识 | 上报附带 `release`（版本号）与 `contract_commit` |
-| Trace | 读取响应 `trace_id` 并在错误详情展示；可选注入 W3C `traceparent`，与后端 OTel 对齐 |
-| 性能 | 采集 Web Vitals（LCP/INP/CLS/TTFB），上报同源或监控端点，遵循采样与隐私设置 |
-| 日志 | 生产禁用 `console.*`（ESLint 规则）；统一 `logger`，默认脱敏 |
-| 隐私 | 不采集输入明文、不录制 DOM 回放中的敏感字段；Cookie/存储键值不上报 |
+| 错误监控 | 已定 OpenTelemetry Web + 自有 collector；`@opentelemetry/*` 依赖仅允许出现在 `packages/observability`（ESLint + dependency-cruiser 约束） |
+| 采样与开关 | `monitoring.dsn` 为空时不初始化 SDK、不产生任何网络请求；采样率取 `monitoring.sampleRate`，按环境配置 |
+| 发布标识 | 上报附带 `release`（`monitoring.release ?? __APP_VERSION__`）与 `contract_commit`（`__CONTRACT_COMMIT__`） |
+| Trace | 读取响应 `trace_id` 并在错误详情展示；缺失时生成 `client_trace_id` 关联前后端。W3C `traceparent` 注入非首期目标（D3-06） |
+| 性能 | Web Vitals（LCP/INP/CLS/TTFB）为 P1，随 RUM 采样策略另行实施 |
+| 日志 | 生产禁用 `console.*`（ESLint 规则）；统一 `logger`，字段白名单 + 默认脱敏，OTel SDK 在首屏后 1s 动态导入 |
+| 隐私 | 不采集输入明文、不录制 DOM 回放中的敏感字段；Cookie/存储键值不上报；上报字段经 `privacy.ts` 白名单裁剪并有单测 |
 
 ---
 
@@ -631,7 +637,7 @@ type AppError = {
 | ID | 约束 | 门禁 |
 |---|---|---|
 | FE-01 | TypeScript `strict` 全开；禁止无理由的 `any`、`@ts-ignore`、非空断言 `!` | `tsc --noEmit` + ESLint |
-| FE-02 | ESLint 零告警（`--max-warnings=0`）；`@typescript-eslint` type-checked 规则启用 | `pnpm lint` |
+| FE-02 | ESLint 零告警（`--max-warnings=0`）；`@typescript-eslint` type-checked 规则启用；业务代码禁止硬编码中文（`// i18n-ignore <理由>` 豁免） | `pnpm lint` + `pnpm lint:i18n` |
 | FE-03 | Prettier 格式检查无 diff（CI 只检查不写回） | `pnpm format:check` |
 | FE-04 | 分层与包边界符合第五章；禁止跨 feature 深链、apps 互引 | dependency-cruiser |
 | FE-05 | 命名符合第四章；组件 PascalCase、其余 kebab-case | ESLint + Review |
@@ -662,7 +668,7 @@ type AppError = {
 ```text
 make frontend-install     # corepack + pnpm install --frozen-lockfile
 make frontend-gen         # 生成 OpenAPI TS 类型
-make frontend-lint        # eslint --max-warnings=0
+make frontend-lint        # eslint --max-warnings=0 + 中文硬编码扫描（lint:i18n）
 make frontend-format      # prettier --check
 make frontend-typecheck   # tsc --noEmit（全部 workspace）
 make frontend-boundaries  # dependency-cruiser
@@ -682,6 +688,7 @@ make frontend-ci          # 以上必跑项聚合
 | 契约生成 | `pnpm gen:api`（openapi-typescript 7.4.0）+ `git diff --exit-code`（无漂移） | 是 |
 | 格式 | `pnpm format:check` | 是 |
 | Lint | `pnpm lint`（`--max-warnings=0`） | 是 |
+| 文案 | `pnpm lint:i18n`（中文硬编码扫描，`// i18n-ignore` 豁免） | 是 |
 | 边界 | `pnpm boundaries` | 是 |
 | 类型 | `pnpm typecheck` | 是 |
 | 测试 | `pnpm test:ci`（coverage + 阈值） | 是 |

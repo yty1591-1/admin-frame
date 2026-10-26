@@ -127,7 +127,7 @@ make openapi-docs         # 渲染分端 HTML 文档（dist/openapi/docs）
 make openapi-client       # 生成 TypeScript 类型（dist/openapi/client）
 make openapi-changelog    # 相对基线生成变更日志（dist/openapi/changelog）
 make openapi-artifacts    # 一次生成以上三类契约产物（需 Node.js 20+）
-make frontend-ci          # 前端全量门禁（FE-01～FE-20：格式/lint/边界/类型/测试/构建/体积/许可证/审计）
+make frontend-ci          # 前端全量门禁（FE-01～FE-20：格式/lint/文案/边界/类型/测试/构建/体积/许可证/审计）
 make frontend-e2e         # 前端 Playwright smoke（需先构建并安装浏览器）
 make ci                   # 本地对齐托管平台必跑项
 ```
