@@ -1,5 +1,4 @@
--- 000011_create_identity_tables.up.sql
--- ENT-01 阶段 1：身份域账号、凭据、会话、MFA、登录尝试与外部身份映射。
+-- 身份域（identity）模块表结构：账号、凭据、会话、MFA、登录尝试与外部身份映射。
 -- 仅由 cmd/migrate 或部署 Job 执行；API / worker 启动不做迁移（DATA_STANDARDS）。
 -- 设计要点：
 --   1. 主键统一雪花 ID（pkg/id），禁止自增；

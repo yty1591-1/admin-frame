@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 登录尝试字段上限，与 migrations/000011 的列宽一致。
+// 登录尝试字段上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxAccountRefLen 账号不可逆摘要长度上限（SHA-256 十六进制）。
 	MaxAccountRefLen = 64

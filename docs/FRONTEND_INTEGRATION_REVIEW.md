@@ -291,7 +291,7 @@ async function doRefreshToken() {
 
 **不放进 `/me` 的字段**：`roles` / `permissions` / `data_scopes` 仍走 `/iam/me/permissions`。原因：`internal/identity/transport/rest` 当前只依赖身份用例（`handler.go:27-45`），把 IAM 快照注进来会让身份域反向依赖权限域。前端两次并行请求即可，`authStore` 已是 `Promise.all` 结构（`src/store/auth.ts:43-46`）。
 
-**首版缺的展示字段**：`identity_account` 只有 `subject`，没有 `display_name` / `email` / `avatar_url`（`migrations/000011_create_identity_tables.up.sql:11-31`）。所以 `realName`、`avatar` 暂时回退 `subject` 与空串。要真正的昵称 / 头像需另开迁移 `000013_alter_identity_account_profile` 增列，属独立变更，不阻塞阶段 1。
+**首版缺的展示字段**：`identity_account` 只有 `subject`，没有 `display_name` / `email` / `avatar_url`（`migrations/000001_create_identity_tables.up.sql:11-31`）。所以 `realName`、`avatar` 暂时回退 `subject` 与空串。要真正的昵称 / 头像需另开迁移 `000007_alter_identity_account_profile` 增列，属独立变更，不阻塞阶段 1。
 
 后端落地清单（复用现有分层，不新建域）：
 
@@ -536,7 +536,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 | ID | 缺口 | 现状 | 建议契约 |
 |---|---|---|---|
-| GAP-01 | 用户资料 | 无端点；`/user/info` 是 mock 遗留 | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000013` 另开。详见 §3 FEINT-05 |
+| GAP-01 | 用户资料 | 无端点；`/user/info` 是 mock 遗留 | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000007` 另开。详见 §3 FEINT-05 |
 | GAP-09 | 菜单资源 | 无菜单表、无菜单端点（`migrations/000003` 全为 `kind='api'`；`iam_permission.path` 语义是祖先编码，不能当 URL 用） | **已决策方案 B**：新增 `iam_menu` + `GET /{channel}/v1/menus`，前端切 `accessMode: backend`。详见 §6「GAP-09 菜单：方案 B 设计」 |
 | GAP-10 | 审计查询 | 权限点 `audit:read` 已存在，无端点 | `GET /admin/v1/audit/events?action&subject&from&to` |
 | GAP-11 | 配置中心 | 权限点 `config:read/write` 已存在，无端点 | `GET/PUT /admin/v1/configs/{key}`，写入走审批 |
@@ -550,7 +550,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 **为什么不能复用 `iam_permission` 承载菜单**：`iam_permission.path` 的语义是"树路径，逗号分隔的祖先编码"（`migrations/000002_create_iam_tables.up.sql:19`），不是 URL 路由；`kind='menu'` 只表达"这是一条菜单类权限点"，没有 `component`、`icon`、`visible` 等路由必需字段。强行复用会让 `path` 一列两种语义。
 
-**数据模型（新增迁移 `000012_create_iam_menu`，与 `000011` 之后顺延；若资料列先合入则本迁移顺延为 `000013`，编号按合入顺序分配）**：
+**数据模型（新增迁移 `000006_create_iam_menu`，与模块基线 `000005` 之后顺延；若资料列先合入则本迁移顺延为 `000007`，编号按合入顺序分配）**：
 
 | 列 | 类型 | 说明 |
 |---|---|---|
@@ -672,13 +672,13 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 ### 阶段 4：后端补端点（与阶段 3 并行）
 
-- GAP-01 已前移至阶段 1（阻塞登录闭环）；本阶段只做**增强**：迁移 `000013` 增加 `display_name` / `avatar_url`，`/me` 追加 `display_name` / `avatar_url` 字段。
+- GAP-01 已前移至阶段 1（阻塞登录闭环）；本阶段只做**增强**：迁移 `000007` 增加 `display_name` / `avatar_url`，`/me` 追加 `display_name` / `avatar_url` 字段。
 - GAP-09 按 §6「GAP-09 菜单：方案 B 设计」落地（独立阶段，见下）。
 - GAP-10～12 按业务优先级。
 
 ### 阶段 5：菜单方案 B（可与阶段 2 并行）
 
-1. 迁移 `000012_create_iam_menu`（up/down 配对）+ 种子：A 端 `system.role`、B 端 `member.list` 各 1 条示例菜单，`component` 与前端 `pageMap` 键严格一致。
+1. 迁移 `000006_create_iam_menu`（up/down 配对）+ 种子：A 端 `system.role`、B 端 `member.list` 各 1 条示例菜单，`component` 与前端 `pageMap` 键严格一致。
 2. `internal/iam`（或独立 menu 包）：菜单查询用例 —— 按 `channel` + 有效权限裁剪、按 `parent_code` 组树、结果带 `snapshot_version` 供缓存失效。
 3. transport：`GET /admin/v1/menus`、`GET /biz/v1/menus`，仅认证；OpenAPI 增 `MenuTreeNode` schema。
 4. 前端：`accessMode: 'backend'` + `fetchMenuListAsync`，删除 `modules/system.ts` / `modules/member.ts`，补 component 存在性强校验。
@@ -725,7 +725,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 | `userId` | `subject_id` | 与令牌 `sub` 一致 |
 | `username` | `subject` | 规范化登录主体（trim + 小写） |
 | `realName` | `subject`（回退） | 无 `display_name` 列，见 FEINT-05 |
-| `avatar` | —（空串） | 需迁移 `000013` 才有 `avatar_url` |
+| `avatar` | —（空串） | 需迁移 `000007` 才有 `avatar_url` |
 | `roles` | 取自 `/iam/me/permissions` 的 `roles` | 不由 `/me` 返回 |
 | `desc` | —（空串） | 后端无简介字段 |
 | `homePath` | — | 前端按应用静态配置（`preferences.app.defaultHomePath`） |
@@ -746,7 +746,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 | — | `version` | 写接口必传 |
 | — | `data_scopes` | 数据范围 |
 
-### 权限码清单（种子，`migrations/000003` + `000006`）
+### 权限码清单（种子，`migrations/000003`）
 
 A 端：`iam:permission:read`、`iam:role:read`、`iam:role:write`、`iam:role:grant`、`iam:binding:read`、`iam:binding:write`、`iam:check`、`iam:change:read`、`iam:change:approve`、`iam:breakglass:request`、`iam:breakglass:approve`、`audit:read`、`config:read`、`config:write`
 

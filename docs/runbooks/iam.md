@@ -89,11 +89,10 @@
    - 应用失败（`approved` 不转 `applied`）：目标角色 / 绑定可能不属于该商户（`40400`）
      或已被删除；修正目标后按当前 `version` 重试，**禁止直接改审批单状态**。
    - 破玻璃不走 B 端：B 端创建 `breakglass_request` 与 B 端路由均拒绝，属预期行为。
-9. **迁移回滚**：先 `migrate down 000010`（把 IAM 主题事件搬回 `iam_outbox`，供旧发布器使用）→
-   `migrate down 000006` → `migrate down 000005` → `migrate down 000004` → `migrate down 000003` →
-   `migrate down 000002`，仅在非生产环境执行；`000010` 与 `000009` 的回滚顺序不可颠倒；
-   `000005` 的回滚会丢失商户归属，回滚前必须确认没有 pending / approved 的 B 端单据。
-   生产回滚只切配置（`iam.mode=off` + `async.enabled=false`），不回滚 schema。
+9. **迁移回滚**：仅在非生产环境执行，按 `000005` → `000004` → `000003` → `000002` 顺序（先停 `cmd/worker` / Relay 并归档 `async_outbox`、`async_dlq`；`000005` 回滚会删除三张异步表及其中未投递的 IAM 审计事件）。
+   `000003` 在权限点仍被 `iam_role_permission` 引用时会因外键 RESTRICT 失败，须先走正常撤权流程；
+   `000002` 会丢失全部 IAM 授权与审批单商户归属，回滚前必须确认没有 pending / approved 的 B 端单据。
+   身份域 `000001` 独立回滚。生产回滚只切配置（`iam.mode=off` + `async.enabled=false`），不回滚 schema。
 10. 恢复后：`/readyz` 全部 `ok`、`unavailable` 归零、冒烟一次「授权 → 生效 → 撤销」闭环。
 
 ## 演练与验证

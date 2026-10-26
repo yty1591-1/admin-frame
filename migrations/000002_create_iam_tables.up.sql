@@ -1,11 +1,13 @@
--- IAM（RBAC 权限管理）表结构。
+-- IAM（RBAC 权限管理）模块表结构。
 -- 数据库基线：MySQL 8.0.19+（InnoDB / utf8mb4_0900_ai_ci）。
 -- 设计要点：
 --   1. 功能权限（iam_role_permission）与数据范围（iam_role_data_scope）正交；
 --   2. 角色扁平、无继承，通过一个主体绑定多个角色表达组合；
 --   3. 时间列统一 DATETIME(3) + 应用写入 UTC，避免 TIMESTAMP 的 2038 上限与隐式时区转换；
 --   4. JSON 列使用原生 JSON 类型，由数据库校验合法性；
---   5. 外键仅用于阻止悬空授权与误删（RESTRICT），业务删除仍以软删为主。
+--   5. 外键仅用于阻止悬空授权与误删（RESTRICT），业务删除仍以软删为主；
+--   6. 审批单含 merchant_id 商户维度：空串=平台级（A 端），非空=商户级（B 端）；
+--   7. 审计 / 缓存失效事件写平台 async_outbox（见 000005），IAM 不再维护自有 outbox 表。
 
 CREATE TABLE IF NOT EXISTS iam_permission (
     code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名或复用',
@@ -101,6 +103,7 @@ CREATE TABLE IF NOT EXISTS iam_role_data_scope (
 CREATE TABLE IF NOT EXISTS iam_change_request (
     id               BIGINT        NOT NULL                   COMMENT '审批单主键，雪花 ID',
     channel          VARCHAR(16)   NOT NULL                   COMMENT '发起端别：admin / biz',
+    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''        COMMENT '商户ID；空串表示平台级（A 端），非空表示商户级（B 端）',
     action           VARCHAR(64)   NOT NULL                   COMMENT '申请动作：role_create / role_permission_replace / binding_create / breakglass 等',
     target_type      VARCHAR(32)   NOT NULL                   COMMENT '目标类型：iam_role / iam_binding / iam_breakglass',
     target_id        VARCHAR(64)   NOT NULL                   COMMENT '目标ID；新建类动作在应用前存业务临时ID或空串',
@@ -114,23 +117,7 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
     applied_at       DATETIME(3)   NULL                       COMMENT '实际应用时间（UTC）',
     version          BIGINT        NOT NULL DEFAULT 1         COMMENT '乐观锁版本，防并发重复审批',
     PRIMARY KEY (id),
-    KEY idx_iam_change_status (channel, status, requested_at) COMMENT '待办列表与超时审批扫描'
+    KEY idx_iam_change_status (channel, status, requested_at) COMMENT '待办列表与超时审批扫描',
+    KEY idx_iam_change_merchant_status (merchant_id, channel, status, requested_at) COMMENT 'B 端待办列表：按商户 + 端别 + 状态 + 申请时间扫描'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 高风险变更审批单；申请人与审批人强制不同，审批通过后才落到目标表';
-
-CREATE TABLE IF NOT EXISTS iam_outbox (
-    id               BIGINT        NOT NULL                   COMMENT '事件主键，雪花 ID；同时用作投递顺序依据',
-    event_type       VARCHAR(64)   NOT NULL                   COMMENT '事件类型：audit.event / cache.invalidate 等',
-    aggregate_type   VARCHAR(32)   NOT NULL                   COMMENT '聚合类型：iam_role / iam_binding',
-    aggregate_id     VARCHAR(64)   NOT NULL                   COMMENT '聚合ID，用于缓存失效与去重',
-    payload          JSON          NOT NULL                   COMMENT '事件载荷；禁止含 Token、密钥、完整 PII',
-    status           VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT '投递状态：pending=待投递 / processing=投递中 / succeeded=成功 / failed=失败 / dead=进死信',
-    attempts         INT           NOT NULL DEFAULT 0         COMMENT '已投递次数，指数退避依据',
-    next_retry_at    DATETIME(3)   NULL                       COMMENT '下次可投递时间（UTC）；NULL 表示立即可投递',
-    created_at       DATETIME(3)   NOT NULL                   COMMENT '创建时间（UTC），与业务写入同事务',
-    updated_at       DATETIME(3)   NOT NULL                   COMMENT '状态最后更新时间（UTC）',
-    PRIMARY KEY (id),
-    KEY idx_iam_outbox_pending (status, next_retry_at) COMMENT 'worker 拉取待投递事件，按状态 + 重试时间扫描',
-    KEY idx_iam_outbox_aggregate (aggregate_type, aggregate_id) COMMENT '按聚合排查投递情况与缓存失效是否完成'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  COMMENT='IAM 事务性 Outbox：审计事件与缓存失效事件可靠投递，禁止绕过直接写日志冒充审计';

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// OAuth 身份映射字段上限，与 migrations/000011 的列宽一致。
+// OAuth 身份映射字段上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxOAuthProviderLen 提供方标识最大字节数。
 	MaxOAuthProviderLen = 32

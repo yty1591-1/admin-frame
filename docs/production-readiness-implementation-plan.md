@@ -287,7 +287,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 | 序号 | 任务 | 产出 | 验收要点 | 阶段 |
 |---|---|---|---|---|
 | T1 | 身份域建模 | `internal/identity/domain`：`Account`、`Credential`、`Session`、`MFAEnrollment`、`LoginAttempt`、状态机 | 状态迁移表驱动用例；禁用 / 锁定不可登录 | 1 |
-| T2 | 持久化 | `identity_account`、`identity_credential`、`identity_session`、`identity_mfa`、`identity_login_attempt`、`identity_oauth_identity`；迁移 `000011_create_identity_tables`（`000009/000010` 已被 ENT-03 占用） | up/down 可执行；唯一键 `(channel, subject)`、`refresh_token_hash`、`(provider, provider_subject)` | 1 |
+| T2 | 持久化 | `identity_account`、`identity_credential`、`identity_session`、`identity_mfa`、`identity_login_attempt`、`identity_oauth_identity`；迁移 `000001_create_identity_tables` | up/down 可执行；唯一键 `(channel, subject)`、`refresh_token_hash`、`(provider, provider_subject)` | 1 |
 | T3 | 凭据与策略 | Argon2id（复用 `pkg/password`）、密码强度、失败锁定、登录限流 | 5 次失败锁定；统一错误文案；审计事件 | 1 |
 | T4 | 令牌签发 | Access JWT + 一次性 Refresh Token；claims `sub/aud/iss/exp/iat/jti/ver/channel/merchant_id`；`pkg/jwt` 支持 `kid` 密钥环 | 三端 issuer / audience / 密钥隔离；`kid` 支持轮换，未知 `kid` 失败关闭 | 2 |
 | T5 | 撤销 | Redis `authn:revoked:<jti>`（TTL = 剩余寿命）与 `authn:ver:<account_id>`；`security` 中间件注入 `RevocationChecker` | 禁用 / 登出 ≤ 60s 生效；Redis 不可用时按 `fail_closed` 返回 `50300` | 2 |
@@ -506,7 +506,7 @@ async:
 
 | 序号 | 任务 | 产出 | 验收要点 |
 |---|---|---|---|
-| T1 | 表设计 | `audit_events`：事件字段 + `attrs JSON` + `prev_hash` / `hash`；迁移 `000010_create_audit_events` | 追加写；索引 `(occurred_at)`、`(actor_id, occurred_at)`、`(resource_type, resource_id)` |
+| T1 | 表设计 | `audit_events`：事件字段 + `attrs JSON` + `prev_hash` / `hash`；迁移 `000006_create_audit_events` | 追加写；索引 `(occurred_at)`、`(actor_id, occurred_at)`、`(resource_type, resource_id)` |
 | T2 | 写入链路 | `auditlog.Recorder` 经 Outbox 落库；关键操作同事务 | 写失败即业务失败 |
 | T3 | 防篡改 | 应用账号无 `UPDATE/DELETE`；哈希链可选启用 | `AC-ENT-04-3` |
 | T4 | 查询接口 | `GET /admin/v1/audit/events`：时间、主体、动作、资源、结果、分页 | 权限 `audit:read`；过滤正确 |
@@ -974,7 +974,7 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 |---|---|---|---|
 | 2026-10-22 | 规划文档创建（v0.1） | 完成 | 基于差距评估 v0.2；拆分为 Wave 0～4 与 25 个任务包 |
 | 2026-10-22 | ENT-02 多实例运行语义落地 | 完成 | NodeID 配置化 + Deps.IDs、Redis 幂等存储、Redis 令牌桶、`publish_in_api` / worker 发布器、multiinstance 集成用例与 `check-idempotency` 门禁；T4 逐 operation 标注单独跟进 |
-| 2026-10-22 | ENT-03 通用异步基础设施落地 | 完成 | `pkg/outbox`（Store/Relay/Router/Deduper/DLQ）、`AsyncRuntime`、`async.*` 配置、IAM 完整迁移（迁移 000010）、`check-outbox` 门禁与 `async-dlq` runbook；集成用例覆盖 AC-ENT-03-1～5 |
+| 2026-10-22 | ENT-03 通用异步基础设施落地 | 完成 | `pkg/outbox`（Store/Relay/Router/Deduper/DLQ）、`AsyncRuntime`、`async.*` 配置、IAM 完整迁移（已并入 `000005` 基线）、`check-outbox` 门禁与 `async-dlq` runbook；集成用例覆盖 AC-ENT-03-1～5 |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---
@@ -1063,7 +1063,7 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | `pkg/testkit/**` | 新增 | ENT-16 |
 | `cmd/worker/main.go` | 变更 | ENT-03 / ENT-08 / ENT-15 |
 | `cmd/internal/iamruntime/runtime.go` | 变更 | ENT-02（NodeID / 发布器） |
-| `migrations/000009_*` ～ `000015_*` | 新增 | 身份 / 审计 / 异步 / 租户 / 通知 / 开关 |
+| `migrations/000006_*` ～ `000012_*` | 新增 | 身份 / 审计 / 异步 / 租户 / 通知 / 开关 |
 | `deploy/helm/admin-frame/**` | 新增 | ENT-05 |
 | `deploy/observability/**` | 新增 | ENT-06 |
 | `deploy/backup/**`、`scripts/backup/**` | 新增 | ENT-08 |

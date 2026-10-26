@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 账号字段上限，与 migrations/000011 的列宽一致。
+// 账号字段上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxSubjectLen 登录主体最大字节数（规范化后）。
 	MaxSubjectLen = 255

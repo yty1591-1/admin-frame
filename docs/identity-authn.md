@@ -83,7 +83,7 @@
 | 审计 | `audit.Event` 与 `auth.login` / `auth.login_failed` 已定义，仅写结构化日志 | [`event.go`](../internal/shared/audit/event.go)、[`actions.go`](../internal/shared/audit/actions.go) |
 | 异步 | `platform.AsyncRuntime` + `pkg/outbox` 可用，可作为审计可靠出口 | [`async.go`](../internal/platform/async.go) |
 | 配置 | 无 `identity.*`；`auth.jwt` 只有验签参数 | [`config.go`](../internal/platform/config.go#L375-L398) |
-| 迁移 | `000001`～`000010` 已占用 | `migrations/` |
+| 迁移 | `000001_create_identity_tables`（模块基线） | `migrations/` |
 | 门禁 | 无 `check-authn.sh` | `scripts/ci/`、`Makefile` |
 
 ### 2.2 复核命令
@@ -107,7 +107,7 @@ rg -n "func .*Cache\)|func .*Lock\)|AsyncRuntime" pkg/redis internal/platform
 1. **可复用原语已齐备**，`ENT-01` 不需要引入新的基础设施。
 2. **缺口集中在领域与应用层**：账号实体、会话表、令牌签发编排、撤销检查。
 3. **装配顺序需要调整**：撤销检查必须在 `AuthMW` 构造前注入（见 §13）。
-4. **迁移编号必须顺延**：原计划使用的 `000009` 已被 `ENT-03` 占用，身份表实际使用 `000011`。
+4. **迁移编号按模块压平**：身份表为模块基线 `000001`，IAM 为 `000002`～`000004`，平台 async 为 `000005`。
 
 ---
 
@@ -576,8 +576,8 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 
 ### 9.1 迁移
 
-- 文件：`migrations/000011_create_identity_tables.{up,down}.sql`。
-- 编号说明：`000009` / `000010` 已被 `ENT-03` 的 `async_outbox` 占用，`ENT-01` 顺延为 `000011`；实施计划中的旧编号须同步修正。
+- 文件：`migrations/000001_create_identity_tables.{up,down}.sql`。
+- 编号说明：迁移已按模块压平为 `000001`～`000005`：`000001` 身份域、`000002`～`000004` IAM、`000005` 平台异步；后续变更从 `000006` 顺延。
 - 只由 `cmd/migrate` 或部署 Job 执行；API / worker 启动只校验版本，不执行迁移（`DATA_STANDARDS`）。
 
 ### 9.2 表结构
@@ -811,7 +811,7 @@ internal/identity/
 | 序号 | 任务 | 产出 | 变更路径 | 验收要点 | 阶段 |
 |---|---|---|---|---|---|
 | T1 | 身份域建模 | `Account`、`Credential`、`Session`、`MFAEnrollment`、`LoginAttempt` 与状态机 | `internal/identity/domain` | 状态迁移表驱动用例；禁用 / 锁定不可登录 | 1 |
-| T2 | 持久化 | 六张表 + 内存 / MySQL 仓储 | `internal/identity/infrastructure/persistence`、`migrations/000011_*` | up/down 可执行；唯一键与索引符合 §9；API 不执行迁移 | 1 |
+| T2 | 持久化 | 六张表 + 内存 / MySQL 仓储 | `internal/identity/infrastructure/persistence`、`migrations/000001_*` | up/down 可执行；唯一键与索引符合 §9；API 不执行迁移 | 1 |
 | T3 | 凭据与策略 | Argon2id、密码强度、失败锁定、登录限流 | `internal/identity/app`、`pkg/password`、`pkg/ratelimit` | 5 次失败锁定；统一文案；审计事件 | 1 |
 | T4 | 令牌签发 | Access JWT + 一次性 Refresh；`kid` 密钥环 | `pkg/jwt`、`internal/security`、`internal/identity/app` | 三端隔离；`kid` 轮换；未知 `kid` 拒绝 | 2 |
 | T5 | 撤销 | `token_version` + `jti` 黑名单 + `RevocationChecker` | `pkg/redis`、`internal/security`、`internal/platform` | 禁用 / 登出 ≤ 60s；Redis 故障 `50300` | 2 |
@@ -855,7 +855,7 @@ internal/identity/
 | 生产配置 | `env=prod` 时禁止 `auth.mode=demo`；强制 `identity.enabled=true`、`revocation.driver=redis`、`revocation.failure_mode=fail_closed`、A 端 `mfa.admin_required=true` |
 | 契约 | `api/openapi/{admin,biz,c}.yaml` 均存在 `login` / `refresh` / `logout` path |
 | 撤销路径 | `internal/security` 存在 `RevocationChecker` 引用，且有测试文件引用 |
-| 迁移 | `000011_create_identity_tables.{up,down}.sql` 成对存在，编号不重复 |
+| 迁移 | `000001_create_identity_tables.{up,down}.sql` 成对存在，编号不重复 |
 | 审计 | 新增 action 在 `KnownActions()` 与 `EVENTS.md` 同时存在 |
 | 密钥 | 示例配置不含明文 `secret_key` / `client_secret` |
 

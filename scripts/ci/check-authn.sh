@@ -70,7 +70,7 @@ fi
 
 echo "==> ENT-01: identity migration pair"
 for suffix in up down; do
-  file="migrations/000011_create_identity_tables.${suffix}.sql"
+  file="migrations/000001_create_identity_tables.${suffix}.sql"
   if [[ ! -f "${file}" ]]; then
     echo "ERROR: missing ${file}" >&2
     FAIL=1
@@ -78,12 +78,12 @@ for suffix in up down; do
     echo "    OK: ${file}"
   fi
 done
-MIGRATION_FILES="$(find migrations -maxdepth 1 -type f -name '000011_*' | wc -l | tr -d ' ')"
+MIGRATION_FILES="$(find migrations -maxdepth 1 -type f -name '000001_*' | wc -l | tr -d ' ')"
 if [[ "${MIGRATION_FILES}" -ne 2 ]]; then
-  echo "ERROR: expected exactly 2 files with 000011_ prefix, got ${MIGRATION_FILES}" >&2
+  echo "ERROR: expected exactly 2 files with 000001_ prefix, got ${MIGRATION_FILES}" >&2
   FAIL=1
 else
-  echo "    OK: 000011 migration pair only"
+  echo "    OK: 000001 migration pair only"
 fi
 
 echo "==> ENT-01: auth actions registered in audit catalog"

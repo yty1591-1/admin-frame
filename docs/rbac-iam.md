@@ -1,6 +1,6 @@
 # RBAC 权限管理服务（IAM）规划与设计
 
-> **状态**：实施中（v0.16；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（`iam_outbox` 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用）；M4.5 已完成：UnitOfWork（`pkg/db.WithinUnitOfWork` + `app.UnitOfWork`，业务写入与 outbox 同事务提交，嵌套复用外层事务）；M4.6 已完成：B 端审批单（迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个审批端点、跨商户 404）；M4.7 已完成：高风险直写强制转审批（`iam.approval.enabled`；开启后角色 / 绑定直写端点统一返回 `40900`，审批单 apply 走用例内部调用不受影响）；M5 进行中：可执行故障演练用例 + `BenchmarkReplaceRolePermissions_Diff` 登记 + 容量评估（staging shadow/enforce 与真实 SQL 压测待环境执行））
+> **状态**：实施中（v0.16；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（IAM Outbox 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用；ENT-03 起存储已迁至平台 `async_outbox`）；M4.5 已完成：UnitOfWork（`pkg/db.WithinUnitOfWork` + `app.UnitOfWork`，业务写入与 outbox 同事务提交，嵌套复用外层事务）；M4.6 已完成：B 端审批单（审批单 `merchant_id` 商户维度与 B 端权限点已并入 000002 / 000003 模块基线、`ChangeScope` 租户隔离、B 端 6 个审批端点、跨商户 404）；M4.7 已完成：高风险直写强制转审批（`iam.approval.enabled`；开启后角色 / 绑定直写端点统一返回 `40900`，审批单 apply 走用例内部调用不受影响）；M5 进行中：可执行故障演练用例 + `BenchmarkReplaceRolePermissions_Diff` 登记 + 容量评估（staging shadow/enforce 与真实 SQL 压测待环境执行））
 > **定位**：模块化单体中的 `internal/iam` 业务域，**不新增独立进程 / 微服务**
 > **适用范围**：A 端平台角色、B 端商户内角色与权限管理；C 端不接入 IAM
 > **决策记录**：[`docs/adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)（落位、失败关闭、`50300`、灰度路线）
@@ -38,7 +38,7 @@
 | 按 `internal/iam` + `off/shadow/enforce` 路线进入 M0（ADR + 权限目录评审）与 M1（迁移 + 领域模型） | **批准** | M0 已完成设计输入（本文 + ADR-0004）；M1 已开工，权限目录与迁移已落地 |
 | M1 权限目录一致性门禁 | **用 Go 测试**（`internal/iam/catalog`），不新增 shell 解析 | 已落地：`TestPermissionCatalog*` 6 个用例，覆盖格式 / 唯一性 / 常量 / 种子迁移 / 文档 / down |
 | M2 快照与缓存 | 消费侧 `SnapshotLoader` + L1/L2 + shadow | 已落地：见 §6.3 / §8.2 / §14；覆盖率见 §13.1 |
-| 迁移序号 `000002` / `000003` | **确认未被占用**（现有仅 `000001_create_orders`） | 已落地：`000002_create_iam_tables` + `000003_seed_iam_permissions`，up/down 配对通过 `check-migrations` |
+| 迁移序号 `000002` / `000003` | **确认未被占用**（早期仅有 `000001_create_orders` 演示域） | 已落地：`000002_create_iam_tables` + `000003_seed_iam_permissions`；模块压平后编号保持，`000001` 为身份域、`000005` 为平台异步表 |
 | 数据库引擎 | **MySQL 8.0.19+ 单基线** | 已落地：`DATETIME(3)` + 原生 `JSON` + 显式 `utf8mb4_0900_ai_ci` + `RESTRICT` 外键；不并行维护 PostgreSQL |
 
 > 上述两项不再作为待确认项；其余仍开放的问题见 [§16.2](#162-开放问题owner-决策)。
@@ -221,7 +221,7 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 ### 5.3 DDL（MySQL 基线）
 
-> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`；种子：`000003_seed_iam_permissions.up.sql` / `.down.sql`（追加式种子：`000004_seed_breakglass_role`、`000006_seed_biz_change_permissions`）；增量：`000005_add_iam_change_request_merchant_id`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
+> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_permissions.up.sql` / `.down.sql`（A 端目录 + B 端审批权限点 + 演示域 `deprecated` 状态）、`000004_seed_breakglass_role.up.sql` / `.down.sql`。平台异步表见 `000005_create_async_outbox.up.sql` / `.down.sql`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
 >
 > **M1 前置决策（2026-10-21 已确认）**：
 >
@@ -359,7 +359,7 @@ CREATE TABLE IF NOT EXISTS iam_role_data_scope (
 CREATE TABLE IF NOT EXISTS iam_change_request (
     id               BIGINT        NOT NULL                   COMMENT '审批单主键，雪花 ID',
     channel          VARCHAR(16)   NOT NULL                   COMMENT '发起端别：admin / biz',
-    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''        COMMENT '商户ID；空串表示平台级（A 端），非空表示商户级（B 端，迁移 000005）',
+    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''        COMMENT '商户ID；空串表示平台级（A 端），非空表示商户级（B 端）',
     action           VARCHAR(64)   NOT NULL                   COMMENT '申请动作：role_create / role_permission_replace / binding_create / breakglass 等',
     target_type      VARCHAR(32)   NOT NULL                   COMMENT '目标类型：iam_role / iam_binding / iam_breakglass',
     target_id        VARCHAR(64)   NOT NULL                   COMMENT '目标ID；新建类动作在应用前存业务临时ID或空串',
@@ -374,7 +374,7 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
     version          BIGINT        NOT NULL DEFAULT 1         COMMENT '乐观锁版本，防并发重复审批',
     PRIMARY KEY (id),
     KEY idx_iam_change_status (channel, status, requested_at) COMMENT '待办列表与超时审批扫描',
-    KEY idx_iam_change_merchant_status (merchant_id, channel, status, requested_at) COMMENT 'B 端待办列表：按商户 + 端别 + 状态 + 申请时间扫描（迁移 000005）'
+    KEY idx_iam_change_merchant_status (merchant_id, channel, status, requested_at) COMMENT 'B 端待办列表：按商户 + 端别 + 状态 + 申请时间扫描'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 高风险变更审批单；申请人与审批人强制不同，审批通过后才落到目标表';
 ```
@@ -389,13 +389,13 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
 >
 > **强制转审批（M4.7 已落地）**：`iam.approval.enabled=true` 时，角色创建 / 更新 / 删除 / 克隆 / 权限替换与绑定 / 解绑共 7 个直写端点在 transport 层统一返回 `40900`，消息给出对应的 `action` 与 `/change-requests` 路径；调用方须先提交审批单。审批单 `apply` 走应用服务内部调用，不经过 HTTP，因此不受该开关影响。开关默认关闭，存量调用方行为不变；开启时 A/B 端均可使用审批流，C 端与 worker 因无 IAM transport 会在配置校验阶段被拒绝。
 >
-> **租户隔离（迁移 000005）**：`merchant_id NOT NULL DEFAULT ''` + `idx_iam_change_merchant_status`；A 端单据 `merchant_id` 恒为空、B 端恒非空，由 `domain.validateChangeTenant` 在创建时强制。B 端申请的单据执行时目标角色 / 绑定必须同商户（`loadRoleForChange` / `UnbindCommand.MerchantID`），否则返回 `40400`；B 端载荷出现 `merchant_id` 返回 `40300`、`scope_type=platform` 在申请阶段即返回 `40000`（不把越权意图带上审批台）。破玻璃仍为 A 端专属：B 端创建 `breakglass_request` 与 B 端路由均直接拒绝。
+> **租户隔离（迁移 000002 内置）**：`merchant_id NOT NULL DEFAULT ''` + `idx_iam_change_merchant_status`；A 端单据 `merchant_id` 恒为空、B 端恒非空，由 `domain.validateChangeTenant` 在创建时强制。B 端申请的单据执行时目标角色 / 绑定必须同商户（`loadRoleForChange` / `UnbindCommand.MerchantID`），否则返回 `40400`；B 端载荷出现 `merchant_id` 返回 `40300`、`scope_type=platform` 在申请阶段即返回 `40000`（不把越权意图带上审批台）。破玻璃仍为 A 端专属：B 端创建 `breakglass_request` 与 B 端路由均直接拒绝。
 >
-> **权限点分层**：B 端不复用 A 端的 `iam:change:read` / `iam:change:approve`，而是新增 `iam:change:request` / `iam:change:review`（迁移 000006 追加种子）。即使商户过滤逻辑出现缺陷，持有 B 端权限点的主体也没有平台级审批单的权限。
+> **权限点分层**：B 端不复用 A 端的 `iam:change:read` / `iam:change:approve`，而是新增 `iam:change:request` / `iam:change:review`（随 `000003` 目录种子写入）。即使商户过滤逻辑出现缺陷，持有 B 端权限点的主体也没有平台级审批单的权限。
 
 ### 5.3.7 异步 Outbox（平台 async_outbox）
 
-ENT-03 T8 起 IAM 不再维护自有 `iam_outbox`：审计与缓存失效事件统一写入平台表 `async_outbox`（表结构见 `migrations/000009_create_async_outbox.up.sql`），历史数据由 `migrations/000010_migrate_iam_outbox.{up,down}.sql` 迁移 / 回滚。
+ENT-03 T8 起 IAM 不再维护自有 `iam_outbox`：审计与缓存失效事件统一写入平台表 `async_outbox`（表结构见 `migrations/000005_create_async_outbox.up.sql`）。模块基线不再创建 `iam_outbox`，因此无需历史数据迁移。
 
 > **T8 实现状态**：
 > - 写入：`app.OutboxRecorder` 通过 `pkg/outbox.Store.Append` 写入 `async_outbox`（topic=`iam.audit` / `iam.cache`，event_type 沿用 `audit.event` / `cache.invalidate`），复用 `pkg/db.TxFromContext` 与业务写入同事务；写入失败返回 `50000`（fail-closed，不静默丢审计）。
@@ -507,7 +507,7 @@ WHERE t.TABLE_SCHEMA = DATABASE()
   3. **Shadow**：写路径双写 IAM（仅测试环境）或只读比对；确认无差异。
   4. **Enforce**：切换鉴权来源；观察一个发布周期。
   5. **Contract**：删除 `cmd` 中的演示角色表与临时开关（保留 `off` 作为应急回滚位，至少一个版本）。
-- **up 不可改，down 可修正**：`up` 参与 checksum，已应用后禁止修改（drift 会阻断后续迁移）；`down` 不参与 checksum，可用于修正语法错误。本次已修正 `000001_create_orders.down.sql` 的 `DROP INDEX IF EXISTS`（MySQL 不支持该语法），改为 `DROP TABLE`（索引随表删除）。
+- **up 不可改，down 可修正**：`up` 参与 checksum，已应用后禁止修改（drift 会阻断后续迁移）；`down` 不参与 checksum，可用于修正语法错误。早期演示域 down 曾误用 `DROP INDEX IF EXISTS`（MySQL 不支持该语法），已改为 `DROP TABLE`（索引随表删除）；演示域表与迁移已随模块压平移除。
 - **MySQL 8.0.19+**：种子迁移使用 `INSERT ... VALUES ... AS new ON DUPLICATE KEY UPDATE`（8.0.19 引入的行别名语法），可重放且不依赖已弃用的 `VALUES()` 函数。
 - **索引内联**：所有索引写在 `CREATE TABLE` 内；MySQL 不支持 `CREATE INDEX IF NOT EXISTS`，独立建索引在部分重试场景会因索引已存在而失败。
 - **外键顺序**：父表先建、子表后建；down 反向先子后父。`RESTRICT` 外键使误删被引用数据时显式失败，而不是留下悬空授权。
@@ -1657,7 +1657,7 @@ BenchmarkReplaceRolePermissions_Diff
 | Gitee Go | 平台不支持等同的 service 声明；在控制台配置 `IAM_TEST_MYSQL_DSN` 即启用，未配置时显式跳过 |
 | 本地 | `docker run --rm -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=iam_test mysql:8.0`，再导出 DSN |
 
-**启动流程**：`openAndMigrate` 用 `pkg/migrate` 对 `migrations/` 全量执行 up（含 000001～000010），确保测试 schema 与生产迁移完全一致；每个用例前清空 `async_consumed → async_dlq → async_outbox → iam_change_request → iam_role_binding → iam_role_data_scope → iam_role_permission → iam_role`（按外键 RESTRICT 逆序），并保留种子权限点。
+**启动流程**：`openAndMigrate` 用 `pkg/migrate` 对 `migrations/` 全量执行 up（含 000001～000005 模块基线），确保测试 schema 与生产迁移完全一致；每个用例前清空 `async_consumed → async_dlq → async_outbox → iam_change_request → iam_role_binding → iam_role_data_scope → iam_role_permission → iam_role`（按外键 RESTRICT 逆序），并保留种子权限点。
 
 **覆盖点**（与 §6.6 端口语义逐条对应）：
 
@@ -1746,7 +1746,7 @@ BenchmarkReplaceRolePermissions_Diff
 | **M1 领域与存储**（3～5d） | `internal/iam/domain`、memory + MySQL 仓储、迁移 000002/000003、`internal/iam/catalog` 目录门禁、domain 单测、SQL 集成测试 | domain 覆盖率 ≥ 70%（实测 90.8%）；memory 仓储 94.7%；迁移 up/down 可执行（MySQL 8.0 实测）；目录四处一致测试通过；租户条件 / 唯一约束 / 乐观锁 / 快照 SQL 集成测试通过（**已完成：domain + memory + MySQL 仓储 + CI service**） | `migrate down`（仅非生产） |
 | **M2 快照与缓存**（3～5d） | `SnapshotLoader`、L1/L2 缓存、`security` 适配、`iam.mode=shadow`、指标 | shadow 与演示表判定一致率 100%；缓存命中 / 失效测试通过；P99 达标（**已完成：契约 + 缓存 + 服务 + 三态适配 + 指标 + 单测；覆盖率 app 76.6% / cache 77.8% / security 94.1%（按当前全量代码实测）；配置与 cmd 注入随 M3**） | 切回 `off` |
 | **M3 A 端管理 API**（5～7d） | A 端角色 / 权限 / 绑定 API、审计接线、OpenAPI、配置装配 | A 端 15 个端点全链路可用；审计事件 `rbac.role_change` / `rbac.binding_change` 已 `active` 且 fail-closed（当前目标为 SlogEmitter，持久化 Outbox 待 M4）；`admin.yaml` 已含 IAM 契约；`go test ./...`、layering / test-gates / transport / audit / migrations / observability / config / openapi / perf / deps / licenses、`golangci-lint` 全绿（**已完成**）；staging `enforce` 稳定性待环境验证 | 切回 `off` + 清缓存 |
-| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（**M4.5 已完成：`UnitOfWork` + context 传递 `*sql.Tx`，业务写入与审计同提交，嵌套复用**）、B 端审批（**M4.6 已完成：迁移 000005 `merchant_id` + 000006 权限点、`ChangeScope` 租户隔离、B 端 6 个端点、跨商户 404**）、高风险直写强制转审批（**M4.7 已完成：`iam.approval.enabled` + 7 个直写端点返回 40900、审批单 apply 不受影响、仅 A/B、prod 要求持久化 db**）；e2e 通过 | 关闭审批 / 破玻璃开关 |
+| **M4 B 端与治理**（5～7d） | B 端自助、审批单、SoD、破玻璃、访问复核导出 | B 跨商户 404、配额生效、目录按端过滤、`/authorize` 不挂载（**M4.1 已完成：13 个端点 + `iamruntime` 统一装配 + OpenAPI + 单测**）；审批单聚合 + SoD + memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个端点（**M4.2 已完成：含 HTTP 全链路与 SoD 测试**）；破玻璃限时 + 告警（**M4.3 已完成**）、Outbox 持久化（**M4.4 已完成：`iam_outbox` + memory/MySQL 仓储 + 发布器 + 退避/死信 + 三项指标 + prod enforce 强制启用**）、Outbox 单事务写入（**M4.5 已完成：`UnitOfWork` + context 传递 `*sql.Tx`，业务写入与审计同提交，嵌套复用**）、B 端审批（**M4.6 已完成：审批单 `merchant_id` 与 B 端权限点并入 000002 / 000003 基线、`ChangeScope` 租户隔离、B 端 6 个端点、跨商户 404**）、高风险直写强制转审批（**M4.7 已完成：`iam.approval.enabled` + 7 个直写端点返回 40900、审批单 apply 不受影响、仅 A/B、prod 要求持久化 db**）；e2e 通过 | 关闭审批 / 破玻璃开关 |
 | **M5 生产加固**（3～5d） | 压测、故障演练、runbook、告警、容量评估、清理演示表 | SLO 达标；故障演练通过；`make ci` + 发布 Checklist 全绿（**M5 已完成代码侧：§13.7 可执行故障演练用例、`BenchmarkReplaceRolePermissions_Diff` 登记、容量评估、演示表清理确认；staging shadow 24h / enforce 灰度 / 真实 SQL 压测 / Outbox 积压演练待环境执行**） | 保留 `off` 开关一个版本 |
 
 **依赖顺序**：M1 完成前不合并 M2 的运行时切换；M2 shadow 数据必须来自真实（脱敏）角色配置；M3 enforce 前必须完成审计接线。
@@ -1843,10 +1843,10 @@ BenchmarkReplaceRolePermissions_Diff
 - [x] 所有导出符号有 godoc，包有注释（C-01～C-10）。（revive `exported` / `package-comments` 已设为 error 级，`golangci-lint run ./...` 0 issue）
 - [ ] 错误处理、命名、context、并发符合 S-01～S-12。（`golangci-lint` 0 issue，人工 Review 仍待进行）
 - [x] 权限目录四处一致（`catalog.go` / `perm.go` / 种子 / `PERMISSIONS.md`）由 `internal/iam/catalog` 的 Go 测试强制，`-count=1` 通过。
-- [x] 迁移 `000002` / `000003` / `000005` / `000006` up/down 配对，`make check-migrations` 通过；`up` 未改写已应用的历史文件（新增权限点走追加式种子）。
+- [x] 迁移 `000001`～`000005` up/down 配对，`make check-migrations` 通过；基线按模块压平（identity / IAM / async），`up` 不再引用已删除的历史增量文件。
 - [x] 所有 IAM 表有表注释、所有字段有字段注释，枚举取值列全且与 domain 常量一致；写法统一为 MySQL 列内 `COMMENT`（`000002_create_iam_tables.up.sql`）。
 - [x] B 端租户条件在 SQL 与 app 双重落实；越权 404（`TestSQLBindingRepositoryTenantIsolation` / `TestUnbindHidesCrossMerchantBinding`）；B 端 HTTP 自助接口（19 个端点，含 6 个审批端点）已落地，跨商户 404、配额 40000、目录按端过滤均有传输层测试（`TestBiz*` / `TestBizChangeRequestTenantIsolation`）。
-- [x] 审批单租户隔离（M4.6）：迁移 `000005` 新增 `merchant_id` + 复合索引、`domain.validateChangeTenant` 强制端别 / 商户不变量、`ChangeScope` 由 transport 从 Principal 派生、B 端路由与破玻璃路由分离；SQL / memory 仓储与 HTTP 用例均覆盖跨商户不可见。
+- [x] 审批单租户隔离（M4.6）：`000002` 内置 `merchant_id` + 复合索引、`domain.validateChangeTenant` 强制端别 / 商户不变量、`ChangeScope` 由 transport 从 Principal 派生、B 端路由与破玻璃路由分离；SQL / memory 仓储与 HTTP 用例均覆盖跨商户不可见。
 - [x] 高风险直写强制转审批（M4.7）：`iam.approval.enabled` 开启后 7 个角色 / 绑定直写端点统一返回 `40900` 并提示 `/change-requests`，拦截发生在用例之前；审批单 `apply` 走用例内部调用不受影响；C 端 / worker 配置被拒绝；prod 要求持久化 `db.driver`（`TestApprovalRequiredRejectsDirectWrites` / `TestValidateIAMApprovalRules`）。
 - [x] 审计事件 `rbac.role_change` / `rbac.binding_change` 已登记、置 `active` 并接线（`ChangeRecorder`，审计失败 fail-closed）；`rbac.breakglass` 已在 M4.3 接线；持久化 Outbox 已在 ENT-03 T8 完整迁移到平台 `async_outbox`（`pkg/outbox` Relay + 死信重放 + 积压指标）。
 - [x] A 端管理 API 15 个端点、`RoleService` / `BindingService` / `QueryService` 单测与 HTTP 传输测试通过；OpenAPI（`api/openapi/admin.yaml`）已补齐 IAM 契约。

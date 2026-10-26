@@ -1,5 +1,4 @@
--- 000009_create_async_outbox.up.sql
--- ENT-03：平台级异步基础设施的持久化底座。
+-- 平台异步（async）模块表结构：事务性 Outbox、死信与消费幂等记录。
 -- 仅由 cmd/migrate 或部署 Job 执行；API / worker 启动不做迁移（DATA_STANDARDS）。
 
 CREATE TABLE IF NOT EXISTS async_outbox (

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 会话字段上限，与 migrations/000011 的列宽一致。
+// 会话字段上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxRefreshHashLen 刷新令牌 SHA-256 十六进制摘要长度上限。
 	MaxRefreshHashLen = 64

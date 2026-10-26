@@ -55,7 +55,7 @@
 | `iam:change:review` | biz | api | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
-> 状态统一为 `deprecated`（见 `migrations/000008_retire_demo_permissions.up.sql`）。
+> 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_permissions.up.sql` 写入）。
 >
 > 当前基线无 `menu` / `button` 形态，菜单元数据由后续 PR 追加；追加时 `sort` 取当前最大值 + 10，且不得改动既有条目。
 

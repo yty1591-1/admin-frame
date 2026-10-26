@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// 恢复码与密文上限，与 migrations/000011 的列宽一致。
+// 恢复码与密文上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxMFASecretLen TOTP 密钥密文最大字节数（AES-GCM 加密后）。
 	MaxMFASecretLen = 256

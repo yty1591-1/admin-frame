@@ -40,7 +40,7 @@ type ChangeLimits struct {
 	RequireReason bool
 	// AllowBizChannel 是否允许 B 端发起与决定审批单。
 	//
-	// 依赖 iam_change_request.merchant_id（迁移 000005）做租户隔离：
+	// 依赖 iam_change_request.merchant_id（迁移 000002）做租户隔离：
 	// 关闭时 B 端创建直接返回 40300，决定类接口返回 40400。
 	AllowBizChannel bool
 	// AllowBreakglass 是否允许 breakglass 动作；破玻璃流程属 M4.3。

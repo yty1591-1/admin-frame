@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 凭据字段上限，与 migrations/000011 的列宽一致。
+// 凭据字段上限，与 migrations/000001 的列宽一致。
 const (
 	// MaxCredentialHashLen 编码后哈希最大字节数（Argon2id / bcrypt 均远小于此值）。
 	MaxCredentialHashLen = 255
