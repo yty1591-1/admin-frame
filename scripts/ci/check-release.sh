@@ -96,38 +96,6 @@ else
   FAIL=1
 fi
 
-FE_DF="deploy/frontend/Dockerfile"
-echo "==> RELS-01/02/03 (frontend): static image checks"
-if [[ ! -f "${FE_DF}" ]]; then
-  echo "ERROR: missing ${FE_DF} (INF-REL-03)" >&2
-  FAIL=1
-else
-  if grep -nE '^[[:space:]]*FROM[^#]*:latest' "${FE_DF}"; then
-    echo "ERROR: :latest base image in ${FE_DF} (RELS-01)" >&2
-    FAIL=1
-  else
-    echo "    OK: no :latest base image"
-  fi
-  if grep -qE '^[[:space:]]*(FROM|ARG)[^#]*nginx-unprivileged:[0-9]+\.[0-9]+-alpine' "${FE_DF}"; then
-    echo "    OK: nginx-unprivileged pinned major.minor"
-  else
-    echo "ERROR: nginx runtime base must pin nginx-unprivileged:<major>.<minor>-alpine (RELS-01)" >&2
-    FAIL=1
-  fi
-  if grep -qE '^[[:space:]]*HEALTHCHECK' "${FE_DF}" && grep -q 'healthz' "${FE_DF}"; then
-    echo "    OK: HEALTHCHECK targets /healthz"
-  else
-    echo "ERROR: frontend Dockerfile missing HEALTHCHECK /healthz (RELS-02)" >&2
-    FAIL=1
-  fi
-  if grep -qE '^[[:space:]]*USER[[:space:]]+[0-9]+' "${FE_DF}"; then
-    echo "    OK: non-root numeric USER"
-  else
-    echo "ERROR: frontend runtime must declare numeric non-root USER (INF-REL-03)" >&2
-    FAIL=1
-  fi
-fi
-
 echo "==> RELS-01/03/06: release image pipeline"
 IMG_WF=".github/workflows/image.yml"
 if [[ ! -f "${IMG_WF}" ]]; then

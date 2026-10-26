@@ -50,8 +50,6 @@
 
 基础镜像：钉扎 major.minor（如 `alpine:3.24`）；生产流水线**推荐**锁定 digest，并在升级时显式变更。
 
-**前端镜像**：`admin-web` / `biz-web` 由 `deploy/frontend/Dockerfile` 构建，运行基座固定 `nginxinc/nginx-unprivileged:<major>.<minor>-alpine`，以 UID/GID 101 监听 8080，禁止 root。前端与后端 **独立发布与回滚**（`deploy/helm/admin-frame-frontend`）；`index.html` 与 `config.js` 必须 `no-store`，`/assets/*` 必须 `immutable`（INF-REL-02），发布后按 [frontend-release 自检](../deploy/frontend/README.md) 验证缓存头。
-
 **运行镜像 OS 必须在发行版支持期内**：过期基线（如已 EOL 的 `alpine:3.20`）会让 Trivy 只给出 `This OS version is no longer supported` 警告并**停止提供 OS 漏洞数据**，扫描结果变成「假绿」。`check-release.sh` 已对该下限做静态校验（`MIN_ALPINE_MINOR`），升级基础镜像时同步抬高该值。
 
 ---
