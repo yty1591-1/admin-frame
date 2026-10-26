@@ -11,7 +11,22 @@ describe('loadRuntimeConfig', () => {
     });
     expect(config.channel).toBe('admin');
     expect(config.features).toEqual({});
-    expect(config.monitoring).toEqual({ dsn: null, sampleRate: 0 });
+    expect(config.monitoring).toEqual({ dsn: null, sampleRate: 0, release: null });
+  });
+
+  it('解析 monitoring.release 上报版本标识', () => {
+    const config = loadRuntimeConfig('admin', {
+      apiBaseUrl: '',
+      env: 'prod',
+      channel: 'admin',
+      monitoring: { dsn: 'https://collector.example/v1/traces', sampleRate: 0.5, release: '1.0.0' },
+    });
+
+    expect(config.monitoring).toEqual({
+      dsn: 'https://collector.example/v1/traces',
+      sampleRate: 0.5,
+      release: '1.0.0',
+    });
   });
 
   it('端别不一致时 fail-closed', () => {

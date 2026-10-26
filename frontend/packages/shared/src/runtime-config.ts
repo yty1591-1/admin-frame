@@ -13,6 +13,8 @@ export type AppRuntimeConfig = {
   monitoring: {
     dsn: string | null;
     sampleRate: number;
+    /** 上报版本标识；缺省为 null，由装配层回退构建期 __APP_VERSION__。 */
+    release: string | null;
   };
 };
 
@@ -32,6 +34,7 @@ const runtimeConfigSchema = z.object({
     .object({
       dsn: z.string().nullable().optional(),
       sampleRate: z.number().min(0).max(1).optional(),
+      release: z.string().nullable().optional(),
     })
     .optional(),
 });
@@ -69,6 +72,7 @@ export function loadRuntimeConfig(
     monitoring: {
       dsn: parsed.data.monitoring?.dsn ?? null,
       sampleRate: parsed.data.monitoring?.sampleRate ?? 0,
+      release: parsed.data.monitoring?.release ?? null,
     },
   };
 }
