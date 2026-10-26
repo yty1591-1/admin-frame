@@ -19,7 +19,9 @@
     "@admin-frame/api-client": "workspace:*",
     "@admin-frame/ui": "workspace:*",
     "@tanstack/react-query": "5.104.5",
-    "msw": "3.0.3"
+    "axe-core": "4.14.0",
+    "msw": "3.0.3",
+    "react-router": "7.18.4"
   },
   "devDependencies": {
     "@testing-library/react": "16.3.3",
