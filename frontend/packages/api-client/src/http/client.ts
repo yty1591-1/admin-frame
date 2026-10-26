@@ -91,7 +91,11 @@ export class HttpClient {
     this.channel = options.channel;
     this.baseUrl = options.baseUrl;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    // 延迟解析全局 fetch：保证测试/运行时在实例创建后仍可注入拦截器（MSW、埋点）。
+    const fetchImpl = options.fetchImpl;
+    this.fetchImpl =
+      fetchImpl ??
+      ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
     this.getAccessToken = options.getAccessToken;
     this.refreshAccessToken = options.refreshAccessToken;
     this.onUnauthorized = options.onUnauthorized;
