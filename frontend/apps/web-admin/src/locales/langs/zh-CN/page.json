@@ -1,0 +1,12 @@
+{
+  "auth": {
+    "login": "登录"
+  },
+  "profile": {
+    "title": "个人中心"
+  },
+  "system": {
+    "title": "系统管理",
+    "role": "角色管理"
+  }
+}

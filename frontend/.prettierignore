@@ -1,7 +1,0 @@
-node_modules/
-dist/
-coverage/
-pnpm-lock.yaml
-packages/api-client/src/generated/
-playwright-report/
-test-results/

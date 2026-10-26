@@ -1,0 +1,12 @@
+{
+  "auth": {
+    "login": "Login"
+  },
+  "profile": {
+    "title": "Profile"
+  },
+  "system": {
+    "title": "System",
+    "role": "Roles"
+  }
+}

@@ -1,14 +1,28 @@
-import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vitest/config';
-import { sharedTestConfig } from './packages/config/src/vitest-base';
+import Vue from '@vitejs/plugin-vue';
+import VueJsx from '@vitejs/plugin-vue-jsx';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
-  // 构建期常量在测试环境同样需要存在（HomePage 等读取 __CONTRACT_COMMIT__）。
-  define: {
-    __CHANNEL__: JSON.stringify('admin'),
-    __APP_VERSION__: JSON.stringify('0.0.0-test'),
-    __CONTRACT_COMMIT__: JSON.stringify('test-commit'),
+  plugins: [Vue(), VueJsx()],
+  test: {
+    environment: 'happy-dom',
+    environmentOptions: {
+      happyDOM: {
+        settings: {
+          // happy-dom v20+ disables JS evaluation by default (security fix).
+          // Treat disabled script loading as success to preserve test behavior.
+          handleDisabledFileLoadingAsSuccess: true,
+        },
+      },
+    },
+    exclude: [
+      ...configDefaults.exclude,
+      '**/e2e/**',
+      '**/dist/**',
+      '**/.{idea,git,cache,output,temp}/**',
+      '**/node_modules/**',
+      '**/{stylelint,eslint}.config.*',
+      '**/{oxfmt,oxlint}.config.*',
+    ],
   },
-  test: sharedTestConfig,
 });

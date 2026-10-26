@@ -1,0 +1,12 @@
+{
+  "auth": {
+    "login": "Login"
+  },
+  "member": {
+    "title": "Members",
+    "list": "Member List"
+  },
+  "profile": {
+    "title": "Profile"
+  }
+}

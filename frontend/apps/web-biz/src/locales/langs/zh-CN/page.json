@@ -1,0 +1,12 @@
+{
+  "auth": {
+    "login": "登录"
+  },
+  "member": {
+    "title": "成员管理",
+    "list": "成员列表"
+  },
+  "profile": {
+    "title": "个人中心"
+  }
+}
