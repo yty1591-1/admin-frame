@@ -32,6 +32,14 @@
 - [ ] 就绪后再接流量（`/readyz`）
 - [ ] `/version` 显示预期 version/commit/build_time（非全 `dev`）
 
+## 前端发布（如涉及 admin-web / biz-web）
+
+- [ ] 前端镜像 tag + digest 已记录（`frontend-image` job 产出，非 `latest`）
+- [ ] `config.js` 仅含非敏感运行期配置，与目标环境一致
+- [ ] `/index.html`、`/config.js` 返回 `no-store`；`/assets/*` 返回 `immutable`
+- [ ] 无痕窗口完成登录、刷新与关键路由冒烟
+- [ ] 已打开 [frontend-rollback.md](../runbooks/frontend-rollback.md)，上一 Release revision 可回滚
+
 ## 回滚预备
 
 - [ ] 上一良好 digest 已备好

@@ -6,7 +6,7 @@
 |---------|------|------|---------|
 | `api.5xx.rate_high` | P1 | 任一 API 进程 5xx 比率持续升高 | [api-5xx-spike.md](./api-5xx-spike.md) |
 | `db.pool.exhaustion` | P1 | 数据库连接池耗尽或获取超时飙升 | [db-connection-pool.md](./db-connection-pool.md) |
-| `release.health_failed` | P1 | 发版后 readiness 失败或错误激增需回滚 | [release-rollback.md](./release-rollback.md) |
+| `release.health_failed` | P1 | 发版后 readiness 失败或错误激增需回滚 | [release-rollback.md](./release-rollback.md)（后端）/ [frontend-rollback.md](./frontend-rollback.md)（前端） |
 | `api.latency.p99_high` | P2 | 端侧 P99 延迟超过 SLO | [api-5xx-spike.md](./api-5xx-spike.md) |
 | `worker.queue_lag` | P2 | worker 队列积压超过阈值 | [async-dlq.md](./async-dlq.md) |
 | `iam.authz.unavailable` | P1 | 鉴权依赖不可用（`result=unavailable`）占比超阈值 | [iam.md](./iam.md) |

@@ -141,12 +141,12 @@
 |----|------|
 | 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
 | 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
-| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05） |
+| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05）；前端 `admin-web` / `biz-web` 由独立 `frontend-image` job 产出（INF-REL-03） |
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
-| 架构 | `linux/amd64,linux/arm64`；`Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
-| 版本 | `VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
-| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
-| 基础镜像 | 运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起）；EOL 基线会让 OS 漏洞扫描失效，`check-release.sh` 静态拦截（RELS-02/§3） |
+| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译；前端构建阶段在 QEMU 下执行 `pnpm build` |
+| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03）；前端：版本与运行期配置由 `config.js` 提供，镜像不注入密钥 |
+| 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 / Nginx 静态站点 |
+| 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起）；前端固定 `nginxinc/nginx-unprivileged:<major>.<minor>-alpine` 并以 UID 101 运行，`check-release.sh` 静态拦截 `:latest`、缺失 `HEALTHCHECK` 与非 root `USER`（RELS-02/§3） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
 
 - 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备）。

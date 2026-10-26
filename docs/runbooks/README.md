@@ -10,7 +10,8 @@
 | [_TEMPLATE.md](./_TEMPLATE.md) | 新建模板 |
 | [api-5xx-spike.md](./api-5xx-spike.md) | 5xx / 延迟 / 队列积压 |
 | [db-connection-pool.md](./db-connection-pool.md) | 连接池耗尽 |
-| [release-rollback.md](./release-rollback.md) | 发版回滚 |
+| [release-rollback.md](./release-rollback.md) | 发版回滚（后端） |
+| [frontend-rollback.md](./frontend-rollback.md) | 前端静态站点回滚与缓存头排查 |
 | [iam.md](./iam.md) | IAM 鉴权不可用 / 拒绝率异常 / 误授权回滚 |
 | [async-dlq.md](./async-dlq.md) | 异步死信积压与重放 |
 | [slo-error-budget.md](./slo-error-budget.md) | SLO 燃烧率与错误预算冻结 |

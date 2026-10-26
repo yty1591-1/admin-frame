@@ -1,10 +1,10 @@
 # 前端基础设施规划与差距评估（A/B 双端）
 
-> **版本**：v0.4（S3 已落地）
-> **状态**：评审通过，D-01～D-09 均已结论化；S1 权限与数据层、S2 UI 基座、S3 错误/可观测/i18n 已落地（S3 改动待提交）
+> **版本**：v0.5（S4 已落地）
+> **状态**：评审通过，D-01～D-09 均已结论化；S1 权限与数据层、S2 UI 基座、S3 错误/可观测/i18n、S4 测试与发布硬化已落地（见 [S4 方案](./frontend-s4-plan.md)）
 > **适用范围**：`frontend/` 下 A 端 `admin-web`、B 端 `biz-web` 与共享 `packages/*`
-> **基线**：2026-10-25，`main` 分支 `90da8b9`（认证切片、S1、S2 已合入）+ 本地 S3 实施
-> **关联文档**：[前端架构与工程规范](./frontend-architecture.md)、[ADR-0005](./adr/0005-frontend-monorepo-react.md)、[CI 流水线规范](./CI_STANDARDS.md)、[安全规范](./SECURITY_STANDARDS.md)、[测试规范](./TESTING_STANDARDS.md)
+> **基线**：2026-10-26，`main` 分支 `90da8b9`（认证切片、S1、S2 已合入）+ 本地 S3/S4 实施
+> **关联文档**：[前端架构与工程规范](./frontend-architecture.md)、[ADR-0005](./adr/0005-frontend-monorepo-react.md)、[CI 流水线规范](./CI_STANDARDS.md)、[安全规范](./SECURITY_STANDARDS.md)、[测试规范](./TESTING_STANDARDS.md)、[S4 测试与发布硬化](./frontend-s4-plan.md)
 > **定位**：本文回答“写业务页面前还必须具备什么”，不替代 `frontend-architecture.md` 的规范性约束；两者冲突时以架构文档为准。
 
 ---
@@ -57,8 +57,8 @@
 | UI 设计系统与交互基座 | **L2** | 令牌、主题、状态组件、AppShell 已有；表格/表单/弹窗/通知/危险操作套件已落地（S2），列设置与虚拟滚动待 P2 |
 | 可观测与前端安全 | **L2** | logger/脱敏/trace_id/路由错误边界已落地（S3-2）；OTel Web 动态上报与隐私白名单已落地（S3-3）；Web Vitals、CSP 注入待 P1 |
 | 性能 | **L2** | 体积门禁、路由懒加载、manualChunks 已生效；缺 Lighthouse/RUM 与预取 |
-| 测试与质量 | **L2** | 单测/MSW/E2E 骨架已有；**apps 测试未纳入 Vitest**、无 axe、无契约夹具沉淀 |
-| 发布与运行 | **L1** | 静态构建可用；缺镜像/Helm、缓存头、Source Map 私有化、回滚演练 |
+| 测试与质量 | **L2（S4 已补强）** | apps 组件/流程测试已纳入 Vitest，axe 与 MSW 夹具已沉淀（S4-1）；429/超时夹具与视觉回归待补 |
+| 发布与运行 | **L2** | 非 root Nginx 镜像、缓存头、Helm 前端工作负载、独立镜像流水线与回滚 runbook 已落地（S4-2）；Source Map 私有化与演练待补 |
 | 多端与国际化 | **L0 / L2** | B 端尚未启动；`packages/i18n` 字典 + `t()` + `lint:i18n` 已落地（S3-4），多语言切换待后续 |
 
 **结论**
@@ -81,17 +81,19 @@
 | 认证装配 | 登录页、两步 MFA、登录前强制绑定（密钥/恢复码一次展示）、启动恢复、登录守卫、403、退出登录 | `frontend/apps/admin-web/src/app/auth/*`、`frontend/apps/admin-web/src/pages/LoginPage.tsx` |
 | UI 基础 | 设计令牌、主题、Empty/Error/PageLoading、AppShell、原子组件白名单 | `frontend/packages/ui/src/*` |
 | 工具函数 | 时间/金额格式化、分页上限、运行期配置校验 | `frontend/packages/shared/src/*` |
-| 测试 | 97 个单测用例，覆盖率门禁 70%，MSW 契约 Mock，2 条 admin E2E | `frontend/packages/*/src/*.test.*`、`frontend/e2e/admin/shell.spec.ts` |
-| 门禁 | format/lint/boundaries/typecheck/test/build/size/license/audit/E2E 均有本地与 CI 入口 | `frontend/package.json`、`scripts/ci/check-frontend.sh`、`.github/workflows/ci.yml` |
+| 测试 | 188 个用例（42 个文件），覆盖率门禁 70%，apps 组件/流程测试 + axe + MSW 契约夹具，2 条 admin E2E | `frontend/apps/*/src/**/*.test.*`、`frontend/packages/testing/src/*`、`frontend/e2e/admin/shell.spec.ts` |
+| 发布 | 非 root Nginx 镜像、缓存头、Helm 前后端独立发布、镜像流水线与回滚 runbook | `deploy/frontend/*`、`deploy/helm/admin-frame-frontend/*`、[runbook](./runbooks/frontend-rollback.md) |
+| 门禁 | format/lint/boundaries/typecheck/test/build/size/license/audit/E2E 均有本地与 CI 入口 | `frontend/package.json`、`scripts/ci/check-frontend.sh`、`scripts/ci/check-release.sh`、`.github/workflows/ci.yml` |
 
 **已确认的空白**
 
-- `vitest` 的 `include` 仅覆盖 `packages/*/src`，**apps 内组件测试不会被执行**（见 `frontend/packages/config/src/vitest-base.ts`）。
-- MSW 覆盖登录/刷新/登出/权限快照/角色列表/角色删除（含 40900 夹具），无会话与 MFA 异常流夹具。
+- `vitest` 的 `include` 已覆盖 `apps/*/src`（S4-1）；覆盖率阈值仍只统计 `packages/*`，apps 以回归保护为主。
+- MSW 已覆盖登录/刷新/MFA/权限快照/角色列表/角色删除（含 40900），**缺** 429、超时与网络中断夹具。
 - 运行期 `config.features` 已解析但无消费封装；无 feature flag 读取入口。
 - `ThemeProvider` 支持 CSP nonce，但入口未从运行期配置注入。
-- 无 logger、无错误上报 SDK、无 Web Vitals 采集。
-- 无 i18n；界面文案为硬编码中文（`zh-CN` 由 antd locale 提供）。
+- 会话管理页、空闲超时、跨标签页同步待 S5。
+- 无视觉回归；Lighthouse/RUM 未接入。
+- Source Map 私有化与前端回滚演练（S4-3）待补。
 
 ---
 
@@ -193,10 +195,10 @@
 | 编号 | 能力 | 现状 | 目标 | 验收标准 | 优先级 |
 |---|---|---|---|---|---|
 | INF-TEST-01 | 单测与覆盖率 | L2 | L3 | 行/函数/分支/语句 ≥70% | 已具备 |
-| INF-TEST-02 | 组件测试执行范围 | L0 | L2 | **apps 组件测试纳入 Vitest**；`renderWithProviders` 支持 Router/Auth | **P0** |
-| INF-TEST-03 | 契约 Mock 夹具 | L1 | L2 | MSW 覆盖成功/400/401/403/409/429/5xx/超时；与生成类型对齐 | **P0** |
-| INF-TEST-04 | 必测场景 | L0 | L2 | 登录/MFA、并发 401、权限 403、fail-closed、B 端隔离、40900 | **P0** |
-| INF-TEST-05 | 可访问性 | L1 | L2 | 关键页面 axe 严重问题为 0；键盘可达 | P1 |
+| INF-TEST-02 | 组件测试执行范围 | L2（S4 已落地） | L2 | apps 组件测试纳入 Vitest；`renderWithProviders` 支持 Router/Auth | 已具备 |
+| INF-TEST-03 | 契约 Mock 夹具 | L2（S4 已补强） | L2 | MSW 覆盖成功/400/401/403/409/5xx；与生成类型对齐（429/超时待补） | P1 |
+| INF-TEST-04 | 必测场景 | L2（S4 已落地） | L2 | 登录/MFA、权限 403、fail-closed、40900 已覆盖；并发 401 与 B 端隔离待补 | P1 |
+| INF-TEST-05 | 可访问性 | L2（S4 已落地） | L2 | 关键页面 axe 严重问题为 0；键盘可达 | P1 |
 | INF-TEST-06 | E2E 分层 | L1 | L2 | PR smoke + nightly 全量；不稳定用例隔离并限期修复 | P1 |
 | INF-TEST-07 | 视觉回归 | L0 | L2 | 仅当组件数 ≥30 再评估 ADR | P3 |
 
@@ -205,10 +207,10 @@
 | 编号 | 能力 | 现状 | 目标 | 验收标准 | 优先级 |
 |---|---|---|---|---|---|
 | INF-REL-01 | 运行期配置 | L2 | L3 | `config.js` 覆盖；校验失败 fail-closed；`no-store` | 已具备 |
-| INF-REL-02 | 静态服务与缓存头 | L0 | L2 | `index.html`/`config.js` 不缓存；hash 资源 immutable | P1 |
-| INF-REL-03 | 镜像与部署模板 | L0 | L2 | Nginx 非 root 镜像；Helm 前后端独立发布与回滚 | P1 |
+| INF-REL-02 | 静态服务与缓存头 | L2（S4 已落地） | L2 | `index.html`/`config.js` 不缓存；hash 资源 immutable | 已具备 |
+| INF-REL-03 | 镜像与部署模板 | L2（S4 已落地） | L2 | Nginx 非 root 镜像；Helm 前后端独立发布与回滚 | 已具备 |
 | INF-REL-04 | Source Map 私有化 | L0 | L2 | 产物不公开；上传私有监控平台并关联 release | P1 |
-| INF-REL-05 | 回滚演练 | L0 | L2 | 前端回退上一静态版本；`index.html` 不长缓存 | P1 |
+| INF-REL-05 | 回滚演练 | L1（runbook 已落地） | L2 | 前端回退上一静态版本；`index.html` 不长缓存 | P1 |
 
 ### 4.10 多端与国际化
 
@@ -308,7 +310,7 @@ main.tsx
 | **S1 权限与数据层** | 5.1 + 5.2 | 权限守卫与菜单可用；示例列表页按 Query/URL 规范接入（**已落地**） | 认证切片（已完成，含强制绑定） |
 | **S2 UI 基座与交互** | 5.3 + 5.5 | 表格/表单/弹窗/通知/危险操作套件可用（**已落地**） | S1 |
 | **S3 错误、可观测与 i18n** | 5.4 + 5.6 | 错误码映射、logger、trace_id、文案字典就绪（**已落地**：[S3 方案](./frontend-s3-plan.md) v1.1） | S1 |
-| **S4 测试与发布硬化** | 5.7 + 4.8/4.9 | apps 测试纳入、axe、缓存头、镜像/Helm、回滚演练 | S2 |
+| **S4 测试与发布硬化** | 5.7 + 4.8/4.9 | apps 测试纳入、axe、缓存头、镜像/Helm、回滚 runbook 已落地（**已完成**：[S4 方案](./frontend-s4-plan.md)） | S2 |
 | **S5 会话与 MFA 管理** | 4.3 的 P1 项 | 会话页、已登录下 MFA 绑定/解绑、空闲超时、跨标签页同步 | S1 |
 | **S6 B 端** | 4.10 + 4.4 租户隔离 | B 端登录/IAM 可用；不发送 `merchant_id`；跨商户 404 | S1～S3 |
 
