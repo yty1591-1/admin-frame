@@ -1406,7 +1406,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "演示 Token：admin.<subject_id>（生产替换为 A 端独立 JWT）"
+      description: "A 端 JWT（Bearer）。权限与主体以 IAM 快照为准，令牌不携带角色。仅 auth.mode=demo 的本地/测试形态使用演示令牌 admin.<subject_id>，生产禁止。"
   schemas:
     VersionInfo:
       type: object

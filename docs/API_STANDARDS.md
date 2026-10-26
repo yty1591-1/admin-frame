@@ -63,11 +63,11 @@
 - Ingress 的 `/admin`、`/biz`、`/c` 前缀**原样转发**，而契约路径本身已含该前缀；因此 `servers` 只写域名，调用方不得再拼一次 `/admin`。
 - 若某环境未启用 TLS，以该环境实际入口为准；生产入口按 SEC-10 强制 TLS。
 
-### 3.2 契约分发与前端订阅
+### 3.2 契约分发与订阅
 
 - **分发物**：`make openapi-docs`（HTML）、`make openapi-client`（TypeScript 类型）、`make openapi-changelog`（相对基线变更日志）与 `contract-commit.txt`（产物对应的 commit），统一输出到 `dist/openapi/`，由 CI job `openapi-docs` 作为 artifact 上传；产物不入库、不进镜像、不在生产进程挂载（SEC-08）。
-- **订阅方式**：前端仓库锁定本仓库的 tag 或 commit（以产物中的 `contract-commit.txt` 核对），升级时以该版本的 `api/openapi/**` 与 changelog 为准；禁止依赖运行中的服务做接口探测。
-- **变更通知**：契约有变更的 MR 必须附 changelog 摘要；breaking / 弃用须写入发布说明并主动通知前端，不得等联调时暴露（API-02、API-07、API-09）。
+- **订阅方式**：消费方锁定本仓库的 tag 或 commit（以产物中的 `contract-commit.txt` 核对），升级时以该版本的 `api/openapi/**` 与 changelog 为准；禁止依赖运行中的服务做接口探测。
+- **变更通知**：契约有变更的 MR 必须附 changelog 摘要；breaking / 弃用须写入发布说明并主动通知消费方，不得等联调时暴露（API-02、API-07、API-09）。
 
 ---
 
@@ -110,6 +110,24 @@
 ### 4.4 时间
 
 - 对外时间字段使用 RFC3339（UTC）；契约中标 `format: date-time`。
+
+### 4.5 空响应（204）端点
+
+写操作无需回传数据的端点返回 **HTTP 204 且无响应体**，不套信封。当前清单（新增须同步本节）：
+
+| 端 | 端点 | 说明 |
+|---|---|---|
+| A/B | `POST /{channel}/v1/auth/logout` | 幂等；同时把当前 `jti` 加入黑名单 |
+| A/B | `POST /{channel}/v1/auth/logout-all` | 递增 `token_version`，撤销全部会话 |
+| A | `POST /admin/v1/auth/sessions/revoke-all` | 语义同 `logout-all`；B 端不提供会话管理 |
+| A | `DELETE /admin/v1/auth/sessions/{id}` | 单会话撤销；他人会话与不存在统一 40400 |
+| A | `POST /admin/v1/auth/mfa/disable` | 解绑后撤销全部会话；B 端不提供 MFA |
+| A | `POST /admin/v1/auth/mfa/verify`（已登录确认绑定分支） | 携带 `Authorization` 时返回 204；无 `Authorization` 的票据分支返回 `200 + TokenPair` |
+
+调用方约束（前端尤其注意）：
+
+- 204 响应没有 body，**不得用"取 `body.code` 判断成功"的拦截器**处理；浏览器侧应显式声明按原始响应返回（如 `responseReturn: 'raw'`），或对 `status === 204` 短路为成功。
+- 需要回传数据时用 `200 + 信封`，不得返回 `204` 再让调用方推断。
 
 ---
 
@@ -202,7 +220,7 @@ make ci               # 含 openapi（产物生成不并入 make ci，避免引�
 | `scripts/ci/check-openapi.sh` | validate + breaking |
 | `scripts/openapi/build-docs.sh` | Redocly 渲染 HTML 文档（dev/CI 产物） |
 | `scripts/openapi/gen-client.sh` | 生成 TypeScript 类型（dev/CI 产物） |
-| `scripts/openapi/changelog.sh` | 相对基线生成变更日志（发布说明/前端订阅） |
+| `scripts/openapi/changelog.sh` | 相对基线生成变更日志（发布说明/契约订阅） |
 | `pkg/httpx` | 可复用信封、分页、错误写响应 |
 | `internal/shared/httpx` | 本仓库薄封装（挂接 apperr 契约码） |
 | `internal/shared/apperr` | 稳定业务码 |

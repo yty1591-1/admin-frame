@@ -1015,7 +1015,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "演示 Token：biz.<merchant_id>.<subject_id>（生产替换为 B 端独立 JWT）"
+      description: "B 端 JWT（Bearer）。merchant_id 由令牌声明推导，不接受请求参数覆盖。仅 auth.mode=demo 的本地/测试形态使用演示令牌 biz.<merchant_id>.<subject_id>，生产禁止。"
   schemas:
     VersionInfo:
       type: object

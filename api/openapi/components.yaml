@@ -87,8 +87,17 @@ components:
     PageMeta:
       type: object
       required: [items, total]
-      description: 列表 data 载荷的公共形状（items + total）
+      description: |
+        列表 data 载荷的公共形状（items + total）。
+        具体元素类型由各分端的 `XxxListData` 定义；本 schema 只约束外层形状，
+        供代码生成器产出可用的分页类型，避免 `items` 缺失导致退化为 any。
       properties:
+        items:
+          type: array
+          description: 当前页条目；元素类型见各分端 ListData 定义（此处仅约束外层为数组）
+          items:
+            type: object
+            description: 单条记录；具体字段由各分端 ListData 定义
         total:
           type: integer
           minimum: 0
