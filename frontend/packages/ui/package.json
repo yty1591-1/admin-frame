@@ -10,6 +10,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@admin-frame/i18n": "workspace:*"
+  },
   "peerDependencies": {
     "antd": "^5.0.0",
     "react": "^19.0.0",

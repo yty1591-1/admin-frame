@@ -41,8 +41,22 @@ module.exports = {
       to: { path: '^packages/(api-client|auth|ui|testing|config)/' },
     },
     {
+      name: 'i18n-is-leaf',
+      comment: 'i18n 为最底层字典包，不得依赖其他 packages；ui → i18n 单向允许',
+      severity: 'error',
+      from: { path: '^packages/i18n/' },
+      to: { path: '^packages/', pathNot: '^packages/i18n/' },
+    },
+    {
+      name: 'observability-is-leaf',
+      comment: '可观测包不得依赖 api-client/auth/ui，避免日志链反向耦合（D3-02）',
+      severity: 'error',
+      from: { path: '^packages/observability/' },
+      to: { path: '^packages/(api-client|auth|ui|testing|shared|i18n|config)/' },
+    },
+    {
       name: 'ui-not-on-api',
-      comment: '设计系统不感知接口与鉴权',
+      comment: '设计系统不感知接口与鉴权；仅允许依赖 i18n 字典',
       severity: 'error',
       from: { path: '^packages/ui/' },
       to: { path: '^packages/(api-client|auth|testing)/' },

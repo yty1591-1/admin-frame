@@ -22,6 +22,37 @@ const TOKEN_RESTRICTIONS = [
   },
 ];
 
+const ANT_DESIGN_RESTRICTION = {
+  name: 'antd',
+  message: '业务代码统一从 @admin-frame/ui 导入，禁止直接依赖 antd（§11.1）',
+};
+
+const AXIOS_RESTRICTION = {
+  name: 'axios',
+  message: 'HTTP 请求只能通过 @admin-frame/api-client 发出（FE-06）',
+};
+
+const REACT_ROUTER_DOM_RESTRICTION = {
+  name: 'react-router-dom',
+  message: '统一使用 react-router（React Router 7）导入路由 API',
+};
+
+const PRIVATE_PACKAGE_PATTERNS = [
+  {
+    group: ['@admin-frame/*/src/*', '@admin-frame/*/dist/*'],
+    message: '包内实现属于私有细节，只能从包公共出口导入（FE-04）',
+  },
+  {
+    group: ['**/internal/*'],
+    message: '禁止深链 feature 内部实现，请从 index.ts 公共出口导入（FE-04）',
+  },
+];
+
+const OTEL_RESTRICTION = {
+  group: ['@opentelemetry/*'],
+  message: 'OTel 依赖仅允许 packages/observability 引入（D3-02）',
+};
+
 /**
  * 前端 ESLint 基线（FE-01～FE-07、FE-13、FE-14）。
  * 供根配置与各 app 复用；apps 不得自行关闭这些规则。
@@ -87,27 +118,8 @@ export function createEslintBase({ tsconfigRootDir }) {
         'no-restricted-imports': [
           'error',
           {
-            paths: [
-              {
-                name: 'antd',
-                message: '业务代码统一从 @admin-frame/ui 导入，禁止直接依赖 antd（§11.1）',
-              },
-              { name: 'axios', message: 'HTTP 请求只能通过 @admin-frame/api-client 发出（FE-06）' },
-              {
-                name: 'react-router-dom',
-                message: '统一使用 react-router（React Router 7）导入路由 API',
-              },
-            ],
-            patterns: [
-              {
-                group: ['@admin-frame/*/src/*', '@admin-frame/*/dist/*'],
-                message: '包内实现属于私有细节，只能从包公共出口导入（FE-04）',
-              },
-              {
-                group: ['**/internal/*'],
-                message: '禁止深链 feature 内部实现，请从 index.ts 公共出口导入（FE-04）',
-              },
-            ],
+            paths: [ANT_DESIGN_RESTRICTION, AXIOS_RESTRICTION, REACT_ROUTER_DOM_RESTRICTION],
+            patterns: [...PRIVATE_PACKAGE_PATTERNS, OTEL_RESTRICTION],
           },
         ],
         '@typescript-eslint/consistent-type-imports': [
@@ -161,19 +173,36 @@ export function createEslintBase({ tsconfigRootDir }) {
         'no-restricted-imports': [
           'error',
           {
-            paths: [
-              { name: 'axios', message: 'HTTP 请求只能通过 @admin-frame/api-client 发出（FE-06）' },
-              {
-                name: 'react-router-dom',
-                message: '统一使用 react-router（React Router 7）导入路由 API',
-              },
-            ],
-            patterns: [
-              {
-                group: ['@admin-frame/*/src/*', '@admin-frame/*/dist/*'],
-                message: '包内实现属于私有细节，只能从包公共出口导入（FE-04）',
-              },
-            ],
+            paths: [AXIOS_RESTRICTION, REACT_ROUTER_DOM_RESTRICTION],
+            patterns: PRIVATE_PACKAGE_PATTERNS,
+          },
+        ],
+      },
+    },
+    {
+      files: ['packages/observability/**/*.{ts,tsx}'],
+      rules: {
+        // D3-02：observability 是唯一允许引入 OTel 的包；antd/axios 仍禁止。
+        'no-restricted-imports': [
+          'error',
+          {
+            paths: [ANT_DESIGN_RESTRICTION, AXIOS_RESTRICTION, REACT_ROUTER_DOM_RESTRICTION],
+            patterns: PRIVATE_PACKAGE_PATTERNS,
+          },
+        ],
+      },
+    },
+    {
+      files: ['packages/observability/src/chunk-reload.ts'],
+      rules: {
+        // 唯一 sessionStorage 例外：仅存一次性刷新标记，键名与值不含令牌（FE-07、D3-04）。
+        'no-restricted-globals': ['error', FETCH_RESTRICTION, TOKEN_RESTRICTIONS[0]],
+        'no-restricted-properties': [
+          'error',
+          {
+            object: 'window',
+            property: 'localStorage',
+            message: '禁止使用 localStorage 存储令牌（FE-07）',
           },
         ],
       },
@@ -193,13 +222,6 @@ export function createEslintBase({ tsconfigRootDir }) {
             message: '前端路由不得占用 /admin、/biz 前缀（§17.4）',
           },
         ],
-      },
-    },
-    {
-      files: ['apps/**/src/app/**/*.{ts,tsx}'],
-      rules: {
-        // 错误边界是唯一允许输出诊断日志的装配层（§12.2）。
-        'no-console': ['error', { allow: ['error'] }],
       },
     },
     {
