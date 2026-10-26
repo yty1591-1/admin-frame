@@ -59,6 +59,9 @@ pnpm format:check
 echo "==> FE-02: eslint (flat config, typed rules)"
 pnpm lint
 
+echo "==> INF-I18N-01: hardcoded CJK scan"
+pnpm lint:i18n
+
 echo "==> FE-04: dependency-cruiser"
 bash ../scripts/ci/check-frontend-boundaries.sh
 

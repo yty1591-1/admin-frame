@@ -230,6 +230,7 @@ frontend-gen:
 
 frontend-lint:
 	cd $(FRONTEND_DIR) && $(PNPM) lint
+	cd $(FRONTEND_DIR) && $(PNPM) lint:i18n
 
 frontend-format:
 	cd $(FRONTEND_DIR) && $(PNPM) format:check
