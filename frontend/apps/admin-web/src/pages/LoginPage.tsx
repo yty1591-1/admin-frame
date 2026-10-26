@@ -12,7 +12,7 @@ import {
   Typography,
 } from '@admin-frame/ui';
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { Navigate, useSearchParams } from 'react-router';
 import { z } from 'zod';
 import { useAuth } from '../app/auth/auth-context';
@@ -139,7 +139,7 @@ export default function LoginPage() {
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
-  const { register, handleSubmit, formState } = useForm<LoginValues>({
+  const { control, handleSubmit, formState } = useForm<LoginValues>({
     defaultValues: { subject: '', password: '' },
   });
 
@@ -301,7 +301,21 @@ export default function LoginPage() {
                 required
                 error={fieldErrors.subject}
               >
-                <Input id="login-subject" autoComplete="username" {...register('subject')} />
+                <Controller
+                  control={control}
+                  name="subject"
+                  render={({ field }) => (
+                    <Input
+                      id="login-subject"
+                      autoComplete="username"
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={(event) => {
+                        field.onChange(event);
+                      }}
+                    />
+                  )}
+                />
               </FormField>
               <FormField
                 label={t('auth.password')}
@@ -309,10 +323,20 @@ export default function LoginPage() {
                 required
                 error={fieldErrors.password}
               >
-                <Input.Password
-                  id="login-password"
-                  autoComplete="current-password"
-                  {...register('password')}
+                <Controller
+                  control={control}
+                  name="password"
+                  render={({ field }) => (
+                    <Input.Password
+                      id="login-password"
+                      autoComplete="current-password"
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={(event) => {
+                        field.onChange(event);
+                      }}
+                    />
+                  )}
                 />
               </FormField>
               <Button type="primary" htmlType="submit" block loading={formState.isSubmitting}>
