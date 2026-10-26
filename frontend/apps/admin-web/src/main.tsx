@@ -1,12 +1,13 @@
+import { defaultTranslator } from '@admin-frame/i18n';
+import { loadRuntimeConfig } from '@admin-frame/shared';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { loadRuntimeConfig } from '@admin-frame/shared';
 import { App } from './app/App';
 import { FatalConfigError } from './app/FatalConfigError';
 
 const container = document.getElementById('root');
 if (!container) {
-  throw new Error('缺少 #root 挂载点');
+  throw new Error(defaultTranslator('error.dev.missingRoot'));
 }
 
 const root = createRoot(container);
@@ -19,6 +20,7 @@ try {
     </StrictMode>,
   );
 } catch (error) {
-  const message = error instanceof Error ? error.message : '运行期配置加载失败';
+  const message =
+    error instanceof Error ? error.message : defaultTranslator('error.dev.runtimeConfigFailed');
   root.render(<FatalConfigError message={message} />);
 }

@@ -1,5 +1,10 @@
+import { useI18n } from '@admin-frame/i18n';
 import { ErrorState } from '@admin-frame/ui';
 
 export default function NotFoundPage() {
-  return <ErrorState title="页面不存在" description="请检查地址或返回工作台。" />;
+  const { t } = useI18n();
+
+  return (
+    <ErrorState title={t('nav.notFound')} description={t('common.notFoundDescriptionAdmin')} />
+  );
 }

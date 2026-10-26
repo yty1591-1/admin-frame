@@ -7,5 +7,6 @@ window.__APP_CONFIG__ = {
   monitoring: {
     dsn: null,
     sampleRate: 0,
+    release: null,
   },
 };

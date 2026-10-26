@@ -1,10 +1,13 @@
+import { useI18n } from '@admin-frame/i18n';
 import { ErrorState } from '@admin-frame/ui';
 
 export default function ForbiddenPage() {
+  const { t } = useI18n();
+
   return (
     <ErrorState
-      title="无访问权限"
-      description="当前账号缺少访问该页面的权限；如需开通请联系平台管理员。"
+      title={t('permission.state.deniedTitle')}
+      description={t('permission.state.deniedDescription')}
     />
   );
 }

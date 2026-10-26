@@ -1,5 +1,6 @@
 import type { AdminApiClient } from '@admin-frame/api-client';
 import type { SessionRuntime } from '@admin-frame/auth';
+import { defaultTranslator } from '@admin-frame/i18n';
 import { createContext, useContext } from 'react';
 
 export type AuthStatus = 'booting' | 'anonymous' | 'authenticated';
@@ -22,7 +23,9 @@ export const AuthContext = createContext<AuthContextValue | null>(null);
 export function useAuth(): AuthContextValue {
   const value = useContext(AuthContext);
   if (!value) {
-    throw new Error('useAuth 必须在 AuthProvider 内使用');
+    throw new Error(
+      defaultTranslator('error.dev.missingProvider', { hook: 'useAuth', provider: 'AuthProvider' }),
+    );
   }
   return value;
 }

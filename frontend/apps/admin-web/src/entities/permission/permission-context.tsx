@@ -1,6 +1,7 @@
-import type { PermissionChecker } from '@admin-frame/auth';
 import type { SubjectPermissions } from '@admin-frame/api-client';
+import type { PermissionChecker } from '@admin-frame/auth';
 import { createPermissionChecker } from '@admin-frame/auth';
+import { defaultTranslator, useI18n } from '@admin-frame/i18n';
 import { ErrorState, PageLoading } from '@admin-frame/ui';
 import { createContext, useContext, type ReactNode } from 'react';
 
@@ -39,7 +40,12 @@ export function PermissionContextProvider({
 export function usePermissionState(): PermissionState {
   const value = useContext(PermissionContext);
   if (!value) {
-    throw new Error('usePermissionState 必须在 PermissionContextProvider 内使用');
+    throw new Error(
+      defaultTranslator('error.dev.missingProvider', {
+        hook: 'usePermissionState',
+        provider: 'PermissionContextProvider',
+      }),
+    );
   }
   return value;
 }
@@ -93,25 +99,26 @@ export function RequirePermission({
   children: ReactNode;
 }) {
   const state = usePermissionState();
+  const { t } = useI18n();
 
   if (state.status === 'unavailable') {
     return (
       <ErrorState
-        title="权限服务暂不可用"
-        description="无法确认当前账号的权限，已按最小权限拒绝访问。请稍后重试。"
+        title={t('permission.state.unavailableTitle')}
+        description={t('permission.state.unavailableDescription')}
         traceId={state.traceId}
         onRetry={state.refresh}
       />
     );
   }
   if (state.status !== 'ready') {
-    return <PageLoading tip="正在加载权限…" />;
+    return <PageLoading tip={t('permission.state.loading')} />;
   }
   if (!checkPermission(state.checker, permission)) {
     return (
       <ErrorState
-        title="无访问权限"
-        description="当前账号缺少访问该页面的权限；如需开通请联系平台管理员。"
+        title={t('permission.state.deniedTitle')}
+        description={t('permission.state.deniedDescription')}
       />
     );
   }

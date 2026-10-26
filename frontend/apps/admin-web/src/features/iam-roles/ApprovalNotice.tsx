@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { ConfirmDialog, Descriptions, Typography } from '@admin-frame/ui';
 
 export type ApprovalNoticeProps = {
@@ -14,28 +15,38 @@ export type ApprovalNoticeProps = {
  * 不跳转、不自动重试；申请人不得审批自己的申请（SoD）。
  */
 export function ApprovalNotice({ open, roleName, roleCode, reason, onClose }: ApprovalNoticeProps) {
+  const { t } = useI18n();
+
   return (
     <ConfirmDialog
       open={open}
-      title="该操作需审批"
-      confirmText="我知道了"
+      title={t('iam.approval.title')}
+      confirmText={t('iam.approval.confirm')}
       hideCancel
       content={
         <>
           <Typography.Paragraph>
-            删除角色「{roleName}」属于高风险变更，已转为审批申请，不会立即生效。
+            {t('iam.approval.content', { name: roleName })}
           </Typography.Paragraph>
           <Descriptions
             column={1}
             size="small"
             items={[
-              { key: 'action', label: '操作', children: '删除角色' },
-              { key: 'role', label: '角色', children: `${roleName}（${roleCode}）` },
-              { key: 'reason', label: '原因', children: reason },
+              {
+                key: 'action',
+                label: t('iam.approval.actionLabel'),
+                children: t('iam.role.deleteTitle'),
+              },
+              {
+                key: 'role',
+                label: t('iam.approval.roleLabel'),
+                children: t('common.targetWithCode', { name: roleName, code: roleCode }),
+              },
+              { key: 'reason', label: t('iam.approval.reasonLabel'), children: reason },
             ]}
           />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            申请进度请在「IAM 变更审批」中查看；按职责分离要求，申请人不得审批自己的申请。
+            {t('iam.approval.hint')}
           </Typography.Paragraph>
         </>
       }

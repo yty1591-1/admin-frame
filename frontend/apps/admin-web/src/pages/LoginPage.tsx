@@ -1,5 +1,5 @@
 import type { MFASetupData } from '@admin-frame/api-client';
-import { isAppError } from '@admin-frame/api-client';
+import { describeError, useI18n, type MessageKey } from '@admin-frame/i18n';
 import {
   Alert,
   Button,
@@ -25,7 +25,7 @@ const loginSchema = z.object({
 type LoginValues = z.infer<typeof loginSchema>;
 
 type LoginError = {
-  message: string;
+  messageKey: MessageKey;
   traceId: string | undefined;
 };
 
@@ -49,14 +49,16 @@ function resolveReturnTo(raw: string | null): string {
 }
 
 /** 40100 统一文案，避免区分账号不存在/密码错误/停用（§10.6）。 */
-function toLoginError(cause: unknown, unauthorizedMessage: string): LoginError {
-  if (isAppError(cause)) {
-    return {
-      message: cause.code === 40100 ? unauthorizedMessage : cause.message,
-      traceId: cause.traceId,
-    };
+function toLoginError(cause: unknown, unauthorizedKey: MessageKey): LoginError {
+  const presentation = describeError(cause);
+  if (presentation.code === 40100) {
+    return { messageKey: unauthorizedKey, traceId: presentation.traceId };
   }
-  return { message: '登录失败，请稍后重试', traceId: undefined };
+  return {
+    messageKey:
+      presentation.messageKey === 'error.unknown' ? 'auth.unknownFailure' : presentation.messageKey,
+    traceId: presentation.traceId,
+  };
 }
 
 const pageStyle: CSSProperties = {
@@ -78,6 +80,7 @@ const recoveryListStyle: CSSProperties = {
 };
 
 function ErrorAlert({ error }: { error: LoginError | null }) {
+  const { t } = useI18n();
   if (!error) {
     return null;
   }
@@ -86,32 +89,32 @@ function ErrorAlert({ error }: { error: LoginError | null }) {
       type="error"
       showIcon
       style={{ marginBottom: 16 }}
-      message={error.message}
-      description={error.traceId ? `追踪号：${error.traceId}` : undefined}
+      message={t(error.messageKey)}
+      description={error.traceId ? t('common.traceId', { traceId: error.traceId }) : undefined}
     />
   );
 }
 
 /** 强制绑定第一步：展示密钥、otpauth URI 与一次性恢复码。 */
 function MfaSetupPanel({ setup }: { setup: MFASetupData }) {
+  const { t } = useI18n();
+
   return (
     <>
-      <Typography.Paragraph type="secondary">
-        首次登录需要绑定身份验证器。请将下方密钥（或 otpauth 链接）录入验证器后，再进行校验。
-      </Typography.Paragraph>
+      <Typography.Paragraph type="secondary">{t('auth.mfaSetupIntro')}</Typography.Paragraph>
       <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
-        <Typography.Text strong>密钥</Typography.Text>
+        <Typography.Text strong>{t('auth.mfaSecret')}</Typography.Text>
         <Typography.Text code copyable>
           {setup.secret}
         </Typography.Text>
-        <Typography.Text strong>otpauth 链接</Typography.Text>
+        <Typography.Text strong>{t('auth.mfaOtpUri')}</Typography.Text>
         <Typography.Text code copyable ellipsis>
           {setup.otpauth_uri}
         </Typography.Text>
       </Space>
       <Divider style={{ margin: '12px 0' }} />
       <Typography.Paragraph type="warning" style={{ marginBottom: 0 }}>
-        恢复码只能查看一次，请立即保存；每个恢复码仅可使用一次。
+        {t('auth.mfaRecoveryWarning')}
       </Typography.Paragraph>
       <ul style={recoveryListStyle}>
         {setup.recovery_codes.map((code) => (
@@ -125,6 +128,7 @@ function MfaSetupPanel({ setup }: { setup: MFASetupData }) {
 }
 
 export default function LoginPage() {
+  const { t } = useI18n();
   const { status, runtime, markAuthenticated } = useAuth();
   const [searchParams] = useSearchParams();
   const returnTo = resolveReturnTo(searchParams.get('returnTo'));
@@ -140,7 +144,7 @@ export default function LoginPage() {
   });
 
   if (status === 'booting') {
-    return <PageLoading tip="正在恢复会话…" />;
+    return <PageLoading tip={t('auth.sessionRestoring')} />;
   }
   if (status === 'authenticated') {
     return <Navigate to={returnTo} replace />;
@@ -162,10 +166,10 @@ export default function LoginPage() {
     if (!parsed.success) {
       const paths = parsed.error.issues.map((issue) => issue.path[0]);
       setFieldErrors({
-        ...(paths.includes('subject') ? { subject: '请输入账号' } : {}),
-        ...(paths.includes('password') ? { password: '请输入密码' } : {}),
+        ...(paths.includes('subject') ? { subject: t('auth.subjectRequired') } : {}),
+        ...(paths.includes('password') ? { password: t('auth.passwordRequired') } : {}),
       });
-      setError({ message: '请输入账号和密码', traceId: undefined });
+      setError({ messageKey: 'auth.credentialsRequired', traceId: undefined });
       return;
     }
     setFieldErrors({});
@@ -184,21 +188,21 @@ export default function LoginPage() {
           setStep('mfaSetup');
         } catch (cause) {
           backToCredentials();
-          setError(toLoginError(cause, 'MFA 绑定初始化失败，请重新登录'));
+          setError(toLoginError(cause, 'auth.mfaSetupInitFailed'));
         }
         return;
       }
       markAuthenticated();
     } catch (cause) {
       backToCredentials();
-      setError(toLoginError(cause, '账号或密码错误'));
+      setError(toLoginError(cause, 'auth.invalidCredentials'));
     }
   });
 
   const submitCode = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (code.trim() === '') {
-      setError({ message: '请输入动态码或恢复码', traceId: undefined });
+      setError({ messageKey: 'auth.mfaCodeRequired', traceId: undefined });
       return;
     }
     setError(null);
@@ -213,12 +217,7 @@ export default function LoginPage() {
     } catch (cause) {
       backToCredentials();
       setError(
-        toLoginError(
-          cause,
-          step === 'mfaSetup'
-            ? '动态码错误或绑定票据已失效，请重新登录'
-            : '动态码错误或票据已失效，请重新登录',
-        ),
+        toLoginError(cause, step === 'mfaSetup' ? 'auth.mfaSetupInvalid' : 'auth.mfaInvalid'),
       );
     } finally {
       setVerifying(false);
@@ -229,19 +228,15 @@ export default function LoginPage() {
 
   return (
     <div style={pageStyle}>
-      <Card title="A 端运营后台" style={{ width: 420 }}>
+      <Card title={t('common.appNameAdmin')} style={{ width: 420 }}>
         {step === 'mfa' ? (
-          <Typography.Paragraph type="secondary">
-            请输入身份验证器中的 6 位动态码，或使用一次性恢复码。
-          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{t('auth.mfaPrompt')}</Typography.Paragraph>
         ) : null}
         {step === 'mfaSetup' ? (
-          <Typography.Paragraph type="secondary">
-            需要先完成 MFA 绑定才能进入后台。
-          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{t('auth.mfaSetupRequired')}</Typography.Paragraph>
         ) : null}
         {step === 'credentials' ? (
-          <Typography.Paragraph type="secondary">使用平台账号登录</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{t('auth.loginIntro')}</Typography.Paragraph>
         ) : null}
         <ErrorAlert error={error} />
         {step === 'mfaSetup' && setup ? <MfaSetupPanel setup={setup} /> : null}
@@ -249,10 +244,10 @@ export default function LoginPage() {
           <form onSubmit={(event) => void submitCode(event)} noValidate>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <FormField
-                label="动态码"
+                label={t('auth.mfaCode')}
                 htmlFor="mfa-code"
                 required
-                hint="6 位数字动态码或一次性恢复码"
+                hint={t('auth.mfaCodeHint')}
               >
                 <Input
                   id="mfa-code"
@@ -265,7 +260,7 @@ export default function LoginPage() {
                 />
               </FormField>
               <Button type="primary" htmlType="submit" block loading={verifying}>
-                验证
+                {t('auth.verify')}
               </Button>
               <Button
                 type="text"
@@ -275,7 +270,7 @@ export default function LoginPage() {
                   setError(null);
                 }}
               >
-                返回登录
+                {t('auth.backToLogin')}
               </Button>
             </Space>
           </form>
@@ -283,7 +278,7 @@ export default function LoginPage() {
         {step === 'mfaSetup' && !recoverySaved ? (
           <Space direction="vertical" size="middle" style={{ width: '100%', marginTop: 16 }}>
             <Button type="primary" block onClick={() => setRecoverySaved(true)}>
-              我已保存恢复码，继续
+              {t('auth.mfaRecoverySaved')}
             </Button>
             <Button
               type="text"
@@ -293,18 +288,23 @@ export default function LoginPage() {
                 setError(null);
               }}
             >
-              返回登录
+              {t('auth.backToLogin')}
             </Button>
           </Space>
         ) : null}
         {step === 'credentials' ? (
           <form onSubmit={(event) => void submit(event)} noValidate>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <FormField label="账号" htmlFor="login-subject" required error={fieldErrors.subject}>
+              <FormField
+                label={t('auth.subject')}
+                htmlFor="login-subject"
+                required
+                error={fieldErrors.subject}
+              >
                 <Input id="login-subject" autoComplete="username" {...register('subject')} />
               </FormField>
               <FormField
-                label="密码"
+                label={t('auth.password')}
                 htmlFor="login-password"
                 required
                 error={fieldErrors.password}
@@ -316,7 +316,7 @@ export default function LoginPage() {
                 />
               </FormField>
               <Button type="primary" htmlType="submit" block loading={formState.isSubmitting}>
-                登录
+                {t('auth.login')}
               </Button>
             </Space>
           </form>

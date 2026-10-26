@@ -1,4 +1,5 @@
-import { isAppError, type AdminIamApi, type Role } from '@admin-frame/api-client';
+import type { AdminIamApi, Role } from '@admin-frame/api-client';
+import { describeError, useI18n, type MessageKey } from '@admin-frame/i18n';
 import { createIdempotencyKey } from '@admin-frame/shared';
 import {
   Button,
@@ -24,15 +25,12 @@ import { useRoleList } from './use-role-list';
 /** 必须是模块级常量：`useListParams` 以引用判断筛选键集合（§8.1）。 */
 const FILTER_KEYS = ['keyword', 'status'] as const;
 
-const STATUS_OPTIONS = [
-  { value: 'active', label: '启用' },
-  { value: 'disabled', label: '停用' },
-] as const;
+const STATUS_VALUES = ['active', 'disabled'] as const;
 
-const DELETE_IMPACTS = [
-  '立即解除该角色与全部主体的绑定关系',
-  '绑定关系与历史审计记录按合规要求保留',
-] as const;
+const DELETE_IMPACT_KEYS: readonly MessageKey[] = [
+  'iam.role.deleteImpact.bindings',
+  'iam.role.deleteImpact.audit',
+];
 
 export function RoleListPanel({ api }: { api: AdminIamApi }) {
   const { page, pageSize, filters, setPage, setPageSize, setFilter, resetFilters } =
@@ -45,7 +43,9 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
   });
   const canWrite = usePermission('iam:role:write');
   const toast = useToast();
+  const { t } = useI18n();
   const deleteMutation = useDeleteRole(api);
+  const listError = query.isError ? describeError(query.error) : null;
 
   // 输入框允许中间态；提交（回车/查询/清空）后才写入 URL 触发请求。
   const [keyword, setKeyword] = useState(filters.keyword ?? '');
@@ -85,7 +85,7 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
       { id: current.id, reason, idempotencyKey: key },
       {
         onSuccess: () => {
-          toast.success(`角色「${current.name}」已删除`);
+          toast.success(t('iam.role.deleteSuccess', { name: current.name }));
           setTarget(null);
           idempotencyKey.current = null;
         },
@@ -97,9 +97,10 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
             idempotencyKey.current = null;
             return;
           }
+          const presentation = describeError(error);
           setDeleteError({
-            message: '删除角色失败，请稍后重试。',
-            traceId: isAppError(error) ? error.traceId : undefined,
+            message: t(presentation.messageKey),
+            traceId: presentation.traceId,
           });
         },
       },
@@ -108,42 +109,45 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
 
   const columns: TableColumnsType<Role> = [
     {
-      title: '角色码',
+      title: t('iam.role.col.code'),
       dataIndex: 'code',
       key: 'code',
       width: 200,
       render: (code: string) => <Typography.Text code>{code}</Typography.Text>,
     },
-    { title: '名称', dataIndex: 'name', key: 'name' },
+    { title: t('iam.role.col.name'), dataIndex: 'name', key: 'name' },
     {
-      title: '端别',
+      title: t('iam.role.col.channel'),
       dataIndex: 'channel',
       key: 'channel',
       width: 100,
       render: (channel: Role['channel']) => (
-        <StatusTag tone={roleChannelMeta[channel].tone} label={roleChannelMeta[channel].label} />
+        <StatusTag
+          tone={roleChannelMeta[channel].tone}
+          label={t(roleChannelMeta[channel].labelKey)}
+        />
       ),
     },
     {
-      title: '类型',
+      title: t('iam.role.col.type'),
       dataIndex: 'role_type',
       key: 'role_type',
       width: 120,
       render: (type: Role['role_type']) => (
-        <StatusTag tone={roleTypeMeta[type].tone} label={roleTypeMeta[type].label} />
+        <StatusTag tone={roleTypeMeta[type].tone} label={t(roleTypeMeta[type].labelKey)} />
       ),
     },
     {
-      title: '状态',
+      title: t('iam.role.col.status'),
       dataIndex: 'status',
       key: 'status',
       width: 100,
       render: (status: Role['status']) => (
-        <StatusTag tone={roleStatusMeta[status].tone} label={roleStatusMeta[status].label} />
+        <StatusTag tone={roleStatusMeta[status].tone} label={t(roleStatusMeta[status].labelKey)} />
       ),
     },
     {
-      title: '操作',
+      title: t('iam.role.col.actions'),
       key: 'actions',
       width: 100,
       render: (_value: unknown, record: Role) =>
@@ -151,12 +155,12 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
           <Button
             type="link"
             danger
-            aria-label={`删除角色 ${record.name}`}
+            aria-label={t('iam.role.deleteAria', { name: record.name })}
             onClick={() => {
               openDelete(record);
             }}
           >
-            删除
+            {t('common.delete')}
           </Button>
         ) : null,
     },
@@ -173,20 +177,20 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
         pageSize={pageSize}
         loading={query.isFetching}
         error={
-          query.isError
-            ? {
-                message: '角色列表加载失败，请检查筛选条件或稍后重试。',
-                traceId: isAppError(query.error) ? query.error.traceId : undefined,
+          listError === null
+            ? null
+            : {
+                message: t(listError.messageKey),
+                traceId: listError.traceId,
               }
-            : null
         }
-        emptyText="暂无角色"
+        emptyText={t('iam.role.empty')}
         toolbar={
           <Space wrap>
             <Input
-              aria-label="角色关键字"
+              aria-label={t('iam.role.keywordAria')}
               allowClear
-              placeholder="搜索角色码或名称"
+              placeholder={t('iam.role.searchPlaceholder')}
               style={{ width: 280 }}
               value={keyword}
               onChange={(event) => {
@@ -206,14 +210,17 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
                 setFilter('keyword', keyword);
               }}
             >
-              查询
+              {t('common.search')}
             </Button>
             <Select<string>
-              aria-label="状态"
+              aria-label={t('iam.role.statusAria')}
               allowClear
-              placeholder="全部状态"
+              placeholder={t('iam.role.statusAll')}
               style={{ width: 160 }}
-              options={[...STATUS_OPTIONS]}
+              options={STATUS_VALUES.map((value) => ({
+                value,
+                label: t(roleStatusMeta[value].labelKey),
+              }))}
               value={filters.status ?? null}
               onChange={(value) => {
                 setFilter('status', value ?? null);
@@ -224,7 +231,7 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
                 resetFilters();
               }}
             >
-              重置
+              {t('common.reset')}
             </Button>
           </Space>
         }
@@ -241,9 +248,13 @@ export function RoleListPanel({ api }: { api: AdminIamApi }) {
       />
       <DangerActionConfirm
         open={target !== null}
-        title="删除角色"
-        target={target === null ? '' : `${target.name}（${target.code}）`}
-        impacts={DELETE_IMPACTS}
+        title={t('iam.role.deleteTitle')}
+        target={
+          target === null
+            ? ''
+            : t('common.targetWithCode', { name: target.name, code: target.code })
+        }
+        impacts={DELETE_IMPACT_KEYS.map((key) => t(key))}
         loading={deleteMutation.isPending}
         error={deleteError}
         onConfirm={handleConfirm}
