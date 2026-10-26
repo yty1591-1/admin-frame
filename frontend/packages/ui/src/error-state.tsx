@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Button, Space, Typography } from 'antd';
 
 export type ErrorStateProps = {
@@ -9,6 +10,8 @@ export type ErrorStateProps = {
 };
 
 export function ErrorState({ title, description, traceId, onRetry }: ErrorStateProps) {
+  const { t } = useI18n();
+
   return (
     <div role="alert" style={{ padding: '48px 0', textAlign: 'center' }}>
       <Space direction="vertical" size={8} align="center">
@@ -18,12 +21,12 @@ export function ErrorState({ title, description, traceId, onRetry }: ErrorStateP
         {description ? <Typography.Text type="secondary">{description}</Typography.Text> : null}
         {traceId ? (
           <Typography.Text type="secondary" copyable={{ text: traceId }}>
-            trace_id: {traceId}
+            {t('common.traceId', { traceId })}
           </Typography.Text>
         ) : null}
         {onRetry ? (
           <Button type="primary" onClick={onRetry}>
-            重试
+            {t('common.retry')}
           </Button>
         ) : null}
       </Space>

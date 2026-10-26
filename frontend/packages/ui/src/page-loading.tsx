@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Spin } from 'antd';
 
 export type PageLoadingProps = {
@@ -5,7 +6,9 @@ export type PageLoadingProps = {
 };
 
 /** 路由级加载态；作为 Suspense fallback 使用。 */
-export function PageLoading({ tip = '加载中…' }: PageLoadingProps) {
+export function PageLoading({ tip }: PageLoadingProps) {
+  const { t } = useI18n();
+
   return (
     <div
       role="status"
@@ -20,7 +23,7 @@ export function PageLoading({ tip = '加载中…' }: PageLoadingProps) {
       }}
     >
       <Spin size="large" />
-      <span>{tip}</span>
+      <span>{tip ?? t('common.loading')}</span>
     </div>
   );
 }

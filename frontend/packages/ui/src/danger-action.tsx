@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Alert, Button, Input, Modal, Space, Typography } from 'antd';
 import { useEffect, useId, useState } from 'react';
 
@@ -41,6 +42,7 @@ export function DangerActionConfirm({
   onConfirm,
   onCancel,
 }: DangerActionProps) {
+  const { t } = useI18n();
   const reasonId = useId();
   const [reason, setReason] = useState('');
   // 每次打开都清空原因，避免上一次草稿被误提交。
@@ -69,7 +71,7 @@ export function DangerActionConfirm({
       destroyOnHidden
       footer={[
         <Button key="cancel" onClick={handleCancel} disabled={loading}>
-          取消
+          {t('common.cancel')}
         </Button>,
         <Button
           key="confirm"
@@ -87,11 +89,13 @@ export function DangerActionConfirm({
     >
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Typography.Paragraph style={{ marginBottom: 0 }}>
-          该操作将对「<Typography.Text strong>{target}</Typography.Text>」生效，且不可撤销。
+          {t('common.dangerIntroPrefix')}
+          <Typography.Text strong>{target}</Typography.Text>
+          {t('common.dangerIntroSuffix')}
         </Typography.Paragraph>
         {impacts.length === 0 ? null : (
           <div>
-            <Typography.Text type="secondary">影响范围</Typography.Text>
+            <Typography.Text type="secondary">{t('common.impactLabel')}</Typography.Text>
             <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
               {impacts.map((impact) => (
                 <li key={impact}>{impact}</li>
@@ -101,7 +105,8 @@ export function DangerActionConfirm({
         )}
         <div>
           <label htmlFor={reasonId} style={{ display: 'block', marginBottom: 8 }}>
-            操作原因{reasonRequired ? '（必填，将写入审计）' : '（选填）'}
+            {t('common.reasonLabel')}
+            {reasonRequired ? t('common.reasonRequiredHint') : t('common.reasonOptionalHint')}
           </label>
           <Input.TextArea
             id={reasonId}
@@ -111,7 +116,7 @@ export function DangerActionConfirm({
             maxLength={reasonMaxLength}
             showCount
             disabled={loading}
-            placeholder="说明本次变更原因"
+            placeholder={t('common.reasonPlaceholder')}
             onChange={(event) => {
               setReason(event.target.value);
             }}
@@ -125,7 +130,7 @@ export function DangerActionConfirm({
             description={
               error.traceId === undefined ? null : (
                 <Typography.Text type="secondary" copyable={{ text: error.traceId }}>
-                  trace_id: {error.traceId}
+                  {t('common.traceId', { traceId: error.traceId })}
                 </Typography.Text>
               )
             }

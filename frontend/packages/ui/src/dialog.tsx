@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Button, Modal } from 'antd';
 import type { ReactNode } from 'react';
 
@@ -22,13 +23,15 @@ export function ConfirmDialog({
   open,
   title,
   content,
-  confirmText = '确定',
+  confirmText,
   danger = false,
   loading = false,
   hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useI18n();
+
   return (
     <Modal
       open={open}
@@ -38,11 +41,11 @@ export function ConfirmDialog({
       footer={[
         hideCancel ? null : (
           <Button key="cancel" onClick={onCancel} disabled={loading}>
-            取消
+            {t('common.cancel')}
           </Button>
         ),
         <Button key="confirm" type="primary" danger={danger} loading={loading} onClick={onConfirm}>
-          {confirmText}
+          {confirmText ?? t('common.confirm')}
         </Button>,
       ]}
     >

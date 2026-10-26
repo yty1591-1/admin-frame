@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Card, Table, type TableColumnsType } from 'antd';
 import type { ReactNode } from 'react';
 import { EmptyState } from './empty-state';
@@ -42,11 +43,12 @@ export function TableShell<T>({
   pageSize,
   loading,
   error,
-  emptyText = '暂无数据',
+  emptyText,
   toolbar,
   onPageChange,
   onRetry,
 }: TableShellProps<T>) {
+  const { t } = useI18n();
   const header = toolbar === undefined ? null : <div style={{ marginBottom: 16 }}>{toolbar}</div>;
 
   if (error) {
@@ -54,7 +56,7 @@ export function TableShell<T>({
       <Card>
         {header}
         <ErrorState
-          title="列表加载失败"
+          title={t('common.listLoadFailedTitle')}
           description={error.message}
           traceId={error.traceId}
           onRetry={onRetry}
@@ -77,14 +79,14 @@ export function TableShell<T>({
           columns={columns}
           dataSource={rows ?? []}
           loading={loading}
-          locale={{ emptyText: <EmptyState description={emptyText} /> }}
+          locale={{ emptyText: <EmptyState description={emptyText ?? t('common.empty')} /> }}
           pagination={{
             current: page,
             pageSize,
             total,
             showSizeChanger: true,
             pageSizeOptions: PAGE_SIZE_OPTIONS,
-            showTotal: (count) => `共 ${String(count)} 条`,
+            showTotal: (count) => t('common.listTotal', { count }),
             onChange: (nextPage, nextPageSize) => {
               onPageChange(nextPage, nextPageSize);
             },

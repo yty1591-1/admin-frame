@@ -1,3 +1,4 @@
+import { defaultTranslator } from '@admin-frame/i18n';
 import { App as AntApp, Typography } from 'antd';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
@@ -29,7 +30,7 @@ function ToastBridge({ children }: { children: ReactNode }) {
             <div>
               <div>{text}</div>
               <Typography.Text copyable={{ text: traceId }} style={{ fontSize: 12 }}>
-                trace_id: {traceId}
+                {defaultTranslator('common.traceId', { traceId })}
               </Typography.Text>
             </div>
           );
@@ -54,7 +55,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 export function useToast(): ToastApi {
   const value = useContext(ToastContext);
   if (!value) {
-    throw new Error('useToast 必须在 ToastProvider 内使用');
+    throw new Error(
+      defaultTranslator('error.dev.missingProvider', {
+        hook: 'useToast',
+        provider: 'ToastProvider',
+      }),
+    );
   }
   return value;
 }

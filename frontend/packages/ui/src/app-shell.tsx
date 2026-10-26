@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Button, Layout, Space, Typography } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 
@@ -35,12 +36,13 @@ export function AppShell({
   actions,
   children,
 }: AppShellProps) {
+  const { t } = useI18n();
   const { Header, Sider, Content } = Layout;
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {menus.length > 0 ? (
         <Sider theme="light" width={220}>
-          <nav aria-label="主导航" style={{ padding: 12 }}>
+          <nav aria-label={t('common.mainNav')} style={{ padding: 12 }}>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               {menus.map((entry) => (
                 <Button

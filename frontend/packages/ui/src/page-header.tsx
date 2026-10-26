@@ -1,3 +1,4 @@
+import { useI18n } from '@admin-frame/i18n';
 import { Space, Typography } from 'antd';
 import type { ReactNode } from 'react';
 
@@ -17,12 +18,13 @@ export type PageHeaderProps = {
 
 /** 页面头部：标题（页面内唯一 h1）、描述、面包屑与操作区。 */
 export function PageHeader({ title, description, breadcrumb, extra }: PageHeaderProps) {
+  const { t } = useI18n();
   const items = breadcrumb ?? [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
       {items.length > 0 ? (
-        <nav aria-label="面包屑">
+        <nav aria-label={t('common.breadcrumb')}>
           <ol
             style={{
               display: 'flex',
