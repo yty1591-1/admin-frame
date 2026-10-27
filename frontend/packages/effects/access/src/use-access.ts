@@ -33,6 +33,16 @@ function useAccess() {
     return intersection.length > 0;
   }
 
+  /**
+   * 基于权限码判断是否拥有全部权限（交集）
+   * @description: 空数组必须显式挡掉：every([]) 恒为 true 会让按钮永远可见
+   * @param codes
+   */
+  function hasAllAccessByCodes(codes: string[]) {
+    const userCodesSet = new Set(accessStore.accessCodes);
+    return codes.length > 0 && codes.every((item) => userCodesSet.has(item));
+  }
+
   async function toggleAccessMode() {
     updatePreferences({
       app: {
@@ -46,6 +56,7 @@ function useAccess() {
     accessMode,
     hasAccessByCodes,
     hasAccessByRoles,
+    hasAllAccessByCodes,
     toggleAccessMode,
   };
 }

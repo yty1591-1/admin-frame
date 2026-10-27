@@ -376,6 +376,9 @@ export async function getAccessCodesApi() {
 `authStore` 侧：`userStore.setUserInfo({ ...userInfo, roles: snapshot.roles })`，`accessStore.setAccessCodes(snapshot.permissions)`。若不想在 store 里多存一份快照，可只保留 `getAccessCodesApi()`，`roles` 留空（`accessMode: 'frontend'` 下路由过滤只比较 `accessCodes`，不依赖 `roles`）。
 
 - **注意**：`web-biz` 必须使用 `/biz/v1/iam/me/permissions`，两端的 api 文件不要复用同一常量。
+- **按钮显隐写法**：并集（任一权限即可见）用 `v-access:code="['iam:role:write', 'iam:role:grant']"`；
+  交集（全部权限才可见）用 `v-access:code.all="['iam:role:write', 'iam:role:grant']"` 或
+  `<AccessControl mode="all" :codes="[...]" />`。页面内禁止裸写 `hasAccessByCodes(['a']) && hasAccessByCodes(['b'])`。
 - **验收**：无权限按钮隐藏（`v-access:code`）与后端 403 表现一致；权限变更后（`snapshot_version` 递增）刷新页面即生效；页面加载只发起一次 `/iam/me/permissions`。
 
 ### FEINT-07 角色 DTO / 枚举 / 乐观锁不符
@@ -529,7 +532,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 | GAP-04 | 审批单 | `iam/change-requests`（创建/列表/详情/审批/取消） | 无 | 审批中心页，`action` 驱动动态表单 |
 | GAP-05 | 破玻璃 | `iam/breakglass/*` | 无 | 高权限应急入口，需二次确认 + 原因 |
 | GAP-06 | 数据范围编辑 | `DataScope[]` 契约完整 | 无 | 角色授权页签，`merchant_set` 需商户选择器（≤100） |
-| GAP-07 | 权限目录树 | `iam/permissions`（分页 / 按端过滤） | 无 | 授权弹窗数据源，`kind=menu/button/api` 分组 |
+| GAP-07 | 权限目录 | `iam/permissions`（分页 / 按端过滤） | 无 | 授权弹窗数据源，按 `resource` 分组（目录已平铺） |
 | GAP-08 | 绑定管理 | `iam/bindings` CRUD + 过期时间 | 无 | 成员授权页 |
 
 ### 后端待补（前端已有消费位）
@@ -537,7 +540,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 | ID | 缺口 | 现状 | 建议契约 |
 |---|---|---|---|
 | GAP-01 | 用户资料 | 无端点；`/user/info` 是 mock 遗留 | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000007` 另开。详见 §3 FEINT-05 |
-| GAP-09 | 菜单资源 | 无菜单表、无菜单端点（`migrations/000003` 全为 `kind='api'`；`iam_permission.path` 语义是祖先编码，不能当 URL 用） | **已决策方案 B**：新增 `iam_menu` + `GET /{channel}/v1/menus`，前端切 `accessMode: backend`。详见 §6「GAP-09 菜单：方案 B 设计」 |
+| GAP-09 | 菜单资源 | 无菜单表、无菜单端点 | **已决策方案 B**：新增 `iam_menu` + `GET /{channel}/v1/menus`，前端切 `accessMode: backend`。详见 §6「GAP-09 菜单：方案 B 设计」 |
 | GAP-10 | 审计查询 | 权限点 `audit:read` 已存在，无端点 | `GET /admin/v1/audit/events?action&subject&from&to` |
 | GAP-11 | 配置中心 | 权限点 `config:read/write` 已存在，无端点 | `GET/PUT /admin/v1/configs/{key}`，写入走审批 |
 | GAP-12 | 文件上传 | `pkg/storage`（S3/OSS）已就绪，`api/openapi` 无上传端点 | `POST /{channel}/v1/files` 预签名直传，前端已有 `useUpload` 能力可接 |
@@ -548,7 +551,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 已决策：**新增菜单资源 + `GET /{channel}/v1/menus`，前端切 `accessMode: 'backend'`**。
 
-**为什么不能复用 `iam_permission` 承载菜单**：`iam_permission.path` 的语义是"树路径，逗号分隔的祖先编码"（`migrations/000002_create_iam_tables.up.sql:19`），不是 URL 路由；`kind='menu'` 只表达"这是一条菜单类权限点"，没有 `component`、`icon`、`visible` 等路由必需字段。强行复用会让 `path` 一列两种语义。
+**为什么不能复用 `iam_permission` 承载菜单**：权限目录已收敛为平铺结构，只保留 `code / name / channel / resource / data_bearing / sort / status`，没有 `component`、`icon`、`route_name`、`redirect` 等路由必需字段；一个权限点也可能对应多个菜单。强行复用会让权限目录承担两种语义。
 
 **数据模型（新增迁移 `000006_create_iam_menu`，与模块基线 `000005` 之后顺延；若资料列先合入则本迁移顺延为 `000007`，编号按合入顺序分配）**：
 

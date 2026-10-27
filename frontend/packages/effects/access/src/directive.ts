@@ -2,7 +2,8 @@
  * Global authority directive
  * Used for fine-grained control of component permissions
  * @Example v-access:role="[ROLE_NAME]" or v-access:role="ROLE_NAME"
- * @Example v-access:code="[ROLE_CODE]" or v-access:code="ROLE_CODE"
+ * @Example v-access:code="['iam:role:write', 'iam:role:grant']"   任一命中即显示（并集）
+ * @Example v-access:code.all="['iam:role:write', 'iam:role:grant']" 全部命中才显示（交集）
  */
 import type { App, Directive, DirectiveBinding } from 'vue';
 
@@ -12,7 +13,12 @@ function isAccessible(
   el: Element,
   binding: DirectiveBinding<string | string[]>,
 ) {
-  const { accessMode, hasAccessByCodes, hasAccessByRoles } = useAccess();
+  const {
+    accessMode,
+    hasAccessByCodes,
+    hasAccessByRoles,
+    hasAllAccessByCodes,
+  } = useAccess();
 
   const value = binding.value;
 
@@ -20,7 +26,9 @@ function isAccessible(
   const authMethod =
     accessMode.value === 'frontend' && binding.arg === 'role'
       ? hasAccessByRoles
-      : hasAccessByCodes;
+      : binding.modifiers.all
+        ? hasAllAccessByCodes
+        : hasAccessByCodes;
 
   const values = Array.isArray(value) ? value : [value];
 
