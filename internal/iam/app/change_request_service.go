@@ -166,7 +166,7 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 		return nil, apperr.BadRequest("reason is required")
 	}
 	if cmd.Channel == domain.ChannelBiz {
-		// B 端审批流随 000005 落地；关闭时按不可用处理，而不是静默降级为 A 端单据。
+		// B 端审批流随 000002 落地；关闭时按不可用处理，而不是静默降级为 A 端单据。
 		if !s.limits.AllowBizChannel {
 			return nil, apperr.Forbidden("biz channel change requests are not enabled")
 		}

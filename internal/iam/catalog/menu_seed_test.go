@@ -11,7 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/catalog"
 )
 
-// menuSeedRow 解析 000007 菜单种子的每条 VALUES 行。
+// menuSeedRow 解析 000003 基线种子中的每条菜单 VALUES 行。
 //
 // 只捕获一致性校验需要的列：channel / code / parent_code / node_type /
 // route_name / permission_code。列顺序与迁移文件保持一致。
@@ -24,7 +24,7 @@ var menuSeedRow = regexp.MustCompile(
 // menuSeedFile 返回菜单种子迁移的绝对路径。
 func menuSeedFile(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), "migrations", "000007_seed_iam_menus.up.sql")
+	return filepath.Join(repoRoot(t), "migrations", "000003_seed_iam_baseline.up.sql")
 }
 
 // TestMenuSeedConsistency 校验菜单种子与权限目录、自身唯一性及父子关系一致。

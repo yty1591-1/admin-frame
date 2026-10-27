@@ -1,7 +1,7 @@
 # IAM 权限点目录（PERMISSIONS）
 
 > **状态**：生效中（21 条：17 条活跃 + 4 条已弃用）
-> **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/000003_seed_iam_permissions.up.sql` 由 Go 测试强制一致
+> **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/000003_seed_iam_baseline.up.sql` 由 Go 测试强制一致
 > **门禁**：`go test ./internal/iam/catalog/...`（已纳入 `make test-ci` → `make ci`）
 > **关联**：[`docs/rbac-iam.md`](../rbac-iam.md) §4.3 / §5.3.1、[`docs/adr/0004-rbac-iam-domain.md`](../adr/0004-rbac-iam-domain.md)
 
@@ -57,7 +57,7 @@
 | `iam:menu:write` | admin | 否 | 活跃 | 创建、更新、停用菜单资源；仅影响入口展示，不构成鉴权边界 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
-> 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_permissions.up.sql` 写入）。
+> 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。
 >
 > 权限目录为平铺结构，不含层级：`resource`（权限码首段）由服务端生成并为生成列，
 > 菜单与路由树由 `iam_menu` 承载。追加条目时 `sort` 取当前最大值 + 10，且不得改动既有条目。
@@ -85,7 +85,7 @@
 
 1. `internal/iam/catalog/catalog.go`：追加 `entries` 条目（唯一真相）；
 2. `internal/iam/perm.go`：新增 `Perm*` 常量；
-3. `migrations/000003_seed_iam_permissions.up.sql`：追加一行（行首为 `('`）；
+3. `migrations/000003_seed_iam_baseline.up.sql`：追加一行（行首为 `('`）；
 4. 本文件：追加表格行。
 
 `internal/iam/catalog` 的单元测试会校验：

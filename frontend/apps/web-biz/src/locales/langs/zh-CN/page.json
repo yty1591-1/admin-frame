@@ -4,7 +4,11 @@
   },
   "member": {
     "title": "成员管理",
-    "list": "成员列表"
+    "list": "成员列表",
+    "role": "角色管理",
+    "binding": "授权绑定",
+    "template": "角色模板",
+    "change": "变更申请"
   },
   "profile": {
     "title": "个人中心"

@@ -4,7 +4,11 @@
   },
   "member": {
     "title": "Members",
-    "list": "Member List"
+    "list": "Member List",
+    "role": "Roles",
+    "binding": "Bindings",
+    "template": "Role Templates",
+    "change": "Change Requests"
   },
   "profile": {
     "title": "Profile"

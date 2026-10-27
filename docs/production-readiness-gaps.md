@@ -239,7 +239,7 @@
 **落地证据**
 
 - 运行时：`pkg/outbox`（Event / Store / MySQLStore / Relay / Router / Deduper / DeadLetterReplayer）、`internal/platform/async.go`（`AsyncRuntime`）。
-- 迁移：`migrations/000005_create_async_outbox.*`（平台异步表，含 IAM 审计事件）。
+- 迁移：`migrations/000004_create_async_outbox.*`（平台异步表，含 IAM 审计事件）。
 - worker：`cmd/worker/main.go`（Relay 宿主 + `-replay-dlq`）。
 - IAM 迁移：`internal/iam/app/outbox.go`（`OutboxRecorder` 写 `async_outbox`）、`cmd/internal/iamruntime/runtime.go`（`RegisterAsync`）。
 

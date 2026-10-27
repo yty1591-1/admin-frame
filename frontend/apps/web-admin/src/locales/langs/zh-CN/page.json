@@ -7,6 +7,18 @@
   },
   "system": {
     "title": "系统管理",
-    "role": "角色管理"
+    "role": "角色管理",
+    "menu": "菜单管理",
+    "audit": "审计日志",
+    "config": "系统配置"
+  },
+  "iam": {
+    "title": "权限管理",
+    "permission": "权限目录",
+    "binding": "授权绑定",
+    "template": "角色模板",
+    "change": "变更审批",
+    "breakglass": "破玻璃申请",
+    "check": "模拟鉴权"
   }
 }

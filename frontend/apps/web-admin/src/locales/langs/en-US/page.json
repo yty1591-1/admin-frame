@@ -7,6 +7,18 @@
   },
   "system": {
     "title": "System",
-    "role": "Roles"
+    "role": "Roles",
+    "menu": "Menus",
+    "audit": "Audit Log",
+    "config": "System Config"
+  },
+  "iam": {
+    "title": "Permissions",
+    "permission": "Permission Catalog",
+    "binding": "Bindings",
+    "template": "Role Templates",
+    "change": "Change Requests",
+    "breakglass": "Breakglass",
+    "check": "Authorization Check"
   }
 }

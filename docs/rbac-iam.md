@@ -38,7 +38,7 @@
 | 按 `internal/iam` + `off/shadow/enforce` 路线进入 M0（ADR + 权限目录评审）与 M1（迁移 + 领域模型） | **批准** | M0 已完成设计输入（本文 + ADR-0004）；M1 已开工，权限目录与迁移已落地 |
 | M1 权限目录一致性门禁 | **用 Go 测试**（`internal/iam/catalog`），不新增 shell 解析 | 已落地：`TestPermissionCatalog*` 6 个用例，覆盖格式 / 唯一性 / 常量 / 种子迁移 / 文档 / down |
 | M2 快照与缓存 | 消费侧 `SnapshotLoader` + L1/L2 + shadow | 已落地：见 §6.3 / §8.2 / §14；覆盖率见 §13.1 |
-| 迁移序号 `000002` / `000003` | **确认未被占用**（早期仅有 `000001_create_orders` 演示域） | 已落地：`000002_create_iam_tables` + `000003_seed_iam_permissions`；模块压平后编号保持，`000001` 为身份域、`000005` 为平台异步表 |
+| 迁移序号 `000002` / `000003` | **确认未被占用**（早期仅有 `000001_create_orders` 演示域） | 已落地：`000002_create_iam_tables`（结构 + 菜单表）与 `000003_seed_iam_baseline`（权限 / 破玻璃角色 / 菜单）；按领域合并后 `000001` 为身份域、`000004` 为平台异步表 |
 | 数据库引擎 | **MySQL 8.0.19+ 单基线** | 已落地：`DATETIME(3)` + 原生 `JSON` + 显式 `utf8mb4_0900_ai_ci` + `RESTRICT` 外键；不并行维护 PostgreSQL |
 
 > 上述两项不再作为待确认项；其余仍开放的问题见 [§16.2](#162-开放问题owner-决策)。
@@ -155,7 +155,7 @@ wildcard   := "*" | segment ":" "*"
 | `internal/<domain>/perm.go` | 各业务域权限点常量（现有约定，保持） |
 | `internal/iam/perm.go` | IAM 自身管理权限点常量 |
 | `docs/iam/PERMISSIONS.md` | 全量目录（新增，供评审与运营查阅） |
-| `migrations/000003_seed_iam_permissions.*.sql` | 目录种子（只读同步，追加式：后续 `*_seed_*.sql` 同约定） |
+| `migrations/000003_seed_iam_baseline.*.sql` | 目录种子（只读同步，追加式：后续 `*_seed_*.sql` 同约定） |
 | `iam_permission` 表 | 运行时元数据（名称、端别、数据承载、排序、状态）；平铺无层级，`resource` 为生成列 |
 | `iam_menu` 表 | 菜单 / 路由树（`component`、`icon`、`redirect`、权限码门禁）；可见性由权限快照裁剪 |
 
@@ -231,7 +231,7 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 ### 5.3 DDL（MySQL 基线）
 
-> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_permissions.up.sql` / `.down.sql`（A 端目录 + B 端审批权限点 + 演示域 `deprecated` 状态）、`000004_seed_breakglass_role.up.sql` / `.down.sql`。平台异步表见 `000005_create_async_outbox.up.sql` / `.down.sql`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
+> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含菜单 / 路由资源表、审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_baseline.up.sql` / `.down.sql`（权限目录 + 破玻璃角色 + 菜单）。平台异步表见 `000004_create_async_outbox.up.sql` / `.down.sql`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
 >
 > **M1 前置决策（2026-10-21 已确认）**：
 >
@@ -472,7 +472,7 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
 
 ### 5.3.7 异步 Outbox（平台 async_outbox）
 
-ENT-03 T8 起 IAM 不再维护自有 `iam_outbox`：审计与缓存失效事件统一写入平台表 `async_outbox`（表结构见 `migrations/000005_create_async_outbox.up.sql`）。模块基线不再创建 `iam_outbox`，因此无需历史数据迁移。
+ENT-03 T8 起 IAM 不再维护自有 `iam_outbox`：审计与缓存失效事件统一写入平台表 `async_outbox`（表结构见 `migrations/000004_create_async_outbox.up.sql`）。模块基线不再创建 `iam_outbox`，因此无需历史数据迁移。
 
 > **T8 实现状态**：
 > - 写入：`app.OutboxRecorder` 通过 `pkg/outbox.Store.Append` 写入 `async_outbox`（topic=`iam.audit` / `iam.cache`，event_type 沿用 `audit.event` / `cache.invalidate`），复用 `pkg/db.TxFromContext` 与业务写入同事务；写入失败返回 `50000`（fail-closed，不静默丢审计）。

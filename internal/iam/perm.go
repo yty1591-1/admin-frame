@@ -4,7 +4,7 @@ package iam
 //
 // 权限码是跨版本契约：发布后不得改名、不得复用；废弃通过 iam_permission.status=deprecated
 // 表达，而不是删除常量，否则历史审计与旧客户端无法解释。新增权限码必须同步
-// docs/iam/PERMISSIONS.md、本文件与 migrations/000003_seed_iam_permissions.up.sql，
+// docs/iam/PERMISSIONS.md、本文件与 migrations/000003_seed_iam_baseline.up.sql，
 // 由 internal/iam/catalog 的单元测试做门禁。
 type PermissionCode string
 

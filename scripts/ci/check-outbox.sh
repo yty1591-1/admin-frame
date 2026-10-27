@@ -57,8 +57,8 @@ if [[ "${FAIL}" -eq 0 ]]; then
 fi
 
 echo "==> ENT-03: migration must create async tables"
-UP="migrations/000005_create_async_outbox.up.sql"
-DOWN="migrations/000005_create_async_outbox.down.sql"
+UP="migrations/000004_create_async_outbox.up.sql"
+DOWN="migrations/000004_create_async_outbox.down.sql"
 for file in "${UP}" "${DOWN}"; do
   if [[ ! -f "${file}" ]]; then
     echo "ERROR: missing ${file}" >&2

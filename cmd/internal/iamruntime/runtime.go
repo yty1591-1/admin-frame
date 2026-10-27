@@ -229,7 +229,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		IDs:        ids,
 		Limits: app.ChangeLimits{
 			RequireReason: cfg.IAM.Security.RequireReason,
-			// 000005 已补 merchant_id，B 端审批按 Principal 的商户隔离后开放。
+			// 000002 已补 merchant_id，B 端审批按 Principal 的商户隔离后开放。
 			AllowBizChannel: true,
 			AllowBreakglass: cfg.IAM.Breakglass.Enabled,
 			// 审批单必须在意图过期前完成决策：迟到的批准等于授权了过期载荷。
