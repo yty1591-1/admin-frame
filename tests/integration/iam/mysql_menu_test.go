@@ -2,7 +2,14 @@ package iam_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"testing"
+	"time"
+
+	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
 // insertMenu 写入一条菜单，parent 为空串表示根节点。
@@ -41,4 +48,63 @@ func TestMenuParentMustStayInSameChannel(t *testing.T) {
 			t.Fatalf("清理测试菜单失败: %v", err)
 		}
 	})
+}
+
+// TestSQLMenuRepositoryCRUD 验证真实 MySQL 下的创建、读取、乐观锁与唯一键冲突。
+func TestSQLMenuRepositoryCRUD(t *testing.T) {
+	ctx := t.Context()
+	const menuID = int64(1990000000000000201)
+	repo := persistence.NewSQLMenuRepository(testDB(t))
+	id := strconv.FormatInt(menuID, 10)
+	now := time.Now().UTC()
+	menu := &domain.Menu{
+		ID: id, Channel: domain.ChannelAdmin, Code: "itest.crud", ParentCode: "system",
+		NodeType: domain.MenuNodePage, RouteName: "ItestCrud", RoutePath: "crud",
+		Component: "/system/role/index.vue", Title: "集成测试菜单", Sort: 90,
+		Status: domain.MenuStatusActive, Version: 1, UpdatedBy: "itest",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := menu.Validate(); err != nil {
+		t.Fatalf("fixture Validate: %v", err)
+	}
+	if err := repo.Create(ctx, menu); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := testDB(t).ExecContext(context.Background(), "DELETE FROM iam_menu WHERE id = ?", menuID); err != nil {
+			t.Fatalf("清理测试菜单失败: %v", err)
+		}
+	})
+
+	loaded, err := repo.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if loaded.Version != 1 || loaded.Code != "itest.crud" {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+
+	loaded.Title = "集成测试菜单改名"
+	loaded.Version = 2
+	loaded.UpdatedAt = time.Now().UTC()
+	if err := repo.Update(ctx, loaded, 1); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := repo.Update(ctx, loaded, 1); !hasCode(err, apperr.CodeConflict) {
+		t.Fatalf("stale update err = %v, want 40900", err)
+	}
+
+	duplicate := *menu
+	duplicate.ID = "1990000000000000202"
+	duplicate.Title = "重复编码"
+	duplicate.RouteName = "ItestOther"
+	if err := repo.Create(ctx, &duplicate); !hasCode(err, apperr.CodeConflict) {
+		t.Fatalf("duplicate create err = %v, want 40900", err)
+	}
+}
+
+// hasCode 判断错误是否为指定业务码。
+func hasCode(err error, code int) bool {
+	var appErr *apperr.AppError
+	return errors.As(err, &appErr) && appErr.Code == code
 }

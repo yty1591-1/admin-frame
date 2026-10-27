@@ -82,6 +82,8 @@ type Menu struct {
 	ExternalURL string
 	// Status 生命周期状态。
 	Status MenuStatus
+	// Version 乐观锁版本；每次写入自增。
+	Version int64
 	// UpdatedBy 最后维护人。
 	UpdatedBy string
 	// CreatedAt / UpdatedAt UTC。
@@ -119,9 +121,15 @@ func (m *Menu) Validate() error {
 		if strings.TrimSpace(m.Redirect) == "" {
 			return errInvalid(ErrInvalidMenu, "catalog %q requires redirect", m.Code)
 		}
+		if strings.TrimSpace(m.Component) != "" || strings.TrimSpace(m.ExternalURL) != "" {
+			return errInvalid(ErrInvalidMenu, "catalog %q must not set component or external_url", m.Code)
+		}
 	case MenuNodePage:
 		if strings.TrimSpace(m.Component) == "" {
 			return errInvalid(ErrInvalidMenu, "menu %q requires component", m.Code)
+		}
+		if strings.TrimSpace(m.ExternalURL) != "" {
+			return errInvalid(ErrInvalidMenu, "menu %q must not set external_url", m.Code)
 		}
 	case MenuNodeIFrame:
 		if strings.TrimSpace(m.Component) == "" || strings.TrimSpace(m.ExternalURL) == "" {
@@ -130,6 +138,9 @@ func (m *Menu) Validate() error {
 	case MenuNodeLink:
 		if strings.TrimSpace(m.ExternalURL) == "" {
 			return errInvalid(ErrInvalidMenu, "link %q requires external_url", m.Code)
+		}
+		if strings.TrimSpace(m.Component) != "" {
+			return errInvalid(ErrInvalidMenu, "link %q must not set component", m.Code)
 		}
 	}
 	if m.PermissionCode != "" {
@@ -151,4 +162,132 @@ func (m *Menu) Validate() error {
 // 仅做权限判定，不负责祖先补链；祖先补齐由 app 层完成。
 func (m *Menu) IsVisibleTo(has func(iam.PermissionCode) bool) bool {
 	return m.PermissionCode == "" || has(m.PermissionCode)
+}
+
+// NewMenuParams 是创建菜单的入参；状态固定为 active，版本从 1 开始。
+type NewMenuParams struct {
+	ID             string
+	Channel        Channel
+	Code           string
+	ParentCode     string
+	NodeType       MenuNodeType
+	RouteName      string
+	RoutePath      string
+	Component      string
+	Redirect       string
+	Title          string
+	TitleKey       string
+	Icon           string
+	PermissionCode iam.PermissionCode
+	Sort           int
+	HideInMenu     bool
+	KeepAlive      bool
+	ExternalURL    string
+	Actor          string
+	Now            time.Time
+}
+
+// NewMenu 构造并校验菜单；文本字段统一去首尾空白。
+func NewMenu(p NewMenuParams) (*Menu, error) {
+	if strings.TrimSpace(p.Actor) == "" {
+		return nil, errInvalid(ErrInvalidMenu, "menu actor is required")
+	}
+	now := p.Now.UTC()
+	menu := &Menu{
+		ID:             strings.TrimSpace(p.ID),
+		Channel:        p.Channel,
+		Code:           strings.TrimSpace(p.Code),
+		ParentCode:     strings.TrimSpace(p.ParentCode),
+		NodeType:       p.NodeType,
+		RouteName:      strings.TrimSpace(p.RouteName),
+		RoutePath:      strings.TrimSpace(p.RoutePath),
+		Component:      strings.TrimSpace(p.Component),
+		Redirect:       strings.TrimSpace(p.Redirect),
+		Title:          strings.TrimSpace(p.Title),
+		TitleKey:       strings.TrimSpace(p.TitleKey),
+		Icon:           strings.TrimSpace(p.Icon),
+		PermissionCode: iam.PermissionCode(strings.TrimSpace(string(p.PermissionCode))),
+		Sort:           p.Sort,
+		HideInMenu:     p.HideInMenu,
+		KeepAlive:      p.KeepAlive,
+		ExternalURL:    strings.TrimSpace(p.ExternalURL),
+		Status:         MenuStatusActive,
+		Version:        1,
+		UpdatedBy:      strings.TrimSpace(p.Actor),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if menu.ID == "" {
+		return nil, errInvalid(ErrInvalidMenu, "menu id is required")
+	}
+	if err := menu.Validate(); err != nil {
+		return nil, err
+	}
+	return menu, nil
+}
+
+// MenuUpdateParams 描述菜单的可修改字段；nil 表示保持不变。
+//
+// code / channel 创建后不可修改，因此不在本结构中；状态变更走单独用例。
+type MenuUpdateParams struct {
+	ParentCode     *string
+	NodeType       *MenuNodeType
+	RouteName      *string
+	RoutePath      *string
+	Component      *string
+	Redirect       *string
+	Title          *string
+	TitleKey       *string
+	Icon           *string
+	PermissionCode *iam.PermissionCode
+	Sort           *int
+	HideInMenu     *bool
+	KeepAlive      *bool
+	ExternalURL    *string
+}
+
+// ApplyUpdate 就地合并可变字段；调用方随后必须执行 Validate。
+func (m *Menu) ApplyUpdate(p MenuUpdateParams) {
+	if p.ParentCode != nil {
+		m.ParentCode = strings.TrimSpace(*p.ParentCode)
+	}
+	if p.NodeType != nil {
+		m.NodeType = *p.NodeType
+	}
+	if p.RouteName != nil {
+		m.RouteName = strings.TrimSpace(*p.RouteName)
+	}
+	if p.RoutePath != nil {
+		m.RoutePath = strings.TrimSpace(*p.RoutePath)
+	}
+	if p.Component != nil {
+		m.Component = strings.TrimSpace(*p.Component)
+	}
+	if p.Redirect != nil {
+		m.Redirect = strings.TrimSpace(*p.Redirect)
+	}
+	if p.Title != nil {
+		m.Title = strings.TrimSpace(*p.Title)
+	}
+	if p.TitleKey != nil {
+		m.TitleKey = strings.TrimSpace(*p.TitleKey)
+	}
+	if p.Icon != nil {
+		m.Icon = strings.TrimSpace(*p.Icon)
+	}
+	if p.PermissionCode != nil {
+		m.PermissionCode = iam.PermissionCode(strings.TrimSpace(string(*p.PermissionCode)))
+	}
+	if p.Sort != nil {
+		m.Sort = *p.Sort
+	}
+	if p.HideInMenu != nil {
+		m.HideInMenu = *p.HideInMenu
+	}
+	if p.KeepAlive != nil {
+		m.KeepAlive = *p.KeepAlive
+	}
+	if p.ExternalURL != nil {
+		m.ExternalURL = strings.TrimSpace(*p.ExternalURL)
+	}
 }

@@ -12,6 +12,9 @@ import (
 // mysqlErrDuplicateEntry 是 MySQL 唯一键冲突错误码（ER_DUP_ENTRY）。
 const mysqlErrDuplicateEntry = 1062
 
+// mysqlErrNoReferencedRow 是 MySQL 外键引用不存在的错误码（ER_NO_REFERENCED_ROW_2）。
+const mysqlErrNoReferencedRow = 1452
+
 // isDuplicateEntry 判断错误是否为唯一键冲突，用于把数据库约束映射为 40900。
 //
 // 只识别 1062，不吞掉外键 / 数据截断等其他错误：
@@ -27,6 +30,20 @@ func conflictOnDuplicate(err error, message string) error {
 		return nil
 	}
 	if isDuplicateEntry(err) {
+		return apperr.Conflict(message)
+	}
+	return err
+}
+
+// conflictOnReferencedRow 把外键引用失败转换为业务冲突，避免暴露为 500。
+//
+// 应用层已做存在性预检；此处兜底并发删除父节点或权限点导致的外键失败。
+func conflictOnReferencedRow(err error, message string) error {
+	if err == nil {
+		return nil
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrNoReferencedRow {
 		return apperr.Conflict(message)
 	}
 	return err

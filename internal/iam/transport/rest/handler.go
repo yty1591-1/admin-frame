@@ -33,8 +33,10 @@ type HandlerConfig struct {
 	// Templates 角色模板用例；为空时模板路由返回 50000（兼容仅启用角色管理的装配）。
 	Templates *app.TemplateService
 	// Menus 菜单用例；为空时菜单端点返回 50000。
-	Menus   *app.MenuService
-	Channel domain.Channel
+	Menus *app.MenuService
+	// MenuAdmin 菜单管理用例；为空时菜单管理端点返回 50000。
+	MenuAdmin *app.MenuAdminService
+	Channel   domain.Channel
 	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
 	// （iam.approval.enabled）。
 	RequireApproval bool
@@ -49,6 +51,7 @@ type Handler struct {
 	breakglass      *app.BreakglassService
 	templates       *app.TemplateService
 	menus           *app.MenuService
+	menuAdmin       *app.MenuAdminService
 	channel         domain.Channel
 	requireApproval bool
 }
@@ -72,6 +75,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		breakglass:      cfg.Breakglass,
 		templates:       cfg.Templates,
 		menus:           cfg.Menus,
+		menuAdmin:       cfg.MenuAdmin,
 		channel:         cfg.Channel,
 		requireApproval: cfg.RequireApproval,
 	}, nil

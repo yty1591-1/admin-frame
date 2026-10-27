@@ -216,7 +216,7 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 | 表 | 用途 | 关键约束 |
 |----|------|----------|
 | `iam_permission` | 权限点目录（平铺） | `code` 主键；`channel ∈ {admin,biz,both}`；`status ∈ {active,deprecated}`；`resource` 为生成列（由 `code` 首段派生）；不含层级字段，菜单 / 路由树由 `iam_menu` 承载 |
-| `iam_menu` | 菜单 / 路由树 | `code` 稳定标识；`channel ∈ {admin,biz}`；`route_name` 端内唯一；`component` 必须命中前端 `pageMap`；自引用父节点 + 权限码外键（`RESTRICT`）；`sort` 同级升序 |
+| `iam_menu` | 菜单 / 路由树 | `code` 稳定标识；`channel ∈ {admin,biz}`；`route_name` 端内唯一；`component` 必须命中前端 `pageMap`；自引用父节点 + 权限码外键（`RESTRICT`）；`sort` 同级升序；`version` 乐观锁；A 端管理接口只停用不物理删 |
 | `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`version` 乐观锁；`template_id` / `template_version` 记录模板来源与实例基线；`uk_iam_role_id_channel`、`uk_iam_role_id_scope` 供子表复合外键引用 |
 | `iam_role_template` | 角色模板 | 唯一 `(channel, code)`；`status ∈ {active,disabled}`；`version` 递增以识别实例漂移；软删保留 `code` |
 | `iam_role_template_permission` | 模板 → 权限点基线 | 主键 `(template_id, permission_code)`；外键到模板与权限点（`RESTRICT`） |
@@ -877,6 +877,14 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | POST | `/admin/v1/iam/breakglass` | `iam:breakglass:request` | 申请限时超级权限（≤ 2h，需开启开关） | `rbac.breakglass` |
 | POST | `/admin/v1/iam/breakglass/{id}/approve` | `iam:breakglass:approve` | 审批并立即生效（申请人 ≠ 审批人） | `rbac.breakglass` |
 | POST | `/admin/v1/iam/breakglass/{id}/revoke` | `iam:breakglass:approve` | 提前撤销临时绑定（需 version） | `rbac.breakglass` |
+| GET | `/admin/v1/iam/menus` | `iam:menu:read` | 菜单资源平铺列表（含停用；`status` / `parent_code` / `keyword` 过滤） | 否 |
+| GET | `/admin/v1/iam/menus/tree` | `iam:menu:read` | 菜单资源树（`include_disabled=true` 含停用节点） | 否 |
+| GET | `/admin/v1/iam/menus/components` | `iam:menu:read` | 可引用的前端页面组件清单 | 否 |
+| GET | `/admin/v1/iam/menus/{id}` | `iam:menu:read` | 菜单详情（含 `version`） | 否 |
+| POST | `/admin/v1/iam/menus` | `iam:menu:write` | 创建菜单；`code` / `channel` 不可改，`component` 必须在页面清单内 | `rbac.menu_change` |
+| PATCH | `/admin/v1/iam/menus/{id}` | `iam:menu:write` | 局部更新 / 移动；需 `version` 或 `If-Match` | `rbac.menu_change` |
+| DELETE | `/admin/v1/iam/menus/{id}` | `iam:menu:write` | 停用（非物理删）；存在启用子节点返回 `40900` | `rbac.menu_change` |
+| POST | `/admin/v1/iam/menus/{id}/enable` | `iam:menu:write` | 重新启用；父菜单停用时返回 `40900` | `rbac.menu_change` |
 
 审批单载荷（`payload`）按 `action` 区分，字段名与角色 DTO 保持一致（数据范围用 `scope_type`），未知字段返回 `40000`：
 

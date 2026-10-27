@@ -10,9 +10,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/iam/menuview"
 	"github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/iam/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -108,9 +110,35 @@ func newRouterWithApproval(t *testing.T, requireApproval bool) *router {
 	if err != nil {
 		t.Fatal(err)
 	}
+	menuRepo := persistence.NewMemoryMenuRepository(
+		&domain.Menu{
+			ID: "100", Channel: domain.ChannelAdmin, Code: "system", NodeType: domain.MenuNodeCatalog,
+			RouteName: "System", RoutePath: "/system", Redirect: "/system/role",
+			Title: "系统管理", Sort: 10, Status: domain.MenuStatusActive, Version: 1,
+		},
+		&domain.Menu{
+			ID: "200", Channel: domain.ChannelAdmin, Code: "system.role", ParentCode: "system",
+			NodeType: domain.MenuNodePage, RouteName: "SystemRole", RoutePath: "role",
+			Component: "/system/role/index.vue", Title: "角色管理",
+			PermissionCode: iam.PermRoleRead, Sort: 10, Status: domain.MenuStatusActive, Version: 1,
+		},
+	)
+	menuSvc, err := app.NewMenuService(menuRepo, persistence.NewMemorySnapshotRepository(roles, bindings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	menuAdminSvc, err := app.NewMenuAdminService(app.MenuAdminConfig{
+		Menus: menuRepo, Recorder: recorder{}, Components: menuview.Catalog{}, IDs: ids,
+		Audit: app.AuditMeta{Service: "test", ActorType: "staff"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
-		Changes: newChangeService(t, roleSvc, bindingSvc, ids), Channel: domain.ChannelAdmin,
+		Changes: newChangeService(t, roleSvc, bindingSvc, ids),
+		Menus:   menuSvc, MenuAdmin: menuAdminSvc,
+		Channel: domain.ChannelAdmin,
 		RequireApproval: requireApproval,
 	})
 	if err != nil {
@@ -441,6 +469,70 @@ func TestDeleteRoleRequiresVersionAndReportsNotFound(t *testing.T) {
 	rec, env = rt.do(t, http.MethodDelete, "/admin/v1/iam/roles/not-exist", nil, map[string]string{"If-Match": `"1"`})
 	if rec.Code != http.StatusNotFound || env.Code != apperr.CodeNotFound {
 		t.Fatalf("not found status=%d code=%d", rec.Code, env.Code)
+	}
+}
+
+func TestMenuAdminEndpoints(t *testing.T) {
+	rt := newRouter(t)
+	rec, env := rt.do(t, http.MethodGet, "/admin/v1/iam/menus?keyword=role", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d", rec.Code)
+	}
+	var list struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 1 || len(list.Items) != 1 {
+		t.Fatalf("list = %+v", list)
+	}
+
+	rec, env = rt.do(t, http.MethodPost, "/admin/v1/iam/menus", map[string]any{
+		"code": "system.audit", "parent_code": "system", "node_type": "menu",
+		"route_name": "SystemAudit", "route_path": "audit",
+		"component": "/system/role/index.vue", "title": "审计日志", "sort": 20,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Version int64  `json:"version"`
+	}
+	if err := json.Unmarshal(env.Data, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || created.Version != 1 {
+		t.Fatalf("created = %+v", created)
+	}
+
+	path := "/admin/v1/iam/menus/" + created.ID
+	rec, env = rt.do(t, http.MethodPatch, path, map[string]any{"title": "审计中心", "version": 1}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rec, env = rt.do(t, http.MethodPatch, path, map[string]any{"title": "审计中心", "version": 1}, nil)
+	if rec.Code != http.StatusConflict || env.Code != apperr.CodeConflict {
+		t.Fatalf("stale patch status=%d code=%d", rec.Code, env.Code)
+	}
+
+	rec, _ = rt.do(t, http.MethodDelete, path, map[string]any{"version": 2}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable status=%d", rec.Code)
+	}
+	rec, _ = rt.do(t, http.MethodPost, path+"/enable", map[string]any{"version": 3}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable status=%d", rec.Code)
+	}
+
+	rec, env = rt.do(t, http.MethodGet, "/admin/v1/iam/menus/tree?include_disabled=true", nil, nil)
+	if rec.Code != http.StatusOK || len(env.Data) == 0 {
+		t.Fatalf("tree status=%d", rec.Code)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	iampcache "github.com/admin-frame/admin-frame/internal/iam/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/iam/menuview"
 	"github.com/admin-frame/admin-frame/internal/iam/observability"
 	"github.com/admin-frame/admin-frame/internal/iam/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -181,9 +182,22 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("iam query service: %w", err)
 	}
-	menuSvc, err := app.NewMenuService(buildMenuRepository(deps), snapshots)
+	menuRepo := buildMenuRepository(deps)
+	menuSvc, err := app.NewMenuService(menuRepo, snapshots)
 	if err != nil {
 		return nil, fmt.Errorf("iam menu service: %w", err)
+	}
+	menuAdminSvc, err := app.NewMenuAdminService(app.MenuAdminConfig{
+		Menus:      menuRepo,
+		Recorder:   recorder,
+		Components: menuview.Catalog{},
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      auditMeta,
+		Logger:     deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam menu admin service: %w", err)
 	}
 	templateSvc, err := app.NewTemplateService(app.TemplateServiceConfig{
 		Templates:  templates,
@@ -249,6 +263,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Breakglass:      breakglassSvc,
 		Templates:       templateSvc,
 		Menus:           menuSvc,
+		MenuAdmin:       menuAdminSvc,
 		Channel:         domain.Channel(cfg.Channel),
 		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
