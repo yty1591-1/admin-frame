@@ -23,7 +23,6 @@ import (
 func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) http.Handler, perm auth.PermissionMiddleware) {
 	// 权限目录（只读，仅 biz / both）。
 	mux.Handle("GET /biz/v1/iam/permissions", authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListPermissions))))
-	mux.Handle("GET /biz/v1/iam/permissions/tree", authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.PermissionTree))))
 
 	// 本商户角色生命周期。
 	mux.Handle("GET /biz/v1/iam/roles", authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoles))))
@@ -71,6 +70,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 
 	// 当前主体权限：仅需认证。
 	mux.Handle("GET /biz/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
+
+	// 本商户主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
+	mux.Handle("GET /biz/v1/menus", authMW(http.HandlerFunc(h.Menus)))
 }
 
 // NewRouter 注册 B 端 IAM 路由并挂接鉴权与权限中间件（测试用）。

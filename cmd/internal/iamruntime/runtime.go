@@ -181,6 +181,10 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("iam query service: %w", err)
 	}
+	menuSvc, err := app.NewMenuService(buildMenuRepository(deps), snapshots)
+	if err != nil {
+		return nil, fmt.Errorf("iam menu service: %w", err)
+	}
 	templateSvc, err := app.NewTemplateService(app.TemplateServiceConfig{
 		Templates:  templates,
 		Roles:      roleSvc,
@@ -244,6 +248,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Changes:         changeSvc,
 		Breakglass:      breakglassSvc,
 		Templates:       templateSvc,
+		Menus:           menuSvc,
 		Channel:         domain.Channel(cfg.Channel),
 		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
@@ -356,6 +361,17 @@ func topicStatsCounter(reader outbox.TopicStatReader, topic string) func() (int,
 		}
 		return stats.Pending, lag, nil
 	}
+}
+
+// buildMenuRepository 按 db.driver 选择菜单仓储。
+//
+// 菜单由 SQL 种子维护；内存模式（local / demo / 单测）没有种子来源，返回空仓储，
+// 前端切换 accessMode=backend 时应接入 MySQL，否则菜单为空。
+func buildMenuRepository(deps *platform.Deps) domain.MenuRepository {
+	if deps.Database == nil {
+		return persistence.NewMemoryMenuRepository()
+	}
+	return persistence.NewSQLMenuRepository(deps.Database.SQL())
 }
 
 // buildChangeRequestRepository 按 db.driver 选择审批单仓储。

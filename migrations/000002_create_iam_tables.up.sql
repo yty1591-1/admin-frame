@@ -14,32 +14,26 @@
 --        至多一条生效绑定」，同时在库内保留完整授权历史，供访问复核；
 --      - 角色模板（iam_role_template）支持「平台定义、商户实例化」，并以 template_version
 --        记录实例基线，避免商户规模增长后角色定义与授权配置重复膨胀；
---      - 权限目录父节点改为 NULL + 自引用外键，菜单 / 按钮树不再允许悬空节点；
+--      - 权限目录收敛为平铺表（菜单 / 路由树由 iam_menu 承载），resource 由权限码首段生成；
 --      - 审批单补充时效、决策人、决策说明与载荷版本，并以 pending_key 生成列阻止同一目标并发重复提单。
 
 CREATE TABLE IF NOT EXISTS iam_permission (
     code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名或复用',
-    name             VARCHAR(128)  NOT NULL                  COMMENT '权限点显示名，用于菜单 / 按钮 / 授权勾选',
+    name             VARCHAR(128)  NOT NULL                  COMMENT '权限点显示名，用于授权勾选',
     channel          VARCHAR(16)   NOT NULL                  COMMENT '可授予端别：admin=仅A端 / biz=仅B端 / both=两端均可',
-    resource         VARCHAR(64)   NOT NULL                  COMMENT '资源段，取权限码首段，如 order；用于数据范围匹配',
-    action           VARCHAR(64)   NOT NULL                  COMMENT '动作段，取权限码末段，如 read / write / grant',
-    kind             VARCHAR(16)   NOT NULL                  COMMENT '权限点形态：menu=菜单 / button=按钮 / api=接口',
+    resource         VARCHAR(64)   GENERATED ALWAYS AS (SUBSTRING_INDEX(code, ':', 1)) STORED
+                                                             COMMENT '资源段，由权限码首段派生；供数据范围匹配与 SQL 侧分组 / 联表',
     data_bearing     TINYINT       NOT NULL DEFAULT 0        COMMENT '是否涉及数据范围：1=是（授权时必须配置 iam_role_data_scope）/ 0=否',
-    parent_code      VARCHAR(128)  NULL     DEFAULT NULL     COMMENT '父节点权限码，根节点为 NULL；用于菜单 / 按钮树',
-    path             VARCHAR(256)  NOT NULL DEFAULT ''       COMMENT '树路径，逗号分隔的祖先编码，用于子树查询与排序；根节点为空串',
-    sort             INT           NOT NULL DEFAULT 0        COMMENT '同级排序值，升序，值越小越靠前',
+    sort             INT           NOT NULL DEFAULT 0        COMMENT '排序值，升序，值越小越靠前',
     status           VARCHAR(16)   NOT NULL DEFAULT 'active' COMMENT '状态：active=可用 / deprecated=已弃用（保留授权但不可新授）',
     created_at       DATETIME(3)   NOT NULL                  COMMENT '创建时间（UTC，毫秒精度）',
     updated_at       DATETIME(3)   NOT NULL                  COMMENT '最后更新时间（UTC，毫秒精度），由应用写入',
     PRIMARY KEY (code),
-    KEY idx_iam_permission_channel_status (channel, status, sort) COMMENT '菜单树按端别 + 状态过滤并按同级排序输出',
-    CONSTRAINT fk_iam_permission_parent FOREIGN KEY (parent_code) REFERENCES iam_permission (code)
-        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    KEY idx_iam_permission_channel_status (channel, status, sort) COMMENT '按端别 + 状态过滤并按排序输出',
+    KEY idx_iam_permission_resource (resource) COMMENT '按资源段分组 / 联表查询',
     CONSTRAINT ck_iam_permission_channel CHECK (channel IN ('admin', 'biz', 'both')),
-    CONSTRAINT ck_iam_permission_kind CHECK (kind IN ('menu', 'button', 'api')),
     CONSTRAINT ck_iam_permission_status CHECK (status IN ('active', 'deprecated')),
-    CONSTRAINT ck_iam_permission_data_bearing CHECK (data_bearing IN (0, 1)),
-    CONSTRAINT ck_iam_permission_parent_self CHECK (parent_code IS NULL OR parent_code <> code)
+    CONSTRAINT ck_iam_permission_data_bearing CHECK (data_bearing IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 权限点目录，代码所有、库内只读同步；不存放角色授权关系';
 

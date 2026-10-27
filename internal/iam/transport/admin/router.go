@@ -20,7 +20,6 @@ import (
 func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) http.Handler, perm auth.PermissionMiddleware) {
 	// 权限目录（只读）。
 	mux.Handle("GET /admin/v1/iam/permissions", authMW(perm(string(iam.PermPermissionRead))(http.HandlerFunc(h.ListPermissions))))
-	mux.Handle("GET /admin/v1/iam/permissions/tree", authMW(perm(string(iam.PermPermissionRead))(http.HandlerFunc(h.PermissionTree))))
 
 	// 角色生命周期。
 	mux.Handle("GET /admin/v1/iam/roles", authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoles))))
@@ -90,6 +89,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 
 	// 当前主体权限：仅需认证，不额外要求权限点。
 	mux.Handle("GET /admin/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
+
+	// 当前主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
+	mux.Handle("GET /admin/v1/menus", authMW(http.HandlerFunc(h.Menus)))
 }
 
 // NewRouter 注册 IAM 管理端路由并挂接鉴权与权限中间件（测试用）。

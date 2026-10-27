@@ -72,6 +72,8 @@ var (
 	ErrInvalidRoleTemplate = errors.New("invalid role template")
 	// ErrTemplateNotActive 角色模板已停用或已删除，不能用于实例化。
 	ErrTemplateNotActive = errors.New("role template not active")
+	// ErrInvalidMenu 菜单 / 路由资源字段非法。
+	ErrInvalidMenu = errors.New("invalid menu")
 )
 
 // errInvalid 构造参数错误（HTTP 400 / 业务码 40000）。

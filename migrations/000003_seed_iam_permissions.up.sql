@@ -6,43 +6,39 @@
 --
 -- 约定：
 --   * channel：admin=仅 A 端可授予 / biz=仅 B 端可授予 / both=两端均可；
+--   * resource 是生成列（由 code 首段派生），本文件不得写入；
 --   * order:* / file:* 属于已移除的演示域，保留码值以解释历史审计，status 固定 deprecated；
 --   * iam:change:request / iam:change:review 为 B 端专属，A 端审批仍用 iam:change:read / approve。
 
 INSERT INTO iam_permission
-    (code, name, channel, resource, action, kind, data_bearing, parent_code, path, sort, status, created_at, updated_at)
+    (code, name, channel, data_bearing, sort, status, created_at, updated_at)
 VALUES
-    ('iam:permission:read', '查看权限目录', 'admin', 'iam', 'read', 'api', 0, NULL, '', 10, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:role:read', '查看角色', 'both', 'iam', 'read', 'api', 0, NULL, '', 20, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:role:write', '管理角色', 'both', 'iam', 'write', 'api', 0, NULL, '', 30, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:role:grant', '授予角色权限', 'both', 'iam', 'grant', 'api', 0, NULL, '', 40, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:binding:read', '查看绑定', 'both', 'iam', 'read', 'api', 0, NULL, '', 50, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:binding:write', '管理绑定', 'both', 'iam', 'write', 'api', 0, NULL, '', 60, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:check', '模拟鉴权', 'admin', 'iam', 'check', 'api', 0, NULL, '', 70, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:change:read', '查看审批单', 'admin', 'iam', 'read', 'api', 0, NULL, '', 80, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:change:approve', '审批变更', 'admin', 'iam', 'approve', 'api', 0, NULL, '', 90, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:breakglass:request', '申请破玻璃', 'admin', 'iam', 'request', 'api', 0, NULL, '', 100, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:breakglass:approve', '审批破玻璃', 'admin', 'iam', 'approve', 'api', 0, NULL, '', 110, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('order:read', '查询订单', 'both', 'order', 'read', 'api', 1, NULL, '', 120, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('order:write', '变更订单', 'both', 'order', 'write', 'api', 1, NULL, '', 130, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('file:read', '查看文件', 'both', 'file', 'read', 'api', 1, NULL, '', 140, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('file:write', '管理文件', 'both', 'file', 'write', 'api', 1, NULL, '', 150, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('audit:read', '查询审计', 'admin', 'audit', 'read', 'api', 1, NULL, '', 160, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('data:export', '导出数据', 'both', 'data', 'export', 'api', 1, NULL, '', 170, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('config:read', '查看配置', 'admin', 'config', 'read', 'api', 0, NULL, '', 180, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('config:write', '修改配置', 'admin', 'config', 'write', 'api', 0, NULL, '', 190, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:change:request', '发起变更申请', 'biz', 'iam', 'request', 'api', 0, NULL, '', 200, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('iam:change:review', '审批本商户变更', 'biz', 'iam', 'review', 'api', 0, NULL, '', 210, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
+    ('iam:permission:read', '查看权限目录', 'admin', 0, 10, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:role:read', '查看角色', 'both', 0, 20, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:role:write', '管理角色', 'both', 0, 30, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:role:grant', '授予角色权限', 'both', 0, 40, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:binding:read', '查看绑定', 'both', 0, 50, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:binding:write', '管理绑定', 'both', 0, 60, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:check', '模拟鉴权', 'admin', 0, 70, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:change:read', '查看审批单', 'admin', 0, 80, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:change:approve', '审批变更', 'admin', 0, 90, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:breakglass:request', '申请破玻璃', 'admin', 0, 100, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:breakglass:approve', '审批破玻璃', 'admin', 0, 110, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('order:read', '查询订单', 'both', 1, 120, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('order:write', '变更订单', 'both', 1, 130, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('file:read', '查看文件', 'both', 1, 140, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('file:write', '管理文件', 'both', 1, 150, 'deprecated', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('audit:read', '查询审计', 'admin', 1, 160, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('data:export', '导出数据', 'both', 1, 170, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('config:read', '查看配置', 'admin', 0, 180, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('config:write', '修改配置', 'admin', 0, 190, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:change:request', '发起变更申请', 'biz', 0, 200, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('iam:change:review', '审批本商户变更', 'biz', 0, 210, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
 AS new
 ON DUPLICATE KEY UPDATE
     name         = new.name,
     channel      = new.channel,
-    resource     = new.resource,
-    action       = new.action,
-    kind         = new.kind,
     data_bearing = new.data_bearing,
-    parent_code  = new.parent_code,
-    path         = new.path,
     sort         = new.sort,
     status       = new.status,
     updated_at   = UTC_TIMESTAMP(3);

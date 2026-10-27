@@ -32,7 +32,9 @@ type HandlerConfig struct {
 	Breakglass *app.BreakglassService
 	// Templates 角色模板用例；为空时模板路由返回 50000（兼容仅启用角色管理的装配）。
 	Templates *app.TemplateService
-	Channel   domain.Channel
+	// Menus 菜单用例；为空时菜单端点返回 50000。
+	Menus   *app.MenuService
+	Channel domain.Channel
 	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
 	// （iam.approval.enabled）。
 	RequireApproval bool
@@ -46,6 +48,7 @@ type Handler struct {
 	changes         *app.ChangeRequestService
 	breakglass      *app.BreakglassService
 	templates       *app.TemplateService
+	menus           *app.MenuService
 	channel         domain.Channel
 	requireApproval bool
 }
@@ -68,6 +71,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		changes:         cfg.Changes,
 		breakglass:      cfg.Breakglass,
 		templates:       cfg.Templates,
+		menus:           cfg.Menus,
 		channel:         cfg.Channel,
 		requireApproval: cfg.RequireApproval,
 	}, nil
@@ -123,19 +127,6 @@ func (h *Handler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toPermissionDTO(entry))
 	}
 	httpx.OK(w, PermissionListResponse{Items: items, Total: total}, traceID)
-}
-
-// PermissionTree GET /iam/permissions/tree
-func (h *Handler) PermissionTree(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
-	filter := app.PermissionFilter{
-		Channel: domain.Channel(strings.TrimSpace(r.URL.Query().Get("channel"))),
-		Keyword: r.URL.Query().Get("keyword"),
-	}
-	if h.channel == domain.ChannelBiz {
-		filter.Channel = domain.ChannelBiz
-	}
-	httpx.OK(w, toPermissionTreeDTO(h.query.PermissionTree(filter)), traceID)
 }
 
 // ListRoles GET /iam/roles

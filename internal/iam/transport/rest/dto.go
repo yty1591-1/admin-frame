@@ -8,29 +8,23 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/iam"
-	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/catalog"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 )
 
 // PermissionDTO 是权限点目录响应项。
+//
+// 目录为平铺结构：resource 由权限码首段派生，供前端按资源分组；
+// 菜单与路由树由 /menus 端点提供，不在权限点中表达层级。
 type PermissionDTO struct {
 	Code        string `json:"code"`
 	Name        string `json:"name"`
 	Channel     string `json:"channel"`
-	Kind        string `json:"kind"`
+	Resource    string `json:"resource"`
 	DataBearing bool   `json:"data_bearing"`
 	Status      string `json:"status"`
 	Sort        int    `json:"sort"`
-	ParentCode  string `json:"parent_code,omitempty"`
-	Path        string `json:"path,omitempty"`
 	Description string `json:"description,omitempty"`
-}
-
-// PermissionTreeDTO 是权限树节点，children 为空时省略。
-type PermissionTreeDTO struct {
-	PermissionDTO
-	Children []*PermissionTreeDTO `json:"children,omitempty"`
 }
 
 // PermissionListResponse 是权限目录分页响应。
@@ -202,25 +196,12 @@ func toPermissionDTO(entry catalog.Entry) *PermissionDTO {
 		Code:        string(entry.Code),
 		Name:        entry.Name,
 		Channel:     string(entry.Channel),
-		Kind:        string(entry.Kind),
+		Resource:    entry.Resource(),
 		DataBearing: entry.DataBearing,
 		Status:      string(entry.Status),
 		Sort:        entry.Sort,
-		ParentCode:  string(entry.ParentCode),
-		Path:        entry.Path,
 		Description: entry.Description,
 	}
-}
-
-// toPermissionTreeDTO 递归转换权限树。
-func toPermissionTreeDTO(nodes []*app.PermissionNode) []*PermissionTreeDTO {
-	out := make([]*PermissionTreeDTO, 0, len(nodes))
-	for _, node := range nodes {
-		dto := &PermissionTreeDTO{PermissionDTO: *toPermissionDTO(node.Entry)}
-		dto.Children = toPermissionTreeDTO(node.Children)
-		out = append(out, dto)
-	}
-	return out
 }
 
 // toDataScopeDTO 转换单个数据范围。

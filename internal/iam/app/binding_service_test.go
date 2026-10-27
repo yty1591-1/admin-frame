@@ -353,10 +353,6 @@ func TestPermissionCatalogQueries(t *testing.T) {
 	if len(bizOnly) != 2 {
 		t.Fatalf("biz order permissions = %d, want 2", len(bizOnly))
 	}
-	tree := f.querySvc.PermissionTree(app.PermissionFilter{})
-	if len(tree) != len(f.querySvc.Permissions(app.PermissionFilter{})) {
-		t.Fatalf("tree roots = %d; baseline catalog has no parents", len(tree))
-	}
 }
 
 func TestSnapshotRepositoryRejectsInvalidQuery(t *testing.T) {

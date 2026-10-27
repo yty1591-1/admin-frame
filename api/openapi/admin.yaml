@@ -1,13 +1,15 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 3.1.0
+  version: 4.0.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
     3.0.0：移除历史订单契约（破坏性）。
     3.1.0：登录新增 `MFABindingRequired` 分支与 `mfa_setup_ticket`（§7.2.1）。
+    4.0.0：`Permission` 移除 `action` / `kind` / `parent_code` / `path`，`resource` 改为服务端生成（破坏性）；
+    新增 `GET /admin/v1/menus` 与 `MenuTreeNode`；移除冗余的 `/admin/v1/iam/permissions/tree`。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -425,43 +427,6 @@ paths:
                         $ref: "#/components/schemas/PermissionListData"
         "400":
           $ref: "./components.yaml#/components/responses/BadRequest"
-        "401":
-          $ref: "./components.yaml#/components/responses/Unauthorized"
-        "403":
-          $ref: "./components.yaml#/components/responses/Forbidden"
-        "500":
-          $ref: "./components.yaml#/components/responses/InternalError"
-  /admin/v1/iam/permissions/tree:
-    get:
-      tags: [iam]
-      summary: 权限点目录（树）
-      description: 需要 `iam:permission:read`。用于管理端菜单/授权界面渲染。
-      operationId: adminIAMPermissionTree
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: query
-          name: channel
-          schema:
-            $ref: "#/components/schemas/Channel"
-        - in: query
-          name: keyword
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ok
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "./components.yaml#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/PermissionTreeNode"
         "401":
           $ref: "./components.yaml#/components/responses/Unauthorized"
         "403":
@@ -956,6 +921,38 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/SubjectPermissions"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+        "503":
+          $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /admin/v1/menus:
+    get:
+      tags: [iam]
+      summary: 当前主体可见菜单
+      description: |
+        仅需认证，不额外要求权限点。按主体权限快照裁剪菜单树：
+        只保留 permission_code 为空或已授予的节点，递归补齐可见节点的祖先链，
+        并丢弃裁剪后无可见子节点的目录。菜单只影响前端入口展示，
+        接口鉴权仍以权限点中间件为准。
+      operationId: adminGetMenus
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MenuTreeNode"
         "401":
           $ref: "./components.yaml#/components/responses/Unauthorized"
         "500":
@@ -1478,9 +1475,58 @@ components:
           description: 仅 scope_type=merchant_set 使用，最多 100 个
           items:
             type: string
+    MenuMeta:
+      type: object
+      required: [title, order]
+      properties:
+        title:
+          type: string
+          description: 显示名；i18n 缺失时兜底
+        titleKey:
+          type: string
+          description: i18n key，如 page.system.role
+        icon:
+          type: string
+        order:
+          type: integer
+          description: 同级排序，升序
+        hideInMenu:
+          type: boolean
+        keepAlive:
+          type: boolean
+        iframeSrc:
+          type: string
+          description: iframe 节点目标地址
+        link:
+          type: string
+          description: 外链节点目标地址
+    MenuTreeNode:
+      type: object
+      required: [name, path, meta, status]
+      description: 菜单 / 路由树节点；目录节点 component 为空，children 由服务端裁剪
+      properties:
+        name:
+          type: string
+          description: 路由 name，PascalCase
+        path:
+          type: string
+        component:
+          type: string
+          description: BasicLayout / IFrameView / /system/role/index.vue
+        redirect:
+          type: string
+        meta:
+          $ref: "#/components/schemas/MenuMeta"
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuTreeNode"
+        status:
+          type: string
+          enum: [active, disabled]
     Permission:
       type: object
-      required: [code, name, channel, kind, data_bearing, status, sort]
+      required: [code, name, channel, resource, data_bearing, status, sort]
       properties:
         code:
           type: string
@@ -1492,9 +1538,11 @@ components:
           type: string
           description: admin / biz / both
           enum: [admin, biz, both]
-        kind:
+        resource:
           type: string
-          enum: [api, menu, button]
+          readOnly: true
+          description: 资源段，由权限码首段派生（服务端生成），供前端按资源分组
+          example: iam
         data_bearing:
           type: boolean
           description: 为 true 时角色必须声明对应数据范围
@@ -1503,21 +1551,8 @@ components:
           enum: [active, deprecated]
         sort:
           type: integer
-        parent_code:
-          type: string
-        path:
-          type: string
         description:
           type: string
-    PermissionTreeNode:
-      allOf:
-        - $ref: "#/components/schemas/Permission"
-        - type: object
-          properties:
-            children:
-              type: array
-              items:
-                $ref: "#/components/schemas/PermissionTreeNode"
     PermissionListData:
       type: object
       required: [items, total]

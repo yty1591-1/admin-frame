@@ -156,7 +156,8 @@ wildcard   := "*" | segment ":" "*"
 | `internal/iam/perm.go` | IAM 自身管理权限点常量 |
 | `docs/iam/PERMISSIONS.md` | 全量目录（新增，供评审与运营查阅） |
 | `migrations/000003_seed_iam_permissions.*.sql` | 目录种子（只读同步，追加式：后续 `*_seed_*.sql` 同约定） |
-| `iam_permission` 表 | 运行时元数据（名称、类型、父节点、排序、状态） |
+| `iam_permission` 表 | 运行时元数据（名称、端别、数据承载、排序、状态）；平铺无层级，`resource` 为生成列 |
+| `iam_menu` 表 | 菜单 / 路由树（`component`、`icon`、`redirect`、权限码门禁）；可见性由权限快照裁剪 |
 
 > 约束：新增权限点必须同 MR 更新常量、目录文档、种子迁移与 OpenAPI（若暴露）；CI 通过 Go 测试校验唯一性、格式、段数与目录一致性。
 
@@ -214,7 +215,8 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 | 表 | 用途 | 关键约束 |
 |----|------|----------|
-| `iam_permission` | 权限点目录 | `code` 主键；`channel ∈ {admin,biz,both}`；`kind ∈ {menu,button,api}`；`status ∈ {active,deprecated}`；`parent_code` 可空 + 自引用外键（根节点 `NULL`，库层拒绝悬空节点） |
+| `iam_permission` | 权限点目录（平铺） | `code` 主键；`channel ∈ {admin,biz,both}`；`status ∈ {active,deprecated}`；`resource` 为生成列（由 `code` 首段派生）；不含层级字段，菜单 / 路由树由 `iam_menu` 承载 |
+| `iam_menu` | 菜单 / 路由树 | `code` 稳定标识；`channel ∈ {admin,biz}`；`route_name` 端内唯一；`component` 必须命中前端 `pageMap`；自引用父节点 + 权限码外键（`RESTRICT`）；`sort` 同级升序 |
 | `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`version` 乐观锁；`template_id` / `template_version` 记录模板来源与实例基线；`uk_iam_role_id_channel`、`uk_iam_role_id_scope` 供子表复合外键引用 |
 | `iam_role_template` | 角色模板 | 唯一 `(channel, code)`；`status ∈ {active,disabled}`；`version` 递增以识别实例漂移；软删保留 `code` |
 | `iam_role_template_permission` | 模板 → 权限点基线 | 主键 `(template_id, permission_code)`；外键到模板与权限点（`RESTRICT`） |
@@ -255,27 +257,21 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 ```sql
 CREATE TABLE IF NOT EXISTS iam_permission (
     code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名或复用',
-    name             VARCHAR(128)  NOT NULL                  COMMENT '权限点显示名，用于菜单 / 按钮 / 授权勾选',
+    name             VARCHAR(128)  NOT NULL                  COMMENT '权限点显示名，用于授权勾选',
     channel          VARCHAR(16)   NOT NULL                  COMMENT '可授予端别：admin=仅A端 / biz=仅B端 / both=两端均可',
-    resource         VARCHAR(64)   NOT NULL                  COMMENT '资源段，取权限码首段，如 order；用于数据范围匹配',
-    action           VARCHAR(64)   NOT NULL                  COMMENT '动作段，取权限码末段，如 read / write / grant',
-    kind             VARCHAR(16)   NOT NULL                  COMMENT '权限点形态：menu=菜单 / button=按钮 / api=接口',
+    resource         VARCHAR(64)   GENERATED ALWAYS AS (SUBSTRING_INDEX(code, ':', 1)) STORED
+                                                             COMMENT '资源段，由权限码首段派生；供数据范围匹配与 SQL 侧分组 / 联表',
     data_bearing     TINYINT       NOT NULL DEFAULT 0        COMMENT '是否涉及数据范围：1=是（授权时必须配置 iam_role_data_scope）/ 0=否',
-    parent_code      VARCHAR(128)  NULL     DEFAULT NULL     COMMENT '父节点权限码，根节点为 NULL；用于菜单 / 按钮树',
-    path             VARCHAR(256)  NOT NULL DEFAULT ''       COMMENT '树路径，逗号分隔的祖先编码，用于子树查询与排序；根节点为空串',
-    sort             INT           NOT NULL DEFAULT 0        COMMENT '同级排序值，升序，值越小越靠前',
+    sort             INT           NOT NULL DEFAULT 0        COMMENT '排序值，升序，值越小越靠前',
     status           VARCHAR(16)   NOT NULL DEFAULT 'active' COMMENT '状态：active=可用 / deprecated=已弃用（保留授权但不可新授）',
     created_at       DATETIME(3)   NOT NULL                  COMMENT '创建时间（UTC，毫秒精度）',
     updated_at       DATETIME(3)   NOT NULL                  COMMENT '最后更新时间（UTC，毫秒精度），由应用写入',
     PRIMARY KEY (code),
-    KEY idx_iam_permission_channel_status (channel, status, sort) COMMENT '菜单树按端别 + 状态过滤并按同级排序输出',
-    CONSTRAINT fk_iam_permission_parent FOREIGN KEY (parent_code) REFERENCES iam_permission (code)
-        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    KEY idx_iam_permission_channel_status (channel, status, sort) COMMENT '按端别 + 状态过滤并按排序输出',
+    KEY idx_iam_permission_resource (resource) COMMENT '按资源段分组 / 联表查询',
     CONSTRAINT ck_iam_permission_channel CHECK (channel IN ('admin', 'biz', 'both')),
-    CONSTRAINT ck_iam_permission_kind CHECK (kind IN ('menu', 'button', 'api')),
     CONSTRAINT ck_iam_permission_status CHECK (status IN ('active', 'deprecated')),
-    CONSTRAINT ck_iam_permission_data_bearing CHECK (data_bearing IN (0, 1)),
-    CONSTRAINT ck_iam_permission_parent_self CHECK (parent_code IS NULL OR parent_code <> code)
+    CONSTRAINT ck_iam_permission_data_bearing CHECK (data_bearing IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 权限点目录，代码所有、库内只读同步；不存放角色授权关系';
 ```
@@ -561,7 +557,7 @@ COMMENT ON INDEX  uk_iam_role_scope_code           IS '端内角色编码唯一�
 1. **库级完整性（不依赖单点应用校验）**
    - 枚举、端别 / 子类型 / 商户组合、JSON 载荷结构全部落到 `CHECK`：`ck_iam_role_tenant`、`ck_iam_binding_tenant`、`ck_iam_change_tenant`、`ck_iam_rds_channel_scope`、`ck_iam_change_payload` 等。
    - 子表引用改为**复合外键**：`iam_role_binding (role_id, channel, merchant_id)`、`iam_role_data_scope (role_id, channel)` 指向 `iam_role` 的对应唯一键。跨端 / 跨商户绑定从「只有应用层拦」变为「库层直接拒绝」。
-   - 权限目录 `parent_code` 改为 `NULL` 根节点 + 自引用外键：`''` 不再是合法根值，悬空父节点与自引用父节点（`ck_iam_permission_parent_self`）被库层拒绝。
+   - 权限目录改为**平铺结构**：删除 `kind` / `parent_code` / `path` / `action`，`resource` 改为 `STORED` 生成列（由 `code` 首段派生）；层级与菜单职责移交 `iam_menu`（自引用外键 + 权限码外键）。
 
 2. **绑定历史（软撤销 + 生成列唯一键）**
    - `iam_role_binding` 新增 `revoked_at` / `revoked_by` / `revoke_reason`；解绑写撤销标记，不物理删除。
@@ -581,7 +577,7 @@ COMMENT ON INDEX  uk_iam_role_scope_code           IS '端内角色编码唯一�
 5. **代码与接口影响（本次同步项）**
    - domain：`Binding` 增加撤销字段与 `Revoke`；`ChangeRequest` 增加时效 / 决策 / 执行人字段与 `expired`；`Role` 增加模板字段。
    - repository：`BindingRepository.Delete` 语义改为 `Revoke(ctx, id, actor, reason)`；`ListBySubject` 与快照 SQL 过滤撤销；`ListByRole` 保留历史，角色删除引用检查只看生效绑定。
-   - 快照 SQL（§8.3）与集成测试须补 `revoked_at IS NULL`；`internal/iam/catalog` 门禁需允许种子 `parent_code` 为 `NULL`。
+   - 快照 SQL（§8.3）与集成测试须补 `revoked_at IS NULL`；`internal/iam/catalog` 门禁按平铺目录校验，不再校验父节点。
 
 ### 5.4 数据纪律
 
@@ -859,7 +855,6 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | 方法 | 路径 | 权限点 | 说明 | 审计 |
 |------|------|--------|------|------|
 | GET | `/admin/v1/iam/permissions` | `iam:permission:read` | 权限点目录（可分页 / 按 channel 过滤） | 否 |
-| GET | `/admin/v1/iam/permissions/tree` | `iam:permission:read` | 菜单 / 按钮树 | 否 |
 | GET | `/admin/v1/iam/roles` | `iam:role:read` | 角色列表（channel / scope / 状态过滤） | 否 |
 | POST | `/admin/v1/iam/roles` | `iam:role:write` | 创建角色（code 不可重复） | `rbac.role_change` |
 | GET | `/admin/v1/iam/roles/{id}` | `iam:role:read` | 角色详情（含权限点、数据范围、绑定数） | 否 |
@@ -900,7 +895,6 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | 方法 | 路径 | 权限点 | 说明 |
 |------|------|--------|------|
 | GET | `/biz/v1/iam/permissions` | `iam:role:read` | 仅 `biz` / `both` 权限点（B 端无 `iam:permission:read`） |
-| GET | `/biz/v1/iam/permissions/tree` | `iam:role:read` | 菜单 / 按钮树，同样强制 `channel=biz` |
 | GET | `/biz/v1/iam/roles` | `iam:role:read` | 仅本商户角色，`total` 为真实总数 |
 | POST | `/biz/v1/iam/roles` | `iam:role:write` | 仅本商户；`merchant_id` 取自 Token，`channel=admin` 直接 40000 |
 | GET | `/biz/v1/iam/roles/{id}` | `iam:role:read` | 他商户角色对外 `40400` |
@@ -1740,17 +1734,17 @@ BenchmarkReplaceRolePermissions_Diff
 
 | 用例 | 断言 |
 |------|------|
-| `TestPermissionCatalog` | 逐条格式（2～4 段、全小写、无 `*`、长度 ≤ 128）、枚举合法、`sort` 严格递增、父节点存在 |
+| `TestPermissionCatalog` | 逐条格式（2～4 段、全小写、无 `*`、长度 ≤ 128）、枚举合法、`sort` 严格递增 |
 | `TestPermissionCatalogMatchesConstants` | `go/ast` 解析 `perm.go`；目录 ↔ `Perm*` 常量**双向**一致，常量值必须是字符串字面量 |
-| `TestPermissionCatalogMatchesSeedMigration` | 逐行解析种子；`code / name / channel / resource / action / kind / data_bearing / sort` 与目录一致，无重复、无遗漏 |
-| `TestPermissionCatalogMatchesDoc` | 解析 `PERMISSIONS.md` 目录表；`code / channel / kind / data_bearing` 与目录一致 |
+| `TestPermissionCatalogMatchesSeedMigration` | 逐行解析种子；`code / name / channel / data_bearing / sort` 与目录一致，无重复、无遗漏 |
+| `TestPermissionCatalogMatchesDoc` | 解析 `PERMISSIONS.md` 目录表；`code / channel / data_bearing` 与目录一致 |
 | `TestPermissionCatalogDownMigration` | down 覆盖全部种子 `code`（防止新增权限点后无法回滚） |
 | `TestPermissionCatalogSeedIsIdempotent` | 种子含 `ON DUPLICATE KEY UPDATE`，可重放 |
 
 **解析约定（改格式必须同步测试）**：
 
 1. 种子迁移中每条权限点**独占一行**，行首为 `('`，列顺序与 `INSERT` 列表一致；
-2. `PERMISSIONS.md` 的目录表列顺序固定为 `code | channel | kind | data_bearing | 说明`，`code` 用反引号包裹；
+2. `PERMISSIONS.md` 的目录表列顺序固定为 `code | channel | data_bearing | 状态 | 说明`，`code` 用反引号包裹；
 3. 新增权限点只允许追加，`sort` 取当前最大值 + 10。
 
 **缓存陷阱**：Go 测试缓存不跟踪测试运行时读取的外部文件（种子 SQL、Markdown）。CI 的 `make test-ci` 已固定 `-count=1`；本地单独验证目录时也必须加 `-count=1`，否则可能命中旧缓存。
@@ -1986,29 +1980,29 @@ BenchmarkReplaceRolePermissions_Diff
 
 > 可读主表见 [`docs/iam/PERMISSIONS.md`](./iam/PERMISSIONS.md)；机器可读的唯一真相为 `internal/iam/catalog/catalog.go`，并由 Go 测试强制与 `internal/iam/perm.go`、全部 `migrations/*_seed_*.up.sql` 及该文档一致（§13.5）。本附录仅作设计摘要，**冲突时以 `PERMISSIONS.md` 为准**。`channel` 为 `admin` 表示仅 A 端可授予，`biz` 表示 B 端仅商户可授予，`both` 表示两端均可。
 
-| code | channel | kind | data_bearing | 说明 |
-|------|---------|------|--------------|------|
-| `iam:permission:read` | admin | api | 否 | 查看权限目录 |
-| `iam:role:read` | both | api | 否 | 查看角色 |
-| `iam:role:write` | both | api | 否 | 创建 / 更新 / 停用 / 删除角色 |
-| `iam:role:grant` | both | api | 否 | 替换角色权限点 |
-| `iam:binding:read` | both | api | 否 | 查看绑定 |
-| `iam:binding:write` | both | api | 否 | 绑定 / 解绑 |
-| `iam:check` | admin | api | 否 | 模拟鉴权 |
-| `iam:change:read` | admin | api | 否 | 查看审批单 |
-| `iam:change:approve` | admin | api | 否 | 审批变更 |
-| `iam:change:request` | biz | api | 否 | 发起本商户变更申请 / 查看本商户待办 |
-| `iam:change:review` | biz | api | 否 | 审批本商户变更（申请人不得自审） |
-| `iam:breakglass:request` | admin | api | 否 | 申请破玻璃 |
-| `iam:breakglass:approve` | admin | api | 否 | 审批破玻璃 |
-| `order:read` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
-| `order:write` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
-| `file:read` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
-| `file:write` | both | api | 是 | 已弃用；保留既有授权，禁止新授 |
-| `audit:read` | admin | api | 是 | 查询审计 |
-| `data:export` | both | api | 是 | 导出数据 |
-| `config:read` | admin | api | 否 | 查看配置 |
-| `config:write` | admin | api | 否 | 修改配置 |
+| code | channel | data_bearing | 说明 |
+|------|---------|--------------|------|
+| `iam:permission:read` | admin | 否 | 查看权限目录 |
+| `iam:role:read` | both | 否 | 查看角色 |
+| `iam:role:write` | both | 否 | 创建 / 更新 / 停用 / 删除角色 |
+| `iam:role:grant` | both | 否 | 替换角色权限点 |
+| `iam:binding:read` | both | 否 | 查看绑定 |
+| `iam:binding:write` | both | 否 | 绑定 / 解绑 |
+| `iam:check` | admin | 否 | 模拟鉴权 |
+| `iam:change:read` | admin | 否 | 查看审批单 |
+| `iam:change:approve` | admin | 否 | 审批变更 |
+| `iam:change:request` | biz | 否 | 发起本商户变更申请 / 查看本商户待办 |
+| `iam:change:review` | biz | 否 | 审批本商户变更（申请人不得自审） |
+| `iam:breakglass:request` | admin | 否 | 申请破玻璃 |
+| `iam:breakglass:approve` | admin | 否 | 审批破玻璃 |
+| `order:read` | both | 是 | 已弃用；保留既有授权，禁止新授 |
+| `order:write` | both | 是 | 已弃用；保留既有授权，禁止新授 |
+| `file:read` | both | 是 | 已弃用；保留既有授权，禁止新授 |
+| `file:write` | both | 是 | 已弃用；保留既有授权，禁止新授 |
+| `audit:read` | admin | 是 | 查询审计 |
+| `data:export` | both | 是 | 导出数据 |
+| `config:read` | admin | 否 | 查看配置 |
+| `config:write` | admin | 否 | 修改配置 |
 
 **系统角色种子（示例，非最终）**：
 

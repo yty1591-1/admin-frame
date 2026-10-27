@@ -44,18 +44,17 @@ func seedFiles(t *testing.T, suffix string) []string {
 // 依赖约定：每条权限点独占一行、行首为 "('"，列顺序与 000003 的 INSERT 列表一致。
 // 该约定写在迁移文件头，改动列顺序时必须同步本表达式与目录测试。
 //
-// parent_code 允许 NULL（根节点），因此该列匹配 (NULL|'...') 而不是裸字符串。
+// resource 是生成列（由 code 首段派生），不参与 INSERT，因此本表达式不匹配该列。
 var seedRow = regexp.MustCompile(
-	`^\s*\('([a-z][a-z0-9_:]*)',\s*'([^']*)',\s*'(admin|biz|both)',\s*'([a-z][a-z0-9_]*)',\s*` +
-		`'([a-z][a-z0-9_]*)',\s*'(api|menu|button)',\s*([01]),\s*(?:NULL|'[^']*'),\s*'[^']*',\s*(\d+),`,
+	`^\s*\('([a-z][a-z0-9_:]*)',\s*'([^']*)',\s*'(admin|biz|both)',\s*([01]),\s*(\d+),`,
 )
 
 // docRow 解析 PERMISSIONS.md 目录表。
 var docRow = regexp.MustCompile(
-	"^\\|\\s*`([a-z][a-z0-9_:]*)`\\s*\\|\\s*(admin|biz|both)\\s*\\|\\s*(api|menu|button)\\s*\\|\\s*(是|否)\\s*\\|",
+	"^\\|\\s*`([a-z][a-z0-9_:]*)`\\s*\\|\\s*(admin|biz|both)\\s*\\|\\s*(是|否)\\s*\\|",
 )
 
-// TestPermissionCatalog 校验目录自身：格式、唯一性、排序、父节点。
+// TestPermissionCatalog 校验目录自身：格式、唯一性与排序。
 func TestPermissionCatalog(t *testing.T) {
 	if err := catalog.Validate(); err != nil {
 		t.Fatalf("权限目录非法: %v；%s", err, fixHint)
@@ -141,24 +140,15 @@ func TestPermissionCatalogMatchesSeedMigration(t *testing.T) {
 			if catalog.Channel(m[3]) != e.Channel {
 				t.Fatalf("%s:%d %q 的 channel=%q，目录为 %q；%s", name, i+1, code, m[3], e.Channel, fixHint)
 			}
-			if m[4] != e.Resource() {
-				t.Fatalf("%s:%d %q 的 resource=%q，应由权限码首段派生为 %q；%s", name, i+1, code, m[4], e.Resource(), fixHint)
-			}
-			if m[5] != e.Action() {
-				t.Fatalf("%s:%d %q 的 action=%q，应由权限码末段派生为 %q；%s", name, i+1, code, m[5], e.Action(), fixHint)
-			}
-			if catalog.Kind(m[6]) != e.Kind {
-				t.Fatalf("%s:%d %q 的 kind=%q，目录为 %q；%s", name, i+1, code, m[6], e.Kind, fixHint)
-			}
 			wantBearing := "0"
 			if e.DataBearing {
 				wantBearing = "1"
 			}
-			if m[7] != wantBearing {
-				t.Fatalf("%s:%d %q 的 data_bearing=%s，目录为 %s；%s", name, i+1, code, m[7], wantBearing, fixHint)
+			if m[4] != wantBearing {
+				t.Fatalf("%s:%d %q 的 data_bearing=%s，目录为 %s；%s", name, i+1, code, m[4], wantBearing, fixHint)
 			}
-			if m[8] != strconv.Itoa(e.Sort) {
-				t.Fatalf("%s:%d %q 的 sort=%s，目录为 %d；%s", name, i+1, code, m[8], e.Sort, fixHint)
+			if m[5] != strconv.Itoa(e.Sort) {
+				t.Fatalf("%s:%d %q 的 sort=%s，目录为 %d；%s", name, i+1, code, m[5], e.Sort, fixHint)
 			}
 		}
 	}
@@ -207,15 +197,12 @@ func TestPermissionCatalogMatchesDoc(t *testing.T) {
 		if catalog.Channel(m[2]) != e.Channel {
 			t.Fatalf("%s:%d %q 的 channel=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[2], e.Channel, fixHint)
 		}
-		if catalog.Kind(m[3]) != e.Kind {
-			t.Fatalf("%s:%d %q 的 kind=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[3], e.Kind, fixHint)
-		}
 		want := "否"
 		if e.DataBearing {
 			want = "是"
 		}
-		if m[4] != want {
-			t.Fatalf("%s:%d %q 的 data_bearing=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[4], want, fixHint)
+		if m[3] != want {
+			t.Fatalf("%s:%d %q 的 data_bearing=%q，目录为 %q；%s", filepath.Base(path), i+1, code, m[3], want, fixHint)
 		}
 	}
 

@@ -426,10 +426,6 @@ func TestPermissionsAndRoleList(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("oversized page status=%d", rec.Code)
 	}
-	rec, _ = rt.do(t, http.MethodGet, "/admin/v1/iam/permissions/tree", nil, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tree status=%d", rec.Code)
-	}
 	rec, _ = rt.do(t, http.MethodGet, "/admin/v1/iam/roles?page_size=10", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("roles status=%d", rec.Code)

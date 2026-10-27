@@ -136,33 +136,6 @@ func (s *QueryService) Permissions(filter PermissionFilter) []catalog.Entry {
 	return out
 }
 
-// PermissionNode 是权限目录树节点，供菜单 / 按钮渲染。
-type PermissionNode struct {
-	Entry    catalog.Entry
-	Children []*PermissionNode
-}
-
-// PermissionTree 返回过滤后的权限树。
-//
-// 父节点被过滤掉时，子节点提升为根，避免出现「孤儿节点」在界面上丢失。
-func (s *QueryService) PermissionTree(filter PermissionFilter) []*PermissionNode {
-	entries := s.Permissions(filter)
-	nodes := make(map[iam.PermissionCode]*PermissionNode, len(entries))
-	for _, entry := range entries {
-		nodes[entry.Code] = &PermissionNode{Entry: entry}
-	}
-	roots := make([]*PermissionNode, 0, len(entries))
-	for _, entry := range entries {
-		node := nodes[entry.Code]
-		if parent, ok := nodes[entry.ParentCode]; ok && entry.ParentCode != "" {
-			parent.Children = append(parent.Children, node)
-			continue
-		}
-		roots = append(roots, node)
-	}
-	return roots
-}
-
 // SimulateQuery 是模拟鉴权入参。
 type SimulateQuery struct {
 	Channel     domain.Channel

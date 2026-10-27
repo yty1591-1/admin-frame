@@ -29,19 +29,6 @@ const (
 	ChannelBoth Channel = "both"
 )
 
-// Kind 表示权限点在界面上的形态，用于菜单 / 按钮渲染。
-type Kind string
-
-// 权限点形态取值。
-const (
-	// KindAPI 接口级权限，无独立界面节点。
-	KindAPI Kind = "api"
-	// KindMenu 菜单节点。
-	KindMenu Kind = "menu"
-	// KindButton 按钮级操作。
-	KindButton Kind = "button"
-)
-
 // Status 表示权限点生命周期状态。
 type Status string
 
@@ -61,8 +48,8 @@ var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*(?::[a-z][
 
 // Entry 是权限点目录中的一条记录。
 //
-// 字段与 iam_permission 表列一一对应；Resource / Action 由 Code 派生，不单独存储，
-// 避免目录内部自相矛盾。
+// 字段与 iam_permission 表列一一对应；Resource 由 Code 派生且库内为生成列，
+// 不单独写入，避免目录内部自相矛盾。
 type Entry struct {
 	// Code 权限点稳定标识，对应 iam_permission.code。
 	Code iam.PermissionCode
@@ -70,18 +57,12 @@ type Entry struct {
 	Name string
 	// Channel 可授予端别，对应 iam_permission.channel。
 	Channel Channel
-	// Kind 权限点形态，对应 iam_permission.kind。
-	Kind Kind
 	// DataBearing 是否涉及数据范围，对应 iam_permission.data_bearing。
 	DataBearing bool
 	// Status 生命周期状态，对应 iam_permission.status。
 	Status Status
-	// Sort 同级排序值，对应 iam_permission.sort。
+	// Sort 排序值，对应 iam_permission.sort。
 	Sort int
-	// ParentCode 父节点权限码，根节点为空，对应 iam_permission.parent_code。
-	ParentCode iam.PermissionCode
-	// Path 逗号分隔的祖先编码，根节点为空，对应 iam_permission.path。
-	Path string
 	// Description 设计说明，仅用于文档与 Review，不落库。
 	Description string
 }
@@ -91,15 +72,9 @@ func (e Entry) Resource() string {
 	return strings.SplitN(string(e.Code), ":", 2)[0]
 }
 
-// Action 返回权限码末段，用于判定读写语义。
-func (e Entry) Action() string {
-	parts := strings.Split(string(e.Code), ":")
-	return parts[len(parts)-1]
-}
-
 // Validate 校验单条目录记录的自洽性。
 //
-// 只做与其它条目无关的检查；唯一性、排序与父节点存在性由 Validate 负责。
+// 只做与其它条目无关的检查；唯一性与排序由 Validate 负责。
 func (e Entry) Validate() error {
 	code := string(e.Code)
 	if code == "" {
@@ -122,11 +97,6 @@ func (e Entry) Validate() error {
 	default:
 		return fmt.Errorf("权限码 %q 的 channel=%q 非法：仅允许 admin / biz / both", code, e.Channel)
 	}
-	switch e.Kind {
-	case KindAPI, KindMenu, KindButton:
-	default:
-		return fmt.Errorf("权限码 %q 的 kind=%q 非法：仅允许 api / menu / button", code, e.Kind)
-	}
 	switch e.Status {
 	case StatusActive, StatusDeprecated:
 	default:
@@ -135,13 +105,10 @@ func (e Entry) Validate() error {
 	if e.Sort < 0 {
 		return fmt.Errorf("权限码 %q 的 sort=%d 不得为负", code, e.Sort)
 	}
-	if e.ParentCode != "" && !codePattern.MatchString(string(e.ParentCode)) {
-		return fmt.Errorf("权限码 %q 的 parent_code=%q 不合法", code, e.ParentCode)
-	}
 	return nil
 }
 
-// entries 是权限点目录的唯一真相，顺序即菜单排序（Sort 必须严格递增）。
+// entries 是权限点目录的唯一真相，顺序即授权页排序（Sort 必须严格递增）。
 //
 // 变更要求：新增条目只能追加，Sort 取当前最大值 + 10；不得调整既有条目的
 // Code / Channel / DataBearing，否则视为破坏性变更，须走 ADR 与数据迁移。
@@ -150,7 +117,6 @@ var entries = []Entry{
 		Code:        iam.PermPermissionRead,
 		Name:        "查看权限目录",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        10,
 		Description: "读取权限点目录，供菜单与授权页展示；不含角色授权关系。",
@@ -159,7 +125,6 @@ var entries = []Entry{
 		Code:        iam.PermRoleRead,
 		Name:        "查看角色",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        20,
 		Description: "查看角色定义与已授予权限；B 端限本商户。",
@@ -168,7 +133,6 @@ var entries = []Entry{
 		Code:        iam.PermRoleWrite,
 		Name:        "管理角色",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        30,
 		Description: "创建、更新、停用、软删角色；不包含授权。",
@@ -177,7 +141,6 @@ var entries = []Entry{
 		Code:        iam.PermRoleGrant,
 		Name:        "授予角色权限",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        40,
 		Description: "替换角色权限点集合；强制 Idempotency-Key 并写审计。",
@@ -186,7 +149,6 @@ var entries = []Entry{
 		Code:        iam.PermBindingRead,
 		Name:        "查看绑定",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        50,
 		Description: "查看主体与角色的绑定关系；B 端限本商户。",
@@ -195,7 +157,6 @@ var entries = []Entry{
 		Code:        iam.PermBindingWrite,
 		Name:        "管理绑定",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        60,
 		Description: "绑定或解绑主体角色；重复绑定幂等，解绑幂等。",
@@ -204,7 +165,6 @@ var entries = []Entry{
 		Code:        iam.PermCheck,
 		Name:        "模拟鉴权",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        70,
 		Description: "以指定主体与资源模拟鉴权结果，用于排障与灰度比对；不改变授权。",
@@ -213,7 +173,6 @@ var entries = []Entry{
 		Code:        iam.PermChangeRead,
 		Name:        "查看审批单",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        80,
 		Description: "查看高风险变更审批单与审批记录。",
@@ -222,7 +181,6 @@ var entries = []Entry{
 		Code:        iam.PermChangeApprove,
 		Name:        "审批变更",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        90,
 		Description: "审批角色 / 绑定变更；申请人不得自审。",
@@ -231,7 +189,6 @@ var entries = []Entry{
 		Code:        iam.PermBreakglassRequest,
 		Name:        "申请破玻璃",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        100,
 		Description: "申请限时超级权限；必须填写原因与有效期，默认上限 2 小时。",
@@ -240,7 +197,6 @@ var entries = []Entry{
 		Code:        iam.PermBreakglassApprove,
 		Name:        "审批破玻璃",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        110,
 		Description: "审批破玻璃申请；与申请人强制分离并触发高危告警。",
@@ -249,7 +205,6 @@ var entries = []Entry{
 		Code:        iam.PermOrderRead,
 		Name:        "查询订单",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusDeprecated,
 		Sort:        120,
@@ -259,7 +214,6 @@ var entries = []Entry{
 		Code:        iam.PermOrderWrite,
 		Name:        "变更订单",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusDeprecated,
 		Sort:        130,
@@ -269,7 +223,6 @@ var entries = []Entry{
 		Code:        iam.PermFileRead,
 		Name:        "查看文件",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusDeprecated,
 		Sort:        140,
@@ -279,7 +232,6 @@ var entries = []Entry{
 		Code:        iam.PermFileWrite,
 		Name:        "管理文件",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusDeprecated,
 		Sort:        150,
@@ -289,7 +241,6 @@ var entries = []Entry{
 		Code:        iam.PermAuditRead,
 		Name:        "查询审计",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusActive,
 		Sort:        160,
@@ -299,7 +250,6 @@ var entries = []Entry{
 		Code:        iam.PermDataExport,
 		Name:        "导出数据",
 		Channel:     ChannelBoth,
-		Kind:        KindAPI,
 		DataBearing: true,
 		Status:      StatusActive,
 		Sort:        170,
@@ -309,7 +259,6 @@ var entries = []Entry{
 		Code:        iam.PermConfigRead,
 		Name:        "查看配置",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        180,
 		Description: "查看运行时配置；敏感项脱敏。",
@@ -318,7 +267,6 @@ var entries = []Entry{
 		Code:        iam.PermConfigWrite,
 		Name:        "修改配置",
 		Channel:     ChannelAdmin,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        190,
 		Description: "修改运行时配置；须审计并支持回滚。",
@@ -327,7 +275,6 @@ var entries = []Entry{
 		Code:        iam.PermChangeRequest,
 		Name:        "发起变更申请",
 		Channel:     ChannelBiz,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        200,
 		Description: "以本商户身份发起高风险变更申请，并查看本商户审批单（仅 B 端）。",
@@ -336,7 +283,6 @@ var entries = []Entry{
 		Code:        iam.PermChangeReview,
 		Name:        "审批本商户变更",
 		Channel:     ChannelBiz,
-		Kind:        KindAPI,
 		Status:      StatusActive,
 		Sort:        210,
 		Description: "审批本商户变更申请；申请人不得自审（职责分离）。",
@@ -391,14 +337,6 @@ func Validate() error {
 			return fmt.Errorf("权限码 %q 的 sort=%d 未严格递增（前一条为 %d），目录顺序必须稳定", e.Code, e.Sort, prevSort)
 		}
 		prevSort = e.Sort
-	}
-	for _, e := range entries {
-		if e.ParentCode == "" {
-			continue
-		}
-		if _, ok := seen[e.ParentCode]; !ok {
-			return fmt.Errorf("权限码 %q 的父节点 %q 不在目录中", e.Code, e.ParentCode)
-		}
 	}
 	return nil
 }
