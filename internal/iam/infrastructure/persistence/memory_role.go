@@ -162,6 +162,27 @@ func (r *MemoryRoleRepository) Count(_ context.Context, filter domain.RoleFilter
 	return total, nil
 }
 
+// ListByTemplate 返回由指定模板实例化的未删除角色，按 code 升序。
+func (r *MemoryRoleRepository) ListByTemplate(_ context.Context, templateID string) ([]*domain.Role, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]*domain.Role, 0, len(r.roles))
+	for _, role := range r.roles {
+		if role.IsDeleted() || role.TemplateID != templateID {
+			continue
+		}
+		out = append(out, cloneRole(role))
+	}
+	slices.SortFunc(out, func(a, b *domain.Role) int {
+		if byCode := strings.Compare(a.Code, b.Code); byCode != 0 {
+			return byCode
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
 // matchesKeyword 对 code / name 做大小写不敏感包含匹配。
 func matchesKeyword(role *domain.Role, keyword string) bool {
 	needle := strings.ToLower(keyword)

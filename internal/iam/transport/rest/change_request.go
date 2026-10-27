@@ -26,21 +26,25 @@ import (
 // merchant_id 只对 A 端回显（平台运营需要定位租户）；B 端回显一个自己已知的值
 // 没有信息增益，反而把租户标识扩散到客户端日志，因此 B 端置空。
 type ChangeRequestDTO struct {
-	ID          string          `json:"id"`
-	Channel     string          `json:"channel"`
-	MerchantID  string          `json:"merchant_id,omitempty"`
-	Action      string          `json:"action"`
-	TargetType  string          `json:"target_type"`
-	TargetID    string          `json:"target_id"`
-	Payload     json.RawMessage `json:"payload"`
-	Status      string          `json:"status"`
-	Reason      string          `json:"reason"`
-	RequestedBy string          `json:"requested_by"`
-	RequestedAt time.Time       `json:"requested_at"`
-	ApprovedBy  string          `json:"approved_by"`
-	ApprovedAt  *time.Time      `json:"approved_at,omitempty"`
-	AppliedAt   *time.Time      `json:"applied_at,omitempty"`
-	Version     int64           `json:"version"`
+	ID             string          `json:"id"`
+	Channel        string          `json:"channel"`
+	MerchantID     string          `json:"merchant_id,omitempty"`
+	Action         string          `json:"action"`
+	TargetType     string          `json:"target_type"`
+	TargetID       string          `json:"target_id"`
+	Payload        json.RawMessage `json:"payload"`
+	PayloadVersion int32           `json:"payload_version"`
+	Status         string          `json:"status"`
+	Reason         string          `json:"reason"`
+	RequestedBy    string          `json:"requested_by"`
+	RequestedAt    time.Time       `json:"requested_at"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+	ApprovedBy     string          `json:"approved_by"`
+	ApprovedAt     *time.Time      `json:"approved_at,omitempty"`
+	DecisionReason string          `json:"decision_reason,omitempty"`
+	AppliedBy      string          `json:"applied_by,omitempty"`
+	AppliedAt      *time.Time      `json:"applied_at,omitempty"`
+	Version        int64           `json:"version"`
 }
 
 // ChangeRequestListResponse 是审批单列表响应。
@@ -79,21 +83,25 @@ func toChangeRequestDTO(request *domain.ChangeRequest, includeMerchant bool) *Ch
 		merchantID = request.MerchantID
 	}
 	return &ChangeRequestDTO{
-		ID:          request.ID,
-		Channel:     string(request.Channel),
-		MerchantID:  merchantID,
-		Action:      string(request.Action),
-		TargetType:  string(request.TargetType),
-		TargetID:    request.TargetID,
-		Payload:     json.RawMessage(payload),
-		Status:      string(request.Status),
-		Reason:      request.Reason,
-		RequestedBy: request.RequestedBy,
-		RequestedAt: request.RequestedAt,
-		ApprovedBy:  request.ApprovedBy,
-		ApprovedAt:  request.ApprovedAt,
-		AppliedAt:   request.AppliedAt,
-		Version:     request.Version,
+		ID:             request.ID,
+		Channel:        string(request.Channel),
+		MerchantID:     merchantID,
+		Action:         string(request.Action),
+		TargetType:     string(request.TargetType),
+		TargetID:       request.TargetID,
+		Payload:        json.RawMessage(payload),
+		PayloadVersion: request.PayloadVersion,
+		Status:         string(request.Status),
+		Reason:         request.Reason,
+		RequestedBy:    request.RequestedBy,
+		RequestedAt:    request.RequestedAt,
+		ExpiresAt:      request.ExpiresAt,
+		ApprovedBy:     request.ApprovedBy,
+		ApprovedAt:     request.ApprovedAt,
+		DecisionReason: request.DecisionReason,
+		AppliedBy:      request.AppliedBy,
+		AppliedAt:      request.AppliedAt,
+		Version:        request.Version,
 	}
 }
 
@@ -258,7 +266,7 @@ func (h *Handler) ApplyChangeRequest(w http.ResponseWriter, r *http.Request) {
 
 // decideChangeRequest 抽取通过 / 拒绝的公共解析逻辑。
 func (h *Handler) decideChangeRequest(w http.ResponseWriter, r *http.Request,
-	decide func(context.Context, string, int64, string, app.ChangeScope) (*domain.ChangeRequest, error)) {
+	decide func(context.Context, string, int64, string, string, app.ChangeScope) (*domain.ChangeRequest, error)) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	principal, scope, err := h.changeScope(r)
 	if err != nil {
@@ -275,7 +283,7 @@ func (h *Handler) decideChangeRequest(w http.ResponseWriter, r *http.Request,
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	request, err := decide(r.Context(), r.PathValue("id"), version, principal.SubjectID, scope)
+	request, err := decide(r.Context(), r.PathValue("id"), version, principal.SubjectID, req.Reason, scope)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return

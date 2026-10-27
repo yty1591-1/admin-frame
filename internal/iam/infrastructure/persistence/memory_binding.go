@@ -71,8 +71,11 @@ func (r *MemoryBindingRepository) Save(_ context.Context, binding *domain.Bindin
 	return nil
 }
 
-// Delete 解绑；不存在也返回 nil（幂等）。
-func (r *MemoryBindingRepository) Delete(_ context.Context, id string) error {
+// Revoke 软撤销绑定；不存在或已撤销也返回 nil（幂等）。
+//
+// 撤销后从唯一键索引移除，使同一主体同一角色可以重新授权为一条新绑定，
+// 旧行仍保留在 bindings 中，供审计回放完整授权轨迹。
+func (r *MemoryBindingRepository) Revoke(_ context.Context, id, actor, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -80,14 +83,19 @@ func (r *MemoryBindingRepository) Delete(_ context.Context, id string) error {
 	if !ok {
 		return nil
 	}
-	delete(r.bindings, id)
-	delete(r.byKey, bindingKey{
+	if err := binding.Revoke(actor, reason); err != nil {
+		return err
+	}
+	key := bindingKey{
 		channel:     binding.Channel,
 		subjectType: binding.SubjectType,
 		subjectID:   binding.SubjectID,
 		merchantID:  binding.MerchantID,
 		roleID:      binding.RoleID,
-	})
+	}
+	if current, exists := r.byKey[key]; exists && current == id {
+		delete(r.byKey, key)
+	}
 	return nil
 }
 
@@ -123,7 +131,7 @@ func (r *MemoryBindingRepository) ListBySubject(_ context.Context, query domain.
 			binding.MerchantID != query.MerchantID {
 			continue
 		}
-		if binding.IsExpired(at) {
+		if !binding.IsEffective(at) {
 			continue
 		}
 		out = append(out, cloneBinding(binding))
@@ -177,7 +185,7 @@ func validateSubjectQuery(query domain.SubjectQuery) error {
 	return nil
 }
 
-// cloneBinding 返回绑定深拷贝，隔离 ExpiresAt 指针。
+// cloneBinding 返回绑定深拷贝，隔离 ExpiresAt / RevokedAt 指针。
 func cloneBinding(binding *domain.Binding) *domain.Binding {
 	if binding == nil {
 		return nil
@@ -186,6 +194,10 @@ func cloneBinding(binding *domain.Binding) *domain.Binding {
 	if binding.ExpiresAt != nil {
 		expiresAt := *binding.ExpiresAt
 		cp.ExpiresAt = &expiresAt
+	}
+	if binding.RevokedAt != nil {
+		revokedAt := *binding.RevokedAt
+		cp.RevokedAt = &revokedAt
 	}
 	return &cp
 }

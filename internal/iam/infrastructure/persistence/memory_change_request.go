@@ -54,6 +54,18 @@ func (r *MemoryChangeRequestRepository) Save(_ context.Context, request *domain.
 		if exists {
 			return apperr.Conflict("change request id already exists")
 		}
+		// 对应库内 uk_iam_change_pending：同一端别 / 商户 / 动作 / 目标至多一张待审批单。
+		if request.Status == domain.ChangeStatusPending && request.TargetID != "" {
+			for _, other := range r.requests {
+				if other.Status != domain.ChangeStatusPending || other.TargetID == "" {
+					continue
+				}
+				if other.Channel == request.Channel && other.MerchantID == request.MerchantID &&
+					other.Action == request.Action && other.TargetID == request.TargetID {
+					return apperr.Conflict("change request already pending for this target")
+				}
+			}
+		}
 		r.requests[request.ID] = cloneChangeRequest(request)
 		return nil
 	}
@@ -129,13 +141,17 @@ func matchChangeFilter(request *domain.ChangeRequest, filter domain.ChangeReques
 	return true
 }
 
-// cloneChangeRequest 返回审批单深拷贝，隔离 Payload / ApprovedAt / AppliedAt。
+// cloneChangeRequest 返回审批单深拷贝，隔离 Payload / ExpiresAt / ApprovedAt / AppliedAt。
 func cloneChangeRequest(request *domain.ChangeRequest) *domain.ChangeRequest {
 	if request == nil {
 		return nil
 	}
 	cp := *request
 	cp.Payload = slices.Clone(request.Payload)
+	if request.ExpiresAt != nil {
+		expiresAt := *request.ExpiresAt
+		cp.ExpiresAt = &expiresAt
+	}
 	if request.ApprovedAt != nil {
 		approvedAt := *request.ApprovedAt
 		cp.ApprovedAt = &approvedAt

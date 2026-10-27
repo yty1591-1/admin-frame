@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 
 // roleSelectColumns 是角色表的显式列清单（禁止 SELECT *，DATA-04）。
 const roleSelectColumns = `id, channel, scope_type, merchant_id, code, name, description,
-	role_type, status, version, created_by, updated_by, created_at, updated_at, deleted_at`
+	role_type, template_id, template_version, status, version, created_by, updated_by,
+	created_at, updated_at, deleted_at`
 
 // SQLRoleRepository 是 MySQL 8.0 的角色仓储实现。
 //
@@ -95,12 +97,22 @@ func (r *SQLRoleRepository) insert(ctx context.Context, role *domain.Role) error
 	if err != nil {
 		return err
 	}
+	var templateID any = int64(0)
+	if role.TemplateID != "" {
+		parsed, parseErr := parseID(role.TemplateID)
+		if parseErr != nil {
+			return parseErr
+		}
+		templateID = parsed
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO iam_role
 		(id, channel, scope_type, merchant_id, code, name, description,
-		 role_type, status, version, created_by, updated_by, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 role_type, template_id, template_version, status, version,
+		 created_by, updated_by, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		roleID, string(role.Channel), string(role.Scope), role.MerchantID, role.Code,
-		role.Name, role.Description, string(role.Type), string(role.Status), role.Version,
+		role.Name, role.Description, string(role.Type), templateID,
+		role.TemplateVersion, string(role.Status), role.Version,
 		role.CreatedBy, role.UpdatedBy, role.CreatedAt.UTC(), role.UpdatedAt.UTC(), nullTime(role.DeletedAt))
 	if err := conflictOnDuplicate(err, "role code already exists in this channel and merchant"); err != nil {
 		return err
@@ -138,10 +150,11 @@ func (r *SQLRoleRepository) update(ctx context.Context, role *domain.Role, expec
 	}
 
 	result, err := tx.ExecContext(ctx, `UPDATE iam_role
-		SET name = ?, description = ?, role_type = ?, status = ?, version = ?,
+		SET name = ?, description = ?, role_type = ?, template_version = ?, status = ?, version = ?,
 		    updated_by = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ? AND version = ?`,
-		role.Name, role.Description, string(role.Type), string(role.Status), role.Version,
+		role.Name, role.Description, string(role.Type), role.TemplateVersion,
+		string(role.Status), role.Version,
 		role.UpdatedBy, role.UpdatedAt.UTC(), nullTime(role.DeletedAt), roleID, expectedVersion)
 	if err != nil {
 		return err
@@ -201,6 +214,37 @@ func (r *SQLRoleRepository) Count(ctx context.Context, filter domain.RoleFilter)
 		return 0, err
 	}
 	return total, nil
+}
+
+// ListByTemplate 返回由指定模板实例化的未删除角色，按 code、id 排序。
+//
+// 供模板漂移扫描：调用方比对 role.TemplateVersion 与模板当前 Version，
+// 决定是否需要显式同步，而不是在读取时隐式联动。
+func (r *SQLRoleRepository) ListByTemplate(ctx context.Context, templateID string) ([]*domain.Role, error) {
+	parsed, err := parseID(templateID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx,
+		`SELECT `+roleSelectColumns+` FROM iam_role
+		 WHERE template_id = ? AND deleted_at IS NULL ORDER BY code, id`, parsed)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*domain.Role, 0)
+	for rows.Next() {
+		role, scanErr := scanRole(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // roleFilterClause 生成 List / Count 共用的过滤子句，避免两处条件漂移。
@@ -276,19 +320,44 @@ func syncPermissions(ctx context.Context, tx db.Querier, role *domain.Role, role
 	return nil
 }
 
-// syncScopes 全量替换角色的数据范围（表小、按 resource 唯一）。
+// syncScopes 差量同步角色的数据范围。
+//
+// 与权限一致，不做全量 delete + insert：保留未变更行的 created_at，
+// 让审计能回答「这个数据范围是什么时候第一次配置的」。
 func syncScopes(ctx context.Context, tx db.Querier, role *domain.Role, roleID int64) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM iam_role_data_scope WHERE role_id = ?`, roleID); err != nil {
+	scopes := role.SortedDataScopes()
+	if len(scopes) == 0 {
+		_, err := tx.ExecContext(ctx, `DELETE FROM iam_role_data_scope WHERE role_id = ?`, roleID)
 		return err
 	}
-	for _, scope := range role.SortedDataScopes() {
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(scopes)), ",")
+	args := make([]any, 0, len(scopes)+1)
+	args = append(args, roleID)
+	for _, scope := range scopes {
+		args = append(args, scope.Resource)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM iam_role_data_scope WHERE role_id = ? AND resource NOT IN (`+placeholders+`)`,
+		args...); err != nil {
+		return err
+	}
+
+	for _, scope := range scopes {
 		payload, err := marshalScopeValues(scope)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO iam_role_data_scope
-			(role_id, resource, scope_type, scope_values, updated_at) VALUES (?, ?, ?, ?, ?)`,
-			roleID, scope.Resource, string(scope.Type), payload, role.UpdatedAt.UTC()); err != nil {
+			(role_id, channel, resource, scope_type, scope_values, granted_by, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			AS new ON DUPLICATE KEY UPDATE
+				scope_type = new.scope_type,
+				scope_values = new.scope_values,
+				granted_by = new.granted_by,
+				updated_at = new.updated_at`,
+			roleID, string(role.Channel), scope.Resource, string(scope.Type), payload,
+			role.UpdatedBy, role.UpdatedAt.UTC(), role.UpdatedAt.UTC()); err != nil {
 			return err
 		}
 	}
@@ -372,19 +441,24 @@ type scanRow interface {
 	Scan(dest ...any) error
 }
 
-// scanRole 扫描一行角色；deleted_at 允许为 NULL。
+// scanRole 扫描一行角色；deleted_at 允许为 NULL，template_id 为 0 表示非模板实例。
 func scanRole(row scanRow) (*domain.Role, error) {
 	var (
-		role      domain.Role
-		deletedAt sql.NullTime
+		role       domain.Role
+		templateID int64
+		deletedAt  sql.NullTime
 	)
 	err := row.Scan(
 		&role.ID, &role.Channel, &role.Scope, &role.MerchantID, &role.Code,
-		&role.Name, &role.Description, &role.Type, &role.Status, &role.Version,
-		&role.CreatedBy, &role.UpdatedBy, &role.CreatedAt, &role.UpdatedAt, &deletedAt,
+		&role.Name, &role.Description, &role.Type, &templateID, &role.TemplateVersion,
+		&role.Status, &role.Version, &role.CreatedBy, &role.UpdatedBy,
+		&role.CreatedAt, &role.UpdatedAt, &deletedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if templateID != 0 {
+		role.TemplateID = strconv.FormatInt(templateID, 10)
 	}
 	if deletedAt.Valid {
 		value := deletedAt.Time.UTC()

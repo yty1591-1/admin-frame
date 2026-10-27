@@ -58,7 +58,7 @@ func TestChangeRequestFullFlowAppliesPermissions(t *testing.T) {
 		t.Fatalf("created request = %+v", request)
 	}
 
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestChangeRequestApproveEnforcesSeparationOfDuties(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	_, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1001", adminScope)
+	_, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1001", "", adminScope)
 	if !errors.Is(err, domain.ErrSelfApproval) {
 		t.Fatalf("err = %v, want self approval rejection", err)
 	}
@@ -148,7 +148,7 @@ func TestChangeRequestApplyIsVersionGuarded(t *testing.T) {
 	f := newFixture(t)
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestChangeRequestApplyFailureKeepsApprovedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -219,14 +219,14 @@ func TestChangeRequestRejectFlow(t *testing.T) {
 	role := createTestRole(t, f, "ops_lead")
 	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
 
-	rejected, err := f.changeSvc.Reject(context.Background(), request.ID, request.Version, "1002", adminScope)
+	rejected, err := f.changeSvc.Reject(context.Background(), request.ID, request.Version, "1002", "rejected in test", adminScope)
 	if err != nil {
 		t.Fatalf("Reject: %v", err)
 	}
 	if rejected.Status != domain.ChangeStatusRejected || rejected.ApprovedBy != "1002" {
 		t.Fatalf("rejected = %+v", rejected)
 	}
-	if _, err := f.changeSvc.Approve(context.Background(), rejected.ID, rejected.Version, "1003", adminScope); !errors.Is(err, domain.ErrChangeNotPending) {
+	if _, err := f.changeSvc.Approve(context.Background(), rejected.ID, rejected.Version, "1003", "", adminScope); !errors.Is(err, domain.ErrChangeNotPending) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -302,7 +302,7 @@ func TestChangeRequestRoleCreateBindsTargetOnApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestChangeRequestBindingCreateApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestChangeRequestRejectsUnknownPayloadFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", adminScope)
+	approved, err := f.changeSvc.Approve(context.Background(), request.ID, request.Version, "1002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}

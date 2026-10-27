@@ -30,7 +30,9 @@ type HandlerConfig struct {
 	Query      *app.QueryService
 	Changes    *app.ChangeRequestService
 	Breakglass *app.BreakglassService
-	Channel    domain.Channel
+	// Templates 角色模板用例；为空时模板路由返回 50000（兼容仅启用角色管理的装配）。
+	Templates *app.TemplateService
+	Channel   domain.Channel
 	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
 	// （iam.approval.enabled）。
 	RequireApproval bool
@@ -43,6 +45,7 @@ type Handler struct {
 	query           *app.QueryService
 	changes         *app.ChangeRequestService
 	breakglass      *app.BreakglassService
+	templates       *app.TemplateService
 	channel         domain.Channel
 	requireApproval bool
 }
@@ -64,6 +67,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		query:           cfg.Query,
 		changes:         cfg.Changes,
 		breakglass:      cfg.Breakglass,
+		templates:       cfg.Templates,
 		channel:         cfg.Channel,
 		requireApproval: cfg.RequireApproval,
 	}, nil

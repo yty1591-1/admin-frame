@@ -33,6 +33,26 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 授权（全量替换，差量审计）。
 	mux.Handle("PUT /admin/v1/iam/roles/{id}/permissions", authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.ReplacePermissions))))
 
+	// 角色模板：平台定义基线，B 端按商户实例化；同步为高风险显式收敛动作。
+	mux.Handle("GET /admin/v1/iam/role-templates",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoleTemplates))))
+	mux.Handle("POST /admin/v1/iam/role-templates",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.CreateRoleTemplate))))
+	mux.Handle("GET /admin/v1/iam/role-templates/{id}",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetRoleTemplate))))
+	mux.Handle("PATCH /admin/v1/iam/role-templates/{id}",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.UpdateRoleTemplate))))
+	mux.Handle("PUT /admin/v1/iam/role-templates/{id}/permissions",
+		authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.ReplaceRoleTemplatePermissions))))
+	mux.Handle("DELETE /admin/v1/iam/role-templates/{id}",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.DeleteRoleTemplate))))
+	mux.Handle("GET /admin/v1/iam/role-templates/{id}/drift",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetTemplateDrift))))
+	mux.Handle("POST /admin/v1/iam/role-templates/{id}/sync",
+		authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.SyncRoleTemplate))))
+	mux.Handle("POST /admin/v1/iam/role-templates/{id}/instantiate",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.InstantiateRoleTemplate))))
+
 	// 绑定。
 	mux.Handle("GET /admin/v1/iam/bindings", authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.ListBindings))))
 	mux.Handle("POST /admin/v1/iam/bindings", authMW(perm(string(iam.PermBindingWrite))(http.HandlerFunc(h.CreateBinding))))

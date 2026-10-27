@@ -36,6 +36,7 @@ WHERE b.channel = ?
 	AND b.subject_type = ?
 	AND b.subject_id = ?
 	AND b.merchant_id = ?
+	AND b.revoked_at IS NULL
 	AND (b.expires_at IS NULL OR b.expires_at > ?)
 	AND (p.code IS NOT NULL OR r.role_type = 'breakglass')`
 
@@ -54,6 +55,7 @@ WHERE b.channel = ?
 	AND b.subject_type = ?
 	AND b.subject_id = ?
 	AND b.merchant_id = ?
+	AND b.revoked_at IS NULL
 	AND (b.expires_at IS NULL OR b.expires_at > ?)`
 
 // SQLSnapshotRepository 是 MySQL 8.0 的鉴权快照只读实现。

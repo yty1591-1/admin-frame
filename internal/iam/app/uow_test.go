@@ -186,7 +186,7 @@ func TestApplyChangeRequestPropagatesCommitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	approved, err := f.changeSvc.Approve(ctx, request.ID, request.Version, "2002", adminScope)
+	approved, err := f.changeSvc.Approve(ctx, request.ID, request.Version, "2002", "", adminScope)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}

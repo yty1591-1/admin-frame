@@ -64,6 +64,14 @@ var (
 	ErrChangeTenantOverride = errors.New("change payload must not override tenant")
 	// ErrInvalidChangeTenant 审批单端别与商户组合非法：A 端不得带商户，B 端必须带商户。
 	ErrInvalidChangeTenant = errors.New("invalid change tenant")
+	// ErrChangeExpired 审批时效已过，不能再通过。
+	ErrChangeExpired = errors.New("change request expired")
+	// ErrInvalidDecisionReason 审批结论说明非法；拒绝时必填。
+	ErrInvalidDecisionReason = errors.New("invalid decision reason")
+	// ErrInvalidRoleTemplate 角色模板字段非法。
+	ErrInvalidRoleTemplate = errors.New("invalid role template")
+	// ErrTemplateNotActive 角色模板已停用或已删除，不能用于实例化。
+	ErrTemplateNotActive = errors.New("role template not active")
 )
 
 // errInvalid 构造参数错误（HTTP 400 / 业务码 40000）。

@@ -95,6 +95,7 @@ func (i *capturedInvalidator) count() int {
 type fixture struct {
 	roles       *persistence.MemoryRoleRepository
 	bindings    *persistence.MemoryBindingRepository
+	templates   *persistence.MemoryRoleTemplateRepository
 	snapshots   *persistence.MemorySnapshotRepository
 	changes     *persistence.MemoryChangeRequestRepository
 	recorder    *capturedRecorder
@@ -103,6 +104,7 @@ type fixture struct {
 	roleSvc     *app.RoleService
 	bindingSvc  *app.BindingService
 	querySvc    *app.QueryService
+	templateSvc *app.TemplateService
 	changeSvc   *app.ChangeRequestService
 }
 
@@ -119,6 +121,7 @@ func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 	f := &fixture{
 		roles:       roles,
 		bindings:    bindings,
+		templates:   persistence.NewMemoryRoleTemplateRepository(),
 		snapshots:   persistence.NewMemorySnapshotRepository(roles, bindings),
 		recorder:    &capturedRecorder{},
 		invalidator: &capturedInvalidator{},
@@ -156,6 +159,19 @@ func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 	f.querySvc, err = app.NewQueryService(roles, bindings, f.snapshots)
 	if err != nil {
 		t.Fatalf("NewQueryService: %v", err)
+	}
+	f.templateSvc, err = app.NewTemplateService(app.TemplateServiceConfig{
+		Templates:  f.templates,
+		Roles:      f.roleSvc,
+		RoleRepo:   roles,
+		Recorder:   f.recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits:     app.RoleLimits{MaxPermissionsPerRole: 200, RequireReason: true},
+	})
+	if err != nil {
+		t.Fatalf("NewTemplateService: %v", err)
 	}
 	applicator, err := app.NewRoleChangeApplicator(f.roleSvc, f.bindingSvc)
 	if err != nil {

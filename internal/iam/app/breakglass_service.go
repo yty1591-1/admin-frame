@@ -150,7 +150,7 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 		switch {
 		case request.IsPending():
 			approved, approveErr := s.changes.Approve(ctx, request.ID, cmd.Version, cmd.Approver,
-				ChangeScope{Channel: domain.ChannelAdmin})
+				"", ChangeScope{Channel: domain.ChannelAdmin})
 			if approveErr != nil {
 				return approveErr
 			}

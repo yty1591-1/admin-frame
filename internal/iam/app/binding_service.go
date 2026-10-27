@@ -228,8 +228,15 @@ func (s *BindingService) Unbind(ctx context.Context, cmd UnbindCommand) error {
 		// 跨商户一律 404，不泄露资源是否存在（SEC-14）。
 		return apperr.NotFound("binding not found")
 	}
+	if binding.IsRevoked() {
+		// 已撤销：保持首次撤销事实，重复解绑幂等成功且不重复写审计。
+		return nil
+	}
+	if err := binding.Revoke(cmd.Actor, cmd.Reason); err != nil {
+		return err
+	}
 	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
-		if err := s.bindings.Delete(ctx, binding.ID); err != nil {
+		if err := s.bindings.Revoke(ctx, binding.ID, cmd.Actor, cmd.Reason); err != nil {
 			return err
 		}
 		return s.recordBinding(ctx, binding, opUnbind, cmd.Actor, cmd.Reason, map[string]string{

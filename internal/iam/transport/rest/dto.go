@@ -56,6 +56,8 @@ type RoleDTO struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
 	RoleType     string         `json:"role_type"`
+	TemplateID   string         `json:"template_id,omitempty"`
+	TemplateVer  int64          `json:"template_version,omitempty"`
 	Status       string         `json:"status"`
 	Version      int64          `json:"version"`
 	Permissions  []string       `json:"permissions"`
@@ -123,15 +125,18 @@ type DeleteRoleRequest struct {
 
 // BindingDTO 是绑定响应。
 type BindingDTO struct {
-	ID          string     `json:"id"`
-	Channel     string     `json:"channel"`
-	SubjectType string     `json:"subject_type"`
-	SubjectID   string     `json:"subject_id"`
-	MerchantID  string     `json:"merchant_id"`
-	RoleID      string     `json:"role_id"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	GrantedBy   string     `json:"granted_by"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	Channel      string     `json:"channel"`
+	SubjectType  string     `json:"subject_type"`
+	SubjectID    string     `json:"subject_id"`
+	MerchantID   string     `json:"merchant_id"`
+	RoleID       string     `json:"role_id"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	GrantedBy    string     `json:"granted_by"`
+	CreatedAt    time.Time  `json:"created_at"`
+	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy    string     `json:"revoked_by,omitempty"`
+	RevokeReason string     `json:"revoke_reason,omitempty"`
 }
 
 // BindingListResponse 是绑定列表响应。
@@ -252,6 +257,8 @@ func toRoleDTO(role *domain.Role) *RoleDTO {
 		Name:        role.Name,
 		Description: role.Description,
 		RoleType:    string(role.Type),
+		TemplateID:  role.TemplateID,
+		TemplateVer: role.TemplateVersion,
 		Status:      string(role.Status),
 		Version:     role.Version,
 		Permissions: permissions,
@@ -266,15 +273,18 @@ func toRoleDTO(role *domain.Role) *RoleDTO {
 // toBindingDTO 转换绑定聚合。
 func toBindingDTO(binding *domain.Binding) *BindingDTO {
 	return &BindingDTO{
-		ID:          binding.ID,
-		Channel:     string(binding.Channel),
-		SubjectType: string(binding.SubjectType),
-		SubjectID:   binding.SubjectID,
-		MerchantID:  binding.MerchantID,
-		RoleID:      binding.RoleID,
-		ExpiresAt:   binding.ExpiresAt,
-		GrantedBy:   binding.GrantedBy,
-		CreatedAt:   binding.CreatedAt,
+		ID:           binding.ID,
+		Channel:      string(binding.Channel),
+		SubjectType:  string(binding.SubjectType),
+		SubjectID:    binding.SubjectID,
+		MerchantID:   binding.MerchantID,
+		RoleID:       binding.RoleID,
+		ExpiresAt:    binding.ExpiresAt,
+		GrantedBy:    binding.GrantedBy,
+		CreatedAt:    binding.CreatedAt,
+		RevokedAt:    binding.RevokedAt,
+		RevokedBy:    binding.RevokedBy,
+		RevokeReason: binding.RevokeReason,
 	}
 }
 

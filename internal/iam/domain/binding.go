@@ -5,6 +5,9 @@ import "time"
 // MaxBreakglassDuration 破玻璃绑定的最大有效期（§8.5：默认上限 2 小时）。
 const MaxBreakglassDuration = 2 * time.Hour
 
+// MaxRevokeReasonLen 解绑原因最大字节数，与 iam_role_binding.revoke_reason 列宽一致。
+const MaxRevokeReasonLen = 512
+
 // Binding 是主体与角色的绑定关系聚合。
 //
 // 不变量：
@@ -31,6 +34,12 @@ type Binding struct {
 	GrantedBy string
 	// CreatedAt 绑定时间（UTC）。
 	CreatedAt time.Time
+	// RevokedAt 解绑时间（UTC）；nil 表示仍生效。
+	RevokedAt *time.Time
+	// RevokedBy 解绑操作人 subject_id；未解绑时为空串。
+	RevokedBy string
+	// RevokeReason 解绑原因。
+	RevokeReason string
 }
 
 // NewBindingParams 创建绑定的入参。
@@ -119,8 +128,36 @@ func (b *Binding) IsExpired(now time.Time) bool {
 	return !now.Before(*b.ExpiresAt)
 }
 
-// IsEffective 报告绑定在 now 时刻是否有效。
-func (b *Binding) IsEffective(now time.Time) bool { return !b.IsExpired(now) }
+// IsRevoked 报告绑定是否已被撤销。
+func (b *Binding) IsRevoked() bool { return b.RevokedAt != nil }
+
+// IsEffective 报告绑定在 now 时刻是否有效（未撤销且未过期）。
+func (b *Binding) IsEffective(now time.Time) bool {
+	return !b.IsRevoked() && !b.IsExpired(now)
+}
+
+// Revoke 软撤销绑定并记录操作人与原因。
+//
+// 不物理删除：解绑是授权轨迹上的一个事实，访问复核需要回放「谁在何时因何收回」。
+// 幂等：已撤销的绑定再次撤销直接成功且不覆盖首次撤销信息，避免重试改写审计事实。
+func (b *Binding) Revoke(actor, reason string) error {
+	if b.IsRevoked() {
+		return nil
+	}
+	if actor == "" {
+		return errInvalid(ErrMissingActor, "binding revoker is required")
+	}
+	trimmed := reason
+	if len(trimmed) > MaxRevokeReasonLen {
+		return errInvalid(ErrInvalidBinding,
+			"binding revoke reason exceeds %d bytes", MaxRevokeReasonLen)
+	}
+	now := nowUTC()
+	b.RevokedAt = &now
+	b.RevokedBy = actor
+	b.RevokeReason = trimmed
+	return nil
+}
 
 // ValidateAgainst 校验绑定与目标角色的一致性（跨端 / 跨商户 / 状态 / 破玻璃时效）。
 //

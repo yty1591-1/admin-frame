@@ -119,7 +119,7 @@ func TestMemoryChangeRequestRepositoryListFiltersAndOrder(t *testing.T) {
 	second.RequestedAt = time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	approved := newTestChangeRequest(t, "change-3", nil)
 	approved.RequestedAt = time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	if err := approved.Approve("approver-1", 1); err != nil {
+	if err := approved.Approve("approver-1", "", 1); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 

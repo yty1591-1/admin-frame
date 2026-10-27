@@ -24,6 +24,8 @@ type RoleRepository interface {
 	List(ctx context.Context, filter RoleFilter) ([]*Role, error)
 	// Count 返回满足条件的未删除角色总数，用于分页 total 与 B 端角色配额。
 	Count(ctx context.Context, filter RoleFilter) (int, error)
+	// ListByTemplate 返回由指定模板实例化的未删除角色，供模板漂移扫描与显式同步。
+	ListByTemplate(ctx context.Context, templateID string) ([]*Role, error)
 }
 
 // RoleFilter 是角色列表过滤条件。
@@ -48,13 +50,13 @@ type BindingRepository interface {
 	// expires_at / granted_by 并保留原主键（过期后重绑必须重新生效）。
 	// 调用方需要真实主键时通过 ListBySubject 回读。
 	Save(ctx context.Context, binding *Binding) error
-	// Delete 解绑；不存在也返回成功（幂等）。
-	Delete(ctx context.Context, id string) error
+	// Revoke 软撤销绑定；不存在或已撤销都返回成功（幂等）。
+	Revoke(ctx context.Context, id, actor, reason string) error
 	// FindByID 按主键加载绑定。
 	FindByID(ctx context.Context, id string) (*Binding, error)
-	// ListBySubject 返回主体在 at 时刻有效的绑定（过滤已过期）。
+	// ListBySubject 返回主体在 at 时刻有效的绑定（过滤已撤销与已过期）。
 	ListBySubject(ctx context.Context, query SubjectQuery) ([]*Binding, error)
-	// ListByRole 返回绑定到指定角色的全部绑定，用于删除前引用检查。
+	// ListByRole 返回绑定到指定角色的全部记录（含已过期 / 已撤销），用于审计与引用检查。
 	ListByRole(ctx context.Context, roleID string) ([]*Binding, error)
 }
 
@@ -77,6 +79,37 @@ func (q SubjectQuery) EffectiveTime() time.Time {
 		return nowUTC()
 	}
 	return q.At.UTC()
+}
+
+// RoleTemplateRepository 是角色模板聚合的持久化端口。
+//
+// 约定与 RoleRepository 一致：未找到返回 NotFound，Save 使用 expectedVersion
+// 做乐观锁；模板与实例之间是复制关系，仓储不负责传播变更。
+type RoleTemplateRepository interface {
+	// FindByID 按主键加载模板（含权限与数据范围）。
+	FindByID(ctx context.Context, id string) (*RoleTemplate, error)
+	// FindByCode 按端别 + 编码加载模板；软删模板仍返回，用于阻止 code 复用。
+	FindByCode(ctx context.Context, channel Channel, code string) (*RoleTemplate, error)
+	// Save 创建或更新模板；expectedVersion 为 0 表示创建。
+	Save(ctx context.Context, template *RoleTemplate, expectedVersion int64) error
+	// List 按条件分页列举未删除模板。
+	List(ctx context.Context, filter RoleTemplateFilter) ([]*RoleTemplate, error)
+	// Count 返回满足条件的未删除模板总数。
+	Count(ctx context.Context, filter RoleTemplateFilter) (int, error)
+}
+
+// RoleTemplateFilter 是模板列表过滤条件。
+type RoleTemplateFilter struct {
+	// Channel 端别过滤；空表示不过滤（仅 A 端内部查询允许）。
+	Channel Channel
+	// Status 状态过滤；空表示全部。
+	Status RoleTemplateStatus
+	// Keyword 按 code / name 模糊匹配。
+	Keyword string
+	// Limit 分页大小，上限 100。
+	Limit int
+	// Offset 偏移量。
+	Offset int
 }
 
 // ChangeRequestRepository 是审批单聚合的持久化端口。

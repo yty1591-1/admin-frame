@@ -27,6 +27,13 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
 
+// defaultApprovalTTL 是审批单的默认决策时效。
+//
+// 审批单承载的是「某一时刻的变更意图」：载荷与目标聚合都可能随时间变化，
+// 超过该时限仍未决策的单据按 expired 处理，必须重新发起，避免迟到的批准
+// 授权了已经过期的意图。
+const defaultApprovalTTL = 72 * time.Hour
+
 // Runtime 是 IAM 在本进程内的唯一实例集合。
 type Runtime struct {
 	// Authorizer 供 platform 构造权限中间件。
@@ -61,7 +68,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return &Runtime{Authorizer: security.NewAuthorizer(staticChecker)}, nil
 	}
 
-	roles, bindings, snapshots, err := buildRepositories(deps)
+	roles, bindings, templates, snapshots, err := buildRepositories(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +181,24 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("iam query service: %w", err)
 	}
+	templateSvc, err := app.NewTemplateService(app.TemplateServiceConfig{
+		Templates:  templates,
+		Roles:      roleSvc,
+		RoleRepo:   roles,
+		Recorder:   recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      auditMeta,
+		Limits: app.RoleLimits{
+			MaxPermissionsPerRole:     cfg.IAM.Limits.MaxPermissionsPerRole,
+			MaxCustomRolesPerMerchant: cfg.IAM.Limits.MaxCustomRolesPerMerchant,
+			RequireReason:             cfg.IAM.Security.RequireReason,
+		},
+		Logger: deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam template service: %w", err)
+	}
 
 	applicator, err := app.NewRoleChangeApplicator(roleSvc, bindingSvc)
 	if err != nil {
@@ -189,6 +214,8 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			// 000005 已补 merchant_id，B 端审批按 Principal 的商户隔离后开放。
 			AllowBizChannel: true,
 			AllowBreakglass: cfg.IAM.Breakglass.Enabled,
+			// 审批单必须在意图过期前完成决策：迟到的批准等于授权了过期载荷。
+			ApprovalTTL: defaultApprovalTTL,
 		},
 		Logger: deps.Logger,
 	})
@@ -216,6 +243,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Query:           querySvc,
 		Changes:         changeSvc,
 		Breakglass:      breakglassSvc,
+		Templates:       templateSvc,
 		Channel:         domain.Channel(cfg.Channel),
 		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
@@ -272,15 +300,23 @@ func breakglassActiveCounter(
 }
 
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
-func buildRepositories(deps *platform.Deps) (domain.RoleRepository, domain.BindingRepository, domain.SnapshotRepository, error) {
+func buildRepositories(deps *platform.Deps) (
+	domain.RoleRepository,
+	domain.BindingRepository,
+	domain.RoleTemplateRepository,
+	domain.SnapshotRepository,
+	error,
+) {
 	if deps.Database == nil {
 		roles := persistence.NewMemoryRoleRepository()
 		bindings := persistence.NewMemoryBindingRepository()
-		return roles, bindings, persistence.NewMemorySnapshotRepository(roles, bindings), nil
+		templates := persistence.NewMemoryRoleTemplateRepository()
+		return roles, bindings, templates, persistence.NewMemorySnapshotRepository(roles, bindings), nil
 	}
 	sqlDB := deps.Database.SQL()
 	return persistence.NewSQLRoleRepository(sqlDB),
 		persistence.NewSQLBindingRepository(sqlDB),
+		persistence.NewSQLRoleTemplateRepository(sqlDB),
 		persistence.NewSQLSnapshotRepository(sqlDB),
 		nil
 }

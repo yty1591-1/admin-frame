@@ -43,9 +43,11 @@ func seedFiles(t *testing.T, suffix string) []string {
 //
 // 依赖约定：每条权限点独占一行、行首为 "('"，列顺序与 000003 的 INSERT 列表一致。
 // 该约定写在迁移文件头，改动列顺序时必须同步本表达式与目录测试。
+//
+// parent_code 允许 NULL（根节点），因此该列匹配 (NULL|'...') 而不是裸字符串。
 var seedRow = regexp.MustCompile(
 	`^\s*\('([a-z][a-z0-9_:]*)',\s*'([^']*)',\s*'(admin|biz|both)',\s*'([a-z][a-z0-9_]*)',\s*` +
-		`'([a-z][a-z0-9_]*)',\s*'(api|menu|button)',\s*([01]),\s*'[^']*',\s*'[^']*',\s*(\d+),`,
+		`'([a-z][a-z0-9_]*)',\s*'(api|menu|button)',\s*([01]),\s*(?:NULL|'[^']*'),\s*'[^']*',\s*(\d+),`,
 )
 
 // docRow 解析 PERMISSIONS.md 目录表。

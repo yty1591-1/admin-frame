@@ -45,6 +45,11 @@ type ChangeLimits struct {
 	AllowBizChannel bool
 	// AllowBreakglass 是否允许 breakglass 动作；破玻璃流程属 M4.3。
 	AllowBreakglass bool
+	// ApprovalTTL 审批时效；≤0 表示不设截止（仅测试 / 兼容场景）。
+	//
+	// 超时后审批单不允许再通过：审批人看到的载荷可能已与目标聚合格局不一致，
+	// 迟到的批准等于授权了过期意图。
+	ApprovalTTL time.Duration
 }
 
 // ChangeScope 是一次审批操作的数据作用域，由 transport 从 Principal 派生。
@@ -183,6 +188,11 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 	if err != nil {
 		return nil, apperr.Internal("generate change request id", err)
 	}
+	var expiresAt *time.Time
+	if s.limits.ApprovalTTL > 0 {
+		value := time.Now().UTC().Add(s.limits.ApprovalTTL)
+		expiresAt = &value
+	}
 	request, err := domain.NewChangeRequest(domain.NewChangeRequestParams{
 		ID:         requestID,
 		Channel:    cmd.Channel,
@@ -191,6 +201,7 @@ func (s *ChangeRequestService) Create(ctx context.Context, cmd CreateChangeReque
 		TargetID:   cmd.TargetID,
 		Payload:    cmd.Payload,
 		Reason:     cmd.Reason,
+		ExpiresAt:  expiresAt,
 		Actor:      cmd.Actor,
 	})
 	if err != nil {
@@ -271,13 +282,14 @@ func (s *ChangeRequestService) Approve(
 	requestID string,
 	version int64,
 	approver string,
+	decisionReason string,
 	scope ChangeScope,
 ) (*domain.ChangeRequest, error) {
 	request, err := s.loadForDecision(ctx, requestID, version, scope)
 	if err != nil {
 		return nil, err
 	}
-	if err := request.Approve(approver, version); err != nil {
+	if err := request.Approve(approver, decisionReason, version); err != nil {
 		return nil, err
 	}
 	if err := s.requests.Save(ctx, request, version); err != nil {
@@ -292,13 +304,14 @@ func (s *ChangeRequestService) Reject(
 	requestID string,
 	version int64,
 	approver string,
+	decisionReason string,
 	scope ChangeScope,
 ) (*domain.ChangeRequest, error) {
 	request, err := s.loadForDecision(ctx, requestID, version, scope)
 	if err != nil {
 		return nil, err
 	}
-	if err := request.Reject(approver, version); err != nil {
+	if err := request.Reject(approver, decisionReason, version); err != nil {
 		return nil, err
 	}
 	if err := s.requests.Save(ctx, request, version); err != nil {
@@ -392,7 +405,7 @@ func (s *ChangeRequestService) Apply(ctx context.Context, cmd ApplyChangeRequest
 			}
 		}
 		expected := request.Version
-		if err := request.MarkApplied(expected); err != nil {
+		if err := request.MarkApplied(actor, expected); err != nil {
 			return err
 		}
 		return s.requests.Save(ctx, request, expected)

@@ -192,18 +192,21 @@ wildcard   := "*" | segment ":" "*"
 ### 5.1 关系概览
 
 ```text
-iam_permission (code PK)
-        ▲
-        │ permission_code
-iam_role_permission ──────► iam_role (id PK)
-                                  ▲
-                                  │ role_id
-                           iam_role_binding ──► subject (staff / merchant_staff)
-                                  │
-                                  └── expires_at
+iam_role_template (id PK) ──► iam_role_template_permission
+                     └─────► iam_role_template_data_scope
+                                  │ 实例化（复制基线）
+                                  ▼
+iam_permission (code PK)          iam_role (id PK) ◄─ template_id / template_version
+        ▲                         │        ▲
+        │ permission_code         │        │ role_id
+iam_role_permission ──────────────┘        │
+                                           │
+iam_role_data_scope ──(role_id, channel)───┘
+iam_role_binding ──(role_id, channel, merchant_id)──► iam_role
+                  │ expires_at / revoked_at / revoked_by（历史保留）
+                  └── active_key 生成列：生效行=1，撤销行=id
 
-iam_role_data_scope ──────► iam_role (role_id, resource)
-iam_change_request（M4）  审批流，引用目标角色 / 绑定
+iam_change_request（M4）  审批流，引用目标角色 / 绑定；pending_key 防重复提单
 async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.cache）
 ```
 
@@ -211,13 +214,18 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 | 表 | 用途 | 关键约束 |
 |----|------|----------|
-| `iam_permission` | 权限点目录 | `code` 主键；`channel ∈ {admin,biz,both}`；`status ∈ {active,deprecated}` |
-| `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`version` 乐观锁 |
+| `iam_permission` | 权限点目录 | `code` 主键；`channel ∈ {admin,biz,both}`；`kind ∈ {menu,button,api}`；`status ∈ {active,deprecated}`；`parent_code` 可空 + 自引用外键（根节点 `NULL`，库层拒绝悬空节点） |
+| `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`version` 乐观锁；`template_id` / `template_version` 记录模板来源与实例基线；`uk_iam_role_id_channel`、`uk_iam_role_id_scope` 供子表复合外键引用 |
+| `iam_role_template` | 角色模板 | 唯一 `(channel, code)`；`status ∈ {active,disabled}`；`version` 递增以识别实例漂移；软删保留 `code` |
+| `iam_role_template_permission` | 模板 → 权限点基线 | 主键 `(template_id, permission_code)`；外键到模板与权限点（`RESTRICT`） |
+| `iam_role_template_data_scope` | 模板数据范围基线 | 主键 `(template_id, resource)`；`scope_type` / `scope_values` CHECK 与角色侧一致 |
 | `iam_role_permission` | 角色 → 权限点 | 主键 `(role_id, permission_code)`；授权人、时间 |
-| `iam_role_binding` | 主体 → 角色 | 唯一 `(channel, subject_type, subject_id, merchant_id, role_id)`；`expires_at` 可空 |
-| `iam_role_data_scope` | 角色数据范围 | 主键 `(role_id, resource)`；`scope_values` 为原生 JSON 类型 |
-| `iam_change_request` | 审批单（M4） | 状态机 `pending → approved/rejected → applied`；申请人与审批人不同；`merchant_id` 区分平台级 / 商户级（M4.6） |
+| `iam_role_binding` | 主体 → 角色 | 唯一 `(channel, subject_type, subject_id, merchant_id, role_id, active_key)`：`active_key` 生成列保证「同一主体同一角色至多一条生效绑定」；`revoked_at/revoked_by` 软撤销保留历史；复合外键 `(role_id, channel, merchant_id)` 阻止跨端 / 跨商户绑定；`expires_at` 可空 |
+| `iam_role_data_scope` | 角色数据范围 | 主键 `(role_id, resource)`；冗余 `channel` + 复合外键 `(role_id, channel)`；CHECK 强制 B 端仅 `merchant` / `self`；`scope_values` 为原生 JSON 类型 |
+| `iam_change_request` | 审批单（M4） | 状态机 `pending → approved/rejected → applied`（另有 `cancelled` / `expired`）；申请人与审批人不同；`merchant_id` 区分平台级 / 商户级（M4.6）；`pending_key` 生成列唯一键阻止同一目标并发重复提单；`expires_at` 时效、`decision_reason` 决策说明、`applied_by` 执行人、`payload_version` 载荷版本 |
 | `async_outbox`（ENT-03） | 审计 / 缓存失效事件 | 业务请求内与业务写入**同事务**写入（失败即失败关闭）；`pkg/outbox` Relay 投递；状态、重试次数与死信 |
+
+> **唯一真相**：库级约束以 `migrations/000002_create_iam_tables.up.sql` 为准；本节只做语义摘要，两者冲突时先修迁移再同步文档。企业级加固（2026-10-26）的完整说明见 §5.3.9。
 
 ### 5.3 DDL（MySQL 基线）
 
@@ -246,21 +254,28 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 ```sql
 CREATE TABLE IF NOT EXISTS iam_permission (
-    code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名',
+    code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名或复用',
     name             VARCHAR(128)  NOT NULL                  COMMENT '权限点显示名，用于菜单 / 按钮 / 授权勾选',
     channel          VARCHAR(16)   NOT NULL                  COMMENT '可授予端别：admin=仅A端 / biz=仅B端 / both=两端均可',
     resource         VARCHAR(64)   NOT NULL                  COMMENT '资源段，取权限码首段，如 order；用于数据范围匹配',
     action           VARCHAR(64)   NOT NULL                  COMMENT '动作段，取权限码末段，如 read / write / grant',
     kind             VARCHAR(16)   NOT NULL                  COMMENT '权限点形态：menu=菜单 / button=按钮 / api=接口',
     data_bearing     TINYINT       NOT NULL DEFAULT 0        COMMENT '是否涉及数据范围：1=是（授权时必须配置 iam_role_data_scope）/ 0=否',
-    parent_code      VARCHAR(128)  NOT NULL DEFAULT ''       COMMENT '父节点权限码，根节点为空串；用于菜单树',
-    path             VARCHAR(256)  NOT NULL DEFAULT ''       COMMENT '树路径，逗号分隔的祖先编码，用于子树查询与排序',
+    parent_code      VARCHAR(128)  NULL     DEFAULT NULL     COMMENT '父节点权限码，根节点为 NULL；用于菜单 / 按钮树',
+    path             VARCHAR(256)  NOT NULL DEFAULT ''       COMMENT '树路径，逗号分隔的祖先编码，用于子树查询与排序；根节点为空串',
     sort             INT           NOT NULL DEFAULT 0        COMMENT '同级排序值，升序，值越小越靠前',
     status           VARCHAR(16)   NOT NULL DEFAULT 'active' COMMENT '状态：active=可用 / deprecated=已弃用（保留授权但不可新授）',
     created_at       DATETIME(3)   NOT NULL                  COMMENT '创建时间（UTC，毫秒精度）',
     updated_at       DATETIME(3)   NOT NULL                  COMMENT '最后更新时间（UTC，毫秒精度），由应用写入',
     PRIMARY KEY (code),
-    KEY idx_iam_permission_channel_status (channel, status) COMMENT '菜单树按端别 + 状态过滤'
+    KEY idx_iam_permission_channel_status (channel, status, sort) COMMENT '菜单树按端别 + 状态过滤并按同级排序输出',
+    CONSTRAINT fk_iam_permission_parent FOREIGN KEY (parent_code) REFERENCES iam_permission (code)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT ck_iam_permission_channel CHECK (channel IN ('admin', 'biz', 'both')),
+    CONSTRAINT ck_iam_permission_kind CHECK (kind IN ('menu', 'button', 'api')),
+    CONSTRAINT ck_iam_permission_status CHECK (status IN ('active', 'deprecated')),
+    CONSTRAINT ck_iam_permission_data_bearing CHECK (data_bearing IN (0, 1)),
+    CONSTRAINT ck_iam_permission_parent_self CHECK (parent_code IS NULL OR parent_code <> code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 权限点目录，代码所有、库内只读同步；不存放角色授权关系';
 ```
@@ -278,6 +293,8 @@ CREATE TABLE IF NOT EXISTS iam_role (
     description      VARCHAR(512)  NOT NULL DEFAULT ''       COMMENT '角色说明，建议写清职责边界',
     role_type        VARCHAR(16)   NOT NULL DEFAULT 'custom' COMMENT '角色类型：system=系统内置 / custom=自定义 / breakglass=破玻璃，仅此类型可在审批有效期内展开 *',
     status           VARCHAR(16)   NOT NULL DEFAULT 'active' COMMENT '状态：active=生效 / disabled=停用（停用后快照不再加载其权限）',
+    template_id      BIGINT        NOT NULL DEFAULT 0        COMMENT '来源角色模板 ID；0=非模板实例（手工创建或系统种子）',
+    template_version BIGINT        NOT NULL DEFAULT 0        COMMENT '实例化时模板版本；与模板当前 version 不一致表示存在漂移，供同步任务比对',
     version          BIGINT        NOT NULL DEFAULT 1        COMMENT '乐观锁版本；更新须 WHERE version=?，冲突返回 40900',
     created_by       VARCHAR(64)   NOT NULL                  COMMENT '创建人 subject_id',
     updated_by       VARCHAR(64)   NOT NULL                  COMMENT '最后更新人 subject_id',
@@ -286,11 +303,25 @@ CREATE TABLE IF NOT EXISTS iam_role (
     deleted_at       DATETIME(3)   NULL                      COMMENT '软删时间（UTC）；NULL=未删除，非空后 code 不可复用',
     PRIMARY KEY (id),
     UNIQUE KEY uk_iam_role_scope_code (channel, merchant_id, code) COMMENT '端内角色编码唯一，绑定与授权的幂等防线',
+    UNIQUE KEY uk_iam_role_id_channel (id, channel) COMMENT '供数据范围 / 绑定复合外键引用，库层防止跨端引用',
+    UNIQUE KEY uk_iam_role_id_scope (id, channel, merchant_id) COMMENT '供绑定复合外键引用，库层防止跨商户绑定',
     KEY idx_iam_role_merchant_status (merchant_id, status) COMMENT 'B端按商户 + 状态列角色',
-    KEY idx_iam_role_channel_scope (channel, scope_type, status) COMMENT 'A端按端别 + 作用域列角色'
+    KEY idx_iam_role_channel_scope (channel, scope_type, status) COMMENT 'A端按端别 + 作用域列角色',
+    KEY idx_iam_role_template (template_id, template_version) COMMENT '模板漂移扫描：按模板聚合实例并比对基线版本',
+    CONSTRAINT ck_iam_role_channel CHECK (channel IN ('admin', 'biz')),
+    CONSTRAINT ck_iam_role_scope_type CHECK (scope_type IN ('platform', 'merchant')),
+    CONSTRAINT ck_iam_role_tenant CHECK (
+        (scope_type = 'platform' AND channel = 'admin' AND merchant_id = '')
+     OR (scope_type = 'merchant' AND channel = 'biz' AND merchant_id <> '')
+    ),
+    CONSTRAINT ck_iam_role_type CHECK (role_type IN ('system', 'custom', 'breakglass')),
+    CONSTRAINT ck_iam_role_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT ck_iam_role_version CHECK (version >= 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 角色定义，按端别与商户作用域隔离；角色扁平、无继承';
 ```
+
+> 角色模板三表（`iam_role_template` / `iam_role_template_permission` / `iam_role_template_data_scope`）的完整 DDL 见 `migrations/000002_create_iam_tables.up.sql`；语义与实例化规则见 §5.3.9。
 
 ### 5.3.3 iam_role_permission（角色 → 权限点）
 
@@ -323,32 +354,60 @@ CREATE TABLE IF NOT EXISTS iam_role_binding (
     expires_at       DATETIME(3)   NULL                COMMENT '绑定过期时间（UTC）；NULL=长期有效；查询须过滤已过期记录',
     granted_by       VARCHAR(64)   NOT NULL            COMMENT '授权人 subject_id，用于审计与职责分离校验',
     created_at       DATETIME(3)   NOT NULL            COMMENT '绑定时间（UTC，毫秒精度）',
+    revoked_at       DATETIME(3)   NULL                COMMENT '解绑时间（UTC）；NULL=生效；非空后该行仅用于历史与访问复核',
+    revoked_by       VARCHAR(64)   NOT NULL DEFAULT '' COMMENT '解绑操作人 subject_id；未解绑时为空串',
+    revoke_reason    VARCHAR(512)  NOT NULL DEFAULT '' COMMENT '解绑原因；强制填写策略由应用配置决定',
+    active_key       BIGINT        GENERATED ALWAYS AS (CASE WHEN revoked_at IS NULL THEN 1 ELSE id END) STORED
+                                                   COMMENT '生效绑定的唯一哨兵：生效行恒为 1，撤销行取自身 id，使同一主体同一角色至多一条生效绑定且保留全部历史',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_iam_binding (channel, subject_type, subject_id, merchant_id, role_id)
-        COMMENT '同一主体对同一角色的重复绑定幂等，防并发重复插入',
-    KEY idx_iam_binding_subject (channel, subject_type, subject_id, merchant_id)
-        COMMENT '快照回源主查询路径：按主体取全部有效绑定',
-    KEY idx_iam_binding_role (role_id)
-        COMMENT '反查角色被哪些主体绑定，删除角色前校验引用',
-    CONSTRAINT fk_iam_binding_role FOREIGN KEY (role_id) REFERENCES iam_role (id)
-        ON DELETE RESTRICT ON UPDATE RESTRICT
+    UNIQUE KEY uk_iam_binding (channel, subject_type, subject_id, merchant_id, role_id, active_key)
+        COMMENT '同一主体对同一角色的生效绑定幂等；撤销后重新授权会新增一行而不是复活旧行',
+    KEY idx_iam_binding_subject (channel, subject_type, subject_id, merchant_id, revoked_at)
+        COMMENT '快照回源主查询路径：按主体取全部生效绑定',
+    KEY idx_iam_binding_expiry (expires_at)
+        COMMENT '过期绑定清理扫描：避免全表扫描',
+    CONSTRAINT fk_iam_binding_role_scope FOREIGN KEY (role_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT ck_iam_binding_channel CHECK (channel IN ('admin', 'biz')),
+    CONSTRAINT ck_iam_binding_subject_type CHECK (subject_type IN ('staff', 'merchant_staff')),
+    CONSTRAINT ck_iam_binding_tenant CHECK (
+        (channel = 'admin' AND subject_type = 'staff' AND merchant_id = '')
+     OR (channel = 'biz' AND subject_type = 'merchant_staff' AND merchant_id <> '')
+    ),
+    CONSTRAINT ck_iam_binding_revoke CHECK (
+        (revoked_at IS NULL AND revoked_by = '')
+     OR (revoked_at IS NOT NULL AND revoked_by <> '')
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  COMMENT='IAM 主体-角色绑定，支持限时有效；鉴权快照的唯一绑定来源';
+  COMMENT='IAM 主体-角色绑定，支持限时有效与软撤销；鉴权快照的唯一绑定来源';
 ```
+
+> **撤销语义**：解绑不再物理删除，而是写 `revoked_at` / `revoked_by` / `revoke_reason`（`revoke()`）；仓储解绑幂等（已撤销再撤销返回成功）。`active_key` 生成列让唯一键只约束「生效绑定」，因此同一主体可以保留多条历史行、且撤销后重新授权必然新增一行并重新生效。快照 SQL 必须带 `b.revoked_at IS NULL`；`ListByRole` 保留历史用于审计，角色删除引用检查只看 `IsEffective`。
 
 ### 5.3.5 iam_role_data_scope（角色数据范围）
 
 ```sql
 CREATE TABLE IF NOT EXISTS iam_role_data_scope (
     role_id          BIGINT        NOT NULL COMMENT '角色ID，关联 iam_role.id',
+    channel          VARCHAR(16)   NOT NULL COMMENT '角色端别冗余列；由复合外键锁定与 iam_role 一致，用于库层拒绝 B 端越权范围',
     resource         VARCHAR(64)   NOT NULL COMMENT '资源段：* 表示全部资源，或权限点首段如 order / file',
     scope_type       VARCHAR(16)   NOT NULL COMMENT '范围类型：all=全部 / merchant=当前商户 / self=本人 / merchant_set=指定商户集合；B端仅允许 merchant、self',
     scope_values     JSON          NOT NULL COMMENT '范围取值：merchant_set 存 {"merchant_ids":[...]}（≤100）；其他类型存 {}',
+    granted_by       VARCHAR(64)   NOT NULL COMMENT '最近一次配置人 subject_id',
+    created_at       DATETIME(3)   NOT NULL COMMENT '首次配置时间（UTC，毫秒精度）',
     updated_at       DATETIME(3)   NOT NULL COMMENT '最后更新时间（UTC，毫秒精度）',
     PRIMARY KEY (role_id, resource),
     KEY idx_iam_rds_scope_type (scope_type) COMMENT '按范围类型审计与越权排查',
-    CONSTRAINT fk_iam_rds_role FOREIGN KEY (role_id) REFERENCES iam_role (id)
-        ON DELETE RESTRICT ON UPDATE RESTRICT
+    CONSTRAINT fk_iam_rds_role_channel FOREIGN KEY (role_id, channel) REFERENCES iam_role (id, channel)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT ck_iam_rds_scope_type CHECK (scope_type IN ('all', 'merchant', 'self', 'merchant_set')),
+    CONSTRAINT ck_iam_rds_channel_scope CHECK (channel = 'admin' OR scope_type IN ('merchant', 'self')),
+    CONSTRAINT ck_iam_rds_scope_values CHECK (
+        (scope_type = 'merchant_set'
+            AND JSON_LENGTH(scope_values, '$.merchant_ids') BETWEEN 1 AND 100)
+     OR (scope_type <> 'merchant_set' AND JSON_LENGTH(scope_values) = 0)
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='角色数据范围，与功能权限正交；授予 data_bearing 权限时必填';
 ```
@@ -364,20 +423,42 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
     target_type      VARCHAR(32)   NOT NULL                   COMMENT '目标类型：iam_role / iam_binding / iam_breakglass',
     target_id        VARCHAR(64)   NOT NULL                   COMMENT '目标ID；新建类动作在应用前存业务临时ID或空串',
     payload          JSON          NOT NULL                   COMMENT '申请载荷；应用前须重新校验，不得直接信任',
-    status           VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT '状态机：pending=待审批 / approved=已通过 / rejected=已拒绝 / applied=已应用 / cancelled=已撤销',
+    payload_version  INT           NOT NULL DEFAULT 1         COMMENT '载荷结构版本；载荷语义变更时递增，供审批人识别与回溯',
+    status           VARCHAR(16)   NOT NULL DEFAULT 'pending' COMMENT '状态机：pending=待审批 / approved=已通过 / rejected=已拒绝 / applied=已应用 / cancelled=已撤销 / expired=已超时',
     reason           VARCHAR(512)  NOT NULL DEFAULT ''        COMMENT '申请原因；iam.security.require_reason=true 时必填',
     requested_by     VARCHAR(64)   NOT NULL                   COMMENT '申请人 subject_id',
     requested_at     DATETIME(3)   NOT NULL                   COMMENT '申请时间（UTC，毫秒精度）',
+    expires_at       DATETIME(3)   NULL                       COMMENT '审批时效截止（UTC）；NULL=按配置计算，超时后不得再通过',
     approved_by      VARCHAR(64)   NOT NULL DEFAULT ''        COMMENT '审批人 subject_id，必须与申请人不同（职责分离）',
     approved_at      DATETIME(3)   NULL                       COMMENT '审批时间（UTC）',
+    decision_reason  VARCHAR(512)  NOT NULL DEFAULT ''        COMMENT '审批结论说明；拒绝时必填，通过时可选',
+    applied_by       VARCHAR(64)   NOT NULL DEFAULT ''        COMMENT '执行应用的操作人 subject_id；系统执行时写 system',
     applied_at       DATETIME(3)   NULL                       COMMENT '实际应用时间（UTC）',
     version          BIGINT        NOT NULL DEFAULT 1         COMMENT '乐观锁版本，防并发重复审批',
+    pending_key      VARCHAR(255)  GENERATED ALWAYS AS (
+        CASE WHEN status = 'pending' AND target_id <> ''
+             THEN CONCAT(channel, '|', merchant_id, '|', action, '|', target_id)
+        END
+    ) STORED COMMENT '待审批幂等键：同一端别 / 商户 / 目标至多一张待审批单，终态行取 NULL 不参与唯一约束',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_iam_change_pending (pending_key)
+        COMMENT '阻止并发重复提单；新建类动作 target_id 为空时不参与（应用层按载荷幂等）',
     KEY idx_iam_change_status (channel, status, requested_at) COMMENT '待办列表与超时审批扫描',
-    KEY idx_iam_change_merchant_status (merchant_id, channel, status, requested_at) COMMENT 'B 端待办列表：按商户 + 端别 + 状态 + 申请时间扫描'
+    KEY idx_iam_change_expiry (status, expires_at) COMMENT '超时审批扫描：仅扫描 pending 且已过期的单据',
+    KEY idx_iam_change_merchant_status (merchant_id, channel, status, requested_at) COMMENT 'B 端待办列表：按商户 + 端别 + 状态 + 申请时间扫描',
+    CONSTRAINT ck_iam_change_channel CHECK (channel IN ('admin', 'biz')),
+    CONSTRAINT ck_iam_change_status CHECK (status IN ('pending', 'approved', 'rejected', 'applied', 'cancelled', 'expired')),
+    CONSTRAINT ck_iam_change_tenant CHECK (
+        (channel = 'admin' AND merchant_id = '')
+     OR (channel = 'biz' AND merchant_id <> '')
+    ),
+    CONSTRAINT ck_iam_change_version CHECK (version >= 1),
+    CONSTRAINT ck_iam_change_payload CHECK (JSON_TYPE(payload) = 'OBJECT')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 高风险变更审批单；申请人与审批人强制不同，审批通过后才落到目标表';
 ```
+
+> **时效与幂等**：`expires_at` 在提单时按配置计算（默认 24h，破玻璃按自身时效），过期未决只能标记 `expired`、不得再 `approve`；`pending_key` 生成列只对 `status='pending' AND target_id<>''` 生效，同一端别 / 商户 / 目标至多一张待审批单，终态后自动释放键值，新建类动作由应用层按载荷幂等。`decision_reason` 在拒绝时必填；`applied_by` 记录实际执行人（审批人自查或系统任务写 `system`），与 `approved_by` 区分，避免「谁批的」与「谁执行的」混淆。
 
 > **实现状态（M4.2 应用层 / 持久化 / 端点已落地；M4.6 补齐 B 端租户隔离）**：`domain.ChangeRequest`（状态机 `pending → approved → applied` / `rejected` / `cancelled`、SoD、载荷 JSON 对象校验、敏感字段与 B 端 `merchant_id` 覆盖拒绝、端别 / 商户不变量）、`MemoryChangeRequestRepository` / `SQLChangeRequestRepository`（乐观锁、过滤、分页、`merchant_id` 过滤与不可变）、`app.ChangeRequestService`（创建 / 列表 / 详情 / 通过 / 拒绝 / 撤销 / 应用，全部接收 `ChangeScope`）与 `app.RoleChangeApplicator`（应用时重新加载目标聚合并按当前版本写入，跨端 / 跨商户一律 404）已落地。
 >
@@ -471,6 +552,37 @@ COMMENT ON INDEX  uk_iam_role_scope_code           IS '端内角色编码唯一�
 - 注释长度受引擎限制（MySQL 单列注释 ≤ 1024 字符、表注释 ≤ 2048 字符），保持一行可读，避免把整段设计文档塞进 `COMMENT`。
 - `COMMENT` 与 `CREATE TABLE` 必须同一次迁移提交，禁止后续补注释的独立迁移（除非修复历史遗漏，且 down 中还原旧注释）。
 
+### 5.3.9 企业级模型补齐（2026-10-26，基线内修订）
+
+> 触发：评审指出原 DDL 只保证「表能存下 RBAC」，缺少库级完整性、授权历史、角色模板与审批治理。因迁移基线尚未发布（无 tag、最近一次提交压平迁移），本次直接修订 `000002` / `000003`，不另开增量迁移；发布后该文件即冻结，后续变更须新增迁移。
+>
+> **能力边界不变**：仍不做角色继承、ABAC、部门树（§3.2 非目标）；本次只补齐「生产级完整性」，不改变 RBAC + 数据范围的判定语义。
+
+1. **库级完整性（不依赖单点应用校验）**
+   - 枚举、端别 / 子类型 / 商户组合、JSON 载荷结构全部落到 `CHECK`：`ck_iam_role_tenant`、`ck_iam_binding_tenant`、`ck_iam_change_tenant`、`ck_iam_rds_channel_scope`、`ck_iam_change_payload` 等。
+   - 子表引用改为**复合外键**：`iam_role_binding (role_id, channel, merchant_id)`、`iam_role_data_scope (role_id, channel)` 指向 `iam_role` 的对应唯一键。跨端 / 跨商户绑定从「只有应用层拦」变为「库层直接拒绝」。
+   - 权限目录 `parent_code` 改为 `NULL` 根节点 + 自引用外键：`''` 不再是合法根值，悬空父节点与自引用父节点（`ck_iam_permission_parent_self`）被库层拒绝。
+
+2. **绑定历史（软撤销 + 生成列唯一键）**
+   - `iam_role_binding` 新增 `revoked_at` / `revoked_by` / `revoke_reason`；解绑写撤销标记，不物理删除。
+   - `active_key` 生成列：生效行恒为 `1`，撤销行取自身 `id`；唯一键扩展为 `(..., active_key)`，从而「同一主体同一角色至多一条生效绑定」与「保留全部历史」同时成立。
+   - 快照 / 主体查询必须过滤 `revoked_at IS NULL`；解绑幂等；撤销后重新授权新增一行（不复活旧行），访问复核可按主体回放完整授权轨迹。
+
+3. **角色模板（平台定义、商户实例化）**
+   - 三表：`iam_role_template`、`iam_role_template_permission`、`iam_role_template_data_scope`；模板 `version` 递增，`iam_role.template_id` / `template_version` 记录实例来源与基线。
+   - 实例（`iam_role`）与模板的关系是**复制而非继承**：实例化时复制权限与数据范围；模板变更后由同步任务比对 `template_version < template.version` 识别漂移，显式同步而不是运行时联动，避免平台改动无通知地扩大存量商户权限。
+   - 模板删除用软删（`deleted_at`），`code` 不复用；模板权限 / 数据范围外键 `RESTRICT`，防止删空基线。
+
+4. **审批治理**
+   - `expires_at`（时效）、`decision_reason`（决策说明）、`applied_by`（执行人）、`payload_version`（载荷版本）、`expired` 状态。
+   - `pending_key` 生成列唯一键：同一端别 / 商户 / 目标至多一张待审批单；终态行取 `NULL` 释放键值。
+   - `apply` 仍须按 `target_id` 重新加载并校验目标聚合，不得信任载荷（原不变量不变）。
+
+5. **代码与接口影响（本次同步项）**
+   - domain：`Binding` 增加撤销字段与 `Revoke`；`ChangeRequest` 增加时效 / 决策 / 执行人字段与 `expired`；`Role` 增加模板字段。
+   - repository：`BindingRepository.Delete` 语义改为 `Revoke(ctx, id, actor, reason)`；`ListBySubject` 与快照 SQL 过滤撤销；`ListByRole` 保留历史，角色删除引用检查只看生效绑定。
+   - 快照 SQL（§8.3）与集成测试须补 `revoked_at IS NULL`；`internal/iam/catalog` 门禁需允许种子 `parent_code` 为 `NULL`。
+
 ### 5.4 数据纪律
 
 - 主键统一雪花 ID（`pkg/id`），**禁止**自增主键暴露给外部；种子权限点使用自然键 `code`。
@@ -480,7 +592,7 @@ COMMENT ON INDEX  uk_iam_role_scope_code           IS '端内角色编码唯一�
 - 所有租户相关 SQL 必须带 `merchant_id`；B 端仓储方法签名必须显式接收 `merchantID`，不允许「空字符串代表全部」。
 - 唯一索引是幂等的最后防线；应用层冲突映射 `40900`，不得静默覆盖。
 - 角色 `version` 用于乐观锁；更新语句必须 `WHERE id=? AND version=?`，影响行数为 0 返回 `40900`。
-- 绑定不设版本；重复绑定由唯一索引兜底：**刷新既有记录的 `expires_at` / `granted_by` 并保留原主键**（过期后重绑必须重新生效，不能只做空更新），解绑幂等（不存在也返回成功）。
+- 绑定不设版本；重复绑定由唯一索引兜底：**刷新既有生效记录的 `expires_at` / `granted_by` 并保留原主键**（过期后重绑必须重新生效，不能只做空更新）；解绑为软撤销（写 `revoked_at` / `revoked_by`），重复解绑幂等（不存在或已撤销都返回成功），不物理删除以保留访问复核轨迹。
 - 不物理删除审计相关数据；角色软删保留 `code`，防止重建洗白。
 - **注释完整性**：每张表必须有表注释，每个字段必须有字段注释；新增列不带注释视为未完成。枚举字段的注释必须列全取值，并与 domain 常量一致（C-10）。注释变更随迁移提交，不得只改文档。
 - **注释可检查**：MySQL（基线）可用以下查询做人工 / CI 抽检；PostgreSQL 的 `pg_description` + `obj_description` 等价查询仅作未来演进参考，当前不维护。
@@ -1021,6 +1133,7 @@ WHERE b.channel = ?
   AND b.subject_type = ?
   AND b.subject_id = ?
   AND b.merchant_id = ?
+  AND b.revoked_at IS NULL
   AND (b.expires_at IS NULL OR b.expires_at > ?);
 ```
 
@@ -1035,6 +1148,7 @@ WHERE b.channel = ?
   AND b.subject_type = ?
   AND b.subject_id = ?
   AND b.merchant_id = ?
+  AND b.revoked_at IS NULL
   AND r.status = 'active'
   AND r.deleted_at IS NULL
   AND (b.expires_at IS NULL OR b.expires_at > ?);

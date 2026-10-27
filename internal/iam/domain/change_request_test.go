@@ -207,7 +207,7 @@ func TestNewChangeRequestAcceptsBizMerchantScopePayload(t *testing.T) {
 
 func TestApproveEnforcesSeparationOfDuties(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	err := request.Approve("requester-1", 1)
+	err := request.Approve("requester-1", "", 1)
 	if err == nil {
 		t.Fatal("expected self-approval rejection")
 	}
@@ -224,7 +224,7 @@ func TestApproveEnforcesSeparationOfDuties(t *testing.T) {
 
 func TestApproveHappyPathAndIdempotency(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	if err := request.Approve("approver-1", 1); err != nil {
+	if err := request.Approve("approver-1", "", 1); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 	if !request.IsApproved() || request.Version != 2 {
@@ -233,7 +233,7 @@ func TestApproveHappyPathAndIdempotency(t *testing.T) {
 	if request.ApprovedBy != "approver-1" || request.ApprovedAt == nil {
 		t.Fatalf("approved by/at=%q/%v", request.ApprovedBy, request.ApprovedAt)
 	}
-	if err := request.Approve("approver-2", 2); err == nil {
+	if err := request.Approve("approver-2", "", 2); err == nil {
 		t.Fatal("expected double approval to fail")
 	} else if !errors.Is(err, domain.ErrChangeNotPending) {
 		t.Fatalf("err=%v", err)
@@ -242,7 +242,7 @@ func TestApproveHappyPathAndIdempotency(t *testing.T) {
 
 func TestApproveRejectsVersionConflict(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	err := request.Approve("approver-1", 9)
+	err := request.Approve("approver-1", "", 9)
 	if !errors.Is(err, domain.ErrVersionConflict) {
 		t.Fatalf("err=%v", err)
 	}
@@ -253,7 +253,7 @@ func TestApproveRejectsVersionConflict(t *testing.T) {
 
 func TestRejectFlow(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	if err := request.Reject("approver-1", 1); err != nil {
+	if err := request.Reject("approver-1", "rejected in test", 1); err != nil {
 		t.Fatalf("Reject: %v", err)
 	}
 	if request.Status != domain.ChangeStatusRejected || !request.Status.IsTerminal() {
@@ -262,7 +262,7 @@ func TestRejectFlow(t *testing.T) {
 	if request.ApprovedAt == nil {
 		t.Fatal("rejection must record decision time")
 	}
-	if err := request.Approve("approver-2", 2); !errors.Is(err, domain.ErrChangeNotPending) {
+	if err := request.Approve("approver-2", "", 2); !errors.Is(err, domain.ErrChangeNotPending) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -285,22 +285,22 @@ func TestCancelOnlyByRequester(t *testing.T) {
 
 func TestMarkAppliedRequiresApproval(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	if err := request.MarkApplied(1); !errors.Is(err, domain.ErrChangeNotApproved) {
+	if err := request.MarkApplied("applier-1", 1); !errors.Is(err, domain.ErrChangeNotApproved) {
 		t.Fatalf("err=%v", err)
 	}
-	if err := request.Approve("approver-1", 1); err != nil {
+	if err := request.Approve("approver-1", "", 1); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if err := request.MarkApplied(9); !errors.Is(err, domain.ErrVersionConflict) {
+	if err := request.MarkApplied("applier-1", 9); !errors.Is(err, domain.ErrVersionConflict) {
 		t.Fatalf("err=%v", err)
 	}
-	if err := request.MarkApplied(2); err != nil {
+	if err := request.MarkApplied("applier-1", 2); err != nil {
 		t.Fatalf("MarkApplied: %v", err)
 	}
 	if request.Status != domain.ChangeStatusApplied || request.AppliedAt == nil {
 		t.Fatalf("status=%s applied_at=%v", request.Status, request.AppliedAt)
 	}
-	if err := request.MarkApplied(3); !errors.Is(err, domain.ErrChangeNotApproved) {
+	if err := request.MarkApplied("applier-1", 3); !errors.Is(err, domain.ErrChangeNotApproved) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -370,8 +370,8 @@ func TestChangeActionTargetTypes(t *testing.T) {
 
 func TestDecisionsRequireActor(t *testing.T) {
 	for name, decide := range map[string]func(*domain.ChangeRequest) error{
-		"approve": func(r *domain.ChangeRequest) error { return r.Approve("", 1) },
-		"reject":  func(r *domain.ChangeRequest) error { return r.Reject("", 1) },
+		"approve": func(r *domain.ChangeRequest) error { return r.Approve("", "", 1) },
+		"reject":  func(r *domain.ChangeRequest) error { return r.Reject("", "rejected in test", 1) },
 		"cancel":  func(r *domain.ChangeRequest) error { return r.Cancel("", 1) },
 	} {
 		request := mustNewChangeRequest(t, nil)
@@ -383,7 +383,7 @@ func TestDecisionsRequireActor(t *testing.T) {
 
 func TestRejectEnforcesSeparationOfDuties(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
-	if err := request.Reject("requester-1", 1); !errors.Is(err, domain.ErrSelfApproval) {
+	if err := request.Reject("requester-1", "rejected in test", 1); !errors.Is(err, domain.ErrSelfApproval) {
 		t.Fatalf("err=%v", err)
 	}
 	if !request.IsPending() {

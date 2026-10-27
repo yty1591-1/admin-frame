@@ -20,6 +20,10 @@ const (
 	MaxChangePayloadBytes = 16 << 10
 	// MaxChangeMerchantIDLen 商户 ID 最大字节数，与 iam_change_request.merchant_id 列宽一致。
 	MaxChangeMerchantIDLen = 64
+	// MaxDecisionReasonLen 审批结论说明最大字节数，与 iam_change_request.decision_reason 列宽一致。
+	MaxDecisionReasonLen = 512
+	// ChangePayloadVersion 当前载荷结构版本；载荷语义变更时递增。
+	ChangePayloadVersion = 1
 )
 
 // ChangeStatus 是审批单状态机取值。
@@ -45,13 +49,15 @@ const (
 	ChangeStatusApplied ChangeStatus = "applied"
 	// ChangeStatusCancelled 申请人已撤销。
 	ChangeStatusCancelled ChangeStatus = "cancelled"
+	// ChangeStatusExpired 审批时效已过，不能再通过。
+	ChangeStatusExpired ChangeStatus = "expired"
 )
 
 // Validate 校验状态取值。
 func (s ChangeStatus) Validate() error {
 	switch s {
 	case ChangeStatusPending, ChangeStatusApproved, ChangeStatusRejected,
-		ChangeStatusApplied, ChangeStatusCancelled:
+		ChangeStatusApplied, ChangeStatusCancelled, ChangeStatusExpired:
 		return nil
 	default:
 		return errInvalid(ErrInvalidChangeStatus, "change status %q is not supported", string(s))
@@ -60,7 +66,8 @@ func (s ChangeStatus) Validate() error {
 
 // IsTerminal 报告状态是否已不可继续流转。
 func (s ChangeStatus) IsTerminal() bool {
-	return s == ChangeStatusRejected || s == ChangeStatusApplied || s == ChangeStatusCancelled
+	return s == ChangeStatusRejected || s == ChangeStatusApplied ||
+		s == ChangeStatusCancelled || s == ChangeStatusExpired
 }
 
 // ChangeAction 是审批单覆盖的高风险动作。
@@ -185,6 +192,10 @@ type ChangeRequest struct {
 	Status ChangeStatus
 	// Reason 申请原因；是否必填由 app 层按配置决定。
 	Reason string
+	// ExpiresAt 审批时效截止；nil 表示未设置，由配置在创建时计算。
+	ExpiresAt *time.Time
+	// PayloadVersion 载荷结构版本。
+	PayloadVersion int32
 	// RequestedBy 申请人 subject_id。
 	RequestedBy string
 	// RequestedAt 申请时间（UTC）。
@@ -193,6 +204,10 @@ type ChangeRequest struct {
 	ApprovedBy string
 	// ApprovedAt 决定时间（UTC）；未决定为 nil。
 	ApprovedAt *time.Time
+	// DecisionReason 审批结论说明；拒绝时必填。
+	DecisionReason string
+	// AppliedBy 执行应用的操作人 subject_id。
+	AppliedBy string
 	// AppliedAt 实际应用时间（UTC）；未应用为 nil。
 	AppliedAt *time.Time
 	// Version 乐观锁版本，初始为 1。
@@ -209,7 +224,9 @@ type NewChangeRequestParams struct {
 	TargetID   string
 	Payload    []byte
 	Reason     string
-	Actor      string
+	// ExpiresAt 审批时效截止；nil 表示不过期（仅测试 / 兼容场景使用）。
+	ExpiresAt *time.Time
+	Actor     string
 }
 
 // NewChangeRequest 创建处于 pending 状态、版本为 1 的审批单。
@@ -246,19 +263,29 @@ func NewChangeRequest(p NewChangeRequestParams) (*ChangeRequest, error) {
 	}
 
 	now := nowUTC()
+	var expiresAt *time.Time
+	if p.ExpiresAt != nil {
+		value := p.ExpiresAt.UTC()
+		if !value.After(now) {
+			return nil, errInvalid(ErrInvalidChangeStatus, "change request expiry must be in the future")
+		}
+		expiresAt = &value
+	}
 	return &ChangeRequest{
-		ID:          p.ID,
-		Channel:     p.Channel,
-		MerchantID:  p.MerchantID,
-		Action:      p.Action,
-		TargetType:  targetType,
-		TargetID:    p.TargetID,
-		Payload:     payload,
-		Status:      ChangeStatusPending,
-		Reason:      reason,
-		RequestedBy: p.Actor,
-		RequestedAt: now,
-		Version:     1,
+		ID:             p.ID,
+		Channel:        p.Channel,
+		MerchantID:     p.MerchantID,
+		Action:         p.Action,
+		TargetType:     targetType,
+		TargetID:       p.TargetID,
+		Payload:        payload,
+		Status:         ChangeStatusPending,
+		Reason:         reason,
+		ExpiresAt:      expiresAt,
+		PayloadVersion: ChangePayloadVersion,
+		RequestedBy:    p.Actor,
+		RequestedAt:    now,
+		Version:        1,
 	}, nil
 }
 
@@ -277,6 +304,14 @@ func (c *ChangeRequest) VisibleTo(channel Channel, merchantID string) bool {
 	return c.MerchantID == merchantID
 }
 
+// IsExpiredAt 报告审批单在 now 时刻是否已超过审批时效。
+func (c *ChangeRequest) IsExpiredAt(now time.Time) bool {
+	if c.ExpiresAt == nil {
+		return false
+	}
+	return !now.Before(*c.ExpiresAt)
+}
+
 // IsApproved 报告审批单是否已通过但尚未应用。
 func (c *ChangeRequest) IsApproved() bool { return c.Status == ChangeStatusApproved }
 
@@ -292,24 +327,35 @@ func (c *ChangeRequest) DecodePayload(dst any) error {
 }
 
 // Approve 通过审批；审批人必须与申请人不同。
-func (c *ChangeRequest) Approve(approver string, expectedVersion int64) error {
+//
+// 超过审批时效的单据必须先由 Expire 收敛为 expired，不能再被通过：
+// 审批人看到的载荷可能已与目标聚合格局不一致，迟到的批准等于授权了过期意图。
+func (c *ChangeRequest) Approve(approver, decisionReason string, expectedVersion int64) error {
 	if err := c.ensurePending(approver, expectedVersion); err != nil {
 		return err
+	}
+	if c.IsExpiredAt(nowUTC()) {
+		return errConflict(ErrChangeExpired, "change request %s has expired", c.ID)
 	}
 	if approver == c.RequestedBy {
 		return errForbidden(ErrSelfApproval,
 			"requester %s must not approve their own change request (separation of duties)", approver)
 	}
+	reason, err := normalizeDecisionReason(decisionReason, false)
+	if err != nil {
+		return err
+	}
 	now := nowUTC()
 	c.Status = ChangeStatusApproved
 	c.ApprovedBy = approver
 	c.ApprovedAt = &now
+	c.DecisionReason = reason
 	c.Version++
 	return nil
 }
 
-// Reject 拒绝审批；同样适用职责分离，避免申请人绕过审批自行关闭。
-func (c *ChangeRequest) Reject(approver string, expectedVersion int64) error {
+// Reject 拒绝审批；同样适用职责分离，且必须说明拒绝理由。
+func (c *ChangeRequest) Reject(approver, decisionReason string, expectedVersion int64) error {
 	if err := c.ensurePending(approver, expectedVersion); err != nil {
 		return err
 	}
@@ -317,10 +363,35 @@ func (c *ChangeRequest) Reject(approver string, expectedVersion int64) error {
 		return errForbidden(ErrSelfApproval,
 			"requester %s must not reject their own change request", approver)
 	}
+	reason, err := normalizeDecisionReason(decisionReason, true)
+	if err != nil {
+		return err
+	}
 	now := nowUTC()
 	c.Status = ChangeStatusRejected
 	c.ApprovedBy = approver
 	c.ApprovedAt = &now
+	c.DecisionReason = reason
+	c.Version++
+	return nil
+}
+
+// Expire 把超时的待审批单收敛为 expired。
+//
+// 只有 pending 且确实超过时效才允许；其它状态返回 40900，避免清理任务误改已决定单据。
+func (c *ChangeRequest) Expire(expectedVersion int64) error {
+	if c.Status != ChangeStatusPending {
+		return errConflict(ErrChangeNotPending,
+			"change request %s is %s, not pending", c.ID, string(c.Status))
+	}
+	if expectedVersion != c.Version {
+		return errConflict(ErrVersionConflict,
+			"change request %s version %d does not match expected %d", c.ID, c.Version, expectedVersion)
+	}
+	if !c.IsExpiredAt(nowUTC()) {
+		return errConflict(ErrChangeNotPending, "change request %s has not expired yet", c.ID)
+	}
+	c.Status = ChangeStatusExpired
 	c.Version++
 	return nil
 }
@@ -367,7 +438,7 @@ func (c *ChangeRequest) BindTarget(targetID string) error {
 //
 // 应用动作必须幂等：重复调用返回 40900，由调用方回读状态，避免同一审批单被
 // 应用到两个不同版本的目标聚合。
-func (c *ChangeRequest) MarkApplied(expectedVersion int64) error {
+func (c *ChangeRequest) MarkApplied(actor string, expectedVersion int64) error {
 	if c.Status != ChangeStatusApproved {
 		return errConflict(ErrChangeNotApproved,
 			"change request %s is %s; only approved requests can be applied", c.ID, string(c.Status))
@@ -376,8 +447,12 @@ func (c *ChangeRequest) MarkApplied(expectedVersion int64) error {
 		return errConflict(ErrVersionConflict,
 			"change request %s version %d does not match expected %d", c.ID, c.Version, expectedVersion)
 	}
+	if actor == "" {
+		return errInvalid(ErrMissingActor, "change request applier is required")
+	}
 	now := nowUTC()
 	c.Status = ChangeStatusApplied
+	c.AppliedBy = actor
 	c.AppliedAt = &now
 	c.Version++
 	return nil
@@ -435,6 +510,20 @@ func validateChangeTarget(action ChangeAction, targetID string) error {
 			"change action %q requires a target id", string(action))
 	}
 	return nil
+}
+
+// normalizeDecisionReason 去除首尾空白并校验审批结论说明；拒绝时必须填写。
+func normalizeDecisionReason(reason string, required bool) (string, error) {
+	reason = strings.TrimSpace(reason)
+	if required && reason == "" {
+		return "", errInvalid(ErrInvalidDecisionReason,
+			"decision reason is required when rejecting a change request")
+	}
+	if len(reason) > MaxDecisionReasonLen {
+		return "", errInvalid(ErrInvalidDecisionReason,
+			"decision reason exceeds %d bytes", MaxDecisionReasonLen)
+	}
+	return reason, nil
 }
 
 // normalizeChangeReason 去除首尾空白并校验长度。

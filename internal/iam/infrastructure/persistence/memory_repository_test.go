@@ -339,14 +339,14 @@ func TestMemoryBindingRepositoryDeleteIsIdempotent(t *testing.T) {
 	if err := repo.Save(ctx, binding); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Delete(ctx, binding.ID); err != nil {
+	if err := repo.Revoke(ctx, binding.ID, "operator-1", "released in test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Delete(ctx, binding.ID); err != nil {
-		t.Fatalf("second delete must be idempotent: %v", err)
+	if err := repo.Revoke(ctx, binding.ID, "operator-1", "released in test"); err != nil {
+		t.Fatalf("second revoke must be idempotent: %v", err)
 	}
-	if err := repo.Delete(ctx, "missing"); err != nil {
-		t.Fatalf("unknown id delete must be idempotent: %v", err)
+	if err := repo.Revoke(ctx, "missing", "operator-1", "released in test"); err != nil {
+		t.Fatalf("unknown id revoke must be idempotent: %v", err)
 	}
 	// 解绑后同一唯一键可重新绑定（新 ID）。
 	if err := repo.Save(ctx, newTestBinding(t, "binding-2", "u-1", "role-1", nil)); err != nil {

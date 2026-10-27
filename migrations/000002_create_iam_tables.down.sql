@@ -3,8 +3,11 @@
 -- 该迁移会丢失全部 IAM 授权数据，只允许在非生产环境或已确认清理的前提下执行。
 
 DROP TABLE IF EXISTS iam_change_request;
-DROP TABLE IF EXISTS iam_role_data_scope;
 DROP TABLE IF EXISTS iam_role_binding;
+DROP TABLE IF EXISTS iam_role_data_scope;
 DROP TABLE IF EXISTS iam_role_permission;
+DROP TABLE IF EXISTS iam_role_template_permission;
+DROP TABLE IF EXISTS iam_role_template_data_scope;
+DROP TABLE IF EXISTS iam_role_template;
 DROP TABLE IF EXISTS iam_role;
 DROP TABLE IF EXISTS iam_permission;

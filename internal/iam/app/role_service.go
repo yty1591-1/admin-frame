@@ -121,7 +121,10 @@ type CreateRoleCommand struct {
 	Description string
 	Permissions []iam.PermissionCode
 	DataScopes  []domain.DataScope
-	Actor       string
+	// TemplateID / TemplateVersion 记录模板实例来源；手工创建时留空。
+	TemplateID      string
+	TemplateVersion int64
+	Actor           string
 }
 
 // CreateRole 创建处于 active 状态、version=1 的角色，并初始化权限与数据范围。
@@ -153,14 +156,16 @@ func (s *RoleService) CreateRole(ctx context.Context, cmd CreateRoleCommand) (*d
 		return nil, apperr.Internal("generate role id", err)
 	}
 	role, err := domain.NewRole(domain.NewRoleParams{
-		ID:          roleID,
-		Channel:     cmd.Channel,
-		Scope:       cmd.Scope,
-		MerchantID:  cmd.MerchantID,
-		Code:        cmd.Code,
-		Name:        cmd.Name,
-		Description: cmd.Description,
-		Actor:       cmd.Actor,
+		ID:              roleID,
+		Channel:         cmd.Channel,
+		Scope:           cmd.Scope,
+		MerchantID:      cmd.MerchantID,
+		Code:            cmd.Code,
+		Name:            cmd.Name,
+		Description:     cmd.Description,
+		TemplateID:      cmd.TemplateID,
+		TemplateVersion: cmd.TemplateVersion,
+		Actor:           cmd.Actor,
 	})
 	if err != nil {
 		return nil, err

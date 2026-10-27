@@ -49,6 +49,10 @@ type Role struct {
 	Description string
 	// Type 角色类型。
 	Type RoleType
+	// TemplateID 来源角色模板 ID；空串表示非模板实例。
+	TemplateID string
+	// TemplateVersion 实例化时的模板版本；与模板当前版本不一致表示存在漂移。
+	TemplateVersion int64
 	// Status 生命周期状态。
 	Status RoleStatus
 	// Version 乐观锁版本，初始为 1。
@@ -77,7 +81,10 @@ type NewRoleParams struct {
 	Name        string
 	Description string
 	Type        RoleType
-	Actor       string
+	// TemplateID / TemplateVersion 记录模板实例来源；手工创建时留空。
+	TemplateID      string
+	TemplateVersion int64
+	Actor           string
 }
 
 // NewRole 创建处于 active 状态、版本为 1 的角色。
@@ -123,22 +130,24 @@ func NewRole(p NewRoleParams) (*Role, error) {
 
 	now := nowUTC()
 	return &Role{
-		ID:          p.ID,
-		Channel:     p.Channel,
-		Scope:       p.Scope,
-		MerchantID:  p.MerchantID,
-		Code:        p.Code,
-		Name:        p.Name,
-		Description: p.Description,
-		Type:        roleType,
-		Status:      RoleStatusActive,
-		Version:     1,
-		CreatedBy:   p.Actor,
-		UpdatedBy:   p.Actor,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Permissions: make(PermissionSet),
-		DataScopes:  make(map[string]DataScope),
+		ID:              p.ID,
+		Channel:         p.Channel,
+		Scope:           p.Scope,
+		MerchantID:      p.MerchantID,
+		Code:            p.Code,
+		Name:            p.Name,
+		Description:     p.Description,
+		Type:            roleType,
+		TemplateID:      p.TemplateID,
+		TemplateVersion: p.TemplateVersion,
+		Status:          RoleStatusActive,
+		Version:         1,
+		CreatedBy:       p.Actor,
+		UpdatedBy:       p.Actor,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		Permissions:     make(PermissionSet),
+		DataScopes:      make(map[string]DataScope),
 	}, nil
 }
 

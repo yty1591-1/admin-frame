@@ -13,7 +13,8 @@ import (
 
 // changeRequestSelectColumns 是审批单表的显式列清单（禁止 SELECT *，DATA-04）。
 const changeRequestSelectColumns = `id, channel, merchant_id, action, target_type, target_id, payload,
-	status, reason, requested_by, requested_at, approved_by, approved_at, applied_at, version`
+	payload_version, status, reason, requested_by, requested_at, expires_at, approved_by, approved_at,
+	decision_reason, applied_by, applied_at, version`
 
 // SQLChangeRequestRepository 是 MySQL 8.0 的审批单仓储实现。
 //
@@ -50,23 +51,25 @@ func (r *SQLChangeRequestRepository) Save(ctx context.Context, request *domain.C
 	}
 	if expectedVersion == 0 {
 		_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO iam_change_request
-			(id, channel, merchant_id, action, target_type, target_id, payload, status, reason,
-				requested_by, requested_at, approved_by, approved_at, applied_at, version)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, channel, merchant_id, action, target_type, target_id, payload, payload_version,
+				status, reason, requested_by, requested_at, expires_at, approved_by, approved_at,
+				decision_reason, applied_by, applied_at, version)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			requestID, string(request.Channel), request.MerchantID, string(request.Action),
-			string(request.TargetType), request.TargetID, request.Payload, string(request.Status),
-			request.Reason, request.RequestedBy, request.RequestedAt.UTC(), request.ApprovedBy,
-			nullTime(request.ApprovedAt), nullTime(request.AppliedAt), request.Version)
-		return conflictOnDuplicate(err, "change request id already exists")
+			string(request.TargetType), request.TargetID, request.Payload, request.PayloadVersion,
+			string(request.Status), request.Reason, request.RequestedBy, request.RequestedAt.UTC(),
+			nullTime(request.ExpiresAt), request.ApprovedBy, nullTime(request.ApprovedAt),
+			request.DecisionReason, request.AppliedBy, nullTime(request.AppliedAt), request.Version)
+		return conflictOnDuplicate(err, "change request already pending for this target")
 	}
 
 	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE iam_change_request
 		SET target_id = ?, status = ?, reason = ?, approved_by = ?, approved_at = ?,
-			applied_at = ?, version = ?
+			decision_reason = ?, applied_by = ?, applied_at = ?, version = ?
 		WHERE id = ? AND version = ?`,
 		request.TargetID, string(request.Status), request.Reason, request.ApprovedBy,
-		nullTime(request.ApprovedAt), nullTime(request.AppliedAt), request.Version,
-		requestID, expectedVersion)
+		nullTime(request.ApprovedAt), request.DecisionReason, request.AppliedBy,
+		nullTime(request.AppliedAt), request.Version, requestID, expectedVersion)
 	if err != nil {
 		return err
 	}
@@ -172,20 +175,27 @@ func changeRequestFilterClause(filter domain.ChangeRequestFilter) (clause string
 	return builder.String(), args
 }
 
-// scanChangeRequest 扫描一行审批单；approved_at / applied_at 允许为 NULL。
+// scanChangeRequest 扫描一行审批单；expires_at / approved_at / applied_at 允许为 NULL。
 func scanChangeRequest(row scanRow) (*domain.ChangeRequest, error) {
 	var (
 		request    domain.ChangeRequest
+		expiresAt  sql.NullTime
 		approvedAt sql.NullTime
 		appliedAt  sql.NullTime
 	)
 	err := row.Scan(
 		&request.ID, &request.Channel, &request.MerchantID, &request.Action, &request.TargetType,
-		&request.TargetID, &request.Payload, &request.Status, &request.Reason, &request.RequestedBy,
-		&request.RequestedAt, &request.ApprovedBy, &approvedAt, &appliedAt, &request.Version,
+		&request.TargetID, &request.Payload, &request.PayloadVersion, &request.Status,
+		&request.Reason, &request.RequestedBy, &request.RequestedAt, &expiresAt,
+		&request.ApprovedBy, &approvedAt, &request.DecisionReason, &request.AppliedBy,
+		&appliedAt, &request.Version,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if expiresAt.Valid {
+		value := expiresAt.Time.UTC()
+		request.ExpiresAt = &value
 	}
 	if approvedAt.Valid {
 		value := approvedAt.Time.UTC()

@@ -450,14 +450,18 @@ func TestSQLBindingRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("byRole=%d", len(byRole))
 	}
 
-	if err := bindings.Delete(ctx, "2001"); err != nil {
+	if err := bindings.Revoke(ctx, "2001", "u-9", "released in test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := bindings.Delete(ctx, "2001"); err != nil {
-		t.Fatalf("second delete must be idempotent: %v", err)
+	if err := bindings.Revoke(ctx, "2001", "u-9", "released in test"); err != nil {
+		t.Fatalf("second revoke must be idempotent: %v", err)
 	}
-	if _, err := bindings.FindByID(ctx, "2001"); !errors.Is(err, apperr.ErrNotFound) {
-		t.Fatalf("err=%v, want not found", err)
+	revoked, err := bindings.FindByID(ctx, "2001")
+	if err != nil {
+		t.Fatalf("revoked binding must stay readable for audit: %v", err)
+	}
+	if !revoked.IsRevoked() || revoked.RevokedBy != "u-9" || revoked.RevokeReason != "released in test" {
+		t.Fatalf("revoked_at/by/reason=%v/%q/%q", revoked.RevokedAt, revoked.RevokedBy, revoked.RevokeReason)
 	}
 }
 
@@ -691,13 +695,13 @@ func TestSQLChangeRequestRepository(t *testing.T) {
 	}
 
 	// 状态流转：批准 → 应用。
-	if err := loaded.Approve("u-2", loaded.Version); err != nil {
+	if err := loaded.Approve("u-2", "", loaded.Version); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Save(ctx, loaded, 1); err != nil {
 		t.Fatalf("approve save: %v", err)
 	}
-	if err := loaded.MarkApplied(loaded.Version); err != nil {
+	if err := loaded.MarkApplied("u-2", loaded.Version); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Save(ctx, loaded, 2); err != nil {

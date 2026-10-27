@@ -18,6 +18,8 @@ const (
 	ResourceTypeBinding = "iam_binding"
 	// ResourceTypeBreakglass 破玻璃申请 / 审批 / 撤销。
 	ResourceTypeBreakglass = "iam_breakglass"
+	// ResourceTypeRoleTemplate 角色模板的定义与变更。
+	ResourceTypeRoleTemplate = "iam_role_template"
 )
 
 // 审计属性键，保持稳定便于 SIEM 检索。

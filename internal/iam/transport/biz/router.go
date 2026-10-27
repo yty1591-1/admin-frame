@@ -36,6 +36,14 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 授权（全量替换，差量审计）。
 	mux.Handle("PUT /biz/v1/iam/roles/{id}/permissions", authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.ReplacePermissions))))
 
+	// 角色模板：B 端只读并可实例化本商户角色；模板定义仍由平台维护。
+	mux.Handle("GET /biz/v1/iam/role-templates",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoleTemplates))))
+	mux.Handle("GET /biz/v1/iam/role-templates/{id}",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetRoleTemplate))))
+	mux.Handle("POST /biz/v1/iam/role-templates/{id}/instantiate",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.InstantiateRoleTemplate))))
+
 	// 本商户绑定。
 	mux.Handle("GET /biz/v1/iam/bindings", authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.ListBindings))))
 	mux.Handle("POST /biz/v1/iam/bindings", authMW(perm(string(iam.PermBindingWrite))(http.HandlerFunc(h.CreateBinding))))
