@@ -51,26 +51,29 @@ func (r *MemorySnapshotRepository) Load(ctx context.Context, query domain.Subjec
 		if !role.IsActive() || role.Channel != query.Channel {
 			continue
 		}
-		roleSet[role.Code] = struct{}{}
-		if role.Version > version {
-			version = role.Version
-		}
-		if role.Type == domain.RoleTypeBreakglass {
-			// 与 SQL 实现一致：仅在有效绑定期内注入 "*"，目录本身不含通配符。
-			permissionSet[iam.PermissionCode("*")] = struct{}{}
-			breakglass = true
-		}
-		for _, code := range role.PermissionCodes() {
-			entry, ok := catalog.ByCode(code)
-			if !ok || entry.Status != catalog.StatusActive {
-				continue
+		// RBAC1：绑定角色与其全部生效祖先共同构成权限来源。
+		for _, item := range r.roleChain(ctx, role) {
+			roleSet[item.Code] = struct{}{}
+			if item.Version > version {
+				version = item.Version
 			}
-			if entry.Channel != catalog.ChannelBoth && string(entry.Channel) != string(query.Channel) {
-				continue
+			if item.Type == domain.RoleTypeBreakglass {
+				// 与 SQL 实现一致：仅在有效绑定期内注入 "*"，目录本身不含通配符。
+				permissionSet[iam.PermissionCode("*")] = struct{}{}
+				breakglass = true
 			}
-			permissionSet[code] = struct{}{}
+			for _, code := range item.PermissionCodes() {
+				entry, ok := catalog.ByCode(code)
+				if !ok || entry.Status != catalog.StatusActive {
+					continue
+				}
+				if entry.Channel != catalog.ChannelBoth && string(entry.Channel) != string(query.Channel) {
+					continue
+				}
+				permissionSet[code] = struct{}{}
+			}
+			rawScopes = append(rawScopes, item.SortedDataScopes()...)
 		}
-		rawScopes = append(rawScopes, role.SortedDataScopes()...)
 	}
 
 	roles := make([]string, 0, len(roleSet))
@@ -104,4 +107,24 @@ func (r *MemorySnapshotRepository) Load(ctx context.Context, query domain.Subjec
 		Version:     version,
 		GeneratedAt: time.Now().UTC(),
 	}, nil
+}
+
+// roleChain 返回绑定角色及其全部生效祖先，与 SQL 实现语义保持一致：
+// 祖先必须 active、未软删、同端别；破玻璃祖先不参与继承。
+// 深度受 MaxRoleHierarchyDepth 限制，脏数据成环时按深度截断而不是无限递归。
+func (r *MemorySnapshotRepository) roleChain(ctx context.Context, role *domain.Role) []*domain.Role {
+	chain := []*domain.Role{role}
+	current := role
+	for depth := 0; depth < domain.MaxRoleHierarchyDepth && current.ParentID != ""; depth++ {
+		parent, err := r.roles.FindByID(ctx, current.ParentID)
+		if err != nil {
+			break
+		}
+		if !parent.IsActive() || parent.Channel != role.Channel || parent.Type == domain.RoleTypeBreakglass {
+			break
+		}
+		chain = append(chain, parent)
+		current = parent
+	}
+	return chain
 }

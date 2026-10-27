@@ -1198,6 +1198,9 @@ components:
           enum: [admin, merchant]
         merchant_id:
           type: string
+        parent_id:
+          type: string
+          description: 父角色 ID；为空表示根角色。权限与数据范围沿父链向上继承（RBAC1）
         code:
           type: string
           description: 端别内唯一角色码
@@ -1253,6 +1256,9 @@ components:
         scope_type:
           type: string
           enum: [admin, merchant]
+        parent_id:
+          type: string
+          description: 父角色 ID；为空表示根角色。必须同端别、同商户，且不得成环（深度 ≤ 8）
         code:
           type: string
           minLength: 1
@@ -1285,6 +1291,9 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/RoleStatus"
+        parent_id:
+          type: string
+          description: 父角色 ID；空串表示提升为根角色，省略表示不改继承关系
         version:
           type: integer
           format: int64

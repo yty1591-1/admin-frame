@@ -15,7 +15,7 @@ import (
 )
 
 // roleSelectColumns 是角色表的显式列清单（禁止 SELECT *，DATA-04）。
-const roleSelectColumns = `id, channel, scope_type, merchant_id, code, name, description,
+const roleSelectColumns = `id, channel, scope_type, merchant_id, parent_id, code, name, description,
 	role_type, template_id, template_version, status, version, created_by, updated_by,
 	created_at, updated_at, deleted_at`
 
@@ -105,12 +105,16 @@ func (r *SQLRoleRepository) insert(ctx context.Context, role *domain.Role) error
 		}
 		templateID = parsed
 	}
+	parentID, err := nullableRoleID(role.ParentID)
+	if err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO iam_role
-		(id, channel, scope_type, merchant_id, code, name, description,
+		(id, channel, scope_type, merchant_id, parent_id, code, name, description,
 		 role_type, template_id, template_version, status, version,
 		 created_by, updated_by, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		roleID, string(role.Channel), string(role.Scope), role.MerchantID, role.Code,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		roleID, string(role.Channel), string(role.Scope), role.MerchantID, parentID, role.Code,
 		role.Name, role.Description, string(role.Type), templateID,
 		role.TemplateVersion, string(role.Status), role.Version,
 		role.CreatedBy, role.UpdatedBy, role.CreatedAt.UTC(), role.UpdatedAt.UTC(), nullTime(role.DeletedAt))
@@ -149,11 +153,15 @@ func (r *SQLRoleRepository) update(ctx context.Context, role *domain.Role, expec
 		return apperr.BadRequest("role code, channel and merchant are immutable")
 	}
 
+	parentID, err := nullableRoleID(role.ParentID)
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE iam_role
-		SET name = ?, description = ?, role_type = ?, template_version = ?, status = ?, version = ?,
+		SET name = ?, description = ?, parent_id = ?, role_type = ?, template_version = ?, status = ?, version = ?,
 		    updated_by = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ? AND version = ?`,
-		role.Name, role.Description, string(role.Type), role.TemplateVersion,
+		role.Name, role.Description, parentID, string(role.Type), role.TemplateVersion,
 		string(role.Status), role.Version,
 		role.UpdatedBy, role.UpdatedAt.UTC(), nullTime(role.DeletedAt), roleID, expectedVersion)
 	if err != nil {
@@ -239,6 +247,53 @@ func (r *SQLRoleRepository) ListByTemplate(ctx context.Context, templateID strin
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		out = append(out, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// roleDescendantsSQL 用递归 CTE 展开子角色树；depth 上限与领域层一致，
+// 脏数据成环时在到达上限后自然截断，而不是触发 cte_max_recursion_depth 报错。
+const roleDescendantsSQL = `
+WITH RECURSIVE role_descendants AS (
+	SELECT id, parent_id, 1 AS depth
+	FROM iam_role
+	WHERE parent_id = ? AND deleted_at IS NULL
+	UNION ALL
+	SELECT child.id, child.parent_id, d.depth + 1
+	FROM iam_role child
+	JOIN role_descendants d ON child.parent_id = d.id
+	WHERE child.deleted_at IS NULL AND d.depth < ?
+)
+SELECT ` + roleSelectColumns + `
+FROM iam_role
+WHERE id IN (SELECT id FROM role_descendants)
+ORDER BY code, id`
+
+// ListDescendants 返回以 roleID 为根的未删除子孙角色（不含根自身）。
+func (r *SQLRoleRepository) ListDescendants(ctx context.Context, roleID string) ([]*domain.Role, error) {
+	parsed, err := parseID(roleID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx, roleDescendantsSQL, parsed, domain.MaxRoleHierarchyDepth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*domain.Role, 0)
+	for rows.Next() {
+		role, scanErr := scanRole(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		// 子角色列表只用于删除检查与缓存失效，不需要权限明细。
+		role.Permissions = make(domain.PermissionSet)
+		role.DataScopes = make(map[string]domain.DataScope)
 		out = append(out, role)
 	}
 	if err := rows.Err(); err != nil {
@@ -441,21 +496,25 @@ type scanRow interface {
 	Scan(dest ...any) error
 }
 
-// scanRole 扫描一行角色；deleted_at 允许为 NULL，template_id 为 0 表示非模板实例。
+// scanRole 扫描一行角色；deleted_at / parent_id 允许为 NULL，template_id 为 0 表示非模板实例。
 func scanRole(row scanRow) (*domain.Role, error) {
 	var (
 		role       domain.Role
+		parentID   sql.NullInt64
 		templateID int64
 		deletedAt  sql.NullTime
 	)
 	err := row.Scan(
-		&role.ID, &role.Channel, &role.Scope, &role.MerchantID, &role.Code,
+		&role.ID, &role.Channel, &role.Scope, &role.MerchantID, &parentID, &role.Code,
 		&role.Name, &role.Description, &role.Type, &templateID, &role.TemplateVersion,
 		&role.Status, &role.Version, &role.CreatedBy, &role.UpdatedBy,
 		&role.CreatedAt, &role.UpdatedAt, &deletedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if parentID.Valid {
+		role.ParentID = strconv.FormatInt(parentID.Int64, 10)
 	}
 	if templateID != 0 {
 		role.TemplateID = strconv.FormatInt(templateID, 10)
@@ -477,6 +536,14 @@ func nullTime(value *time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+// nullableRoleID 把空串父角色转换为 SQL NULL；空串语义为「根角色」。
+func nullableRoleID(value string) (any, error) {
+	if value == "" {
+		return nil, nil
+	}
+	return parseID(value)
 }
 
 // normalizeLimit 把分页大小限制在 [1, maxListLimit]。

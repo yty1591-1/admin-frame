@@ -183,6 +183,43 @@ func (r *MemoryRoleRepository) ListByTemplate(_ context.Context, templateID stri
 	return out, nil
 }
 
+// ListDescendants 返回以 roleID 为根的未删除子孙角色（不含根自身）。
+//
+// 内存实现按层 BFS；深度上限与领域层一致，脏数据成环时按层数截断。
+func (r *MemoryRoleRepository) ListDescendants(_ context.Context, roleID string) ([]*domain.Role, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seen := map[string]struct{}{roleID: {}}
+	frontier := map[string]struct{}{roleID: {}}
+	out := make([]*domain.Role, 0)
+	for depth := 1; depth <= domain.MaxRoleHierarchyDepth && len(frontier) > 0; depth++ {
+		next := make(map[string]struct{}, len(frontier))
+		for id, role := range r.roles {
+			if role.IsDeleted() || role.ParentID == "" {
+				continue
+			}
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			if _, isChild := frontier[role.ParentID]; !isChild {
+				continue
+			}
+			seen[id] = struct{}{}
+			next[id] = struct{}{}
+			out = append(out, cloneRole(role))
+		}
+		frontier = next
+	}
+	slices.SortFunc(out, func(a, b *domain.Role) int {
+		if byCode := strings.Compare(a.Code, b.Code); byCode != 0 {
+			return byCode
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
 // matchesKeyword 对 code / name 做大小写不敏感包含匹配。
 func matchesKeyword(role *domain.Role, keyword string) bool {
 	needle := strings.ToLower(keyword)

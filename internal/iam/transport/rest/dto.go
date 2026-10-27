@@ -46,6 +46,7 @@ type RoleDTO struct {
 	Channel      string         `json:"channel"`
 	ScopeType    string         `json:"scope_type"`
 	MerchantID   string         `json:"merchant_id"`
+	ParentID     string         `json:"parent_id,omitempty"`
 	Code         string         `json:"code"`
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
@@ -73,6 +74,7 @@ type RoleListResponse struct {
 type CreateRoleRequest struct {
 	Channel     string         `json:"channel"`
 	ScopeType   string         `json:"scope_type"`
+	ParentID    string         `json:"parent_id"`
 	Code        string         `json:"code"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -82,10 +84,13 @@ type CreateRoleRequest struct {
 }
 
 // UpdateRoleRequest 是 PATCH 角色请求体；nil 字段表示不修改。
+//
+// parent_id 传空串表示提升为根角色，省略表示不改继承关系。
 type UpdateRoleRequest struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	Status      *string `json:"status"`
+	ParentID    *string `json:"parent_id"`
 	Version     int64   `json:"version"`
 	Reason      string  `json:"reason"`
 }
@@ -234,6 +239,7 @@ func toRoleDTO(role *domain.Role) *RoleDTO {
 		Channel:     string(role.Channel),
 		ScopeType:   string(role.Scope),
 		MerchantID:  role.MerchantID,
+		ParentID:    role.ParentID,
 		Code:        role.Code,
 		Name:        role.Name,
 		Description: role.Description,

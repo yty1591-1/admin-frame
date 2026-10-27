@@ -26,6 +26,11 @@ type RoleRepository interface {
 	Count(ctx context.Context, filter RoleFilter) (int, error)
 	// ListByTemplate 返回由指定模板实例化的未删除角色，供模板漂移扫描与显式同步。
 	ListByTemplate(ctx context.Context, templateID string) ([]*Role, error)
+	// ListDescendants 返回以 roleID 为根的未删除子孙角色（不含根自身，按 code、id 排序）。
+	//
+	// 供 RBAC1 的两处使用：删除前检查子树、父角色变更后失效后代主体的快照。
+	// 深度上限为 MaxRoleHierarchyDepth，脏数据成环时据此截断而不是无限递归。
+	ListDescendants(ctx context.Context, roleID string) ([]*Role, error)
 }
 
 // RoleFilter 是角色列表过滤条件。

@@ -21,7 +21,7 @@
 | D2 | **服务端权威** | JWT 只承载身份与渠道，**不承载权限点全集**；每次鉴权以 IAM 存储为准，避免「令牌未过期 = 权限未撤销」。 |
 | D3 | **RBAC + 数据范围** | 功能权限（`resource:action`）+ 数据范围（`all` / `merchant` / `self` / `merchant_set`）分离建模；只做 RBAC 不足以满足 SEC-14。 |
 | D4 | **默认拒绝、失败关闭** | 未认证 401、无权限 403、鉴权依赖不可用 503（稳定码 `50300`，已批准新增），**任何异常都不得放行**。 |
-| D5 | **角色扁平、无继承（v1）** | 通过「一个主体绑定多个角色」表达组合，避免继承环、隐式提权与解释成本；继承 / 拒绝规则留待 ADR。 |
+| D5 | **单亲角色继承（RBAC1）** | `iam_role.parent_id` 支持「同端别、同商户」内的单亲角色树：子角色向上继承全部祖先的权限与数据范围。不做多重继承与拒绝规则；破玻璃角色不参与继承；深度上限 `domain.MaxRoleHierarchyDepth`（8），写入时检测自引用与成环。迁移见 `migrations/000005_add_iam_role_hierarchy.up.sql`。 |
 | D6 | **权限点目录代码所有、数据库只读同步** | 权限码是稳定契约，禁止在管理 API 中随意新建；目录由迁移种子入库，启动期校验，CI 校验唯一性与格式。 |
 | D7 | **`pkg/rbac` 保持纯判定** | 不把数据库、缓存、租户逻辑塞进 `pkg/rbac`；动态权限通过 `security.Authorizer` 的 `SnapshotLoader` 端口注入。 |
 | D8 | **两级缓存 + 有界陈旧** | L1 进程内 3s、L2 Redis 5m，写路径主动删除；权限撤销对外生效 ≤ 3s（L2 删除失败时告警，最坏 5m）。 |
@@ -92,7 +92,7 @@
 
 - **不做完整 IdP**：登录、密码、MFA、SSO、会话管理仍由认证侧负责；IAM 只消费已认证的 `Principal`。
 - **不做 ABAC 表达式引擎**：v1 不引入 Casbin / OPA / CEL 等策略引擎；时间、IP、资源属性等条件策略留待 ADR。
-- **不做角色继承 / 拒绝规则**：v1 角色扁平、仅允许；避免「继承环 + 拒绝优先」导致的解释与缓存复杂性。
+- **不做拒绝规则 / 多重继承**：支持单亲角色继承（RBAC1，见 D5），但仍是 allow-only；避免「继承环 + 拒绝优先」导致的解释与缓存复杂性。
 - **不做独立微服务 / 独立数据库**：与业务域共享库；`internal/iam` 只拥有自己的表。
 - **不做组织架构 / 部门树**：v1 数据范围只到商户 / 本人 / 商户集合；部门树另立 ADR。
 - **不做权限管理界面**：本文只定义后端契约；界面由独立工程负责。
@@ -123,7 +123,7 @@
 | 决策 | 选择 | 理由 / 约束 |
 |------|------|-------------|
 | 授权模型 | RBAC + 数据范围 | 功能权限与数据范围分离，避免「有读权限 = 能读全库」 |
-| 角色继承 | v1 不支持 | 降低解释成本与提权风险；组合通过多绑定表达 |
+| 角色继承 | 支持（单亲，深度 ≤ 8） | RBAC1：子角色向上继承祖先权限；破玻璃不参与，写入时检测成环 |
 | 拒绝规则 | v1 不支持 | `pkg/rbac` 为 allow-only；v1 用「不授予」表达拒绝 |
 | 通配符 | 仅系统角色 / 破玻璃可用 | 管理 API 拒绝创建含 `*` 或 `resource:*` 的自定义角色 |
 | 直接权限 | 不对外暴露 | 主体权限必须来自角色；`Subject.Permissions` 仅承载「已展开的有效权限」 |
@@ -217,7 +217,7 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 |----|------|----------|
 | `iam_permission` | 权限点目录（平铺） | `code` 主键；`channel ∈ {admin,biz,both}`；`status ∈ {active,deprecated}`；`resource` 为生成列（由 `code` 首段派生）；不含层级字段，菜单 / 路由树由 `iam_menu` 承载 |
 | `iam_menu` | 菜单 / 路由树 | `code` 稳定标识；`channel ∈ {admin,biz}`；`route_name` 端内唯一；`component` 必须命中前端 `pageMap`；自引用父节点 + 权限码外键（`RESTRICT`）；`sort` 同级升序；`version` 乐观锁；A 端管理接口只停用不物理删 |
-| `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`version` 乐观锁；`template_id` / `template_version` 记录模板来源与实例基线；`uk_iam_role_id_channel`、`uk_iam_role_id_scope` 供子表复合外键引用 |
+| `iam_role` | 角色 | 唯一 `(channel, merchant_id, code)`；`scope_type ∈ {platform,merchant}`；`role_type ∈ {system,custom,breakglass}`；`parent_id` 自引用复合外键 `(parent_id, channel, merchant_id)` 表达同租户单亲继承，应用层检测成环与深度（≤ 8）；`version` 乐观锁；`template_id` / `template_version` 记录模板来源与实例基线；`uk_iam_role_id_channel`、`uk_iam_role_id_scope` 供子表复合外键引用 |
 | `iam_role_template` | 角色模板 | 唯一 `(channel, code)`；`status ∈ {active,disabled}`；`version` 递增以识别实例漂移；软删保留 `code` |
 | `iam_role_template_permission` | 模板 → 权限点基线 | 主键 `(template_id, permission_code)`；外键到模板与权限点（`RESTRICT`） |
 | `iam_role_template_data_scope` | 模板数据范围基线 | 主键 `(template_id, resource)`；`scope_type` / `scope_values` CHECK 与角色侧一致 |
@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS iam_role (
     channel          VARCHAR(16)   NOT NULL                  COMMENT '角色所属端别：admin=A端平台 / biz=B端商户',
     scope_type       VARCHAR(16)   NOT NULL                  COMMENT '角色作用域：platform=A端全局 / merchant=B端单商户',
     merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''       COMMENT 'B端所属商户ID；scope_type=platform 时为空串，禁止用空串代表“全部商户”',
+    parent_id        BIGINT        NULL     DEFAULT NULL     COMMENT '父角色ID（RBAC1）；NULL=根角色，父角色须同端别、同商户',
     code             VARCHAR(64)   NOT NULL                  COMMENT '角色编码，端内（同商户）唯一；软删后不可复用，防止重建洗白',
     name             VARCHAR(128)  NOT NULL                  COMMENT '角色显示名',
     description      VARCHAR(512)  NOT NULL DEFAULT ''       COMMENT '角色说明，建议写清职责边界',
@@ -304,6 +305,10 @@ CREATE TABLE IF NOT EXISTS iam_role (
     KEY idx_iam_role_merchant_status (merchant_id, status) COMMENT 'B端按商户 + 状态列角色',
     KEY idx_iam_role_channel_scope (channel, scope_type, status) COMMENT 'A端按端别 + 作用域列角色',
     KEY idx_iam_role_template (template_id, template_version) COMMENT '模板漂移扫描：按模板聚合实例并比对基线版本',
+    KEY idx_iam_role_parent (parent_id, channel, merchant_id) COMMENT '按父角色查子树 + 复合外键索引',
+    CONSTRAINT fk_iam_role_parent FOREIGN KEY (parent_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT ck_iam_role_channel CHECK (channel IN ('admin', 'biz')),
     CONSTRAINT ck_iam_role_scope_type CHECK (scope_type IN ('platform', 'merchant')),
     CONSTRAINT ck_iam_role_tenant CHECK (
@@ -314,7 +319,7 @@ CREATE TABLE IF NOT EXISTS iam_role (
     CONSTRAINT ck_iam_role_status CHECK (status IN ('active', 'disabled')),
     CONSTRAINT ck_iam_role_version CHECK (version >= 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  COMMENT='IAM 角色定义，按端别与商户作用域隔离；角色扁平、无继承';
+  COMMENT='IAM 角色定义，按端别与商户作用域隔离；单亲角色继承（RBAC1），破玻璃不参与';
 ```
 
 > 角色模板三表（`iam_role_template` / `iam_role_template_permission` / `iam_role_template_data_scope`）的完整 DDL 见 `migrations/000002_create_iam_tables.up.sql`；语义与实例化规则见 §5.3.9。
@@ -1115,48 +1120,77 @@ if !checker.Allow(sub, need) {
 ### 8.3 有效权限 SQL（单条，禁止 N+1）
 
 ```sql
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, r.code, r.version, r.role_type, 0 AS depth
+    FROM iam_role_binding b
+    JOIN iam_role r
+      ON r.id = b.role_id
+     AND r.channel = b.channel
+     AND r.status = 'active'
+     AND r.deleted_at IS NULL
+    WHERE b.channel = ?
+      AND b.subject_type = ?
+      AND b.subject_id = ?
+      AND b.merchant_id = ?
+      AND b.revoked_at IS NULL
+      AND (b.expires_at IS NULL OR b.expires_at > ?)
+    UNION ALL
+    SELECT a.id, a.parent_id, a.code, a.version, a.role_type, c.depth + 1
+    FROM role_chain c
+    JOIN iam_role a
+      ON a.id = c.parent_id
+     AND a.status = 'active'
+     AND a.deleted_at IS NULL
+     AND a.role_type <> 'breakglass'   -- 破玻璃不参与继承，避免普通角色继承到 "*"
+    WHERE c.depth < ?                   -- domain.MaxRoleHierarchyDepth
+)
 SELECT DISTINCT
-       r.id            AS role_id,
-       r.code          AS role_code,
+       c.id            AS role_id,
+       c.code          AS role_code,
        p.code          AS permission_code
-FROM iam_role_binding b
-JOIN iam_role r
-  ON r.id = b.role_id
- AND r.channel = b.channel
- AND r.status = 'active'
- AND r.deleted_at IS NULL
-JOIN iam_role_permission rp
-  ON rp.role_id = r.id
-JOIN iam_permission p
+FROM role_chain c
+LEFT JOIN iam_role_permission rp ON rp.role_id = c.id
+LEFT JOIN iam_permission p
   ON p.code = rp.permission_code
  AND p.status = 'active'
  AND p.channel IN (?, 'both')
-WHERE b.channel = ?
-  AND b.subject_type = ?
-  AND b.subject_id = ?
-  AND b.merchant_id = ?
-  AND b.revoked_at IS NULL
-  AND (b.expires_at IS NULL OR b.expires_at > ?);
+WHERE p.code IS NOT NULL OR c.role_type = 'breakglass';
 ```
 
-数据范围单独一条：
+数据范围单独一条，角色链展开方式相同：
 
 ```sql
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM iam_role_binding b
+    JOIN iam_role r
+      ON r.id = b.role_id
+     AND r.channel = b.channel
+     AND r.status = 'active'
+     AND r.deleted_at IS NULL
+    WHERE b.channel = ?
+      AND b.subject_type = ?
+      AND b.subject_id = ?
+      AND b.merchant_id = ?
+      AND b.revoked_at IS NULL
+      AND (b.expires_at IS NULL OR b.expires_at > ?)
+    UNION ALL
+    SELECT a.id, a.parent_id, c.depth + 1
+    FROM role_chain c
+    JOIN iam_role a
+      ON a.id = c.parent_id
+     AND a.status = 'active'
+     AND a.deleted_at IS NULL
+     AND a.role_type <> 'breakglass'
+    WHERE c.depth < ?
+)
 SELECT s.resource, s.scope_type, s.scope_values
 FROM iam_role_data_scope s
-JOIN iam_role_binding b ON b.role_id = s.role_id
-JOIN iam_role r ON r.id = b.role_id
-WHERE b.channel = ?
-  AND b.subject_type = ?
-  AND b.subject_id = ?
-  AND b.merchant_id = ?
-  AND b.revoked_at IS NULL
-  AND r.status = 'active'
-  AND r.deleted_at IS NULL
-  AND (b.expires_at IS NULL OR b.expires_at > ?);
+JOIN role_chain c ON c.id = s.role_id;
 ```
 
 - 两条查询可在同一事务 / 同一连接内执行；结果合并为 `authz.Snapshot`。
+- RBAC1：`Roles` 与 `Version` 取整条角色链（绑定角色 + 全部生效祖先），父角色变更即可通过版本比对识别缓存陈旧。
 - 角色数、权限数受 `iam.limits` 限制，防止单主体快照过大。
 - 缓存序列化使用版本化结构（`schema_version`），旧缓存反序列化失败视为 miss，不得 panic。
 
@@ -1927,7 +1961,7 @@ BenchmarkReplaceRolePermissions_Diff
 | 问题 | 建议默认 | 决策方式 |
 |------|----------|----------|
 | 是否需要 deny 规则？ | v1 不需要；用「不授予」表达 | ADR |
-| 是否需要角色继承？ | v1 不需要；多绑定组合 | ADR |
+| 是否需要角色继承？ | 已支持单亲继承（RBAC1）；多重继承仍待 ADR | 已决（2026-10-27，迁移 000005） |
 | 是否引入 ABAC（时间 / IP / 资源属性）？ | v1 不引入；避免策略引擎依赖 | ADR |
 | 审批流自建还是接 BPM？ | v1 自建最小审批单 | 产品 + 架构 |
 | 审计存储用 DB 还是 SIEM？ | 按组织现状；本方案只保证 Outbox 可靠投递 | 安全 Owner |

@@ -45,6 +45,56 @@ func mustNewBizRole(t *testing.T, mutate func(*NewRoleParams)) *Role {
 	})
 }
 
+func TestNewRoleRejectsSelfParent(t *testing.T) {
+	_, err := NewRole(NewRoleParams{
+		ID:       "role-1",
+		Channel:  ChannelAdmin,
+		Scope:    RoleScopePlatform,
+		Code:     "ops_readonly",
+		Name:     "运维只读",
+		Actor:    "actor-1",
+		ParentID: "role-1",
+	})
+	if !errors.Is(err, ErrInvalidRoleParent) {
+		t.Fatalf("err = %v, want ErrInvalidRoleParent", err)
+	}
+}
+
+func TestChangeParent(t *testing.T) {
+	role := mustNewRole(t, func(p *NewRoleParams) { p.ParentID = "role-parent" })
+	if role.ParentID != "role-parent" {
+		t.Fatalf("parent = %q", role.ParentID)
+	}
+	// 父角色未变化：幂等返回，不递增版本。
+	if err := role.ChangeParent("role-parent", "actor-2", role.Version); err != nil {
+		t.Fatalf("idempotent ChangeParent: %v", err)
+	}
+	if role.Version != 1 {
+		t.Fatalf("version = %d, want 1", role.Version)
+	}
+	if err := role.ChangeParent(role.ID, "actor-2", role.Version); !errors.Is(err, ErrInvalidRoleParent) {
+		t.Fatalf("self parent err = %v, want ErrInvalidRoleParent", err)
+	}
+	if err := role.ChangeParent("role-grandparent", "actor-2", role.Version); err != nil {
+		t.Fatalf("ChangeParent: %v", err)
+	}
+	if role.ParentID != "role-grandparent" || role.Version != 2 {
+		t.Fatalf("parent=%q version=%d", role.ParentID, role.Version)
+	}
+
+	breakglass := &Role{
+		ID:      "role-bg",
+		Channel: ChannelAdmin,
+		Scope:   RoleScopePlatform,
+		Type:    RoleTypeBreakglass,
+		Status:  RoleStatusActive,
+		Version: 1,
+	}
+	if err := breakglass.ChangeParent("role-parent", "actor-2", breakglass.Version); !errors.Is(err, ErrInvalidRoleParent) {
+		t.Fatalf("breakglass parent err = %v, want ErrInvalidRoleParent", err)
+	}
+}
+
 func TestNewRoleDefaults(t *testing.T) {
 	role := mustNewRole(t, nil)
 	if role.Status != RoleStatusActive {

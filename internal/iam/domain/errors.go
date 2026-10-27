@@ -16,6 +16,8 @@ var (
 	ErrInvalidRoleScope = errors.New("invalid role scope")
 	// ErrInvalidRoleCode 角色编码格式非法。
 	ErrInvalidRoleCode = errors.New("invalid role code")
+	// ErrInvalidRoleParent 父角色非法：自引用、成环、跨端 / 跨商户、超深或破玻璃参与继承。
+	ErrInvalidRoleParent = errors.New("invalid role parent")
 	// ErrInvalidPermissionCode 权限码格式非法。
 	ErrInvalidPermissionCode = errors.New("invalid permission code")
 	// ErrWildcardNotAllowed 出现通配符权限码；仅 breakglass 可在运行时展开 *。

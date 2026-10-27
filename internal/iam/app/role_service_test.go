@@ -403,6 +403,193 @@ func TestSlogRecorderAndNopRecorder(t *testing.T) {
 	}
 }
 
+func TestRoleHierarchyExpandsPermissionsAndScopes(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	parent, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel:     domain.ChannelAdmin,
+		Scope:       domain.RoleScopePlatform,
+		Code:        "base_reader",
+		Name:        "基础只读",
+		Permissions: []iam.PermissionCode{iam.PermRoleRead, iam.PermDataExport},
+		DataScopes:  []domain.DataScope{{Resource: "data", Type: domain.DataScopeAll}},
+		Actor:       "1001",
+	})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel:     domain.ChannelAdmin,
+		Scope:       domain.RoleScopePlatform,
+		ParentID:    parent.ID,
+		Code:        "order_reader",
+		Name:        "订单只读",
+		Permissions: []iam.PermissionCode{iam.PermRoleGrant},
+		Actor:       "1001",
+	})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if child.ParentID != parent.ID {
+		t.Fatalf("parent_id = %q, want %q", child.ParentID, parent.ID)
+	}
+	if _, err := f.bindingSvc.Bind(ctx, app.BindCommand{
+		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
+		SubjectID: "2001", RoleID: child.ID, Actor: "1001",
+	}); err != nil {
+		t.Fatalf("bind child: %v", err)
+	}
+
+	snapshot, err := f.snapshots.Load(ctx, domain.SubjectQuery{
+		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff, SubjectID: "2001",
+	})
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	for _, code := range []iam.PermissionCode{iam.PermRoleRead, iam.PermDataExport, iam.PermRoleGrant} {
+		if !snapshot.HasPermission(code) {
+			t.Fatalf("permission %s not expanded: %v", code, snapshot.Permissions)
+		}
+	}
+	if len(snapshot.Roles) != 2 || snapshot.Roles[0] != "base_reader" || snapshot.Roles[1] != "order_reader" {
+		t.Fatalf("roles = %v, want both bound and ancestor codes", snapshot.Roles)
+	}
+	inherited, ok := snapshot.ScopeFor("data")
+	if !ok || inherited.Type != domain.DataScopeAll {
+		t.Fatalf("inherited scope = %+v, ok=%v", inherited, ok)
+	}
+}
+
+func TestRoleHierarchyRejectsCycleCrossTenantAndMissingParent(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	root, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		Code: "hierarchy_root", Name: "根角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		ParentID: root.ID, Code: "hierarchy_child", Name: "子角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bizRole, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelBiz, Scope: domain.RoleScopeMerchant, MerchantID: "m-1",
+		Code: "merchant_role", Name: "商户角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pointer := func(value string) *string { return &value }
+	cases := []struct {
+		name     string
+		roleID   string
+		version  int64
+		parentID string
+	}{
+		{name: "self parent", roleID: root.ID, version: root.Version, parentID: root.ID},
+		{name: "cycle back to descendant", roleID: root.ID, version: root.Version, parentID: child.ID},
+		{name: "cross channel parent", roleID: bizRole.ID, version: bizRole.Version, parentID: root.ID},
+		{name: "missing parent", roleID: child.ID, version: child.Version, parentID: "987654321"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, updateErr := f.roleSvc.UpdateRole(ctx, app.UpdateRoleCommand{
+				ID: tc.roleID, ParentID: pointer(tc.parentID), Version: tc.version,
+				Actor: "1001", Reason: "调整层级",
+			})
+			if bizCode(updateErr) != apperr.CodeBadRequest {
+				t.Fatalf("err = %v, want 40000", updateErr)
+			}
+		})
+	}
+}
+
+func TestParentPermissionChangeInvalidatesDescendantSubjects(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	parent, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		Code: "invalidate_parent", Name: "父角色",
+		Permissions: []iam.PermissionCode{iam.PermRoleRead}, Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		ParentID: parent.ID, Code: "invalidate_child", Name: "子角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.bindingSvc.Bind(ctx, app.BindCommand{
+		Channel: domain.ChannelAdmin, SubjectType: domain.SubjectStaff,
+		SubjectID: "3001", RoleID: child.ID, Actor: "1001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := f.invalidator.count()
+	if _, _, err := f.roleSvc.ReplacePermissions(ctx, app.ReplacePermissionsCommand{
+		ID: parent.ID, Permissions: []iam.PermissionCode{iam.PermRoleRead, iam.PermRoleWrite},
+		Version: parent.Version, Actor: "1001", Reason: "扩充父角色权限",
+	}); err != nil {
+		t.Fatalf("ReplacePermissions(parent): %v", err)
+	}
+	if f.invalidator.count() <= before {
+		t.Fatal("expected descendant-bound subject snapshot invalidation")
+	}
+	subjects := f.invalidator.subjects
+	found := false
+	for _, subject := range subjects {
+		if subject == "admin||staff|3001" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("descendant subject not invalidated: %v", subjects)
+	}
+}
+
+func TestDeleteRoleRejectsExistingChildren(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	parent, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		Code: "delete_parent", Name: "父角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.roleSvc.CreateRole(ctx, app.CreateRoleCommand{
+		Channel: domain.ChannelAdmin, Scope: domain.RoleScopePlatform,
+		ParentID: parent.ID, Code: "delete_child", Name: "子角色", Actor: "1001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.roleSvc.DeleteRole(ctx, app.DeleteRoleCommand{
+		ID: parent.ID, Version: parent.Version, Actor: "1001", Reason: "清理",
+	}); bizCode(err) != apperr.CodeConflict {
+		t.Fatalf("delete parent err = %v, want 40900", err)
+	}
+	if err := f.roleSvc.DeleteRole(ctx, app.DeleteRoleCommand{
+		ID: child.ID, Version: child.Version, Actor: "1001", Reason: "清理",
+	}); err != nil {
+		t.Fatalf("delete child: %v", err)
+	}
+	if err := f.roleSvc.DeleteRole(ctx, app.DeleteRoleCommand{
+		ID: parent.ID, Version: parent.Version, Actor: "1001", Reason: "清理",
+	}); err != nil {
+		t.Fatalf("delete parent after child removed: %v", err)
+	}
+}
+
 func TestCreateRoleEnforcesMerchantQuota(t *testing.T) {
 	f := newFixture(t)
 	svc, err := app.NewRoleService(app.RoleServiceConfig{

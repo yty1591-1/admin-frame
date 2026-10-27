@@ -10,6 +10,11 @@ import (
 )
 
 const (
+	// MaxRoleHierarchyDepth 角色继承链的最大深度（边数，即最多向上展开的祖先层数）。
+	//
+	// RBAC1 的权限展开是「绑定角色 + 全部祖先」，深度上限同时约束应用层写入校验与
+	// 快照递归查询，避免脏数据成环时把单次鉴权放大成无界递归。
+	MaxRoleHierarchyDepth = 8
 	// MaxRoleCodeLen 角色编码最大字节数，与 iam_role.code 列宽一致。
 	MaxRoleCodeLen = 64
 	// MaxRoleNameLen 角色显示名最大字节数。
@@ -30,6 +35,8 @@ var roleCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 //   - platform 角色必须属于 admin 端且 merchant_id 为空；
 //   - merchant 角色必须属于 biz 端且 merchant_id 非空；
 //   - 权限集合不含通配符；数据范围类型与端别相容；
+//   - 父角色（RBAC1）必须同端别、同商户且非破玻璃，祖先链不得成环、深度不超过
+//     MaxRoleHierarchyDepth；
 //   - 软删后不可复用 code，且不再参与鉴权快照；
 //   - 每次变更 version 递增，持久化必须带 expectedVersion 做乐观锁。
 type Role struct {
@@ -41,6 +48,10 @@ type Role struct {
 	Scope RoleScopeType
 	// MerchantID B 端商户 ID；platform 角色为空串。
 	MerchantID string
+	// ParentID 父角色 ID；空串表示根角色。
+	//
+	// 权限与数据范围沿父链向上继承，仅在快照展开时生效，不复制到本角色明细表。
+	ParentID string
 	// Code 端内唯一的角色编码；软删后不可复用。
 	Code string
 	// Name 显示名。
@@ -77,6 +88,7 @@ type NewRoleParams struct {
 	Channel     Channel
 	Scope       RoleScopeType
 	MerchantID  string
+	ParentID    string
 	Code        string
 	Name        string
 	Description string
@@ -127,6 +139,11 @@ func NewRole(p NewRoleParams) (*Role, error) {
 		return nil, errForbidden(ErrBreakglassRequiresApproval,
 			"breakglass role must be created through the approval workflow")
 	}
+	if p.ParentID != "" {
+		if p.ParentID == p.ID {
+			return nil, errInvalid(ErrInvalidRoleParent, "role %s must not be its own parent", p.ID)
+		}
+	}
 
 	now := nowUTC()
 	return &Role{
@@ -134,6 +151,7 @@ func NewRole(p NewRoleParams) (*Role, error) {
 		Channel:         p.Channel,
 		Scope:           p.Scope,
 		MerchantID:      p.MerchantID,
+		ParentID:        p.ParentID,
 		Code:            p.Code,
 		Name:            p.Name,
 		Description:     p.Description,
@@ -321,6 +339,29 @@ func (r *Role) UpdateDetails(name, description, actor string, expectedVersion in
 	}
 	r.Name = strings.TrimSpace(name)
 	r.Description = description
+	r.touch(actor)
+	return nil
+}
+
+// ChangeParent 设置父角色；parentID 为空串表示提升为根角色。
+//
+// 跨端 / 跨商户、成环与深度校验依赖仓储查询祖先链，由 app 层完成；
+// 领域层只拦住可在聚合内判定的非法值（自引用、破玻璃参与继承）。
+// 父角色未变化时幂等返回，不递增 version，避免无意义的缓存失效。
+func (r *Role) ChangeParent(parentID, actor string, expectedVersion int64) error {
+	if err := r.ensureMutable(actor, expectedVersion); err != nil {
+		return err
+	}
+	if parentID != "" && parentID == r.ID {
+		return errInvalid(ErrInvalidRoleParent, "role %s must not be its own parent", r.ID)
+	}
+	if r.Type == RoleTypeBreakglass {
+		return errInvalid(ErrInvalidRoleParent, "breakglass role must not inherit from another role")
+	}
+	if r.ParentID == parentID {
+		return nil
+	}
+	r.ParentID = parentID
 	r.touch(actor)
 	return nil
 }

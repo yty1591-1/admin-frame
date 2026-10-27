@@ -495,6 +495,7 @@ func NewRoleChangeApplicator(roles *RoleService, bindings *BindingService) (*Rol
 // roleCreatePayload 是 role_create 动作的载荷。
 type roleCreatePayload struct {
 	Scope       string             `json:"scope_type"`
+	ParentID    string             `json:"parent_id"`
 	Code        string             `json:"code"`
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
@@ -503,10 +504,13 @@ type roleCreatePayload struct {
 }
 
 // roleUpdatePayload 是 role_update 动作的载荷；nil 表示不修改。
+//
+// parent_id 传空串表示提升为根角色，省略表示不改继承关系。
 type roleUpdatePayload struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	Status      *string `json:"status"`
+	ParentID    *string `json:"parent_id"`
 }
 
 // rolePermissionReplacePayload 是 role_permission_replace 动作的载荷。
@@ -623,6 +627,7 @@ func (a *RoleChangeApplicator) applyRoleCreate(ctx context.Context, request *dom
 		Channel:     request.Channel,
 		Scope:       scope,
 		MerchantID:  request.MerchantID,
+		ParentID:    payload.ParentID,
 		Code:        payload.Code,
 		Name:        payload.Name,
 		Description: payload.Description,
@@ -667,6 +672,7 @@ func (a *RoleChangeApplicator) applyRoleUpdate(ctx context.Context, request *dom
 		Name:        payload.Name,
 		Description: payload.Description,
 		Status:      payload.Status,
+		ParentID:    payload.ParentID,
 		Version:     role.Version,
 		Actor:       actor,
 		Reason:      request.Reason,

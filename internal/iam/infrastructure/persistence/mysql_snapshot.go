@@ -13,50 +13,78 @@ import (
 
 // snapshotPermissionSQL 是权限快照查询（docs/rbac-iam.md §8.3）。
 //
-// 单条 SQL 展开 绑定 → 角色 → 角色权限 → 权限点，禁止按角色循环查询（N+1）。
-// 过滤条件同时校验角色状态、软删、权限点状态与端别，任何一项不满足都不进入快照。
+// RBAC1：先用递归 CTE 从绑定角色沿 parent_id 向上展开角色链，再一次性 join 角色权限，
+// 仍然保持单条 SQL、禁止按角色循环查询（N+1）。链上任何一环停用 / 软删都不会被展开；
+// 破玻璃角色作为祖先时整枝被排除，避免普通角色通过继承拿到 "*"。
 //
 // 权限表使用 LEFT JOIN：破玻璃角色本身不持有权限点，只有被绑定时才由
 // 本查询注入 "*"；用 INNER JOIN 会让它整行消失，从而永远无法展开超级权限。
 const snapshotPermissionSQL = `
-SELECT DISTINCT r.id, r.code, r.version, r.role_type, p.code
-FROM iam_role_binding b
-JOIN iam_role r
-		ON r.id = b.role_id
-	AND r.channel = b.channel
-	AND r.status = 'active'
-	AND r.deleted_at IS NULL
+WITH RECURSIVE role_chain AS (
+	SELECT r.id, r.parent_id, r.code, r.version, r.role_type, 0 AS depth
+	FROM iam_role_binding b
+	JOIN iam_role r
+			ON r.id = b.role_id
+		AND r.channel = b.channel
+		AND r.status = 'active'
+		AND r.deleted_at IS NULL
+	WHERE b.channel = ?
+		AND b.subject_type = ?
+		AND b.subject_id = ?
+		AND b.merchant_id = ?
+		AND b.revoked_at IS NULL
+		AND (b.expires_at IS NULL OR b.expires_at > ?)
+	UNION ALL
+	SELECT a.id, a.parent_id, a.code, a.version, a.role_type, c.depth + 1
+	FROM role_chain c
+	JOIN iam_role a
+			ON a.id = c.parent_id
+		AND a.status = 'active'
+		AND a.deleted_at IS NULL
+		AND a.role_type <> 'breakglass'
+	WHERE c.depth < ?
+)
+SELECT DISTINCT c.id, c.code, c.version, c.role_type, p.code
+FROM role_chain c
 LEFT JOIN iam_role_permission rp
-	ON rp.role_id = r.id
+	ON rp.role_id = c.id
 LEFT JOIN iam_permission p
 	ON p.code = rp.permission_code
 	AND p.status = 'active'
 	AND p.channel IN (?, 'both')
-WHERE b.channel = ?
-	AND b.subject_type = ?
-	AND b.subject_id = ?
-	AND b.merchant_id = ?
-	AND b.revoked_at IS NULL
-	AND (b.expires_at IS NULL OR b.expires_at > ?)
-	AND (p.code IS NOT NULL OR r.role_type = 'breakglass')`
+WHERE (p.code IS NOT NULL OR c.role_type = 'breakglass')`
 
 // snapshotScopeSQL 是数据范围快照查询（docs/rbac-iam.md §8.3）。
+//
+// 角色链展开方式与权限查询一致；父角色的数据范围与子角色按资源取并集（最宽者胜出）。
 const snapshotScopeSQL = `
+WITH RECURSIVE role_chain AS (
+	SELECT r.id, r.parent_id, 0 AS depth
+	FROM iam_role_binding b
+	JOIN iam_role r
+			ON r.id = b.role_id
+		AND r.channel = b.channel
+		AND r.status = 'active'
+		AND r.deleted_at IS NULL
+	WHERE b.channel = ?
+		AND b.subject_type = ?
+		AND b.subject_id = ?
+		AND b.merchant_id = ?
+		AND b.revoked_at IS NULL
+		AND (b.expires_at IS NULL OR b.expires_at > ?)
+	UNION ALL
+	SELECT a.id, a.parent_id, c.depth + 1
+	FROM role_chain c
+	JOIN iam_role a
+			ON a.id = c.parent_id
+		AND a.status = 'active'
+		AND a.deleted_at IS NULL
+		AND a.role_type <> 'breakglass'
+	WHERE c.depth < ?
+)
 SELECT DISTINCT s.resource, s.scope_type, s.scope_values
 FROM iam_role_data_scope s
-JOIN iam_role_binding b
-	ON b.role_id = s.role_id
-JOIN iam_role r
-		ON r.id = b.role_id
-	AND r.channel = b.channel
-	AND r.status = 'active'
-	AND r.deleted_at IS NULL
-WHERE b.channel = ?
-	AND b.subject_type = ?
-	AND b.subject_id = ?
-	AND b.merchant_id = ?
-	AND b.revoked_at IS NULL
-	AND (b.expires_at IS NULL OR b.expires_at > ?)`
+JOIN role_chain c ON c.id = s.role_id`
 
 // SQLSnapshotRepository 是 MySQL 8.0 的鉴权快照只读实现。
 //
@@ -114,8 +142,8 @@ func (r *SQLSnapshotRepository) loadPermissions(
 	at time.Time,
 ) (roles []string, permissions []iam.PermissionCode, breakglass bool, version int64, err error) {
 	rows, err := r.sql.QueryContext(ctx, snapshotPermissionSQL,
-		string(query.Channel), string(query.Channel), string(query.SubjectType),
-		query.SubjectID, query.MerchantID, at)
+		string(query.Channel), string(query.SubjectType), query.SubjectID, query.MerchantID, at,
+		domain.MaxRoleHierarchyDepth, string(query.Channel))
 	if err != nil {
 		return nil, nil, false, 0, err
 	}
@@ -172,7 +200,8 @@ func (r *SQLSnapshotRepository) loadPermissions(
 // loadScopes 执行数据范围查询，并按资源取并集（最宽者胜出）。
 func (r *SQLSnapshotRepository) loadScopes(ctx context.Context, query domain.SubjectQuery, at time.Time) ([]domain.DataScope, error) {
 	rows, err := r.sql.QueryContext(ctx, snapshotScopeSQL,
-		string(query.Channel), string(query.SubjectType), query.SubjectID, query.MerchantID, at)
+		string(query.Channel), string(query.SubjectType), query.SubjectID, query.MerchantID, at,
+		domain.MaxRoleHierarchyDepth)
 	if err != nil {
 		return nil, err
 	}

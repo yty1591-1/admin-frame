@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -116,6 +117,7 @@ type CreateRoleCommand struct {
 	Channel     domain.Channel
 	Scope       domain.RoleScopeType
 	MerchantID  string
+	ParentID    string
 	Code        string
 	Name        string
 	Description string
@@ -128,7 +130,11 @@ type CreateRoleCommand struct {
 }
 
 // CreateRole 创建处于 active 状态、version=1 的角色，并初始化权限与数据范围。
+//
+// RBAC1：ParentID 非空时先校验父角色（同端同商户、非破玻璃、无环、深度不超限），
+// 再落库；继承关系只保存在 parent_id，权限与数据范围不复制到本角色明细。
 func (s *RoleService) CreateRole(ctx context.Context, cmd CreateRoleCommand) (*domain.Role, error) {
+	parentID := strings.TrimSpace(cmd.ParentID)
 	if strings.TrimSpace(cmd.Actor) == "" {
 		return nil, apperr.BadRequest("actor is required")
 	}
@@ -155,11 +161,15 @@ func (s *RoleService) CreateRole(ctx context.Context, cmd CreateRoleCommand) (*d
 	if err != nil {
 		return nil, apperr.Internal("generate role id", err)
 	}
+	if err := s.validateParent(ctx, cmd.Channel, cmd.MerchantID, roleID, domain.RoleTypeCustom, parentID); err != nil {
+		return nil, err
+	}
 	role, err := domain.NewRole(domain.NewRoleParams{
 		ID:              roleID,
 		Channel:         cmd.Channel,
 		Scope:           cmd.Scope,
 		MerchantID:      cmd.MerchantID,
+		ParentID:        parentID,
 		Code:            cmd.Code,
 		Name:            cmd.Name,
 		Description:     cmd.Description,
@@ -252,19 +262,22 @@ func (s *RoleService) LoadForChange(ctx context.Context, roleID string, channel 
 }
 
 // UpdateRoleCommand 是 PATCH 角色的入参；nil 字段表示不修改。
+//
+// ParentID 指向空串表示把角色提升为根角色；nil 表示不改继承关系。
 type UpdateRoleCommand struct {
 	ID          string
 	Name        *string
 	Description *string
 	Status      *string
+	ParentID    *string
 	Version     int64
 	Actor       string
 	Reason      string
 }
 
-// UpdateRole 局部更新名称、说明与状态；code / channel / merchant 不可改。
+// UpdateRole 局部更新名称、说明、状态与父角色；code / channel / merchant 不可改。
 func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*domain.Role, error) {
-	if cmd.Name == nil && cmd.Description == nil && cmd.Status == nil {
+	if cmd.Name == nil && cmd.Description == nil && cmd.Status == nil && cmd.ParentID == nil {
 		return nil, apperr.BadRequest("no fields to update")
 	}
 	role, err := roleForGrant(ctx, s.roles, cmd.ID, cmd.Version)
@@ -272,6 +285,7 @@ func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*d
 		return nil, err
 	}
 	operation := opUpdate
+	previousParent := role.ParentID
 	if cmd.Name != nil || cmd.Description != nil {
 		name := role.Name
 		if cmd.Name != nil {
@@ -310,6 +324,16 @@ func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*d
 			statusChanged = true
 		}
 	}
+	if cmd.ParentID != nil {
+		parentID := strings.TrimSpace(*cmd.ParentID)
+		if err := s.validateParent(ctx, role.Channel, role.MerchantID, role.ID, role.Type, parentID); err != nil {
+			return nil, err
+		}
+		if err := role.ChangeParent(parentID, cmd.Actor, role.Version); err != nil {
+			return nil, err
+		}
+	}
+	parentChanged := role.ParentID != previousParent
 	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
 		if err := s.roles.Save(ctx, role, cmd.Version); err != nil {
 			return err
@@ -320,8 +344,8 @@ func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*d
 	}); err != nil {
 		return nil, err
 	}
-	if statusChanged {
-		// 启停改变快照内容，主动失效已绑定主体，避免等 TTL 才生效。
+	if statusChanged || parentChanged {
+		// 启停与改挂父角色都会改变树内主体的快照内容，主动失效而不是等 TTL。
 		s.invalidateRoleSubjects(ctx, role)
 	}
 	return role, nil
@@ -461,6 +485,7 @@ type DeleteRoleCommand struct {
 // DeleteRole 软删角色；存在**有效**绑定时返回 40900，避免静默回收权限。
 //
 // 过期绑定不阻断删除：它在快照中已不生效，只需保留记录供审计追溯。
+// RBAC1：存在子角色时拒绝删除，否则子树会静默丢失继承来的权限。
 func (s *RoleService) DeleteRole(ctx context.Context, cmd DeleteRoleCommand) error {
 	role, err := roleForGrant(ctx, s.roles, cmd.ID, cmd.Version)
 	if err != nil {
@@ -478,6 +503,13 @@ func (s *RoleService) DeleteRole(ctx context.Context, cmd DeleteRoleCommand) err
 		if binding.IsEffective(now) {
 			return apperr.Conflict("role still has bindings; unbind them first")
 		}
+	}
+	descendants, err := s.roles.ListDescendants(ctx, role.ID)
+	if err != nil {
+		return err
+	}
+	if len(descendants) > 0 {
+		return apperr.Conflict("role still has child roles; reassign them before delete")
 	}
 	if err := role.Delete(cmd.Actor, cmd.Version); err != nil {
 		return err
@@ -513,23 +545,89 @@ func (s *RoleService) recordRole(ctx context.Context, role *domain.Role, operati
 	})
 }
 
-// invalidateRoleSubjects 失效该角色全部绑定主体的快照。
+// invalidateRoleSubjects 失效该角色及其全部子孙角色绑定主体的快照。
 //
+// RBAC1：父角色的权限 / 数据范围 / 启停变化会沿继承链影响整棵子树，
+// 只失效直接绑定本角色的主体会让子角色持有者继续使用过期快照。
 // 失败只记录：TTL 是最终兜底，不能因为缓存删除失败而让已提交的授权变更返回错误。
 func (s *RoleService) invalidateRoleSubjects(ctx context.Context, role *domain.Role) {
 	if s.invalidator == nil {
 		return
 	}
-	bindings, err := s.bindings.ListByRole(ctx, role.ID)
+	targets := []*domain.Role{role}
+	descendants, err := s.roles.ListDescendants(ctx, role.ID)
 	if err != nil {
-		s.log.ErrorContext(ctx, "iam invalidate: list bindings failed", "role_id", role.ID, "err", err)
-		return
+		s.log.ErrorContext(ctx, "iam invalidate: list descendants failed", "role_id", role.ID, "err", err)
+	} else {
+		targets = append(targets, descendants...)
 	}
-	for _, binding := range bindings {
-		if err := s.invalidator.InvalidateSubject(ctx, string(binding.Channel), binding.MerchantID,
-			string(binding.SubjectType), binding.SubjectID); err != nil {
-			s.log.WarnContext(ctx, "iam invalidate subject cache failed",
-				"role_id", role.ID, "subject_id", binding.SubjectID, "err", err)
+	for _, target := range targets {
+		bindings, err := s.bindings.ListByRole(ctx, target.ID)
+		if err != nil {
+			s.log.ErrorContext(ctx, "iam invalidate: list bindings failed", "role_id", target.ID, "err", err)
+			continue
+		}
+		for _, binding := range bindings {
+			if err := s.invalidator.InvalidateSubject(ctx, string(binding.Channel), binding.MerchantID,
+				string(binding.SubjectType), binding.SubjectID); err != nil {
+				s.log.WarnContext(ctx, "iam invalidate subject cache failed",
+					"role_id", target.ID, "subject_id", binding.SubjectID, "err", err)
+			}
 		}
 	}
+}
+
+// validateParent 校验 RBAC1 父角色：同端同商户、非破玻璃、祖先链无环且深度不超限。
+//
+// 参数 roleID 为将要写入 parent_id 的角色自身，用于拦截自引用与间接回环；
+// 创建场景传入预先分配的 ID 即可。父角色必须与子角色同商户，
+// 这条约束在库层还有复合外键兜底（fk_iam_role_parent）。
+func (s *RoleService) validateParent(
+	ctx context.Context,
+	channel domain.Channel,
+	merchantID, roleID string,
+	roleType domain.RoleType,
+	parentID string,
+) error {
+	if parentID == "" {
+		return nil
+	}
+	if parentID == roleID {
+		return apperr.BadRequest("role must not be its own parent")
+	}
+	if roleType == domain.RoleTypeBreakglass {
+		return apperr.BadRequest("breakglass role must not inherit from another role")
+	}
+	currentID := parentID
+	seen := make(map[string]struct{}, domain.MaxRoleHierarchyDepth)
+	for depth := 1; depth <= domain.MaxRoleHierarchyDepth; depth++ {
+		if currentID == roleID {
+			return apperr.BadRequest("role hierarchy cycle detected")
+		}
+		if _, dup := seen[currentID]; dup {
+			return apperr.BadRequest("role hierarchy cycle detected")
+		}
+		seen[currentID] = struct{}{}
+		parent, err := s.roles.FindByID(ctx, currentID)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return apperr.BadRequest("parent role not found: " + currentID)
+			}
+			return err
+		}
+		if parent.IsDeleted() {
+			return apperr.BadRequest("parent role is deleted: " + parent.Code)
+		}
+		if parent.Channel != channel || parent.MerchantID != merchantID {
+			return apperr.BadRequest("parent role must belong to the same channel and merchant")
+		}
+		if parent.Type == domain.RoleTypeBreakglass {
+			return apperr.BadRequest("breakglass role cannot be used as a parent")
+		}
+		if parent.ParentID == "" {
+			return nil
+		}
+		currentID = parent.ParentID
+	}
+	return apperr.BadRequest("role hierarchy exceeds max depth")
 }
