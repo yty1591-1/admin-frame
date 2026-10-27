@@ -30,6 +30,10 @@ const (
 	PermBindingWrite PermissionCode = "iam:binding:write"
 	// PermCheck 模拟鉴权，用于排障与灰度比对。
 	PermCheck PermissionCode = "iam:check"
+	// PermMenuRead 查看菜单 / 路由资源管理列表（A 端专属）。
+	PermMenuRead PermissionCode = "iam:menu:read"
+	// PermMenuWrite 创建、更新、停用菜单资源（A 端专属，不含授权关系）。
+	PermMenuWrite PermissionCode = "iam:menu:write"
 	// PermChangeRead 查看高风险变更审批单。
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。

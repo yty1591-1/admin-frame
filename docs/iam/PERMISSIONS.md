@@ -53,12 +53,17 @@
 | `config:write` | admin | 否 | 活跃 | 修改运行时配置；须审计并支持回滚 |
 | `iam:change:request` | biz | 否 | 活跃 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
 | `iam:change:review` | biz | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
+| `iam:menu:read` | admin | 否 | 活跃 | 查看菜单 / 路由资源管理列表；不改变前端可见性 |
+| `iam:menu:write` | admin | 否 | 活跃 | 创建、更新、停用菜单资源；仅影响入口展示，不构成鉴权边界 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_permissions.up.sql` 写入）。
 >
 > 权限目录为平铺结构，不含层级：`resource`（权限码首段）由服务端生成并为生成列，
 > 菜单与路由树由 `iam_menu` 承载。追加条目时 `sort` 取当前最大值 + 10，且不得改动既有条目。
+>
+> `iam:menu:read` / `iam:menu:write` 仅控制 A 端菜单资源的管理入口；菜单可见性仍由各菜单的
+> `permission_code` 决定，接口鉴权仍以权限点中间件为准。
 
 ---
 

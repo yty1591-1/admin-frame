@@ -287,6 +287,22 @@ var entries = []Entry{
 		Sort:        210,
 		Description: "审批本商户变更申请；申请人不得自审（职责分离）。",
 	},
+	{
+		Code:        iam.PermMenuRead,
+		Name:        "查看菜单资源",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        220,
+		Description: "查看菜单 / 路由资源管理列表；不改变前端可见性。",
+	},
+	{
+		Code:        iam.PermMenuWrite,
+		Name:        "管理菜单资源",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        230,
+		Description: "创建、更新、停用菜单资源；菜单仅影响入口展示，不构成接口鉴权边界。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。
