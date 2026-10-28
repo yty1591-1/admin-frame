@@ -20,6 +20,7 @@
 | `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
 | `rbac.breakglass` | A | 破玻璃申请 / 审批 / 生效 / 撤销 | 权限 | 180d | active |
 | `rbac.menu_change` | A | 菜单 / 路由资源创建、更新、停用 | 权限 | 180d | active |
+| `rbac.sod_change` | A/B | 互斥角色组（RBAC2）创建、更新、启停、删除 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
 | `data.export` | A/B | 数据导出（含 PII 须记范围摘要） | 导出 | 365d | planned |
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |

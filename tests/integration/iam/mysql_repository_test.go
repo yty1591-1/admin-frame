@@ -119,6 +119,10 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 		"DELETE FROM iam_role_binding",
 		"DELETE FROM iam_role_data_scope",
 		"DELETE FROM iam_role_permission",
+		// RBAC2：先删关系表，再删角色与互斥组，避免复合外键 RESTRICT 阻断 reset。
+		"DELETE FROM iam_role_prerequisite",
+		"DELETE FROM iam_sod_group_role",
+		"DELETE FROM iam_sod_group",
 		"DELETE FROM iam_role",
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {

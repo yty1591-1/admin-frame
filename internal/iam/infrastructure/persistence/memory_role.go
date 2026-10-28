@@ -220,6 +220,35 @@ func (r *MemoryRoleRepository) ListDescendants(_ context.Context, roleID string)
 	return out, nil
 }
 
+// ListAncestors 返回 roleID 的未删除祖先（不含自身），按 ID 排序。
+//
+// 命中已软删或缺失的父角色时停止向上：祖先链断裂后更深层的角色不再参与继承。
+func (r *MemoryRoleRepository) ListAncestors(_ context.Context, roleID string) ([]*domain.Role, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	current, ok := r.roles[roleID]
+	if !ok {
+		return nil, apperr.NotFound("role not found")
+	}
+	seen := map[string]struct{}{roleID: {}}
+	out := make([]*domain.Role, 0, domain.MaxRoleHierarchyDepth)
+	for depth := 0; depth < domain.MaxRoleHierarchyDepth && current.ParentID != ""; depth++ {
+		parent, exists := r.roles[current.ParentID]
+		if !exists || parent.IsDeleted() {
+			break
+		}
+		if _, dup := seen[parent.ID]; dup {
+			break
+		}
+		seen[parent.ID] = struct{}{}
+		out = append(out, cloneRole(parent))
+		current = parent
+	}
+	slices.SortFunc(out, func(a, b *domain.Role) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
 // matchesKeyword 对 code / name 做大小写不敏感包含匹配。
 func matchesKeyword(role *domain.Role, keyword string) bool {
 	needle := strings.ToLower(keyword)
@@ -253,6 +282,10 @@ func cloneRole(role *domain.Role) *domain.Role {
 	cp := *role
 	cp.Permissions = role.Permissions.Clone()
 	cp.DataScopes = make(map[string]domain.DataScope, len(role.DataScopes))
+	if role.MaxBindings != nil {
+		maxBindings := *role.MaxBindings
+		cp.MaxBindings = &maxBindings
+	}
 	for resource, scope := range role.DataScopes {
 		scope.MerchantIDs = slices.Clone(scope.MerchantIDs)
 		cp.DataScopes[resource] = scope

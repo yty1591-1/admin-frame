@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strconv"
 	"sync"
 	"testing"
@@ -93,43 +95,78 @@ func (i *capturedInvalidator) count() int {
 
 // fixture 是 IAM 用例的内存装配，复用真实仓储以便覆盖端到端语义。
 type fixture struct {
-	roles       *persistence.MemoryRoleRepository
-	bindings    *persistence.MemoryBindingRepository
-	templates   *persistence.MemoryRoleTemplateRepository
-	snapshots   *persistence.MemorySnapshotRepository
-	changes     *persistence.MemoryChangeRequestRepository
-	recorder    *capturedRecorder
-	invalidator *capturedInvalidator
-	uow         app.UnitOfWork
-	roleSvc     *app.RoleService
-	bindingSvc  *app.BindingService
-	querySvc    *app.QueryService
-	templateSvc *app.TemplateService
-	changeSvc   *app.ChangeRequestService
+	roles             *persistence.MemoryRoleRepository
+	bindings          *persistence.MemoryBindingRepository
+	templates         *persistence.MemoryRoleTemplateRepository
+	snapshots         *persistence.MemorySnapshotRepository
+	changes           *persistence.MemoryChangeRequestRepository
+	sodGroups         *persistence.MemorySodGroupRepository
+	sodViolations     *persistence.MemorySodViolationRepository
+	roleConstraints   *persistence.MemoryRoleConstraintRepository
+	constraints       *app.ConstraintGuard
+	recorder          *capturedRecorder
+	invalidator       *capturedInvalidator
+	uow               app.UnitOfWork
+	roleSvc           *app.RoleService
+	bindingSvc        *app.BindingService
+	sodSvc            *app.SodGroupService
+	roleConstraintSvc *app.RoleConstraintService
+	querySvc          *app.QueryService
+	templateSvc       *app.TemplateService
+	changeSvc         *app.ChangeRequestService
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	return newFixtureWithUOW(t, app.NoopUnitOfWork{})
+	return buildFixture(t, app.NoopUnitOfWork{}, app.ConstraintModeShadow)
 }
 
 // newFixtureWithUOW 允许注入自定义事务边界，用于验证「写入 + 审计」的原子装配。
 func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 	t.Helper()
+	return buildFixture(t, uow, app.ConstraintModeShadow)
+}
+
+// newFixtureWithConstraintMode 构造指定 RBAC2 约束模式的装配（enforce 用于拦截断言）。
+func newFixtureWithConstraintMode(t *testing.T, mode app.ConstraintMode) *fixture {
+	t.Helper()
+	return buildFixture(t, app.NoopUnitOfWork{}, mode)
+}
+
+// buildFixture 是 fixture 的唯一构造入口，避免各变体装配漂移。
+func buildFixture(t *testing.T, uow app.UnitOfWork, mode app.ConstraintMode) *fixture {
+	t.Helper()
 	roles := persistence.NewMemoryRoleRepository()
 	bindings := persistence.NewMemoryBindingRepository()
+	sodGroups := persistence.NewMemorySodGroupRepository()
+	roleConstraints := persistence.NewMemoryRoleConstraintRepository()
+	sodViolations := persistence.NewMemorySodViolationRepository(roles, bindings)
+	guard, err := app.NewConstraintGuard(app.ConstraintGuardConfig{
+		Mode:         mode,
+		Roles:        roles,
+		Bindings:     bindings,
+		SodGroups:    sodGroups,
+		Restrictions: roleConstraints,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("NewConstraintGuard: %v", err)
+	}
 	f := &fixture{
-		roles:       roles,
-		bindings:    bindings,
-		templates:   persistence.NewMemoryRoleTemplateRepository(),
-		snapshots:   persistence.NewMemorySnapshotRepository(roles, bindings),
-		recorder:    &capturedRecorder{},
-		invalidator: &capturedInvalidator{},
-		changes:     persistence.NewMemoryChangeRequestRepository(),
-		uow:         uow,
+		roles:           roles,
+		bindings:        bindings,
+		templates:       persistence.NewMemoryRoleTemplateRepository(),
+		snapshots:       persistence.NewMemorySnapshotRepository(roles, bindings),
+		recorder:        &capturedRecorder{},
+		invalidator:     &capturedInvalidator{},
+		changes:         persistence.NewMemoryChangeRequestRepository(),
+		sodGroups:       sodGroups,
+		sodViolations:   sodViolations,
+		roleConstraints: roleConstraints,
+		constraints:     guard,
+		uow:             uow,
 	}
 	ids := &seqIDs{}
-	var err error
 	f.roleSvc, err = app.NewRoleService(app.RoleServiceConfig{
 		Roles:       roles,
 		Bindings:    bindings,
@@ -139,6 +176,7 @@ func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 		IDs:         ids,
 		Audit:       app.AuditMeta{Service: "test", ActorType: "staff"},
 		Limits:      app.RoleLimits{MaxPermissionsPerRole: 200, RequireReason: true},
+		Constraints: guard,
 	})
 	if err != nil {
 		t.Fatalf("NewRoleService: %v", err)
@@ -152,9 +190,37 @@ func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 		IDs:         ids,
 		Audit:       app.AuditMeta{Service: "test", ActorType: "staff"},
 		Limits:      app.BindingLimits{MaxBindingsPerSubject: 2, RequireReason: true},
+		Constraints: guard,
 	})
 	if err != nil {
 		t.Fatalf("NewBindingService: %v", err)
+	}
+	f.sodSvc, err = app.NewSodGroupService(app.SodGroupServiceConfig{
+		Groups:     sodGroups,
+		Roles:      roles,
+		Violations: sodViolations,
+		Recorder:   f.recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits:     app.SodGroupLimits{RequireReason: true},
+	})
+	if err != nil {
+		t.Fatalf("NewSodGroupService: %v", err)
+	}
+	f.roleConstraintSvc, err = app.NewRoleConstraintService(app.RoleConstraintServiceConfig{
+		Roles:       roles,
+		Bindings:    bindings,
+		Constraints: roleConstraints,
+		SodGroups:   sodGroups,
+		Recorder:    f.recorder,
+		UnitOfWork:  uow,
+		IDs:         ids,
+		Audit:       app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits:      app.RoleConstraintLimits{RequireReason: true},
+	})
+	if err != nil {
+		t.Fatalf("NewRoleConstraintService: %v", err)
 	}
 	f.querySvc, err = app.NewQueryService(roles, bindings, f.snapshots)
 	if err != nil {
@@ -173,7 +239,7 @@ func newFixtureWithUOW(t *testing.T, uow app.UnitOfWork) *fixture {
 	if err != nil {
 		t.Fatalf("NewTemplateService: %v", err)
 	}
-	applicator, err := app.NewRoleChangeApplicator(f.roleSvc, f.bindingSvc)
+	applicator, err := app.NewChangeApplicator(f.roleSvc, f.bindingSvc, f.sodSvc, f.roleConstraintSvc)
 	if err != nil {
 		t.Fatalf("NewRoleChangeApplicator: %v", err)
 	}

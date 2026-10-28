@@ -34,6 +34,10 @@ const (
 	PermMenuRead PermissionCode = "iam:menu:read"
 	// PermMenuWrite 创建、更新、停用菜单资源（A 端专属，不含授权关系）。
 	PermMenuWrite PermissionCode = "iam:menu:write"
+	// PermSodRead 查看互斥角色组（RBAC2）。
+	PermSodRead PermissionCode = "iam:sod:read"
+	// PermSodWrite 管理互斥角色组（RBAC2），含成员与阈值变更。
+	PermSodWrite PermissionCode = "iam:sod:write"
 	// PermChangeRead 查看高风险变更审批单。
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。

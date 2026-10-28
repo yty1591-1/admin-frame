@@ -20,6 +20,8 @@ const (
 	ResourceTypeBreakglass = "iam_breakglass"
 	// ResourceTypeRoleTemplate 角色模板的定义与变更。
 	ResourceTypeRoleTemplate = "iam_role_template"
+	// ResourceTypeSodGroup 互斥角色组（RBAC2）的定义与变更。
+	ResourceTypeSodGroup = "iam_sod_group"
 )
 
 // 审计属性键，保持稳定便于 SIEM 检索。
@@ -33,6 +35,10 @@ const (
 	attrRemoved     = "removed"
 	attrExpiresAt   = "expires_at"
 	attrBindingID   = "binding_id"
+	attrGroupCode   = "group_code"
+	attrRoleIDs     = "role_ids"
+	attrMaxActive   = "max_active_roles"
+	attrMaxBindings = "max_bindings"
 )
 
 // AttrOperation 是审计属性中「变更类型」的键（create / update / disable / bind …）。

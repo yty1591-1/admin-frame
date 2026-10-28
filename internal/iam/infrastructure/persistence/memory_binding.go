@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -138,6 +139,82 @@ func (r *MemoryBindingRepository) ListBySubject(_ context.Context, query domain.
 	}
 
 	slices.SortFunc(out, func(a, b *domain.Binding) int {
+		if byRole := strings.Compare(a.RoleID, b.RoleID); byRole != 0 {
+			return byRole
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
+// ListBySubjectForUpdate 与 ListBySubject 语义一致；内存实现无事务锁，直接复用读取逻辑。
+func (r *MemoryBindingRepository) ListBySubjectForUpdate(
+	ctx context.Context, query domain.SubjectQuery,
+) ([]*domain.Binding, error) {
+	return r.ListBySubject(ctx, query)
+}
+
+// CountEffectiveByRole 统计角色在 at 时刻的有效绑定数。
+func (r *MemoryBindingRepository) CountEffectiveByRole(
+	_ context.Context, channel domain.Channel, merchantID, roleID string, at time.Time,
+) (int, error) {
+	if err := channel.Validate(); err != nil {
+		return 0, err
+	}
+	if roleID == "" {
+		return 0, apperr.BadRequest("role id is required")
+	}
+	if channel == domain.ChannelBiz && merchantID == "" {
+		return 0, apperr.BadRequest("merchant id is required for channel biz")
+	}
+	if channel == domain.ChannelAdmin && merchantID != "" {
+		return 0, apperr.BadRequest("merchant id must be empty for channel admin")
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	count := 0
+	for _, binding := range r.bindings {
+		if binding.Channel != channel || binding.MerchantID != merchantID || binding.RoleID != roleID {
+			continue
+		}
+		if !binding.IsEffective(at) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+// ListEffectiveByTenant 返回租户在 at 时刻的全部有效绑定，供互斥组存量预检。
+func (r *MemoryBindingRepository) ListEffectiveByTenant(
+	_ context.Context, channel domain.Channel, merchantID string, at time.Time,
+) ([]*domain.Binding, error) {
+	if err := channel.Validate(); err != nil {
+		return nil, err
+	}
+	if channel == domain.ChannelBiz && merchantID == "" {
+		return nil, apperr.BadRequest("merchant id is required for channel biz")
+	}
+	if channel == domain.ChannelAdmin && merchantID != "" {
+		return nil, apperr.BadRequest("merchant id must be empty for channel admin")
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]*domain.Binding, 0)
+	for _, binding := range r.bindings {
+		if binding.Channel != channel || binding.MerchantID != merchantID || !binding.IsEffective(at) {
+			continue
+		}
+		out = append(out, cloneBinding(binding))
+	}
+	slices.SortFunc(out, func(a, b *domain.Binding) int {
+		if bySubject := strings.Compare(a.SubjectID, b.SubjectID); bySubject != 0 {
+			return bySubject
+		}
 		if byRole := strings.Compare(a.RoleID, b.RoleID); byRole != 0 {
 			return byRole
 		}

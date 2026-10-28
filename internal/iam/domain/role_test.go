@@ -95,6 +95,57 @@ func TestChangeParent(t *testing.T) {
 	}
 }
 
+func TestRoleMaxBindings(t *testing.T) {
+	limit := 3
+	role := mustNewRole(t, func(p *NewRoleParams) { p.MaxBindings = &limit })
+	if role.MaxBindings == nil || *role.MaxBindings != 3 {
+		t.Fatalf("max bindings = %v", role.MaxBindings)
+	}
+	// 参数被复制：修改原指针不影响聚合。
+	limit = 9
+	if *role.MaxBindings != 3 {
+		t.Fatalf("max bindings must be cloned, got %d", *role.MaxBindings)
+	}
+
+	// 相同值幂等，不递增版本。
+	same := 3
+	if err := role.SetMaxBindings(&same, "actor-2", role.Version); err != nil {
+		t.Fatalf("idempotent SetMaxBindings: %v", err)
+	}
+	if role.Version != 1 || *role.MaxBindings != 3 {
+		t.Fatalf("version=%d max=%d", role.Version, *role.MaxBindings)
+	}
+
+	zero := 0
+	if err := role.SetMaxBindings(&zero, "actor-2", role.Version); !errors.Is(err, ErrInvalidRoleConstraint) {
+		t.Fatalf("zero limit err = %v, want ErrInvalidRoleConstraint", err)
+	}
+
+	five := 5
+	if err := role.SetMaxBindings(&five, "actor-2", role.Version); err != nil {
+		t.Fatalf("SetMaxBindings: %v", err)
+	}
+	if role.Version != 2 || *role.MaxBindings != 5 {
+		t.Fatalf("version=%d max=%d", role.Version, *role.MaxBindings)
+	}
+	if err := role.SetMaxBindings(nil, "actor-2", role.Version); err != nil {
+		t.Fatalf("clear max bindings: %v", err)
+	}
+	if role.MaxBindings != nil || role.Version != 3 {
+		t.Fatalf("max bindings=%v version=%d", role.MaxBindings, role.Version)
+	}
+
+	// 创建时同样拒绝非法上限。
+	zeroAgain := 0
+	_, err := NewRole(NewRoleParams{
+		ID: "role-2", Channel: ChannelAdmin, Scope: RoleScopePlatform,
+		Code: "ops_readonly", Name: "运维只读", Actor: "actor-1", MaxBindings: &zeroAgain,
+	})
+	if !errors.Is(err, ErrInvalidRoleConstraint) {
+		t.Fatalf("new role err = %v, want ErrInvalidRoleConstraint", err)
+	}
+}
+
 func TestNewRoleDefaults(t *testing.T) {
 	role := mustNewRole(t, nil)
 	if role.Status != RoleStatusActive {

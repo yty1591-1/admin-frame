@@ -32,6 +32,12 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 授权（全量替换，差量审计）。
 	mux.Handle("PUT /admin/v1/iam/roles/{id}/permissions", authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.ReplacePermissions))))
 
+	// RBAC2 角色约束（基数 + 前置角色）：读 / 写使用不同权限点。
+	mux.Handle("GET /admin/v1/iam/roles/{id}/constraints",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetRoleConstraints))))
+	mux.Handle("PUT /admin/v1/iam/roles/{id}/constraints",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.UpdateRoleConstraints))))
+
 	// 角色模板：平台定义基线，B 端按商户实例化；同步为高风险显式收敛动作。
 	mux.Handle("GET /admin/v1/iam/role-templates",
 		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoleTemplates))))
@@ -51,6 +57,22 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.SyncRoleTemplate))))
 	mux.Handle("POST /admin/v1/iam/role-templates/{id}/instantiate",
 		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.InstantiateRoleTemplate))))
+
+	// RBAC2 互斥角色组：创建 / 改组前强制存量违规预检。
+	mux.Handle("GET /admin/v1/iam/sod-groups",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.ListSodGroups))))
+	mux.Handle("POST /admin/v1/iam/sod-groups",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.CreateSodGroup))))
+	mux.Handle("POST /admin/v1/iam/sod-groups/preflight",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.PreflightSodGroup))))
+	mux.Handle("GET /admin/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.GetSodGroup))))
+	mux.Handle("PATCH /admin/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.UpdateSodGroup))))
+	mux.Handle("DELETE /admin/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.DeleteSodGroup))))
+	mux.Handle("GET /admin/v1/iam/sod-groups/{id}/violations",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.ListSodGroupViolations))))
 
 	// 绑定。
 	mux.Handle("GET /admin/v1/iam/bindings", authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.ListBindings))))

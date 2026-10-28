@@ -35,6 +35,12 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 授权（全量替换，差量审计）。
 	mux.Handle("PUT /biz/v1/iam/roles/{id}/permissions", authMW(perm(string(iam.PermRoleGrant))(http.HandlerFunc(h.ReplacePermissions))))
 
+	// 本商户角色 RBAC2 约束（基数 + 前置角色）：读 / 写使用不同权限点。
+	mux.Handle("GET /biz/v1/iam/roles/{id}/constraints",
+		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetRoleConstraints))))
+	mux.Handle("PUT /biz/v1/iam/roles/{id}/constraints",
+		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.UpdateRoleConstraints))))
+
 	// 角色模板：B 端只读并可实例化本商户角色；模板定义仍由平台维护。
 	mux.Handle("GET /biz/v1/iam/role-templates",
 		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.ListRoleTemplates))))
@@ -42,6 +48,22 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW(perm(string(iam.PermRoleRead))(http.HandlerFunc(h.GetRoleTemplate))))
 	mux.Handle("POST /biz/v1/iam/role-templates/{id}/instantiate",
 		authMW(perm(string(iam.PermRoleWrite))(http.HandlerFunc(h.InstantiateRoleTemplate))))
+
+	// 本商户互斥角色组（RBAC2）：只能看到并维护自己的组。
+	mux.Handle("GET /biz/v1/iam/sod-groups",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.ListSodGroups))))
+	mux.Handle("POST /biz/v1/iam/sod-groups",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.CreateSodGroup))))
+	mux.Handle("POST /biz/v1/iam/sod-groups/preflight",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.PreflightSodGroup))))
+	mux.Handle("GET /biz/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.GetSodGroup))))
+	mux.Handle("PATCH /biz/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.UpdateSodGroup))))
+	mux.Handle("DELETE /biz/v1/iam/sod-groups/{id}",
+		authMW(perm(string(iam.PermSodWrite))(http.HandlerFunc(h.DeleteSodGroup))))
+	mux.Handle("GET /biz/v1/iam/sod-groups/{id}/violations",
+		authMW(perm(string(iam.PermSodRead))(http.HandlerFunc(h.ListSodGroupViolations))))
 
 	// 本商户绑定。
 	mux.Handle("GET /biz/v1/iam/bindings", authMW(perm(string(iam.PermBindingRead))(http.HandlerFunc(h.ListBindings))))

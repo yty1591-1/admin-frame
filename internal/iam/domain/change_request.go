@@ -92,6 +92,14 @@ const (
 	ChangeActionBindingDelete ChangeAction = "binding_delete"
 	// ChangeActionBreakglassRequest 申请限时超级权限。
 	ChangeActionBreakglassRequest ChangeAction = "breakglass_request"
+	// ChangeActionSodGroupCreate 创建互斥角色组（RBAC2）。
+	ChangeActionSodGroupCreate ChangeAction = "sod_group_create"
+	// ChangeActionSodGroupUpdate 修改互斥组名称 / 阈值 / 成员 / 启停。
+	ChangeActionSodGroupUpdate ChangeAction = "sod_group_update"
+	// ChangeActionSodGroupDelete 软删互斥组。
+	ChangeActionSodGroupDelete ChangeAction = "sod_group_delete"
+	// ChangeActionRoleConstraintUpdate 修改角色 RBAC2 约束（基数 + 前置角色）。
+	ChangeActionRoleConstraintUpdate ChangeAction = "role_constraint_update"
 )
 
 // ChangeTargetType 是审批单指向的目标聚合类型，与 iam_change_request.target_type 一致。
@@ -104,18 +112,23 @@ const (
 	ChangeTargetIAMBbinding ChangeTargetType = "iam_binding"
 	// ChangeTargetIAMBreakglass 破玻璃授权。
 	ChangeTargetIAMBreakglass ChangeTargetType = "iam_breakglass"
+	// ChangeTargetIAMSodGroup 互斥角色组（RBAC2）。
+	ChangeTargetIAMSodGroup ChangeTargetType = "iam_sod_group"
 )
 
 // TargetType 返回动作对应的目标类型；未知动作返回 40000。
 func (a ChangeAction) TargetType() (ChangeTargetType, error) {
 	switch a {
 	case ChangeActionRoleCreate, ChangeActionRoleUpdate, ChangeActionRoleDelete,
-		ChangeActionRoleClone, ChangeActionRolePermissionReplace:
+		ChangeActionRoleClone, ChangeActionRolePermissionReplace,
+		ChangeActionRoleConstraintUpdate:
 		return ChangeTargetIAMRole, nil
 	case ChangeActionBindingCreate, ChangeActionBindingDelete:
 		return ChangeTargetIAMBbinding, nil
 	case ChangeActionBreakglassRequest:
 		return ChangeTargetIAMBreakglass, nil
+	case ChangeActionSodGroupCreate, ChangeActionSodGroupUpdate, ChangeActionSodGroupDelete:
+		return ChangeTargetIAMSodGroup, nil
 	default:
 		return "", errInvalid(ErrInvalidChangeAction, "change action %q is not supported", string(a))
 	}
@@ -128,7 +141,8 @@ func (a ChangeAction) TargetType() (ChangeTargetType, error) {
 func (a ChangeAction) allowsEmptyTarget() bool {
 	switch a {
 	case ChangeActionRoleCreate, ChangeActionRoleClone,
-		ChangeActionBindingCreate, ChangeActionBreakglassRequest:
+		ChangeActionBindingCreate, ChangeActionBreakglassRequest,
+		ChangeActionSodGroupCreate:
 		return true
 	default:
 		return false

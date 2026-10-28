@@ -18,6 +18,7 @@ const (
 	ActionRBACBindingChange   = "rbac.binding_change"
 	ActionRBACBreakglass      = "rbac.breakglass"
 	ActionRBACMenuChange      = "rbac.menu_change"
+	ActionRBACSodChange       = "rbac.sod_change"
 	ActionConfigChange        = "config.change"
 	ActionDataExport          = "data.export"
 	ActionDataQueryScope      = "data.query_scope"
@@ -44,6 +45,7 @@ func KnownActions() []string {
 		ActionRBACBindingChange,
 		ActionRBACBreakglass,
 		ActionRBACMenuChange,
+		ActionRBACSodChange,
 		ActionConfigChange,
 		ActionDataExport,
 		ActionDataQueryScope,

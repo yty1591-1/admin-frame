@@ -478,18 +478,31 @@ type ChangeApplicator interface {
 	Apply(ctx context.Context, request *domain.ChangeRequest, actor string) (targetID string, err error)
 }
 
-// RoleChangeApplicator 用 RoleService / BindingService 执行角色与绑定类变更。
+// RoleChangeApplicator 用 RoleService / BindingService / SodGroupService / RoleConstraintService 执行审批变更。
 type RoleChangeApplicator struct {
-	roles    *RoleService
-	bindings *BindingService
+	roles           *RoleService
+	bindings        *BindingService
+	sodGroups       *SodGroupService
+	roleConstraints *RoleConstraintService
 }
 
-// NewRoleChangeApplicator 构造角色 / 绑定审批执行器。
+// NewRoleChangeApplicator 构造角色 / 绑定审批执行器（不含互斥组与约束能力，兼容既有装配）。
 func NewRoleChangeApplicator(roles *RoleService, bindings *BindingService) (*RoleChangeApplicator, error) {
+	return NewChangeApplicator(roles, bindings, nil, nil)
+}
+
+// NewChangeApplicator 构造覆盖角色 / 绑定 / 互斥组 / 角色约束的审批执行器。
+func NewChangeApplicator(
+	roles *RoleService, bindings *BindingService, sodGroups *SodGroupService,
+	roleConstraints *RoleConstraintService,
+) (*RoleChangeApplicator, error) {
 	if roles == nil || bindings == nil {
 		return nil, apperr.Internal("iam role and binding services are required for approval", nil)
 	}
-	return &RoleChangeApplicator{roles: roles, bindings: bindings}, nil
+	return &RoleChangeApplicator{
+		roles: roles, bindings: bindings,
+		sodGroups: sodGroups, roleConstraints: roleConstraints,
+	}, nil
 }
 
 // roleCreatePayload 是 role_create 动作的载荷。
@@ -523,6 +536,33 @@ type rolePermissionReplacePayload struct {
 type roleClonePayload struct {
 	Code string `json:"code"`
 	Name string `json:"name"`
+}
+
+// roleConstraintUpdatePayload 是 role_constraint_update 动作的载荷。
+//
+// PUT 语义：required_role_ids 与 max_bindings 均视为完整快照；
+// max_bindings 省略或为 null 表示取消上限。
+type roleConstraintUpdatePayload struct {
+	RequiredRoleIDs []string `json:"required_role_ids"`
+	MaxBindings     *int     `json:"max_bindings"`
+}
+
+// sodGroupCreatePayload 是 sod_group_create 动作的载荷。
+type sodGroupCreatePayload struct {
+	Code           string   `json:"code"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	MaxActiveRoles int      `json:"max_active_roles"`
+	RoleIDs        []string `json:"role_ids"`
+}
+
+// sodGroupUpdatePayload 是 sod_group_update 动作的载荷；nil 表示不修改。
+type sodGroupUpdatePayload struct {
+	Name           *string   `json:"name"`
+	Description    *string   `json:"description"`
+	MaxActiveRoles *int      `json:"max_active_roles"`
+	RoleIDs        *[]string `json:"role_ids"`
+	Status         *string   `json:"status"`
 }
 
 // breakglassRequestPayload 是 breakglass_request 动作的载荷。
@@ -587,12 +627,20 @@ func (a *RoleChangeApplicator) Apply(ctx context.Context, request *domain.Change
 		return "", a.applyRoleUpdate(ctx, request, actor)
 	case domain.ChangeActionRolePermissionReplace:
 		return "", a.applyRolePermissionReplace(ctx, request, actor)
+	case domain.ChangeActionRoleConstraintUpdate:
+		return "", a.applyRoleConstraintUpdate(ctx, request, actor)
 	case domain.ChangeActionRoleDelete:
 		return "", a.applyRoleDelete(ctx, request, actor)
 	case domain.ChangeActionBindingDelete:
 		return "", a.applyBindingDelete(ctx, request, actor)
 	case domain.ChangeActionBreakglassRequest:
 		return a.applyBreakglassRequest(ctx, request, actor)
+	case domain.ChangeActionSodGroupCreate:
+		return a.applySodGroupCreate(ctx, request, actor)
+	case domain.ChangeActionSodGroupUpdate:
+		return "", a.applySodGroupUpdate(ctx, request, actor)
+	case domain.ChangeActionSodGroupDelete:
+		return "", a.applySodGroupDelete(ctx, request, actor)
 	default:
 		return "", apperr.Internal("unsupported change action "+string(request.Action), nil)
 	}
@@ -709,6 +757,34 @@ func (a *RoleChangeApplicator) applyRolePermissionReplace(ctx context.Context, r
 		Version:     role.Version,
 		Actor:       actor,
 		Reason:      request.Reason,
+	})
+	return err
+}
+
+// applyRoleConstraintUpdate 全量替换角色的基数与前置约束。
+func (a *RoleChangeApplicator) applyRoleConstraintUpdate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.roleConstraints == nil {
+		return apperr.Internal("role constraint applicator is not configured", nil)
+	}
+	var payload roleConstraintUpdatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return err
+	}
+	role, err := a.loadRoleForChange(ctx, request)
+	if err != nil {
+		return err
+	}
+	_, err = a.roleConstraints.Update(ctx, UpdateRoleConstraintCommand{
+		RoleID:          role.ID,
+		Channel:         role.Channel,
+		MerchantID:      role.MerchantID,
+		RequiredRoleIDs: payload.RequiredRoleIDs,
+		MaxBindings:     payload.MaxBindings,
+		Version:         role.Version,
+		Actor:           actor,
+		Reason:          request.Reason,
 	})
 	return err
 }
@@ -832,6 +908,86 @@ func (a *RoleChangeApplicator) applyBreakglassRequest(
 		return "", err
 	}
 	return binding.ID, nil
+}
+
+// applySodGroupCreate 创建互斥组并返回新组 ID。
+func (a *RoleChangeApplicator) applySodGroupCreate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) (string, error) {
+	if a.sodGroups == nil {
+		return "", apperr.Internal("sod group applicator is not configured", nil)
+	}
+	var payload sodGroupCreatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return "", err
+	}
+	group, err := a.sodGroups.Create(ctx, CreateSodGroupCommand{
+		Channel:        request.Channel,
+		MerchantID:     request.MerchantID,
+		Code:           payload.Code,
+		Name:           payload.Name,
+		Description:    payload.Description,
+		MaxActiveRoles: payload.MaxActiveRoles,
+		RoleIDs:        payload.RoleIDs,
+		Actor:          actor,
+		Reason:         request.Reason,
+	})
+	if err != nil {
+		return "", err
+	}
+	return group.ID, nil
+}
+
+// applySodGroupUpdate 修改名称 / 说明 / 阈值 / 成员 / 启停。
+func (a *RoleChangeApplicator) applySodGroupUpdate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.sodGroups == nil {
+		return apperr.Internal("sod group applicator is not configured", nil)
+	}
+	var payload sodGroupUpdatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return err
+	}
+	group, err := a.sodGroups.LoadForChange(ctx, request.TargetID, request.Channel, request.MerchantID)
+	if err != nil {
+		return err
+	}
+	_, err = a.sodGroups.Update(ctx, UpdateSodGroupCommand{
+		ID:             group.ID,
+		Channel:        group.Channel,
+		MerchantID:     group.MerchantID,
+		Name:           payload.Name,
+		Description:    payload.Description,
+		MaxActiveRoles: payload.MaxActiveRoles,
+		RoleIDs:        payload.RoleIDs,
+		Status:         payload.Status,
+		Version:        group.Version,
+		Actor:          actor,
+		Reason:         request.Reason,
+	})
+	return err
+}
+
+// applySodGroupDelete 软删互斥组。
+func (a *RoleChangeApplicator) applySodGroupDelete(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.sodGroups == nil {
+		return apperr.Internal("sod group applicator is not configured", nil)
+	}
+	group, err := a.sodGroups.LoadForChange(ctx, request.TargetID, request.Channel, request.MerchantID)
+	if err != nil {
+		return err
+	}
+	return a.sodGroups.Delete(ctx, DeleteSodGroupCommand{
+		ID:         group.ID,
+		Channel:    group.Channel,
+		MerchantID: group.MerchantID,
+		Version:    group.Version,
+		Actor:      actor,
+		Reason:     request.Reason,
+	})
 }
 
 // RevokeBreakglass 解绑破玻璃绑定；不存在时按幂等成功处理。

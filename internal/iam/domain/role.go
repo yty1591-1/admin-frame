@@ -68,6 +68,8 @@ type Role struct {
 	Status RoleStatus
 	// Version 乐观锁版本，初始为 1。
 	Version int64
+	// MaxBindings 单角色最大有效绑定数（RBAC2 基数约束）；nil 表示不限。
+	MaxBindings *int
 	// CreatedBy / UpdatedBy 操作人 subject_id，用于审计。
 	CreatedBy string
 	UpdatedBy string
@@ -89,6 +91,7 @@ type NewRoleParams struct {
 	Scope       RoleScopeType
 	MerchantID  string
 	ParentID    string
+	MaxBindings *int
 	Code        string
 	Name        string
 	Description string
@@ -144,6 +147,9 @@ func NewRole(p NewRoleParams) (*Role, error) {
 			return nil, errInvalid(ErrInvalidRoleParent, "role %s must not be its own parent", p.ID)
 		}
 	}
+	if err := validateMaxBindings(p.MaxBindings); err != nil {
+		return nil, err
+	}
 
 	now := nowUTC()
 	return &Role{
@@ -152,6 +158,7 @@ func NewRole(p NewRoleParams) (*Role, error) {
 		Scope:           p.Scope,
 		MerchantID:      p.MerchantID,
 		ParentID:        p.ParentID,
+		MaxBindings:     cloneOptionalInt(p.MaxBindings),
 		Code:            p.Code,
 		Name:            p.Name,
 		Description:     p.Description,
@@ -364,6 +371,49 @@ func (r *Role) ChangeParent(parentID, actor string, expectedVersion int64) error
 	r.ParentID = parentID
 	r.touch(actor)
 	return nil
+}
+
+// SetMaxBindings 设置单角色最大有效绑定数；nil 表示取消上限。
+//
+// 与其它写方法一致：未变化时幂等返回，不递增 version。
+func (r *Role) SetMaxBindings(maxBindings *int, actor string, expectedVersion int64) error {
+	if err := r.ensureMutable(actor, expectedVersion); err != nil {
+		return err
+	}
+	if err := validateMaxBindings(maxBindings); err != nil {
+		return err
+	}
+	if sameOptionalInt(r.MaxBindings, maxBindings) {
+		return nil
+	}
+	r.MaxBindings = cloneOptionalInt(maxBindings)
+	r.touch(actor)
+	return nil
+}
+
+// validateMaxBindings 校验基数上限：nil 表示不限，否则必须 >= 1。
+func validateMaxBindings(maxBindings *int) error {
+	if maxBindings != nil && *maxBindings < 1 {
+		return errInvalid(ErrInvalidRoleConstraint, "max_bindings must be >= 1")
+	}
+	return nil
+}
+
+// cloneOptionalInt 复制可选整数，避免调用方与聚合共享同一指针。
+func cloneOptionalInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+// sameOptionalInt 判断两个可选整数是否等价（nil 只与 nil 相等）。
+func sameOptionalInt(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // Disable 停用角色；已停用时幂等返回（不递增版本）。

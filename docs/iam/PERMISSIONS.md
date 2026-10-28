@@ -1,7 +1,7 @@
 # IAM 权限点目录（PERMISSIONS）
 
-> **状态**：生效中（21 条：17 条活跃 + 4 条已弃用）
-> **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/000003_seed_iam_baseline.up.sql` 由 Go 测试强制一致
+> **状态**：生效中（23 条：19 条活跃 + 4 条已弃用）
+> **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/*_seed_*.up.sql` 由 Go 测试强制一致
 > **门禁**：`go test ./internal/iam/catalog/...`（已纳入 `make test-ci` → `make ci`）
 > **关联**：[`docs/rbac-iam.md`](../rbac-iam.md) §4.3 / §5.3.1、[`docs/adr/0004-rbac-iam-domain.md`](../adr/0004-rbac-iam-domain.md)
 
@@ -55,6 +55,8 @@
 | `iam:change:review` | biz | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
 | `iam:menu:read` | admin | 否 | 活跃 | 查看菜单 / 路由资源管理列表；不改变前端可见性 |
 | `iam:menu:write` | admin | 否 | 活跃 | 创建、更新、停用菜单资源；仅影响入口展示，不构成鉴权边界 |
+| `iam:sod:read` | both | 否 | 活跃 | 查看 RBAC2 互斥角色组及其存量违规；B 端限本商户 |
+| `iam:sod:write` | both | 否 | 活跃 | 创建、更新、停用互斥角色组；变更前强制存量违规预检 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。

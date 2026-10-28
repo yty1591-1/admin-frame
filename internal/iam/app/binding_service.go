@@ -27,6 +27,7 @@ type BindingService struct {
 	ids         id.Generator
 	audit       auditBuilder
 	limits      BindingLimits
+	constraints *ConstraintGuard
 }
 
 // BindingLimits 是绑定相关上限与安全开关。
@@ -48,7 +49,9 @@ type BindingServiceConfig struct {
 	IDs        id.Generator
 	Audit      AuditMeta
 	Limits     BindingLimits
-	Logger     *slog.Logger
+	// Constraints RBAC2 约束检查器；nil 表示关闭（等价 mode=off）。
+	Constraints *ConstraintGuard
+	Logger      *slog.Logger
 }
 
 // NewBindingService 构造绑定用例；缺失必要依赖时返回错误（fail-closed）。
@@ -86,6 +89,7 @@ func NewBindingService(cfg BindingServiceConfig) (*BindingService, error) {
 		ids:         cfg.IDs,
 		audit:       newAuditBuilder(cfg.IDs, cfg.Audit),
 		limits:      cfg.Limits,
+		constraints: cfg.Constraints,
 	}, nil
 }
 
@@ -167,6 +171,31 @@ func (s *BindingService) Bind(ctx context.Context, cmd BindCommand) (*domain.Bin
 		return nil, err
 	}
 	if err := s.uow.WithinTx(ctx, func(ctx context.Context) error {
+		if s.constraints.Enabled() {
+			// 锁定主体绑定区间后重新读取：互斥 / 基数 / 前置判定必须基于同一快照，
+			// 否则并发绑定可能各自通过校验后同时落库（TOCTOU）。
+			locked, listErr := s.bindings.ListBySubjectForUpdate(ctx, domain.SubjectQuery{
+				Channel:     cmd.Channel,
+				SubjectType: cmd.SubjectType,
+				SubjectID:   cmd.SubjectID,
+				MerchantID:  cmd.MerchantID,
+				At:          now,
+			})
+			if listErr != nil {
+				return listErr
+			}
+			violations, checkErr := s.constraints.CheckBind(ctx, role, locked, now)
+			if checkErr != nil {
+				// shadow 模式只记录，enforce 模式失败关闭。
+				if err := s.constraints.HandleError(ctx, checkErr,
+					"role_id", role.ID, "subject_id", cmd.SubjectID); err != nil {
+					return err
+				}
+			} else if decideErr := s.constraints.Decide(ctx, violations,
+				"role_id", role.ID, "subject_id", cmd.SubjectID); decideErr != nil {
+				return decideErr
+			}
+		}
 		if err := s.bindings.Save(ctx, binding); err != nil {
 			return err
 		}

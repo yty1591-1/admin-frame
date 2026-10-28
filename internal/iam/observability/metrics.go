@@ -31,8 +31,10 @@ type Metrics struct {
 	loadErrors     *prometheus.CounterVec
 	roleChanges    *prometheus.CounterVec
 	bindingChanges *prometheus.CounterVec
-	outboxDelivery *prometheus.CounterVec
-	registerer     prometheus.Registerer
+	// constraintChecks RBAC2 约束检查结果；kind 为检查类别或违规类型，低基数。
+	constraintChecks *prometheus.CounterVec
+	outboxDelivery   *prometheus.CounterVec
+	registerer       prometheus.Registerer
 }
 
 // NewMetrics 创建并注册指标；重复注册视为装配错误（fail-fast）。
@@ -80,6 +82,10 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Name: "iam_binding_changes_total",
 			Help: "IAM 主体绑定变更次数，按端别、变更类型与结果分组。",
 		}, []string{"channel", "operation", "outcome"}),
+		constraintChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "iam_constraint_checks_total",
+			Help: "IAM RBAC2 约束检查次数；kind=检查类别或违规类型，result=pass|shadow|enforce|error。",
+		}, []string{"kind", "result"}),
 		outboxDelivery: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "iam_outbox_delivery_total",
 			Help: "IAM 事务性 Outbox 投递结果，result=success|retry|dead|poison。",
@@ -88,7 +94,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	for _, collector := range []prometheus.Collector{
 		m.cacheTotal, m.loadDuration, m.snapshotSize, m.decisions,
 		m.invalidateFail, m.shadowMismatch, m.loadErrors,
-		m.roleChanges, m.bindingChanges, m.outboxDelivery,
+		m.roleChanges, m.bindingChanges, m.constraintChecks, m.outboxDelivery,
 	} {
 		if err := registerer.Register(collector); err != nil {
 			return nil, fmt.Errorf("iam observability: register metrics: %w", err)
@@ -248,6 +254,20 @@ func (m *Metrics) OnLoadError(context.Context, string, error) {
 		return
 	}
 	m.loadErrors.WithLabelValues("shadow").Inc()
+}
+
+// OnConstraintCheck 实现 app.ConstraintObserver。
+func (m *Metrics) OnConstraintCheck(_ context.Context, kind, result string) {
+	if m == nil {
+		return
+	}
+	if kind == "" {
+		kind = "unknown"
+	}
+	if result == "" {
+		result = "unknown"
+	}
+	m.constraintChecks.WithLabelValues(kind, result).Inc()
 }
 
 // OnChange 记录一次授权变更（由 ChangeRecorder 装饰器在审计落盘后调用）。

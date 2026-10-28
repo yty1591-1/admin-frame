@@ -402,6 +402,16 @@ const (
 	IAMCacheDriverRedis = "redis"
 )
 
+// RBAC2 约束模式。
+const (
+	// IAMConstraintsModeOff 关闭约束校验。
+	IAMConstraintsModeOff = "off"
+	// IAMConstraintsModeShadow 只记录违规，不拦截（默认）。
+	IAMConstraintsModeShadow = "shadow"
+	// IAMConstraintsModeEnforce 违规写入返回 40900。
+	IAMConstraintsModeEnforce = "enforce"
+)
+
 // IAMConfig 是 RBAC 权限管理（IAM）运行参数（docs/rbac-iam.md §12.1）。
 //
 // 默认 mode=off：未显式启用时保持历史静态权限表行为，避免升级即切换鉴权来源。
@@ -420,6 +430,17 @@ type IAMConfig struct {
 	Breakglass IAMBreakglassConfig `yaml:"breakglass"`
 	// Approval 高风险直写强制转审批开关。
 	Approval IAMApprovalConfig `yaml:"approval"`
+	// Constraints RBAC2 约束（互斥 / 基数 / 前置）的落库行为。
+	Constraints IAMConstraintsConfig `yaml:"constraints"`
+}
+
+// IAMConstraintsConfig 是 RBAC2 约束的落库行为配置。
+//
+// 默认 shadow：只计算并记录违规，不拦截写入，便于在存量数据上先观测影子冲突；
+// 确认无问题后切 enforce，违规写入返回 40900。
+type IAMConstraintsConfig struct {
+	// Mode off | shadow | enforce。
+	Mode string `yaml:"mode"`
 }
 
 // IAMCacheConfig 是快照缓存参数。
@@ -1038,6 +1059,16 @@ func (c *Config) normalize() {
 	}
 	c.Auth.Mode = c.Auth.effectiveMode(c.Env)
 	c.IAM.Mode = normalizeIAMMode(c.IAM.Mode)
+	c.IAM.Constraints.Mode = normalizeIAMConstraintMode(c.IAM.Constraints.Mode)
+}
+
+// normalizeIAMConstraintMode 归一化 RBAC2 约束模式；空串视为 shadow（影子期默认）。
+func normalizeIAMConstraintMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return IAMConstraintsModeShadow
+	}
+	return mode
 }
 
 // normalizeIAMMode 归一化 iam.mode；空串视为 off（保持历史静态权限表行为）。
@@ -1357,6 +1388,12 @@ func (c *Config) validateIAM() []error {
 	}
 	if c.Channel == "biz" && c.IAM.Limits.MaxCustomRolesPerMerchant <= 0 {
 		errs = append(errs, errors.New("iam.limits.max_custom_roles_per_merchant must be > 0 when channel=biz"))
+	}
+	// 空串在 normalize 中会归一为 shadow；校验阶段同样视为合法，避免直接构造配置时误报。
+	switch c.IAM.Constraints.Mode {
+	case "", IAMConstraintsModeOff, IAMConstraintsModeShadow, IAMConstraintsModeEnforce:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported iam.constraints.mode: %s", c.IAM.Constraints.Mode))
 	}
 
 	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && c.IAM.Cache.Driver != IAMCacheDriverRedis {

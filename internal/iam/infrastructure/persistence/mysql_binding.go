@@ -126,6 +126,91 @@ func (r *SQLBindingRepository) ListBySubject(ctx context.Context, query domain.S
 	return collectBindings(rows)
 }
 
+// ListBySubjectForUpdate 与 ListBySubject 语义一致，并对主体绑定区间加锁。
+//
+// 命中 idx_iam_binding_subject 后，InnoDB 的 next-key lock 覆盖该主体的整段区间，
+// 使并发的互斥 / 基数校验串行执行；调用方必须处于事务中。
+func (r *SQLBindingRepository) ListBySubjectForUpdate(
+	ctx context.Context, query domain.SubjectQuery,
+) ([]*domain.Binding, error) {
+	if err := validateSubjectQuery(query); err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx,
+		`SELECT `+bindingSelectColumns+` FROM iam_role_binding
+		 WHERE channel = ? AND subject_type = ? AND subject_id = ? AND merchant_id = ?
+		   AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > ?)
+		 ORDER BY role_id, id
+		 FOR UPDATE`,
+		string(query.Channel), string(query.SubjectType), query.SubjectID, query.MerchantID, query.EffectiveTime())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return collectBindings(rows)
+}
+
+// CountEffectiveByRole 统计角色在 at 时刻的有效绑定数，供 RBAC2 角色基数约束。
+func (r *SQLBindingRepository) CountEffectiveByRole(
+	ctx context.Context, channel domain.Channel, merchantID, roleID string, at time.Time,
+) (int, error) {
+	if err := channel.Validate(); err != nil {
+		return 0, err
+	}
+	if roleID == "" {
+		return 0, apperr.BadRequest("role id is required")
+	}
+	if channel == domain.ChannelBiz && merchantID == "" {
+		return 0, apperr.BadRequest("merchant id is required for channel biz")
+	}
+	if channel == domain.ChannelAdmin && merchantID != "" {
+		return 0, apperr.BadRequest("merchant id must be empty for channel admin")
+	}
+	parsedRoleID, err := parseID(roleID)
+	if err != nil {
+		return 0, err
+	}
+	var total int
+	err = r.exec(ctx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM iam_role_binding
+		 WHERE channel = ? AND merchant_id = ? AND role_id = ?
+		   AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		string(channel), merchantID, parsedRoleID, at).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// ListEffectiveByTenant 返回租户在 at 时刻的全部有效绑定，供互斥组存量预检。
+func (r *SQLBindingRepository) ListEffectiveByTenant(
+	ctx context.Context, channel domain.Channel, merchantID string, at time.Time,
+) ([]*domain.Binding, error) {
+	if err := channel.Validate(); err != nil {
+		return nil, err
+	}
+	if channel == domain.ChannelBiz && merchantID == "" {
+		return nil, apperr.BadRequest("merchant id is required for channel biz")
+	}
+	if channel == domain.ChannelAdmin && merchantID != "" {
+		return nil, apperr.BadRequest("merchant id must be empty for channel admin")
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx,
+		`SELECT `+bindingSelectColumns+` FROM iam_role_binding
+		 WHERE channel = ? AND merchant_id = ?
+		   AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > ?)
+		 ORDER BY subject_id, role_id, id`,
+		string(channel), merchantID, at)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return collectBindings(rows)
+}
+
 // ListByRole 返回绑定到指定角色的全部记录（含已过期 / 已撤销），用于审计与引用检查。
 //
 // 调用方若只关心「仍有生效绑定」，必须自行按 IsEffective 过滤：仓储保留历史，

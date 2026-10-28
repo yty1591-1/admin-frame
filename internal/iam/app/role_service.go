@@ -48,6 +48,7 @@ type RoleService struct {
 	ids         id.Generator
 	audit       auditBuilder
 	limits      RoleLimits
+	constraints *ConstraintGuard
 }
 
 // RoleLimits 是角色规模上限，超限返回 40000 而不是静默截断。
@@ -71,7 +72,9 @@ type RoleServiceConfig struct {
 	IDs        id.Generator
 	Audit      AuditMeta
 	Limits     RoleLimits
-	Logger     *slog.Logger
+	// Constraints RBAC2 约束检查器；nil 表示关闭（等价 mode=off）。
+	Constraints *ConstraintGuard
+	Logger      *slog.Logger
 }
 
 // NewRoleService 构造角色管理用例；缺失必要依赖时返回错误（fail-closed）。
@@ -109,6 +112,7 @@ func NewRoleService(cfg RoleServiceConfig) (*RoleService, error) {
 		ids:         cfg.IDs,
 		audit:       newAuditBuilder(cfg.IDs, cfg.Audit),
 		limits:      cfg.Limits,
+		constraints: cfg.Constraints,
 	}, nil
 }
 
@@ -162,6 +166,9 @@ func (s *RoleService) CreateRole(ctx context.Context, cmd CreateRoleCommand) (*d
 		return nil, apperr.Internal("generate role id", err)
 	}
 	if err := s.validateParent(ctx, cmd.Channel, cmd.MerchantID, roleID, domain.RoleTypeCustom, parentID); err != nil {
+		return nil, err
+	}
+	if err := s.checkHierarchy(ctx, cmd.Channel, cmd.MerchantID, roleID, domain.RoleTypeCustom, parentID); err != nil {
 		return nil, err
 	}
 	role, err := domain.NewRole(domain.NewRoleParams{
@@ -330,6 +337,10 @@ func (s *RoleService) UpdateRole(ctx context.Context, cmd UpdateRoleCommand) (*d
 			return nil, err
 		}
 		if err := role.ChangeParent(parentID, cmd.Actor, role.Version); err != nil {
+			return nil, err
+		}
+		// 改挂父角色会改变整棵子树的继承闭包，必须复核互斥约束。
+		if err := s.checkHierarchy(ctx, role.Channel, role.MerchantID, role.ID, role.Type, parentID); err != nil {
 			return nil, err
 		}
 	}
@@ -511,6 +522,9 @@ func (s *RoleService) DeleteRole(ctx context.Context, cmd DeleteRoleCommand) err
 	if len(descendants) > 0 {
 		return apperr.Conflict("role still has child roles; reassign them before delete")
 	}
+	if err := s.checkDeleteConstraints(ctx, role); err != nil {
+		return err
+	}
 	if err := role.Delete(cmd.Actor, cmd.Version); err != nil {
 		return err
 	}
@@ -575,6 +589,36 @@ func (s *RoleService) invalidateRoleSubjects(ctx context.Context, role *domain.R
 			}
 		}
 	}
+}
+
+// checkHierarchy 复核改挂父角色后的结构性互斥冲突；shadow 模式只记录。
+func (s *RoleService) checkHierarchy(
+	ctx context.Context,
+	channel domain.Channel,
+	merchantID, roleID string,
+	roleType domain.RoleType,
+	parentID string,
+) error {
+	if !s.constraints.Enabled() {
+		return nil
+	}
+	violations, err := s.constraints.CheckHierarchy(ctx, channel, merchantID, roleID, parentID, roleType)
+	if err != nil {
+		return s.constraints.HandleError(ctx, err, "role_id", roleID, "parent_id", parentID)
+	}
+	return s.constraints.Decide(ctx, violations, "role_id", roleID, "parent_id", parentID)
+}
+
+// checkDeleteConstraints 拦截仍被活跃互斥组或前置角色引用的删除。
+func (s *RoleService) checkDeleteConstraints(ctx context.Context, role *domain.Role) error {
+	if !s.constraints.Enabled() {
+		return nil
+	}
+	blockers, err := s.constraints.DeleteBlockers(ctx, role)
+	if err != nil {
+		return s.constraints.HandleError(ctx, err, "role_id", role.ID)
+	}
+	return s.constraints.DecideBlockers(ctx, blockers, "role_id", role.ID)
 }
 
 // validateParent 校验 RBAC1 父角色：同端同商户、非破玻璃、祖先链无环且深度不超限。

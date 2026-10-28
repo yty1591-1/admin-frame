@@ -462,6 +462,79 @@ paths:
           $ref: "./components.yaml#/components/responses/Conflict"
         "500":
           $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/roles/{id}/constraints:
+    get:
+      tags: [iam]
+      summary: 查询本商户角色 RBAC2 约束
+      description: |
+        需要 `iam:role:read`。只允许访问本商户角色，跨商户统一返回 40400。
+      operationId: bizGetIAMRoleConstraints
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleConstraint"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    put:
+      tags: [iam]
+      summary: 全量替换本商户角色 RBAC2 约束
+      description: |
+        需要 `iam:role:write`。PUT 语义与 A 端一致；前置角色必须同为本商户角色。
+        `iam.approval.enabled=true` 时直写返回 40900，需走 `role_constraint_update` 审批单。
+      operationId: bizPutIAMRoleConstraints
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/IfMatchVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleConstraintRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleConstraint"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
   /biz/v1/iam/roles/{id}/clone:
     post:
       tags: [iam]
@@ -960,8 +1033,260 @@ paths:
           $ref: "./components.yaml#/components/responses/InternalError"
         "503":
           $ref: "./components.yaml#/components/responses/ServiceUnavailable"
+  /biz/v1/iam/sod-groups:
+    get:
+      tags: [iam]
+      summary: 本商户互斥角色组列表
+      description: 需要 `iam:sod:read`。只返回 Principal 所属商户的组。
+      operationId: bizListIAMSodGroups
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [active, disabled]}}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodGroupListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    post:
+      tags: [iam]
+      summary: 创建本商户互斥角色组
+      description: 需要 `iam:sod:write`。成员角色必须属于本商户，存在存量违规时返回 40900。
+      operationId: bizCreateIAMSodGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSodGroupRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodGroup"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/sod-groups/preflight:
+    post:
+      tags: [iam]
+      summary: 本商户互斥组候选配置预检
+      description: 需要 `iam:sod:read`。返回会被候选配置直接判为违规的商户主体。
+      operationId: bizPreflightIAMSodGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreflightSodGroupRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodViolationListData"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/sod-groups/{id}:
+    get:
+      tags: [iam]
+      summary: 本商户互斥角色组详情
+      description: 需要 `iam:sod:read`。跨商户返回 40400。
+      operationId: bizGetIAMSodGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SodGroupID"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodGroup"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    patch:
+      tags: [iam]
+      summary: 更新本商户互斥角色组
+      description: 需要 `iam:sod:write`。成员 / 阈值 / 启用变更会重新做存量预检。
+      operationId: bizUpdateIAMSodGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SodGroupID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSodGroupRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodGroup"
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+    delete:
+      tags: [iam]
+      summary: 软删本商户互斥角色组
+      description: 需要 `iam:sod:write`。
+      operationId: bizDeleteIAMSodGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SodGroupID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteSodGroupRequest"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+        "400":
+          $ref: "./components.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "./components.yaml#/components/responses/Conflict"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
+  /biz/v1/iam/sod-groups/{id}/violations:
+    get:
+      tags: [iam]
+      summary: 本商户互斥组存量违规
+      description: 需要 `iam:sod:read`。
+      operationId: bizListIAMSodGroupViolations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SodGroupID"
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "./components.yaml#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SodViolationListData"
+        "401":
+          $ref: "./components.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./components.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "./components.yaml#/components/responses/NotFound"
+        "500":
+          $ref: "./components.yaml#/components/responses/InternalError"
 components:
   parameters:
+    SodGroupID:
+      name: id
+      in: path
+      required: true
+      description: 互斥组 ID
+      schema:
+        type: string
+        minLength: 1
     RoleID:
       name: id
       in: path
@@ -1473,6 +1798,7 @@ components:
         - role_create
         - role_update
         - role_permission_replace
+        - role_constraint_update
         - role_clone
         - role_delete
         - binding_create
@@ -1572,3 +1898,198 @@ components:
           description: 乐观锁版本；与当前审批单不一致返回 40900
         reason:
           type: string
+    RoleConstraint:
+      type: object
+      required: [role_id, max_bindings, required_role_ids, version]
+      properties:
+        role_id:
+          type: string
+        max_bindings:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: 单角色最大有效绑定数；null 表示不限
+        required_role_ids:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    UpdateRoleConstraintRequest:
+      type: object
+      required: [required_role_ids, version]
+      description: PUT 全量替换；max_bindings 为 null 表示取消上限。
+      properties:
+        required_role_ids:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+        max_bindings:
+          type: integer
+          nullable: true
+          minimum: 1
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    SodGroup:
+      type: object
+      required: [id, channel, code, name, max_active_roles, status, version, role_ids, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "#/components/schemas/Channel"
+        merchant_id:
+          type: string
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        max_active_roles:
+          type: integer
+          minimum: 1
+          maximum: 64
+        status:
+          type: string
+          enum: [active, disabled]
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        role_ids:
+          type: array
+          items:
+            type: string
+        created_by:
+          type: string
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SodGroupListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SodGroup"
+        total:
+          type: integer
+    CreateSodGroupRequest:
+      type: object
+      required: [code, name, role_ids]
+      properties:
+        channel:
+          $ref: "#/components/schemas/Channel"
+        code:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        max_active_roles:
+          type: integer
+          minimum: 1
+          maximum: 64
+          default: 1
+        role_ids:
+          type: array
+          minItems: 2
+          maxItems: 64
+          items:
+            type: string
+        reason:
+          type: string
+    UpdateSodGroupRequest:
+      type: object
+      required: [version]
+      description: nil 字段表示不修改；成员 / 阈值 / 启用变更会重新做存量预检。
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        max_active_roles:
+          type: integer
+          minimum: 1
+          maximum: 64
+        role_ids:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+    DeleteSodGroupRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 期望版本号，亦可由 If-Match 提供
+        reason:
+          type: string
+    PreflightSodGroupRequest:
+      type: object
+      required: [role_ids]
+      properties:
+        role_ids:
+          type: array
+          minItems: 2
+          maxItems: 64
+          items:
+            type: string
+        max_active_roles:
+          type: integer
+          minimum: 1
+          maximum: 64
+          default: 1
+    SodViolation:
+      type: object
+      required: [subject_type, subject_id, role_ids]
+      properties:
+        subject_type:
+          type: string
+          enum: [staff, merchant_staff]
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        role_ids:
+          type: array
+          items:
+            type: string
+    SodViolationListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SodViolation"
+        total:
+          type: integer

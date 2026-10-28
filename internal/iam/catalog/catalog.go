@@ -303,6 +303,22 @@ var entries = []Entry{
 		Sort:        230,
 		Description: "创建、更新、停用菜单资源；菜单仅影响入口展示，不构成接口鉴权边界。",
 	},
+	{
+		Code:        iam.PermSodRead,
+		Name:        "查看互斥组",
+		Channel:     ChannelBoth,
+		Status:      StatusActive,
+		Sort:        240,
+		Description: "查看 RBAC2 互斥角色组及其存量违规；B 端限本商户。",
+	},
+	{
+		Code:        iam.PermSodWrite,
+		Name:        "管理互斥组",
+		Channel:     ChannelBoth,
+		Status:      StatusActive,
+		Sort:        250,
+		Description: "创建、更新、停用互斥角色组；变更前强制存量违规预检。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。

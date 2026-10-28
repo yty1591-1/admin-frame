@@ -15,7 +15,7 @@ import (
 )
 
 // roleSelectColumns 是角色表的显式列清单（禁止 SELECT *，DATA-04）。
-const roleSelectColumns = `id, channel, scope_type, merchant_id, parent_id, code, name, description,
+const roleSelectColumns = `id, channel, scope_type, merchant_id, parent_id, max_bindings, code, name, description,
 	role_type, template_id, template_version, status, version, created_by, updated_by,
 	created_at, updated_at, deleted_at`
 
@@ -109,12 +109,16 @@ func (r *SQLRoleRepository) insert(ctx context.Context, role *domain.Role) error
 	if err != nil {
 		return err
 	}
+	var maxBindings any
+	if role.MaxBindings != nil {
+		maxBindings = *role.MaxBindings
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO iam_role
-		(id, channel, scope_type, merchant_id, parent_id, code, name, description,
+		(id, channel, scope_type, merchant_id, parent_id, max_bindings, code, name, description,
 		 role_type, template_id, template_version, status, version,
 		 created_by, updated_by, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		roleID, string(role.Channel), string(role.Scope), role.MerchantID, parentID, role.Code,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		roleID, string(role.Channel), string(role.Scope), role.MerchantID, parentID, maxBindings, role.Code,
 		role.Name, role.Description, string(role.Type), templateID,
 		role.TemplateVersion, string(role.Status), role.Version,
 		role.CreatedBy, role.UpdatedBy, role.CreatedAt.UTC(), role.UpdatedAt.UTC(), nullTime(role.DeletedAt))
@@ -157,11 +161,15 @@ func (r *SQLRoleRepository) update(ctx context.Context, role *domain.Role, expec
 	if err != nil {
 		return err
 	}
+	var maxBindings any
+	if role.MaxBindings != nil {
+		maxBindings = *role.MaxBindings
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE iam_role
-		SET name = ?, description = ?, parent_id = ?, role_type = ?, template_version = ?, status = ?, version = ?,
-		    updated_by = ?, updated_at = ?, deleted_at = ?
+		SET name = ?, description = ?, parent_id = ?, max_bindings = ?, role_type = ?, template_version = ?,
+		    status = ?, version = ?, updated_by = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ? AND version = ?`,
-		role.Name, role.Description, parentID, string(role.Type), role.TemplateVersion,
+		role.Name, role.Description, parentID, maxBindings, string(role.Type), role.TemplateVersion,
 		string(role.Status), role.Version,
 		role.UpdatedBy, role.UpdatedAt.UTC(), nullTime(role.DeletedAt), roleID, expectedVersion)
 	if err != nil {
@@ -292,6 +300,56 @@ func (r *SQLRoleRepository) ListDescendants(ctx context.Context, roleID string) 
 			return nil, scanErr
 		}
 		// 子角色列表只用于删除检查与缓存失效，不需要权限明细。
+		role.Permissions = make(domain.PermissionSet)
+		role.DataScopes = make(map[string]domain.DataScope)
+		out = append(out, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// roleAncestorsSQL 用递归 CTE 向上展开祖先链；depth 上限与领域层一致。
+const roleAncestorsSQL = `
+WITH RECURSIVE role_ancestors AS (
+	SELECT r.id, r.parent_id, 1 AS depth
+	FROM iam_role anchor
+	JOIN iam_role r ON r.id = anchor.parent_id
+	WHERE anchor.id = ? AND r.deleted_at IS NULL
+	UNION ALL
+	SELECT p.id, p.parent_id, a.depth + 1
+	FROM iam_role p
+	JOIN role_ancestors a ON p.id = a.parent_id
+	WHERE p.deleted_at IS NULL AND a.depth < ?
+)
+SELECT ` + roleSelectColumns + `
+FROM iam_role
+WHERE id IN (SELECT id FROM role_ancestors)
+ORDER BY id`
+
+// ListAncestors 返回 roleID 的未删除祖先（不含自身），按 ID 排序。
+//
+// 命中已软删的父角色时链路自然断开：更深层角色不再进入结果集，
+// 与鉴权快照的继承语义保持一致。
+func (r *SQLRoleRepository) ListAncestors(ctx context.Context, roleID string) ([]*domain.Role, error) {
+	parsed, err := parseID(roleID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx, roleAncestorsSQL, parsed, domain.MaxRoleHierarchyDepth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*domain.Role, 0, domain.MaxRoleHierarchyDepth)
+	for rows.Next() {
+		role, scanErr := scanRole(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		// 祖先链只用于约束判定，不需要权限明细。
 		role.Permissions = make(domain.PermissionSet)
 		role.DataScopes = make(map[string]domain.DataScope)
 		out = append(out, role)
@@ -499,13 +557,14 @@ type scanRow interface {
 // scanRole 扫描一行角色；deleted_at / parent_id 允许为 NULL，template_id 为 0 表示非模板实例。
 func scanRole(row scanRow) (*domain.Role, error) {
 	var (
-		role       domain.Role
-		parentID   sql.NullInt64
-		templateID int64
-		deletedAt  sql.NullTime
+		role        domain.Role
+		parentID    sql.NullInt64
+		maxBindings sql.NullInt64
+		templateID  int64
+		deletedAt   sql.NullTime
 	)
 	err := row.Scan(
-		&role.ID, &role.Channel, &role.Scope, &role.MerchantID, &parentID, &role.Code,
+		&role.ID, &role.Channel, &role.Scope, &role.MerchantID, &parentID, &maxBindings, &role.Code,
 		&role.Name, &role.Description, &role.Type, &templateID, &role.TemplateVersion,
 		&role.Status, &role.Version, &role.CreatedBy, &role.UpdatedBy,
 		&role.CreatedAt, &role.UpdatedAt, &deletedAt,
@@ -515,6 +574,10 @@ func scanRole(row scanRow) (*domain.Role, error) {
 	}
 	if parentID.Valid {
 		role.ParentID = strconv.FormatInt(parentID.Int64, 10)
+	}
+	if maxBindings.Valid {
+		value := int(maxBindings.Int64)
+		role.MaxBindings = &value
 	}
 	if templateID != 0 {
 		role.TemplateID = strconv.FormatInt(templateID, 10)

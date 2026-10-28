@@ -186,6 +186,32 @@ wildcard   := "*" | segment ":" "*"
 - 破玻璃同样适用 SoD（申请人 ≠ 审批人），并记 `rbac.breakglass` 审计；不允许以「紧急」为由绕过双人审批。
 - SoD 规则属于安全策略，放配置（`iam.security.sod_conflicts`），变更须安全 Owner Review。
 
+### 4.6 RBAC2 落地与 `enforce` 切换
+
+RBAC2 只覆盖**静态职责分离（SSD）**与结构约束，均由配置期 + 绑定写入期双重校验：
+
+| 约束 | 配置入口 | 写入期判定 |
+|------|----------|------------|
+| 互斥组（SSD） | `/iam/sod-groups` | 有效角色闭包在组内超 `max_active_roles` → `40900` |
+| 单角色基数 | `PUT /iam/roles/{id}/constraints` 的 `max_bindings` | 有效绑定数达到上限 → `40900` |
+| 前置角色 | 同上 `required_role_ids` | 主体闭包未包含全部前置角色 → `40900` |
+
+约束配置自身也会做冲突校验：前置角色必须同端同商户、`active`、非破玻璃、无环，且与活跃互斥组不冲突；`max_bindings` 不得低于存量有效绑定数。高风险环境可把 `role_constraint_update` 纳入审批单（`iam.approval.enabled=true` 时直写被拒绝）。
+
+**DSD（动态职责分离）暂缓**：本期不引入「会话级角色激活 / 释放」模型。理由：
+
+1. 现有鉴权链路是「主体快照 → 权限判定」，没有会话上下文，引入 DSD 会改变快照与决策契约，影响面大于 RBAC2 本身；
+2. 高危组合（审批 / 授权 / 破玻璃）已由 SSD + 申请人 ≠ 审批人覆盖，DSD 的增量收益需要真实运营数据支撑；
+3. 后续以独立 ADR 评估「按请求声明激活角色」的接口与审计语义，避免半成品开关。
+
+**`shadow → enforce` 切换前置条件**（按顺序逐条满足）：
+
+- [ ] staging 以 `iam.constraints.mode=shadow` 连续观察 ≥ 24h，`iam_constraint_checks_total{result="shadow"}` 的违规量与日志可逐条解释并归零；
+- [ ] 互斥组 / 基数 / 前置配置完成存量预检，`GET /iam/sod-groups/{id}/violations` 无违规主体；
+- [ ] `iam_role_prerequisite` 无环、无跨租户边（迁移与配置审计各校验一次）；
+- [ ] 切换窗口内不并行执行角色改挂父角色或批量绑定，避免影子期与强制期语义交叉；
+- [ ] 回滚路径确认：切回 `shadow` 只需一次配置变更，无需回滚数据。
+
 ---
 
 ## 五、数据模型
@@ -224,14 +250,19 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 | `iam_role_permission` | 角色 → 权限点 | 主键 `(role_id, permission_code)`；授权人、时间 |
 | `iam_role_binding` | 主体 → 角色 | 唯一 `(channel, subject_type, subject_id, merchant_id, role_id, active_key)`：`active_key` 生成列保证「同一主体同一角色至多一条生效绑定」；`revoked_at/revoked_by` 软撤销保留历史；复合外键 `(role_id, channel, merchant_id)` 阻止跨端 / 跨商户绑定；`expires_at` 可空 |
 | `iam_role_data_scope` | 角色数据范围 | 主键 `(role_id, resource)`；冗余 `channel` + 复合外键 `(role_id, channel)`；CHECK 强制 B 端仅 `merchant` / `self`；`scope_values` 为原生 JSON 类型 |
+| `iam_sod_group` | RBAC2 互斥组（SSD） | 唯一 `(channel, merchant_id, code)`；`max_active_roles` 为同主体在组内至多同时持有的角色数；租户 CHECK 与角色一致 |
+| `iam_sod_group_role` | 互斥组 → 角色 | 主键 `(group_id, role_id)`；两条复合外键分别锁定组与角色的端别 / 商户，库层拒绝跨租户组合 |
+| `iam_role_prerequisite` | 角色前置约束 | 主键 `(role_id, required_role_id)`；双侧复合外键；禁止自引用 |
 | `iam_change_request` | 审批单（M4） | 状态机 `pending → approved/rejected → applied`（另有 `cancelled` / `expired`）；申请人与审批人不同；`merchant_id` 区分平台级 / 商户级（M4.6）；`pending_key` 生成列唯一键阻止同一目标并发重复提单；`expires_at` 时效、`decision_reason` 决策说明、`applied_by` 执行人、`payload_version` 载荷版本 |
 | `async_outbox`（ENT-03） | 审计 / 缓存失效事件 | 业务请求内与业务写入**同事务**写入（失败即失败关闭）；`pkg/outbox` Relay 投递；状态、重试次数与死信 |
 
 > **唯一真相**：库级约束以 `migrations/000002_create_iam_tables.up.sql` 为准；本节只做语义摘要，两者冲突时先修迁移再同步文档。企业级加固（2026-10-26）的完整说明见 §5.3.9。
 
+**RBAC2 约束语义**：`iam_sod_group.max_active_roles` 表示同一主体在组内至多同时持有的角色数（默认 1 即两两互斥）；互斥判定基于 RBAC1 有效角色闭包（绑定角色 + active 祖先），破玻璃角色豁免；`iam_role.max_bindings` 是单角色最大有效绑定数（NULL=不限）；`iam_role_prerequisite` 表达「授予 A 前必须已持有 B」。互斥组创建 / 改组 / 启用前必须做存量预检，存在违规时拒绝写入（40900）。运行时拦截行为由 `iam.constraints.mode`（`off` / `shadow` / `enforce`，默认 `shadow`）控制；互斥组端点见 OpenAPI `/iam/sod-groups`，基数 / 前置端点见 `GET|PUT /iam/roles/{id}/constraints`，审批动作为 `role_constraint_update`。
+
 ### 5.3 DDL（MySQL 基线）
 
-> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含菜单 / 路由资源表、审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_baseline.up.sql` / `.down.sql`（权限目录 + 破玻璃角色 + 菜单）。平台异步表见 `000004_create_async_outbox.up.sql` / `.down.sql`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
+> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含菜单 / 路由资源表、审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_baseline.up.sql` / `.down.sql`（权限目录 + 破玻璃角色 + 菜单）。平台异步表见 `000004_create_async_outbox.up.sql` / `.down.sql`。RBAC1 / RBAC2 增量见 `000005_add_iam_role_hierarchy`、`000006_add_iam_rbac2_constraints` 与 `000007_seed_rbac2_permissions`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
 >
 > **M1 前置决策（2026-10-21 已确认）**：
 >
@@ -865,6 +896,8 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | GET | `/admin/v1/iam/roles/{id}` | `iam:role:read` | 角色详情（含权限点、数据范围、绑定数） | 否 |
 | PATCH | `/admin/v1/iam/roles/{id}` | `iam:role:write` | 改名称 / 描述 / 状态；code 不可改 | `rbac.role_change` |
 | PUT | `/admin/v1/iam/roles/{id}/permissions` | `iam:role:grant` | **全量替换**权限点（差量计算） | `rbac.role_change` |
+| GET | `/admin/v1/iam/roles/{id}/constraints` | `iam:role:read` | 查询基数上限与前置角色；跨端 / 跨商户 `40400` | — |
+| PUT | `/admin/v1/iam/roles/{id}/constraints` | `iam:role:write` | **全量替换**基数 + 前置；环 / 互斥冲突 / 存量超限拒绝 | `rbac.role_change` |
 | POST | `/admin/v1/iam/roles/{id}/clone` | `iam:role:write` | 复制角色（新 code，默认停用） | `rbac.role_change` |
 | DELETE | `/admin/v1/iam/roles/{id}` | `iam:role:write` | 软删；有绑定时 `40900` | `rbac.role_change` |
 | GET | `/admin/v1/iam/bindings` | `iam:binding:read` | 按主体 / 角色查询绑定 | 否 |
@@ -898,6 +931,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | `role_create` | `scope_type` / `code` / `name` / `description` / `permissions[]` / `data_scopes[]` | 空，应用后回填新角色 ID |
 | `role_update` | `name` / `description` / `status`（任意子集） | 角色 ID |
 | `role_permission_replace` | `permissions[]` / 可选 `data_scopes[]` | 角色 ID |
+| `role_constraint_update` | `required_role_ids[]` / 可选 `max_bindings`（null=不限） | 角色 ID |
 | `role_clone` | `code` / `name` | 源角色 ID，应用后返回新角色 ID |
 | `role_delete` | 无 | 角色 ID |
 | `binding_create` | `role_id` / `subject_type` / `subject_id` / 可选 `expires_at` | 空，应用后回填绑定 ID |
@@ -913,6 +947,8 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | GET | `/biz/v1/iam/roles/{id}` | `iam:role:read` | 他商户角色对外 `40400` |
 | PATCH | `/biz/v1/iam/roles/{id}` | `iam:role:write` | 名称 / 描述 / 启停；需 `version` |
 | PUT | `/biz/v1/iam/roles/{id}/permissions` | `iam:role:grant` | 仅可授予 `channel=biz/both` 的权限点 |
+| GET | `/biz/v1/iam/roles/{id}/constraints` | `iam:role:read` | 仅本商户角色；跨商户 `40400` |
+| PUT | `/biz/v1/iam/roles/{id}/constraints` | `iam:role:write` | 仅本商户角色与前置角色 |
 | POST | `/biz/v1/iam/roles/{id}/clone` | `iam:role:write` | 克隆默认停用，仍受商户配额约束 |
 | DELETE | `/biz/v1/iam/roles/{id}` | `iam:role:write` | 有生效绑定则 `40900` |
 | GET | `/biz/v1/iam/bindings` | `iam:binding:read` | 仅本商户绑定 |
@@ -1336,6 +1372,7 @@ JOIN role_chain c ON c.id = s.role_id;
 | `iam_shadow_mismatch_total` | Counter | `channel`、`static_allow`、`iam_allow` | shadow 与静态表判定差异；切 enforce 前必须为 0 或逐条解释 |
 | `iam_role_changes_total` | Counter | `channel`、`operation`、`outcome` | M3 已落地：角色变更量与失败率（由审计装饰器计数） |
 | `iam_binding_changes_total` | Counter | `channel`、`operation`、`outcome` | M3 已落地：绑定变更量与失败率 |
+| `iam_constraint_checks_total` | Counter | `kind`、`result=pass\|shadow\|enforce\|error` | RBAC2 约束检查量；`kind` 为检查类别（bind / hierarchy / delete）或违规类型，切 `enforce` 前 `shadow` 必须归零或逐条解释 |
 | `iam_bindings_total` | Gauge | `channel`、`scope_type` | 绑定规模，低基数（M4：需定期聚合，避免每请求查询） |
 | `iam_outbox_pending` | Gauge | — | M4.4 已落地：未投递事件数（含重试等待与死信） |
 | `iam_outbox_lag_seconds` | Gauge | — | M4.4 已落地：最老未投递事件的积压秒数 |
@@ -1383,6 +1420,9 @@ Runbook：`docs/runbooks/iam.md`（RB-01～RB-07），覆盖缓存故障、DB �
 # configs/admin.yaml.example / biz.yaml.example 追加；c.yaml 不添加
 iam:
   mode: enforce                 # off | shadow | enforce
+
+  constraints:
+    mode: shadow                # off | shadow | enforce；该开关只控制运行时拦截，配置期校验始终生效
 
   load_timeout: 300ms
   cache:

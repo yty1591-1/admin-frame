@@ -116,6 +116,8 @@ iam:
     allowed_subjects: []
   approval:
     enabled: false               # true 时角色 / 绑定直写端点返回 40900，必须走 change-requests
+  constraints:                   # RBAC2 约束（互斥组 / 前置角色 / 基数）
+    mode: shadow                 # off|shadow|enforce；空=shadow，仅记录不拦截
 
 # 身份域认证端点（docs/identity-authn.md）；默认关闭，保持既有「只验签」行为。
 # 启用前置：auth.mode=jwt、redis.addr 非空（需补充 redis 段）、生产必须 fail_closed。

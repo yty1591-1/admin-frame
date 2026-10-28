@@ -18,6 +18,10 @@ var (
 	ErrInvalidRoleCode = errors.New("invalid role code")
 	// ErrInvalidRoleParent 父角色非法：自引用、成环、跨端 / 跨商户、超深或破玻璃参与继承。
 	ErrInvalidRoleParent = errors.New("invalid role parent")
+	// ErrInvalidSodGroup 互斥角色组字段非法：租户组合、编码、成员数或并发阈值不合法。
+	ErrInvalidSodGroup = errors.New("invalid sod group")
+	// ErrInvalidRoleConstraint 角色约束非法：前置角色自引用 / 重复 / 超限，或基数上限非法。
+	ErrInvalidRoleConstraint = errors.New("invalid role constraint")
 	// ErrInvalidPermissionCode 权限码格式非法。
 	ErrInvalidPermissionCode = errors.New("invalid permission code")
 	// ErrWildcardNotAllowed 出现通配符权限码；仅 breakglass 可在运行时展开 *。

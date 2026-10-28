@@ -36,7 +36,11 @@ type HandlerConfig struct {
 	Menus *app.MenuService
 	// MenuAdmin 菜单管理用例；为空时菜单管理端点返回 50000。
 	MenuAdmin *app.MenuAdminService
-	Channel   domain.Channel
+	// SodGroups 互斥角色组用例（RBAC2）；为空时相关端点返回 50000。
+	SodGroups *app.SodGroupService
+	// RoleConstraints 角色约束用例（RBAC2 基数 + 前置角色）；为空时相关端点返回 50000。
+	RoleConstraints *app.RoleConstraintService
+	Channel         domain.Channel
 	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
 	// （iam.approval.enabled）。
 	RequireApproval bool
@@ -52,6 +56,8 @@ type Handler struct {
 	templates       *app.TemplateService
 	menus           *app.MenuService
 	menuAdmin       *app.MenuAdminService
+	sodGroups       *app.SodGroupService
+	roleConstraints *app.RoleConstraintService
 	channel         domain.Channel
 	requireApproval bool
 }
@@ -76,6 +82,8 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		templates:       cfg.Templates,
 		menus:           cfg.Menus,
 		menuAdmin:       cfg.MenuAdmin,
+		sodGroups:       cfg.SodGroups,
+		roleConstraints: cfg.RoleConstraints,
 		channel:         cfg.Channel,
 		requireApproval: cfg.RequireApproval,
 	}, nil

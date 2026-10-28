@@ -73,6 +73,12 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	sodGroups, roleRestrictions := buildConstraintRepositories(deps)
+	sodViolations := buildSodViolationRepository(deps, roles, bindings)
+	constraintMode, err := app.ParseConstraintMode(cfg.IAM.Constraints.Mode)
+	if err != nil {
+		return nil, err
+	}
 
 	snapshotCache, err := buildSnapshotCache(deps)
 	if err != nil {
@@ -88,6 +94,19 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 	if err := iamMetrics.RegisterBreakglassGauge(breakglassActiveCounter(roles, bindings)); err != nil {
 		return nil, fmt.Errorf("iam breakglass gauge: %w", err)
+	}
+	// 约束检查器依赖指标做 shadow 期观测，因此必须在指标就绪后构造。
+	constraintGuard, err := app.NewConstraintGuard(app.ConstraintGuardConfig{
+		Mode:         constraintMode,
+		Roles:        roles,
+		Bindings:     bindings,
+		SodGroups:    sodGroups,
+		Restrictions: roleRestrictions,
+		Observer:     iamMetrics,
+		Logger:       deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam constraint guard: %w", err)
 	}
 
 	authorizeSvc, err := app.NewAuthorizeService(app.AuthorizeConfig{
@@ -156,7 +175,8 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			MaxCustomRolesPerMerchant: cfg.IAM.Limits.MaxCustomRolesPerMerchant,
 			RequireReason:             cfg.IAM.Security.RequireReason,
 		},
-		Logger: deps.Logger,
+		Constraints: constraintGuard,
+		Logger:      deps.Logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("iam role service: %w", err)
@@ -173,10 +193,40 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 			MaxBindingsPerSubject: cfg.IAM.Limits.MaxBindingsPerSubject,
 			RequireReason:         cfg.IAM.Security.RequireReason,
 		},
-		Logger: deps.Logger,
+		Constraints: constraintGuard,
+		Logger:      deps.Logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("iam binding service: %w", err)
+	}
+	sodGroupSvc, err := app.NewSodGroupService(app.SodGroupServiceConfig{
+		Groups:     sodGroups,
+		Roles:      roles,
+		Violations: sodViolations,
+		Recorder:   recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      auditMeta,
+		Limits:     app.SodGroupLimits{RequireReason: cfg.IAM.Security.RequireReason},
+		Logger:     deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam sod group service: %w", err)
+	}
+	roleConstraintSvc, err := app.NewRoleConstraintService(app.RoleConstraintServiceConfig{
+		Roles:       roles,
+		Bindings:    bindings,
+		Constraints: roleRestrictions,
+		SodGroups:   sodGroups,
+		Recorder:    recorder,
+		UnitOfWork:  uow,
+		IDs:         ids,
+		Audit:       auditMeta,
+		Limits:      app.RoleConstraintLimits{RequireReason: cfg.IAM.Security.RequireReason},
+		Logger:      deps.Logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam role constraint service: %w", err)
 	}
 	querySvc, err := app.NewQueryService(roles, bindings, snapshots)
 	if err != nil {
@@ -218,7 +268,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("iam template service: %w", err)
 	}
 
-	applicator, err := app.NewRoleChangeApplicator(roleSvc, bindingSvc)
+	applicator, err := app.NewChangeApplicator(roleSvc, bindingSvc, sodGroupSvc, roleConstraintSvc)
 	if err != nil {
 		return nil, fmt.Errorf("iam change applicator: %w", err)
 	}
@@ -264,6 +314,8 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Templates:       templateSvc,
 		Menus:           menuSvc,
 		MenuAdmin:       menuAdminSvc,
+		SodGroups:       sodGroupSvc,
+		RoleConstraints: roleConstraintSvc,
 		Channel:         domain.Channel(cfg.Channel),
 		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
@@ -339,6 +391,30 @@ func buildRepositories(deps *platform.Deps) (
 		persistence.NewSQLRoleTemplateRepository(sqlDB),
 		persistence.NewSQLSnapshotRepository(sqlDB),
 		nil
+}
+
+// buildConstraintRepositories 装配 RBAC2 约束仓储（互斥组 / 前置角色）。
+//
+// 内存与 SQL 必须与角色仓储保持一致：否则影子期会把冲突记录在另一份数据上，
+// 造成「验证通过、生产不通过」的假象。
+func buildConstraintRepositories(deps *platform.Deps) (domain.SodGroupRepository, domain.RoleConstraintRepository) {
+	if deps.Database == nil {
+		return persistence.NewMemorySodGroupRepository(), persistence.NewMemoryRoleConstraintRepository()
+	}
+	sqlDB := deps.Database.SQL()
+	return persistence.NewSQLSodGroupRepository(sqlDB), persistence.NewSQLRoleConstraintRepository(sqlDB)
+}
+
+// buildSodViolationRepository 装配互斥组存量预检仓储。
+//
+// 内存实现复用同一份角色 / 绑定仓储，保证与 Guard、快照看到相同的数据。
+func buildSodViolationRepository(
+	deps *platform.Deps, roles domain.RoleRepository, bindings domain.BindingRepository,
+) domain.SodViolationRepository {
+	if deps.Database == nil {
+		return persistence.NewMemorySodViolationRepository(roles, bindings)
+	}
+	return persistence.NewSQLSodViolationRepository(deps.Database.SQL())
 }
 
 // RegisterAsync 注册 IAM 异步 topic handler（API 与 worker 共用）。

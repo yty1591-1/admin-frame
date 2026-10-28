@@ -31,6 +31,11 @@ type RoleRepository interface {
 	// 供 RBAC1 的两处使用：删除前检查子树、父角色变更后失效后代主体的快照。
 	// 深度上限为 MaxRoleHierarchyDepth，脏数据成环时据此截断而不是无限递归。
 	ListDescendants(ctx context.Context, roleID string) ([]*Role, error)
+	// ListAncestors 返回 roleID 的全部未删除祖先（不含自身，按 id 排序）。
+	//
+	// 供 RBAC2 展开「有效角色闭包」：绑定角色 + 祖先共同参与互斥与前置判定。
+	// 是否 active 由调用方过滤——停用祖先不参与权限继承。
+	ListAncestors(ctx context.Context, roleID string) ([]*Role, error)
 }
 
 // RoleFilter 是角色列表过滤条件。
@@ -61,6 +66,17 @@ type BindingRepository interface {
 	FindByID(ctx context.Context, id string) (*Binding, error)
 	// ListBySubject 返回主体在 at 时刻有效的绑定（过滤已撤销与已过期）。
 	ListBySubject(ctx context.Context, query SubjectQuery) ([]*Binding, error)
+	// ListBySubjectForUpdate 与 ListBySubject 语义一致，但在事务内对主体绑定区间加锁。
+	//
+	// 供 RBAC2 约束校验使用：互斥 / 基数判定必须先锁定同一主体的绑定范围，
+	// 否则并发绑定可能各自通过检查后同时落库。SQL 实现使用 SELECT ... FOR UPDATE。
+	ListBySubjectForUpdate(ctx context.Context, query SubjectQuery) ([]*Binding, error)
+	// CountEffectiveByRole 统计某角色在 at 时刻的有效绑定数，供 RBAC2 角色基数约束。
+	CountEffectiveByRole(ctx context.Context, channel Channel, merchantID, roleID string, at time.Time) (int, error)
+	// ListEffectiveByTenant 返回租户在 at 时刻的全部有效绑定，供互斥组存量预检。
+	//
+	// 只用于低频配置期检查，不得进入鉴权热路径。
+	ListEffectiveByTenant(ctx context.Context, channel Channel, merchantID string, at time.Time) ([]*Binding, error)
 	// ListByRole 返回绑定到指定角色的全部记录（含已过期 / 已撤销），用于审计与引用检查。
 	ListByRole(ctx context.Context, roleID string) ([]*Binding, error)
 }
@@ -84,6 +100,63 @@ func (q SubjectQuery) EffectiveTime() time.Time {
 		return nowUTC()
 	}
 	return q.At.UTC()
+}
+
+// SodGroupRepository 是 RBAC2 互斥角色组的持久化端口。
+//
+// 约定与角色仓储一致：未找到返回 NotFound，Save 使用 expectedVersion 做乐观锁；
+// 组主体与组-角色关系必须同事务提交，复合外键保证跨租户组合无法落库。
+type SodGroupRepository interface {
+	// FindByID 按主键加载互斥组（含组内角色）。
+	FindByID(ctx context.Context, id string) (*SodGroup, error)
+	// FindByCode 按端别 + 商户 + 编码加载互斥组；软删组仍返回，用于阻止 code 复用。
+	FindByCode(ctx context.Context, channel Channel, merchantID, code string) (*SodGroup, error)
+	// Save 创建或更新互斥组；expectedVersion 为 0 表示创建。
+	Save(ctx context.Context, group *SodGroup, expectedVersion int64) error
+	// List 按条件分页列举未软删的互斥组。
+	List(ctx context.Context, filter SodGroupFilter) ([]*SodGroup, error)
+	// Count 返回满足条件的未软删互斥组数。
+	Count(ctx context.Context, filter SodGroupFilter) (int, error)
+	// ListByRole 返回包含指定角色的未软删互斥组，供绑定期互斥校验。
+	ListByRole(ctx context.Context, channel Channel, merchantID, roleID string) ([]*SodGroup, error)
+}
+
+// SodGroupFilter 是互斥组列表过滤条件。
+type SodGroupFilter struct {
+	// Channel 端别过滤；空表示不过滤（仅 A 端内部查询允许）。
+	Channel Channel
+	// MerchantID 商户过滤；B 端必填。
+	MerchantID string
+	// Status 状态过滤；空表示全部。
+	Status SodGroupStatus
+	// Keyword 按 code / name 模糊匹配；空表示不过滤。
+	Keyword string
+	// Limit 分页大小，上限 100（API-05）。
+	Limit int
+	// Offset 偏移量。
+	Offset int
+}
+
+// SodViolationRepository 评估互斥组在某一时刻的存量违规（配置期预检）。
+//
+// 实现需展开 RBAC1 有效角色闭包（绑定角色 + 祖先），再与组内角色求交；
+// 结果按主体聚合，最多返回 limit 条，避免一次预检拖垮管理端。
+type SodViolationRepository interface {
+	List(ctx context.Context, group *SodGroup, at time.Time, limit int) ([]SodViolation, error)
+}
+
+// RoleConstraintRepository 是 RBAC2 角色前置约束的持久化端口。
+// 基数约束（单角色最大绑定数）属于角色聚合，由 RoleRepository 负责读写；
+// 本端口只管理前置角色关系。
+type RoleConstraintRepository interface {
+	// ListByRole 返回指定角色的前置约束；无约束时返回空集合而非 NotFound。
+	ListByRole(ctx context.Context, roleID string) (RoleConstraint, error)
+	// ListByRoles 批量返回前置约束，供绑定期一次性展开有效角色闭包。
+	ListByRoles(ctx context.Context, roleIDs []string) ([]RoleConstraint, error)
+	// Replace 全量替换角色的前置角色；组内角色的租户字段取自 role。
+	Replace(ctx context.Context, role *Role, requiredRoleIDs []string, actor string) error
+	// ListDependents 返回把 roleID 作为前置角色的角色 ID，供删除前引用检查。
+	ListDependents(ctx context.Context, roleID string) ([]string, error)
 }
 
 // RoleTemplateRepository 是角色模板聚合的持久化端口。
