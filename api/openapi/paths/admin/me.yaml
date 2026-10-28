@@ -1,0 +1,28 @@
+admin-v1-me:
+  get:
+    tags: [auth]
+    summary: 当前登录主体资料
+    description: |
+      仅需认证，不额外要求权限点。
+      roles / permissions / data_scopes 仍由 `GET /admin/v1/iam/me/permissions` 提供。
+    operationId: adminGetMe
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/me.yaml#/components/schemas/MeView"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

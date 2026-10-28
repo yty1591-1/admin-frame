@@ -1,0 +1,33 @@
+components:
+  schemas:
+    MeView:
+      type: object
+      required:
+        [subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version]
+      additionalProperties: false
+      description: |
+        当前登录主体资料。A 端 `channel` 恒为 `admin`，`merchant_id` 恒为空串。
+        角色与权限不在此响应中，统一走 `GET /admin/v1/iam/me/permissions`。
+      properties:
+        subject_id:
+          type: string
+          description: 账号主键，与令牌 `sub` 一致
+        subject:
+          type: string
+          description: 规范化登录主体（trim + 小写）
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        merchant_id:
+          type: string
+          description: B 端商户 ID；A 端恒为空串
+        status:
+          type: string
+          enum: [pending, active, locked, disabled]
+          description: 账号生命周期状态
+        mfa_enabled:
+          type: boolean
+          description: MFA 绑定是否已确认（仅 ConfirmedAt 非空时为 true）
+        token_version:
+          type: integer
+          format: int64
+          description: 账号级撤销版本，只读
