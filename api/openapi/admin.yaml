@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 5.1.0
+  version: 6.0.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -13,6 +13,8 @@ info:
     4.1.0：新增菜单资源管理端点（`/admin/v1/iam/menus*`），菜单停用代替物理删除。
     5.0.0：`GET /admin/v1/menus` 重命名为 `GET /admin/v1/iam/me/menus`，与 `/iam/me/permissions` 对齐（破坏性）。
     5.1.0：新增 `GET /admin/v1/me`（当前主体资料）。
+    6.0.0：角色 `scope_type` 枚举由 `admin` 更正为 `platform`，与后端 RBAC 语义一致（破坏性）；
+    登记角色模板端点与契约（`/admin/v1/iam/role-templates*`）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -75,6 +77,18 @@ paths:
     $ref: './paths/admin/iam-roles.yaml#/admin-v1-iam-roles-by-id-constraints'
   /admin/v1/iam/roles/{id}/clone:
     $ref: './paths/admin/iam-roles.yaml#/admin-v1-iam-roles-by-id-clone'
+  /admin/v1/iam/role-templates:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates'
+  /admin/v1/iam/role-templates/{id}:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates-by-id'
+  /admin/v1/iam/role-templates/{id}/permissions:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates-by-id-permissions'
+  /admin/v1/iam/role-templates/{id}/drift:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates-by-id-drift'
+  /admin/v1/iam/role-templates/{id}/sync:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates-by-id-sync'
+  /admin/v1/iam/role-templates/{id}/instantiate:
+    $ref: './paths/admin/iam-role-templates.yaml#/admin-v1-iam-role-templates-by-id-instantiate'
   /admin/v1/iam/bindings:
     $ref: './paths/admin/iam-bindings.yaml#/admin-v1-iam-bindings'
   /admin/v1/iam/bindings/{id}:

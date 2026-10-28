@@ -51,8 +51,8 @@ components:
           $ref: "./common.yaml#/components/schemas/Channel"
         scope_type:
           type: string
-          description: 角色作用域；A 端为 admin，B 端为 merchant
-          enum: [admin, merchant]
+          description: 角色作用域；A 端为 platform，B 端为 merchant
+          enum: [platform, merchant]
         merchant_id:
           type: string
         parent_id:
@@ -114,7 +114,7 @@ components:
           $ref: "./common.yaml#/components/schemas/Channel"
         scope_type:
           type: string
-          enum: [admin, merchant]
+          enum: [platform, merchant]
         parent_id:
           type: string
           description: 父角色 ID；为空表示根角色。必须同端别、同商户，且不得成环（深度 ≤ 8）

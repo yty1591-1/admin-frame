@@ -1,0 +1,373 @@
+admin-v1-iam-role-templates:
+  get:
+    tags: [iam]
+    summary: 角色模板列表
+    description: 需要 `iam:role:read`。A 端可按 channel 查看两端模板。
+    operationId: adminListIAMRoleTemplates
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        schema:
+          $ref: "../../schemas/admin/common.yaml#/components/schemas/Channel"
+      - in: query
+        name: status
+        schema:
+          $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateStatus"
+      - in: query
+        name: keyword
+        description: 按模板码 / 名称模糊匹配
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [iam]
+    summary: 创建角色模板
+    description: 需要 `iam:role:write`。权限码必须存在于目录且与端别匹配。
+    operationId: adminCreateIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/CreateRoleTemplateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-role-templates-by-id:
+  get:
+    tags: [iam]
+    summary: 角色模板详情
+    description: 需要 `iam:role:read`。A 端可查看两端模板，B 端仅本端。
+    operationId: adminGetIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  patch:
+    tags: [iam]
+    summary: 更新角色模板基础信息
+    description: 需要 `iam:role:write`。需提供 `version`（或 `If-Match`）。
+    operationId: adminUpdateIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/UpdateRoleTemplateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  delete:
+    tags: [iam]
+    summary: 软删角色模板
+    description: 需要 `iam:role:write`。版本可由 body `version` 或 `If-Match` 提供。
+    operationId: adminDeleteIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/DeleteRoleTemplateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/common.yaml#/components/schemas/IdOnly"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-role-templates-by-id-permissions:
+  put:
+    tags: [iam]
+    summary: 全量替换模板权限与数据范围
+    description: 需要 `iam:role:grant`。`data_scopes` 省略表示不修改，空数组表示清空。
+    operationId: adminReplaceIAMRoleTemplatePermissions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/ReplaceTemplatePermissionsRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-role-templates-by-id-drift:
+  get:
+    tags: [iam]
+    summary: 模板实例漂移
+    description: 需要 `iam:role:read`。返回与模板版本不一致的实例角色。
+    operationId: adminGetIAMRoleTemplateDrift
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/TemplateDriftListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-role-templates-by-id-sync:
+  post:
+    tags: [iam]
+    summary: 同步模板到实例角色
+    description: 需要 `iam:role:grant`。`dry_run=true` 只返回待同步实例。
+    operationId: adminSyncIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/SyncTemplateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/TemplateDriftListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-role-templates-by-id-instantiate:
+  post:
+    tags: [iam]
+    summary: 按模板实例化角色
+    description: 需要 `iam:role:write`。A 端可实例化为 admin / merchant 作用域角色。
+    operationId: adminInstantiateIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/InstantiateTemplateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/Role"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
