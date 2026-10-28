@@ -349,7 +349,8 @@ admin-v1-iam-me-menus:
     description: |
       仅需认证，不额外要求权限点。按主体权限快照裁剪菜单树：
       只保留 permission_code 为空或已授予的节点，递归补齐可见节点的祖先链，
-      并丢弃裁剪后无可见子节点的目录。菜单只影响前端入口展示，
+      并丢弃裁剪后无可见子节点的目录；目录 redirect 按首个可见后代重算，
+      避免跳向被裁剪的页面。菜单只影响前端入口展示，
       接口鉴权仍以权限点中间件为准。
     operationId: adminGetMenus
     security:

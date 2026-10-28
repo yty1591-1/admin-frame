@@ -438,6 +438,11 @@ func (s *MenuAdminService) validateRelations(menu *domain.Menu, menus []*domain.
 		if parent.Status != domain.MenuStatusActive {
 			return apperr.BadRequest("parent menu is disabled")
 		}
+		// 只有目录能承载子节点；页面 / link / iframe 作为父级时，
+		// 自身能否访问与子节点可见性会纠缠在一起。
+		if parent.NodeType != domain.MenuNodeCatalog {
+			return apperr.BadRequest("parent menu must be a catalog")
+		}
 		depth := 1
 		cursor := menu.ParentCode
 		visited := map[string]struct{}{menu.Code: {}}
@@ -457,10 +462,12 @@ func (s *MenuAdminService) validateRelations(menu *domain.Menu, menus []*domain.
 			cursor = parent.ParentCode
 		}
 	}
-	if !creating && (menu.NodeType == domain.MenuNodeLink || menu.NodeType == domain.MenuNodeIFrame) {
+	// 已挂子节点的菜单不能改成非目录类型，否则会出现「页面下挂页面」的树，
+	// 权限裁剪后父页面无法作为可点击入口。
+	if !creating && menu.NodeType != domain.MenuNodeCatalog {
 		for _, existing := range menus {
 			if existing.ParentCode == menu.Code {
-				return apperr.BadRequest("menu with children cannot be converted to link or iframe")
+				return apperr.BadRequest("only catalog menus can have children")
 			}
 		}
 	}

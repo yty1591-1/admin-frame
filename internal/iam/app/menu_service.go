@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -34,8 +35,13 @@ type MenuQuery struct {
 
 // MenuNode 是裁剪后的菜单树节点。
 type MenuNode struct {
-	Menu     *domain.Menu
-	Children []*MenuNode
+	Menu *domain.Menu
+	// EffectiveRedirect 是目录节点的实际跳转：首个可见后代的完整路由路径。
+	//
+	// 配置的 Menu.Redirect 可能指向已被权限裁剪的页面，前端点击目录会落到
+	// 无权限路由，因此输出前按可见树重算；非目录节点等于 Menu.Redirect。
+	EffectiveRedirect string
+	Children          []*MenuNode
 }
 
 // Menus 返回指定端别下、当前主体可见的菜单树。
@@ -44,7 +50,8 @@ type MenuNode struct {
 //  1. 只保留 permission_code 为空或主体已持有的节点；
 //  2. 递归补齐可见节点的祖先链，否则子页面可见而父目录缺失，前端拼不出树；
 //  3. 目录节点裁剪后没有可见子节点则整枝丢弃；
-//  4. disabled 节点不加载，输出按 sort、code 升序。
+//  4. disabled 节点不加载，输出按 sort、code 升序；
+//  5. 目录的 redirect 重算为首个可见后代的完整路径，避免跳向被裁剪的页面。
 func (s *MenuService) Menus(ctx context.Context, query MenuQuery) ([]*MenuNode, error) {
 	snapshot, err := s.snapshots.Load(ctx, domain.SubjectQuery{
 		Channel:     query.Channel,
@@ -109,7 +116,46 @@ func (s *MenuService) Menus(ctx context.Context, query MenuQuery) ([]*MenuNode, 
 		// 父节点不存在或已被停用：按根节点处理，避免可见页面整枝丢失。
 		roots = append(roots, node)
 	}
-	return pruneEmptyCatalogs(roots), nil
+	roots = pruneEmptyCatalogs(roots)
+	applyEffectiveRedirects(roots, "")
+	return roots, nil
+}
+
+// applyEffectiveRedirects 为目录节点计算实际跳转。
+//
+// 静态 redirect 可能指向已被权限裁剪的页面；这里改为取首个可见后代的完整路径。
+func applyEffectiveRedirects(nodes []*MenuNode, parentPath string) {
+	for _, node := range nodes {
+		fullPath := joinRoutePath(parentPath, node.Menu.RoutePath)
+		node.EffectiveRedirect = node.Menu.Redirect
+		if node.Menu.NodeType == domain.MenuNodeCatalog {
+			if target := firstVisiblePath(node, fullPath); target != "" {
+				node.EffectiveRedirect = target
+			}
+		}
+		applyEffectiveRedirects(node.Children, fullPath)
+	}
+}
+
+// firstVisiblePath 返回节点自身或首个可见后代的完整路径；无可见后代时返回空串。
+func firstVisiblePath(node *MenuNode, fullPath string) string {
+	if node.Menu.NodeType != domain.MenuNodeCatalog {
+		return fullPath
+	}
+	for _, child := range node.Children {
+		if path := firstVisiblePath(child, joinRoutePath(fullPath, child.Menu.RoutePath)); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// joinRoutePath 拼接父子路由路径；子路径为绝对路径时直接使用。
+func joinRoutePath(parentPath, routePath string) string {
+	if parentPath == "" || strings.HasPrefix(routePath, "/") {
+		return routePath
+	}
+	return strings.TrimSuffix(parentPath, "/") + "/" + routePath
 }
 
 // pruneEmptyCatalogs 递归丢弃没有可见子节点的目录节点。

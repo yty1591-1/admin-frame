@@ -124,6 +124,11 @@ func (m *Menu) Validate() error {
 		if strings.TrimSpace(m.Component) != "" || strings.TrimSpace(m.ExternalURL) != "" {
 			return errInvalid(ErrInvalidMenu, "catalog %q must not set component or external_url", m.Code)
 		}
+		// 目录只做分组：挂权限码既不生效（有可见子节点时祖先补链会绕过，
+		// 无可见子节点时整枝被裁），又容易误以为能按目录授权。
+		if m.PermissionCode != "" {
+			return errInvalid(ErrInvalidMenu, "catalog %q must not set permission_code; gate leaf pages instead", m.Code)
+		}
 	case MenuNodePage:
 		if strings.TrimSpace(m.Component) == "" {
 			return errInvalid(ErrInvalidMenu, "menu %q requires component", m.Code)

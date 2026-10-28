@@ -65,6 +65,9 @@ func TestMenuSeedConsistency(t *testing.T) {
 				t.Fatalf("菜单 %s/%s 的 permission_code=%q 不在权限目录中", channel, code, permission)
 			}
 		}
+		if nodeType == "catalog" && permission != "" {
+			t.Fatalf("目录 %s/%s 不应挂权限码（权限码只挂叶子页面），实际 %q", channel, code, permission)
+		}
 	}
 
 	for _, match := range matches {

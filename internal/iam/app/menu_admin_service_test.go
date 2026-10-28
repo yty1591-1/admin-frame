@@ -123,6 +123,21 @@ func TestCreateMenuRejectsInvalidInput(t *testing.T) {
 			cmd:  baseCreateMenuCommand(func(c *app.CreateMenuCommand) { c.ParentCode = "nope" }),
 		},
 		{
+			name: "parent is not catalog",
+			cmd:  baseCreateMenuCommand(func(c *app.CreateMenuCommand) { c.ParentCode = "system.role" }),
+		},
+		{
+			name: "catalog with permission code",
+			cmd: baseCreateMenuCommand(func(c *app.CreateMenuCommand) {
+				c.Code = "system.settings"
+				c.RouteName = "SystemSettings"
+				c.NodeType = domain.MenuNodeCatalog
+				c.Component = ""
+				c.Redirect = "/system/settings"
+				c.PermissionCode = iam.PermRoleRead
+			}),
+		},
+		{
 			name: "duplicate code",
 			cmd:  baseCreateMenuCommand(func(c *app.CreateMenuCommand) { c.Code = "system.role" }),
 		},
@@ -155,6 +170,20 @@ func baseCreateMenuCommand(mutate func(*app.CreateMenuCommand)) app.CreateMenuCo
 		mutate(&cmd)
 	}
 	return cmd
+}
+
+// TestUpdateMenuRejectsNonCatalogWithChildren 已挂子节点的目录不能再改成页面 / link / iframe。
+func TestUpdateMenuRejectsNonCatalogWithChildren(t *testing.T) {
+	svc, _, _ := newMenuAdminFixture(t)
+	nodeType := domain.MenuNodePage
+	component := "/system/role/index.vue"
+	_, err := svc.UpdateMenu(context.Background(), app.UpdateMenuCommand{
+		ID: "100", Version: 1, Actor: "1001",
+		Fields: domain.MenuUpdateParams{NodeType: &nodeType, Component: &component},
+	})
+	if bizCode(err) != apperr.CodeBadRequest {
+		t.Fatalf("err = %v, want 40000", err)
+	}
 }
 
 // TestUpdateMenuUsesOptimisticLock 验证版本自增与冲突返回 40900。

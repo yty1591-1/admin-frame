@@ -80,7 +80,8 @@ func toMenuTreeDTO(node *app.MenuNode) *MenuTreeNodeDTO {
 		Name:      menu.RouteName,
 		Path:      menu.RoutePath,
 		Component: menu.Component,
-		Redirect:  menu.Redirect,
+		// 目录跳转由 MenuService 按可见树重算，避免指向被裁掉的页面。
+		Redirect: node.EffectiveRedirect,
 		Meta: MenuMetaDTO{
 			Title:      menu.Title,
 			TitleKey:   menu.TitleKey,
