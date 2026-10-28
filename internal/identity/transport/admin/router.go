@@ -1,4 +1,4 @@
-// Package admin 提供 A 端认证路由（/admin/v1/auth/*）。
+// Package admin 提供 A 端身份域路由（/admin/v1/auth/* 与 /admin/v1/me）。
 //
 // 路由只做「路径 → Handler → 中间件」绑定；通道无关逻辑在 transport/rest。
 package admin
@@ -24,6 +24,7 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 
 	mux.HandleFunc("POST /admin/v1/auth/login", h.Login)
 	mux.HandleFunc("POST /admin/v1/auth/refresh", h.Refresh)
+	mux.Handle("GET /admin/v1/me", authMW(http.HandlerFunc(h.Me)))
 	mux.Handle("POST /admin/v1/auth/logout", authMW(http.HandlerFunc(h.Logout)))
 	mux.Handle("POST /admin/v1/auth/logout-all", authMW(http.HandlerFunc(h.LogoutAll)))
 

@@ -110,6 +110,26 @@ type SessionView struct {
 	RevokedAt     *time.Time
 }
 
+// MeView 是当前登录主体资料的对外视图。
+//
+// 只承载身份域字段；角色、权限与数据范围仍由 IAM 的 /iam/me/permissions 提供。
+type MeView struct {
+	// SubjectID 账号主键，与令牌 sub 一致。
+	SubjectID string
+	// Subject 规范化登录主体（trim + 小写）。
+	Subject string
+	// Channel 账号所属端别；必须与装配端别一致。
+	Channel domain.Channel
+	// MerchantID B 端商户 ID；A / C 端为空串。
+	MerchantID string
+	// Status 账号生命周期状态。
+	Status domain.AccountStatus
+	// MFAEnabled 表示 MFA 绑定是否已确认。
+	MFAEnabled bool
+	// TokenVersion 账号级撤销版本，只读。
+	TokenVersion int64
+}
+
 // AuthService 编排登录、刷新、登出与会话撤销（docs/identity-authn.md §5）。
 type AuthService struct {
 	accounts    domain.AccountRepository
@@ -679,6 +699,48 @@ func (s *AuthService) ListSessions(ctx context.Context, actor SessionActor) ([]S
 		})
 	}
 	return out, nil
+}
+
+// Me 返回当前登录主体资料。
+//
+// 只读：不写审计、不碰会话；不存在、软删、端别不一致与停用统一返回 40100，
+// 避免通过该端点枚举账号状态。
+func (s *AuthService) Me(ctx context.Context, actor SessionActor) (MeView, error) {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return MeView{}, invalidToken()
+	}
+	account, err := s.accounts.FindByID(ctx, actor.AccountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return MeView{}, invalidToken()
+		}
+		return MeView{}, apperr.Internal("load account failed", err)
+	}
+	if account == nil || account.DeletedAt != nil || account.Channel != s.channel ||
+		account.Status == domain.AccountStatusDisabled {
+		return MeView{}, invalidToken()
+	}
+	mfaEnabled := false
+	if s.mfa != nil {
+		enrollment, mfaErr := s.mfa.FindByAccount(ctx, account.ID)
+		switch {
+		case mfaErr == nil && enrollment != nil:
+			mfaEnabled = enrollment.IsConfirmed()
+		case mfaErr == nil || errors.Is(mfaErr, apperr.ErrNotFound):
+			mfaEnabled = false
+		default:
+			return MeView{}, apperr.Internal("load mfa enrollment failed", mfaErr)
+		}
+	}
+	return MeView{
+		SubjectID:    account.ID,
+		Subject:      account.Subject,
+		Channel:      account.Channel,
+		MerchantID:   account.MerchantID,
+		Status:       account.Status,
+		MFAEnabled:   mfaEnabled,
+		TokenVersion: account.TokenVersion,
+	}, nil
 }
 
 // RevokeSession 撤销账号下的指定会话；已被撤销时幂等返回。

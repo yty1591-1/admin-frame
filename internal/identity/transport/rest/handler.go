@@ -74,6 +74,32 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 }
 
+// Me GET /admin/v1/me
+//
+// 仅需认证，不额外要求权限点；角色与权限由 IAM 的 /iam/me/permissions 提供。
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	view, err := h.auth.Me(r.Context(), actor)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, meResponse{
+		SubjectID:    view.SubjectID,
+		Subject:      view.Subject,
+		Channel:      view.Channel.String(),
+		MerchantID:   view.MerchantID,
+		Status:       view.Status.String(),
+		MFAEnabled:   view.MFAEnabled,
+		TokenVersion: view.TokenVersion,
+	}, traceID)
+}
+
 // SetupMFA POST /admin/v1/auth/mfa/setup
 //
 // 两种入口：Bearer（已登录绑定）或请求体中的 mfa_setup_ticket（登录前强制绑定）。
@@ -319,6 +345,17 @@ type tokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// meResponse 当前主体资料；不含角色与权限。
+type meResponse struct {
+	SubjectID    string `json:"subject_id"`
+	Subject      string `json:"subject"`
+	Channel      string `json:"channel"`
+	MerchantID   string `json:"merchant_id"`
+	Status       string `json:"status"`
+	MFAEnabled   bool   `json:"mfa_enabled"`
+	TokenVersion int64  `json:"token_version"`
 }
 
 // sessionDTO 会话列表项；不包含任何令牌或 IP / UA 原文。
