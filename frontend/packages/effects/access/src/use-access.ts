@@ -29,6 +29,10 @@ function useAccess() {
   function hasAccessByCodes(codes: string[]) {
     const userCodesSet = new Set(accessStore.accessCodes);
 
+    // 破玻璃 / 系统角色在快照中展开为 "*"；前端必须同样视作全部权限。
+    if (userCodesSet.has('*')) {
+      return true;
+    }
     const intersection = codes.filter((item) => userCodesSet.has(item));
     return intersection.length > 0;
   }
@@ -40,6 +44,9 @@ function useAccess() {
    */
   function hasAllAccessByCodes(codes: string[]) {
     const userCodesSet = new Set(accessStore.accessCodes);
+    if (userCodesSet.has('*')) {
+      return codes.length > 0;
+    }
     return codes.length > 0 && codes.every((item) => userCodesSet.has(item));
   }
 
