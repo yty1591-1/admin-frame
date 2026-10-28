@@ -303,8 +303,8 @@ func (s *MenuAdminService) List(ctx context.Context, filter MenuFilter) ([]*doma
 }
 
 // Get 返回单条菜单详情。
-func (s *MenuAdminService) Get(ctx context.Context, id string) (*domain.Menu, error) {
-	return s.menus.Get(ctx, id)
+func (s *MenuAdminService) Get(ctx context.Context, menuID string) (*domain.Menu, error) {
+	return s.menus.Get(ctx, menuID)
 }
 
 // MenuAdminNode 是管理树节点。
@@ -355,14 +355,14 @@ func (s *MenuAdminService) Components(channel domain.Channel) ([]string, error) 
 }
 
 // loadForWrite 加载菜单并校验版本与操作人。
-func (s *MenuAdminService) loadForWrite(ctx context.Context, id string, version int64, actor string) (*domain.Menu, error) {
+func (s *MenuAdminService) loadForWrite(ctx context.Context, menuID string, version int64, actor string) (*domain.Menu, error) {
 	if version <= 0 {
 		return nil, apperr.BadRequest("version is required")
 	}
 	if strings.TrimSpace(actor) == "" {
 		return nil, apperr.BadRequest("actor is required")
 	}
-	menu, err := s.menus.Get(ctx, id)
+	menu, err := s.menus.Get(ctx, menuID)
 	if err != nil {
 		return nil, err
 	}

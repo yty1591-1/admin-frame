@@ -268,9 +268,9 @@ func (r *SQLSodGroupRepository) ListByRole(
 }
 
 // sodGroupFilterClause 生成 List / Count 共用的过滤子句。
-func sodGroupFilterClause(filter domain.SodGroupFilter) (string, []any) {
+func sodGroupFilterClause(filter domain.SodGroupFilter) (clause string, args []any) {
 	var builder strings.Builder
-	args := make([]any, 0, 5)
+	args = make([]any, 0, 5)
 	if filter.Channel != "" {
 		builder.WriteString(` AND channel = ?`)
 		args = append(args, string(filter.Channel))

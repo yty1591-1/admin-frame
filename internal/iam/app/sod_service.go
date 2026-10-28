@@ -287,16 +287,16 @@ func (s *SodGroupService) Delete(ctx context.Context, cmd DeleteSodGroupCommand)
 
 // Get 按 ID 加载互斥组；跨端 / 跨商户统一 NotFound。
 func (s *SodGroupService) Get(
-	ctx context.Context, id string, channel domain.Channel, merchantID string,
+	ctx context.Context, groupID string, channel domain.Channel, merchantID string,
 ) (*domain.SodGroup, error) {
-	return s.loadScoped(ctx, id, channel, merchantID)
+	return s.loadScoped(ctx, groupID, channel, merchantID)
 }
 
 // LoadForChange 供审批执行器按作用域重新加载目标聚合。
 func (s *SodGroupService) LoadForChange(
-	ctx context.Context, id string, channel domain.Channel, merchantID string,
+	ctx context.Context, groupID string, channel domain.Channel, merchantID string,
 ) (*domain.SodGroup, error) {
-	return s.loadScoped(ctx, id, channel, merchantID)
+	return s.loadScoped(ctx, groupID, channel, merchantID)
 }
 
 // List 按条件分页列举互斥组；作用域过滤由调用方在 filter 中传入。
@@ -313,9 +313,9 @@ func (s *SodGroupService) Count(ctx context.Context, filter domain.SodGroupFilte
 
 // ListViolations 返回指定互斥组的存量违规主体。
 func (s *SodGroupService) ListViolations(
-	ctx context.Context, id string, channel domain.Channel, merchantID string, limit int,
+	ctx context.Context, groupID string, channel domain.Channel, merchantID string, limit int,
 ) ([]domain.SodViolation, error) {
-	group, err := s.loadScoped(ctx, id, channel, merchantID)
+	group, err := s.loadScoped(ctx, groupID, channel, merchantID)
 	if err != nil {
 		return nil, err
 	}
@@ -353,9 +353,9 @@ func (s *SodGroupService) Preflight(
 
 // loadScoped 加载互斥组并校验端别 / 商户；跨租户统一 NotFound（SEC-14）。
 func (s *SodGroupService) loadScoped(
-	ctx context.Context, id string, channel domain.Channel, merchantID string,
+	ctx context.Context, groupID string, channel domain.Channel, merchantID string,
 ) (*domain.SodGroup, error) {
-	group, err := s.groups.FindByID(ctx, id)
+	group, err := s.groups.FindByID(ctx, groupID)
 	if err != nil {
 		return nil, err
 	}

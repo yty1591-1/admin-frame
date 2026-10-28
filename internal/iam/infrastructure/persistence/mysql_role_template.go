@@ -209,9 +209,9 @@ func (r *SQLRoleTemplateRepository) Count(ctx context.Context, filter domain.Rol
 }
 
 // roleTemplateFilterClause 生成 List / Count 共用的过滤子句。
-func roleTemplateFilterClause(filter domain.RoleTemplateFilter) (string, []any) {
+func roleTemplateFilterClause(filter domain.RoleTemplateFilter) (clause string, args []any) {
 	var builder strings.Builder
-	args := make([]any, 0, 3)
+	args = make([]any, 0, 3)
 	if filter.Channel != "" {
 		builder.WriteString(` AND channel = ?`)
 		args = append(args, string(filter.Channel))

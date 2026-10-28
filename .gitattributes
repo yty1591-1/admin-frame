@@ -1,0 +1,27 @@
+# https://docs.github.com/cn/get-started/getting-started-with-git/configuring-git-to-handle-line-endings
+#
+# 统一行尾：文本文件在仓库内与检出后均为 LF，与 Linux CI / WSL 下的
+# gofmt、shell 脚本、Makefile 行为保持一致，避免 CRLF 导致的格式化误报。
+
+# 自动识别文本文件并规范化为 LF（含 Go、YAML、SQL、Markdown、Makefile 等）。
+* text=auto eol=lf
+
+# 需要 CRLF 的 Windows 原生脚本（当前仓库尚未使用，保留约定）。
+*.cmd text eol=crlf
+*.[cC][mM][dD] text eol=crlf
+*.bat text eol=crlf
+*.[bB][aA][tT] text eol=crlf
+
+# 明确标记二进制，避免被 text=auto 误判后做行尾转换。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.mp4 binary

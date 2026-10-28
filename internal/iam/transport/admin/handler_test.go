@@ -138,7 +138,7 @@ func newRouterWithApproval(t *testing.T, requireApproval bool) *router {
 		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
 		Changes: newChangeService(t, roleSvc, bindingSvc, ids),
 		Menus:   menuSvc, MenuAdmin: menuAdminSvc,
-		Channel: domain.ChannelAdmin,
+		Channel:         domain.ChannelAdmin,
 		RequireApproval: requireApproval,
 	})
 	if err != nil {

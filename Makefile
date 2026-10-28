@@ -65,14 +65,18 @@ test-integration:
 lint:
 	golangci-lint run ./...
 
+# 仅扫描 Go 源码目录：仓库根下有 frontend/node_modules（数万文件），
+# 在 WSL 的 /mnt/d（9p）上整树遍历会让 fmt 门禁耗时常达分钟级。
+GO_DIRS := ./cmd ./internal ./pkg ./scripts ./tests
+
 fmt:
-	gofmt -w .
-	$(GOIMPORTS) -local $(MODULE) -w .
+	gofmt -w $(GO_DIRS)
+	$(GOIMPORTS) -local $(MODULE) -w $(GO_DIRS)
 
 # 与 CI job fmt 对齐：仅检查、不写回（不依赖全局安装 goimports）。
 fmt-check:
-	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
-	@out="$$($(GOIMPORTS) -local $(MODULE) -l .)"; if [ -n "$$out" ]; then echo "goimports needed:"; echo "$$out"; exit 1; fi
+	@out="$$(gofmt -l $(GO_DIRS))"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	@out="$$($(GOIMPORTS) -local $(MODULE) -l $(GO_DIRS))"; if [ -n "$$out" ]; then echo "goimports needed:"; echo "$$out"; exit 1; fi
 
 tidy:
 	$(GO) mod tidy

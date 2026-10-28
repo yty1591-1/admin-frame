@@ -23,6 +23,9 @@ COVER_MIN="${TEST_DOMAIN_COVER_MIN:-70}"
 PLATFORM_COVER_MIN="${TEST_PLATFORM_COVER_MIN:-70}"
 SECURITY_COVER_MIN="${TEST_SECURITY_COVER_MIN:-80}"
 REQUIRED_TESTS=(TestBizRoleTenantIsolation TestBizChangeRequestTenantIsolation)
+# 仅扫描 Go 源码目录：仓库根下有 frontend/node_modules（数万文件），
+# 整树递归 grep 在 WSL 的 /mnt/d（9p）上单次可达数十分钟。
+GO_ROOTS=(cmd internal pkg scripts tests)
 FAIL=0
 
 echo "==> TEST-01: domain packages must have *_test.go"
@@ -124,7 +127,7 @@ fi
 
 echo "==> TEST-03: required isolation / ownership tests must exist"
 for name in "${REQUIRED_TESTS[@]}"; do
-  if ! grep -RIn --include='*_test.go' -E "^func ${name}\\(t \\*testing\\.T\\)" . >/dev/null; then
+  if ! grep -RIn --include='*_test.go' -E "^func ${name}\\(t \\*testing\\.T\\)" "${GO_ROOTS[@]}" >/dev/null; then
     echo "ERROR: required test ${name} not found (TEST-03)" >&2
     FAIL=1
   else

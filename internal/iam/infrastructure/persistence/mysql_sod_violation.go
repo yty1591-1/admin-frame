@@ -54,6 +54,7 @@ func (r *SQLSodViolationRepository) List(
 	}
 	args = append(args, group.MaxActiveRoles, limit)
 
+	//nolint:gosec // G202: IN 列表占位符由固定 "?" 逐个生成，实参经 args 绑定，无外部输入拼接。
 	rows, err := r.sql.QueryContext(ctx, `
 WITH RECURSIVE subject_chain AS (
 	SELECT b.channel, b.subject_type, b.subject_id, b.merchant_id, b.role_id, 0 AS depth

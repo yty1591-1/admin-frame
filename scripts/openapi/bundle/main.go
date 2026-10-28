@@ -52,7 +52,7 @@ func main() {
 	if err := enc.Close(); err != nil {
 		fail(err)
 	}
-	if err := os.WriteFile(os.Args[2], buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(os.Args[2], buf.Bytes(), 0o644); err != nil { //nolint:gosec // G306: 装配产物需被用户与后续工具读取，0644 为预期权限。
 		fail(err)
 	}
 }
@@ -63,7 +63,7 @@ func fail(err error) {
 }
 
 func loadNode(path string) (*yaml.Node, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: 路径来自开发者/CI 显式传入的契约文件参数，非不可信输入。
 	if err != nil {
 		return nil, err
 	}
