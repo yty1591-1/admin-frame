@@ -94,7 +94,7 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("GET /biz/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
 
 	// 本商户主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
-	mux.Handle("GET /biz/v1/menus", authMW(http.HandlerFunc(h.Menus)))
+	mux.Handle("GET /biz/v1/iam/me/menus", authMW(http.HandlerFunc(h.Menus)))
 }
 
 // NewRouter 注册 B 端 IAM 路由并挂接鉴权与权限中间件（测试用）。

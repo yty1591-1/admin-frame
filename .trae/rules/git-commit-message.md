@@ -2,7 +2,6 @@
 alwaysApply: true
 scene: git_message
 ---
-
 # 提交信息规范（生产级硬约束）
 
 > 本文件是规范正文；`.cursor/rules/git-commit-message.mdc` 为其镜像，修改须同时提交两处，内容保持一致。

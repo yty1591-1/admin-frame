@@ -342,7 +342,7 @@ admin-v1-iam-menus-by-id-enable:
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
 
-admin-v1-menus:
+admin-v1-iam-me-menus:
   get:
     tags: [iam]
     summary: 当前主体可见菜单

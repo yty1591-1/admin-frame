@@ -131,7 +131,7 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW(perm(string(iam.PermMenuWrite))(http.HandlerFunc(h.EnableMenu))))
 
 	// 当前主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
-	mux.Handle("GET /admin/v1/menus", authMW(http.HandlerFunc(h.Menus)))
+	mux.Handle("GET /admin/v1/iam/me/menus", authMW(http.HandlerFunc(h.Menus)))
 }
 
 // NewRouter 注册 IAM 管理端路由并挂接鉴权与权限中间件（测试用）。

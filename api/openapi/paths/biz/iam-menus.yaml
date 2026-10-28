@@ -1,4 +1,4 @@
-biz-v1-menus:
+biz-v1-iam-me-menus:
   get:
     tags: [iam]
     summary: 当前主体可见菜单

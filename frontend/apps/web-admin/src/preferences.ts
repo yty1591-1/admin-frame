@@ -19,7 +19,7 @@ export const overridesPreferences = defineOverridesPreferences({
     /**
      * 权限模式：
      * - frontend：菜单与路由由前端 route modules 定义，按用户角色过滤；
-     * - backend：菜单由后端 GET /v1/menus 下发并按权限点裁剪，前端只做组件映射。
+     * - backend：菜单由后端 GET /v1/iam/me/menus 下发并按权限点裁剪，前端只做组件映射。
      *
      * admin-frame 已提供 iam_menu 菜单资源与裁剪接口，因此采用 backend；
      * 菜单由后端种子的 route name / component 驱动，必须与 views 目录保持一致。

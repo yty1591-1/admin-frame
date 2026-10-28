@@ -32,7 +32,7 @@ type MenuTreeNodeDTO struct {
 	Status    string             `json:"status"`
 }
 
-// Menus GET /menus
+// Menus GET {channel}/v1/iam/me/menus
 //
 // 菜单只决定前端入口是否可见，接口安全边界仍是权限点中间件；
 // 本端点仅需认证，不额外要求权限点。

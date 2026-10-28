@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 4.1.0
+  version: 5.0.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -11,6 +11,7 @@ info:
     4.0.0：`Permission` 移除 `action` / `kind` / `parent_code` / `path`，`resource` 改为服务端生成（破坏性）；
     新增 `GET /admin/v1/menus` 与 `MenuTreeNode`；移除冗余的 `/admin/v1/iam/permissions/tree`。
     4.1.0：新增菜单资源管理端点（`/admin/v1/iam/menus*`），菜单停用代替物理删除。
+    5.0.0：`GET /admin/v1/menus` 重命名为 `GET /admin/v1/iam/me/menus`，与 `/iam/me/permissions` 对齐（破坏性）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -91,8 +92,8 @@ paths:
     $ref: './paths/admin/iam-menus.yaml#/admin-v1-iam-menus-by-id'
   /admin/v1/iam/menus/{id}/enable:
     $ref: './paths/admin/iam-menus.yaml#/admin-v1-iam-menus-by-id-enable'
-  /admin/v1/menus:
-    $ref: './paths/admin/iam-menus.yaml#/admin-v1-menus'
+  /admin/v1/iam/me/menus:
+    $ref: './paths/admin/iam-menus.yaml#/admin-v1-iam-me-menus'
   /admin/v1/iam/breakglass:
     $ref: './paths/admin/iam-breakglass.yaml#/admin-v1-iam-breakglass'
   /admin/v1/iam/breakglass/{id}/approve:
