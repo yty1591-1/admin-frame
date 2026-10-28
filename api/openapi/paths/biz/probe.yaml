@@ -1,0 +1,52 @@
+healthz:
+  get:
+    tags: [probe]
+    summary: Liveness
+    operationId: bizHealthz
+    security: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  example: ok
+
+readyz:
+  get:
+    tags: [probe]
+    summary: Readiness
+    operationId: bizReadyz
+    security: []
+    responses:
+      "200":
+        description: ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/biz/common.yaml#/components/schemas/ReadyStatus"
+      "503":
+        description: not ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/biz/common.yaml#/components/schemas/ReadyStatus"
+
+version:
+  get:
+    tags: [probe]
+    summary: Build version
+    operationId: bizVersion
+    security: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/biz/common.yaml#/components/schemas/VersionInfo"

@@ -1,0 +1,223 @@
+components:
+  schemas:
+    MenuAdmin:
+      type: object
+      required: [id, channel, code, node_type, route_name, route_path, title, sort, status, version, updated_by, created_at, updated_at]
+      description: 菜单管理视图；version 为乐观锁版本
+      properties:
+        id:
+          type: string
+        channel:
+          type: string
+          enum: [admin, biz]
+        code:
+          type: string
+          description: 创建后不可修改
+        parent_code:
+          type: string
+        node_type:
+          type: string
+          enum: [catalog, menu, iframe, link]
+        route_name:
+          type: string
+        route_path:
+          type: string
+        component:
+          type: string
+        redirect:
+          type: string
+        title:
+          type: string
+        title_key:
+          type: string
+        icon:
+          type: string
+        permission_code:
+          type: string
+          description: 可见所需权限点；空表示登录即可见
+        sort:
+          type: integer
+        hide_in_menu:
+          type: boolean
+        keep_alive:
+          type: boolean
+        external_url:
+          type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        version:
+          type: integer
+          format: int64
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MenuAdminListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuAdmin"
+        total:
+          type: integer
+
+    MenuAdminTreeNode:
+      allOf:
+        - $ref: "#/components/schemas/MenuAdmin"
+        - type: object
+          properties:
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/MenuAdminTreeNode"
+
+    CreateMenuRequest:
+      type: object
+      required: [code, node_type, route_name, route_path, title]
+      properties:
+        channel:
+          type: string
+          enum: [admin]
+          default: admin
+        code:
+          type: string
+        parent_code:
+          type: string
+        node_type:
+          type: string
+          enum: [catalog, menu, iframe, link]
+        route_name:
+          type: string
+        route_path:
+          type: string
+        component:
+          type: string
+        redirect:
+          type: string
+        title:
+          type: string
+        title_key:
+          type: string
+        icon:
+          type: string
+        permission_code:
+          type: string
+        sort:
+          type: integer
+        hide_in_menu:
+          type: boolean
+        keep_alive:
+          type: boolean
+        external_url:
+          type: string
+        reason:
+          type: string
+
+    UpdateMenuRequest:
+      type: object
+      required: [version]
+      description: 未提供的字段保持不变；code / channel 不可修改
+      properties:
+        parent_code:
+          type: string
+        node_type:
+          type: string
+          enum: [catalog, menu, iframe, link]
+        route_name:
+          type: string
+        route_path:
+          type: string
+        component:
+          type: string
+        redirect:
+          type: string
+        title:
+          type: string
+        title_key:
+          type: string
+        icon:
+          type: string
+        permission_code:
+          type: string
+        sort:
+          type: integer
+        hide_in_menu:
+          type: boolean
+        keep_alive:
+          type: boolean
+        external_url:
+          type: string
+        version:
+          type: integer
+          format: int64
+        reason:
+          type: string
+
+    MenuStatusRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+        reason:
+          type: string
+
+    MenuMeta:
+      type: object
+      required: [title, order]
+      properties:
+        title:
+          type: string
+          description: 显示名；i18n 缺失时兜底
+        titleKey:
+          type: string
+          description: i18n key，如 page.system.role
+        icon:
+          type: string
+        order:
+          type: integer
+          description: 同级排序，升序
+        hideInMenu:
+          type: boolean
+        keepAlive:
+          type: boolean
+        iframeSrc:
+          type: string
+          description: iframe 节点目标地址
+        link:
+          type: string
+          description: 外链节点目标地址
+
+    MenuTreeNode:
+      type: object
+      required: [name, path, meta, status]
+      description: 菜单 / 路由树节点；目录节点 component 为空，children 由服务端裁剪
+      properties:
+        name:
+          type: string
+          description: 路由 name，PascalCase
+        path:
+          type: string
+        component:
+          type: string
+          description: BasicLayout / IFrameView / /system/role/index.vue
+        redirect:
+          type: string
+        meta:
+          $ref: "#/components/schemas/MenuMeta"
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuTreeNode"
+        status:
+          type: string
+          enum: [active, disabled]

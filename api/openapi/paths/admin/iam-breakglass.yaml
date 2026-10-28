@@ -1,0 +1,136 @@
+admin-v1-iam-breakglass:
+  post:
+    tags: [iam]
+    summary: 申请破玻璃（限时超级权限）
+    description: |
+      需要 `iam:breakglass:request`。仅 A 端可用，且必须开启
+      `iam.breakglass.enabled`（生产默认关闭）；关闭时返回 40300。
+      申请本身不产生任何授权，只创建一张 action=breakglass_request 的审批单。
+      时长上限硬编码为 2 小时（7200 秒），超限或非正数返回 40000。
+    operationId: adminRequestIAMBreakglass
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-breakglass.yaml#/components/schemas/CreateBreakglassRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-breakglass.yaml#/components/schemas/BreakglassGrant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-breakglass-by-id-approve:
+  post:
+    tags: [iam]
+    summary: 审批破玻璃并立即生效
+    description: |
+      需要 `iam:breakglass:approve`。审批人必须与申请人不同（职责分离），
+      否则返回 40300。通过后立即创建一条带 expires_at 的临时绑定，
+      该主体在绑定期内的鉴权快照会展开 `*`。
+      已 applied 的单子按幂等成功返回；审批已通过但应用失败时可重试。
+    operationId: adminApproveIAMBreakglass
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 破玻璃审批单 ID
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-change-requests.yaml#/components/schemas/DecideChangeRequestRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-breakglass.yaml#/components/schemas/BreakglassGrant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-breakglass-by-id-revoke:
+  post:
+    tags: [iam]
+    summary: 撤销破玻璃授权
+    description: |
+      需要 `iam:breakglass:approve`。提前删除临时绑定，快照在缓存 TTL 内失效。
+      version 必须与审批单当前版本一致，避免旧页面误撤新授权，否则返回 40900。
+    operationId: adminRevokeIAMBreakglass
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 破玻璃审批单 ID
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-change-requests.yaml#/components/schemas/DecideChangeRequestRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-breakglass.yaml#/components/schemas/BreakglassGrant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

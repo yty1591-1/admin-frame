@@ -1,0 +1,219 @@
+admin-v1-iam-bindings:
+  get:
+    tags: [iam]
+    summary: 查询绑定
+    description: 需要 `iam:binding:read`。`role_id` 优先；否则按 subject 查询。
+    operationId: adminListIAMBindings
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: role_id
+        schema:
+          type: string
+      - in: query
+        name: subject_type
+        schema:
+          $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/SubjectType"
+      - in: query
+        name: subject_id
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/BindingListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [iam]
+    summary: 绑定主体角色
+    description: |
+      需要 `iam:binding:write`。校验：主体与角色同端别、同商户；角色须 enabled；
+      单主体绑定数受 `iam.limits.max_bindings_per_subject` 约束（只统计未过期绑定）。
+      同一 (主体, 角色) 重复绑定不会新增行：刷新 `expires_at` / `granted_by` 并保留原 ID，
+      因此过期后重新绑定会立即重新生效。
+    operationId: adminCreateIAMBinding
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/CreateBindingRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/Binding"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-bindings-by-id:
+  delete:
+    tags: [iam]
+    summary: 解绑
+    description: 需要 `iam:binding:write`。删除后主动失效该主体快照。
+    operationId: adminDeleteIAMBinding
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/BindingID"
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/UnbindRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/common.yaml#/components/schemas/IdOnly"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-subjects-by-subject_type-by-subject_id-permissions:
+  get:
+    tags: [iam]
+    summary: 主体有效权限（快照）
+    description: 需要 `iam:binding:read`。B 端只能查询本商户主体。
+    operationId: adminGetIAMSubjectPermissions
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/SubjectTypePath"
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/SubjectIDPath"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/SubjectPermissions"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-authorize:
+  post:
+    tags: [iam]
+    summary: 模拟鉴权
+    description: |
+      需要 `iam:check`。只读、不修改任何状态，用于排障与灰度比对；
+      响应不返回完整权限表，仅返回判定、命中角色与匹配到的数据范围。
+    operationId: adminSimulateIAMAuthorize
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/AuthorizeRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/AuthorizeResult"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-iam-me-permissions:
+  get:
+    tags: [iam]
+    summary: 当前主体权限
+    description: 仅需认证，不额外要求权限点。返回调用者自身的有效权限快照。
+    operationId: adminGetIAMMePermissions
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-bindings.yaml#/components/schemas/SubjectPermissions"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

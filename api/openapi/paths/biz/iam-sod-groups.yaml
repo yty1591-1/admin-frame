@@ -1,0 +1,247 @@
+biz-v1-iam-sod-groups:
+  get:
+    tags: [iam]
+    summary: 本商户互斥角色组列表
+    description: 需要 `iam:sod:read`。只返回 Principal 所属商户的组。
+    operationId: bizListIAMSodGroups
+    security:
+      - bearerAuth: []
+    parameters:
+      - {name: status, in: query, schema: {type: string, enum: [active, disabled]}}
+      - {name: keyword, in: query, schema: {type: string}}
+      - {name: page, in: query, schema: {type: integer, minimum: 1}}
+      - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodGroupListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [iam]
+    summary: 创建本商户互斥角色组
+    description: 需要 `iam:sod:write`。成员角色必须属于本商户，存在存量违规时返回 40900。
+    operationId: bizCreateIAMSodGroup
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/CreateSodGroupRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodGroup"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+biz-v1-iam-sod-groups-preflight:
+  post:
+    tags: [iam]
+    summary: 本商户互斥组候选配置预检
+    description: 需要 `iam:sod:read`。返回会被候选配置直接判为违规的商户主体。
+    operationId: bizPreflightIAMSodGroup
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/PreflightSodGroupRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodViolationListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+biz-v1-iam-sod-groups-by-id:
+  get:
+    tags: [iam]
+    summary: 本商户互斥角色组详情
+    description: 需要 `iam:sod:read`。跨商户返回 40400。
+    operationId: bizGetIAMSodGroup
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/biz/common.yaml#/components/parameters/SodGroupID"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodGroup"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  patch:
+    tags: [iam]
+    summary: 更新本商户互斥角色组
+    description: 需要 `iam:sod:write`。成员 / 阈值 / 启用变更会重新做存量预检。
+    operationId: bizUpdateIAMSodGroup
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/biz/common.yaml#/components/parameters/SodGroupID"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/UpdateSodGroupRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodGroup"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  delete:
+    tags: [iam]
+    summary: 软删本商户互斥角色组
+    description: 需要 `iam:sod:write`。
+    operationId: bizDeleteIAMSodGroup
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/biz/common.yaml#/components/parameters/SodGroupID"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/DeleteSodGroupRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        status:
+                          type: string
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+biz-v1-iam-sod-groups-by-id-violations:
+  get:
+    tags: [iam]
+    summary: 本商户互斥组存量违规
+    description: 需要 `iam:sod:read`。
+    operationId: bizListIAMSodGroupViolations
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/biz/common.yaml#/components/parameters/SodGroupID"
+      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100}}
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-sod-groups.yaml#/components/schemas/SodViolationListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

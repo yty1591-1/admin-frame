@@ -1,0 +1,206 @@
+c-v1-auth-sms-send:
+  post:
+    tags: [auth]
+    summary: 发送短信验证码
+    description: |
+      手机号必须为 E.164。无论账号是否存在都返回 204，防止手机号枚举；
+      受重发间隔、单手机号日限与单 IP 时限约束，超限返回 42900。
+      短信未启用时返回 50300。
+    operationId: cAuthSendSMSCode
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SMSSendRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-login:
+  post:
+    tags: [auth]
+    summary: 短信验证码登录
+    description: |
+      验证码错误、过期与未注册手机号统一返回 40100；不自动建号。
+      登录成功后创建 C 端会话并签发访问 / 刷新令牌。
+    operationId: cAuthLogin
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SMSLoginRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TokenPair"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-oauth-by-provider-authorize:
+  post:
+    tags: [auth]
+    summary: 发起 OAuth 授权
+    description: |
+      生成一次性 state 与 PKCE verifier，返回第三方授权地址。
+      provider 未配置时路由不存在（404）；state 有效期 10 分钟。
+    operationId: cAuthOAuthAuthorize
+    security: []
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        description: 已配置的提供方名称
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/OAuthAuthorizeResult"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-oauth-by-provider-callback:
+  post:
+    tags: [auth]
+    summary: OAuth 授权回调
+    description: |
+      state 一次性消费；无效 state、provider 不匹配、授权码拒绝与未映射身份
+      （`auto_provision=false`）统一返回 40100，提供方故障返回 50300。
+    operationId: cAuthOAuthCallback
+    security: []
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        description: 已配置的提供方名称
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, state]
+            additionalProperties: false
+            properties:
+              code:
+                type: string
+                minLength: 1
+                description: 提供方回调的授权码
+              state:
+                type: string
+                minLength: 1
+                description: authorize 下发的一次性 state
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TokenPair"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-refresh:
+  post:
+    tags: [auth]
+    summary: 刷新令牌（一次性轮换）
+    description: 旧令牌成功轮换后立即失效；已轮换令牌再次出现视为重放，撤销整条会话链。
+    operationId: cAuthRefresh
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/RefreshRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TokenPair"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-logout:
+  post:
+    tags: [auth]
+    summary: 登出当前会话
+    description: 幂等；同时把当前访问令牌的 `jti` 加入黑名单。
+    operationId: cAuthLogout
+    security:
+      - bearerAuth: []
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

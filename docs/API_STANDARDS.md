@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部对外 HTTP API（A/B/C）及对应 OpenAPI 契约
 > **关联**：架构 §十六；安全见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
 > **执行方式**：oasdiff validate + oasdiff breaking + MR 模板 + Review
-> **最后更新**：2026-10-13
+> **最后更新**：2026-10-28
 > **变更方式**：修改本规范须同步更新 `api/openapi/**`、`scripts/ci/check-openapi.sh`、流水线与架构 §十六，经架构 Owner Review
 
 ---
@@ -22,7 +22,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| API-01 | 三端独立契约：`api/openapi/admin.yaml`、`biz.yaml`、`c.yaml`；共用模型仅放 `components.yaml` | `make openapi` / CI job `openapi` |
+| API-01 | 三端独立契约入口：`api/openapi/{admin,biz,c}.yaml`；路径与模型按域拆分到 `paths/<端>/`、`schemas/<端>/`；共用模型仅放 `components.yaml`。入口只做装配，不写具体 operation | `make openapi` / CI job `openapi` |
 | API-02 | 公开路径/方法/请求响应字段变更须同步更新对应端 OpenAPI；禁止「先上线后补契约」 | Review + openapi job |
 | API-03 | 业务响应使用统一信封：`code` / `message` / `data` / `trace_id`（`pkg/httpx`；本仓库经 `internal/shared/httpx`） | Review + 契约 schema |
 | API-04 | 稳定业务错误码来自 `internal/shared/apperr`；已发布码禁止改语义；新码只追加 | Review + 单测 |
@@ -47,6 +47,8 @@
 
 - 探针 `/healthz`、`/readyz`、`/version` 写入各端契约且 `security: []`。
 - 共享信封、分页参数、标准错误响应只维护在 `api/openapi/components.yaml`，各端 `$ref` 引用。
+- 目录约定：入口文件只保留 `openapi` / `info` / `servers` / `tags` / `security` / `paths` / `components.securitySchemes`；`paths` 下每个条目以 `$ref` 引用域文件中的 path item（`./paths/<端>/<域>.yaml#/<key>`）；模型与参数放在 `schemas/<端>/<域>.yaml`，以 `$ref` 引用。
+- 一个域一个文件（如 `paths/admin/iam-roles.yaml`、`schemas/admin/iam-roles.yaml`），单文件建议 ≤ 500 行；新增端点只改对应域文件与入口的 `$ref`。
 - 错误码枚举与实现以 `internal/shared/apperr` 为准；契约中的 `ErrorCode` 须与之同步。
 - 错误码表**只增不减**：`ErrorCode` 以 `x-extensible-enum` 声明为开放集合，新增码不得触发 oasdiff breaking；客户端须对未知码按「未知错误」兜底（API-04）。
 
@@ -65,7 +67,8 @@
 
 ### 3.2 契约分发与订阅
 
-- **分发物**：`make openapi-docs`（HTML）、`make openapi-client`（TypeScript 类型）、`make openapi-changelog`（相对基线变更日志）与 `contract-commit.txt`（产物对应的 commit），统一输出到 `dist/openapi/`，由 CI job `openapi-docs` 作为 artifact 上传；产物不入库、不进镜像、不在生产进程挂载（SEC-08）。
+- **分发物**：`make openapi-bundle`（装配后的单文件契约）、`make openapi-docs`（HTML）、`make openapi-client`（TypeScript 类型）、`make openapi-changelog`（相对基线变更日志）与 `contract-commit.txt`（产物对应的 commit），统一输出到 `dist/openapi/`，由 CI job `openapi-docs` 作为 artifact 上传；产物不入库、不进镜像、不在生产进程挂载（SEC-08）。
+- **单文件分发**：多文件源经 `scripts/openapi/bundle` 装配为 `dist/openapi/bundled/{admin,biz,c}.yaml`，语义与源文件等价；无法解析相对 `$ref` 的消费方以该产物为准。
 - **订阅方式**：消费方锁定本仓库的 tag 或 commit（以产物中的 `contract-commit.txt` 核对），升级时以该版本的 `api/openapi/**` 与 changelog 为准；禁止依赖运行中的服务做接口探测。
 - **变更通知**：契约有变更的 MR 必须附 changelog 摘要；breaking / 弃用须写入发布说明并主动通知消费方，不得等联调时暴露（API-02、API-07、API-09）。
 
@@ -159,6 +162,7 @@
 ## 6. MUST NOT
 
 - 三端共用一份「万能」OpenAPI，或在契约中混挂他端路径。
+- 在三端入口文件中直接编写 operation、schema 或 parameter（入口仅做装配）。
 - 未更新契约即合并公开 API 行为变更。
 - 复用已发布业务错误码表达新语义。
 - 在 C 端契约或 DTO 中暴露 `remark` / `cost_cent` 等内部字段。
@@ -170,7 +174,8 @@
 ## 7. 本地与 CI
 
 ```bash
-make openapi          # API-01/07/08：validate + 相对基线 breaking
+make openapi          # API-01/07/08：validate + 相对基线 breaking（多文件先装配）
+make openapi-bundle   # 装配为单文件（dist/openapi/bundled）
 make openapi-docs     # 渲染分端 HTML 文档（dist/openapi/docs）
 make openapi-client   # 生成 TypeScript 类型（dist/openapi/client）
 make openapi-changelog # 相对基线生成 markdown changelog（dist/openapi/changelog）
@@ -185,6 +190,8 @@ make ci               # 含 openapi（产物生成不并入 make ci，避免引�
 
 工具钉扎：oasdiff **v1.33.0**（`github.com/oasdiff/oasdiff`，见 `scripts/ci/check-openapi.sh`）。
 严重级别覆盖：`api/openapi/.oasdiff-severity.txt`。
+多文件装配：`scripts/openapi/bundle`（Go，随仓库编译，不引入 Node 依赖）；门禁比对前两侧均先装配，
+避免 `$ref` 路径差异被误判为 breaking。
 
 基线引用解析顺序：`OPENAPI_BASE_REF` → `GITHUB_BASE_REF`（`origin/<name>`）→ `origin/main` → `origin/master` → `main` → `master`。
 浅克隆须 `fetch-depth: 0`（或等价取得基线对象）。无法解析基线时仅跑 validate，并打印告警（本地新仓库可接受；受保护分支 CI 应总能解析）。
@@ -202,6 +209,7 @@ make ci               # 含 openapi（产物生成不并入 make ci，避免引�
 ## 9. Review 清单
 
 - [ ] 影响端的 OpenAPI 已更新，路径前缀与权限正确
+- [ ] 新增/修改的 operation 与模型落在对应域文件，入口只更新 `$ref`
 - [ ] 信封与错误码未另起炉灶；新错误码已追加到 `apperr` 与 `components.yaml`
 - [ ] 列表含分页；`page_size` 上限 100
 - [ ] C 端无内部字段；写路径有 `Idempotency-Key`
@@ -214,10 +222,14 @@ make ci               # 含 openapi（产物生成不并入 make ci，避免引�
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `api/openapi/{admin,biz,c}.yaml` | 分端契约（含多环境 `servers`） |
+| `api/openapi/{admin,biz,c}.yaml` | 分端契约入口（`info`/`servers`/`tags` + 装配 `paths`） |
+| `api/openapi/paths/<端>/*.yaml` | 按域的 path item（`paths` 以 `$ref` 引用） |
+| `api/openapi/schemas/<端>/*.yaml` | 按域的模型与参数（`components` 以 `$ref` 引用） |
 | `api/openapi/components.yaml` | 共享信封/分页/错误响应 |
 | `api/openapi/.oasdiff-severity.txt` | 版本策略严重级别 |
-| `scripts/ci/check-openapi.sh` | validate + breaking |
+| `scripts/ci/check-openapi.sh` | validate + 基线整树装配后 breaking |
+| `scripts/openapi/bundle/main.go` | 多文件装配为单文件（门禁比对与分发） |
+| `scripts/openapi/bundle.sh` | 生成 `dist/openapi/bundled` 单文件产物 |
 | `scripts/openapi/build-docs.sh` | Redocly 渲染 HTML 文档（dev/CI 产物） |
 | `scripts/openapi/gen-client.sh` | 生成 TypeScript 类型（dev/CI 产物） |
 | `scripts/openapi/changelog.sh` | 相对基线生成变更日志（发布说明/契约订阅） |

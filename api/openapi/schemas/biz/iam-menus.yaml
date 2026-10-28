@@ -1,0 +1,52 @@
+components:
+  schemas:
+    MenuMeta:
+      type: object
+      required: [title, order]
+      properties:
+        title:
+          type: string
+          description: 显示名；i18n 缺失时兜底
+        titleKey:
+          type: string
+          description: i18n key，如 page.member.title
+        icon:
+          type: string
+        order:
+          type: integer
+          description: 同级排序，升序
+        hideInMenu:
+          type: boolean
+        keepAlive:
+          type: boolean
+        iframeSrc:
+          type: string
+          description: iframe 节点目标地址
+        link:
+          type: string
+          description: 外链节点目标地址
+
+    MenuTreeNode:
+      type: object
+      required: [name, path, meta, status]
+      description: 菜单 / 路由树节点；目录节点 component 为空，children 由服务端裁剪
+      properties:
+        name:
+          type: string
+          description: 路由 name，PascalCase
+        path:
+          type: string
+        component:
+          type: string
+          description: BasicLayout / IFrameView / /member/list/index.vue
+        redirect:
+          type: string
+        meta:
+          $ref: "#/components/schemas/MenuMeta"
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuTreeNode"
+        status:
+          type: string
+          enum: [active, disabled]

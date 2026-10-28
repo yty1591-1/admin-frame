@@ -1,0 +1,41 @@
+admin-v1-iam-permissions:
+  get:
+    tags: [iam]
+    summary: 权限点目录（分页）
+    description: 需要 `iam:permission:read`。目录为只读基线，变更走迁移与发布。
+    operationId: adminListIAMPermissions
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        description: 按端别过滤；空表示全部
+        schema:
+          $ref: "../../schemas/admin/common.yaml#/components/schemas/Channel"
+      - in: query
+        name: keyword
+        description: 按权限码 / 名称模糊匹配
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-permissions.yaml#/components/schemas/PermissionListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

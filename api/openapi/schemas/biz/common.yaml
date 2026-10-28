@@ -1,0 +1,113 @@
+components:
+  parameters:
+    SodGroupID:
+      name: id
+      in: path
+      required: true
+      description: 互斥组 ID
+      schema:
+        type: string
+        minLength: 1
+
+    RoleID:
+      name: id
+      in: path
+      required: true
+      description: 角色 ID
+      schema:
+        type: string
+        minLength: 1
+
+    BindingID:
+      name: id
+      in: path
+      required: true
+      description: 绑定 ID
+      schema:
+        type: string
+        minLength: 1
+
+    SubjectTypePath:
+      name: subject_type
+      in: path
+      required: true
+      schema:
+        $ref: "./iam-bindings.yaml#/components/schemas/SubjectType"
+
+    SubjectIDPath:
+      name: subject_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    IfMatchVersion:
+      name: If-Match
+      in: header
+      required: false
+      description: 期望版本号（与 body.version 二选一，冲突返回 40000）
+      schema:
+        type: string
+        pattern: '^"?[1-9][0-9]*"?$'
+
+    ChangeRequestID:
+      name: id
+      in: path
+      required: true
+      description: 审批单 ID
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    VersionInfo:
+      type: object
+      required: [service, version]
+      properties:
+        service:
+          type: string
+          example: biz-api
+        version:
+          type: string
+          example: 1.4.2
+        commit:
+          type: string
+          description: git commit（RELS-03）；本地可为 none
+          example: abcdef0
+        build_time:
+          type: string
+          description: UTC 构建时间（RELS-03）
+          example: "2026-10-13T12:00:00Z"
+
+    ReadyStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, fail]
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+              error:
+                type: string
+    # ---- IAM ----
+
+    Channel:
+      type: string
+      description: 端别；IAM 角色与绑定必须与端别一致
+      enum: [admin, biz]
+
+    IdOnly:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string

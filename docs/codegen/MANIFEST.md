@@ -2,9 +2,10 @@
 
 | ID | 类型 | 源 | 命令 | 输出路径 | 入库 | status |
 |----|------|----|------|----------|------|--------|
-| openapi-admin | source | `api/openapi/admin.yaml` + `components.yaml` | （手写） | 同左 | yes | active |
-| openapi-biz | source | `api/openapi/biz.yaml` + `components.yaml` | （手写） | 同左 | yes | active |
-| openapi-c | source | `api/openapi/c.yaml` + `components.yaml` | （手写） | 同左 | yes | active |
+| openapi-admin | source | `api/openapi/admin.yaml` + `paths/admin/**` + `schemas/admin/**` + `components.yaml` | （手写） | 同左 | yes | active |
+| openapi-biz | source | `api/openapi/biz.yaml` + `paths/biz/**` + `schemas/biz/**` + `components.yaml` | （手写） | 同左 | yes | active |
+| openapi-c | source | `api/openapi/c.yaml` + `paths/c/**` + `schemas/c/**` + `components.yaml` | （手写） | 同左 | yes | active |
+| openapi-bundle | generated | 分端契约入口 + 域文件 + `components.yaml` | `make openapi-bundle`（`scripts/openapi/bundle`） | `dist/openapi/bundled/` | no | active |
 | openapi-docs | generated | `api/openapi/{admin,biz,c}.yaml` + `components.yaml` | `make openapi-docs` | `dist/openapi/docs/` | no | active |
 | openapi-ts-client | generated | `api/openapi/{admin,biz,c}.yaml` + `components.yaml` | `make openapi-client` | `dist/openapi/client/` | no | active |
 | openapi-changelog | generated | 分端契约 + git 基线 | `make openapi-changelog`（或 `make openapi-artifacts`） | `dist/openapi/changelog/` + `dist/openapi/contract-commit.txt` | no | active |

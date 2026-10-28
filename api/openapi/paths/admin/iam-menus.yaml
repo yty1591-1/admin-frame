@@ -1,0 +1,376 @@
+admin-v1-iam-menus:
+  get:
+    tags: [iam]
+    summary: 菜单资源列表（管理视图）
+    description: |
+      需要 `iam:menu:read`，仅 A 端。返回平铺分页列表，包含停用节点。
+      菜单只影响前端入口展示，接口鉴权仍以权限点中间件为准。
+    operationId: adminListIAMMenus
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin]
+          default: admin
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [active, disabled]
+      - in: query
+        name: parent_code
+        schema:
+          type: string
+      - in: query
+        name: keyword
+        description: 按 code / title / route_path 模糊匹配
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdminListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+  post:
+    tags: [iam]
+    summary: 创建菜单资源
+    description: |
+      需要 `iam:menu:write`。code / channel 创建后不可修改；component 必须命中后端页面清单。
+      创建成功返回 version=1，并写入审计 `rbac.menu_change`。
+    operationId: adminCreateIAMMenu
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/CreateMenuRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdmin"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-iam-menus-tree:
+  get:
+    tags: [iam]
+    summary: 菜单资源树（管理视图）
+    description: 需要 `iam:menu:read`。`include_disabled=true` 时包含停用节点，供管理页渲染。
+    operationId: adminGetIAMMenuTree
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin]
+          default: admin
+      - in: query
+        name: include_disabled
+        schema:
+          type: boolean
+          default: false
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdminTreeNode"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-menus-components:
+  get:
+    tags: [iam]
+    summary: 可引用的前端页面组件清单
+    description: 需要 `iam:menu:read`。返回值用于菜单表单下拉，后端写入时同样校验。
+    operationId: adminListIAMMenuComponents
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin]
+          default: admin
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: string
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-menus-by-id:
+  get:
+    tags: [iam]
+    summary: 菜单资源详情
+    description: 需要 `iam:menu:read`。
+    operationId: adminGetIAMMenu
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdmin"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  patch:
+    tags: [iam]
+    summary: 更新菜单资源
+    description: |
+      需要 `iam:menu:write`。code / channel 不可修改；必须提供 `version` 或 `If-Match`，
+      版本不一致返回 40900。父节点必须同端存在且启用，且不得成环。
+    operationId: adminUpdateIAMMenu
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/UpdateMenuRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdmin"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  delete:
+    tags: [iam]
+    summary: 停用菜单资源
+    description: |
+      需要 `iam:menu:write`。语义是停用而非物理删除：保留审计与父子引用，
+      重新启用走 `POST /admin/v1/iam/menus/{id}/enable`。存在启用子节点时返回 40900。
+    operationId: adminDisableIAMMenu
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuStatusRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdmin"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-menus-by-id-enable:
+  post:
+    tags: [iam]
+    summary: 启用菜单资源
+    description: 需要 `iam:menu:write`。父菜单仍停用时返回 40900。
+    operationId: adminEnableIAMMenu
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuStatusRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuAdmin"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-menus:
+  get:
+    tags: [iam]
+    summary: 当前主体可见菜单
+    description: |
+      仅需认证，不额外要求权限点。按主体权限快照裁剪菜单树：
+      只保留 permission_code 为空或已授予的节点，递归补齐可见节点的祖先链，
+      并丢弃裁剪后无可见子节点的目录。菜单只影响前端入口展示，
+      接口鉴权仍以权限点中间件为准。
+    operationId: adminGetMenus
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: "../../schemas/admin/iam-menus.yaml#/components/schemas/MenuTreeNode"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

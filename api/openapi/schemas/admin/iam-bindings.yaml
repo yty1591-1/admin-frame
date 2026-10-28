@@ -1,0 +1,155 @@
+components:
+  schemas:
+    SubjectType:
+      type: string
+      description: staff 仅 A 端；merchant_staff 仅 B 端
+      enum: [staff, merchant_staff]
+
+    Binding:
+      type: object
+      required:
+        [id, channel, subject_type, subject_id, role_id, granted_by, created_at]
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        role_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          description: 空表示永久绑定
+        granted_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    BindingListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Binding"
+        total:
+          type: integer
+
+    CreateBindingRequest:
+      type: object
+      required: [subject_type, subject_id, role_id]
+      properties:
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+          minLength: 1
+        role_id:
+          type: string
+          minLength: 1
+        expires_at:
+          type: string
+          format: date-time
+          description: 可选；必须晚于当前时间
+        reason:
+          type: string
+
+    UnbindRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+
+    SubjectPermissions:
+      type: object
+      required:
+        [
+          channel,
+          subject_type,
+          subject_id,
+          roles,
+          permissions,
+          data_scopes,
+          snapshot_version,
+          generated_at,
+        ]
+      properties:
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "./iam-roles.yaml#/components/schemas/DataScope"
+        snapshot_version:
+          type: integer
+          format: int64
+        generated_at:
+          type: string
+          format: date-time
+
+    AuthorizeRequest:
+      type: object
+      required: [subject_type, subject_id, permission]
+      properties:
+        subject_type:
+          $ref: "#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        permission:
+          type: string
+          example: iam:role:read
+        resource:
+          $ref: "#/components/schemas/AuthorizeResource"
+
+    AuthorizeResource:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        merchant_id:
+          type: string
+
+    AuthorizeResult:
+      type: object
+      required: [allowed, reason, matched_roles, snapshot_version]
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+          description: |
+            稳定判定原因：permission_granted / permission_not_granted /
+            unknown_permission / no_active_role / empty_snapshot。
+        matched_roles:
+          type: array
+          items:
+            type: string
+        data_scope:
+          $ref: "./iam-roles.yaml#/components/schemas/DataScope"
+        snapshot_version:
+          type: integer
+          format: int64

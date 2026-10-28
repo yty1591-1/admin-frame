@@ -1,0 +1,360 @@
+admin-v1-iam-roles:
+  get:
+    tags: [iam]
+    summary: 角色列表
+    description: 需要 `iam:role:read`。B 端强制按 Principal 的 merchant_id 收窄。
+    operationId: adminListIAMRoles
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: channel
+        schema:
+          $ref: "../../schemas/admin/common.yaml#/components/schemas/Channel"
+      - in: query
+        name: merchant_id
+        description: A 端可选；B 端忽略并由令牌决定
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/RoleStatus"
+      - in: query
+        name: keyword
+        description: 按角色码 / 名称模糊匹配
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/RoleListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [iam]
+    summary: 创建角色
+    description: 需要 `iam:role:write`。权限码必须存在于目录且与端别匹配。
+    operationId: adminCreateIAMRole
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/CreateRoleRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/Role"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-roles-by-id:
+  get:
+    tags: [iam]
+    summary: 角色详情（含绑定数）
+    description: 需要 `iam:role:read`。
+    operationId: adminGetIAMRole
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/Role"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  patch:
+    tags: [iam]
+    summary: 更新角色基础信息 / 启停
+    description: 需要 `iam:role:write`。需提供 `version`（或 `If-Match`）。
+    operationId: adminUpdateIAMRole
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/UpdateRoleRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/Role"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  delete:
+    tags: [iam]
+    summary: 软删角色
+    description: |
+      需要 `iam:role:write`。版本可由 body `version` 或 `If-Match` 提供；
+      仍存在绑定时返回 40900（须先解绑）。
+    operationId: adminDeleteIAMRole
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/DeleteRoleRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/common.yaml#/components/schemas/IdOnly"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-roles-by-id-permissions:
+  put:
+    tags: [iam]
+    summary: 全量替换角色权限与数据范围
+    description: |
+      需要 `iam:role:grant`。语义为全量替换，响应返回 added / removed 差量；
+      `data_scopes` 省略表示不修改，空数组表示清空。审计记录差量。
+    operationId: adminReplaceIAMRolePermissions
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/ReplacePermissionsRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/ReplacePermissionsData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-roles-by-id-constraints:
+  get:
+    tags: [iam]
+    summary: 查询角色 RBAC2 约束
+    description: |
+      需要 `iam:role:read`。返回单角色最大有效绑定数与前置角色；
+      跨端 / 跨商户统一返回 40400（SEC-14）。
+    operationId: adminGetIAMRoleConstraints
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/RoleConstraint"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  put:
+    tags: [iam]
+    summary: 全量替换角色 RBAC2 约束
+    description: |
+      需要 `iam:role:write`。PUT 语义：`required_role_ids` 与 `max_bindings`
+      均视为完整快照，`max_bindings` 为 null 表示取消上限。
+      校验同端同商户、前置角色 active 且非破玻璃、无环、与活跃互斥组不冲突、
+      上限不低于存量有效绑定数；违规返回 40000 / 40900。
+      `iam.approval.enabled=true` 时直写返回 40900，需走 `role_constraint_update` 审批单。
+    operationId: adminPutIAMRoleConstraints
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/IfMatchVersion"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/UpdateRoleConstraintRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/RoleConstraint"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-iam-roles-by-id-clone:
+  post:
+    tags: [iam]
+    summary: 复制角色
+    description: 需要 `iam:role:write`。新角色为 disabled 状态，需显式启用。
+    operationId: adminCloneIAMRole
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: "../../schemas/admin/common.yaml#/components/parameters/RoleID"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/CloneRoleRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-roles.yaml#/components/schemas/Role"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

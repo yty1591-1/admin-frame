@@ -1,0 +1,71 @@
+components:
+  schemas:
+    CreateBreakglassRequest:
+      type: object
+      required: [subject_type, subject_id, duration_seconds, reason]
+      properties:
+        subject_type:
+          $ref: "./iam-bindings.yaml#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+          description: 被授权主体 ID
+        duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 7200
+          description: 授权时长（秒），上限 2 小时
+        reason:
+          type: string
+          description: 申请原因，供审批人与审计使用
+
+    BreakglassGrant:
+      type: object
+      required:
+        - id
+        - status
+        - subject_type
+        - subject_id
+        - duration_seconds
+        - reason
+        - requested_by
+        - requested_at
+        - version
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "./iam-change-requests.yaml#/components/schemas/ChangeStatus"
+        subject_type:
+          $ref: "./iam-bindings.yaml#/components/schemas/SubjectType"
+        subject_id:
+          type: string
+        duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 7200
+        reason:
+          type: string
+        requested_by:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+        applied_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: 生效时间 + 申请时长；未生效时为空
+        binding_id:
+          type: string
+          description: 生效后创建的临时绑定 ID，撤销时使用
+        version:
+          type: integer
+          format: int64
+          minimum: 1

@@ -1,0 +1,52 @@
+healthz:
+  get:
+    tags: [probe]
+    summary: Liveness
+    operationId: adminHealthz
+    security: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  example: ok
+
+readyz:
+  get:
+    tags: [probe]
+    summary: Readiness
+    operationId: adminReadyz
+    security: []
+    responses:
+      "200":
+        description: ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/admin/common.yaml#/components/schemas/ReadyStatus"
+      "503":
+        description: not ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/admin/common.yaml#/components/schemas/ReadyStatus"
+
+version:
+  get:
+    tags: [probe]
+    summary: Build version
+    operationId: adminVersion
+    security: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/admin/common.yaml#/components/schemas/VersionInfo"

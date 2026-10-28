@@ -1,0 +1,32 @@
+biz-v1-menus:
+  get:
+    tags: [iam]
+    summary: 当前主体可见菜单
+    description: |
+      仅需认证，不额外要求权限点。按本商户主体权限快照裁剪菜单树：
+      只保留 permission_code 为空或已授予的节点，递归补齐可见节点的祖先链，
+      并丢弃裁剪后无可见子节点的目录。菜单只影响前端入口展示，
+      接口鉴权仍以权限点中间件为准。
+    operationId: bizGetMenus
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: "../../schemas/biz/iam-menus.yaml#/components/schemas/MenuTreeNode"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

@@ -1,0 +1,128 @@
+components:
+  schemas:
+    ChangeStatus:
+      type: string
+      description: |
+        审批单状态机：pending → approved → applied；
+        pending → rejected；pending → cancelled。终态不可再流转。
+      enum: [pending, approved, rejected, applied, cancelled]
+
+    ChangeAction:
+      type: string
+      description: |
+        审批单动作。breakglass_request 需要 iam.breakglass.enabled=true，否则创建返回 40300；
+      enum:
+        - role_create
+        - role_update
+        - role_permission_replace
+        - role_constraint_update
+        - role_clone
+        - role_delete
+        - binding_create
+        - binding_delete
+        - breakglass_request
+
+    ChangeTargetType:
+      type: string
+      enum: [iam_role, iam_binding, iam_breakglass, iam_sod_group]
+
+    ChangeRequest:
+      type: object
+      required:
+        - id
+        - channel
+        - action
+        - target_type
+        - status
+        - reason
+        - requested_by
+        - requested_at
+        - version
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        merchant_id:
+          type: string
+          readOnly: true
+          description: 商户 ID；仅 A 端回显（平台级审批单为空），B 端不返回该字段
+        action:
+          $ref: "#/components/schemas/ChangeAction"
+        target_type:
+          $ref: "#/components/schemas/ChangeTargetType"
+        target_id:
+          type: string
+          description: 目标聚合 ID；新建类动作为空，应用成功后才回填
+        payload:
+          type: object
+          description: 申请载荷原样返回，便于审批人核对；不得包含敏感字段
+          additionalProperties: true
+        status:
+          $ref: "#/components/schemas/ChangeStatus"
+        reason:
+          type: string
+        requested_by:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        approved_by:
+          type: string
+          description: 审批人 / 拒绝人；pending 时为空
+        approved_at:
+          type: string
+          format: date-time
+        applied_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+
+    ChangeRequestListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeRequest"
+        total:
+          type: integer
+
+    CreateChangeRequestRequest:
+      type: object
+      required: [action, payload, reason]
+      properties:
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        action:
+          $ref: "#/components/schemas/ChangeAction"
+        target_id:
+          type: string
+          description: 新建类动作可为空；其它动作必填
+        payload:
+          type: object
+          description: |
+            动作载荷，JSON 对象，最大 16 KiB，未知字段会返回 40000。
+            role_permission_replace：permissions[] + 可选 data_scopes[]；
+            role_update：name / description / status 任意子集；
+            role_create：scope_type / code / name / permissions / data_scopes；
+            binding_create：role_id / subject_type / subject_id / expires_at。
+          additionalProperties: true
+        reason:
+          type: string
+
+    DecideChangeRequestRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 期望版本号，亦可由 If-Match 提供
+        reason:
+          type: string

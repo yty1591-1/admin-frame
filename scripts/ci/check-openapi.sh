@@ -24,9 +24,19 @@ OASDIFF_VERSION="${OASDIFF_VERSION:-v1.33.0}"
 SPECS=(api/openapi/admin.yaml api/openapi/biz.yaml api/openapi/c.yaml)
 SEVERITY_FILE="api/openapi/.oasdiff-severity.txt"
 COMPONENTS="api/openapi/components.yaml"
+BUNDLER="./scripts/openapi/bundle"
+
+TMP_DIR="$(mktemp -d)"
+cleanup() { rm -rf "${TMP_DIR}"; }
+trap cleanup EXIT
 
 oasdiff() {
   go run "github.com/oasdiff/oasdiff@${OASDIFF_VERSION}" "$@"
+}
+
+# 多文件契约须先装配为单文件，才能让 oasdiff 的 breaking 比对不受 $ref 路径差异影响。
+bundle() {
+  go run "${BUNDLER}" "$1" "$2"
 }
 
 # 从 OpenAPI 文本提取 info.version（info 块下首个 version）。
@@ -91,11 +101,6 @@ resolve_base_ref() {
   return 1
 }
 
-git_has_file() {
-  local ref="$1" path="$2"
-  git cat-file -e "${ref}:${path}" 2>/dev/null
-}
-
 echo "==> oasdiff ${OASDIFF_VERSION}"
 echo "==> validate shared components"
 oasdiff validate "${COMPONENTS}" --fail-on ERR
@@ -122,27 +127,43 @@ else
   exit 0
 fi
 
+# 基线为多文件目录树，须整树取出才能解析相对 $ref。
+BASE_DIR="${TMP_DIR}/base"
+mkdir -p "${BASE_DIR}"
+if ! git archive "${BASE_REF}" api/openapi | tar -x -C "${BASE_DIR}"; then
+  echo "WARN: cannot export ${BASE_REF}:api/openapi; skipping breaking checks (validate only)" >&2
+  echo "OK: openapi validate"
+  exit 0
+fi
+
 for spec in "${SPECS[@]}"; do
-  if ! git_has_file "${BASE_REF}" "${spec}"; then
+  name="$(basename "${spec}" .yaml)"
+  base_spec="${BASE_DIR}/${spec}"
+  if [[ ! -f "${base_spec}" ]]; then
     echo "==> ${spec}: new file vs ${BASE_REF}, skip breaking"
     continue
   fi
 
-  base_ver="$(git show "${BASE_REF}:${spec}" | extract_version || true)"
+  base_ver="$(extract_version <"${base_spec}" || true)"
   rev_ver="$(extract_version <"${spec}" || true)"
   echo "==> breaking ${spec} (${base_ver:-?} -> ${rev_ver:-?})"
+
+  base_bundle="${TMP_DIR}/base-${name}.yaml"
+  rev_bundle="${TMP_DIR}/rev-${name}.yaml"
+  bundle "${base_spec}" "${base_bundle}"
+  bundle "${spec}" "${rev_bundle}"
 
   if [[ -n "${base_ver}" && -n "${rev_ver}" ]] && major_bumped "${base_ver}" "${rev_ver}"; then
     echo "    major bumped: intentional breaking allowed (API-07)"
     # 仍打印报告，但不因 ERR 失败。
-    oasdiff breaking "${BASE_REF}:${spec}" "${spec}" \
+    oasdiff breaking "${base_bundle}" "${rev_bundle}" \
       --severity-levels "${SEVERITY_FILE}" \
       --deprecation-days-stable 90 \
       --format text || true
     continue
   fi
 
-  if ! oasdiff breaking "${BASE_REF}:${spec}" "${spec}" \
+  if ! oasdiff breaking "${base_bundle}" "${rev_bundle}" \
     --fail-on ERR \
     --severity-levels "${SEVERITY_FILE}" \
     --deprecation-days-stable 90 \
