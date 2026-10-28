@@ -47,13 +47,26 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
   /**
    * 刷新token逻辑
+   *
+   * 后端为一次性轮换：必须用 refresh token 换回新的令牌对，
+   * 并在同一次赋值内替换两个令牌；失败时清空双令牌，交给重认证。
    */
   async function doRefreshToken() {
     const accessStore = useAccessStore();
-    const resp = await refreshTokenApi();
-    const newToken = resp.data;
-    accessStore.setAccessToken(newToken);
-    return newToken;
+    const refreshToken = accessStore.refreshToken;
+    if (!refreshToken) {
+      throw new Error('missing refresh token');
+    }
+    try {
+      const tokens = await refreshTokenApi(refreshToken);
+      accessStore.setAccessToken(tokens.accessToken);
+      accessStore.setRefreshToken(tokens.refreshToken);
+      return tokens.accessToken;
+    } catch (error) {
+      accessStore.setAccessToken(null);
+      accessStore.setRefreshToken(null);
+      throw error;
+    }
   }
 
   function formatToken(token: null | string) {

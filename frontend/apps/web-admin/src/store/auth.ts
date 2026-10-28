@@ -1,5 +1,7 @@
 import type { Recordable, UserInfo } from '@vben/types';
 
+import type { LoginOutcome, MfaSetupData, TokenPairVM } from '#/api/core/auth';
+
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 
@@ -10,7 +12,14 @@ import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
 
-import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
+import {
+  getMyPermissionsApi,
+  getUserInfoApi,
+  loginApi,
+  logoutApi,
+  mfaSetupApi,
+  mfaVerifyApi,
+} from '#/api';
 import { $t } from '#/locales';
 
 export const useAuthStore = defineStore('auth', () => {
@@ -21,65 +30,88 @@ export const useAuthStore = defineStore('auth', () => {
   const loginLoading = ref(false);
 
   /**
-   * 异步处理登录操作
-   * Asynchronously handle the login process
-   * @param params 登录表单数据
+   * 密码登录。
+   *
+   * 返回三态：拿到令牌时已在本方法内完成落库与跳转；
+   * MFA 中间态由登录页接管后续步骤，任何中间态都不会写入令牌。
    */
-  async function authLogin(
-    params: Recordable<any>,
-    onSuccess?: () => Promise<void> | void,
-  ) {
-    // 异步处理用户登录操作并获取 accessToken
-    let userInfo: null | UserInfo = null;
+  async function authLogin(params: Recordable<any>): Promise<LoginOutcome> {
+    loginLoading.value = true;
     try {
-      loginLoading.value = true;
-      const { accessToken } = await loginApi(params);
-
-      // 如果成功获取到 accessToken
-      if (accessToken) {
-        accessStore.setAccessToken(accessToken);
-
-        // 获取用户信息并存储到 accessStore 中
-        const [fetchUserInfoResult, accessCodes] = await Promise.all([
-          fetchUserInfo(),
-          getAccessCodesApi(),
-        ]);
-
-        userInfo = fetchUserInfoResult;
-
-        userStore.setUserInfo(userInfo);
-        accessStore.setAccessCodes(accessCodes);
-
-        if (accessStore.loginExpired) {
-          accessStore.setLoginExpired(false);
-        } else {
-          onSuccess
-            ? await onSuccess?.()
-            : await router.push(
-                userInfo.homePath || preferences.app.defaultHomePath,
-              );
-        }
-
-        if (userInfo?.realName) {
-          notification.success({
-            description: `${$t('authentication.loginSuccessDesc')}:${userInfo?.realName}`,
-            duration: 3,
-            message: $t('authentication.loginSuccess'),
-          });
-        }
+      const outcome = await loginApi({
+        password: params.password,
+        username: params.username,
+      });
+      if (outcome.kind === 'token') {
+        await completeLogin(outcome.tokens);
       }
+      return outcome;
     } finally {
       loginLoading.value = false;
     }
+  }
 
-    return {
-      userInfo,
-    };
+  /** 已完成密码校验的账号：用一次性票据完成第二步 MFA。 */
+  async function verifyMfaChallenge(ticket: string, code: string) {
+    loginLoading.value = true;
+    try {
+      const tokens = await mfaVerifyApi({ code, mfaTicket: ticket });
+      await completeLogin(tokens);
+    } finally {
+      loginLoading.value = false;
+    }
+  }
+
+  /** 强制绑定：初始化 TOTP，返回密钥、二维码 URI 与恢复码（仅本次可见）。 */
+  async function startMfaBinding(ticket: string): Promise<MfaSetupData> {
+    loginLoading.value = true;
+    try {
+      return await mfaSetupApi(ticket);
+    } finally {
+      loginLoading.value = false;
+    }
+  }
+
+  /** 强制绑定：首码校验通过后后端直接签发令牌对。 */
+  async function confirmMfaBinding(ticket: string, code: string) {
+    loginLoading.value = true;
+    try {
+      const tokens = await mfaVerifyApi({ code, mfaSetupTicket: ticket });
+      await completeLogin(tokens);
+    } finally {
+      loginLoading.value = false;
+    }
+  }
+
+  /** 统一落库双令牌 → 拉取资料与权限 → 跳转。 */
+  async function completeLogin(tokens: TokenPairVM) {
+    accessStore.setAccessToken(tokens.accessToken);
+    accessStore.setRefreshToken(tokens.refreshToken);
+
+    const userInfo = await fetchUserInfo();
+    if (accessStore.loginExpired) {
+      accessStore.setLoginExpired(false);
+    }
+
+    const redirect = router.currentRoute.value.query.redirect as
+      | string
+      | undefined;
+    await router.push(
+      redirect ? decodeURIComponent(redirect) : preferences.app.defaultHomePath,
+    );
+
+    if (userInfo?.realName) {
+      notification.success({
+        description: `${$t('authentication.loginSuccessDesc')}:${userInfo.realName}`,
+        duration: 3,
+        message: $t('authentication.loginSuccess'),
+      });
+    }
   }
 
   async function logout(redirect: boolean = true) {
     try {
-      await logoutApi();
+      await logoutApi(accessStore.accessToken);
     } catch {
       // 不做任何处理
     }
@@ -104,10 +136,15 @@ export const useAuthStore = defineStore('auth', () => {
     });
   }
 
-  async function fetchUserInfo() {
-    const userInfo = await getUserInfoApi();
-    userStore.setUserInfo(userInfo);
-    return userInfo;
+  async function fetchUserInfo(): Promise<UserInfo> {
+    const [userInfo, permissions] = await Promise.all([
+      getUserInfoApi(),
+      getMyPermissionsApi(),
+    ]);
+    const merged = { ...userInfo, roles: permissions.roles };
+    userStore.setUserInfo(merged);
+    accessStore.setAccessCodes(permissions.permissions);
+    return merged;
   }
 
   function $reset() {
@@ -117,8 +154,11 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     $reset,
     authLogin,
+    confirmMfaBinding,
     fetchUserInfo,
     loginLoading,
     logout,
+    startMfaBinding,
+    verifyMfaChallenge,
   };
 });

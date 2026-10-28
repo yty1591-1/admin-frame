@@ -25,6 +25,11 @@ export const overridesPreferences = defineOverridesPreferences({
      * 菜单由后端种子的 route name / component 驱动，必须与 views 目录保持一致。
      */
     accessMode: 'backend',
+    /**
+     * admin-frame 刷新令牌为一次性轮换：必须在拦截器内用 refresh token 换新，
+     * 因此显式开启 Vben 的 401 自动刷新。
+     */
+    enableRefreshToken: true,
   },
   copyright: {
     companyName: 'Admin Frame',
