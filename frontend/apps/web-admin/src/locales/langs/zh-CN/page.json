@@ -19,6 +19,7 @@
     "template": "角色模板",
     "change": "变更审批",
     "breakglass": "破玻璃申请",
-    "check": "模拟鉴权"
+    "check": "模拟鉴权",
+    "sod": "互斥角色组"
   }
 }

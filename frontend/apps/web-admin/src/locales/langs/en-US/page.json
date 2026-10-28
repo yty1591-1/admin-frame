@@ -19,6 +19,7 @@
     "template": "Role Templates",
     "change": "Change Requests",
     "breakglass": "Breakglass",
-    "check": "Authorization Check"
+    "check": "Authorization Check",
+    "sod": "Segregation of Duties"
   }
 }
