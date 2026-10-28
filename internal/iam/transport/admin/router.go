@@ -109,9 +109,6 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /admin/v1/iam/breakglass/{id}/revoke",
 		authMW(perm(string(iam.PermBreakglassApprove))(http.HandlerFunc(h.RevokeBreakglass))))
 
-	// 当前主体权限：仅需认证，不额外要求权限点。
-	mux.Handle("GET /admin/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
-
 	// 菜单资源管理（A 端专属）：菜单只影响前端入口，不构成接口鉴权边界。
 	mux.Handle("GET /admin/v1/iam/menus",
 		authMW(perm(string(iam.PermMenuRead))(http.HandlerFunc(h.ListMenus))))
@@ -129,6 +126,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW(perm(string(iam.PermMenuWrite))(http.HandlerFunc(h.DisableMenu))))
 	mux.Handle("POST /admin/v1/iam/menus/{id}/enable",
 		authMW(perm(string(iam.PermMenuWrite))(http.HandlerFunc(h.EnableMenu))))
+
+	// 当前主体权限：仅需认证，不额外要求权限点。
+	mux.Handle("GET /admin/v1/iam/me/permissions", authMW(http.HandlerFunc(h.MePermissions)))
 
 	// 当前主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
 	mux.Handle("GET /admin/v1/iam/me/menus", authMW(http.HandlerFunc(h.Menus)))
