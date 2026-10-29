@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -37,7 +38,7 @@ func TestClientIPResolver(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/", nil)
+			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 			req.RemoteAddr = tc.remoteAddr
 			if tc.xff != "" {
 				req.Header.Set("X-Forwarded-For", tc.xff)
@@ -51,7 +52,7 @@ func TestClientIPResolver(t *testing.T) {
 
 // TestClientIPResolverNil 验证未配置可信代理时永不信任 XFF。
 func TestClientIPResolverNil(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.RemoteAddr = "203.0.113.7:54321"
 	req.Header.Set("X-Forwarded-For", "1.2.3.4")
 	if got := (*ClientIPResolver)(nil).ClientIP(req); got != "203.0.113.7" {

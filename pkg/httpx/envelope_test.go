@@ -37,7 +37,7 @@ func TestNoStoreMiddleware(t *testing.T) {
 	handler := httpx.NoStoreMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		httpx.OK(w, map[string]string{"access_token": "token"}, "trace")
 	}))
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/auth/login", nil))
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/auth/login", http.NoBody))
 
 	if got := rr.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, private" {
 		t.Fatalf("cache-control=%q", got)

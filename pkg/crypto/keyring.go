@@ -92,7 +92,7 @@ func (r *KeyRing) Seal(plaintext, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 	out := make([]byte, 0, 2+len(r.active)+len(inner))
-	out = append(out, keyRingBlobVersion, byte(len(r.active)))
+	out = append(out, keyRingBlobVersion, byte(len(r.active))) //nolint:gosec // G115: NewKeyRing 已限制 key id 长度不超过 maxKeyIDLen
 	out = append(out, r.active...)
 	out = append(out, inner...)
 	return out, nil
@@ -111,8 +111,7 @@ func (r *KeyRing) Open(blob, aad []byte) ([]byte, error) {
 		if length == 0 || length > maxKeyIDLen || len(blob) < 2+length {
 			return nil, ErrInvalidCiphertext
 		}
-		kid := string(blob[2 : 2+length])
-		aead, ok := r.keys[kid]
+		aead, ok := r.keys[string(blob[2:2+length])]
 		if !ok || aead == nil {
 			return nil, ErrInvalidCiphertext
 		}
