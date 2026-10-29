@@ -40,10 +40,12 @@ const emit = defineEmits<{
 
 const form = reactive<Record<string, any>>({});
 
+// 只在弹窗打开时回填一次。父组件常以内联字面量传 modelValue，
+// 监听对象本身会在每次重渲染时生成新引用并清空用户正在输入的内容。
 watch(
-  () => [props.open, props.modelValue],
-  () => {
-    if (!props.open) {
+  () => props.open,
+  (open) => {
+    if (!open) {
       return;
     }
     for (const key of Object.keys(form)) {
@@ -51,7 +53,7 @@ watch(
     }
     Object.assign(form, JSON.parse(JSON.stringify(props.modelValue ?? {})));
   },
-  { deep: true, immediate: true },
+  { immediate: true },
 );
 
 function close() {
