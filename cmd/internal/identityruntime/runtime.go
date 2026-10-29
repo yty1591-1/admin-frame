@@ -90,6 +90,11 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 失败计数跨副本共享；Redis 缺失时守卫回退登录尝试表计数。
+	var failureCounter app.LoginFailureCounter
+	if deps.Redis != nil {
+		failureCounter = identitycache.NewRedisLoginFailureCounter(deps.Redis.Cache())
+	}
 	guard, err := app.NewLoginGuard(
 		repos.accounts,
 		repos.attempts,
@@ -100,6 +105,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 			Duration:    cfg.Identity.Lockout.Duration,
 		},
 		app.WithLoginLimiter(limiter),
+		app.WithLoginFailureCounter(failureCounter),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity login guard: %w", err)

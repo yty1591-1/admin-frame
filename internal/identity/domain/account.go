@@ -190,14 +190,16 @@ func (a *Account) Activate(now time.Time) error {
 	}
 }
 
-// Lock 把 active 账号置为 locked，until 必须晚于 now。
+// Lock 把 active / pending 账号置为 locked，until 必须晚于 now。
+//
+// pending 账号允许登录，也必须允许被锁定，否则未激活账号可被无限试密码。
 func (a *Account) Lock(until, now time.Time) error {
 	if err := a.ensureNotDeleted(); err != nil {
 		return err
 	}
-	if a.Status != AccountStatusActive {
+	if a.Status != AccountStatusActive && a.Status != AccountStatusPending {
 		return errConflict(ErrInvalidAccountTransition,
-			"account %s must be active to lock, current status %s", a.ID, a.Status)
+			"account %s must be active or pending to lock, current status %s", a.ID, a.Status)
 	}
 	if until.IsZero() {
 		return errInvalid(ErrInvalidAccountTransition, "lock expiry is required")
@@ -227,11 +229,11 @@ func (a *Account) Unlock(now time.Time) error {
 	return nil
 }
 
-// TryUnlockExpired 在锁定期到期后自动恢复 active，返回是否发生迁移。
+// UnlockIfExpired 在锁定期到期后自动恢复 active，返回是否发生迁移。
 //
-// 登录成功时由用例调用：锁定期已过但状态仍为 locked 的账号可以登录，
-// 成功后自动回到 active，避免管理员介入。
-func (a *Account) TryUnlockExpired(now time.Time) (bool, error) {
+// 登录成功与失败计数前都调用：锁定期已过但状态仍为 locked 的账号必须重新归一为
+// active，否则后续失败会因「状态仍是 locked」而不再计数、不再重新锁定。
+func (a *Account) UnlockIfExpired(now time.Time) (bool, error) {
 	if err := a.ensureNotDeleted(); err != nil {
 		return false, err
 	}
@@ -327,7 +329,7 @@ func (a *Account) BumpTokenVersion(now time.Time) error {
 // CanAuthenticate 判断账号当前是否允许发起登录。
 //
 // pending 允许登录（首次登录成功后激活）；locked 在锁定期到期后允许重试，
-// 成功登录由用例调用 TryUnlockExpired 恢复 active。
+// 成功登录由用例调用 UnlockIfExpired 恢复 active。
 func (a *Account) CanAuthenticate(now time.Time) bool {
 	if a.IsDeleted() {
 		return false

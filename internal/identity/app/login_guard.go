@@ -73,6 +73,17 @@ type IDGenerator interface {
 	NextString() (string, error)
 }
 
+// LoginFailureCounter 是跨副本共享的失败计数端口（Redis INCR + EXPIRE）。
+//
+// 未注入时回退登录尝试表计数；注入后即使多副本并发，阈值判定也不会因
+// 事务隔离或未提交记录而漏判。计数错误由守卫回退数据库计数，不阻断登录。
+type LoginFailureCounter interface {
+	// Increment 在窗口内自增一次失败并返回最新计数。
+	Increment(ctx context.Context, key string, window time.Duration) (int64, error)
+	// Reset 清除窗口计数（登录成功后调用）。
+	Reset(ctx context.Context, key string) error
+}
+
 // LoginGuardOption 配置 LoginGuard。
 type LoginGuardOption func(*LoginGuard)
 
@@ -81,6 +92,15 @@ func WithLoginLimiter(limiter LoginLimiter) LoginGuardOption {
 	return func(g *LoginGuard) {
 		if limiter != nil {
 			g.limiter = limiter
+		}
+	}
+}
+
+// WithLoginFailureCounter 注入跨副本失败计数器；默认回退数据库计数。
+func WithLoginFailureCounter(counter LoginFailureCounter) LoginGuardOption {
+	return func(g *LoginGuard) {
+		if counter != nil {
+			g.counter = counter
 		}
 	}
 }
@@ -99,6 +119,7 @@ type LoginGuard struct {
 	ids      IDGenerator
 	policy   LockoutPolicy
 	limiter  LoginLimiter
+	counter  LoginFailureCounter
 }
 
 // NewLoginGuard 构造登录守卫；仓储、ID 生成器与策略均必填。
@@ -164,50 +185,141 @@ func (g *LoginGuard) Authorize(account *domain.Account, now time.Time) error {
 
 // RecordFailure 记录失败尝试，并在窗口内失败次数达到阈值时锁定账号。
 //
-// since 取「窗口起点」与「最近一次成功登录时间」的较晚者：
-// 成功登录后窗口重新计数，但无需删除历史审计记录。
+// 返回值 lockedNow 表示本次调用是否真正触发了 active/pending → locked 迁移，
+// 调用方据此只发一次 auth.account.locked，避免已锁定账号的每次失败重复发审计。
+//
+// 计数优先使用跨副本计数器；未注入或计数失败时回退登录尝试表。since 取
+// 「窗口起点」与「最近一次成功登录时间」的较晚者，成功登录后窗口重新计数。
 func (g *LoginGuard) RecordFailure(
 	ctx context.Context,
 	account *domain.Account,
 	reason, ipHash, uaHash string,
 	now time.Time,
-) error {
+) (bool, error) {
 	if account == nil {
-		return apperr.Internal("account is required", nil)
+		return false, apperr.Internal("account is required", nil)
 	}
 	accountRef := HashAccountRef(account.Channel, account.Subject)
 	attempt, err := g.newAttempt(account.Channel, accountRef, domain.LoginOutcomeFailure, normalizeReason(reason), ipHash, uaHash, now)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := g.attempts.Append(ctx, attempt); err != nil {
-		return err
+		return false, err
 	}
 
-	since := now.Add(-g.policy.Window)
-	lastSuccess, found, err := g.attempts.LastSuccessAt(ctx, account.Channel, accountRef)
+	// 锁定未到期：允许试密码但保持锁定，不重复迁移、不重复发锁审计。
+	if account.Status == domain.AccountStatusLocked && account.LockedUntil != nil && account.LockedUntil.After(now) {
+		return false, nil
+	}
+	// 锁定已到期：先归一为 active，再按当前窗口重新计数，否则永远无法重新锁定。
+	if account.Status == domain.AccountStatusLocked {
+		unlocked, err := g.unlockExpired(ctx, account, now)
+		if err != nil {
+			return false, err
+		}
+		if !unlocked && account.Status == domain.AccountStatusLocked && account.LockedUntil != nil &&
+			account.LockedUntil.After(now) {
+			// 并发的卸载失败已把账号重新锁定，本次失败不再计数。
+			return false, nil
+		}
+	}
+	if account.IsDeleted() || account.Status == domain.AccountStatusDisabled {
+		return false, nil
+	}
+
+	failures, err := g.countFailures(ctx, account.Channel, accountRef, now)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if failures < g.policy.MaxFailures ||
+		(account.Status != domain.AccountStatusActive && account.Status != domain.AccountStatusPending) {
+		return false, nil
+	}
+
+	return g.lockAccount(ctx, account, now)
+}
+
+// unlockExpired 把过期锁定的账号归一为 active，并同步调用方持有的账号对象。
+//
+// 在副本上修改、保存成功后才写回调用方，避免版本冲突失败时污染入参。
+func (g *LoginGuard) unlockExpired(ctx context.Context, account *domain.Account, now time.Time) (bool, error) {
+	candidate := *account
+	unlocked, err := candidate.UnlockIfExpired(now)
+	if err != nil || !unlocked {
+		return false, err
+	}
+	if err := g.accounts.Save(ctx, &candidate, account.Version); err != nil {
+		if !errors.Is(err, apperr.ErrConflict) {
+			return false, err
+		}
+		// 并发请求已解锁或已重新锁定：以最新状态为准，不把冲突暴露成 500。
+		fresh, loadErr := g.accounts.FindByID(ctx, account.ID)
+		if loadErr != nil {
+			return false, nil
+		}
+		*account = *fresh
+		return false, nil
+	}
+	*account = candidate
+	return true, nil
+}
+
+// lockAccount 锁定账号；版本冲突时重读并重试一次，仍冲突按「并发方已处理」返回。
+func (g *LoginGuard) lockAccount(ctx context.Context, account *domain.Account, now time.Time) (bool, error) {
+	candidate := *account
+	if err := candidate.Lock(now.Add(g.policy.Duration), now); err != nil {
+		return false, err
+	}
+	if err := g.accounts.Save(ctx, &candidate, account.Version); err == nil {
+		*account = candidate
+		return true, nil
+	} else if !errors.Is(err, apperr.ErrConflict) {
+		return false, err
+	}
+	fresh, loadErr := g.accounts.FindByID(ctx, account.ID)
+	if loadErr != nil {
+		return false, nil
+	}
+	if fresh.Status == domain.AccountStatusLocked || fresh.IsDeleted() {
+		*account = *fresh
+		return false, nil
+	}
+	// 重读后仍处于可锁定状态：再尝试一次；再次冲突说明并发方已完成迁移。
+	retry := *fresh
+	if lockErr := retry.Lock(now.Add(g.policy.Duration), now); lockErr != nil {
+		*account = *fresh
+		return false, nil
+	}
+	if saveErr := g.accounts.Save(ctx, &retry, fresh.Version); saveErr != nil {
+		*account = *fresh
+		return false, nil
+	}
+	*account = retry
+	return true, nil
+}
+
+// countFailures 统计窗口内失败次数：优先跨副本计数器，失败或未注入时回退数据库。
+func (g *LoginGuard) countFailures(ctx context.Context, channel domain.Channel, accountRef string, now time.Time) (int, error) {
+	if g.counter != nil {
+		count, err := g.counter.Increment(ctx, loginFailureKey(channel, accountRef), g.policy.Window)
+		if err == nil {
+			return int(count), nil
+		}
+		// Redis 故障时回退数据库计数：保持锁定能力，不把登录整体打成 503。
+	}
+	since := now.Add(-g.policy.Window)
+	lastSuccess, found, err := g.attempts.LastSuccessAt(ctx, channel, accountRef)
+	if err != nil {
+		return 0, err
 	}
 	if found && lastSuccess.After(since) {
 		since = lastSuccess
 	}
-	failures, err := g.attempts.CountFailuresSince(ctx, account.Channel, accountRef, since)
-	if err != nil {
-		return err
-	}
-	if failures < g.policy.MaxFailures || account.Status != domain.AccountStatusActive {
-		return nil
-	}
-
-	expectedVersion := account.Version
-	if err := account.Lock(now.Add(g.policy.Duration), now); err != nil {
-		return err
-	}
-	return g.accounts.Save(ctx, account, expectedVersion)
+	return g.attempts.CountFailuresSince(ctx, channel, accountRef, since)
 }
 
-// RecordSuccess 记录成功尝试，并把已到期的锁定恢复为 active。
+// RecordSuccess 记录成功尝试，重置失败窗口，并把已到期的锁定恢复为 active。
 func (g *LoginGuard) RecordSuccess(
 	ctx context.Context,
 	account *domain.Account,
@@ -225,11 +337,15 @@ func (g *LoginGuard) RecordSuccess(
 	if err := g.attempts.Append(ctx, attempt); err != nil {
 		return err
 	}
+	// 成功即重置窗口；计数器不可用时由 LastSuccessAt 兜底，不影响登录结果。
+	if g.counter != nil {
+		_ = g.counter.Reset(ctx, loginFailureKey(account.Channel, accountRef))
+	}
 	if account.Status != domain.AccountStatusLocked {
 		return nil
 	}
 	expectedVersion := account.Version
-	unlocked, err := account.TryUnlockExpired(now)
+	unlocked, err := account.UnlockIfExpired(now)
 	if err != nil {
 		return err
 	}
@@ -237,6 +353,11 @@ func (g *LoginGuard) RecordSuccess(
 		return nil
 	}
 	return g.accounts.Save(ctx, account, expectedVersion)
+}
+
+// loginFailureKey 构造失败计数键：channel + 账号摘要，跨副本共享。
+func loginFailureKey(channel domain.Channel, accountRef string) string {
+	return string(channel) + ":login_fail:" + accountRef
 }
 
 // newAttempt 生成并校验一条登录尝试。

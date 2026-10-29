@@ -47,6 +47,32 @@ func TestDecodeAccountState(t *testing.T) {
 	})
 }
 
+// TestRedisLoginFailureCounter 验证失败计数自增、成功重置与未配置时的失败关闭。
+func TestRedisLoginFailureCounter(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newRedisCache(t)
+	counter := NewRedisLoginFailureCounter(client)
+
+	for want := int64(1); want <= 3; want++ {
+		count, err := counter.Increment(ctx, "admin:alice", time.Minute)
+		if err != nil || count != want {
+			t.Fatalf("increment = %d, %v; want %d", count, err, want)
+		}
+	}
+	if err := counter.Reset(ctx, "admin:alice"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	count, err := counter.Increment(ctx, "admin:alice", time.Minute)
+	if err != nil || count != 1 {
+		t.Fatalf("after reset increment = %d, %v; want 1", count, err)
+	}
+
+	disabled := NewRedisLoginFailureCounter(nil)
+	if _, err := disabled.Increment(ctx, "admin:alice", time.Minute); err == nil {
+		t.Fatal("nil cache must fail increment")
+	}
+}
+
 // TestRevocationStoreSnapshotRoundTrip 验证内存与 Redis 实现都能保存并删除带 FetchedAt 的快照。
 func TestRevocationStoreSnapshotRoundTrip(t *testing.T) {
 	ctx := context.Background()

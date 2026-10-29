@@ -326,15 +326,18 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 
 	if err := s.guard.Authorize(account, now); err != nil {
 		reason := reasonFromAuthError(err)
-		if recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now); recordErr != nil {
+		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now)
+		if recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
 		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
 			audit.OutcomeFailure, reason, in.TraceID, nil); auditErr != nil {
 			return LoginResult{}, auditErr
 		}
-		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
-			return LoginResult{}, lockedErr
+		if lockedNow {
+			if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
+				return LoginResult{}, lockedErr
+			}
 		}
 		return LoginResult{}, err
 	}
@@ -342,15 +345,18 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 	credential, err := s.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePassword)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			if recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now); recordErr != nil {
+			lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
+			if recordErr != nil {
 				return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 			}
 			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
 				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
 				return LoginResult{}, auditErr
 			}
-			if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
-				return LoginResult{}, lockedErr
+			if lockedNow {
+				if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
+					return LoginResult{}, lockedErr
+				}
 			}
 			return LoginResult{}, invalidCredentials()
 		}
@@ -359,15 +365,18 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 
 	needsRehash, err := s.password.Verify(credential.Hash, in.Password)
 	if err != nil {
-		if recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now); recordErr != nil {
+		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
+		if recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
 		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
 			audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
 			return LoginResult{}, auditErr
 		}
-		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
-			return LoginResult{}, lockedErr
+		if lockedNow {
+			if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
+				return LoginResult{}, lockedErr
+			}
 		}
 		return LoginResult{}, err
 	}
@@ -473,15 +482,18 @@ func (s *AuthService) completeVerifiedLoginInTx(ctx context.Context, in Verified
 	}
 	if err := s.guard.Authorize(account, now); err != nil {
 		reason := reasonFromAuthError(err)
-		if recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now); recordErr != nil {
+		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now)
+		if recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
 		}
 		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
 			audit.OutcomeFailure, reason, in.TraceID, nil); auditErr != nil {
 			return LoginResult{}, auditErr
 		}
-		if lockedErr := s.emitAccountLockedIfNeeded(ctx, account, in.TraceID); lockedErr != nil {
-			return LoginResult{}, lockedErr
+		if lockedNow {
+			if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
+				return LoginResult{}, lockedErr
+			}
 		}
 		return LoginResult{}, err
 	}
@@ -971,11 +983,11 @@ func (s *AuthService) emitAudit(
 	return nil
 }
 
-// emitAccountLockedIfNeeded 在失败计数触发锁定时补发 auth.account.locked。
+// emitAccountLocked 仅在本次失败真正触发锁定迁移时补发 auth.account.locked。
 //
-// RecordFailure 达阈值会把账号原地置为 locked，因此事后判断状态即可。
-func (s *AuthService) emitAccountLockedIfNeeded(ctx context.Context, account *domain.Account, traceID string) error {
-	if account == nil || account.Status != domain.AccountStatusLocked {
+// 已锁定账号的后续失败由 RecordFailure 返回 lockedNow=false，避免重复审计。
+func (s *AuthService) emitAccountLocked(ctx context.Context, account *domain.Account, traceID string) error {
+	if account == nil {
 		return nil
 	}
 	return s.emitAudit(ctx, audit.ActionAuthAccountLocked, account.ID, account.MerchantID, "account", account.ID,

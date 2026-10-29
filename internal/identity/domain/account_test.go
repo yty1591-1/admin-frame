@@ -146,12 +146,12 @@ func TestAccountStateTransitions(t *testing.T) {
 			wantVersion:      2,
 		},
 		{
-			name:             "pending cannot lock",
+			name:             "pending locks",
 			apply:            func(a *Account) error { return a.Lock(baseTime.Add(15*time.Minute), baseTime) },
-			wantStatus:       AccountStatusPending,
-			wantErr:          ErrInvalidAccountTransition,
+			wantStatus:       AccountStatusLocked,
 			wantTokenVersion: 1,
-			wantVersion:      1,
+			wantLocked:       true,
+			wantVersion:      2,
 		},
 		{
 			name:             "lock expiry must be after now",
@@ -274,7 +274,7 @@ func TestAccountStateTransitions(t *testing.T) {
 	}
 }
 
-func TestAccountTryUnlockExpired(t *testing.T) {
+func TestAccountUnlockIfExpired(t *testing.T) {
 	tests := []struct {
 		name       string
 		status     AccountStatus
@@ -308,9 +308,9 @@ func TestAccountTryUnlockExpired(t *testing.T) {
 			account := mustAccount(t, nil)
 			account.Status = tt.status
 			account.LockedUntil = tt.until
-			changed, err := account.TryUnlockExpired(baseTime)
+			changed, err := account.UnlockIfExpired(baseTime)
 			if err != nil {
-				t.Fatalf("TryUnlockExpired() error = %v", err)
+				t.Fatalf("UnlockIfExpired() error = %v", err)
 			}
 			if changed != tt.wantChange {
 				t.Fatalf("changed = %v, want %v", changed, tt.wantChange)

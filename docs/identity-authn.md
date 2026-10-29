@@ -138,12 +138,20 @@ pending ──激活──► active ──失败阈值──► locked ──�
 | 迁移 | 触发 | 副作用 |
 |---|---|---|
 | `pending → active` | 首次密码 / 验证码 / OAuth 登录成功且策略允许 | 初始化 `token_version=1` |
-| `active → locked` | 窗口内失败次数达到 `identity.lockout.max_failures` | 写 `auth.account.locked`；拒绝签发令牌 |
-| `locked → active` | 锁定到期或管理员解锁 | `login_attempt` 计数清零 |
+| `active / pending → locked` | 窗口内失败次数达到 `identity.lockout.max_failures` | 写 `auth.account.locked`（仅本次迁移发一次）；拒绝签发令牌 |
+| `locked → active` | 锁定到期（下次失败计数前或登录成功时归一）或管理员解锁 | 下次登录重新计数；窗口内失败仍可再次锁定 |
 | `active / locked → disabled` | 管理员停用 | `token_version++`、撤销全部会话、写 `auth.account.disabled` |
 | `disabled → active` | 管理员恢复 | 不恢复旧会话；用户必须重新登录 |
 
 **状态迁移必须有表驱动用例**：合法迁移成功、非法迁移返回稳定错误、每次迁移产生预期审计事件。
+
+**失败计数规则**（`IDN-P0-03`）：
+
+- 失败计数优先使用 Redis `INCR + EXPIRE`（键 `authn:fail:<channel>:login_fail:<account_ref>`，跨副本共享）；Redis 不可用时回退 `identity_login_attempt` 表计数，保持锁定能力。
+- 锁定到期后状态仍为 `locked`：下一次失败计数前必须先归一为 `active`，再按窗口重新计数；窗口内失败仍达到阈值时重新锁定，禁止「到期后永久放行」。
+- `pending` 账号允许登录，也必须允许被锁定，避免未激活账号被无限试密码。
+- 版本冲突按并发收敛处理：重读后以最新状态为准，返回 `40100`，不得因锁冲突返回 `500`。
+- `auth.account.locked` 只在真正发生 `active/pending → locked` 迁移时写一次；已锁定账号的后续失败只写 `auth.login_failed(reason=locked)`。
 
 ### 3.3 会话状态机
 
@@ -337,6 +345,7 @@ sequenceDiagram
 |---|---|---|---|
 | `authn:ver:<account_id>` | `token_version\|status\|fetched_at` | `identity.revocation.state_ttl`（默认 `min(access_ttl+1m, 60s)`，硬上限 60s） | 账号级撤销；校验令牌 `ver` 与账号状态，`fetched_at` 用于陈旧度判定 |
 | `authn:revoked:<jti>` | `1` | 令牌剩余寿命 | 单会话撤销 |
+| `authn:fail:<channel>:login_fail:<account_ref>` | 失败次数 | `identity.lockout.window` | 登录失败窗口计数；跨副本共享，Redis 不可用时回退登录尝试表 |
 
 - 所有键统一带环境前缀（复用 `pkg/redis` 的 `KeyPrefix`），跨环境互不影响。
 - 写入使用 `SET ... EX`；撤销检查只读，不延长 TTL。

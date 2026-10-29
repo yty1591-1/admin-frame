@@ -125,6 +125,18 @@ func TestAuditAccountLockedOnThreshold(t *testing.T) {
 	if locked[0].Outcome != audit.OutcomeFailure || locked[0].Reason != domain.LoginReasonLocked {
 		t.Fatalf("unexpected locked event: %+v", locked[0])
 	}
+
+	// 已锁定账号的后续失败只追加尝试，不得重复发 auth.account.locked。
+	for i := 0; i < 2; i++ {
+		if _, err := f.svc.Login(ctx, app.LoginInput{
+			Subject: "admin@example.com", Password: "wrong-password", TraceID: "trace-lock-again",
+		}); !errors.Is(err, apperr.ErrUnauthorized) {
+			t.Fatalf("locked attempt %d: expected 401, got %v", i+1, err)
+		}
+	}
+	if got := len(capture.byAction(audit.ActionAuthAccountLocked)); got != 1 {
+		t.Fatalf("locked event must be emitted once, got %d", got)
+	}
 }
 
 // TestAuditSessionLifecycle 覆盖登出、刷新成功与刷新令牌重放。

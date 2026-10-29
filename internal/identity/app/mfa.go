@@ -560,15 +560,18 @@ func (s *AuthService) mfaFailure(
 	ipHash, uaHash, traceID string,
 ) error {
 	now := s.clock.Now().UTC()
-	if err := s.guard.RecordFailure(ctx, account, domain.LoginReasonMFAFailed, ipHash, uaHash, now); err != nil {
+	lockedNow, err := s.guard.RecordFailure(ctx, account, domain.LoginReasonMFAFailed, ipHash, uaHash, now)
+	if err != nil {
 		return apperr.Internal("record mfa failure failed", err)
 	}
 	if err := s.emitAudit(ctx, audit.ActionAuthMFAFailed, account.ID, account.MerchantID, "account", account.ID,
 		audit.OutcomeFailure, domain.LoginReasonMFAFailed, traceID, nil); err != nil {
 		return err
 	}
-	if err := s.emitAccountLockedIfNeeded(ctx, account, traceID); err != nil {
-		return err
+	if lockedNow {
+		if err := s.emitAccountLocked(ctx, account, traceID); err != nil {
+			return err
+		}
 	}
 	return invalidToken()
 }

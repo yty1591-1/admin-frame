@@ -191,7 +191,7 @@ func TestLoginGuardRecordFailureLocksAtThreshold(t *testing.T) {
 
 	for i := 1; i <= policy.MaxFailures; i++ {
 		now := guardBaseTime.Add(time.Duration(i) * time.Minute)
-		if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "iphash", "uahash", now); err != nil {
+		if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "iphash", "uahash", now); err != nil {
 			t.Fatalf("RecordFailure(#%d) error = %v", i, err)
 		}
 		wantLocked := i == policy.MaxFailures
@@ -229,11 +229,11 @@ func TestLoginGuardRecordFailureIgnoresWindow(t *testing.T) {
 	account := fixture.newActiveAccount(t)
 	ctx := context.Background()
 
-	if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
+	if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	// 第二次失败已越过 15 分钟窗口，首次失败不再计数。
-	if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime.Add(16*time.Minute)); err != nil {
+	if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime.Add(16*time.Minute)); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	if account.Status != domain.AccountStatusActive {
@@ -247,13 +247,13 @@ func TestLoginGuardRecordSuccessResetsWindow(t *testing.T) {
 	account := fixture.newActiveAccount(t)
 	ctx := context.Background()
 
-	if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
+	if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	if err := fixture.guard.RecordSuccess(ctx, account, "", "", guardBaseTime.Add(time.Minute)); err != nil {
 		t.Fatalf("RecordSuccess() error = %v", err)
 	}
-	if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime.Add(2*time.Minute)); err != nil {
+	if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime.Add(2*time.Minute)); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	// 成功登录后窗口重置：成功之前的失败不再计数，当前仅 1 次失败。
@@ -268,7 +268,7 @@ func TestLoginGuardRecordSuccessUnlocksExpired(t *testing.T) {
 	account := fixture.newActiveAccount(t)
 	ctx := context.Background()
 
-	if err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
+	if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	if account.Status != domain.AccountStatusLocked {
@@ -302,7 +302,7 @@ func TestLoginGuardRecordSuccessUnlocksExpired(t *testing.T) {
 func TestLoginGuardRecordNilAccount(t *testing.T) {
 	fixture := newGuardFixture(t, app.DefaultLockoutPolicy())
 	ctx := context.Background()
-	if err := fixture.guard.RecordFailure(ctx, nil, domain.LoginReasonBadCredential, "", "", guardBaseTime); err == nil {
+	if _, err := fixture.guard.RecordFailure(ctx, nil, domain.LoginReasonBadCredential, "", "", guardBaseTime); err == nil {
 		t.Fatal("RecordFailure(nil) error = nil, want error")
 	}
 	if err := fixture.guard.RecordSuccess(ctx, nil, "", "", guardBaseTime); err == nil {
@@ -348,6 +348,189 @@ func TestHashAccountRef(t *testing.T) {
 	}
 	if other := app.HashAccountRef(domain.ChannelBiz, "alice@example.com"); other == first {
 		t.Fatal("HashAccountRef() must differ across channels")
+	}
+}
+
+// TestLoginGuardLocksPendingAccount 验证 pending 账号同样受失败锁定保护。
+func TestLoginGuardLocksPendingAccount(t *testing.T) {
+	policy := app.LockoutPolicy{MaxFailures: 3, Window: 15 * time.Minute, Duration: 15 * time.Minute}
+	fixture := newGuardFixture(t, policy)
+	account, err := domain.NewAccount(domain.NewAccountParams{
+		ID:      "2001",
+		Channel: domain.ChannelAdmin,
+		Subject: "Pending",
+		Now:     guardBaseTime,
+	})
+	if err != nil {
+		t.Fatalf("NewAccount() error = %v", err)
+	}
+	if err := fixture.accounts.Save(context.Background(), account, 0); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	ctx := context.Background()
+
+	for i := 1; i <= policy.MaxFailures; i++ {
+		now := guardBaseTime.Add(time.Duration(i) * time.Minute)
+		lockedNow, recordErr := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", now)
+		if recordErr != nil {
+			t.Fatalf("RecordFailure(#%d) error = %v", i, recordErr)
+		}
+		if want := i == policy.MaxFailures; lockedNow != want {
+			t.Fatalf("after failure #%d lockedNow = %v, want %v", i, lockedNow, want)
+		}
+	}
+	if account.Status != domain.AccountStatusLocked {
+		t.Fatalf("status = %s, want locked", account.Status)
+	}
+}
+
+// TestLoginGuardRelocksAfterExpiry 验证锁定到期后继续失败会重新锁定（不再永久放行）。
+func TestLoginGuardRelocksAfterExpiry(t *testing.T) {
+	policy := app.LockoutPolicy{MaxFailures: 2, Window: 15 * time.Minute, Duration: 5 * time.Minute}
+	fixture := newGuardFixture(t, policy)
+	account := fixture.newActiveAccount(t)
+	ctx := context.Background()
+
+	for i := 1; i <= policy.MaxFailures; i++ {
+		now := guardBaseTime.Add(time.Duration(i) * time.Minute)
+		if _, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", now); err != nil {
+			t.Fatalf("RecordFailure(#%d) error = %v", i, err)
+		}
+	}
+	if account.Status != domain.AccountStatusLocked {
+		t.Fatalf("status = %s, want locked", account.Status)
+	}
+
+	// 锁定期已过但仍在失败窗口内：应先归一为 active，再因窗口内失败达到阈值重新锁定。
+	afterExpiry := guardBaseTime.Add(10 * time.Minute)
+	lockedNow, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", afterExpiry)
+	if err != nil {
+		t.Fatalf("RecordFailure(after expiry) error = %v", err)
+	}
+	if !lockedNow {
+		t.Fatalf("expired lock must transition back to locked, lockedNow = false")
+	}
+	if account.Status != domain.AccountStatusLocked || account.LockedUntil == nil ||
+		!account.LockedUntil.After(afterExpiry) {
+		t.Fatalf("account = %+v, want locked with future expiry", account)
+	}
+}
+
+// TestLoginGuardConcurrentFailuresLock 验证并发错误登录不会漏锁，也不会返回业务错误。
+func TestLoginGuardConcurrentFailuresLock(t *testing.T) {
+	policy := app.LockoutPolicy{MaxFailures: 5, Window: 15 * time.Minute, Duration: 15 * time.Minute}
+	fixture := newGuardFixture(t, policy)
+	seed := fixture.newActiveAccount(t)
+	ctx := context.Background()
+
+	const workers = 20
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			account, err := fixture.accounts.FindByID(ctx, seed.ID)
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			_, errs[idx] = fixture.guard.RecordFailure(ctx,
+				account, domain.LoginReasonBadCredential, "iphash", "uahash", guardBaseTime)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("worker %d error = %v, want nil (no 500 path)", i, err)
+		}
+	}
+	persisted, err := fixture.accounts.FindByID(ctx, seed.ID)
+	if err != nil {
+		t.Fatalf("FindByID() error = %v", err)
+	}
+	if persisted.Status != domain.AccountStatusLocked {
+		t.Fatalf("status = %s, want locked after %d concurrent failures", persisted.Status, workers)
+	}
+}
+
+// fakeFailureCounter 是可控的失败计数器。
+type fakeFailureCounter struct {
+	mu     sync.Mutex
+	count  int64
+	resets int
+	fail   bool
+}
+
+// Increment 返回窗口内计数；fail=true 时模拟 Redis 故障。
+func (c *fakeFailureCounter) Increment(context.Context, string, time.Duration) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fail {
+		return 0, errors.New("counter down")
+	}
+	c.count++
+	return c.count, nil
+}
+
+// Reset 记录重置次数。
+func (c *fakeFailureCounter) Reset(context.Context, string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resets++
+	c.count = 0
+	return nil
+}
+
+// TestLoginGuardUsesSharedFailureCounter 验证注入计数器后按计数阈值锁定，并在成功时重置。
+func TestLoginGuardUsesSharedFailureCounter(t *testing.T) {
+	policy := app.LockoutPolicy{MaxFailures: 2, Window: 15 * time.Minute, Duration: 15 * time.Minute}
+	counter := &fakeFailureCounter{}
+	fixture := newGuardFixture(t, policy, app.WithLoginFailureCounter(counter))
+	account := fixture.newActiveAccount(t)
+	ctx := context.Background()
+
+	lockedNow, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "", guardBaseTime)
+	if err != nil || lockedNow {
+		t.Fatalf("first failure lockedNow=%v err=%v, want false/nil", lockedNow, err)
+	}
+	lockedNow, err = fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "",
+		guardBaseTime.Add(time.Minute))
+	if err != nil || !lockedNow {
+		t.Fatalf("second failure lockedNow=%v err=%v, want true/nil", lockedNow, err)
+	}
+	if account.Status != domain.AccountStatusLocked {
+		t.Fatalf("status = %s, want locked", account.Status)
+	}
+	if err := fixture.guard.RecordSuccess(ctx, account, "", "", guardBaseTime.Add(16*time.Minute)); err != nil {
+		t.Fatalf("RecordSuccess() error = %v", err)
+	}
+	if counter.resets != 1 {
+		t.Fatalf("reset count = %d, want 1", counter.resets)
+	}
+}
+
+// TestLoginGuardFallsBackWhenCounterFails 验证计数器故障时回退数据库计数，锁能力不丢失。
+func TestLoginGuardFallsBackWhenCounterFails(t *testing.T) {
+	policy := app.LockoutPolicy{MaxFailures: 2, Window: 15 * time.Minute, Duration: 15 * time.Minute}
+	counter := &fakeFailureCounter{fail: true}
+	fixture := newGuardFixture(t, policy, app.WithLoginFailureCounter(counter))
+	account := fixture.newActiveAccount(t)
+	ctx := context.Background()
+
+	for i := 1; i <= policy.MaxFailures; i++ {
+		lockedNow, err := fixture.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, "", "",
+			guardBaseTime.Add(time.Duration(i)*time.Minute))
+		if err != nil {
+			t.Fatalf("RecordFailure(#%d) error = %v", i, err)
+		}
+		if want := i == policy.MaxFailures; lockedNow != want {
+			t.Fatalf("after failure #%d lockedNow = %v, want %v", i, lockedNow, want)
+		}
+	}
+	if account.Status != domain.AccountStatusLocked {
+		t.Fatalf("status = %s, want locked via DB fallback", account.Status)
 	}
 }
 
