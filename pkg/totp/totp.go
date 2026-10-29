@@ -46,19 +46,28 @@ func EncodeSecret(secret []byte) string {
 //
 // code 必须为 6 位数字；任何格式错误都返回 false，调用方不得据此区分失败原因。
 func Validate(secret []byte, code string, now time.Time) bool {
+	_, ok := ValidateStep(secret, code, now)
+	return ok
+}
+
+// ValidateStep 校验动态码并返回命中的时间步；用于服务端防重放（IDN-P1-05）。
+//
+// 命中多个窗口时返回最大的时间步（最接近未来的窗口）。
+func ValidateStep(secret []byte, code string, now time.Time) (int64, bool) {
 	if len(secret) == 0 {
-		return false
+		return 0, false
 	}
 	normalized := strings.TrimSpace(code)
 	if len(normalized) != Digits {
-		return false
+		return 0, false
 	}
 	for _, r := range normalized {
 		if r < '0' || r > '9' {
-			return false
+			return 0, false
 		}
 	}
 	seconds := now.UTC().Unix() / int64(Period/time.Second)
+	var matched int64 = -1
 	for offset := -Window; offset <= Window; offset++ {
 		candidateSeconds := seconds + int64(offset)
 		// 计数器为无符号数：负偏移在 Unix 纪元附近会下溢，直接跳过。
@@ -67,10 +76,13 @@ func Validate(secret []byte, code string, now time.Time) bool {
 		}
 		candidate := hotp(secret, uint64(candidateSeconds))
 		if subtle.ConstantTimeCompare([]byte(candidate), []byte(normalized)) == 1 {
-			return true
+			matched = candidateSeconds
 		}
 	}
-	return false
+	if matched < 0 {
+		return 0, false
+	}
+	return matched, true
 }
 
 // ProvisioningURI 生成 otpauth://totp URI，供客户端扫码录入。
