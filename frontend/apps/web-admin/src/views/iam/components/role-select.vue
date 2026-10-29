@@ -68,6 +68,8 @@ onMounted(() => load());
     class="w-full"
     show-search
     @search="handleSearch"
-    @update:value="(value) => emit('update:modelValue', value as string | undefined)"
+    @update:value="
+      (value) => emit('update:modelValue', value as string | undefined)
+    "
   />
 </template>

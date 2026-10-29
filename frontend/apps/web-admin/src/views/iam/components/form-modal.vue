@@ -119,7 +119,9 @@ function handleOk() {
             :placeholder="field.placeholder"
           />
           <Input.TextArea
-            v-else-if="field.component === 'textarea' || field.component === 'json'"
+            v-else-if="
+              field.component === 'textarea' || field.component === 'json'
+            "
             v-model:value="form[field.name]"
             :disabled="field.disabled"
             :placeholder="field.placeholder"

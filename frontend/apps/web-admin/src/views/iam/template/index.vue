@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
-import type { DataScope, RoleTemplate, TemplateDrift } from '#/api';
 
 import type { FormField } from '../components/types';
+
+import type { DataScope, RoleTemplate, TemplateDrift } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 

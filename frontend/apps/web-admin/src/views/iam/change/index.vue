@@ -9,7 +9,16 @@ import { onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Drawer, Input, message, Modal, Space, Table, Tag } from 'ant-design-vue';
+import {
+  Button,
+  Drawer,
+  Input,
+  message,
+  Modal,
+  Space,
+  Table,
+  Tag,
+} from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
 import {
@@ -39,7 +48,9 @@ const actionOptions: { label: string; value: ChangeAction }[] = [
   { label: '破玻璃申请', value: 'breakglass_request' },
 ];
 
-const actionLabel = new Map(actionOptions.map((item) => [item.value, item.label]));
+const actionLabel = new Map(
+  actionOptions.map((item) => [item.value, item.label]),
+);
 
 const [QueryForm, queryFormApi] = useVbenForm({
   schema: [
@@ -232,7 +243,10 @@ function openDetail(item: ChangeRequest) {
   detailOpen.value = true;
 }
 
-function openDecision(item: ChangeRequest, kind: 'apply' | 'approve' | 'cancel' | 'reject') {
+function openDecision(
+  item: ChangeRequest,
+  kind: 'apply' | 'approve' | 'cancel' | 'reject',
+) {
   Object.assign(decide, {
     id: item.id,
     kind,
@@ -276,13 +290,18 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page description="审批中心：直写被审批模式拦截时，可在此提交并流转变更" title="变更审批">
+  <Page
+    description="审批中心：直写被审批模式拦截时，可在此提交并流转变更"
+    title="变更审批"
+  >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />
       <Space class="mt-2">
         <Button type="primary" @click="handleSearch">查询</Button>
         <Button @click="handleReset">重置</Button>
-        <Button v-access:code="'iam:role:write'" @click="createOpen = true"> 新建审批单 </Button>
+        <Button v-access:code="'iam:role:write'" @click="createOpen = true">
+          新建审批单
+        </Button>
       </Space>
     </div>
 
@@ -309,7 +328,11 @@ onMounted(fetchList);
         </template>
         <template v-else-if="column.key === 'actions'">
           <Space :size="4" wrap>
-            <Button size="small" type="link" @click="openDetail(record as ChangeRequest)">
+            <Button
+              size="small"
+              type="link"
+              @click="openDetail(record as ChangeRequest)"
+            >
               详情
             </Button>
             <template v-if="record.status === 'pending'">

@@ -45,7 +45,9 @@ watch(
   },
 );
 
-const payloadText = computed(() => JSON.stringify(props.payload ?? {}, null, 2));
+const payloadText = computed(() =>
+  JSON.stringify(props.payload ?? {}, null, 2),
+);
 
 function close() {
   emit('update:open', false);
@@ -76,16 +78,25 @@ function submit() {
       <p class="text-muted-foreground mb-1 text-xs">审批动作</p>
       <p class="text-foreground mb-3 font-mono text-sm">{{ action }}</p>
       <p class="text-muted-foreground mb-1 text-xs">申请载荷</p>
-      <pre class="bg-muted mb-3 max-h-52 overflow-auto rounded p-2 font-mono text-xs">{{
-        payloadText
-      }}</pre>
+      <pre
+        class="bg-muted mb-3 max-h-52 overflow-auto rounded p-2 font-mono text-xs"
+        >{{ payloadText }}</pre>
       <p class="text-muted-foreground mb-1 text-xs">申请原因</p>
-      <Input.TextArea v-model:value="reason" :rows="2" placeholder="请填写提交审批的原因" />
+      <Input.TextArea
+        v-model:value="reason"
+        :rows="2"
+        placeholder="请填写提交审批的原因"
+      />
     </template>
     <template #footer>
       <Button @click="close">关闭</Button>
       <Button @click="refresh">刷新详情</Button>
-      <Button v-if="action" :loading="submitting" type="primary" @click="submit">
+      <Button
+        v-if="action"
+        :loading="submitting"
+        type="primary"
+        @click="submit"
+      >
         提交审批单
       </Button>
     </template>

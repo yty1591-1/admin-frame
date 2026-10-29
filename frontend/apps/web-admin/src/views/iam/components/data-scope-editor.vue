@@ -31,7 +31,10 @@ function updateRow(index: number, patch: Partial<DataScope>) {
 }
 
 function addRow() {
-  emit('update:modelValue', [...rows.value, { resource: '*', scope_type: 'all' }]);
+  emit('update:modelValue', [
+    ...rows.value,
+    { resource: '*', scope_type: 'all' },
+  ]);
 }
 
 function removeRow(index: number) {
@@ -44,7 +47,11 @@ function removeRow(index: number) {
 
 <template>
   <div class="space-y-2">
-    <div v-for="(row, index) in rows" :key="index" class="grid grid-cols-12 items-center gap-2">
+    <div
+      v-for="(row, index) in rows"
+      :key="index"
+      class="grid grid-cols-12 items-center gap-2"
+    >
       <Input
         :value="row.resource"
         class="col-span-3"
@@ -56,7 +63,8 @@ function removeRow(index: number) {
         :value="row.scope_type"
         class="col-span-3"
         @update:value="
-          (value) => updateRow(index, { scope_type: value as DataScope['scope_type'] })
+          (value) =>
+            updateRow(index, { scope_type: value as DataScope['scope_type'] })
         "
       />
       <Select
@@ -72,7 +80,9 @@ function removeRow(index: number) {
             })
         "
       />
-      <div v-else class="text-muted-foreground col-span-5 text-xs">该资源允许访问全部数据</div>
+      <div v-else class="text-muted-foreground col-span-5 text-xs">
+        该资源允许访问全部数据
+      </div>
       <Button danger type="text" @click="removeRow(index)">删除</Button>
     </div>
     <Button block type="dashed" @click="addRow">新增数据范围</Button>

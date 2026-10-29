@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
+
 import type { Permission } from '#/api';
 
 import { onMounted, reactive, ref } from 'vue';

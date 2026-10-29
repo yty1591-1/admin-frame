@@ -29,7 +29,9 @@ const groups = computed(() => {
   const word = keyword.value.trim().toLowerCase();
   const visible = word
     ? permissions.value.filter(
-        (item) => item.code.toLowerCase().includes(word) || item.name.toLowerCase().includes(word),
+        (item) =>
+          item.code.toLowerCase().includes(word) ||
+          item.name.toLowerCase().includes(word),
       )
     : permissions.value;
   const map = new Map<string, Permission[]>();
@@ -40,7 +42,9 @@ const groups = computed(() => {
   }
   return [...map.entries()]
     .map(([resource, items]) => ({
-      items: items.toSorted((a, b) => a.sort - b.sort || a.code.localeCompare(b.code)),
+      items: items.toSorted(
+        (a, b) => a.sort - b.sort || a.code.localeCompare(b.code),
+      ),
       resource,
     }))
     .toSorted((a, b) => a.resource.localeCompare(b.resource));
@@ -94,7 +98,12 @@ function toggleGroup(items: Permission[], event: CheckboxChangeEvent) {
 
 <template>
   <Spin :spinning="loading">
-    <Input v-model:value="keyword" allow-clear class="mb-3" placeholder="搜索权限码或名称" />
+    <Input
+      v-model:value="keyword"
+      allow-clear
+      class="mb-3"
+      placeholder="搜索权限码或名称"
+    />
     <div class="max-h-[52vh] space-y-3 overflow-auto pr-1">
       <div
         v-for="group in groups"
@@ -111,7 +120,9 @@ function toggleGroup(items: Permission[], event: CheckboxChangeEvent) {
             <span class="text-foreground text-sm font-medium">
               {{ group.resource }}
             </span>
-            <span class="text-muted-foreground text-xs"> {{ group.items.length }} 项 </span>
+            <span class="text-muted-foreground text-xs">
+              {{ group.items.length }} 项
+            </span>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-2">
@@ -125,7 +136,13 @@ function toggleGroup(items: Permission[], event: CheckboxChangeEvent) {
             <span class="text-muted-foreground ml-1 font-mono text-xs">
               {{ item.code }}
             </span>
-            <Tag v-if="item.status === 'deprecated'" class="ml-1" color="default"> 已弃用 </Tag>
+            <Tag
+              v-if="item.status === 'deprecated'"
+              class="ml-1"
+              color="default"
+            >
+              已弃用
+            </Tag>
           </Checkbox>
         </div>
       </div>

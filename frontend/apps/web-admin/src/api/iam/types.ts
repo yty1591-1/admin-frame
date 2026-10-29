@@ -166,8 +166,8 @@ export type ChangeAction =
   | 'role_update';
 
 export type ChangeTargetType =
-  | 'iam_breakglass'
   | 'iam_binding'
+  | 'iam_breakglass'
   | 'iam_role'
   | 'iam_sod_group';
 

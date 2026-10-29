@@ -44,6 +44,8 @@ onMounted(load);
     :value="props.modelValue"
     class="w-full"
     mode="multiple"
-    @update:value="(value) => emit('update:modelValue', (value as string[]) ?? [])"
+    @update:value="
+      (value) => emit('update:modelValue', (value as string[]) ?? [])
+    "
   />
 </template>

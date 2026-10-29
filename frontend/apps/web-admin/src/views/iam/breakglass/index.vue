@@ -9,7 +9,15 @@ import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Input, message, Modal, Space, Table, Tag } from 'ant-design-vue';
+import {
+  Button,
+  Input,
+  message,
+  Modal,
+  Space,
+  Table,
+  Tag,
+} from 'ant-design-vue';
 
 import {
   approveBreakglassApi,
@@ -167,7 +175,10 @@ async function handleRequest(payload: Record<string, any>) {
   }
 }
 
-function openDecision(record: ChangeRequest, kind: 'approve' | 'reject' | 'revoke') {
+function openDecision(
+  record: ChangeRequest,
+  kind: 'approve' | 'reject' | 'revoke',
+) {
   Object.assign(decide, {
     id: record.id,
     kind,
@@ -202,10 +213,17 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page description="限时超级权限：申请本身不授权，需另一账号审批后临时生效" title="破玻璃申请">
+  <Page
+    description="限时超级权限：申请本身不授权，需另一账号审批后临时生效"
+    title="破玻璃申请"
+  >
     <div class="bg-card mb-4 rounded-lg p-4">
       <Space>
-        <Button v-access:code="'iam:breakglass:request'" type="primary" @click="requestOpen = true">
+        <Button
+          v-access:code="'iam:breakglass:request'"
+          type="primary"
+          @click="requestOpen = true"
+        >
           申请破玻璃
         </Button>
         <Button @click="fetchList">刷新</Button>
@@ -302,7 +320,11 @@ onMounted(fetchList);
       <p class="text-muted-foreground mb-2 text-xs">
         单号：{{ decide.id }} · version {{ decide.version }}
       </p>
-      <Input.TextArea v-model:value="decide.reason" :rows="3" placeholder="决策说明" />
+      <Input.TextArea
+        v-model:value="decide.reason"
+        :rows="3"
+        placeholder="决策说明"
+      />
     </Modal>
   </Page>
 </template>
