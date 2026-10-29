@@ -32,6 +32,27 @@ func TestOKEnvelope(t *testing.T) {
 	}
 }
 
+func TestNoStoreMiddleware(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handler := httpx.NoStoreMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.OK(w, map[string]string{"access_token": "token"}, "trace")
+	}))
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/auth/login", nil))
+
+	if got := rr.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, private" {
+		t.Fatalf("cache-control=%q", got)
+	}
+	if got := rr.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("pragma=%q", got)
+	}
+	if got := rr.Header().Get("Expires"); got != "0" {
+		t.Fatalf("expires=%q", got)
+	}
+	if got := rr.Header().Get("Vary"); got != "Authorization" {
+		t.Fatalf("vary=%q", got)
+	}
+}
+
 func TestFailOmitsData(t *testing.T) {
 	rr := httptest.NewRecorder()
 	httpx.Fail(rr, http.StatusNotFound, httpx.BizCodeNotFound, "not found", "t2")

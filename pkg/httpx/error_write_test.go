@@ -122,6 +122,29 @@ func TestHTTPStatusFromBizCode(t *testing.T) {
 	}
 }
 
+// retryErr 模拟携带重试时长的限流错误。
+type retryErr struct {
+	*codedErr
+	seconds int
+}
+
+func (e *retryErr) RetryAfterSeconds() int { return e.seconds }
+
+func TestFromErrorWritesRetryAfter(t *testing.T) {
+	rr := httptest.NewRecorder()
+	httpx.FromError(rr, &retryErr{
+		codedErr: &codedErr{code: httpx.BizCodeTooManyRequests, msg: "too many", err: errors.ResourceExhausted("too many")},
+		seconds:  30,
+	}, "tid")
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rr.Code)
+	}
+	if got := rr.Header().Get("Retry-After"); got != "30" {
+		t.Fatalf("Retry-After = %q, want 30", got)
+	}
+}
+
 func TestDefaultBizCodeAlignment(t *testing.T) {
 	cases := []struct {
 		sem  errors.Code

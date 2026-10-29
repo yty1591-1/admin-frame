@@ -2,9 +2,15 @@ package httpx
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/admin-frame/admin-frame/pkg/errors"
 )
+
+// RetryAfterCoder 可选：错误携带建议重试秒数；FromError 会写入 Retry-After 响应头。
+type RetryAfterCoder interface {
+	RetryAfterSeconds() int
+}
 
 // writeOptions 控制 FromError 的消息、状态与业务码解析。
 type writeOptions struct {
@@ -92,6 +98,12 @@ func FromError(w http.ResponseWriter, err error, traceID string, opts ...Option)
 	msg := o.message(err)
 	if msg == "" {
 		msg = "error"
+	}
+	var retry RetryAfterCoder
+	if errors.As(err, &retry) {
+		if seconds := retry.RetryAfterSeconds(); seconds > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
 	}
 	Fail(w, status, code, msg, traceID)
 }
