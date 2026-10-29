@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	identityobs "github.com/admin-frame/admin-frame/internal/identity/observability"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -120,11 +121,22 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("identity token service: %w", err)
 	}
 
+	// 撤销快照写入失败指标；未配置 Metrics 时降级为无观测（仍有 ≤60s TTL 兜底）。
+	var revocationObserver app.RevocationObserver
+	if deps.Metrics != nil {
+		observer, obsErr := identityobs.NewMetrics(deps.Metrics.RegistererWithoutChannel())
+		if obsErr != nil {
+			return nil, obsErr
+		}
+		revocationObserver = observer
+	}
+
 	checker, err := app.NewRevocationChecker(
 		repos.accounts,
 		revocation,
 		cfg.Identity.Revocation.FailureMode,
-		cfg.Identity.AccessTTL+time.Minute,
+		cfg.Identity.Revocation.StateTTL,
+		app.WithRevocationObserver(revocationObserver),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity revocation checker: %w", err)
@@ -147,24 +159,27 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
-		Accounts:         repos.accounts,
-		Credentials:      repos.credentials,
-		Sessions:         repos.sessions,
-		Guard:            guard,
-		Password:         passwordSvc,
-		Tokens:           tokens,
-		Revocation:       revocation,
-		Audit:            auditEmitter,
-		IDs:              deps.IDs,
-		Channel:          channel,
-		UoW:              uow,
-		IdleTimeout:      cfg.Identity.Session.IdleTimeout,
-		Service:          cfg.Service,
-		MFA:              repos.mfa,
-		MFACipher:        mfaCipher,
-		MFATickets:       tickets,
-		MFAIssuer:        cfg.Identity.MFA.Issuer,
-		MFAAdminRequired: mfaAdminRequired,
+		Accounts:           repos.accounts,
+		Credentials:        repos.credentials,
+		Sessions:           repos.sessions,
+		Guard:              guard,
+		Password:           passwordSvc,
+		Tokens:             tokens,
+		Revocation:         revocation,
+		RevocationStateTTL: cfg.Identity.Revocation.StateTTL,
+		RevocationObserver: revocationObserver,
+		Logger:             deps.Logger,
+		Audit:              auditEmitter,
+		IDs:                deps.IDs,
+		Channel:            channel,
+		UoW:                uow,
+		IdleTimeout:        cfg.Identity.Session.IdleTimeout,
+		Service:            cfg.Service,
+		MFA:                repos.mfa,
+		MFACipher:          mfaCipher,
+		MFATickets:         tickets,
+		MFAIssuer:          cfg.Identity.MFA.Issuer,
+		MFAAdminRequired:   mfaAdminRequired,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity auth service: %w", err)
