@@ -332,7 +332,7 @@ func NewSessionFamily(p NewSessionFamilyParams) (*SessionFamily, error) {
 		return nil, errInvalid(ErrInvalidSession, "session family expiry must be after now")
 	}
 	absolute := utcNow(p.AbsoluteExpiresAt)
-	if absolute.IsZero() {
+	if p.AbsoluteExpiresAt.IsZero() {
 		absolute = expiresAt
 	}
 	if absolute.Before(expiresAt) {
