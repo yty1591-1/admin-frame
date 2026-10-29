@@ -60,6 +60,23 @@ func (r *SQLLoginAttemptRepository) CountFailuresSince(ctx context.Context, chan
 	return count, nil
 }
 
+// DeleteBefore 删除 occurred_at 早于 before 的尝试记录，单次最多 limit 条。
+func (r *SQLLoginAttemptRepository) DeleteBefore(ctx context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	result, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_login_attempt
+		WHERE occurred_at < ? ORDER BY occurred_at LIMIT ?`, before.UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 // LastSuccessAt 返回最近一次成功登录时间；没有记录时 found 为 false。
 func (r *SQLLoginAttemptRepository) LastSuccessAt(ctx context.Context, channel domain.Channel, accountRef string) (time.Time, bool, error) {
 	var occurredAt sql.NullTime

@@ -15,6 +15,10 @@ import (
 const sessionSelectColumns = `id, account_id, family_id, refresh_token_hash, status, token_version, version,
 	expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason, created_at, updated_at`
 
+// familySelectColumns 是设备会话表的显式列清单。
+const familySelectColumns = `family_id, account_id, status, version, created_at, last_used_at, expires_at,
+	absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason, updated_at`
+
 // SQLSessionRepository 是 MySQL 8.0 的会话仓储实现。
 //
 // 刷新并发：Save 使用 version 乐观锁，只有一个请求能把 active 改为 rotated；
@@ -155,6 +159,12 @@ func (r *SQLSessionRepository) RevokeFamily(ctx context.Context, familyID string
 	if err != nil {
 		return 0, err
 	}
+	if _, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session_family
+		SET status = 'revoked', revoked_at = ?, revoked_reason = ?, updated_at = ?, version = version + 1
+		WHERE family_id = ? AND status = 'active'`,
+		now.UTC(), string(reason), now.UTC(), family); err != nil {
+		return 0, err
+	}
 	return int(affected), nil
 }
 
@@ -176,6 +186,12 @@ func (r *SQLSessionRepository) RevokeByAccount(ctx context.Context, accountID st
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
+		return 0, err
+	}
+	if _, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session_family
+		SET status = 'revoked', revoked_at = ?, revoked_reason = ?, updated_at = ?, version = version + 1
+		WHERE account_id = ? AND status = 'active'`,
+		now.UTC(), string(reason), now.UTC(), id); err != nil {
 		return 0, err
 	}
 	return int(affected), nil
@@ -207,6 +223,249 @@ func (r *SQLSessionRepository) ListByAccount(ctx context.Context, accountID stri
 		return nil, err
 	}
 	return out, nil
+}
+
+// FindFamily 按主键加载设备会话。
+func (r *SQLSessionRepository) FindFamily(ctx context.Context, familyID string) (*domain.SessionFamily, error) {
+	id, err := parseID(familyID)
+	if err != nil {
+		return nil, err
+	}
+	row := r.exec(ctx).QueryRowContext(ctx,
+		`SELECT `+familySelectColumns+` FROM identity_session_family WHERE family_id = ?`, id)
+	family, err := scanFamily(row)
+	if err != nil {
+		return nil, resolveNotFound(err, "session family not found")
+	}
+	return family, nil
+}
+
+// SaveFamily 创建（expectedVersion=0）或更新设备会话。
+func (r *SQLSessionRepository) SaveFamily(ctx context.Context, family *domain.SessionFamily, expectedVersion int64) error {
+	if family == nil {
+		return apperr.BadRequest("session family is required")
+	}
+	if r.sql == nil {
+		return apperr.Unavailable("identity session repository is not configured")
+	}
+	if expectedVersion == 0 {
+		return r.insertFamily(ctx, family)
+	}
+	return r.updateFamily(ctx, family, expectedVersion)
+}
+
+// insertFamily 写入新设备会话。
+func (r *SQLSessionRepository) insertFamily(ctx context.Context, family *domain.SessionFamily) error {
+	familyID, err := parseID(family.ID)
+	if err != nil {
+		return err
+	}
+	accountID, err := parseID(family.AccountID)
+	if err != nil {
+		return err
+	}
+	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_session_family
+		(family_id, account_id, status, version, created_at, last_used_at, expires_at,
+		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		familyID, accountID, string(family.Status), family.Version,
+		family.CreatedAt.UTC(), family.LastUsedAt.UTC(), family.ExpiresAt.UTC(),
+		family.AbsoluteExpiresAt.UTC(), family.IPHash, family.UAHash, family.DeviceLabel,
+		nullTime(family.RevokedAt), string(family.RevokedReason), family.UpdatedAt.UTC())
+	return conflictOnDuplicate(err, "session family id already exists")
+}
+
+// updateFamily 以乐观锁更新设备会话状态与时间字段。
+func (r *SQLSessionRepository) updateFamily(ctx context.Context, family *domain.SessionFamily, expectedVersion int64) error {
+	familyID, err := parseID(family.ID)
+	if err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session_family
+		SET status = ?, version = ?, last_used_at = ?, expires_at = ?, absolute_expires_at = ?,
+		    revoked_at = ?, revoked_reason = ?, updated_at = ?
+		WHERE family_id = ? AND version = ?`,
+		string(family.Status), family.Version, family.LastUsedAt.UTC(), family.ExpiresAt.UTC(),
+		family.AbsoluteExpiresAt.UTC(), nullTime(family.RevokedAt), string(family.RevokedReason),
+		family.UpdatedAt.UTC(), familyID, expectedVersion)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected > 0 {
+		return nil
+	}
+	var current int64
+	err = r.exec(ctx).QueryRowContext(ctx,
+		`SELECT version FROM identity_session_family WHERE family_id = ?`, familyID).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperr.NotFound("session family not found")
+	}
+	if err != nil {
+		return err
+	}
+	return apperr.Conflict("session family version conflict")
+}
+
+// ListFamiliesByAccount 按 last_used_at / family_id 倒序返回设备会话。
+func (r *SQLSessionRepository) ListFamiliesByAccount(
+	ctx context.Context,
+	accountID string,
+	afterLastUsed time.Time,
+	afterID string,
+	limit int,
+) ([]*domain.SessionFamily, error) {
+	id, err := parseID(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	query := `SELECT ` + familySelectColumns + ` FROM identity_session_family
+		WHERE account_id = ? AND status = 'active'`
+	args := []any{id}
+	if !afterLastUsed.IsZero() && afterID != "" {
+		cursorID, cursorErr := parseID(afterID)
+		if cursorErr != nil {
+			return nil, cursorErr
+		}
+		query += ` AND (last_used_at < ? OR (last_used_at = ? AND family_id < ?))`
+		args = append(args, afterLastUsed.UTC(), afterLastUsed.UTC(), cursorID)
+	}
+	query += ` ORDER BY last_used_at DESC, family_id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.exec(ctx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*domain.SessionFamily, 0, limit)
+	for rows.Next() {
+		family, scanErr := scanFamily(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, family)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListByFamily 返回 family 下全部会话，按创建时间倒序、ID 升序。
+func (r *SQLSessionRepository) ListByFamily(ctx context.Context, familyID string) ([]*domain.Session, error) {
+	id, err := parseID(familyID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx,
+		`SELECT `+sessionSelectColumns+` FROM identity_session WHERE family_id = ?
+		 ORDER BY created_at DESC, id ASC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*domain.Session, 0, 4)
+	for rows.Next() {
+		session, scanErr := scanSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ExpireStale 把到期的会话与设备标记为 expired 单次最多 limit 条。
+func (r *SQLSessionRepository) ExpireStale(ctx context.Context, now time.Time, limit int) (domain.SessionExpireResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var result domain.SessionExpireResult
+	sessionResult, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session
+		SET status = 'expired', updated_at = ?, version = version + 1
+		WHERE status IN ('active', 'rotated')
+		  AND (expires_at <= ? OR (idle_expires_at IS NOT NULL AND idle_expires_at <= ?))
+		ORDER BY expires_at LIMIT ?`, now.UTC(), now.UTC(), now.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := sessionResult.RowsAffected(); rowsErr == nil {
+		result.Sessions = int(affected)
+	}
+	familyResult, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session_family
+		SET status = 'expired', updated_at = ?, version = version + 1
+		WHERE status = 'active' AND (expires_at <= ? OR absolute_expires_at <= ?)
+		ORDER BY expires_at LIMIT ?`, now.UTC(), now.UTC(), now.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := familyResult.RowsAffected(); rowsErr == nil {
+		result.Families = int(affected)
+	}
+	return result, nil
+}
+
+// DeleteExpiredBefore 删除保留期外的会话与设备，单次最多 limit 条。
+func (r *SQLSessionRepository) DeleteExpiredBefore(ctx context.Context, before time.Time, limit int) (domain.SessionDeleteResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var result domain.SessionDeleteResult
+	sessionResult, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_session
+		WHERE status IN ('rotated', 'revoked', 'expired') AND updated_at < ?
+		ORDER BY updated_at LIMIT ?`, before.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := sessionResult.RowsAffected(); rowsErr == nil {
+		result.Sessions = int(affected)
+	}
+	familyResult, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_session_family
+		WHERE status IN ('revoked', 'expired') AND updated_at < ?
+		ORDER BY updated_at LIMIT ?`, before.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := familyResult.RowsAffected(); rowsErr == nil {
+		result.Families = int(affected)
+	}
+	return result, nil
+}
+
+// scanFamily 扫描一行设备会话；可空列允许 NULL。
+func scanFamily(row scanRow) (*domain.SessionFamily, error) {
+	var (
+		family    domain.SessionFamily
+		revokedAt sql.NullTime
+	)
+	err := row.Scan(
+		&family.ID, &family.AccountID, &family.Status, &family.Version,
+		&family.CreatedAt, &family.LastUsedAt, &family.ExpiresAt, &family.AbsoluteExpiresAt,
+		&family.IPHash, &family.UAHash, &family.DeviceLabel, &revokedAt,
+		&family.RevokedReason, &family.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	family.CreatedAt = family.CreatedAt.UTC()
+	family.LastUsedAt = family.LastUsedAt.UTC()
+	family.ExpiresAt = family.ExpiresAt.UTC()
+	family.AbsoluteExpiresAt = family.AbsoluteExpiresAt.UTC()
+	family.UpdatedAt = family.UpdatedAt.UTC()
+	family.RevokedAt = nullableTime(revokedAt)
+	return &family, nil
 }
 
 // scanSession 扫描一行会话；可空列允许 NULL。

@@ -22,6 +22,9 @@ const (
 	ActionAuthMFAFailed       = "auth.mfa.failed"
 	ActionAuthMFADisabled     = "auth.mfa.disabled"
 	ActionAuthMFAReset        = "auth.mfa.reset"
+	ActionAuthMFARecoveryUsed = "auth.mfa.recovery_used"
+	ActionAuthMFATicketReplay = "auth.mfa.ticket_replay"
+	ActionAuthSessionEvicted  = "auth.session.evicted"
 	ActionRBACRoleChange      = "rbac.role_change"
 	ActionRBACBindingChange   = "rbac.binding_change"
 	ActionRBACBreakglass      = "rbac.breakglass"
@@ -57,6 +60,9 @@ func KnownActions() []string {
 		ActionAuthMFAFailed,
 		ActionAuthMFADisabled,
 		ActionAuthMFAReset,
+		ActionAuthMFARecoveryUsed,
+		ActionAuthMFATicketReplay,
+		ActionAuthSessionEvicted,
 		ActionRBACRoleChange,
 		ActionRBACBindingChange,
 		ActionRBACBreakglass,

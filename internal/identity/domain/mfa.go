@@ -26,6 +26,10 @@ type MFAEnrollment struct {
 	SecretCiphertext []byte
 	// ConfirmedAt 首次校验通过时间；nil 表示未确认。
 	ConfirmedAt *time.Time
+	// LastUsedStep 最近一次成功消费的 TOTP 时间步；同一时间步不得重放（IDN-P1-05）。
+	LastUsedStep int64
+	// Version 乐观锁版本；确认、消费时间步与密钥重加密时递增。
+	Version int64
 	// RecoveryCodeHashes 恢复码哈希，永不为 nil。
 	RecoveryCodeHashes []string
 	// CreatedAt / UpdatedAt UTC。
@@ -48,6 +52,7 @@ func NewMFAEnrollment(accountID string, secret []byte, now time.Time) (*MFAEnrol
 	return &MFAEnrollment{
 		AccountID:          accountID,
 		SecretCiphertext:   append([]byte(nil), secret...),
+		Version:            1,
 		RecoveryCodeHashes: []string{},
 		CreatedAt:          createdAt,
 		UpdatedAt:          createdAt,
@@ -65,6 +70,32 @@ func (m *MFAEnrollment) Confirm(now time.Time) error {
 	confirmedAt := utcNow(now)
 	m.ConfirmedAt = &confirmedAt
 	m.UpdatedAt = confirmedAt
+	m.Version++
+	return nil
+}
+
+// TryConsumeStep 原子推进 TOTP 时间步；step 不大于已消费步时返回 false（视为重放）。
+func (m *MFAEnrollment) TryConsumeStep(step int64, now time.Time) bool {
+	if step <= m.LastUsedStep {
+		return false
+	}
+	m.LastUsedStep = step
+	m.UpdatedAt = utcNow(now)
+	m.Version++
+	return true
+}
+
+// RotateSecret 以新密文替换 TOTP 密钥（密钥轮换后的重加密），并递增版本。
+func (m *MFAEnrollment) RotateSecret(ciphertext []byte, now time.Time) error {
+	if len(ciphertext) == 0 {
+		return errInvalid(ErrInvalidMFA, "mfa secret ciphertext is required")
+	}
+	if len(ciphertext) > MaxMFASecretLen {
+		return errInvalid(ErrInvalidMFA, "mfa secret exceeds %d bytes", MaxMFASecretLen)
+	}
+	m.SecretCiphertext = append([]byte(nil), ciphertext...)
+	m.UpdatedAt = utcNow(now)
+	m.Version++
 	return nil
 }
 
@@ -85,6 +116,7 @@ func (m *MFAEnrollment) SetRecoveryCodes(hashes []string, now time.Time) error {
 	}
 	m.RecoveryCodeHashes = next
 	m.UpdatedAt = utcNow(now)
+	m.Version++
 	return nil
 }
 
@@ -119,6 +151,7 @@ func (m *MFAEnrollment) UseRecoveryCode(hash string, now time.Time) bool {
 			m.RecoveryCodeHashes = []string{}
 		}
 		m.UpdatedAt = utcNow(now)
+		m.Version++
 		return true
 	}
 	return false

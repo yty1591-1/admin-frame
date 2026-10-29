@@ -10,6 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
 // Register 将 A 端认证路由挂到 mux。
@@ -33,58 +34,61 @@ func Register(
 	accountWrite := permission(permMW, string(iam.PermIdentityAccountWrite))
 	accountRead := permission(permMW, string(iam.PermIdentityAccountRead))
 
-	mux.HandleFunc("POST /admin/v1/auth/login", h.Login)
-	mux.HandleFunc("POST /admin/v1/auth/refresh", h.Refresh)
-	mux.Handle("GET /admin/v1/me", authMW(http.HandlerFunc(h.Me)))
-	mux.Handle("POST /admin/v1/auth/logout", authMW(http.HandlerFunc(h.Logout)))
-	mux.Handle("POST /admin/v1/auth/logout-all", authMW(http.HandlerFunc(h.LogoutAll)))
+	// 认证与账号端点可能返回令牌、MFA 密钥与账号敏感信息，统一禁止缓存（IDN-P2-03）。
+	secure := func(next http.Handler) http.Handler { return pkghttpx.NoStoreMiddleware(next) }
+
+	mux.Handle("POST /admin/v1/auth/login", secure(http.HandlerFunc(h.Login)))
+	mux.Handle("POST /admin/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))
+	mux.Handle("GET /admin/v1/me", secure(authMW(http.HandlerFunc(h.Me))))
+	mux.Handle("POST /admin/v1/auth/logout", secure(authMW(http.HandlerFunc(h.Logout))))
+	mux.Handle("POST /admin/v1/auth/logout-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
 
 	// MFA：setup / verify 支持「已登录 Bearer」与「登录前票据」两条入口；
 	// 是否带 Authorization 决定走哪条，票据本身由用例层校验。
-	mux.HandleFunc("POST /admin/v1/auth/mfa/setup",
-		ticketOrBearer(http.HandlerFunc(h.SetupMFA), authMW(http.HandlerFunc(h.SetupMFA))))
-	mux.HandleFunc("POST /admin/v1/auth/mfa/verify",
-		ticketOrBearer(http.HandlerFunc(h.VerifyMFA), authMW(http.HandlerFunc(h.VerifyMFA))))
-	mux.Handle("POST /admin/v1/auth/mfa/disable", authMW(http.HandlerFunc(h.DisableMFA)))
+	mux.Handle("POST /admin/v1/auth/mfa/setup",
+		secure(ticketOrBearer(http.HandlerFunc(h.SetupMFA), authMW(http.HandlerFunc(h.SetupMFA)))))
+	mux.Handle("POST /admin/v1/auth/mfa/verify",
+		secure(ticketOrBearer(http.HandlerFunc(h.VerifyMFA), authMW(http.HandlerFunc(h.VerifyMFA)))))
+	mux.Handle("POST /admin/v1/auth/mfa/disable", secure(authMW(http.HandlerFunc(h.DisableMFA))))
 
 	// 会话管理：列表、单会话撤销与全量撤销。
-	mux.Handle("GET /admin/v1/auth/sessions", authMW(http.HandlerFunc(h.ListSessions)))
-	mux.Handle("DELETE /admin/v1/auth/sessions/{id}", authMW(http.HandlerFunc(h.RevokeSession)))
-	mux.Handle("POST /admin/v1/auth/sessions/revoke-all", authMW(http.HandlerFunc(h.LogoutAll)))
+	mux.Handle("GET /admin/v1/auth/sessions", secure(authMW(http.HandlerFunc(h.ListSessions))))
+	mux.Handle("DELETE /admin/v1/auth/sessions/{id}", secure(authMW(http.HandlerFunc(h.RevokeSession))))
+	mux.Handle("POST /admin/v1/auth/sessions/revoke-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
 
 	// 改密：Bearer 走自助改密；无 Authorization 时按强制改密票据处理。
-	mux.HandleFunc("POST /admin/v1/auth/password/change",
-		ticketOrBearer(http.HandlerFunc(h.ChangePassword), authMW(http.HandlerFunc(h.ChangePassword))))
+	mux.Handle("POST /admin/v1/auth/password/change",
+		secure(ticketOrBearer(http.HandlerFunc(h.ChangePassword), authMW(http.HandlerFunc(h.ChangePassword)))))
 
 	// 账号查询：identity:account:read。
 	mux.Handle("GET /admin/v1/auth/accounts",
-		authMW(accountRead(http.HandlerFunc(h.ListAccounts))))
+		secure(authMW(accountRead(http.HandlerFunc(h.ListAccounts)))))
 	mux.Handle("GET /admin/v1/auth/accounts/{id}",
-		authMW(accountRead(http.HandlerFunc(h.GetAccount))))
+		secure(authMW(accountRead(http.HandlerFunc(h.GetAccount)))))
 	mux.Handle("GET /admin/v1/auth/accounts/{id}/sessions",
-		authMW(accountRead(http.HandlerFunc(h.ListAccountSessions))))
+		secure(authMW(accountRead(http.HandlerFunc(h.ListAccountSessions)))))
 
 	// 账号生命周期管理：必须额外持有 identity:account:write。
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/disable",
-		authMW(accountWrite(http.HandlerFunc(h.DisableAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.DisableAccount)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/enable",
-		authMW(accountWrite(http.HandlerFunc(h.EnableAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.EnableAccount)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/lock",
-		authMW(accountWrite(http.HandlerFunc(h.LockAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.LockAccount)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/unlock",
-		authMW(accountWrite(http.HandlerFunc(h.UnlockAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.UnlockAccount)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/mfa/reset",
-		authMW(accountWrite(http.HandlerFunc(h.ResetAccountMFA))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.ResetAccountMFA)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/password/reset",
-		authMW(accountWrite(http.HandlerFunc(h.ResetAccountPassword))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.ResetAccountPassword)))))
 	mux.Handle("DELETE /admin/v1/auth/accounts/{id}",
-		authMW(accountWrite(http.HandlerFunc(h.DeleteAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.DeleteAccount)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/restore",
-		authMW(accountWrite(http.HandlerFunc(h.RestoreAccount))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.RestoreAccount)))))
 	mux.Handle("DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}",
-		authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSession))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSession)))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/sessions/revoke-all",
-		authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSessions))))
+		secure(authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSessions)))))
 }
 
 // permission 返回权限中间件；未注入时失败关闭（403），禁止账号管理端点裸奔。

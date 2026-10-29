@@ -146,6 +146,10 @@ components:
           type: integer
           minimum: 1
           description: 访问令牌有效期（秒）
+        absolute_expires_at:
+          type: string
+          format: date-time
+          description: 设备绝对到期时间；刷新不会延长，达到后需重新登录
     SMSSendRequest:
       type: object
       required: [phone]
@@ -410,14 +414,16 @@ components:
           minLength: 1
     AuthSession:
       type: object
-      required: [id, current, status, created_at, last_used_at, expires_at]
-      description: 会话视图；不包含任何令牌、IP 或 UA 原文。
+      required: [id, current, status, created_at, last_used_at, expires_at, absolute_expires_at]
+      description: |
+        设备会话视图；`id` 为设备（family）ID，同一设备刷新只轮换内部令牌代。
+        不包含任何令牌；`ip_hash` / `ua_hash` 仅为不可逆摘要。
       properties:
         id:
           type: string
         current:
           type: boolean
-          description: 是否为当前请求使用的会话
+          description: 是否为当前请求使用的设备
         status:
           type: string
           enum: [active, rotated, revoked, expired]
@@ -430,6 +436,11 @@ components:
         expires_at:
           type: string
           format: date-time
+          description: 当前令牌代到期时间；刷新会推进但不超过 absolute_expires_at
+        absolute_expires_at:
+          type: string
+          format: date-time
+          description: 设备绝对到期时间；刷新不会延长
         idle_expires_at:
           type: string
           format: date-time
@@ -438,6 +449,12 @@ components:
           type: string
           format: date-time
           description: 撤销时间；未撤销时省略
+        ip_hash:
+          type: string
+          description: 客户端 IP 摘要；不可逆，不返回原文
+        ua_hash:
+          type: string
+          description: User-Agent 摘要；不可逆，不返回原文
     AuthSessionListData:
       type: object
       required: [items]
@@ -446,6 +463,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthSession"
+        next_cursor:
+          type: string
+          description: 下一页游标；省略表示没有更多设备
   responses:
     BadRequest:
       description: 参数非法

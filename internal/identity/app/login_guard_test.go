@@ -36,10 +36,12 @@ type stubLimiter struct {
 	allowed    bool
 	retryAfter time.Duration
 	lastKey    string
+	keys       []string
 }
 
 func (l *stubLimiter) Allow(key string) (bool, time.Duration) {
 	l.lastKey = key
+	l.keys = append(l.keys, key)
 	return l.allowed, l.retryAfter
 }
 
@@ -332,6 +334,20 @@ func TestLoginGuardCheckRateLimit(t *testing.T) {
 		t.Fatal("CheckRateLimit(denied) error = nil, want error")
 	}
 	guardCode(t, err, apperr.CodeTooManyRequests)
+	var retry interface{ RetryAfterSeconds() int }
+	if !errors.As(err, &retry) || retry.RetryAfterSeconds() != 30 {
+		t.Fatalf("Retry-After = %v, want 30", retry)
+	}
+
+	// 多维度键必须逐桶扣减；任一超限即拒绝，并取最大等待时长。
+	multi := &stubLimiter{allowed: true}
+	mfixture := newGuardFixture(t, app.DefaultLockoutPolicy(), app.WithLoginLimiter(multi))
+	if err := mfixture.guard.CheckRateLimit("account-key", "ip-key"); err != nil {
+		t.Fatalf("CheckRateLimit(multi) error = %v", err)
+	}
+	if len(multi.keys) != 2 || multi.keys[0] != "account-key" || multi.keys[1] != "ip-key" {
+		t.Fatalf("limiter keys = %v, want [account-key ip-key]", multi.keys)
+	}
 }
 
 func TestHashAccountRef(t *testing.T) {

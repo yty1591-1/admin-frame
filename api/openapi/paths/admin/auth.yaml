@@ -119,11 +119,27 @@ admin-v1-auth-logout-all:
 admin-v1-auth-sessions:
   get:
     tags: [auth]
-    summary: 列出本账号会话
-    description: 仅返回本账号会话；不下发任何令牌、IP 或 UA 原文。
+    summary: 列出本账号设备会话
+    description: 按设备（family）分页返回本账号会话；不下发任何令牌，IP / UA 仅返回摘要。
     operationId: adminAuthListSessions
     security:
       - bearerAuth: []
+    parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: 上一页返回的 next_cursor；省略表示第一页
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 每页设备数
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
     responses:
       "200":
         description: ok
@@ -500,8 +516,8 @@ admin-v1-auth-accounts-by-id-restore:
 admin-v1-auth-accounts-by-id-sessions:
   get:
     tags: [auth]
-    summary: 列出目标账号会话
-    description: 需要权限点 `identity:account:read`；返回目标账号全部会话，current 恒为 false。
+    summary: 列出目标账号设备会话
+    description: 需要权限点 `identity:account:read`；按设备（family）分页返回，current 恒为 false。
     operationId: adminAuthListAccountSessions
     security:
       - bearerAuth: []
@@ -512,7 +528,21 @@ admin-v1-auth-accounts-by-id-sessions:
         description: 账号 ID
         schema:
           type: string
-          minLength: 1
+      - name: cursor
+        in: query
+        required: false
+        description: 上一页返回的 next_cursor；省略表示第一页
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 每页设备数
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
     responses:
       "200":
         description: ok
@@ -539,10 +569,10 @@ admin-v1-auth-accounts-by-id-sessions:
 admin-v1-auth-accounts-by-id-sessions-by-sid:
   delete:
     tags: [auth]
-    summary: 撤销目标账号指定会话
+    summary: 撤销目标账号指定设备
     description: |
-      需要权限点 `identity:account:write`。仅撤销会话与刷新能力；
-      已签发的 Access Token 仍有效到自然过期（IDN-P1-02 修复后收紧）。
+      需要权限点 `identity:account:write`。按设备（family）撤销全部令牌代，并写会话撤销快照，
+      使该设备已签发的 Access Token 在 ≤60s 内失效。
     operationId: adminAuthRevokeAccountSession
     security:
       - bearerAuth: []
@@ -557,7 +587,7 @@ admin-v1-auth-accounts-by-id-sessions-by-sid:
       - name: sid
         in: path
         required: true
-        description: 会话 ID
+        description: 设备（family）ID，与列表返回的 id 一致
         schema:
           type: string
           minLength: 1

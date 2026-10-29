@@ -437,7 +437,7 @@ func TestMemoryMFAEnrollmentRepository(t *testing.T) {
 	if err := enrollment.SetRecoveryCodes([]string{"hash-1"}, repoBaseTime); err != nil {
 		t.Fatalf("SetRecoveryCodes() error = %v", err)
 	}
-	if err := repo.Save(ctx, enrollment); err != nil {
+	if err := repo.Save(ctx, enrollment, 0); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 

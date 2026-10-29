@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -127,14 +129,44 @@ type PasswordHasher interface {
 	Algorithm() password.Algorithm
 }
 
+// dummyPassword 是时序对齐用的固定占位明文，不代表任何真实凭据（IDN-P2-04）。
+const dummyPassword = "identity-timing-equalizer-not-a-real-credential"
+
+// defaultPasswordWaitTimeout 是获取并发槽位的默认等待上限。
+const defaultPasswordWaitTimeout = 2 * time.Second
+
+// PasswordServiceOption 配置密码服务的可选能力。
+type PasswordServiceOption func(*PasswordService)
+
+// WithConcurrencyLimit 限制同时执行的 Argon2 哈希 / 校验数量（IDN-P2-05）。
+//
+// maxConcurrent ≤ 0 时不启用；waitTimeout ≤ 0 时使用默认 2s，获取槽位超时返回 50300。
+func WithConcurrencyLimit(maxConcurrent int, waitTimeout time.Duration) PasswordServiceOption {
+	return func(s *PasswordService) {
+		if maxConcurrent <= 0 {
+			return
+		}
+		if waitTimeout <= 0 {
+			waitTimeout = defaultPasswordWaitTimeout
+		}
+		s.slots = make(chan struct{}, maxConcurrent)
+		s.waitTimeout = waitTimeout
+	}
+}
+
 // PasswordService 组合密码策略与哈希器，供登录 / 改密用例调用。
 type PasswordService struct {
-	hasher PasswordHasher
-	policy PasswordPolicy
+	hasher      PasswordHasher
+	policy      PasswordPolicy
+	dummyHash   string
+	slots       chan struct{}
+	waitTimeout time.Duration
 }
 
 // NewPasswordService 构造密码服务；哈希器必填，策略零值时使用默认策略。
-func NewPasswordService(hasher PasswordHasher, policy PasswordPolicy) (*PasswordService, error) {
+//
+// 构造时预计算占位哈希，使账号不存在 / 无凭据分支的耗时与真实校验一致。
+func NewPasswordService(hasher PasswordHasher, policy PasswordPolicy, opts ...PasswordServiceOption) (*PasswordService, error) {
 	if hasher == nil {
 		return nil, apperr.Internal("password hasher is required", nil)
 	}
@@ -144,7 +176,69 @@ func NewPasswordService(hasher PasswordHasher, policy PasswordPolicy) (*Password
 	if err := policy.Validate(); err != nil {
 		return nil, apperr.BadRequest(err.Error())
 	}
-	return &PasswordService{hasher: hasher, policy: policy}, nil
+	dummyHash, dummyErr := hasher.Hash([]byte(dummyPassword))
+	if dummyErr != nil {
+		// 不阻断启动；VerifyDummy 在无可用占位哈希时退化为空操作。
+		dummyHash = ""
+	}
+	service := &PasswordService{hasher: hasher, policy: policy, dummyHash: dummyHash}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service, nil
+}
+
+// VerifyContext 在并发槽位内校验密码，超时返回 50300（IDN-P2-05）。
+func (s *PasswordService) VerifyContext(ctx context.Context, encoded, plain string) (bool, error) {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	return s.Verify(encoded, plain)
+}
+
+// VerifyDummyContext 在并发槽位内执行占位校验；超时返回 50300。
+func (s *PasswordService) VerifyDummyContext(ctx context.Context) error {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	s.VerifyDummy()
+	return nil
+}
+
+// VerifyDummy 对固定占位哈希执行一次真实校验，用于账号不存在、无密码凭据或状态拒绝时对齐耗时。
+//
+// 结果始终忽略；调用方仍返回统一 invalidCredentials()。
+func (s *PasswordService) VerifyDummy() {
+	if s == nil || s.dummyHash == "" {
+		return
+	}
+	_ = s.hasher.Verify(s.dummyHash, []byte(dummyPassword+"-probe"))
+}
+
+// acquire 获取一个密码计算槽位；未启用并发限制时为空操作。
+//
+// 排队超过 waitTimeout 或请求取消时返回 50300，避免排队雪崩。
+func (s *PasswordService) acquire(ctx context.Context) (func(), error) {
+	if s == nil || s.slots == nil {
+		return func() {}, nil
+	}
+	timer := time.NewTimer(s.waitTimeout)
+	defer timer.Stop()
+	select {
+	case s.slots <- struct{}{}:
+		return func() { <-s.slots }, nil
+	case <-timer.C:
+		return nil, apperr.Unavailable("password verification is busy")
+	case <-ctx.Done():
+		return nil, apperr.New(apperr.CodeServiceUnavailable, "password verification canceled",
+			errors.Join(apperr.ErrUnavailable, ctx.Err()))
+	}
 }
 
 // Policy 返回当前生效的策略。

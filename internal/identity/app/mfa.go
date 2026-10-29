@@ -3,20 +3,32 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/totp"
 )
 
 // DefaultMFAIssuer 是 otpauth URI 的默认发行方标识。
 const DefaultMFAIssuer = "AdminFrame"
+
+// MFASecretCipher 是 TOTP 密钥的加解密端口；crypto.AEAD 与 crypto.KeyRing 均满足。
+type MFASecretCipher interface {
+	Seal(plaintext, aad []byte) ([]byte, error)
+	Open(blob, aad []byte) ([]byte, error)
+}
+
+// MFAKeyRotator 是可选能力：支持 key id 的密钥环在登录成功后重加密旧密文。
+type MFAKeyRotator interface {
+	// NeedsRotation 报告密文是否使用了非 active key（含旧格式）。
+	NeedsRotation(blob []byte) bool
+}
 
 // recoveryCodeCount 是绑定 MFA 时生成的一次性恢复码数量。
 const recoveryCodeCount = 10
@@ -108,14 +120,21 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 	if err != nil {
 		return MFASetupResult{}, err
 	}
-	codes, hashes, err := generateRecoveryCodes()
+	codes, hashes, err := generateRecoveryCodes(s.hasher, account.ID)
 	if err != nil {
 		return MFASetupResult{}, err
 	}
 	if err := enrollment.SetRecoveryCodes(hashes, now); err != nil {
 		return MFASetupResult{}, err
 	}
-	if err := s.mfa.Save(ctx, enrollment); err != nil {
+	expected := int64(0)
+	if existing != nil {
+		// 覆盖未确认绑定：沿用创建时间，并把版本与 CAS 期望值对齐。
+		expected = existing.Version
+		enrollment.Version = existing.Version + 1
+		enrollment.CreatedAt = existing.CreatedAt
+	}
+	if err := s.mfa.Save(ctx, enrollment, expected); err != nil {
 		return MFASetupResult{}, apperr.Internal("save mfa enrollment failed", err)
 	}
 
@@ -142,7 +161,10 @@ func (s *AuthService) mfaSetupAccount(ctx context.Context, in MFASetupInput, now
 		if claims.ExpiresAt.IsZero() || !claims.ExpiresAt.After(now) {
 			return nil, invalidToken()
 		}
-		if err := s.guard.CheckRateLimit(mfaSetupRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+		if err := s.guard.CheckRateLimit(
+			mfaSetupRateKey(s.channel, claims.ID, in.IPHash),
+			mfaAccountRateKey(s.channel, claims.Subject),
+		); err != nil {
 			return nil, err
 		}
 		return s.loadMFAAccount(ctx, claims.Subject, now)
@@ -174,14 +196,22 @@ func (s *AuthService) loadMFAAccount(ctx context.Context, accountID string, now 
 // 两者同时出现返回 40000，避免请求语义歧义。
 func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
 	var result MFAVerifyResult
-	if err := s.runTx(ctx, func(txCtx context.Context) error {
+	err := s.runTx(ctx, func(txCtx context.Context) error {
 		res, err := s.verifyMFAInTx(txCtx, in)
 		if err != nil {
 			return err
 		}
 		result = res
 		return nil
-	}); err != nil {
+	})
+	if s.metrics != nil {
+		status := MetricResultSuccess
+		if err != nil {
+			status = MetricResultFailure
+		}
+		s.metrics.ObserveMFAVerify(ctx, status)
+	}
+	if err != nil {
 		return MFAVerifyResult{}, err
 	}
 	return result, nil
@@ -248,11 +278,11 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 		if !enrollment.IsConfirmed() {
 			return invalidToken()
 		}
-		ok, err := s.verifyEnrollmentCode(txCtx, enrollment, code, now, true)
+		outcome, _, err := s.verifyEnrollmentCode(txCtx, loaded, enrollment, code, now, true, actor.TraceID)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if outcome != mfaCodeTOTP && outcome != mfaCodeRecovery {
 			return s.mfaFailure(txCtx, loaded, "", "", actor.TraceID)
 		}
 		if err := s.mfa.Delete(txCtx, loaded.ID); err != nil {
@@ -349,10 +379,13 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 		}
 		return MFAVerifyResult{}, apperr.Internal("load account failed", err)
 	}
-	if err := s.guard.Authorize(account, now); err != nil {
+	if err := s.mfaAuthorize(ctx, account, now, in.TraceID); err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if err := s.guard.CheckRateLimit(mfaRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+	if err := s.guard.CheckRateLimit(
+		mfaRateKey(s.channel, claims.ID, in.IPHash),
+		mfaAccountRateKey(s.channel, account.ID),
+	); err != nil {
 		return MFAVerifyResult{}, err
 	}
 
@@ -376,18 +409,18 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 	if !enrollment.IsConfirmed() {
 		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
 	}
-	ok, err := s.verifyEnrollmentCode(ctx, enrollment, in.Code, now, true)
+	outcome, _, err := s.verifyEnrollmentCode(ctx, account, enrollment, in.Code, now, true, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if !ok {
+	if outcome != mfaCodeTOTP && outcome != mfaCodeRecovery {
 		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
 	}
 
 	if err := s.guard.RecordSuccess(ctx, account, in.IPHash, in.UAHash, now); err != nil {
 		return MFAVerifyResult{}, apperr.Internal("record login success failed", err)
 	}
-	result, err := s.createSession(ctx, account, now)
+	result, err := s.createSession(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
@@ -422,10 +455,13 @@ func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (
 		}
 		return MFAVerifyResult{}, apperr.Internal("load account failed", err)
 	}
-	if err := s.guard.Authorize(account, now); err != nil {
+	if err := s.mfaAuthorize(ctx, account, now, in.TraceID); err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if err := s.guard.CheckRateLimit(mfaSetupRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+	if err := s.guard.CheckRateLimit(
+		mfaSetupRateKey(s.channel, claims.ID, in.IPHash),
+		mfaAccountRateKey(s.channel, account.ID),
+	); err != nil {
 		return MFAVerifyResult{}, err
 	}
 
@@ -436,7 +472,8 @@ func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (
 			"mfa ticket store unavailable", errors.Join(apperr.ErrUnavailable, err))
 	}
 	if !consumed {
-		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
+		// 票据重放属于客户端重试，不计入密码 / MFA 失败，避免被用于恶意锁定。
+		return MFAVerifyResult{}, s.mfaTicketReplay(ctx, account, in.TraceID)
 	}
 
 	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
@@ -450,17 +487,18 @@ func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (
 		// 票据签发后绑定已被其他请求确认：不再重复确认，直接按失败关闭处理。
 		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
 	}
-	ok, err := s.verifyEnrollmentCode(ctx, enrollment, in.Code, now, false)
+	outcome, _, err := s.verifyEnrollmentCode(ctx, account, enrollment, in.Code, now, false, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if !ok {
+	if outcome != mfaCodeTOTP {
 		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
 	}
+	expected := enrollment.Version
 	if err := enrollment.Confirm(now); err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if err := s.mfa.Save(ctx, enrollment); err != nil {
+	if err := s.mfa.Save(ctx, enrollment, expected); err != nil {
 		return MFAVerifyResult{}, apperr.Internal("save mfa enrollment failed", err)
 	}
 	if err := s.emitAudit(ctx, audit.ActionAuthMFABound, account.ID, account.MerchantID, "account", account.ID,
@@ -490,7 +528,7 @@ func (s *AuthService) confirmMFABinding(ctx context.Context, in MFAVerifyInput) 
 		}
 		return MFAVerifyResult{}, apperr.Internal("load account failed", err)
 	}
-	if err := s.guard.Authorize(account, now); err != nil {
+	if err := s.mfaAuthorize(ctx, account, now, actor.TraceID); err != nil {
 		return MFAVerifyResult{}, err
 	}
 	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
@@ -503,17 +541,18 @@ func (s *AuthService) confirmMFABinding(ctx context.Context, in MFAVerifyInput) 
 	if enrollment.IsConfirmed() {
 		return MFAVerifyResult{}, apperr.Conflict("mfa is already confirmed")
 	}
-	ok, err := s.verifyEnrollmentCode(ctx, enrollment, in.Code, now, false)
+	outcome, _, err := s.verifyEnrollmentCode(ctx, account, enrollment, in.Code, now, false, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if !ok {
+	if outcome != mfaCodeTOTP {
 		return MFAVerifyResult{}, s.mfaFailure(ctx, account, in.IPHash, in.UAHash, in.TraceID)
 	}
+	expected := enrollment.Version
 	if err := enrollment.Confirm(now); err != nil {
 		return MFAVerifyResult{}, err
 	}
-	if err := s.mfa.Save(ctx, enrollment); err != nil {
+	if err := s.mfa.Save(ctx, enrollment, expected); err != nil {
 		return MFAVerifyResult{}, apperr.Internal("save mfa enrollment failed", err)
 	}
 	if err := s.emitAudit(ctx, audit.ActionAuthMFABound, account.ID, account.MerchantID, "account", account.ID,
@@ -523,34 +562,113 @@ func (s *AuthService) confirmMFABinding(ctx context.Context, in MFAVerifyInput) 
 	return MFAVerifyResult{AccountID: account.ID, BindingConfirmed: true}, nil
 }
 
-// verifyEnrollmentCode 先校验 TOTP；allowRecovery 时再尝试一次性恢复码。
+// mfaCodeOutcome 是动态码 / 恢复码的校验结果。
+type mfaCodeOutcome int
+
+const (
+	// mfaCodeInvalid 动态码与恢复码均无效。
+	mfaCodeInvalid mfaCodeOutcome = iota
+	// mfaCodeTOTP TOTP 校验通过；时间步已原子推进。
+	mfaCodeTOTP
+	// mfaCodeRecovery 恢复码校验通过；该码已被原子消费。
+	mfaCodeRecovery
+	// mfaCodeReplay 命中的 TOTP 时间步已被消费或并发冲突，视为重放。
+	mfaCodeReplay
+)
+
+// verifyEnrollmentCode 先校验 TOTP；allowRecovery 时再原子消费一次性恢复码。
+//
+// 成功时在同一事务内推进 last_used_step 并按需重加密密钥；失败由调用方统一按 40100 处理。
 func (s *AuthService) verifyEnrollmentCode(
 	ctx context.Context,
+	account *domain.Account,
 	enrollment *domain.MFAEnrollment,
 	code string,
 	now time.Time,
 	allowRecovery bool,
-) (bool, error) {
+	traceID string,
+) (mfaCodeOutcome, int, error) {
 	if s.mfaCipher == nil {
-		return false, apperr.Unavailable("mfa is not configured")
+		return mfaCodeInvalid, 0, apperr.Unavailable("mfa is not configured")
 	}
 	secret, err := s.mfaCipher.Open(enrollment.SecretCiphertext, mfaAAD(enrollment.AccountID))
 	if err != nil {
-		return false, apperr.Internal("decrypt mfa secret failed", err)
+		return mfaCodeInvalid, 0, apperr.Internal("decrypt mfa secret failed", err)
 	}
-	if totp.Validate(secret, code, now) {
-		return true, nil
+	step, ok := totp.ValidateStep(secret, code, now)
+	if ok {
+		expected := enrollment.Version
+		if !enrollment.TryConsumeStep(step, now) {
+			return mfaCodeReplay, 0, nil
+		}
+		if rotator, isRotator := s.mfaCipher.(MFAKeyRotator); isRotator && rotator.NeedsRotation(enrollment.SecretCiphertext) {
+			rotated, sealErr := s.mfaCipher.Seal(secret, mfaAAD(account.ID))
+			if sealErr != nil {
+				return mfaCodeInvalid, 0, apperr.Internal("re-encrypt mfa secret failed", sealErr)
+			}
+			if rotateErr := enrollment.RotateSecret(rotated, now); rotateErr != nil {
+				return mfaCodeInvalid, 0, rotateErr
+			}
+		}
+		if saveErr := s.mfa.Save(ctx, enrollment, expected); saveErr != nil {
+			if errors.Is(saveErr, apperr.ErrConflict) {
+				// 并发使用同一时间步：只有一个请求能完成 CAS，其余按重放处理。
+				return mfaCodeReplay, 0, nil
+			}
+			return mfaCodeInvalid, 0, apperr.Internal("save mfa enrollment failed", saveErr)
+		}
+		return mfaCodeTOTP, 0, nil
 	}
 	if !allowRecovery {
-		return false, nil
+		return mfaCodeInvalid, 0, nil
 	}
-	if !enrollment.UseRecoveryCode(hashRecoveryCode(code), now) {
-		return false, nil
+	// 逐个候选摘要尝试消费：active 优先，历史 key 用于轮换双读。
+	var remaining int
+	consumed := false
+	for _, digest := range RecoveryDigests(s.hasher, account.ID, code) {
+		remaining, consumed, err = s.mfa.ConsumeRecoveryCode(ctx, account.ID, digest, now)
+		if err != nil {
+			if errors.Is(err, apperr.ErrNotFound) {
+				return mfaCodeInvalid, 0, nil
+			}
+			return mfaCodeInvalid, 0, apperr.Internal("consume recovery code failed", err)
+		}
+		if consumed {
+			break
+		}
 	}
-	if err := s.mfa.Save(ctx, enrollment); err != nil {
-		return false, apperr.Internal("consume recovery code failed", err)
+	if !consumed {
+		return mfaCodeInvalid, remaining, nil
 	}
-	return true, nil
+	if s.metrics != nil {
+		s.metrics.ObserveMFARecoveryUsed(ctx, remaining)
+	}
+	if auditErr := s.emitAudit(ctx, audit.ActionAuthMFARecoveryUsed, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeSuccess, "", traceID, map[string]string{"remaining": strconv.Itoa(remaining)}); auditErr != nil {
+		return mfaCodeInvalid, 0, auditErr
+	}
+	return mfaCodeRecovery, remaining, nil
+}
+
+// mfaTicketReplay 记录票据重放审计并返回 40100；不计入失败次数，避免恶意锁定。
+func (s *AuthService) mfaTicketReplay(ctx context.Context, account *domain.Account, traceID string) error {
+	if err := s.emitAudit(ctx, audit.ActionAuthMFATicketReplay, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeFailure, domain.LoginReasonReplay, traceID, nil); err != nil {
+		return err
+	}
+	return invalidToken()
+}
+
+// mfaAuthorize 校验账号当前是否允许登录；locked / disabled 时先写审计再拒绝（IDN-P2-02）。
+func (s *AuthService) mfaAuthorize(ctx context.Context, account *domain.Account, now time.Time, traceID string) error {
+	if err := s.guard.Authorize(account, now); err != nil {
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+			audit.OutcomeFailure, reasonFromAuthError(err), traceID, nil); auditErr != nil {
+			return auditErr
+		}
+		return err
+	}
+	return nil
 }
 
 // mfaFailure 记录一次 MFA 失败尝试并写审计，返回统一 40100。
@@ -602,27 +720,42 @@ func (s *AuthService) saveRevocationState(ctx context.Context, account *domain.A
 	return nil
 }
 
-// generateRecoveryCodes 生成一次性恢复码与其 SHA-256 哈希。
-func generateRecoveryCodes() (codes, hashes []string, err error) {
+// recoveryCodeBytes 是恢复码熵（80 bit），显著提高离线爆破成本。
+const recoveryCodeBytes = 10
+
+// generateRecoveryCodes 生成一次性恢复码（按 4 位分组展示）与其带账号盐的哈希。
+func generateRecoveryCodes(hasher *crypto.Hasher, accountID string) (codes, hashes []string, err error) {
 	codes = make([]string, 0, recoveryCodeCount)
 	hashes = make([]string, 0, recoveryCodeCount)
 	for i := 0; i < recoveryCodeCount; i++ {
-		buf := make([]byte, 5)
+		buf := make([]byte, recoveryCodeBytes)
 		if _, err := rand.Read(buf); err != nil {
 			return nil, nil, apperr.Internal("generate recovery code failed", err)
 		}
-		code := totp.EncodeSecret(buf)
+		code := formatRecoveryCode(totp.EncodeSecret(buf))
 		codes = append(codes, code)
-		hashes = append(hashes, hashRecoveryCode(code))
+		hashes = append(hashes, RecoveryDigests(hasher, accountID, code)[0])
 	}
 	return codes, hashes, nil
 }
 
-// hashRecoveryCode 返回规范化恢复码的 SHA-256 十六进制摘要。
-func hashRecoveryCode(code string) string {
-	normalized := strings.ToUpper(strings.TrimSpace(code))
-	sum := sha256.Sum256([]byte(normalized))
-	return hex.EncodeToString(sum[:])
+// formatRecoveryCode 把裸 Base32 串按 4 位分组，便于用户抄写与辨认。
+func formatRecoveryCode(raw string) string {
+	upper := strings.ToUpper(strings.TrimSpace(raw))
+	var builder strings.Builder
+	for i, r := range upper {
+		if i > 0 && i%4 == 0 {
+			builder.WriteByte('-')
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
+}
+
+// normalizeRecoveryCode 去掉分组符号与空白，统一大写。
+func normalizeRecoveryCode(code string) string {
+	replacer := strings.NewReplacer("-", "", " ", "", "\t", "")
+	return strings.ToUpper(replacer.Replace(strings.TrimSpace(code)))
 }
 
 // mfaAAD 绑定账号 ID 作为附加认证数据，防止密文跨账号挪用。
@@ -644,6 +777,11 @@ func mfaSetupRateKey(channel domain.Channel, jti, ipHash string) string {
 		return string(channel) + ":mfa_setup:" + jti
 	}
 	return string(channel) + ":mfa_setup:" + jti + ":" + ipHash
+}
+
+// mfaAccountRateKey 是 MFA 校验的账号级限流键，防止换票据刷验证码。
+func mfaAccountRateKey(channel domain.Channel, accountID string) string {
+	return string(channel) + ":mfa_account:" + accountID
 }
 
 // mfaSetupTicketStoreKey 把绑定票据的 jti 放入独立命名空间。

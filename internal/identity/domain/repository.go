@@ -62,7 +62,8 @@ type CredentialRepository interface {
 // 约定：
 //   - RefreshHash 全局唯一，只存 SHA-256 摘要；
 //   - Save 必须使用 expectedVersion 做乐观锁，保证并发刷新只有一个请求成功；
-//   - RevokeFamily 在同一语句内把整条会话链置为 revoked（含已 rotated 的会话）。
+//   - RevokeFamily 在同一语句内把整条会话链置为 revoked（含已 rotated 的会话），并同步撤销设备会话；
+//   - RevokeByAccount 撤销账号下全部会话，并同步撤销全部设备会话。
 type SessionRepository interface {
 	// FindByID 按主键加载会话；不存在返回 apperr.NotFound。
 	FindByID(ctx context.Context, id string) (*Session, error)
@@ -74,16 +75,50 @@ type SessionRepository interface {
 	RevokeFamily(ctx context.Context, familyID string, reason RevokeReason, now time.Time) (int, error)
 	// RevokeByAccount 撤销账号下全部 active / rotated 会话（logout-all / 停用）。
 	RevokeByAccount(ctx context.Context, accountID string, reason RevokeReason, now time.Time) (int, error)
-	// ListByAccount 返回账号全部会话，按创建时间倒序，供会话管理使用。
+	// ListByAccount 返回账号全部会话，按创建时间倒序，供审计与清理使用。
 	ListByAccount(ctx context.Context, accountID string) ([]*Session, error)
+	// FindFamily 按主键加载设备会话；不存在返回 apperr.NotFound。
+	FindFamily(ctx context.Context, familyID string) (*SessionFamily, error)
+	// SaveFamily 创建设备会话（expectedVersion=0）或使用乐观锁更新。
+	SaveFamily(ctx context.Context, family *SessionFamily, expectedVersion int64) error
+	// ListFamiliesByAccount 按 last_used_at / family_id 倒序返回设备会话（游标分页）。
+	//
+	// afterLastUsed / afterID 为空表示第一页；limit <= 0 使用调用方默认值。
+	ListFamiliesByAccount(ctx context.Context, accountID string, afterLastUsed time.Time, afterID string, limit int) ([]*SessionFamily, error)
+	// ListByFamily 返回 family 下全部会话，按创建时间倒序。
+	ListByFamily(ctx context.Context, familyID string) ([]*Session, error)
+	// ExpireStale 把到期的会话与设备标记为 expired，单次最多 limit 条。
+	ExpireStale(ctx context.Context, now time.Time, limit int) (SessionExpireResult, error)
+	// DeleteExpiredBefore 删除 before 之前的 rotated / revoked / expired 会话与设备，单次最多 limit 条。
+	DeleteExpiredBefore(ctx context.Context, before time.Time, limit int) (SessionDeleteResult, error)
+}
+
+// SessionExpireResult 汇总一次过期扫描的结果。
+type SessionExpireResult struct {
+	// Sessions 被标记为 expired 的会话数。
+	Sessions int
+	// Families 被标记为 expired 的设备数。
+	Families int
+}
+
+// SessionDeleteResult 汇总一次保留期清理的结果。
+type SessionDeleteResult struct {
+	// Sessions 被删除的会话数。
+	Sessions int
+	// Families 被删除的设备数。
+	Families int
 }
 
 // MFAEnrollmentRepository 是 TOTP 绑定的持久化端口。
 type MFAEnrollmentRepository interface {
 	// FindByAccount 返回账号的绑定；不存在返回 apperr.NotFound。
 	FindByAccount(ctx context.Context, accountID string) (*MFAEnrollment, error)
-	// Save 创建或覆盖账号绑定（account_id 为主键）。
-	Save(ctx context.Context, enrollment *MFAEnrollment) error
+	// Save 创建或使用乐观锁更新账号绑定。
+	//
+	// expectedVersion=0 表示仅创建；>0 表示必须匹配当前版本，冲突返回 40900。
+	Save(ctx context.Context, enrollment *MFAEnrollment, expectedVersion int64) error
+	// ConsumeRecoveryCode 原子消费一条恢复码，返回剩余数量；已被消费返回 ok=false。
+	ConsumeRecoveryCode(ctx context.Context, accountID, codeHash string, now time.Time) (remaining int, ok bool, err error)
 	// Delete 删除绑定；不存在也返回成功（幂等）。
 	Delete(ctx context.Context, accountID string) error
 }
@@ -109,4 +144,6 @@ type LoginAttemptRepository interface {
 	CountFailuresSince(ctx context.Context, channel Channel, accountRef string, since time.Time) (int, error)
 	// LastSuccessAt 返回最近一次成功登录时间；没有记录时 found 为 false。
 	LastSuccessAt(ctx context.Context, channel Channel, accountRef string) (occurredAt time.Time, found bool, err error)
+	// DeleteBefore 删除 occurred_at 早于 before 的尝试记录，单次最多 limit 条。
+	DeleteBefore(ctx context.Context, before time.Time, limit int) (int, error)
 }

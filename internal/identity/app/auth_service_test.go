@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +47,39 @@ func (fakeHasher) Verify(encoded string, plain []byte) error {
 
 // NeedsRehash 测试哈希始终视为最新参数。
 func (fakeHasher) NeedsRehash(string) bool { return false }
+
+// countingHasher 记录 Verify 次数，用于断言时序对齐的占位校验确实执行（IDN-P2-04）。
+type countingHasher struct {
+	mu       sync.Mutex
+	verifies int
+}
+
+// Hash 返回可逆测试编码。
+func (h *countingHasher) Hash(plain []byte) (string, error) { return "count$" + string(plain), nil }
+
+// Verify 记录调用次数并比对测试编码。
+func (h *countingHasher) Verify(encoded string, plain []byte) error {
+	h.mu.Lock()
+	h.verifies++
+	h.mu.Unlock()
+	if encoded != "count$"+string(plain) {
+		return password.ErrMismatch
+	}
+	return nil
+}
+
+// NeedsRehash 测试哈希始终视为最新参数。
+func (h *countingHasher) NeedsRehash(string) bool { return false }
+
+// Algorithm 返回测试用算法标识。
+func (h *countingHasher) Algorithm() password.Algorithm { return password.AlgorithmBcrypt }
+
+// count 返回累计 Verify 次数。
+func (h *countingHasher) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.verifies
+}
 
 // Algorithm 返回测试算法标识。
 func (fakeHasher) Algorithm() password.Algorithm { return password.AlgorithmArgon2id }
@@ -530,10 +565,11 @@ func TestAuthServiceListAndRevokeSessions(t *testing.T) {
 		TokenID:        "jti-current",
 		TokenExpiresAt: f.clock.Now().Add(15 * time.Minute),
 	}
-	views, err := f.svc.ListSessions(ctx, actor)
+	page, err := f.svc.ListSessions(ctx, app.SessionListInput{SessionActor: actor})
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
+	views := page.Items
 	if len(views) != 2 {
 		t.Fatalf("session count = %d, want 2", len(views))
 	}
@@ -560,6 +596,310 @@ func TestAuthServiceListAndRevokeSessions(t *testing.T) {
 	}
 }
 
+// TestSessionsListIsFamilyCentric 覆盖连续刷新只产生一台设备，列表按设备分页返回。
+func TestSessionsListIsFamilyCentric(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	token := login.RefreshToken
+	for i := 0; i < 100; i++ {
+		refreshed, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: token})
+		if err != nil {
+			t.Fatalf("refresh %d: %v", i, err)
+		}
+		token = refreshed.RefreshToken
+	}
+
+	rows, err := f.sessions.ListByAccount(ctx, login.AccountID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(rows) != 101 {
+		t.Fatalf("token generations = %d, want 101", len(rows))
+	}
+
+	page, err := f.svc.ListSessions(ctx, app.SessionListInput{SessionActor: app.SessionActor{
+		AccountID: login.AccountID,
+		SessionID: login.SessionID,
+	}})
+	if err != nil {
+		t.Fatalf("list device sessions: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("device sessions = %d, want 1", len(page.Items))
+	}
+	if page.Items[0].ID != login.SessionID || !page.Items[0].Current {
+		t.Fatalf("unexpected device view: %+v", page.Items[0])
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("single page must not return cursor, got %q", page.NextCursor)
+	}
+}
+
+// TestSessionsListPagination 覆盖设备列表游标分页。
+func TestSessionsListPagination(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	first := f.login(t, "alice", "Correct#Passw0rd")
+	f.login(t, "alice", "Correct#Passw0rd")
+	f.login(t, "alice", "Correct#Passw0rd")
+
+	actor := app.SessionActor{AccountID: first.AccountID}
+	page, err := f.svc.ListSessions(ctx, app.SessionListInput{SessionActor: actor, Limit: 2})
+	if err != nil {
+		t.Fatalf("list page 1: %v", err)
+	}
+	if len(page.Items) != 2 || page.NextCursor == "" {
+		t.Fatalf("page 1 = %d items, cursor %q", len(page.Items), page.NextCursor)
+	}
+	next, err := f.svc.ListSessions(ctx, app.SessionListInput{
+		SessionActor: actor,
+		Cursor:       page.NextCursor,
+		Limit:        2,
+	})
+	if err != nil {
+		t.Fatalf("list page 2: %v", err)
+	}
+	if len(next.Items) != 1 || next.NextCursor != "" {
+		t.Fatalf("page 2 = %d items, cursor %q", len(next.Items), next.NextCursor)
+	}
+	if next.Items[0].ID == page.Items[0].ID || next.Items[0].ID == page.Items[1].ID {
+		t.Fatalf("pagination returned duplicate device %s", next.Items[0].ID)
+	}
+}
+
+// TestLoginEvictsLeastRecentlyUsedDevice 覆盖单账号设备上限与 auth.session.evicted 审计。
+func TestLoginEvictsLeastRecentlyUsedDevice(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureEmitter{}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MaxPerAccount = 2
+	}, withCapture(capture))
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	first := f.login(t, "alice", "Correct#Passw0rd")
+	f.login(t, "alice", "Correct#Passw0rd")
+	f.login(t, "alice", "Correct#Passw0rd")
+
+	active, err := f.sessions.ListFamiliesByAccount(ctx, first.AccountID, time.Time{}, "", 0)
+	if err != nil {
+		t.Fatalf("list families: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("active devices = %d, want 2", len(active))
+	}
+	evicted, err := f.sessions.FindFamily(ctx, first.SessionID)
+	if err != nil {
+		t.Fatalf("load evicted family: %v", err)
+	}
+	if evicted.Status != domain.SessionStatusRevoked || evicted.RevokedReason != domain.RevokeReasonEvicted {
+		t.Fatalf("oldest family must be evicted: %+v", evicted)
+	}
+	if events := capture.byAction(audit.ActionAuthSessionEvicted); len(events) != 1 {
+		t.Fatalf("expected one auth.session.evicted, got %d", len(events))
+	}
+}
+
+// TestRefreshEnforcesAbsoluteSessionTTL 覆盖设备绝对生命上限：刷新不延长上限，超限后撤销整链。
+func TestRefreshEnforcesAbsoluteSessionTTL(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.SessionAbsoluteTTL = 200 * time.Hour
+	})
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	wantAbsolute := f.clock.Now().Add(200 * time.Hour)
+	if !login.AbsoluteExpiresAt.Equal(wantAbsolute) {
+		t.Fatalf("login absolute_expires_at = %v, want %v", login.AbsoluteExpiresAt, wantAbsolute)
+	}
+	family, err := f.sessions.FindFamily(ctx, login.SessionID)
+	if err != nil {
+		t.Fatalf("load family: %v", err)
+	}
+	if !family.AbsoluteExpiresAt.Equal(wantAbsolute) {
+		t.Fatalf("family absolute expiry = %v, want %v", family.AbsoluteExpiresAt, wantAbsolute)
+	}
+
+	// 刷新只能滑动令牌代，不得延长设备绝对上限。
+	token := login.RefreshToken
+	f.clock.Advance(30 * time.Minute)
+	refreshed, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: token})
+	if err != nil {
+		t.Fatalf("refresh within absolute ttl: %v", err)
+	}
+	if !refreshed.AbsoluteExpiresAt.Equal(wantAbsolute) {
+		t.Fatalf("refresh extended absolute expiry to %v, want %v", refreshed.AbsoluteExpiresAt, wantAbsolute)
+	}
+
+	// 越过绝对上限：拒绝刷新并撤销整条设备链。
+	f.clock.Advance(200 * time.Hour)
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: refreshed.RefreshToken}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("refresh after absolute expiry err = %v, want 401", err)
+	}
+	family, err = f.sessions.FindFamily(ctx, login.SessionID)
+	if err != nil {
+		t.Fatalf("reload family: %v", err)
+	}
+	if family.Status != domain.SessionStatusRevoked || family.RevokedReason != domain.RevokeReasonExpired {
+		t.Fatalf("family = %s/%s, want revoked/expired", family.Status, family.RevokedReason)
+	}
+}
+
+// failingRevokeSessions 模拟仓储撤销失败，用于验证失败关闭与回滚（IDN-P1-03）。
+type failingRevokeSessions struct {
+	domain.SessionRepository
+	fail bool
+}
+
+// RevokeFamily 按 fail 决定是否返回存储错误。
+func (s *failingRevokeSessions) RevokeFamily(
+	ctx context.Context,
+	familyID string,
+	reason domain.RevokeReason,
+	now time.Time,
+) (int, error) {
+	if s.fail {
+		return 0, errStoreDown
+	}
+	return s.SessionRepository.RevokeFamily(ctx, familyID, reason, now)
+}
+
+// recordingMetrics 记录指标事件名与标签，供失败路径断言。
+type recordingMetrics struct {
+	names  []string
+	labels [][]string
+}
+
+// add 追加一条指标事件。
+func (m *recordingMetrics) add(name string, labels ...string) {
+	m.names = append(m.names, name)
+	m.labels = append(m.labels, labels)
+}
+
+// count 返回指定指标事件的出现次数。
+func (m *recordingMetrics) count(name string) int {
+	n := 0
+	for _, item := range m.names {
+		if item == name {
+			n++
+		}
+	}
+	return n
+}
+
+// ObserveLogin 实现 app.Metrics。
+func (m *recordingMetrics) ObserveLogin(_ context.Context, channel domain.Channel, result, reason string, _ time.Duration) {
+	m.add("login", channel.String(), result, reason)
+}
+
+// ObserveLockout 实现 app.Metrics。
+func (m *recordingMetrics) ObserveLockout(_ context.Context, channel domain.Channel) {
+	m.add("lockout", channel.String())
+}
+
+// ObserveMFAVerify 实现 app.Metrics。
+func (m *recordingMetrics) ObserveMFAVerify(_ context.Context, result string) {
+	m.add("mfa_verify", result)
+}
+
+// ObserveMFARecoveryUsed 实现 app.Metrics。
+func (m *recordingMetrics) ObserveMFARecoveryUsed(_ context.Context, remaining int) {
+	m.add("mfa_recovery_used", strconv.Itoa(remaining))
+}
+
+// ObserveRefresh 实现 app.Metrics。
+func (m *recordingMetrics) ObserveRefresh(_ context.Context, result string) {
+	m.add("refresh", result)
+}
+
+// ObserveTokenReuse 实现 app.Metrics。
+func (m *recordingMetrics) ObserveTokenReuse(_ context.Context) {
+	m.add("token_reuse")
+}
+
+// ObserveSessionRevoke 实现 app.Metrics。
+func (m *recordingMetrics) ObserveSessionRevoke(_ context.Context, reason, result string) {
+	m.add("session_revoke", reason, result)
+}
+
+// ObserveSMSSend 实现 app.Metrics。
+func (m *recordingMetrics) ObserveSMSSend(_ context.Context, result string) {
+	m.add("sms_send", result)
+}
+
+// ObserveOAuthCallback 实现 app.Metrics。
+func (m *recordingMetrics) ObserveOAuthCallback(_ context.Context, provider, result string) {
+	m.add("oauth_callback", provider, result)
+}
+
+// TestRefreshReplayFailsClosedWhenRevokeFails 验证撤销失败时事务失败关闭，不产生「审计成功但未撤销」。
+func TestRefreshReplayFailsClosedWhenRevokeFails(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureEmitter{}
+	metrics := &recordingMetrics{}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.Sessions = &failingRevokeSessions{SessionRepository: cfg.Sessions, fail: true}
+		cfg.Metrics = metrics
+	}, withCapture(capture))
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	oldToken := login.RefreshToken
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: oldToken}); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+
+	// 旧令牌再次出现即重放；撤销失败必须返回 50300，而不是记录审计后放行。
+	_, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: oldToken})
+	if !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("replay err = %v, want 50300", err)
+	}
+	if events := capture.byAction(audit.ActionAuthTokenReused); len(events) != 0 {
+		t.Fatalf("replay audit must not commit when revoke fails, got %d", len(events))
+	}
+	if got := metrics.count("token_reuse"); got != 0 {
+		t.Fatalf("token_reuse metric = %d, want 0 on rollback", got)
+	}
+	if got := metrics.count("refresh"); got == 0 {
+		t.Fatalf("refresh failure metric missing")
+	}
+}
+
+// TestMetricsRecordLoginRefreshAndRevoke 验证登录、刷新与设备撤销的关键路径有指标。
+func TestMetricsRecordLoginRefreshAndRevoke(t *testing.T) {
+	ctx := context.Background()
+	metrics := &recordingMetrics{}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.Metrics = metrics
+	})
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	if _, err := f.svc.Login(ctx, app.LoginInput{
+		Subject: "alice", Password: "wrong-password", TraceID: "trace-metrics",
+	}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("wrong password err = %v, want 401", err)
+	}
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if err := f.svc.RevokeSession(ctx, app.SessionActor{
+		AccountID: login.AccountID,
+		SessionID: login.SessionID,
+	}, login.SessionID); err != nil {
+		t.Fatalf("revoke session: %v", err)
+	}
+
+	if got := metrics.count("login"); got != 2 {
+		t.Fatalf("login metric = %d, want 2", got)
+	}
+	if got := metrics.count("refresh"); got != 1 {
+		t.Fatalf("refresh metric = %d, want 1", got)
+	}
+	if got := metrics.count("session_revoke"); got != 1 {
+		t.Fatalf("session_revoke metric = %d, want 1", got)
+	}
+}
+
 // countingAccounts 统计回源数据库次数，用于断言快照命中时不查库。
 type countingAccounts struct {
 	domain.AccountRepository
@@ -582,11 +922,17 @@ func (o *recordingObserver) OnAccountStateWriteFailure(_ context.Context, op str
 	o.ops = append(o.ops, op)
 }
 
+// OnRevocationStoreFailure 追加读失败操作名。
+func (o *recordingObserver) OnRevocationStoreFailure(_ context.Context, op string, _ error) {
+	o.ops = append(o.ops, op)
+}
+
 // flakyRevocationStore 可分别模拟 SET / DEL 失败。
 type flakyRevocationStore struct {
 	*cache.MemoryRevocationStore
-	failSave   bool
-	failDelete bool
+	failSave        bool
+	failDelete      bool
+	failSessionSave bool
 }
 
 // SaveAccountState 按 failSave 决定是否失败。
@@ -603,6 +949,14 @@ func (s *flakyRevocationStore) DeleteAccountState(ctx context.Context, accountID
 		return errStoreDown
 	}
 	return s.MemoryRevocationStore.DeleteAccountState(ctx, accountID)
+}
+
+// SaveSessionState 按 failSessionSave 决定是否失败。
+func (s *flakyRevocationStore) SaveSessionState(ctx context.Context, sessionID string, state app.SessionState, ttl time.Duration) error {
+	if s.failSessionSave {
+		return errStoreDown
+	}
+	return s.MemoryRevocationStore.SaveSessionState(ctx, sessionID, state, ttl)
 }
 
 // TestRevocationInvalidatorFallsBackToDelete 验证 SET 失败时回退 DEL 并上报指标。
@@ -694,6 +1048,18 @@ func (brokenRevocationStore) SaveAccountState(context.Context, string, app.Accou
 }
 
 func (brokenRevocationStore) DeleteAccountState(context.Context, string) error {
+	return errStoreDown
+}
+
+func (brokenRevocationStore) LoadSessionState(context.Context, string) (app.SessionState, bool, error) {
+	return app.SessionState{}, false, errStoreDown
+}
+
+func (brokenRevocationStore) SaveSessionState(context.Context, string, app.SessionState, time.Duration) error {
+	return errStoreDown
+}
+
+func (brokenRevocationStore) DeleteSessionState(context.Context, string) error {
 	return errStoreDown
 }
 
@@ -865,6 +1231,305 @@ func TestRevocationChecker(t *testing.T) {
 			t.Fatalf("new checker: %v", err)
 		}
 		requireAppCode(t, checker.Check(ctx, jwt.Claims{ID: "jti-1"}), apperr.CodeUnauthorized)
+	})
+}
+
+// TestRevokeSessionToleratesSessionStateWriteFailure 验证会话快照写失败不改变已提交的撤销结果。
+func TestRevokeSessionToleratesSessionStateWriteFailure(t *testing.T) {
+	ctx := context.Background()
+	observer := &recordingObserver{}
+	store := &flakyRevocationStore{
+		MemoryRevocationStore: cache.NewMemoryRevocationStore(),
+		failSessionSave:       true,
+	}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.Revocation = store
+		cfg.RevocationObserver = observer
+	})
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	first := f.login(t, "alice", "Correct#Passw0rd")
+	second := f.login(t, "alice", "Correct#Passw0rd")
+
+	actor := app.SessionActor{AccountID: first.AccountID, SessionID: first.SessionID}
+	if err := f.svc.RevokeSession(ctx, actor, second.SessionID); err != nil {
+		t.Fatalf("revoke must succeed even when session snapshot write fails: %v", err)
+	}
+	if session := f.sessionOf(t, second.SessionID); session.Status != domain.SessionStatusRevoked {
+		t.Fatalf("session status = %s, want revoked", session.Status)
+	}
+	if len(observer.ops) != 3 {
+		t.Fatalf("observer ops = %v, want two warm writes and one revoke write", observer.ops)
+	}
+	for _, op := range observer.ops {
+		if op != "session_set" {
+			t.Fatalf("unexpected op %q", op)
+		}
+	}
+
+	// 缓存缺失时 Checker 必须回源数据库，仍然拒绝被撤销会话。
+	checker, err := app.NewRevocationChecker(f.accounts, store, app.RevocationFailClosed, 0,
+		app.WithRevocationSessions(f.sessions), app.WithRevocationClock(f.clock))
+	if err != nil {
+		t.Fatalf("new checker: %v", err)
+	}
+	requireAppCode(t, checker.Check(ctx, sessionClaims(second.AccountID, second.SessionID, "jti-second", 1)),
+		apperr.CodeUnauthorized)
+}
+
+// sessionClaims 构造带 sid 的访问令牌声明，用于会话级撤销断言。
+func sessionClaims(accountID, sessionID, jti string, version int64) jwt.Claims {
+	return jwt.Claims{
+		Subject: accountID,
+		ID:      jti,
+		Extra:   map[string]any{"ver": version, "sid": sessionID},
+	}
+}
+
+// TestRevokeSessionBlocksAccessToken 覆盖撤销非当前会话后，该设备 Access Token 立即被拒绝（IDN-P1-02）。
+func TestRevokeSessionBlocksAccessToken(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	first := f.login(t, "alice", "Correct#Passw0rd")
+	second := f.login(t, "alice", "Correct#Passw0rd")
+
+	checker, err := app.NewRevocationChecker(f.accounts, f.store, app.RevocationFailClosed, 0,
+		app.WithRevocationSessions(f.sessions), app.WithRevocationClock(f.clock))
+	if err != nil {
+		t.Fatalf("new checker: %v", err)
+	}
+	firstClaims := sessionClaims(first.AccountID, first.SessionID, "jti-first", 1)
+	secondClaims := sessionClaims(second.AccountID, second.SessionID, "jti-second", 1)
+	if checkErr := checker.Check(ctx, firstClaims); checkErr != nil {
+		t.Fatalf("first session must pass: %v", checkErr)
+	}
+	if checkErr := checker.Check(ctx, secondClaims); checkErr != nil {
+		t.Fatalf("second session must pass: %v", checkErr)
+	}
+
+	actor := app.SessionActor{
+		AccountID:      first.AccountID,
+		SessionID:      first.SessionID,
+		TokenID:        "jti-first",
+		TokenExpiresAt: f.clock.Now().Add(time.Minute),
+	}
+	if revokeErr := f.svc.RevokeSession(ctx, actor, second.SessionID); revokeErr != nil {
+		t.Fatalf("revoke session: %v", revokeErr)
+	}
+
+	requireAppCode(t, checker.Check(ctx, secondClaims), apperr.CodeUnauthorized)
+	if checkErr := checker.Check(ctx, firstClaims); checkErr != nil {
+		t.Fatalf("current session must still pass: %v", checkErr)
+	}
+	if session := f.sessionOf(t, second.SessionID); session.Status != domain.SessionStatusRevoked {
+		t.Fatalf("session status = %s, want revoked", session.Status)
+	}
+}
+
+// TestRefreshReplayRevokesFamilyAccessTokens 覆盖重放撤销整链后，family 内 Access Token 全部被拒绝。
+func TestRefreshReplayRevokesFamilyAccessTokens(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+
+	refreshed, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	next, err := f.sessions.FindByRefreshHash(ctx, refreshed.RefreshHash)
+	if err != nil {
+		t.Fatalf("load refreshed session: %v", err)
+	}
+
+	checker, err := app.NewRevocationChecker(f.accounts, f.store, app.RevocationFailClosed, 0,
+		app.WithRevocationSessions(f.sessions), app.WithRevocationClock(f.clock))
+	if err != nil {
+		t.Fatalf("new checker: %v", err)
+	}
+	oldClaims := sessionClaims(login.AccountID, login.SessionID, "jti-old", 1)
+	newClaims := sessionClaims(login.AccountID, next.ID, "jti-next", 1)
+	if checkErr := checker.Check(ctx, oldClaims); checkErr != nil {
+		t.Fatalf("rotated session token must pass before replay: %v", checkErr)
+	}
+	if checkErr := checker.Check(ctx, newClaims); checkErr != nil {
+		t.Fatalf("new session token must pass: %v", checkErr)
+	}
+
+	// 旧刷新令牌再次出现即重放：整条 family 被撤销，已签发的 Access Token 同步失效。
+	_, replayErr := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken})
+	requireAppCode(t, replayErr, apperr.CodeUnauthorized)
+	requireAppCode(t, checker.Check(ctx, oldClaims), apperr.CodeUnauthorized)
+	requireAppCode(t, checker.Check(ctx, newClaims), apperr.CodeUnauthorized)
+}
+
+// TestRevocationCheckerSessionSnapshotStaleness 覆盖缓存预热后 DB 直接撤销，超过陈旧度必须回源拒绝。
+func TestRevocationCheckerSessionSnapshotStaleness(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+
+	checker, err := app.NewRevocationChecker(f.accounts, f.store, app.RevocationFailClosed, 5*time.Second,
+		app.WithRevocationSessions(f.sessions), app.WithRevocationClock(f.clock))
+	if err != nil {
+		t.Fatalf("new checker: %v", err)
+	}
+	claims := sessionClaims(login.AccountID, login.SessionID, "jti-1", 1)
+	if checkErr := checker.Check(ctx, claims); checkErr != nil {
+		t.Fatalf("active session must pass: %v", checkErr)
+	}
+
+	// 直接改库：模拟其它副本或运维撤销会话，不刷新缓存。
+	session := f.sessionOf(t, login.SessionID)
+	expected := session.Version
+	if revokeErr := session.Revoke(domain.RevokeReasonAdmin, f.clock.Now()); revokeErr != nil {
+		t.Fatalf("revoke session: %v", revokeErr)
+	}
+	if saveErr := f.sessions.Save(ctx, session, expected); saveErr != nil {
+		t.Fatalf("save revoked session: %v", saveErr)
+	}
+
+	// 快照仍新鲜：允许命中（≤state_ttl 的最终一致窗口）。
+	if checkErr := checker.Check(ctx, claims); checkErr != nil {
+		t.Fatalf("fresh snapshot window must still pass: %v", checkErr)
+	}
+	f.clock.Advance(6 * time.Second)
+	requireAppCode(t, checker.Check(ctx, claims), apperr.CodeUnauthorized)
+}
+
+// TestSessionCleanupExpiresAndDeletes 覆盖保留期清理：先标记过期，超过保留期后删除。
+func TestSessionCleanupExpiresAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	sessions := persistence.NewMemorySessionRepository()
+	attempts := persistence.NewMemoryLoginAttemptRepository()
+
+	family, err := domain.NewSessionFamily(domain.NewSessionFamilyParams{
+		ID:        "fam-1",
+		AccountID: "acct-1",
+		ExpiresAt: now.Add(time.Hour),
+		Now:       now,
+	})
+	if err != nil {
+		t.Fatalf("new family: %v", err)
+	}
+	if err := sessions.SaveFamily(ctx, family, 0); err != nil {
+		t.Fatalf("save family: %v", err)
+	}
+	session, err := domain.NewSession(domain.NewSessionParams{
+		ID:           "fam-1",
+		AccountID:    "acct-1",
+		FamilyID:     "fam-1",
+		RefreshHash:  "hash-1",
+		TokenVersion: 1,
+		ExpiresAt:    now.Add(time.Hour),
+		Now:          now,
+	})
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := sessions.Save(ctx, session, 0); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if err := attempts.Append(ctx, &domain.LoginAttempt{
+		Channel:    domain.ChannelAdmin,
+		AccountRef: "ref-1",
+		Outcome:    domain.LoginOutcomeFailure,
+		OccurredAt: now.Add(-200 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("append attempt: %v", err)
+	}
+
+	cleanup, err := app.NewSessionCleanup(sessions, attempts, app.RetentionPolicy{
+		SessionRetention:      30 * 24 * time.Hour,
+		LoginAttemptRetention: 180 * 24 * time.Hour,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new cleanup: %v", err)
+	}
+
+	first, err := cleanup.Run(ctx, now.Add(31*24*time.Hour))
+	if err != nil {
+		t.Fatalf("cleanup first run: %v", err)
+	}
+	if first.ExpiredSessions != 1 || first.ExpiredFamilies != 1 {
+		t.Fatalf("expire stats = %+v, want 1 session and 1 family", first)
+	}
+	if first.DeletedLoginAttempts != 1 {
+		t.Fatalf("login attempts deleted = %d, want 1", first.DeletedLoginAttempts)
+	}
+	if first.DeletedSessions != 0 || first.DeletedFamilies != 0 {
+		t.Fatalf("expired rows must be kept within retention: %+v", first)
+	}
+	count, err := attempts.CountFailuresSince(ctx, domain.ChannelAdmin, "ref-1", now.Add(-300*24*time.Hour))
+	if err != nil || count != 0 {
+		t.Fatalf("old attempts must be deleted, count=%d err=%v", count, err)
+	}
+
+	second, err := cleanup.Run(ctx, now.Add(62*24*time.Hour))
+	if err != nil {
+		t.Fatalf("cleanup second run: %v", err)
+	}
+	if second.DeletedSessions != 1 || second.DeletedFamilies != 1 {
+		t.Fatalf("delete stats = %+v, want 1 session and 1 family", second)
+	}
+	if _, err := sessions.FindFamily(ctx, "fam-1"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("expired family must be deleted, got %v", err)
+	}
+}
+
+// TestLoginDummyVerifyAlignment 断言账号不存在 / 状态拒绝时执行占位校验（IDN-P2-04）。
+func TestLoginDummyVerifyAlignment(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("unknown account", func(t *testing.T) {
+		hasher := &countingHasher{}
+		passwordSvc, err := app.NewPasswordService(hasher, app.DefaultPasswordPolicy())
+		if err != nil {
+			t.Fatalf("new password service: %v", err)
+		}
+		f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+			cfg.Password = passwordSvc
+		})
+		_, err = f.svc.Login(ctx, app.LoginInput{
+			Subject: "missing@example.com", Password: "Whatever#123", TraceID: "trace-timing-missing",
+		})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		if got := hasher.count(); got != 1 {
+			t.Fatalf("dummy verify count = %d, want 1", got)
+		}
+	})
+
+	t.Run("locked account", func(t *testing.T) {
+		hasher := &countingHasher{}
+		passwordSvc, err := app.NewPasswordService(hasher, app.DefaultPasswordPolicy())
+		if err != nil {
+			t.Fatalf("new password service: %v", err)
+		}
+		f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+			cfg.Password = passwordSvc
+		})
+		f.seedAccount(t, "acct-timing-locked", "locked@example.com", "Correct#Passw0rd")
+		account, loadErr := f.accounts.FindByID(ctx, "acct-timing-locked")
+		if loadErr != nil {
+			t.Fatalf("load account: %v", loadErr)
+		}
+		expected := account.Version
+		if lockErr := account.Lock(f.clock.Now().Add(time.Hour), f.clock.Now()); lockErr != nil {
+			t.Fatalf("lock account: %v", lockErr)
+		}
+		if saveErr := f.accounts.Save(ctx, account, expected); saveErr != nil {
+			t.Fatalf("save locked account: %v", saveErr)
+		}
+
+		_, err = f.svc.Login(ctx, app.LoginInput{
+			Subject: "locked@example.com", Password: "Correct#Passw0rd", TraceID: "trace-timing-locked",
+		})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		if got := hasher.count(); got != 1 {
+			t.Fatalf("dummy verify count = %d, want 1", got)
+		}
 	})
 }
 

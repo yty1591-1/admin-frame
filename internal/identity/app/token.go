@@ -63,6 +63,8 @@ type TokenPair struct {
 	RefreshToken string
 	RefreshHash  string
 	ExpiresIn    int64
+	// AbsoluteExpiresAt 设备绝对到期时间；刷新不得延长，由 AuthService 填充。
+	AbsoluteExpiresAt time.Time
 }
 
 // TokenService 负责 Access JWT 与一次性刷新令牌的生成。

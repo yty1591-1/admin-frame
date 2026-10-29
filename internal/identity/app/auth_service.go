@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,12 @@ import (
 
 // DefaultSessionIdleTimeout 是默认空闲会话上限（docs/identity-authn.md §10）。
 const DefaultSessionIdleTimeout = 72 * time.Hour
+
+// DefaultSessionAbsoluteTTL 是设备默认绝对生命上限（30 天，IDN-P1-07）。
+const DefaultSessionAbsoluteTTL = 720 * time.Hour
+
+// DefaultMaxSessionsPerAccount 是单账号默认活跃设备上限。
+const DefaultMaxSessionsPerAccount = 6
 
 // AuthServiceConfig 是认证用例的装配参数。
 //
@@ -34,6 +41,10 @@ type AuthServiceConfig struct {
 	RevocationStateTTL time.Duration
 	// RevocationObserver 接收撤销快照写入失败；可为 nil。
 	RevocationObserver RevocationObserver
+	// Metrics 是核心指标端口；可为 nil（全部上报降级为 no-op）。
+	Metrics Metrics
+	// Hasher 是 PII / 验证码摘要器；nil 时回退历史无盐算法（仅限本地/tests）。
+	Hasher *crypto.Hasher
 	// Logger 仅用于「业务已提交、缓存失效失败」的告警日志；可为 nil。
 	Logger  *slog.Logger
 	Audit   audit.Emitter
@@ -44,7 +55,7 @@ type AuthServiceConfig struct {
 	// MFA 是 TOTP 绑定仓储；admin_required=true 时必填。
 	MFA domain.MFAEnrollmentRepository
 	// MFACipher 是 TOTP 密钥的 AES-256-GCM 加解密器；未配置时 MFA 端点失败关闭。
-	MFACipher *crypto.AEAD
+	MFACipher MFASecretCipher
 	// MFATickets 是两步登录票据的一次性消费存储。
 	MFATickets MFATicketStore
 	// MFAIssuer 写入 otpauth URI；空值使用 DefaultMFAIssuer。
@@ -53,6 +64,11 @@ type AuthServiceConfig struct {
 	MFAAdminRequired bool
 	// IdleTimeout 会话空闲上限；≤0 时使用 72h。
 	IdleTimeout time.Duration
+	// SessionAbsoluteTTL 设备绝对生命上限；≤0 时使用 DefaultSessionAbsoluteTTL。
+	// 刷新只能在该上限内滑动续期（IDN-P1-07）。
+	SessionAbsoluteTTL time.Duration
+	// MaxPerAccount 单账号活跃设备上限；≤0 使用 DefaultMaxSessionsPerAccount。
+	MaxPerAccount int
 	// Service 写入审计事件的 service 字段。
 	Service string
 	// ActorType 写入审计事件的 actor_type；空值时按端别推导。
@@ -112,14 +128,19 @@ type SessionActor struct {
 
 // SessionView 是会话列表的对外视图；不包含任何令牌信息。
 type SessionView struct {
-	ID            string
-	Current       bool
-	Status        string
-	CreatedAt     time.Time
-	LastUsedAt    time.Time
-	ExpiresAt     time.Time
-	IdleExpiresAt time.Time
-	RevokedAt     *time.Time
+	ID         string
+	Current    bool
+	Status     string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	ExpiresAt  time.Time
+	// AbsoluteExpiresAt 设备绝对到期时间；刷新不得延长。
+	AbsoluteExpiresAt time.Time
+	IdleExpiresAt     time.Time
+	RevokedAt         *time.Time
+	// IPHash / UAHash 客户端摘要；禁止返回原文。
+	IPHash string
+	UAHash string
 }
 
 // MeView 是当前登录主体资料的对外视图。
@@ -152,20 +173,27 @@ type AuthService struct {
 	tokens       *TokenService
 	revocation   RevocationStore
 	invalidation *RevocationInvalidator
-	logger       *slog.Logger
-	audit        audit.Emitter
-	ids          IDGenerator
-	channel      domain.Channel
-	uow          UnitOfWork
-	idleTimeout  time.Duration
-	service      string
-	actorType    string
-	clock        Clock
-	mfa          domain.MFAEnrollmentRepository
-	mfaCipher    *crypto.AEAD
-	mfaTickets   MFATicketStore
-	mfaIssuer    string
-	mfaRequired  bool
+	// sessionStateTTL 会话撤销快照最大陈旧度；与账号快照共享 ≤60s 上限。
+	sessionStateTTL time.Duration
+	observer        RevocationObserver
+	metrics         Metrics
+	hasher          *crypto.Hasher
+	logger          *slog.Logger
+	audit           audit.Emitter
+	ids             IDGenerator
+	channel         domain.Channel
+	uow             UnitOfWork
+	idleTimeout     time.Duration
+	absoluteTTL     time.Duration
+	maxPerAccount   int
+	service         string
+	actorType       string
+	clock           Clock
+	mfa             domain.MFAEnrollmentRepository
+	mfaCipher       MFASecretCipher
+	mfaTickets      MFATicketStore
+	mfaIssuer       string
+	mfaRequired     bool
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -182,6 +210,14 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	idle := cfg.IdleTimeout
 	if idle <= 0 {
 		idle = DefaultSessionIdleTimeout
+	}
+	absoluteTTL := cfg.SessionAbsoluteTTL
+	if absoluteTTL <= 0 {
+		absoluteTTL = DefaultSessionAbsoluteTTL
+	}
+	maxPerAccount := cfg.MaxPerAccount
+	if maxPerAccount <= 0 {
+		maxPerAccount = DefaultMaxSessionsPerAccount
 	}
 	actorType := cfg.ActorType
 	if actorType == "" {
@@ -225,28 +261,34 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		}
 	}
 	svc := &AuthService{
-		accounts:     cfg.Accounts,
-		credentials:  cfg.Credentials,
-		sessions:     cfg.Sessions,
-		guard:        cfg.Guard,
-		password:     cfg.Password,
-		tokens:       cfg.Tokens,
-		revocation:   cfg.Revocation,
-		invalidation: invalidation,
-		logger:       cfg.Logger,
-		audit:        cfg.Audit,
-		ids:          cfg.IDs,
-		channel:      cfg.Channel,
-		uow:          uow,
-		idleTimeout:  idle,
-		service:      cfg.Service,
-		actorType:    actorType,
-		clock:        clock,
-		mfa:          cfg.MFA,
-		mfaCipher:    cfg.MFACipher,
-		mfaTickets:   cfg.MFATickets,
-		mfaIssuer:    mfaIssuer,
-		mfaRequired:  cfg.MFAAdminRequired,
+		accounts:        cfg.Accounts,
+		credentials:     cfg.Credentials,
+		sessions:        cfg.Sessions,
+		guard:           cfg.Guard,
+		password:        cfg.Password,
+		tokens:          cfg.Tokens,
+		revocation:      cfg.Revocation,
+		invalidation:    invalidation,
+		sessionStateTTL: clampAccountStateTTL(cfg.RevocationStateTTL),
+		observer:        cfg.RevocationObserver,
+		metrics:         cfg.Metrics,
+		hasher:          cfg.Hasher,
+		logger:          cfg.Logger,
+		audit:           cfg.Audit,
+		ids:             cfg.IDs,
+		channel:         cfg.Channel,
+		uow:             uow,
+		idleTimeout:     idle,
+		absoluteTTL:     absoluteTTL,
+		maxPerAccount:   maxPerAccount,
+		service:         cfg.Service,
+		actorType:       actorType,
+		clock:           clock,
+		mfa:             cfg.MFA,
+		mfaCipher:       cfg.MFACipher,
+		mfaTickets:      cfg.MFATickets,
+		mfaIssuer:       mfaIssuer,
+		mfaRequired:     cfg.MFAAdminRequired,
 	}
 	return svc, nil
 }
@@ -290,18 +332,57 @@ func isRejected(err error) bool {
 //
 // 账号不存在、密码错误、停用与锁定统一返回 40100 文案，真实原因只写审计。
 func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, error) {
+	started := s.clock.Now()
 	var result LoginResult
-	if err := s.runTx(ctx, func(txCtx context.Context) error {
+	err := s.runTx(ctx, func(txCtx context.Context) error {
 		res, err := s.loginInTx(txCtx, in)
 		if err != nil {
 			return err
 		}
 		result = res
 		return nil
-	}); err != nil {
+	})
+	s.observeLogin(ctx, result, err, started)
+	if err != nil {
 		return LoginResult{}, err
 	}
 	return result, nil
+}
+
+// observeLogin 上报登录结果；失败不影响主流程。
+func (s *AuthService) observeLogin(ctx context.Context, result LoginResult, err error, started time.Time) {
+	if s.metrics == nil {
+		return
+	}
+	duration := s.clock.Now().Sub(started)
+	status, reason := MetricResultSuccess, MetricReasonOK
+	switch {
+	case err != nil:
+		status, reason = MetricResultFailure, loginFailureReason(err)
+	case result.PasswordChangeRequired:
+		status, reason = MetricResultChallenge, MetricReasonPasswordChangeRequired
+	case result.MFABindingRequired:
+		status, reason = MetricResultChallenge, MetricReasonMFABindingRequired
+	case result.MFARequired:
+		status, reason = MetricResultChallenge, MetricReasonMFARequired
+	}
+	s.metrics.ObserveLogin(ctx, s.channel, status, reason, duration)
+}
+
+// loginFailureReason 把错误码映射为低基数原因标签；不泄露具体账号状态给客户端。
+func loginFailureReason(err error) string {
+	var appErr *apperr.AppError
+	if errors.As(err, &appErr) {
+		switch appErr.Code {
+		case apperr.CodeTooManyRequests:
+			return MetricReasonRateLimited
+		case apperr.CodeServiceUnavailable:
+			return MetricReasonUnavailable
+		case apperr.CodeUnauthorized:
+			return MetricReasonBadCredential
+		}
+	}
+	return MetricReasonInternal
 }
 
 // loginInTx 是 Login 的事务内实现：失败尝试、审计与成功写入同一事务。
@@ -311,15 +392,24 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 	if subject == "" || strings.TrimSpace(in.Password) == "" {
 		return LoginResult{}, invalidCredentials()
 	}
-	accountRef := HashAccountRef(s.channel, subject)
-	if err := s.guard.CheckRateLimit(loginRateKey(s.channel, accountRef, in.IPHash)); err != nil {
+	accountRef := AccountRef(s.hasher, s.channel, subject)
+	// 账号级与 IP 级双维度限流：任一超限即拒绝，避免仅靠 IP 或仅靠账号被绕过。
+	rateKeys := []string{loginRateKey(s.channel, accountRef, "")}
+	if in.IPHash != "" {
+		rateKeys = append(rateKeys, loginRateKey(s.channel, "", in.IPHash))
+	}
+	if err := s.guard.CheckRateLimit(rateKeys...); err != nil {
 		return LoginResult{}, err
 	}
 
 	account, err := s.accounts.FindBySubject(ctx, s.channel, subject)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			// 账号不存在与密码错误必须返回同一文案，不写登录尝试（无账号主键）。
+			// 账号不存在与密码错误必须返回同一文案与耗时：先执行一次占位校验（IDN-P2-04）。
+			// 无账号主键，不写登录尝试；并发槽位超时直接 50300。
+			if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
+				return LoginResult{}, dummyErr
+			}
 			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
 				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
 				return LoginResult{}, auditErr
@@ -330,6 +420,10 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 	}
 
 	if err := s.guard.Authorize(account, now); err != nil {
+		// locked / disabled 也在密码校验前返回：执行占位校验，避免通过耗时区分账号状态。
+		if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
+			return LoginResult{}, dummyErr
+		}
 		reason := reasonFromAuthError(err)
 		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now)
 		if recordErr != nil {
@@ -350,6 +444,10 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 	credential, err := s.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePassword)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
+			// 无密码凭据（如仅手机号 / OAuth 账号）同样执行占位校验，避免泄露凭据类型。
+			if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
+				return LoginResult{}, dummyErr
+			}
 			lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
 			if recordErr != nil {
 				return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
@@ -368,8 +466,12 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 		return LoginResult{}, apperr.Internal("load credential failed", err)
 	}
 
-	needsRehash, err := s.password.Verify(credential.Hash, in.Password)
+	needsRehash, err := s.password.VerifyContext(ctx, credential.Hash, in.Password)
 	if err != nil {
+		// 并发槽位超时 / 请求取消属于服务端过载，不记为凭据失败，避免误锁正常账号。
+		if errors.Is(err, apperr.ErrUnavailable) {
+			return LoginResult{}, err
+		}
 		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
 		if recordErr != nil {
 			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
@@ -558,7 +660,7 @@ func (s *AuthService) completeLogin(
 	if err := s.guard.RecordSuccess(ctx, account, ipHash, uaHash, now); err != nil {
 		return LoginResult{}, apperr.Internal("record login success failed", err)
 	}
-	result, err := s.createSession(ctx, account, now)
+	result, err := s.createSession(ctx, account, now, ipHash, uaHash, traceID)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -569,93 +671,156 @@ func (s *AuthService) completeLogin(
 	return result, nil
 }
 
+// refreshOutcome 汇总一次刷新的事务内结果，供提交后写会话撤销快照。
+type refreshOutcome struct {
+	// pair 成功刷新时的新令牌对。
+	pair TokenPair
+	// sessionID 成功刷新时的新会话；事务回滚或重放时为空。
+	sessionID string
+	// revocations 重放等场景下被整链撤销的会话，提交后写 `authn:sid`。
+	revocations []sessionStateWrite
+	// replay 表示本次刷新命中了已轮换令牌（重放），供提交后上报指标。
+	replay bool
+}
+
 // Refresh 执行一次性刷新：旧会话轮换，同 Family 下创建新会话。
 //
 // 已 rotated 的令牌再次出现视为重放：撤销整条家庭链并记 auth.token.reused。
 func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, error) {
-	var pair TokenPair
-	if err := s.runTx(ctx, func(txCtx context.Context) error {
-		res, err := s.refreshInTx(txCtx, in)
-		if err != nil {
-			return err
+	var outcome refreshOutcome
+	err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, fnErr := s.refreshInTx(txCtx, in)
+		outcome = res
+		return fnErr
+	})
+	if err == nil || isRejected(err) {
+		// 事务已提交（重放拒绝同样提交）：补齐整链会话撤销快照，使 Access Token ≤60s 失效。
+		s.markSessionsRevoked(ctx, outcome.revocations)
+	}
+	if s.metrics != nil {
+		if outcome.replay {
+			s.metrics.ObserveTokenReuse(ctx)
 		}
-		pair = res
-		return nil
-	}); err != nil {
+		result := MetricResultSuccess
+		if err != nil {
+			result = MetricResultFailure
+		}
+		s.metrics.ObserveRefresh(ctx, result)
+	}
+	if err != nil {
 		return TokenPair{}, err
 	}
-	return pair, nil
+	return outcome.pair, nil
 }
 
 // refreshInTx 是 Refresh 的事务内实现：重放撤销与新会话签发同一事务。
-func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (TokenPair, error) {
+func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refreshOutcome, error) {
 	if !RefreshPrefixMatches(s.channel, in.RefreshToken) {
-		return TokenPair{}, invalidToken()
+		return refreshOutcome{}, invalidToken()
 	}
 	hash, err := HashRefreshToken(in.RefreshToken)
 	if err != nil {
-		return TokenPair{}, invalidToken()
+		return refreshOutcome{}, invalidToken()
 	}
 	now := s.clock.Now().UTC()
 	session, err := s.sessions.FindByRefreshHash(ctx, hash)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			return TokenPair{}, invalidToken()
+			return refreshOutcome{}, invalidToken()
 		}
-		return TokenPair{}, apperr.Internal("load session failed", err)
+		return refreshOutcome{}, apperr.Internal("load session failed", err)
 	}
 	if session.Status == domain.SessionStatusRotated {
-		s.revokeFamily(ctx, session, now)
+		outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
+		if revokeErr != nil {
+			return refreshOutcome{}, revokeErr
+		}
 		if auditErr := s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
 			audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil); auditErr != nil {
-			return TokenPair{}, auditErr
+			return refreshOutcome{}, auditErr
 		}
-		return TokenPair{}, invalidToken()
+		outcome.replay = true
+		return outcome, invalidToken()
+	}
+	// 设备达到绝对生命上限：终止整条链，刷新令牌不得再续期（IDN-P1-07）。
+	family, err := s.sessions.FindFamily(ctx, session.FamilyID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return refreshOutcome{}, invalidToken()
+		}
+		return refreshOutcome{}, apperr.Internal("load session family failed", err)
+	}
+	if !family.AbsoluteExpiresAt.IsZero() && !now.Before(family.AbsoluteExpiresAt) {
+		writes, revokeErr := s.revokeFamilyChain(ctx, family.ID, domain.RevokeReasonExpired, now)
+		if revokeErr != nil {
+			s.logError("identity revoke expired family failed",
+				"family_ref", shortHash(family.ID), "error", revokeErr)
+			s.observeSessionRevoke(ctx, domain.RevokeReasonExpired, MetricResultFailure)
+			return refreshOutcome{}, apperr.Unavailable("revoke expired session failed")
+		}
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthTokenRevoked, family.AccountID, "", "session", family.ID,
+			audit.OutcomeSuccess, string(domain.RevokeReasonExpired), in.TraceID, nil); auditErr != nil {
+			return refreshOutcome{}, auditErr
+		}
+		return refreshOutcome{revocations: writes}, invalidToken()
 	}
 	if !session.IsActive(now) {
-		return TokenPair{}, invalidToken()
+		return refreshOutcome{}, invalidToken()
 	}
 	account, err := s.accounts.FindByID(ctx, session.AccountID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			s.revokeFamily(ctx, session, now)
-			return TokenPair{}, invalidToken()
+			outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
+			if revokeErr != nil {
+				return refreshOutcome{}, revokeErr
+			}
+			return outcome, invalidToken()
 		}
-		return TokenPair{}, apperr.Internal("load account failed", err)
+		return refreshOutcome{}, apperr.Internal("load account failed", err)
 	}
 	if account.IsDeleted() || account.Status == domain.AccountStatusDisabled ||
 		account.TokenVersion != session.TokenVersion {
-		s.revokeFamily(ctx, session, now)
-		return TokenPair{}, invalidToken()
+		outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
+		if revokeErr != nil {
+			return refreshOutcome{}, revokeErr
+		}
+		return outcome, invalidToken()
 	}
 
 	expected := session.Version
 	if rotateErr := session.Rotate(now); rotateErr != nil {
-		s.revokeFamily(ctx, session, now)
-		return TokenPair{}, invalidToken()
+		outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
+		if revokeErr != nil {
+			return refreshOutcome{}, revokeErr
+		}
+		return outcome, invalidToken()
 	}
 	if saveErr := s.sessions.Save(ctx, session, expected); saveErr != nil {
 		if errors.Is(saveErr, apperr.ErrConflict) {
 			// 并发刷新只有一个请求能完成 active → rotated，其余按重放处理。
-			s.revokeFamily(ctx, session, now)
+			outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
+			if revokeErr != nil {
+				return refreshOutcome{}, revokeErr
+			}
 			if auditErr := s.emitAudit(ctx, audit.ActionAuthTokenReused, session.AccountID, "", "session", session.ID,
 				audit.OutcomeFailure, domain.LoginReasonReplay, in.TraceID, nil); auditErr != nil {
-				return TokenPair{}, auditErr
+				return refreshOutcome{}, auditErr
 			}
-			return TokenPair{}, invalidToken()
+			outcome.replay = true
+			return outcome, invalidToken()
 		}
-		return TokenPair{}, apperr.Internal("rotate session failed", saveErr)
+		return refreshOutcome{}, apperr.Internal("rotate session failed", saveErr)
 	}
 
 	pair, sessionID, err := s.issueNewSession(ctx, account, session.FamilyID, now)
 	if err != nil {
-		return TokenPair{}, err
+		return refreshOutcome{}, err
 	}
 	if err := s.emitAudit(ctx, audit.ActionAuthTokenRefresh, account.ID, account.MerchantID, "session", sessionID,
 		audit.OutcomeSuccess, "", in.TraceID, map[string]string{"family_id": shortHash(session.FamilyID)}); err != nil {
-		return TokenPair{}, err
+		return refreshOutcome{}, err
 	}
-	return pair, nil
+	return refreshOutcome{pair: pair, sessionID: sessionID}, nil
 }
 
 // Logout 撤销当前会话并把当前 jti 加入黑名单；重复登出幂等。
@@ -667,6 +832,7 @@ func (s *AuthService) Logout(ctx context.Context, actor SessionActor) error {
 	}
 	now := s.clock.Now().UTC()
 	revokeToken := false
+	var writes []sessionStateWrite
 	if err := s.runTx(ctx, func(txCtx context.Context) error {
 		session, err := s.sessions.FindByID(txCtx, actor.SessionID)
 		if err != nil {
@@ -680,14 +846,12 @@ func (s *AuthService) Logout(ctx context.Context, actor SessionActor) error {
 		if session.AccountID != actor.AccountID {
 			return invalidToken()
 		}
-		expected := session.Version
-		if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
-			return apperr.Internal("revoke session failed", revokeErr)
+		chain, revokeErr := s.revokeFamilyChain(txCtx, session.FamilyID, domain.RevokeReasonLogout, now)
+		if revokeErr != nil {
+			return apperr.Internal("revoke session family failed", revokeErr)
 		}
-		if saveErr := s.sessions.Save(txCtx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
-			return apperr.Internal("save session failed", saveErr)
-		}
-		if auditErr := s.emitAudit(txCtx, audit.ActionAuthLogout, actor.AccountID, actor.MerchantID, "session", actor.SessionID,
+		writes = chain
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthLogout, actor.AccountID, actor.MerchantID, "session", session.FamilyID,
 			audit.OutcomeSuccess, "", actor.TraceID, nil); auditErr != nil {
 			return auditErr
 		}
@@ -696,6 +860,8 @@ func (s *AuthService) Logout(ctx context.Context, actor SessionActor) error {
 	}); err != nil {
 		return err
 	}
+	// 业务已提交：先写会话撤销快照（整台设备的 Access Token 都会被拒绝），再拉黑当前 jti。
+	s.markSessionsRevoked(ctx, writes)
 	if !revokeToken {
 		return nil
 	}
@@ -748,29 +914,81 @@ func (s *AuthService) LogoutAll(ctx context.Context, actor SessionActor) error {
 	return s.revokeCurrentToken(ctx, actor, now)
 }
 
-// ListSessions 返回账号全部会话，供 A 端会话管理使用。
-func (s *AuthService) ListSessions(ctx context.Context, actor SessionActor) ([]SessionView, error) {
-	if actor.AccountID == "" {
-		return nil, invalidToken()
+// 会话列表分页边界。
+const (
+	// DefaultSessionPageSize 默认每页设备数。
+	DefaultSessionPageSize = 20
+	// MaxSessionPageSize 单页设备数硬上限，避免响应体无界增长。
+	MaxSessionPageSize = 100
+)
+
+// SessionListInput 是设备会话列表入参。
+type SessionListInput struct {
+	SessionActor
+	// Cursor 上一页返回的 next_cursor；空表示第一页。
+	Cursor string
+	// Limit 每页设备数；≤0 使用 DefaultSessionPageSize，超过 MaxSessionPageSize 会被收敛。
+	Limit int
+}
+
+// SessionPage 是设备会话分页结果。
+type SessionPage struct {
+	// Items 当前页设备会话。
+	Items []SessionView
+	// NextCursor 下一页游标；空表示没有更多。
+	NextCursor string
+}
+
+// ListSessions 返回本账号设备会话（family），供 A 端会话管理使用。
+func (s *AuthService) ListSessions(ctx context.Context, in SessionListInput) (SessionPage, error) {
+	if strings.TrimSpace(in.AccountID) == "" {
+		return SessionPage{}, invalidToken()
 	}
-	sessions, err := s.sessions.ListByAccount(ctx, actor.AccountID)
+	currentFamily := ""
+	if in.SessionID != "" {
+		if session, err := s.sessions.FindByID(ctx, in.SessionID); err == nil {
+			currentFamily = session.FamilyID
+		}
+	}
+	return s.listFamilies(ctx, in.AccountID, currentFamily, in.Cursor, in.Limit)
+}
+
+// listFamilies 按游标分页返回设备会话；currentFamilyID 用于标记当前设备。
+func (s *AuthService) listFamilies(
+	ctx context.Context,
+	accountID, currentFamilyID, cursor string,
+	limit int,
+) (SessionPage, error) {
+	afterLastUsed, afterID, err := parseSessionCursor(cursor)
 	if err != nil {
-		return nil, apperr.Internal("list sessions failed", err)
+		return SessionPage{}, err
 	}
-	out := make([]SessionView, 0, len(sessions))
-	for _, session := range sessions {
-		out = append(out, SessionView{
-			ID:            session.ID,
-			Current:       session.ID == actor.SessionID,
-			Status:        session.Status.String(),
-			CreatedAt:     session.CreatedAt,
-			LastUsedAt:    session.LastUsedAt,
-			ExpiresAt:     session.ExpiresAt,
-			IdleExpiresAt: session.IdleExpiresAt,
-			RevokedAt:     session.RevokedAt,
+	limit = normalizeSessionPageSize(limit)
+	families, err := s.sessions.ListFamiliesByAccount(ctx, accountID, afterLastUsed, afterID, limit)
+	if err != nil {
+		return SessionPage{}, apperr.Internal("list session families failed", err)
+	}
+	items := make([]SessionView, 0, len(families))
+	for _, family := range families {
+		items = append(items, SessionView{
+			ID:                family.ID,
+			Current:           family.ID == currentFamilyID,
+			Status:            family.Status.String(),
+			CreatedAt:         family.CreatedAt,
+			LastUsedAt:        family.LastUsedAt,
+			ExpiresAt:         family.ExpiresAt,
+			AbsoluteExpiresAt: family.AbsoluteExpiresAt,
+			RevokedAt:         family.RevokedAt,
+			IPHash:            family.IPHash,
+			UAHash:            family.UAHash,
 		})
 	}
-	return out, nil
+	page := SessionPage{Items: items}
+	if len(families) == limit && len(families) > 0 {
+		last := families[len(families)-1]
+		page.NextCursor = encodeSessionCursor(last.LastUsedAt, last.ID)
+	}
+	return page, nil
 }
 
 // Me 返回当前登录主体资料。
@@ -815,74 +1033,103 @@ func (s *AuthService) Me(ctx context.Context, actor SessionActor) (MeView, error
 	}, nil
 }
 
-// RevokeSession 撤销账号下的指定会话；已被撤销时幂等返回。
+// RevokeSession 撤销账号下的指定设备（family）；已被撤销时幂等返回。
 //
-// 会话撤销与审计在同一事务内；撤销当前会话时 jti 黑名单在提交后写入。
-func (s *AuthService) RevokeSession(ctx context.Context, actor SessionActor, sessionID string) error {
-	if actor.AccountID == "" || strings.TrimSpace(sessionID) == "" {
+// sessionID 参数为会话列表中返回的设备 ID（family_id）。撤销与审计在同一事务内，
+// 设备全部令牌代的撤销快照与当前 jti 黑名单在提交后写入。
+func (s *AuthService) RevokeSession(ctx context.Context, actor SessionActor, familyID string) error {
+	if actor.AccountID == "" || strings.TrimSpace(familyID) == "" {
 		return apperr.BadRequest("session id is required")
 	}
 	now := s.clock.Now().UTC()
 	revokeToken := false
+	var writes []sessionStateWrite
 	if err := s.runTx(ctx, func(txCtx context.Context) error {
-		session, err := s.sessions.FindByID(txCtx, sessionID)
+		family, err := s.sessions.FindFamily(txCtx, familyID)
 		if err != nil {
 			if errors.Is(err, apperr.ErrNotFound) {
 				return apperr.NotFound("session not found")
 			}
-			return apperr.Internal("load session failed", err)
+			return apperr.Internal("load session family failed", err)
 		}
-		if session.AccountID != actor.AccountID {
-			// 不区分「不存在」与「不属于本账号」，避免横向枚举他人会话。
+		if family.AccountID != actor.AccountID {
+			// 不区分「不存在」与「不属于本账号」，避免横向枚举他人设备。
 			return apperr.NotFound("session not found")
 		}
-		expected := session.Version
-		if revokeErr := session.Revoke(domain.RevokeReasonLogout, now); revokeErr != nil {
-			if errors.Is(revokeErr, domain.ErrSessionExpired) {
-				return nil
-			}
-			return apperr.Internal("revoke session failed", revokeErr)
+		chain, revokeErr := s.revokeFamilyChain(txCtx, familyID, domain.RevokeReasonLogout, now)
+		if revokeErr != nil {
+			return apperr.Internal("revoke session family failed", revokeErr)
 		}
-		if saveErr := s.sessions.Save(txCtx, session, expected); saveErr != nil && !errors.Is(saveErr, apperr.ErrConflict) {
-			return apperr.Internal("save session failed", saveErr)
-		}
-		if auditErr := s.emitAudit(txCtx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "session", sessionID,
+		writes = chain
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthTokenRevoked, actor.AccountID, actor.MerchantID, "session", familyID,
 			audit.OutcomeSuccess, string(domain.RevokeReasonLogout), actor.TraceID, nil); auditErr != nil {
 			return auditErr
 		}
-		revokeToken = sessionID == actor.SessionID
+		if actor.SessionID != "" {
+			current, currentErr := s.sessions.FindByID(txCtx, actor.SessionID)
+			if currentErr == nil && current.FamilyID == familyID {
+				revokeToken = true
+			}
+		}
 		return nil
 	}); err != nil {
 		return err
 	}
+	// 业务已提交：写会话撤销快照，使被撤销设备的 Access Token 在 ≤60s 内失效。
+	s.markSessionsRevoked(ctx, writes)
 	if !revokeToken {
 		return nil
 	}
 	return s.revokeCurrentToken(ctx, actor, now)
 }
 
-// createSession 创建新会话并签发令牌。
-func (s *AuthService) createSession(ctx context.Context, account *domain.Account, now time.Time) (LoginResult, error) {
+// createSession 创建新设备会话与首个令牌代，并签发令牌。
+//
+// family_id 取首个会话 ID：同一登录链后续刷新只轮换 identity_session。
+func (s *AuthService) createSession(
+	ctx context.Context,
+	account *domain.Account,
+	now time.Time,
+	ipHash, uaHash, traceID string,
+) (LoginResult, error) {
+	if err := s.evictFamilies(ctx, account, now, traceID); err != nil {
+		return LoginResult{}, err
+	}
 	sessionID, err := s.ids.NextString()
 	if err != nil {
 		return LoginResult{}, apperr.Internal("generate session id failed", err)
 	}
-	familyID, err := s.ids.NextString()
+	expiresAt := now.Add(s.tokens.RefreshTTL())
+	absoluteExpiresAt := s.absoluteExpiry(now, expiresAt)
+	family, err := domain.NewSessionFamily(domain.NewSessionFamilyParams{
+		ID:                sessionID,
+		AccountID:         account.ID,
+		IPHash:            ipHash,
+		UAHash:            uaHash,
+		ExpiresAt:         expiresAt,
+		AbsoluteExpiresAt: absoluteExpiresAt,
+		Now:               now,
+	})
 	if err != nil {
-		return LoginResult{}, apperr.Internal("generate family id failed", err)
+		return LoginResult{}, apperr.Internal("build session family failed", err)
+	}
+	if err := s.sessions.SaveFamily(ctx, family, 0); err != nil {
+		return LoginResult{}, apperr.Internal("save session family failed", err)
 	}
 	pair, err := s.tokens.Issue(account, sessionID)
 	if err != nil {
 		return LoginResult{}, err
 	}
+	// 登录响应返回设备绝对到期时间，供前端在临近上限时提示重新登录。
+	pair.AbsoluteExpiresAt = absoluteExpiresAt
 	session, err := domain.NewSession(domain.NewSessionParams{
 		ID:            sessionID,
 		AccountID:     account.ID,
-		FamilyID:      familyID,
+		FamilyID:      sessionID,
 		RefreshHash:   pair.RefreshHash,
 		TokenVersion:  account.TokenVersion,
-		ExpiresAt:     now.Add(s.tokens.RefreshTTL()),
-		IdleExpiresAt: s.idleExpiry(now),
+		ExpiresAt:     expiresAt,
+		IdleExpiresAt: s.idleExpiry(now, expiresAt),
 		Now:           now,
 	})
 	if err != nil {
@@ -891,16 +1138,89 @@ func (s *AuthService) createSession(ctx context.Context, account *domain.Account
 	if err := s.sessions.Save(ctx, session, 0); err != nil {
 		return LoginResult{}, apperr.Internal("save session failed", err)
 	}
+	s.markSessionActive(ctx, session)
 	return LoginResult{TokenPair: pair, SessionID: sessionID, AccountID: account.ID}, nil
 }
 
-// issueNewSession 在刷新时创建同 Family 的下一代会话。
+// evictFamilies 在创建新设备前淘汰最久未使用的设备，保证单账号活跃设备数受限。
+//
+// 采用「先淘汰再创建」而不是创建后回收：新设备永远不被自己的登录顶掉。
+// 并发登录可能多淘汰一台（最终仍不超过上限），但不会让上限失效。
+func (s *AuthService) evictFamilies(ctx context.Context, account *domain.Account, now time.Time, traceID string) error {
+	if s.maxPerAccount <= 0 {
+		return nil
+	}
+	families, err := s.sessions.ListFamiliesByAccount(ctx, account.ID, time.Time{}, "", 0)
+	if err != nil {
+		return apperr.Internal("list session families failed", err)
+	}
+	excess := len(families) - s.maxPerAccount + 1
+	if excess <= 0 {
+		return nil
+	}
+	// ListFamiliesByAccount 按最近使用倒序，从尾部开始淘汰。
+	for i := len(families) - 1; i >= 0 && excess > 0; i-- {
+		target := families[i]
+		if !target.IsActive(now) {
+			continue
+		}
+		if _, revokeErr := s.sessions.RevokeFamily(ctx, target.ID, domain.RevokeReasonEvicted, now); revokeErr != nil {
+			return apperr.Internal("evict session family failed", revokeErr)
+		}
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthSessionEvicted, target.AccountID, account.MerchantID, "session", target.ID,
+			audit.OutcomeSuccess, string(domain.RevokeReasonEvicted), traceID, nil); auditErr != nil {
+			return auditErr
+		}
+		excess--
+	}
+	return nil
+}
+
+// issueNewSession 在刷新时创建同 Family 的下一代会话，并推进设备最近使用时间。
 func (s *AuthService) issueNewSession(
 	ctx context.Context,
 	account *domain.Account,
 	familyID string,
 	now time.Time,
 ) (TokenPair, string, error) {
+	family, err := s.sessions.FindFamily(ctx, familyID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return TokenPair{}, "", invalidToken()
+		}
+		return TokenPair{}, "", apperr.Internal("load session family failed", err)
+	}
+	if !family.IsActive(now) {
+		// 设备已过期 / 撤销 / 达到绝对上限：终止本条链，避免刷新绕过设备状态。
+		reason := domain.RevokeReasonReplay
+		if !family.AbsoluteExpiresAt.IsZero() && !now.Before(family.AbsoluteExpiresAt) {
+			reason = domain.RevokeReasonExpired
+		}
+		if _, revokeErr := s.sessions.RevokeFamily(ctx, familyID, reason, now); revokeErr != nil {
+			// 兜底撤销失败不覆盖原始 401，但必须留痕，避免「链路未终止」静默。
+			s.logError("identity revoke inactive family failed",
+				"family_ref", shortHash(familyID), "reason", reason.String(), "error", revokeErr)
+			s.observeSessionRevoke(ctx, reason, MetricResultFailure)
+		}
+		return TokenPair{}, "", invalidToken()
+	}
+	// 当前令牌代过期时间只能在设备绝对上限内滑动。
+	nextExpiry := now.Add(s.tokens.RefreshTTL())
+	if !family.AbsoluteExpiresAt.IsZero() && nextExpiry.After(family.AbsoluteExpiresAt) {
+		nextExpiry = family.AbsoluteExpiresAt
+	}
+	expectedFamily := family.Version
+	if touchErr := family.Touch(now, nextExpiry); touchErr != nil {
+		return TokenPair{}, "", invalidToken()
+	}
+	if saveErr := s.sessions.SaveFamily(ctx, family, expectedFamily); saveErr != nil {
+		if errors.Is(saveErr, apperr.ErrConflict) {
+			// 并发刷新只允许一条链推进，其余按重放处理。
+			return TokenPair{}, "", invalidToken()
+		}
+		return TokenPair{}, "", apperr.Internal("save session family failed", saveErr)
+	}
+
 	sessionID, err := s.ids.NextString()
 	if err != nil {
 		return TokenPair{}, "", apperr.Internal("generate session id failed", err)
@@ -909,14 +1229,16 @@ func (s *AuthService) issueNewSession(
 	if err != nil {
 		return TokenPair{}, "", err
 	}
+	// 刷新响应同样返回设备绝对到期时间。
+	pair.AbsoluteExpiresAt = family.AbsoluteExpiresAt
 	session, err := domain.NewSession(domain.NewSessionParams{
 		ID:            sessionID,
 		AccountID:     account.ID,
 		FamilyID:      familyID,
 		RefreshHash:   pair.RefreshHash,
 		TokenVersion:  account.TokenVersion,
-		ExpiresAt:     now.Add(s.tokens.RefreshTTL()),
-		IdleExpiresAt: s.idleExpiry(now),
+		ExpiresAt:     family.ExpiresAt,
+		IdleExpiresAt: s.idleExpiry(now, family.ExpiresAt),
 		Now:           now,
 	})
 	if err != nil {
@@ -925,28 +1247,159 @@ func (s *AuthService) issueNewSession(
 	if err := s.sessions.Save(ctx, session, 0); err != nil {
 		return TokenPair{}, "", apperr.Internal("save session failed", err)
 	}
+	s.markSessionActive(ctx, session)
 	return pair, sessionID, nil
 }
 
-// idleExpiry 计算空闲上限；超过刷新绝对有效期时由领域层裁剪为绝对有效期。
-func (s *AuthService) idleExpiry(now time.Time) time.Time {
+// idleExpiry 计算空闲上限；不得超过当前令牌代或设备绝对到期时间。
+func (s *AuthService) idleExpiry(now, hardExpiry time.Time) time.Time {
 	if s.idleTimeout <= 0 {
 		return time.Time{}
 	}
 	idle := now.Add(s.idleTimeout)
-	absolute := now.Add(s.tokens.RefreshTTL())
-	if idle.After(absolute) {
-		return absolute
+	if !hardExpiry.IsZero() && idle.After(hardExpiry) {
+		return hardExpiry
 	}
 	return idle
 }
 
-// revokeFamily 撤销整条会话链；失败不覆盖原始 401 语义，避免把重放暴露成 500。
-func (s *AuthService) revokeFamily(ctx context.Context, session *domain.Session, now time.Time) {
-	if session == nil || session.FamilyID == "" {
+// absoluteExpiry 计算设备绝对到期时间；不早于首个令牌代过期时间。
+func (s *AuthService) absoluteExpiry(now, expiresAt time.Time) time.Time {
+	if s.absoluteTTL <= 0 {
+		return expiresAt
+	}
+	absolute := now.Add(s.absoluteTTL)
+	if !absolute.After(expiresAt) {
+		return expiresAt
+	}
+	return absolute
+}
+
+// sessionStateWrite 是一次待写入的会话撤销快照（提交后执行）。
+type sessionStateWrite struct {
+	// SessionID 会话主键，对应 Access Token 的 sid。
+	SessionID string
+	// RevokedAt 撤销时间。
+	RevokedAt time.Time
+	// ExpiresAt 会话绝对过期时间，用于判断是否已自然过期。
+	ExpiresAt time.Time
+}
+
+// markSessionActive 在会话创建成功后写入 active 快照，预热鉴权缓存（失败只告警）。
+func (s *AuthService) markSessionActive(ctx context.Context, session *domain.Session) {
+	if session == nil {
 		return
 	}
-	_, _ = s.sessions.RevokeFamily(ctx, session.FamilyID, domain.RevokeReasonReplay, now)
+	s.markSessionState(ctx, session.ID, SessionState{
+		Status:    session.Status,
+		ExpiresAt: session.ExpiresAt,
+	})
+}
+
+// markSessionsRevoked 逐条写入会话撤销快照；同一会话只写一次。
+func (s *AuthService) markSessionsRevoked(ctx context.Context, writes []sessionStateWrite) {
+	if len(writes) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(writes))
+	for _, write := range writes {
+		if _, dup := seen[write.SessionID]; dup {
+			continue
+		}
+		seen[write.SessionID] = struct{}{}
+		s.markSessionState(ctx, write.SessionID, SessionState{
+			Status:    domain.SessionStatusRevoked,
+			RevokedAt: write.RevokedAt,
+			ExpiresAt: write.ExpiresAt,
+		})
+	}
+}
+
+// markSessionState 写入会话撤销快照；失败只告警，由 ≤state_ttl 的回源兜底。
+//
+// 必须在业务事务提交后调用：回滚的事务不得留下撤销快照。
+func (s *AuthService) markSessionState(ctx context.Context, sessionID string, state SessionState) {
+	if s.revocation == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	state.FetchedAt = s.clock.Now().UTC()
+	if err := s.revocation.SaveSessionState(ctx, sessionID, state, s.sessionStateTTL); err != nil {
+		if s.observer != nil {
+			s.observer.OnAccountStateWriteFailure(ctx, "session_set", err)
+		}
+		s.logError("identity session revocation state invalidate failed",
+			"session_ref", shortHash(sessionID), "error", err)
+	}
+}
+
+// revokeFamily 撤销整条会话链并返回需写快照的会话。
+//
+// 撤销失败必须向上返回错误，由调用方回滚事务（IDN-P1-03）：禁止只提交重放审计
+// 而没有真正撤销，否则攻击者仍持有可用刷新令牌。
+func (s *AuthService) revokeFamily(ctx context.Context, session *domain.Session, now time.Time) ([]sessionStateWrite, error) {
+	if session == nil || session.FamilyID == "" {
+		return nil, nil
+	}
+	writes, err := s.revokeFamilyChain(ctx, session.FamilyID, domain.RevokeReasonReplay, now)
+	if err != nil {
+		s.logError("identity revoke family failed",
+			"family_ref", shortHash(session.FamilyID), "error", err)
+		return nil, apperr.Unavailable("revoke session family failed")
+	}
+	return writes, nil
+}
+
+// revokeSessionFamily 撤销整链并封装为刷新事务的结果；失败返回 50300 触发回滚。
+func (s *AuthService) revokeSessionFamily(
+	ctx context.Context,
+	session *domain.Session,
+	now time.Time,
+) (refreshOutcome, error) {
+	writes, err := s.revokeFamily(ctx, session, now)
+	if err != nil {
+		return refreshOutcome{}, err
+	}
+	return refreshOutcome{revocations: writes}, nil
+}
+
+// observeSessionRevoke 上报设备撤销结果；metrics 未注入时为 no-op。
+func (s *AuthService) observeSessionRevoke(ctx context.Context, reason domain.RevokeReason, result string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.ObserveSessionRevoke(ctx, reason.String(), result)
+}
+
+// revokeFamilyChain 撤销设备下全部 active / rotated 会话并返回撤销快照写入项。
+func (s *AuthService) revokeFamilyChain(
+	ctx context.Context,
+	familyID string,
+	reason domain.RevokeReason,
+	now time.Time,
+) ([]sessionStateWrite, error) {
+	if _, err := s.sessions.RevokeFamily(ctx, familyID, reason, now); err != nil {
+		s.logError("identity revoke session family failed",
+			"family_ref", shortHash(familyID), "reason", reason.String(), "error", err)
+		s.observeSessionRevoke(ctx, reason, MetricResultFailure)
+		return nil, err
+	}
+	sessions, err := s.sessions.ListByFamily(ctx, familyID)
+	if err != nil {
+		s.logError("identity list revoked sessions failed",
+			"family_ref", shortHash(familyID), "reason", reason.String(), "error", err)
+		s.observeSessionRevoke(ctx, reason, MetricResultFailure)
+		return nil, err
+	}
+	s.observeSessionRevoke(ctx, reason, MetricResultSuccess)
+	writes := make([]sessionStateWrite, 0, len(sessions))
+	for _, item := range sessions {
+		writes = append(writes, sessionStateWrite{
+			SessionID: item.ID,
+			RevokedAt: now,
+			ExpiresAt: item.ExpiresAt,
+		})
+	}
+	return writes, nil
 }
 
 // revokeCurrentToken 把当前访问令牌的 jti 加入黑名单。
@@ -983,10 +1436,55 @@ func (s *AuthService) logError(msg string, args ...any) {
 	s.logger.Error(msg, args...)
 }
 
+// normalizeSessionPageSize 收敛分页大小到 [1, MaxSessionPageSize]。
+func normalizeSessionPageSize(limit int) int {
+	if limit <= 0 {
+		return DefaultSessionPageSize
+	}
+	if limit > MaxSessionPageSize {
+		return MaxSessionPageSize
+	}
+	return limit
+}
+
+// encodeSessionCursor 把设备最近使用时间与主键编码为不透明游标。
+func encodeSessionCursor(lastUsed time.Time, familyID string) string {
+	return strconv.FormatInt(lastUsed.UTC().UnixMilli(), 10) + "|" + familyID
+}
+
+// parseSessionCursor 解析游标；空游标表示第一页。
+func parseSessionCursor(raw string) (time.Time, string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, "", nil
+	}
+	parts := strings.SplitN(trimmed, "|", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return time.Time{}, "", apperr.BadRequest("invalid session cursor")
+	}
+	ms, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || ms < 0 {
+		return time.Time{}, "", apperr.BadRequest("invalid session cursor")
+	}
+	return time.UnixMilli(ms).UTC(), parts[1], nil
+}
+
 // emitAudit 写入审计事件；未配置 emitter 时跳过。
 func (s *AuthService) emitAudit(
 	ctx context.Context,
 	action, actorID, merchantID, resourceType, resourceID string,
+	outcome audit.Outcome,
+	reason, traceID string,
+	attrs map[string]string,
+) error {
+	return s.emitAuditAs(ctx, s.actorType, action, actorID, merchantID, resourceType, resourceID,
+		outcome, reason, traceID, attrs)
+}
+
+// emitAuditAs 以指定 actor_type 写审计事件；system 用于自动建号等非用户触发操作。
+func (s *AuthService) emitAuditAs(
+	ctx context.Context,
+	actorType, action, actorID, merchantID, resourceType, resourceID string,
 	outcome audit.Outcome,
 	reason, traceID string,
 	attrs map[string]string,
@@ -1002,7 +1500,7 @@ func (s *AuthService) emitAudit(
 		EventID:      eventID,
 		Action:       action,
 		ActorID:      actorID,
-		ActorType:    s.actorType,
+		ActorType:    actorType,
 		Channel:      string(s.channel),
 		MerchantID:   merchantID,
 		ResourceType: resourceType,
@@ -1026,6 +1524,9 @@ func (s *AuthService) emitAudit(
 func (s *AuthService) emitAccountLocked(ctx context.Context, account *domain.Account, traceID string) error {
 	if account == nil {
 		return nil
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveLockout(ctx, s.channel)
 	}
 	return s.emitAudit(ctx, audit.ActionAuthAccountLocked, account.ID, account.MerchantID, "account", account.ID,
 		audit.OutcomeFailure, domain.LoginReasonLocked, traceID, nil)

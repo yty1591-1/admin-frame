@@ -3,9 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"sort"
 	"strings"
@@ -13,6 +11,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
 // DefaultOAuthStateTTL 是默认 OAuth state 有效期（docs/identity-authn.md §8.2）。
@@ -52,14 +52,20 @@ type OAuthStateStore interface {
 
 // OAuthServiceConfig 是 OAuth 登录用例的装配参数。
 type OAuthServiceConfig struct {
-	Providers     map[string]OAuthProvider
-	States        OAuthStateStore
-	Identities    domain.OAuthIdentityRepository
-	Accounts      domain.AccountRepository
-	IDs           IDGenerator
-	Auth          *AuthService
+	Providers  map[string]OAuthProvider
+	States     OAuthStateStore
+	Identities domain.OAuthIdentityRepository
+	Accounts   domain.AccountRepository
+	IDs        IDGenerator
+	Auth       *AuthService
+	// Hasher 是第三方主体摘要器；nil 时回退历史算法（仅限本地/tests）。
+	Hasher        *crypto.Hasher
 	AutoProvision bool
 	StateTTL      time.Duration
+	// Metrics 是核心指标端口；可为 nil。
+	Metrics Metrics
+	// Limiter 是 authorize / callback 的 IP 级与全局限流器；nil 时仅保留 provider 超时（IDN-P2-05）。
+	Limiter LoginLimiter
 }
 
 // AuthorizeResult 是授权发起结果。
@@ -92,6 +98,9 @@ type OAuthService struct {
 	auth          *AuthService
 	autoProvision bool
 	stateTTL      time.Duration
+	hasher        *crypto.Hasher
+	metrics       Metrics
+	limiter       LoginLimiter
 }
 
 // NewOAuthService 构造 OAuth 登录服务；依赖缺失或参数越界时返回错误。
@@ -120,6 +129,9 @@ func NewOAuthService(cfg OAuthServiceConfig) (*OAuthService, error) {
 		auth:          cfg.Auth,
 		autoProvision: cfg.AutoProvision,
 		stateTTL:      stateTTL,
+		hasher:        cfg.Hasher,
+		metrics:       cfg.Metrics,
+		limiter:       cfg.Limiter,
 	}, nil
 }
 
@@ -134,7 +146,19 @@ func (s *OAuthService) ProviderNames() []string {
 }
 
 // Authorize 生成一次性 state 与 PKCE verifier，并返回授权地址。
+//
+// 无客户端摘要时仅受全局限流约束；HTTP 入口应调用 AuthorizeWithClient。
 func (s *OAuthService) Authorize(ctx context.Context, provider string) (AuthorizeResult, error) {
+	return s.AuthorizeWithClient(ctx, provider, "")
+}
+
+// AuthorizeWithClient 在 IP 级与全局限流通过后生成 state（IDN-P2-05）。
+//
+// 每次请求写一个 Redis state 键；限流用于封顶单 IP 与全局键增长速度。
+func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash string) (AuthorizeResult, error) {
+	if err := s.checkRateLimit("authorize", ipHash); err != nil {
+		return AuthorizeResult{}, err
+	}
 	name := strings.TrimSpace(provider)
 	providerImpl, ok := s.providers[name]
 	if !ok {
@@ -159,7 +183,20 @@ func (s *OAuthService) Authorize(ctx context.Context, provider string) (Authoriz
 }
 
 // Callback 校验 state 与授权码，完成身份映射与登录。
-func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (LoginResult, error) {
+func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (result LoginResult, err error) {
+	defer func() {
+		if s.metrics == nil {
+			return
+		}
+		status := MetricResultSuccess
+		if err != nil {
+			status = MetricResultFailure
+		}
+		s.metrics.ObserveOAuthCallback(ctx, strings.TrimSpace(in.Provider), status)
+	}()
+	if err := s.checkRateLimit("callback", in.IPHash); err != nil {
+		return LoginResult{}, err
+	}
 	name := strings.TrimSpace(in.Provider)
 	code := strings.TrimSpace(in.Code)
 	state := strings.TrimSpace(in.State)
@@ -197,7 +234,7 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (Log
 		return LoginResult{}, oauthInvalid()
 	}
 
-	account, err := s.resolveAccount(ctx, name, subject)
+	account, err := s.resolveAccount(ctx, name, subject, in.TraceID)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -210,7 +247,7 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (Log
 }
 
 // resolveAccount 返回外部身份对应账号；未映射时按 auto_provision 决定是否建号。
-func (s *OAuthService) resolveAccount(ctx context.Context, provider, subject string) (*domain.Account, error) {
+func (s *OAuthService) resolveAccount(ctx context.Context, provider, subject, traceID string) (*domain.Account, error) {
 	identity, err := s.identities.FindByProviderSubject(ctx, provider, subject)
 	if err == nil {
 		account, loadErr := s.accounts.FindByID(ctx, identity.AccountID)
@@ -229,60 +266,103 @@ func (s *OAuthService) resolveAccount(ctx context.Context, provider, subject str
 		// D4：失败关闭，不自动建号。
 		return nil, oauthInvalid()
 	}
-	return s.provisionAccount(ctx, provider, subject)
+	return s.provisionAccount(ctx, provider, subject, traceID)
 }
 
-// provisionAccount 自动建号并写入外部身份映射。
-func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject string) (*domain.Account, error) {
-	accountID, err := s.ids.NextString()
-	if err != nil {
-		return nil, apperr.Internal("generate account id failed", err)
-	}
-	account, err := domain.NewAccount(domain.NewAccountParams{
-		ID:      accountID,
-		Channel: domain.ChannelC,
-		Subject: oauthAccountSubject(provider, subject),
-	})
-	if err != nil {
-		return nil, apperr.Internal("build account failed", err)
-	}
-	if err := s.accounts.Save(ctx, account, 0); err != nil {
-		if errors.Is(err, apperr.ErrConflict) {
-			// 并发建号：以已存在的账号为准，避免同一外部身份产生两个账号。
-			existing, loadErr := s.accounts.FindBySubject(ctx, domain.ChannelC, account.Subject)
-			if loadErr != nil {
-				return nil, apperr.Internal("load account failed", loadErr)
-			}
-			account = existing
-		} else {
-			return nil, apperr.Internal("save account failed", err)
+// provisionAccount 在同一事务内自动建号、写外部身份映射与 account.created 审计。
+//
+// 审计与账号写入必须原子：避免「账号已建、审计丢失」（IDN-P2-02）。
+func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject, traceID string) (*domain.Account, error) {
+	var account *domain.Account
+	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
+		created := true
+		accountID, err := s.ids.NextString()
+		if err != nil {
+			return apperr.Internal("generate account id failed", err)
 		}
-	}
+		provisioned, err := domain.NewAccount(domain.NewAccountParams{
+			ID:      accountID,
+			Channel: domain.ChannelC,
+			Subject: OAuthSubjectRef(s.hasher, provider, subject),
+		})
+		if err != nil {
+			return apperr.Internal("build account failed", err)
+		}
+		if err := s.accounts.Save(txCtx, provisioned, 0); err != nil {
+			if errors.Is(err, apperr.ErrConflict) {
+				// 并发建号：以已存在的账号为准，避免同一外部身份产生两个账号。
+				existing, loadErr := s.accounts.FindBySubject(txCtx, domain.ChannelC, provisioned.Subject)
+				if loadErr != nil {
+					return apperr.Internal("load account failed", loadErr)
+				}
+				created = false
+				account = existing
+			} else {
+				return apperr.Internal("save account failed", err)
+			}
+		} else {
+			account = provisioned
+		}
 
-	identityID, err := s.ids.NextString()
-	if err != nil {
-		return nil, apperr.Internal("generate oauth identity id failed", err)
-	}
-	identity, err := domain.NewOAuthIdentity(domain.NewOAuthIdentityParams{
-		ID:              identityID,
-		AccountID:       account.ID,
-		Provider:        provider,
-		ProviderSubject: subject,
-	})
-	if err != nil {
-		return nil, apperr.Internal("build oauth identity failed", err)
-	}
-	if err := s.identities.Save(ctx, identity); err != nil {
-		// 残留 pending 账号可被后续登录复用或人工清理。
-		return nil, apperr.Unavailable("oauth identity store unavailable")
+		identityID, err := s.ids.NextString()
+		if err != nil {
+			return apperr.Internal("generate oauth identity id failed", err)
+		}
+		identity, err := domain.NewOAuthIdentity(domain.NewOAuthIdentityParams{
+			ID:              identityID,
+			AccountID:       account.ID,
+			Provider:        provider,
+			ProviderSubject: subject,
+		})
+		if err != nil {
+			return apperr.Internal("build oauth identity failed", err)
+		}
+		if err := s.identities.Save(txCtx, identity); err != nil {
+			// 残留 pending 账号可被后续登录复用或人工清理。
+			return apperr.Unavailable("oauth identity store unavailable")
+		}
+		if created {
+			// 只记录 provider 名，不写外部主体原文。
+			if err := s.auth.emitAuditAs(txCtx, "system", audit.ActionAuthAccountCreated,
+				account.ID, account.MerchantID, "account", account.ID, audit.OutcomeSuccess, "",
+				traceID, map[string]string{"provider": provider}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return account, nil
 }
 
-// oauthAccountSubject 返回外部身份在身份域的登录主体：摘要化，避免第三方主体含 PII 或超长。
-func oauthAccountSubject(provider, subject string) string {
-	sum := sha256.Sum256([]byte(subject))
-	return "oauth:" + provider + ":" + hex.EncodeToString(sum[:])
+// checkRateLimit 同时检查全局限流与单 IP 限流；任一超限返回 42900。
+//
+// ipHash 为空时跳过单 IP 维度（仅全局限流），用于无客户端摘要的内部调用。
+func (s *OAuthService) checkRateLimit(action, ipHash string) error {
+	if s.limiter == nil {
+		return nil
+	}
+	keys := []string{action + ":global"}
+	if ip := strings.TrimSpace(ipHash); ip != "" {
+		keys = append(keys, action+":ip:"+ip)
+	}
+	denied := false
+	var retryAfter time.Duration
+	for _, key := range keys {
+		allowed, after := s.limiter.Allow(key)
+		if allowed {
+			continue
+		}
+		denied = true
+		if after > retryAfter {
+			retryAfter = after
+		}
+	}
+	if !denied {
+		return nil
+	}
+	return NewRateLimitedError("too many oauth requests", retryAfter)
 }
 
 // randomURLSafe 生成 n 字节随机数的 base64url 编码。

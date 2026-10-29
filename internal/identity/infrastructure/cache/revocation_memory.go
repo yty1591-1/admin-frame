@@ -13,9 +13,10 @@ import (
 //
 // 多副本部署必须使用 Redis，否则登出与停用在其他副本上无法及时生效。
 type MemoryRevocationStore struct {
-	mu      sync.RWMutex
-	states  map[string]memoryEntry[app.AccountState]
-	revoked map[string]memoryEntry[struct{}]
+	mu            sync.RWMutex
+	states        map[string]memoryEntry[app.AccountState]
+	sessionStates map[string]memoryEntry[app.SessionState]
+	revoked       map[string]memoryEntry[struct{}]
 
 	clock func() time.Time
 }
@@ -31,9 +32,10 @@ var _ app.RevocationStore = (*MemoryRevocationStore)(nil)
 // NewMemoryRevocationStore 创建空的进程内撤销存储。
 func NewMemoryRevocationStore() *MemoryRevocationStore {
 	return &MemoryRevocationStore{
-		states:  make(map[string]memoryEntry[app.AccountState]),
-		revoked: make(map[string]memoryEntry[struct{}]),
-		clock:   func() time.Time { return time.Now().UTC() },
+		states:        make(map[string]memoryEntry[app.AccountState]),
+		sessionStates: make(map[string]memoryEntry[app.SessionState]),
+		revoked:       make(map[string]memoryEntry[struct{}]),
+		clock:         func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -73,6 +75,45 @@ func (s *MemoryRevocationStore) DeleteAccountState(_ context.Context, accountID 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.states, accountID)
+	return nil
+}
+
+// LoadSessionState 读取会话撤销快照；过期视为未命中。
+func (s *MemoryRevocationStore) LoadSessionState(_ context.Context, sessionID string) (app.SessionState, bool, error) {
+	if sessionID == "" {
+		return app.SessionState{}, false, apperr.BadRequest("session id is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.sessionStates[sessionID]
+	if !ok || s.expired(entry.expiresAt) {
+		return app.SessionState{}, false, nil
+	}
+	return entry.value, true, nil
+}
+
+// SaveSessionState 写入会话撤销快照。
+func (s *MemoryRevocationStore) SaveSessionState(_ context.Context, sessionID string, state app.SessionState, ttl time.Duration) error {
+	if sessionID == "" {
+		return apperr.BadRequest("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionStates[sessionID] = memoryEntry[app.SessionState]{
+		value:     state,
+		expiresAt: s.clock().Add(ttl),
+	}
+	return nil
+}
+
+// DeleteSessionState 删除会话撤销快照，使下一次校验回源数据库。
+func (s *MemoryRevocationStore) DeleteSessionState(_ context.Context, sessionID string) error {
+	if sessionID == "" {
+		return apperr.BadRequest("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessionStates, sessionID)
 	return nil
 }
 

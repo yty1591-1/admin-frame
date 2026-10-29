@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -106,6 +108,34 @@ func TestPasswordPolicyLengthCountsRunes(t *testing.T) {
 	// 4 个中文字符共 12 字节，按字符计数应通过。
 	if err := policy.ValidatePassword("密码强度"); err != nil {
 		t.Fatalf("ValidatePassword() error = %v, want nil", err)
+	}
+}
+
+// TestPasswordServiceConcurrencyLimit 验证并发槽位耗尽时等待超时返回 50300（IDN-P2-05）。
+func TestPasswordServiceConcurrencyLimit(t *testing.T) {
+	service, err := NewPasswordService(fastHasher(t), DefaultPasswordPolicy(),
+		WithConcurrencyLimit(1, 50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("NewPasswordService() error = %v", err)
+	}
+	encoded, _, err := service.Hash("Str0ng-Passw0rd!")
+	if err != nil {
+		t.Fatalf("Hash() error = %v", err)
+	}
+
+	ctx := context.Background()
+	release, err := service.acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire() error = %v", err)
+	}
+	_, err = service.VerifyContext(ctx, encoded, "Str0ng-Passw0rd!")
+	if !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("VerifyContext() error = %v, want unavailable", err)
+	}
+	release()
+
+	if _, err := service.VerifyContext(ctx, encoded, "Str0ng-Passw0rd!"); err != nil {
+		t.Fatalf("VerifyContext() after release error = %v", err)
 	}
 }
 

@@ -51,6 +51,26 @@ func (r *MemoryLoginAttemptRepository) CountFailuresSince(_ context.Context, cha
 	return count, nil
 }
 
+// DeleteBefore 删除 occurred_at 早于 before 的尝试记录，单次最多 limit 条。
+func (r *MemoryLoginAttemptRepository) DeleteBefore(_ context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.attempts[:0]
+	deleted := 0
+	for _, attempt := range r.attempts {
+		if deleted < limit && attempt.OccurredAt.Before(before) {
+			deleted++
+			continue
+		}
+		kept = append(kept, attempt)
+	}
+	r.attempts = kept
+	return deleted, nil
+}
+
 // LastSuccessAt 返回最近一次成功登录时间；没有记录时 found 为 false。
 func (r *MemoryLoginAttemptRepository) LastSuccessAt(_ context.Context, channel domain.Channel, accountRef string) (time.Time, bool, error) {
 	r.mu.RLock()

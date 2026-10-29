@@ -12,6 +12,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
 )
 
 // fakeProvider 是可控的 OAuth 提供方。
@@ -53,9 +54,21 @@ type oauthFixture struct {
 }
 
 // newOAuthFixture 构造 OAuth 服务；provider 名称固定为 test。
-func newOAuthFixture(t *testing.T, autoProvision bool, provider *fakeProvider) *oauthFixture {
+func newOAuthFixture(t *testing.T, autoProvision bool, provider *fakeProvider, opts ...withAuthConfig) *oauthFixture {
 	t.Helper()
-	base := newAuthFixture(t, domain.ChannelC)
+	return newOAuthFixtureWithLimiter(t, autoProvision, provider, nil, opts...)
+}
+
+// newOAuthFixtureWithLimiter 构造带限流器的 OAuth 服务（IDN-P2-05）。
+func newOAuthFixtureWithLimiter(
+	t *testing.T,
+	autoProvision bool,
+	provider *fakeProvider,
+	limiter app.LoginLimiter,
+	opts ...withAuthConfig,
+) *oauthFixture {
+	t.Helper()
+	base := newAuthFixture(t, domain.ChannelC, opts...)
 	if provider == nil {
 		provider = &fakeProvider{name: "test", subject: "sub-1"}
 	}
@@ -70,6 +83,7 @@ func newOAuthFixture(t *testing.T, autoProvision bool, provider *fakeProvider) *
 		Auth:          base.svc,
 		AutoProvision: autoProvision,
 		StateTTL:      10 * time.Minute,
+		Limiter:       limiter,
 	})
 	if err != nil {
 		t.Fatalf("new oauth service: %v", err)
@@ -100,6 +114,36 @@ func (f *oauthFixture) seedMappedAccount(t *testing.T, providerName, subject str
 		t.Fatalf("save oauth identity: %v", err)
 	}
 	return account
+}
+
+// denyLimiter 始终拒绝，用于验证 OAuth 限流生效。
+type denyLimiter struct{ retryAfter time.Duration }
+
+// Allow 返回拒绝与建议等待时长。
+func (l denyLimiter) Allow(string) (bool, time.Duration) { return false, l.retryAfter }
+
+// TestOAuthRateLimit 验证 authorize / callback 超限返回 42900（IDN-P2-05）。
+func TestOAuthRateLimit(t *testing.T) {
+	ctx := context.Background()
+	limiter := denyLimiter{retryAfter: 2 * time.Second}
+
+	t.Run("authorize", func(t *testing.T) {
+		f := newOAuthFixtureWithLimiter(t, false, nil, limiter)
+		_, err := f.svc.AuthorizeWithClient(ctx, "test", "ip-hash")
+		requireAppCode(t, err, apperr.CodeTooManyRequests)
+		var limited *app.RateLimitedError
+		if !errors.As(err, &limited) || limited.RetryAfter != limiter.retryAfter {
+			t.Fatalf("err=%v want retry-after %s", err, limiter.retryAfter)
+		}
+	})
+
+	t.Run("callback", func(t *testing.T) {
+		f := newOAuthFixtureWithLimiter(t, false, nil, limiter)
+		_, err := f.svc.Callback(ctx, app.OAuthCallbackInput{
+			Provider: "test", Code: "code-1", State: "state-1", IPHash: "ip-hash",
+		})
+		requireAppCode(t, err, apperr.CodeTooManyRequests)
+	})
 }
 
 func TestOAuthAuthorize(t *testing.T) {
@@ -224,6 +268,35 @@ func TestOAuthCallback(t *testing.T) {
 		}
 		if _, err := f.identities.FindByProviderSubject(ctx, "test", "sub-1"); err != nil {
 			t.Fatalf("oauth identity mapping: %v", err)
+		}
+	})
+
+	t.Run("auto_provision_audits_account_created", func(t *testing.T) {
+		capture := &captureEmitter{}
+		f := newOAuthFixture(t, true, nil, withCapture(capture))
+		authorized, err := f.svc.Authorize(ctx, "test")
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		if _, err := f.svc.Callback(ctx, app.OAuthCallbackInput{
+			Provider: "test", Code: "code-1", State: authorized.State, TraceID: "trace-oauth-audit",
+		}); err != nil {
+			t.Fatalf("callback: %v", err)
+		}
+
+		created := capture.byAction(audit.ActionAuthAccountCreated)
+		if len(created) != 1 {
+			t.Fatalf("expected exactly one auth.account.created, got %+v", created)
+		}
+		if created[0].ActorType != "system" || created[0].MerchantID != "" {
+			t.Fatalf("unexpected account.created event: %+v", created[0])
+		}
+		if created[0].Attrs["provider"] != "test" {
+			t.Fatalf("provider attr = %q, want test", created[0].Attrs["provider"])
+		}
+		// 审计不得记录外部主体原文。
+		if strings.Contains(capture.dump(t), "sub-1") {
+			t.Fatalf("audit dump leaks provider subject: %s", capture.dump(t))
 		}
 	})
 

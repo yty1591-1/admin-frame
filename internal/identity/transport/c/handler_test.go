@@ -115,6 +115,29 @@ func TestRegisterRoutes(t *testing.T) {
 	}
 }
 
+// TestAuthRoutesNoStore 断言 C 端认证响应统一带禁止缓存头（IDN-P2-03）。
+func TestAuthRoutesNoStore(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux, newTestHandler(t, "test"), passthrough)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/c/v1/auth/login",
+		strings.NewReader(`{"phone":"+8613800138000","code":"123456"}`))
+	mux.ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Fatalf("cache-control=%q, want no-store", got)
+	}
+	if got := recorder.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("pragma=%q", got)
+	}
+	if got := recorder.Header().Get("Expires"); got != "0" {
+		t.Fatalf("expires=%q", got)
+	}
+	if got := recorder.Header().Get("Vary"); got != "Authorization" {
+		t.Fatalf("vary=%q", got)
+	}
+}
+
 func TestRegisterNilHandler(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, nil, passthrough)

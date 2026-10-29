@@ -73,6 +73,68 @@ func TestRedisLoginFailureCounter(t *testing.T) {
 	}
 }
 
+// TestRevocationStoreSessionRoundTrip 验证内存与 Redis 实现都能保存并删除会话快照。
+func TestRevocationStoreSessionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+
+	stores := map[string]app.RevocationStore{
+		"memory": NewMemoryRevocationStore(),
+	}
+	client, _ := newRedisCache(t)
+	stores["redis"] = NewRedisRevocationStore(client)
+
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			state := app.SessionState{
+				Status:    domain.SessionStatusRevoked,
+				RevokedAt: now,
+				ExpiresAt: now.Add(time.Hour),
+				FetchedAt: now,
+			}
+			if err := store.SaveSessionState(ctx, "sid-1", state, time.Minute); err != nil {
+				t.Fatalf("save session state: %v", err)
+			}
+			loaded, hit, err := store.LoadSessionState(ctx, "sid-1")
+			if err != nil || !hit {
+				t.Fatalf("load session state hit=%v err=%v", hit, err)
+			}
+			if loaded.Status != state.Status || !loaded.RevokedAt.Equal(now) ||
+				!loaded.ExpiresAt.Equal(state.ExpiresAt) || !loaded.FetchedAt.Equal(now) {
+				t.Fatalf("loaded = %+v, want %+v", loaded, state)
+			}
+			if err := store.DeleteSessionState(ctx, "sid-1"); err != nil {
+				t.Fatalf("delete session state: %v", err)
+			}
+			if _, hit, err := store.LoadSessionState(ctx, "sid-1"); err != nil || hit {
+				t.Fatalf("after delete hit=%v err=%v", hit, err)
+			}
+		})
+	}
+}
+
+// TestDecodeSessionState 覆盖会话快照解析与损坏内容拒绝。
+func TestDecodeSessionState(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+
+	state, err := decodeSessionState([]byte("active|0|0|" + strconv.FormatInt(now.UnixMilli(), 10)))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if state.Status != domain.SessionStatusActive || !state.FetchedAt.Equal(now) {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+	if !state.RevokedAt.IsZero() || !state.ExpiresAt.IsZero() {
+		t.Fatalf("zero times must stay zero: %+v", state)
+	}
+
+	for _, raw := range []string{"", "active", "unknown|0|0|1", "active|abc|0|1", "active|-1|0|1"} {
+		if _, err := decodeSessionState([]byte(raw)); err == nil {
+			t.Fatalf("raw %q must be rejected", raw)
+		}
+	}
+}
+
 // TestRevocationStoreSnapshotRoundTrip 验证内存与 Redis 实现都能保存并删除带 FetchedAt 的快照。
 func TestRevocationStoreSnapshotRoundTrip(t *testing.T) {
 	ctx := context.Background()

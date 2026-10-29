@@ -21,6 +21,8 @@ import (
 const (
 	// stateKeyPrefix 账号撤销快照键：authn:ver:<account_id>。
 	stateKeyPrefix = "authn:ver:"
+	// sessionKeyPrefix 会话撤销快照键：authn:sid:<session_id>。
+	sessionKeyPrefix = "authn:sid:"
 	// revokedKeyPrefix jti 黑名单键：authn:revoked:<jti>。
 	revokedKeyPrefix = "authn:revoked:"
 )
@@ -83,6 +85,49 @@ func (s *RedisRevocationStore) DeleteAccountState(ctx context.Context, accountID
 	return nil
 }
 
+// LoadSessionState 读取会话撤销快照；未命中或内容损坏返回 found=false。
+func (s *RedisRevocationStore) LoadSessionState(ctx context.Context, sessionID string) (app.SessionState, bool, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return app.SessionState{}, false, apperr.BadRequest("session id is required")
+	}
+	raw, err := s.cache.Get(ctx, sessionKeyPrefix+sessionID)
+	if err != nil {
+		if errors.Is(err, redis.ErrMiss) {
+			return app.SessionState{}, false, nil
+		}
+		return app.SessionState{}, false, fmt.Errorf("identity session revocation get: %w", err)
+	}
+	state, err := decodeSessionState(raw)
+	if err != nil {
+		// 缓存内容损坏时按未命中处理：回源数据库并回填，而不是让鉴权整体失败。
+		return app.SessionState{}, false, nil
+	}
+	return state, true, nil
+}
+
+// SaveSessionState 写入会话撤销快照。
+func (s *RedisRevocationStore) SaveSessionState(ctx context.Context, sessionID string, state app.SessionState, ttl time.Duration) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return apperr.BadRequest("session id is required")
+	}
+	value := encodeSessionState(state)
+	if err := s.cache.Set(ctx, sessionKeyPrefix+sessionID, []byte(value), ttl); err != nil {
+		return fmt.Errorf("identity session revocation set: %w", err)
+	}
+	return nil
+}
+
+// DeleteSessionState 删除会话撤销快照；用于写入失败后的失效兜底。
+func (s *RedisRevocationStore) DeleteSessionState(ctx context.Context, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return apperr.BadRequest("session id is required")
+	}
+	if err := s.cache.Delete(ctx, sessionKeyPrefix+sessionID); err != nil {
+		return fmt.Errorf("identity session revocation delete: %w", err)
+	}
+	return nil
+}
+
 // RevokeToken 把 jti 写入黑名单，ttl 为令牌剩余寿命。
 func (s *RedisRevocationStore) RevokeToken(ctx context.Context, jti string, ttl time.Duration) error {
 	if strings.TrimSpace(jti) == "" {
@@ -106,6 +151,54 @@ func (s *RedisRevocationStore) IsTokenRevoked(ctx context.Context, jti string) (
 		return false, fmt.Errorf("identity revocation check: %w", err)
 	}
 	return true, nil
+}
+
+// encodeSessionState 把会话快照编码为 "<status>|<revoked_at_ms>|<expires_at_ms>|<fetched_at_ms>"。
+//
+// 零值时间统一写 0，避免 time.Time 的零值在不同版本序列化出不同结果。
+func encodeSessionState(state app.SessionState) string {
+	return fmt.Sprintf("%s|%d|%d|%d",
+		state.Status,
+		unixMilli(state.RevokedAt),
+		unixMilli(state.ExpiresAt),
+		unixMilli(state.FetchedAt),
+	)
+}
+
+// unixMilli 把时间转换为毫秒；零值返回 0。
+func unixMilli(at time.Time) int64 {
+	if at.IsZero() {
+		return 0
+	}
+	return at.UnixMilli()
+}
+
+// decodeSessionState 解析会话快照；缺少 fetched_at 视为陈旧，由检查器回源升级。
+func decodeSessionState(raw []byte) (app.SessionState, error) {
+	parts := strings.SplitN(string(raw), "|", 4)
+	if len(parts) < 4 {
+		return app.SessionState{}, fmt.Errorf("identity session revocation: malformed state")
+	}
+	status := domain.SessionStatus(parts[0])
+	if err := status.Validate(); err != nil {
+		return app.SessionState{}, err
+	}
+	var times [3]time.Time
+	for i, part := range parts[1:] {
+		ms, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || ms < 0 {
+			return app.SessionState{}, fmt.Errorf("identity session revocation: malformed time")
+		}
+		if ms > 0 {
+			times[i] = time.UnixMilli(ms).UTC()
+		}
+	}
+	return app.SessionState{
+		Status:    status,
+		RevokedAt: times[0],
+		ExpiresAt: times[1],
+		FetchedAt: times[2],
+	}, nil
 }
 
 // decodeState 解析 "<version>|<status>|<fetched_at_ms>" 快照。

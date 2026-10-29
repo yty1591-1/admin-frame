@@ -102,6 +102,82 @@ func claimsFor(account *domain.Account, jti string) jwt.Claims {
 	}
 }
 
+// testClock 是可推进的测试时钟，用于在不 sleep 的前提下验证陈旧度上限。
+type testClock struct{ now time.Time }
+
+// Now 返回当前测试时间。
+func (c *testClock) Now() time.Time { return c.now }
+
+// Advance 推进测试时间。
+func (c *testClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+
+// TestSessionRevocationAfterDirectDatabaseChange 覆盖会话缓存预热后 DB 直接撤销，超过陈旧度必须拒绝。
+//
+// 对应 IDN-P1-02：管理员撤销设备后，Access Token 最长 state_ttl（≤60s）内失效。
+func TestSessionRevocationAfterDirectDatabaseChange(t *testing.T) {
+	sqlDB := testDB(t)
+	client := testkit.Redis(t)
+	ctx := context.Background()
+	clock := &testClock{now: time.Now().UTC()}
+
+	accounts := persistence.NewSQLAccountRepository(sqlDB)
+	sessions := persistence.NewSQLSessionRepository(sqlDB)
+	store := identitycache.NewRedisRevocationStore(client.Cache())
+	checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Second,
+		app.WithRevocationSessions(sessions), app.WithRevocationClock(clock))
+	if err != nil {
+		t.Fatalf("new revocation checker: %v", err)
+	}
+
+	account := seedAccount(t, accounts, domain.ChannelAdmin, nextID(), "session-"+nextID()+"@example.com", clock.now)
+	session, err := domain.NewSession(domain.NewSessionParams{
+		ID:           nextID(),
+		AccountID:    account.ID,
+		FamilyID:     nextID(),
+		RefreshHash:  "refresh-" + nextID(),
+		TokenVersion: account.TokenVersion,
+		ExpiresAt:    clock.now.Add(time.Hour),
+		Now:          clock.now,
+	})
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := sessions.Save(ctx, session, 0); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	claims := jwt.Claims{
+		Subject: account.ID,
+		ID:      "jti-" + nextID(),
+		Extra:   map[string]any{"ver": account.TokenVersion, "sid": session.ID},
+	}
+	if err := checker.Check(ctx, claims); err != nil {
+		t.Fatalf("active session must pass: %v", err)
+	}
+
+	// 直接改库：模拟其它副本 / 运维撤销会话，不写缓存。
+	loaded, err := sessions.FindByID(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	expected := loaded.Version
+	if err := loaded.Revoke(domain.RevokeReasonAdmin, clock.now); err != nil {
+		t.Fatalf("revoke session: %v", err)
+	}
+	if err := sessions.Save(ctx, loaded, expected); err != nil {
+		t.Fatalf("save revoked session: %v", err)
+	}
+
+	// 快照仍新鲜：允许命中（≤state_ttl 的最终一致窗口）。
+	if err := checker.Check(ctx, claims); err != nil {
+		t.Fatalf("fresh snapshot window must still pass: %v", err)
+	}
+	clock.Advance(2 * time.Second)
+	if err := checker.Check(ctx, claims); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("revoked session must be rejected after state_ttl, got %v", err)
+	}
+}
+
 // TestRevocationAfterAccountDisabled 覆盖账号停用后旧访问令牌立即失效。
 func TestRevocationAfterAccountDisabled(t *testing.T) {
 	sqlDB := testDB(t)

@@ -275,10 +275,11 @@ func TestAccountServiceTargetSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new account service: %v", err)
 	}
-	views, err := svc.ListTargetSessions(ctx, first.AccountID)
+	page, err := svc.ListTargetSessions(ctx, first.AccountID, "", 0)
 	if err != nil {
 		t.Fatalf("list target sessions: %v", err)
 	}
+	views := page.Items
 	if len(views) != 2 {
 		t.Fatalf("sessions = %d, want 2", len(views))
 	}

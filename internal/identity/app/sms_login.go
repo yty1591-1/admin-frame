@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
 // 短信验证码参数（docs/identity-authn.md §8.1）。
@@ -54,6 +54,10 @@ type SMSRateLimiter interface {
 	AllowDaily(ctx context.Context, phoneHash string, limit int) (bool, error)
 	// AllowHourlyIP 校验单 IP 小时发送上限。
 	AllowHourlyIP(ctx context.Context, ipHash string, limit int) (bool, error)
+	// AllowGlobalDaily 校验全局日发送预算；limit≤0 表示不限制。
+	AllowGlobalDaily(ctx context.Context, limit int) (bool, error)
+	// ResetResend 回滚一次重发窗口占用（发送失败时允许用户立即重试）。
+	ResetResend(ctx context.Context, phoneHash string) error
 }
 
 // CodeSender 是短信发送端口，由 infrastructure/sms 适配 pkg/sms。
@@ -63,17 +67,23 @@ type CodeSender interface {
 
 // SMSLoginConfig 是短信登录用例的装配参数。
 type SMSLoginConfig struct {
-	Accounts       domain.AccountRepository
-	Guard          *LoginGuard
-	Codes          SMSCodeStore
-	Limiter        SMSRateLimiter
-	Sender         CodeSender
-	Auth           *AuthService
+	Accounts domain.AccountRepository
+	Guard    *LoginGuard
+	Codes    SMSCodeStore
+	Limiter  SMSRateLimiter
+	Sender   CodeSender
+	Auth     *AuthService
+	// Hasher 是手机号 / 验证码摘要器；nil 时回退历史算法（仅限本地/tests）。
+	Hasher *crypto.Hasher
+	// Metrics 是核心指标端口；可为 nil。
+	Metrics        Metrics
 	CodeTTL        time.Duration
 	ResendInterval time.Duration
 	MaxAttempts    int
 	DailyPerPhone  int
 	HourlyPerIP    int
+	// DailyBudget 全局日发送预算；0 表示不限制。
+	DailyBudget int
 }
 
 // SendSMSCodeInput 是发送验证码入参。
@@ -105,11 +115,14 @@ type SMSLoginService struct {
 	limiter        SMSRateLimiter
 	sender         CodeSender
 	auth           *AuthService
+	hasher         *crypto.Hasher
+	metrics        Metrics
 	codeTTL        time.Duration
 	resendInterval time.Duration
 	maxAttempts    int
 	dailyPerPhone  int
 	hourlyPerIP    int
+	dailyBudget    int
 }
 
 // NewSMSLoginService 构造短信登录服务；依赖缺失或参数越界时返回错误。
@@ -131,21 +144,34 @@ func NewSMSLoginService(cfg SMSLoginConfig) (*SMSLoginService, error) {
 		limiter:        cfg.Limiter,
 		sender:         cfg.Sender,
 		auth:           cfg.Auth,
+		hasher:         cfg.Hasher,
+		metrics:        cfg.Metrics,
 		codeTTL:        cfg.CodeTTL,
 		resendInterval: cfg.ResendInterval,
 		maxAttempts:    cfg.MaxAttempts,
 		dailyPerPhone:  cfg.DailyPerPhone,
 		hourlyPerIP:    cfg.HourlyPerIP,
+		dailyBudget:    cfg.DailyBudget,
 	}, nil
 }
 
 // Send 生成并发送验证码；响应与账号是否存在无关，避免手机号枚举。
-func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) error {
+func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err error) {
+	defer func() {
+		if s.metrics == nil {
+			return
+		}
+		result := MetricResultSuccess
+		if err != nil {
+			result = MetricResultFailure
+		}
+		s.metrics.ObserveSMSSend(ctx, result)
+	}()
 	phone := strings.TrimSpace(in.Phone)
 	if !e164Pattern.MatchString(phone) {
 		return apperr.BadRequest("phone must be in E.164 format")
 	}
-	phoneHash := HashAccountRef(domain.ChannelC, phone)
+	phoneHash := PhoneRef(s.hasher, phone)
 
 	allowed, retryAfter, err := s.limiter.AllowResend(ctx, phoneHash, s.resendInterval)
 	if err != nil {
@@ -154,6 +180,13 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) error {
 	if !allowed {
 		return tooManySMS("sms code requested too frequently", retryAfter)
 	}
+	sent := false
+	defer func() {
+		if !sent {
+			// 发送失败回滚重发窗口，允许用户立即重试。
+			_ = s.limiter.ResetResend(ctx, phoneHash)
+		}
+	}()
 	if ok, dailyErr := s.limiter.AllowDaily(ctx, phoneHash, s.dailyPerPhone); dailyErr != nil {
 		return unavailableSMS()
 	} else if !ok {
@@ -166,12 +199,19 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) error {
 			return tooManySMS("sms hourly limit exceeded", 0)
 		}
 	}
+	if s.dailyBudget > 0 {
+		if ok, budgetErr := s.limiter.AllowGlobalDaily(ctx, s.dailyBudget); budgetErr != nil {
+			return unavailableSMS()
+		} else if !ok {
+			return tooManySMS("sms daily budget exhausted", 0)
+		}
+	}
 
 	code, err := generateSMSCode()
 	if err != nil {
 		return unavailableSMS()
 	}
-	if err := s.codes.Save(ctx, phoneHash, hashSMSCode(phoneHash, code), s.codeTTL); err != nil {
+	if err := s.codes.Save(ctx, phoneHash, SMSCodeDigest(s.hasher, phoneHash, code), s.codeTTL); err != nil {
 		return unavailableSMS()
 	}
 	if err := s.codes.ResetAttempts(ctx, phoneHash); err != nil {
@@ -183,6 +223,7 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) error {
 		_ = s.codes.Delete(ctx, phoneHash)
 		return unavailableSMS()
 	}
+	sent = true
 	return nil
 }
 
@@ -243,8 +284,12 @@ func (s *SMSLoginService) verifyInput(in SMSLoginInput) (string, error) {
 	if !e164Pattern.MatchString(phone) || !smsCodePattern.MatchString(code) {
 		return "", apperr.BadRequest("phone or code format is invalid")
 	}
-	phoneHash := HashAccountRef(domain.ChannelC, phone)
-	if err := s.guard.CheckRateLimit(loginRateKey(domain.ChannelC, phoneHash, in.IPHash)); err != nil {
+	phoneHash := PhoneRef(s.hasher, phone)
+	rateKeys := []string{loginRateKey(domain.ChannelC, phoneHash, "")}
+	if in.IPHash != "" {
+		rateKeys = append(rateKeys, loginRateKey(domain.ChannelC, "", in.IPHash))
+	}
+	if err := s.guard.CheckRateLimit(rateKeys...); err != nil {
 		return "", err
 	}
 	return phoneHash, nil
@@ -259,8 +304,7 @@ func (s *SMSLoginService) consumeCode(ctx context.Context, phoneHash, code, trac
 		}
 		return unavailableSMS()
 	}
-	expectedHash := hashSMSCode(phoneHash, code)
-	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(expectedHash)) != 1 {
+	if !SMSCodeMatches(s.hasher, storedHash, phoneHash, code) {
 		attempts, incrErr := s.codes.IncrAttempts(ctx, phoneHash, s.codeTTL)
 		if incrErr != nil {
 			return unavailableSMS()
@@ -416,5 +460,5 @@ func tooManySMS(message string, retryAfter time.Duration) error {
 	if retryAfter > 0 {
 		message = fmt.Sprintf("%s, retry after %s", message, retryAfter.Round(time.Second))
 	}
-	return apperr.TooManyRequests(message)
+	return NewRateLimitedError(message, retryAfter)
 }

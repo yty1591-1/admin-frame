@@ -77,6 +77,9 @@ func run(configPath, replayDLQ string) error {
 	if err := identityruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register identity async handlers: %w", err)
 	}
+	if err := identityruntime.StartCleanup(ctx, deps); err != nil {
+		return fmt.Errorf("identity cleanup: %w", err)
+	}
 
 	logger.Info("worker started",
 		"db_driver", cfg.DB.Driver,

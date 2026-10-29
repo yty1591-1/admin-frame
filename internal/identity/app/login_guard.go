@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
 // 默认锁定策略，与 docs/identity-authn.md §10 一致。
@@ -105,6 +107,15 @@ func WithLoginFailureCounter(counter LoginFailureCounter) LoginGuardOption {
 	}
 }
 
+// WithHasher 注入 PII 摘要器；nil 时回退历史无盐算法（仅限本地/tests）。
+func WithHasher(hasher *crypto.Hasher) LoginGuardOption {
+	return func(g *LoginGuard) {
+		if hasher != nil {
+			g.hasher = hasher
+		}
+	}
+}
+
 // LoginGuard 负责登录准入与失败锁定编排。
 //
 // 职责边界：
@@ -120,6 +131,7 @@ type LoginGuard struct {
 	policy   LockoutPolicy
 	limiter  LoginLimiter
 	counter  LoginFailureCounter
+	hasher   *crypto.Hasher
 }
 
 // NewLoginGuard 构造登录守卫；仓储、ID 生成器与策略均必填。
@@ -150,20 +162,42 @@ func NewLoginGuard(
 	return guard, nil
 }
 
-// CheckRateLimit 对登录请求执行分桶限流；未注入限流器时直接放行。
-func (g *LoginGuard) CheckRateLimit(key string) error {
+// CheckRateLimit 对登录请求执行多维度限流；未注入限流器时直接放行。
+//
+// 传入的 key 相互独立（账号级、IP 级），任一超限即拒绝；返回建议等待时长为各维度最大值。
+func (g *LoginGuard) CheckRateLimit(keys ...string) error {
 	if g.limiter == nil {
 		return nil
 	}
-	allowed, retryAfter := g.limiter.Allow(key)
-	if allowed {
+	var retryAfter time.Duration
+	limited := false
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		if _, dup := seen[trimmed]; dup {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		allowed, after := g.limiter.Allow(trimmed)
+		if allowed {
+			continue
+		}
+		limited = true
+		if after > retryAfter {
+			retryAfter = after
+		}
+	}
+	if !limited {
 		return nil
 	}
 	msg := "too many login attempts"
 	if retryAfter > 0 {
 		msg = fmt.Sprintf("too many login attempts, retry after %s", retryAfter.Round(time.Second))
 	}
-	return apperr.TooManyRequests(msg)
+	return NewRateLimitedError(msg, retryAfter)
 }
 
 // Authorize 判断账号当前是否允许登录；拒绝时统一返回 40100 文案。
@@ -199,7 +233,7 @@ func (g *LoginGuard) RecordFailure(
 	if account == nil {
 		return false, apperr.Internal("account is required", nil)
 	}
-	accountRef := HashAccountRef(account.Channel, account.Subject)
+	accountRef := AccountRef(g.hasher, account.Channel, account.Subject)
 	attempt, err := g.newAttempt(account.Channel, accountRef, domain.LoginOutcomeFailure, normalizeReason(reason), ipHash, uaHash, now)
 	if err != nil {
 		return false, err
@@ -329,7 +363,7 @@ func (g *LoginGuard) RecordSuccess(
 	if account == nil {
 		return apperr.Internal("account is required", nil)
 	}
-	accountRef := HashAccountRef(account.Channel, account.Subject)
+	accountRef := AccountRef(g.hasher, account.Channel, account.Subject)
 	attempt, err := g.newAttempt(account.Channel, accountRef, domain.LoginOutcomeSuccess, "", ipHash, uaHash, now)
 	if err != nil {
 		return err

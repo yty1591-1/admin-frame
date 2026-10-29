@@ -54,6 +54,23 @@ func NewAccountService(auth *AuthService) (*AccountService, error) {
 	return &AccountService{auth: auth}, nil
 }
 
+// revokeAccountSessions 撤销账号全部设备并上报指标；失败记录告警日志与失败指标。
+func (s *AccountService) revokeAccountSessions(
+	ctx context.Context,
+	accountID string,
+	reason domain.RevokeReason,
+	now time.Time,
+) error {
+	if _, err := s.auth.sessions.RevokeByAccount(ctx, accountID, reason, now); err != nil {
+		s.auth.logError("identity revoke account sessions failed",
+			"account_ref", shortHash(accountID), "reason", reason.String(), "error", err)
+		s.auth.observeSessionRevoke(ctx, reason, MetricResultFailure)
+		return apperr.Internal("revoke account sessions failed", err)
+	}
+	s.auth.observeSessionRevoke(ctx, reason, MetricResultSuccess)
+	return nil
+}
+
 // ChangePasswordInput 是用户自助改密入参。
 type ChangePasswordInput struct {
 	// Actor 当前登录上下文。
@@ -122,8 +139,8 @@ func (s *AccountService) ChangePassword(ctx context.Context, in ChangePasswordIn
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonPasswordChanged, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonPasswordChanged, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthPasswordChanged, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, reasonUserPassword, in.Actor.TraceID, nil); err != nil {
@@ -160,8 +177,8 @@ func (s *AccountService) Disable(ctx context.Context, in AccountOperationInput) 
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAccountDisabled, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAccountDisabled, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthAccountDisabled, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, operationReason(in.Reason, reasonAdminDisabled), in.Actor.TraceID, nil); err != nil {
@@ -280,8 +297,8 @@ func (s *AccountService) ResetMFA(ctx context.Context, in AccountOperationInput)
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthMFAReset, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, operationReason(in.Reason, reasonAdminResetMFA), in.Actor.TraceID, nil); err != nil {
@@ -483,8 +500,8 @@ func (s *AccountService) Lock(ctx context.Context, in LockAccountInput) error {
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthAccountLocked, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeFailure, operationReason(in.Reason, reasonAdminLocked), in.Actor.TraceID, nil); err != nil {
@@ -541,8 +558,8 @@ func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationI
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthPasswordReset, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, operationReason(in.Reason, reasonAdminPasswordRst), in.Actor.TraceID, nil); err != nil {
@@ -573,8 +590,8 @@ func (s *AccountService) Delete(ctx context.Context, in AccountOperationInput) e
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAccountDisabled, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAccountDisabled, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthAccountDeleted, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, operationReason(in.Reason, reasonAdminDeleted), in.Actor.TraceID, nil); err != nil {
@@ -626,68 +643,51 @@ func (s *AccountService) Restore(ctx context.Context, in AccountOperationInput) 
 	return nil
 }
 
-// ListTargetSessions 列出目标账号的全部会话（管理员视角均标记为非当前会话）。
-func (s *AccountService) ListTargetSessions(ctx context.Context, targetAccountID string) ([]SessionView, error) {
+// ListTargetSessions 列出目标账号的设备会话（管理员视角均标记为非当前会话）。
+func (s *AccountService) ListTargetSessions(ctx context.Context, targetAccountID, cursor string, limit int) (SessionPage, error) {
 	account, err := s.auth.targetAccount(ctx, targetAccountID)
 	if err != nil {
-		return nil, err
+		return SessionPage{}, err
 	}
-	sessions, err := s.auth.sessions.ListByAccount(ctx, account.ID)
-	if err != nil {
-		return nil, apperr.Internal("list sessions failed", err)
-	}
-	out := make([]SessionView, 0, len(sessions))
-	for _, session := range sessions {
-		out = append(out, SessionView{
-			ID:            session.ID,
-			Current:       false,
-			Status:        session.Status.String(),
-			CreatedAt:     session.CreatedAt,
-			LastUsedAt:    session.LastUsedAt,
-			ExpiresAt:     session.ExpiresAt,
-			IdleExpiresAt: session.IdleExpiresAt,
-			RevokedAt:     session.RevokedAt,
-		})
-	}
-	return out, nil
+	return s.auth.listFamilies(ctx, account.ID, "", cursor, limit)
 }
 
-// RevokeTargetSession 撤销目标账号的指定会话。
+// RevokeTargetSession 撤销目标账号的指定设备（family）。
 //
-// 注意：会话级撤销只阻止刷新，已签发的 Access Token 仍有效到自然过期（IDN-P1-02）。
-func (s *AccountService) RevokeTargetSession(ctx context.Context, in AccountOperationInput, sessionID string) error {
-	if strings.TrimSpace(sessionID) == "" {
+// 提交后写设备全部令牌代的撤销快照，使该设备已签发的 Access Token 在 ≤60s 内失效（IDN-P1-02）。
+func (s *AccountService) RevokeTargetSession(ctx context.Context, in AccountOperationInput, familyID string) error {
+	if strings.TrimSpace(familyID) == "" {
 		return apperr.BadRequest("session id is required")
 	}
 	now := s.auth.clock.Now().UTC()
-	return s.auth.runTx(ctx, func(txCtx context.Context) error {
+	var writes []sessionStateWrite
+	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
 		account, err := s.auth.targetAccount(txCtx, in.TargetAccountID)
 		if err != nil {
 			return err
 		}
-		session, err := s.auth.sessions.FindByID(txCtx, sessionID)
+		family, err := s.auth.sessions.FindFamily(txCtx, familyID)
 		if err != nil {
 			if errors.Is(err, apperr.ErrNotFound) {
 				return apperr.NotFound("session not found")
 			}
-			return apperr.Internal("load session failed", err)
+			return apperr.Internal("load session family failed", err)
 		}
-		if session.AccountID != account.ID {
+		if family.AccountID != account.ID {
 			return apperr.NotFound("session not found")
 		}
-		expected := session.Version
-		if err := session.Revoke(domain.RevokeReasonAdmin, now); err != nil {
-			if errors.Is(err, domain.ErrSessionExpired) {
-				return nil
-			}
-			return apperr.Internal("revoke session failed", err)
+		chain, revokeErr := s.auth.revokeFamilyChain(txCtx, familyID, domain.RevokeReasonAdmin, now)
+		if revokeErr != nil {
+			return apperr.Internal("revoke session family failed", revokeErr)
 		}
-		if err := s.auth.sessions.Save(txCtx, session, expected); err != nil && !errors.Is(err, apperr.ErrConflict) {
-			return apperr.Internal("save session failed", err)
-		}
-		return s.auth.emitAudit(txCtx, audit.ActionAuthTokenRevoked, account.ID, account.MerchantID, "session", session.ID,
+		writes = chain
+		return s.auth.emitAudit(txCtx, audit.ActionAuthTokenRevoked, account.ID, account.MerchantID, "session", familyID,
 			audit.OutcomeSuccess, string(domain.RevokeReasonAdmin), in.Actor.TraceID, nil)
-	})
+	}); err != nil {
+		return err
+	}
+	s.auth.markSessionsRevoked(ctx, writes)
+	return nil
 }
 
 // RevokeTargetSessions 撤销目标账号全部会话，并递增 token_version 使访问令牌失效。
@@ -706,8 +706,8 @@ func (s *AccountService) RevokeTargetSessions(ctx context.Context, in AccountOpe
 		if err := s.auth.accounts.Save(txCtx, loaded, expected); err != nil {
 			return apperr.Internal("save account failed", err)
 		}
-		if _, err := s.auth.sessions.RevokeByAccount(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
-			return apperr.Internal("revoke account sessions failed", err)
+		if err := s.revokeAccountSessions(txCtx, loaded.ID, domain.RevokeReasonAdmin, now); err != nil {
+			return err
 		}
 		if err := s.auth.emitAudit(txCtx, audit.ActionAuthTokenRevoked, loaded.ID, loaded.MerchantID, "account", loaded.ID,
 			audit.OutcomeSuccess, string(domain.RevokeReasonAdmin), in.Actor.TraceID, nil); err != nil {

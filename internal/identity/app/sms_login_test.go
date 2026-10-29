@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,6 +327,43 @@ func TestSMSLoginSendFailureCleansCode(t *testing.T) {
 	if _, err := f.codes.Get(ctx, phoneHash); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("code should be removed after send failure, got %v", err)
 	}
+	// 失败必须回滚重发窗口：立即重试应仍是供应商故障（50300），而不是被 42900 锁住。
+	requireAppCode(t, f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}), 50300)
+}
+
+// TestSMSStoresKeyedDigests 验证手机号与验证码以带密钥摘要存储。
+func TestSMSStoresKeyedDigests(t *testing.T) {
+	hasher := testHasher(t)
+	f := newSMSFixture(t, func(cfg *app.SMSLoginConfig) { cfg.Hasher = hasher })
+	ctx := context.Background()
+	phone := "+8613800138000"
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send sms: %v", err)
+	}
+	phoneHash := app.PhoneRef(hasher, phone)
+	stored, err := f.codes.Get(ctx, phoneHash)
+	if err != nil {
+		t.Fatalf("load stored code: %v", err)
+	}
+	if !strings.HasPrefix(stored, "v1:") || len(stored) != len("v1:")+64 {
+		t.Fatalf("stored code digest = %q, want keyed format", stored)
+	}
+	if strings.Contains(stored, f.sender.code) {
+		t.Fatalf("stored digest must not contain plaintext code")
+	}
+	if !app.SMSCodeMatches(hasher, stored, phoneHash, f.sender.code) {
+		t.Fatalf("stored digest must verify sender code")
+	}
+}
+
+// TestSMSLoginGlobalDailyBudget 验证全局日发送预算生效。
+func TestSMSLoginGlobalDailyBudget(t *testing.T) {
+	f := newSMSFixture(t, func(cfg *app.SMSLoginConfig) { cfg.DailyBudget = 1 })
+	ctx := context.Background()
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: "+8613800138000"}); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	requireAppCode(t, f.svc.Send(ctx, app.SendSMSCodeInput{Phone: "+8613800138001"}), 42900)
 }
 
 func TestSMSLogin(t *testing.T) {

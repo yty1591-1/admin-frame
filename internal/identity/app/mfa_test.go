@@ -9,12 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/totp"
 )
 
@@ -61,6 +65,8 @@ func bindMFA(t *testing.T, f *authFixture, accountID string) (secret string, rec
 	if !result.BindingConfirmed {
 		t.Fatalf("expected binding confirmed, got %+v", result)
 	}
+	// 首码已被消费（防重放），后续登录必须使用下一个时间步。
+	f.clock.Advance(totp.Period)
 	return setup.Secret, setup.RecoveryCodes
 }
 
@@ -379,6 +385,217 @@ func TestMFASetupTicketExpiryAndScopeIsolation(t *testing.T) {
 	requireAppCode(t, err, apperr.CodeUnauthorized)
 }
 
+// TestMFATOTPCodeReplayRejected 验证同一 TOTP 码在窗口内第二次使用被拒绝。
+func TestMFATOTPCodeReplayRejected(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-replay", "admin@example.com", "Correct#Passw0rd")
+	secret, _ := bindMFA(t, f, "acct-replay")
+	loginWithMFA(t, f, "admin@example.com", "Correct#Passw0rd")
+
+	challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !challenge.MFARequired {
+		t.Fatalf("expected mfa challenge, got %+v", challenge)
+	}
+	_, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+		Ticket:  challenge.MFATicket,
+		Code:    totpCodeAt(t, secret, f.clock.Now()),
+		TraceID: "trace-replay",
+	})
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+}
+
+// TestMFATOTPConcurrentSameCodeOnlyOneSucceeds 验证并发使用同一 TOTP 码只有一次成功。
+func TestMFATOTPConcurrentSameCodeOnlyOneSucceeds(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-race", "admin@example.com", "Correct#Passw0rd")
+	secret, _ := bindMFA(t, f, "acct-race")
+
+	tickets := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+		tickets = append(tickets, challenge.MFATicket)
+	}
+	code := totpCodeAt(t, secret, f.clock.Now())
+	var success int32
+	var wg sync.WaitGroup
+	for _, ticket := range tickets {
+		wg.Add(1)
+		go func(tk string) {
+			defer wg.Done()
+			if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{Ticket: tk, Code: code}); err == nil {
+				atomic.AddInt32(&success, 1)
+			}
+		}(ticket)
+	}
+	wg.Wait()
+	if success != 1 {
+		t.Fatalf("same TOTP code successes = %d, want 1", success)
+	}
+}
+
+// TestMFARecoveryCodesConcurrentEachOnce 验证并发消费不同恢复码时每个码只成功一次。
+func TestMFARecoveryCodesConcurrentEachOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-recovery", "admin@example.com", "Correct#Passw0rd")
+	_, codes := bindMFA(t, f, "acct-recovery")
+
+	tickets := make([]string, 0, len(codes))
+	for range codes {
+		challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+		tickets = append(tickets, challenge.MFATicket)
+	}
+	var success int32
+	var wg sync.WaitGroup
+	for i, code := range codes {
+		wg.Add(1)
+		go func(ticket, recovery string) {
+			defer wg.Done()
+			if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{Ticket: ticket, Code: recovery}); err == nil {
+				atomic.AddInt32(&success, 1)
+			}
+		}(tickets[i], code)
+	}
+	wg.Wait()
+	if int(success) != len(codes) {
+		t.Fatalf("recovery code successes = %d, want %d", success, len(codes))
+	}
+
+	// 任一已消费的恢复码不可再次使用。
+	challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	_, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{Ticket: challenge.MFATicket, Code: codes[0]})
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+}
+
+// TestMFADisableAndVerifyConcurrency 验证并发解绑与校验后绑定最终为删除状态。
+func TestMFADisableAndVerifyConcurrency(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-concurrent", "admin@example.com", "Correct#Passw0rd")
+	secret, codes := bindMFA(t, f, "acct-concurrent")
+
+	challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !challenge.MFARequired {
+		t.Fatalf("expected mfa challenge, got %+v", challenge)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+			Ticket: challenge.MFATicket,
+			Code:   totpCodeAt(t, secret, f.clock.Now()),
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		_ = f.svc.DisableMFA(ctx, app.SessionActor{AccountID: "acct-concurrent", TraceID: "trace-disable"}, codes[0])
+	}()
+	wg.Wait()
+
+	if _, err := f.mfa.FindByAccount(ctx, "acct-concurrent"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("binding must be deleted after concurrent disable/verify, got %v", err)
+	}
+}
+
+// TestMFASetupTicketReplayNoLockout 验证票据重放不锁定账号且产生独立审计。
+func TestMFASetupTicketReplayNoLockout(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureEmitter{}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAAdminRequired = true
+	}, withCapture(capture))
+	f.seedAccount(t, "acct-replay-ticket", "admin@example.com", "Correct#Passw0rd")
+	login := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !login.MFABindingRequired || login.MFASetupTicket == "" {
+		t.Fatalf("expected mfa binding challenge, got %+v", login)
+	}
+	setup, err := f.svc.SetupMFA(ctx, app.MFASetupInput{SetupTicket: login.MFASetupTicket})
+	if err != nil {
+		t.Fatalf("setup mfa: %v", err)
+	}
+	code := totpCodeAt(t, setup.Secret, f.clock.Now())
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{SetupTicket: login.MFASetupTicket, Code: code}); err != nil {
+		t.Fatalf("first setup verify: %v", err)
+	}
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{SetupTicket: login.MFASetupTicket, Code: code}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("replayed setup ticket err = %v, want 401", err)
+	}
+	account, err := f.accounts.FindByID(ctx, "acct-replay-ticket")
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.Status == domain.AccountStatusLocked {
+		t.Fatalf("ticket replay must not lock the account")
+	}
+	if events := capture.byAction(audit.ActionAuthMFATicketReplay); len(events) != 1 {
+		t.Fatalf("ticket replay audit = %d, want 1", len(events))
+	}
+}
+
+// TestMFAKeyRotationReencryptsLegacyCiphertext 验证旧密文可解密并在登录后重加密为 active key。
+func TestMFAKeyRotationReencryptsLegacyCiphertext(t *testing.T) {
+	ctx := context.Background()
+	legacyKey := []byte("01234567890123456789012345678901")
+	activeKey := []byte("abcdefghijklmnopqrstuvwxyz012345")
+	legacy, err := crypto.NewAES256GCM(legacyKey)
+	if err != nil {
+		t.Fatalf("legacy cipher: %v", err)
+	}
+	ring, err := crypto.NewKeyRing(map[string][]byte{"active": activeKey}, "active", legacyKey)
+	if err != nil {
+		t.Fatalf("key ring: %v", err)
+	}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFACipher = ring
+	})
+	f.seedAccount(t, "acct-rotate", "admin@example.com", "Correct#Passw0rd")
+	secret, err := totp.GenerateSecret()
+	if err != nil {
+		t.Fatalf("generate secret: %v", err)
+	}
+	legacyCT, err := legacy.Seal(secret, []byte("identity:mfa:acct-rotate"))
+	if err != nil {
+		t.Fatalf("seal legacy: %v", err)
+	}
+	enrollment, err := domain.NewMFAEnrollment("acct-rotate", legacyCT, f.clock.Now())
+	if err != nil {
+		t.Fatalf("new enrollment: %v", err)
+	}
+	if err := enrollment.SetRecoveryCodes([]string{"hash-1"}, f.clock.Now()); err != nil {
+		t.Fatalf("set recovery codes: %v", err)
+	}
+	if err := enrollment.Confirm(f.clock.Now()); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := f.mfa.Save(ctx, enrollment, 0); err != nil {
+		t.Fatalf("save enrollment: %v", err)
+	}
+
+	challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !challenge.MFARequired {
+		t.Fatalf("expected mfa challenge, got %+v", challenge)
+	}
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+		Ticket: challenge.MFATicket,
+		Code:   totpCodeAt(t, totp.EncodeSecret(secret), f.clock.Now()),
+	}); err != nil {
+		t.Fatalf("verify with legacy ciphertext: %v", err)
+	}
+	stored, err := f.mfa.FindByAccount(ctx, "acct-rotate")
+	if err != nil {
+		t.Fatalf("reload enrollment: %v", err)
+	}
+	if ring.KeyID(stored.SecretCiphertext) != "active" {
+		t.Fatalf("ciphertext key id = %q, want active", ring.KeyID(stored.SecretCiphertext))
+	}
+	if _, err := ring.Open(stored.SecretCiphertext, []byte("identity:mfa:acct-rotate")); err != nil {
+		t.Fatalf("re-encrypted ciphertext must decrypt: %v", err)
+	}
+}
+
 func TestMFADisable(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin)
@@ -395,6 +612,8 @@ func TestMFADisable(t *testing.T) {
 	})
 
 	t.Run("correct code removes binding and revokes sessions", func(t *testing.T) {
+		// 登录已消费当前时间步；解绑必须使用下一个码，验证防重放生效。
+		f.clock.Advance(totp.Period)
 		err := f.svc.DisableMFA(ctx, app.SessionActor{AccountID: "acct-disable", TraceID: "trace-disable"},
 			totpCodeAt(t, secret, f.clock.Now()))
 		if err != nil {
@@ -437,4 +656,142 @@ func TestMFASetupRejectedOnBizChannel(t *testing.T) {
 
 	_, err = f.svc.SetupMFA(ctx, app.MFASetupInput{Actor: app.SessionActor{AccountID: "acct-biz"}})
 	requireAppCode(t, err, apperr.CodeBadRequest)
+}
+
+// lockAccountForAudit 把账号置为锁定，用于验证 MFA 授权失败审计（IDN-P2-02）。
+func lockAccountForAudit(t *testing.T, f *authFixture, accountID string) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := f.accounts.FindByID(ctx, accountID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	expected := account.Version
+	now := f.clock.Now()
+	if err := account.Lock(now.Add(time.Hour), now); err != nil {
+		t.Fatalf("lock account: %v", err)
+	}
+	if err := f.accounts.Save(ctx, account, expected); err != nil {
+		t.Fatalf("save locked account: %v", err)
+	}
+}
+
+// requireSingleLoginFailed 断言指定原因恰好一条 login_failed；忽略登录阶段已产生的其它原因。
+func requireSingleLoginFailed(t *testing.T, capture *captureEmitter, reason string) {
+	t.Helper()
+	var matched []audit.Event
+	for _, event := range capture.byAction(audit.ActionAuthLoginFailed) {
+		if event.Reason == reason {
+			matched = append(matched, event)
+		}
+	}
+	if len(matched) != 1 {
+		t.Fatalf("expected exactly one auth.login_failed(reason=%s), got %+v", reason, matched)
+	}
+	if matched[0].Outcome != audit.OutcomeFailure {
+		t.Fatalf("unexpected login_failed event: %+v", matched[0])
+	}
+}
+
+// TestMFARecoveryCodeAudited 验证恢复码消费写入 auth.mfa.recovery_used（含剩余数量、不含码值）。
+func TestMFARecoveryCodeAudited(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureEmitter{}
+	f := newAuthFixture(t, domain.ChannelAdmin, withCapture(capture))
+	f.seedAccount(t, "acct-recovery-audit", "admin@example.com", "Correct#Passw0rd")
+	_, codes := bindMFA(t, f, "acct-recovery-audit")
+	challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+	if !challenge.MFARequired || challenge.MFATicket == "" {
+		t.Fatalf("expected mfa challenge, got %+v", challenge)
+	}
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+		Ticket: challenge.MFATicket, Code: codes[0], TraceID: "trace-recovery-audit",
+	}); err != nil {
+		t.Fatalf("verify with recovery code: %v", err)
+	}
+
+	events := capture.byAction(audit.ActionAuthMFARecoveryUsed)
+	if len(events) != 1 {
+		t.Fatalf("expected exactly one auth.mfa.recovery_used, got %+v", events)
+	}
+	if events[0].Outcome != audit.OutcomeSuccess || events[0].Attrs["remaining"] != "9" {
+		t.Fatalf("unexpected recovery_used event: %+v", events[0])
+	}
+	if strings.Contains(capture.dump(t), codes[0]) {
+		t.Fatalf("audit dump leaks recovery code: %s", capture.dump(t))
+	}
+}
+
+// TestMFAAuthorizeFailuresAudited 验证 MFA 校验遇到 locked / disabled 时先写审计再拒绝。
+func TestMFAAuthorizeFailuresAudited(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("complete login locked", func(t *testing.T) {
+		capture := &captureEmitter{}
+		f := newAuthFixture(t, domain.ChannelAdmin, withCapture(capture))
+		f.seedAccount(t, "acct-mfa-locked", "admin@example.com", "Correct#Passw0rd")
+		bindMFA(t, f, "acct-mfa-locked")
+		challenge := f.login(t, "admin@example.com", "Correct#Passw0rd")
+		if !challenge.MFARequired || challenge.MFATicket == "" {
+			t.Fatalf("expected mfa challenge, got %+v", challenge)
+		}
+		lockAccountForAudit(t, f, "acct-mfa-locked")
+
+		_, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+			Ticket: challenge.MFATicket, Code: "000000", TraceID: "trace-mfa-locked",
+		})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		requireSingleLoginFailed(t, capture, domain.LoginReasonLocked)
+	})
+
+	t.Run("complete setup disabled", func(t *testing.T) {
+		capture := &captureEmitter{}
+		f := newAuthFixture(t, domain.ChannelAdmin, withCapture(capture), func(cfg *app.AuthServiceConfig) {
+			cfg.MFAAdminRequired = true
+		})
+		f.seedAccount(t, "acct-setup-disabled", "admin@example.com", "Correct#Passw0rd")
+		login, err := f.svc.Login(ctx, app.LoginInput{
+			Subject: "admin@example.com", Password: "Correct#Passw0rd", TraceID: "trace-setup-disabled",
+		})
+		if err != nil || login.MFASetupTicket == "" {
+			t.Fatalf("login: %v result=%+v", err, login)
+		}
+		account, loadErr := f.accounts.FindByID(ctx, "acct-setup-disabled")
+		if loadErr != nil {
+			t.Fatalf("load account: %v", loadErr)
+		}
+		expected := account.Version
+		if disableErr := account.Disable(f.clock.Now()); disableErr != nil {
+			t.Fatalf("disable account: %v", disableErr)
+		}
+		if saveErr := f.accounts.Save(ctx, account, expected); saveErr != nil {
+			t.Fatalf("save disabled account: %v", saveErr)
+		}
+
+		_, err = f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+			SetupTicket: login.MFASetupTicket, Code: "000000", TraceID: "trace-setup-disabled",
+		})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		requireSingleLoginFailed(t, capture, domain.LoginReasonDisabled)
+	})
+
+	t.Run("confirm binding locked", func(t *testing.T) {
+		capture := &captureEmitter{}
+		f := newAuthFixture(t, domain.ChannelAdmin, withCapture(capture))
+		f.seedAccount(t, "acct-confirm-locked", "admin@example.com", "Correct#Passw0rd")
+		setup, err := f.svc.SetupMFA(ctx, app.MFASetupInput{
+			Actor: app.SessionActor{AccountID: "acct-confirm-locked", TraceID: "trace-confirm-setup"},
+		})
+		if err != nil {
+			t.Fatalf("setup mfa: %v", err)
+		}
+		lockAccountForAudit(t, f, "acct-confirm-locked")
+
+		_, err = f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+			Actor: app.SessionActor{AccountID: "acct-confirm-locked", TraceID: "trace-confirm-locked"},
+			Code:  totpCodeAt(t, setup.Secret, f.clock.Now()), TraceID: "trace-confirm-locked",
+		})
+		requireAppCode(t, err, apperr.CodeUnauthorized)
+		requireSingleLoginFailed(t, capture, domain.LoginReasonLocked)
+	})
 }

@@ -15,16 +15,18 @@ import (
 // 并发安全：内部使用 RWMutex；refresh_token_hash 全局唯一，
 // account_id / family_id / refresh_token_hash 创建后不可变。
 type MemorySessionRepository struct {
-	mu     sync.RWMutex
-	byID   map[string]*domain.Session
-	byHash map[string]string
+	mu       sync.RWMutex
+	byID     map[string]*domain.Session
+	byHash   map[string]string
+	families map[string]*domain.SessionFamily
 }
 
 // NewMemorySessionRepository 创建空的会话仓储。
 func NewMemorySessionRepository() *MemorySessionRepository {
 	return &MemorySessionRepository{
-		byID:   make(map[string]*domain.Session),
-		byHash: make(map[string]string),
+		byID:     make(map[string]*domain.Session),
+		byHash:   make(map[string]string),
+		families: make(map[string]*domain.SessionFamily),
 	}
 }
 
@@ -106,7 +108,22 @@ func (r *MemorySessionRepository) RevokeFamily(_ context.Context, familyID strin
 		r.byID[id] = updated
 		revoked++
 	}
+	r.revokeFamilyLocked(familyID, reason, now)
 	return revoked, nil
+}
+
+// revokeFamilyLocked 撤销设备会话；调用方须持有写锁。
+func (r *MemorySessionRepository) revokeFamilyLocked(familyID string, reason domain.RevokeReason, now time.Time) {
+	family, ok := r.families[familyID]
+	if !ok {
+		return
+	}
+	updated := cloneFamily(family)
+	if err := updated.Revoke(reason, now); err != nil {
+		// 已过期设备不可再变为 revoked，保留历史事实。
+		return
+	}
+	r.families[familyID] = updated
 }
 
 // RevokeByAccount 撤销账号下所有 active / rotated 会话，返回受影响条数。
@@ -131,6 +148,16 @@ func (r *MemorySessionRepository) RevokeByAccount(_ context.Context, accountID s
 		r.byID[id] = updated
 		revoked++
 	}
+	for id, family := range r.families {
+		if family.AccountID != accountID {
+			continue
+		}
+		updated := cloneFamily(family)
+		if err := updated.Revoke(reason, now); err != nil {
+			continue
+		}
+		r.families[id] = updated
+	}
 	return revoked, nil
 }
 
@@ -152,6 +179,189 @@ func (r *MemorySessionRepository) ListByAccount(_ context.Context, accountID str
 		return out[i].ID < out[j].ID
 	})
 	return out, nil
+}
+
+// FindFamily 按主键加载设备会话；不存在返回 NotFound。
+func (r *MemorySessionRepository) FindFamily(_ context.Context, familyID string) (*domain.SessionFamily, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	family, ok := r.families[familyID]
+	if !ok {
+		return nil, apperr.NotFound("session family not found")
+	}
+	return cloneFamily(family), nil
+}
+
+// SaveFamily 创建设备会话或使用乐观锁更新。
+func (r *MemorySessionRepository) SaveFamily(_ context.Context, family *domain.SessionFamily, expectedVersion int64) error {
+	if family == nil {
+		return apperr.BadRequest("session family is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing, exists := r.families[family.ID]
+	if expectedVersion == 0 {
+		if exists {
+			return apperr.Conflict("session family id already exists")
+		}
+		r.families[family.ID] = cloneFamily(family)
+		return nil
+	}
+	if !exists {
+		return apperr.NotFound("session family not found")
+	}
+	if existing.Version != expectedVersion {
+		return apperr.Conflict("session family version conflict")
+	}
+	if existing.AccountID != family.AccountID {
+		return apperr.BadRequest("session family account is immutable")
+	}
+	r.families[family.ID] = cloneFamily(family)
+	return nil
+}
+
+// ListFamiliesByAccount 按 last_used_at / id 倒序返回设备会话。
+func (r *MemorySessionRepository) ListFamiliesByAccount(
+	_ context.Context,
+	accountID string,
+	afterLastUsed time.Time,
+	afterID string,
+	limit int,
+) ([]*domain.SessionFamily, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*domain.SessionFamily, 0, limit)
+	for _, family := range r.families {
+		if family.AccountID != accountID || family.Status != domain.SessionStatusActive {
+			continue
+		}
+		if !afterLastUsed.IsZero() {
+			if family.LastUsedAt.After(afterLastUsed) {
+				continue
+			}
+			if family.LastUsedAt.Equal(afterLastUsed) && (afterID == "" || family.ID >= afterID) {
+				continue
+			}
+		}
+		out = append(out, cloneFamily(family))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].LastUsedAt.Equal(out[j].LastUsedAt) {
+			return out[i].LastUsedAt.After(out[j].LastUsedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListByFamily 返回 family 下全部会话，按创建时间倒序、ID 升序。
+func (r *MemorySessionRepository) ListByFamily(_ context.Context, familyID string) ([]*domain.Session, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*domain.Session, 0, 4)
+	for _, session := range r.byID {
+		if session.FamilyID != familyID {
+			continue
+		}
+		out = append(out, cloneSession(session))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// ExpireStale 把到期的会话与设备标记为 expired，单次最多 limit 条。
+func (r *MemorySessionRepository) ExpireStale(_ context.Context, now time.Time, limit int) (domain.SessionExpireResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result domain.SessionExpireResult
+	for id, session := range r.byID {
+		if result.Sessions >= limit {
+			break
+		}
+		if session.Status != domain.SessionStatusActive && session.Status != domain.SessionStatusRotated {
+			continue
+		}
+		updated := cloneSession(session)
+		if err := updated.Expire(now); err != nil {
+			continue
+		}
+		r.byID[id] = updated
+		result.Sessions++
+	}
+	for id, family := range r.families {
+		if result.Families >= limit {
+			break
+		}
+		updated := cloneFamily(family)
+		if err := updated.Expire(now); err != nil {
+			continue
+		}
+		r.families[id] = updated
+		result.Families++
+	}
+	return result, nil
+}
+
+// DeleteExpiredBefore 删除 before 之前的 rotated / revoked / expired 会话与设备。
+func (r *MemorySessionRepository) DeleteExpiredBefore(_ context.Context, before time.Time, limit int) (domain.SessionDeleteResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result domain.SessionDeleteResult
+	for id, session := range r.byID {
+		if result.Sessions >= limit {
+			break
+		}
+		if session.Status == domain.SessionStatusActive {
+			continue
+		}
+		if !session.UpdatedAt.Before(before) {
+			continue
+		}
+		delete(r.byID, id)
+		delete(r.byHash, session.RefreshHash)
+		result.Sessions++
+	}
+	for id, family := range r.families {
+		if result.Families >= limit {
+			break
+		}
+		if family.Status == domain.SessionStatusActive {
+			continue
+		}
+		if !family.UpdatedAt.Before(before) {
+			continue
+		}
+		delete(r.families, id)
+		result.Families++
+	}
+	return result, nil
+}
+
+// cloneFamily 返回设备会话深拷贝，隔离可空时间字段。
+func cloneFamily(family *domain.SessionFamily) *domain.SessionFamily {
+	if family == nil {
+		return nil
+	}
+	cp := *family
+	cp.RevokedAt = cloneTime(family.RevokedAt)
+	return &cp
 }
 
 // cloneSession 返回会话深拷贝，隔离可空时间字段。

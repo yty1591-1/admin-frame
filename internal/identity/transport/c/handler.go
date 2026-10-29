@@ -11,6 +11,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
 // HandlerConfig 是 C 端认证 Handler 的装配参数。
@@ -25,15 +27,21 @@ type HandlerConfig struct {
 	Auth *app.AuthService
 	// Providers 已配置的 provider，用于路由裁剪。
 	Providers []string
+	// ClientIP 可信代理解析器；nil 表示只使用 RemoteAddr。
+	ClientIP *pkghttpx.ClientIPResolver
+	// Hasher 是 IP / UA 摘要器；nil 时回退历史算法（仅限本地/tests）。
+	Hasher *crypto.Hasher
 }
 
 // Handler 处理 C 端认证 HTTP 请求。
 type Handler struct {
-	rest      *rest.Handler
-	sms       *app.SMSLoginService
-	oauth     *app.OAuthService
-	auth      *app.AuthService
-	providers []string
+	rest       *rest.Handler
+	sms        *app.SMSLoginService
+	oauth      *app.OAuthService
+	auth       *app.AuthService
+	providers  []string
+	ipResolver *pkghttpx.ClientIPResolver
+	hasher     *crypto.Hasher
 }
 
 // NewHandler 构造 C 端认证 Handler。
@@ -47,7 +55,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 			providers = append(providers, trimmed)
 		}
 	}
-	return &Handler{rest: cfg.Rest, sms: cfg.SMS, oauth: cfg.OAuth, auth: cfg.Auth, providers: providers}, nil
+	return &Handler{
+		rest: cfg.Rest, sms: cfg.SMS, oauth: cfg.OAuth, auth: cfg.Auth,
+		providers: providers, ipResolver: cfg.ClientIP, hasher: cfg.Hasher,
+	}, nil
 }
 
 // SendSMSCode POST /c/v1/auth/sms/send
@@ -67,7 +78,7 @@ func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.sms.Send(r.Context(), app.SendSMSCodeInput{
 		Phone:  req.Phone,
-		IPHash: app.HashClientRef(clientIP(r)),
+		IPHash: h.clientIPHash(r),
 	}); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -93,8 +104,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	result, err := h.sms.Login(r.Context(), app.SMSLoginInput{
 		Phone:   req.Phone,
 		Code:    req.Code,
-		IPHash:  app.HashClientRef(clientIP(r)),
-		UAHash:  app.HashClientRef(r.UserAgent()),
+		IPHash:  h.clientIPHash(r),
+		UAHash:  h.clientUAHash(r),
 		TraceID: traceID,
 	})
 	if err != nil {
@@ -121,8 +132,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	result, err := h.sms.Register(r.Context(), app.SMSLoginInput{
 		Phone:   req.Phone,
 		Code:    req.Code,
-		IPHash:  app.HashClientRef(clientIP(r)),
-		UAHash:  app.HashClientRef(r.UserAgent()),
+		IPHash:  h.clientIPHash(r),
+		UAHash:  h.clientUAHash(r),
 		TraceID: traceID,
 	})
 	if err != nil {
@@ -155,7 +166,7 @@ func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
 		Actor:  actor,
 		Phone:  req.Phone,
 		Code:   req.Code,
-		IPHash: app.HashClientRef(clientIP(r)),
+		IPHash: h.clientIPHash(r),
 	}); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -210,7 +221,7 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.Unavailable("oauth login is not enabled"), traceID)
 		return
 	}
-	result, err := h.oauth.Authorize(r.Context(), r.PathValue("provider"))
+	result, err := h.oauth.AuthorizeWithClient(r.Context(), r.PathValue("provider"), h.clientIPHash(r))
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -240,8 +251,8 @@ func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Provider: r.PathValue("provider"),
 		Code:     req.Code,
 		State:    req.State,
-		IPHash:   app.HashClientRef(clientIP(r)),
-		UAHash:   app.HashClientRef(r.UserAgent()),
+		IPHash:   h.clientIPHash(r),
+		UAHash:   h.clientUAHash(r),
 		TraceID:  traceID,
 	})
 	if err != nil {
@@ -308,13 +319,28 @@ func decodeJSON(r *http.Request, dst any) error {
 	return nil
 }
 
-// clientIP 提取客户端 IP；与 rest 包保持一致的代理头约定。
-func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if first, _, ok := strings.Cut(forwarded, ","); ok {
-			return strings.TrimSpace(first)
-		}
-		return strings.TrimSpace(forwarded)
+// clientIPHash 返回客户端 IP 摘要；配置 hash_key 时使用带密钥 HMAC。
+func (h *Handler) clientIPHash(r *http.Request) string {
+	return app.ClientRef(h.hasher, app.HashDomainClientIP, h.clientIP(r))
+}
+
+// clientUAHash 返回 User-Agent 摘要；与 IP 使用不同域。
+func (h *Handler) clientUAHash(r *http.Request) string {
+	return app.ClientRef(h.hasher, app.HashDomainClientUA, r.UserAgent())
+}
+
+// clientIP 使用可信代理解析器获取客户端 IP；nil 解析器只使用 RemoteAddr。
+func (h *Handler) clientIP(r *http.Request) string {
+	if h == nil {
+		return (*pkghttpx.ClientIPResolver)(nil).ClientIP(r)
 	}
-	return r.RemoteAddr
+	return h.clientIPResolver().ClientIP(r)
+}
+
+// clientIPResolver 返回解析器；nil 接收者等价于不信任任何代理头。
+func (h *Handler) clientIPResolver() *pkghttpx.ClientIPResolver {
+	if h == nil {
+		return nil
+	}
+	return h.ipResolver
 }

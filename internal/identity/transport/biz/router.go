@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
 // Register 将 B 端认证路由挂到 mux。
@@ -21,8 +22,11 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW = func(next http.Handler) http.Handler { return next }
 	}
 
-	mux.HandleFunc("POST /biz/v1/auth/login", h.Login)
-	mux.HandleFunc("POST /biz/v1/auth/refresh", h.Refresh)
-	mux.Handle("POST /biz/v1/auth/logout", authMW(http.HandlerFunc(h.Logout)))
-	mux.Handle("POST /biz/v1/auth/logout-all", authMW(http.HandlerFunc(h.LogoutAll)))
+	// 认证响应含令牌，统一禁止缓存（IDN-P2-03）。
+	secure := func(next http.Handler) http.Handler { return pkghttpx.NoStoreMiddleware(next) }
+
+	mux.Handle("POST /biz/v1/auth/login", secure(http.HandlerFunc(h.Login)))
+	mux.Handle("POST /biz/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))
+	mux.Handle("POST /biz/v1/auth/logout", secure(authMW(http.HandlerFunc(h.Logout))))
+	mux.Handle("POST /biz/v1/auth/logout-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
 }

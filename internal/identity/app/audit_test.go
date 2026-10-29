@@ -155,6 +155,16 @@ func TestAuditSessionLifecycle(t *testing.T) {
 		t.Fatalf("expected auth.token.refresh, got %+v", capture.snapshot())
 	}
 
+	// 重放旧刷新令牌：会话仍为 rotated，触发整链撤销并记 auth.token.reused。
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken, TraceID: "trace-replay"}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("expected 401 on refresh replay, got %v", err)
+	}
+	reused := capture.byAction(audit.ActionAuthTokenReused)
+	if len(reused) != 1 || reused[0].Reason != domain.LoginReasonReplay {
+		t.Fatalf("expected auth.token.reused, got %+v", reused)
+	}
+
+	// 整链撤销后登出幂等：仍记录一次 auth.logout。
 	if err := f.svc.Logout(ctx, app.SessionActor{
 		AccountID: login.AccountID, SessionID: sessionIDForRefresh(t, f, pair), TraceID: "trace-logout",
 	}); err != nil {
@@ -162,14 +172,6 @@ func TestAuditSessionLifecycle(t *testing.T) {
 	}
 	if len(capture.byAction(audit.ActionAuthLogout)) != 1 {
 		t.Fatalf("expected auth.logout, got %+v", capture.snapshot())
-	}
-
-	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken, TraceID: "trace-replay"}); !errors.Is(err, apperr.ErrUnauthorized) {
-		t.Fatalf("expected 401 on refresh replay, got %v", err)
-	}
-	reused := capture.byAction(audit.ActionAuthTokenReused)
-	if len(reused) != 1 || reused[0].Reason != domain.LoginReasonReplay {
-		t.Fatalf("expected auth.token.reused, got %+v", reused)
 	}
 }
 

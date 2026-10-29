@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -30,15 +31,48 @@ func (r *MemoryMFAEnrollmentRepository) FindByAccount(_ context.Context, account
 	return cloneMFAEnrollment(enrollment), nil
 }
 
-// Save 创建或覆盖账号绑定。
-func (r *MemoryMFAEnrollmentRepository) Save(_ context.Context, enrollment *domain.MFAEnrollment) error {
+// Save 创建或使用乐观锁更新账号绑定；版本冲突返回 40900。
+func (r *MemoryMFAEnrollmentRepository) Save(
+	_ context.Context,
+	enrollment *domain.MFAEnrollment,
+	expectedVersion int64,
+) error {
 	if enrollment == nil {
 		return apperr.BadRequest("mfa enrollment is required")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	existing, ok := r.enrollments[enrollment.AccountID]
+	switch {
+	case expectedVersion == 0:
+		if ok {
+			return apperr.Conflict("mfa enrollment already exists")
+		}
+	case !ok || existing.Version != expectedVersion:
+		return apperr.Conflict("mfa enrollment version conflict")
+	}
 	r.enrollments[enrollment.AccountID] = cloneMFAEnrollment(enrollment)
 	return nil
+}
+
+// ConsumeRecoveryCode 原子消费一条恢复码；重复消费返回 false。
+func (r *MemoryMFAEnrollmentRepository) ConsumeRecoveryCode(
+	_ context.Context,
+	accountID, codeHash string,
+	now time.Time,
+) (int, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing, ok := r.enrollments[accountID]
+	if !ok {
+		return 0, false, apperr.NotFound("mfa enrollment not found")
+	}
+	clone := cloneMFAEnrollment(existing)
+	if !clone.UseRecoveryCode(codeHash, now) {
+		return len(clone.RecoveryCodeHashes), false, nil
+	}
+	r.enrollments[accountID] = clone
+	return len(clone.RecoveryCodeHashes), true, nil
 }
 
 // Delete 删除绑定；不存在也返回成功。

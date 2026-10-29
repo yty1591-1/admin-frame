@@ -16,7 +16,11 @@ const (
 	smsResendKeyPrefix = "sms:resend:"
 	smsDailyKeyPrefix  = "sms:daily:"
 	smsIPKeyPrefix     = "sms:ip:"
+	smsBudgetKeyPrefix = "sms:budget:"
 )
+
+// smsGlobalBudgetKey 是全局预算计数在日窗口中的固定后缀。
+const smsGlobalBudgetKey = "__global__"
 
 // 计数窗口时长：日限与小时限各留少量余量，避免窗口边界丢计数。
 const (
@@ -98,6 +102,25 @@ func (l *MemorySMSRateLimiter) AllowHourlyIP(_ context.Context, ipHash string, l
 	return l.allow(l.hourly, hourKey(l.now(), ipHash), limit, smsHourlyWindowTTL), nil
 }
 
+// AllowGlobalDaily 校验全局日发送预算；key 与单手机号日限共享同一计数窗口。
+func (l *MemorySMSRateLimiter) AllowGlobalDaily(_ context.Context, limit int) (bool, error) {
+	if limit < 1 {
+		return false, apperr.BadRequest("sms daily budget must be >= 1")
+	}
+	return l.allow(l.daily, dayKey(l.now(), smsGlobalBudgetKey), limit, smsDailyWindowTTL), nil
+}
+
+// ResetResend 清除重发窗口占用，使发送失败后可以立即重试。
+func (l *MemorySMSRateLimiter) ResetResend(_ context.Context, phoneHash string) error {
+	if err := validateSMSKey(phoneHash); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.resend, phoneHash)
+	return nil
+}
+
 // allow 在旧窗口过期后重置计数，并判断是否仍在限额内。
 func (l *MemorySMSRateLimiter) allow(store map[string]smsCounter, key string, limit int, ttl time.Duration) bool {
 	l.mu.Lock()
@@ -175,6 +198,25 @@ func (l *RedisSMSRateLimiter) AllowHourlyIP(ctx context.Context, ipHash string, 
 		return false, apperr.BadRequest("sms hourly limit must be >= 1")
 	}
 	return l.allow(ctx, smsIPKeyPrefix+hourKey(l.now(), ipHash), limit, smsHourlyWindowTTL)
+}
+
+// AllowGlobalDaily 校验全局日发送预算。
+func (l *RedisSMSRateLimiter) AllowGlobalDaily(ctx context.Context, limit int) (bool, error) {
+	if limit < 1 {
+		return false, apperr.BadRequest("sms daily budget must be >= 1")
+	}
+	return l.allow(ctx, smsBudgetKeyPrefix+dayKey(l.now(), smsGlobalBudgetKey), limit, smsDailyWindowTTL)
+}
+
+// ResetResend 删除重发窗口键，使发送失败后可以立即重试。
+func (l *RedisSMSRateLimiter) ResetResend(ctx context.Context, phoneHash string) error {
+	if err := validateSMSKey(phoneHash); err != nil {
+		return err
+	}
+	if l.client == nil {
+		return apperr.Unavailable("sms rate limiter is not configured")
+	}
+	return l.client.Delete(ctx, smsResendKeyPrefix+phoneHash)
 }
 
 // allow 原子自增并判断是否超过限额。

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -27,13 +30,19 @@ type HandlerConfig struct {
 	Auth *app.AuthService
 	// Channel 进程固定端别；不接受请求参数覆盖。
 	Channel domain.Channel
+	// ClientIP 可信代理解析器；nil 表示只使用 RemoteAddr。
+	ClientIP *pkghttpx.ClientIPResolver
+	// Hasher 是 IP / UA 摘要器；nil 时回退历史算法（仅限本地/tests）。
+	Hasher *crypto.Hasher
 }
 
 // Handler 处理认证 HTTP 请求。
 type Handler struct {
-	auth     *app.AuthService
-	accounts *app.AccountService
-	channel  domain.Channel
+	auth       *app.AuthService
+	accounts   *app.AccountService
+	channel    domain.Channel
+	ipResolver *pkghttpx.ClientIPResolver
+	hasher     *crypto.Hasher
 }
 
 // NewHandler 构造认证 Handler。
@@ -48,7 +57,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{auth: cfg.Auth, accounts: accounts, channel: cfg.Channel}, nil
+	return &Handler{
+		auth: cfg.Auth, accounts: accounts, channel: cfg.Channel,
+		ipResolver: cfg.ClientIP, hasher: cfg.Hasher,
+	}, nil
 }
 
 // Login POST /{channel}/v1/auth/login
@@ -65,8 +77,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	result, err := h.auth.Login(r.Context(), app.LoginInput{
 		Subject:  req.Subject,
 		Password: req.Password,
-		IPHash:   app.HashClientRef(clientIP(r)),
-		UAHash:   app.HashClientRef(r.UserAgent()),
+		IPHash:   h.clientIPHash(r),
+		UAHash:   h.clientUAHash(r),
 		TraceID:  traceID,
 	})
 	if err != nil {
@@ -142,7 +154,7 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	result, err := h.auth.SetupMFA(r.Context(), app.MFASetupInput{
 		SetupTicket: req.SetupTicket,
 		Actor:       actor,
-		IPHash:      app.HashClientRef(clientIP(r)),
+		IPHash:      h.clientIPHash(r),
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -180,8 +192,8 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		SetupTicket: req.SetupTicket,
 		Code:        req.Code,
 		Actor:       actor,
-		IPHash:      app.HashClientRef(clientIP(r)),
-		UAHash:      app.HashClientRef(r.UserAgent()),
+		IPHash:      h.clientIPHash(r),
+		UAHash:      h.clientUAHash(r),
 		TraceID:     traceID,
 	})
 	if err != nil {
@@ -232,8 +244,8 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		result, err := h.auth.CompletePasswordChange(r.Context(), app.CompletePasswordChangeInput{
 			Ticket:      req.PasswordChangeTicket,
 			NewPassword: req.NewPassword,
-			IPHash:      app.HashClientRef(clientIP(r)),
-			UAHash:      app.HashClientRef(r.UserAgent()),
+			IPHash:      h.clientIPHash(r),
+			UAHash:      h.clientUAHash(r),
 			TraceID:     traceID,
 		})
 		if err != nil {
@@ -455,22 +467,27 @@ func (h *Handler) RestoreAccount(w http.ResponseWriter, r *http.Request) {
 
 // ListAccountSessions GET /admin/v1/auth/accounts/{id}/sessions
 //
-// 需要 identity:account:read。列出目标账号全部会话，管理员视角 current 恒为 false；
-// 不返回任何令牌、IP 或 UA 原文。
+// 需要 identity:account:read。按设备（family）分页列出目标账号会话，管理员视角 current 恒为 false；
+// 只返回 IP / UA 摘要，不返回原文。
 func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	sessions, err := h.accounts.ListTargetSessions(r.Context(), r.PathValue("id"))
+	cursor, limit, err := sessionListQuery(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, sessionListResponseFrom(sessions), traceID)
+	page, err := h.accounts.ListTargetSessions(r.Context(), r.PathValue("id"), cursor, limit)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, sessionListResponseFrom(page), traceID)
 }
 
 // RevokeAccountSession DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}
 //
-// 需要 identity:account:write。仅撤销会话与刷新能力；已签发的 Access Token
-// 仍有效到自然过期（IDN-P1-02 修复后收紧）。他人会话与不存在统一 404。
+// 需要 identity:account:write。撤销会话与刷新能力，并写会话撤销快照，
+// 使该设备已签发的 Access Token 在 ≤60s 内失效。他人会话与不存在统一 404。
 func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -556,7 +573,7 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 
 // ListSessions GET /admin/v1/auth/sessions
 //
-// 列出本账号会话；仅返回状态与时间字段，不返回任何令牌、IP 或 UA 原文。
+// 按设备（family）分页列出本账号会话；只返回状态、时间与 IP / UA 摘要。
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -564,36 +581,62 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	sessions, err := h.auth.ListSessions(r.Context(), actor)
+	cursor, limit, err := sessionListQuery(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, sessionListResponseFrom(sessions), traceID)
+	page, err := h.auth.ListSessions(r.Context(), app.SessionListInput{
+		SessionActor: actor,
+		Cursor:       cursor,
+		Limit:        limit,
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, sessionListResponseFrom(page), traceID)
 }
 
-// sessionListResponseFrom 把会话视图转换为响应 DTO。
-func sessionListResponseFrom(sessions []app.SessionView) sessionListResponse {
-	items := make([]sessionDTO, 0, len(sessions))
-	for _, view := range sessions {
+// sessionListQuery 解析设备会话分页参数。
+func sessionListQuery(r *http.Request) (string, int, error) {
+	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	limit := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			return "", 0, apperr.BadRequest("invalid limit")
+		}
+		limit = parsed
+	}
+	return cursor, limit, nil
+}
+
+// sessionListResponseFrom 把设备会话分页结果转换为响应 DTO。
+func sessionListResponseFrom(page app.SessionPage) sessionListResponse {
+	items := make([]sessionDTO, 0, len(page.Items))
+	for _, view := range page.Items {
 		items = append(items, sessionDTO{
-			ID:            view.ID,
-			Current:       view.Current,
-			Status:        view.Status,
-			CreatedAt:     view.CreatedAt,
-			LastUsedAt:    view.LastUsedAt,
-			ExpiresAt:     view.ExpiresAt,
-			IdleExpiresAt: zeroAsNil(view.IdleExpiresAt),
-			RevokedAt:     view.RevokedAt,
+			ID:                view.ID,
+			Current:           view.Current,
+			Status:            view.Status,
+			CreatedAt:         view.CreatedAt,
+			LastUsedAt:        view.LastUsedAt,
+			ExpiresAt:         view.ExpiresAt,
+			AbsoluteExpiresAt: view.AbsoluteExpiresAt,
+			IdleExpiresAt:     zeroAsNil(view.IdleExpiresAt),
+			RevokedAt:         view.RevokedAt,
+			IPHash:            view.IPHash,
+			UAHash:            view.UAHash,
 		})
 	}
-	return sessionListResponse{Items: items}
+	return sessionListResponse{Items: items, NextCursor: page.NextCursor}
 }
 
 // RevokeSession DELETE /admin/v1/auth/sessions/{id}
 //
 // 撤销本账号指定会话；他人会话与不存在统一返回 404，避免横向枚举。
-// 撤销当前会话时同时拉黑当前 jti。
+// 被撤销会话的 Access Token 在 ≤60s 内失效；撤销当前会话时同时拉黑当前 jti。
 func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -735,10 +778,11 @@ func accountDTOFrom(view app.AccountSummary) accountDTO {
 
 // tokenResponse 登录 / 刷新成功响应；令牌原文只在此出现一次。
 type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
+	AccessToken       string     `json:"access_token"`
+	RefreshToken      string     `json:"refresh_token"`
+	TokenType         string     `json:"token_type"`
+	ExpiresIn         int64      `json:"expires_in"`
+	AbsoluteExpiresAt *time.Time `json:"absolute_expires_at,omitempty"`
 }
 
 // meResponse 当前主体资料；不含角色与权限。
@@ -754,27 +798,33 @@ type meResponse struct {
 
 // sessionDTO 会话列表项；不包含任何令牌或 IP / UA 原文。
 type sessionDTO struct {
-	ID            string     `json:"id"`
-	Current       bool       `json:"current"`
-	Status        string     `json:"status"`
-	CreatedAt     time.Time  `json:"created_at"`
-	LastUsedAt    time.Time  `json:"last_used_at"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	IdleExpiresAt *time.Time `json:"idle_expires_at,omitempty"`
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	ID         string    `json:"id"`
+	Current    bool      `json:"current"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	// AbsoluteExpiresAt 设备绝对到期时间；刷新不会延长。
+	AbsoluteExpiresAt time.Time  `json:"absolute_expires_at"`
+	IdleExpiresAt     *time.Time `json:"idle_expires_at,omitempty"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	IPHash            string     `json:"ip_hash,omitempty"`
+	UAHash            string     `json:"ua_hash,omitempty"`
 }
 
 // sessionListResponse 会话列表。
 type sessionListResponse struct {
-	Items []sessionDTO `json:"items"`
+	Items      []sessionDTO `json:"items"`
+	NextCursor string       `json:"next_cursor,omitempty"`
 }
 
 func tokenResponseFrom(pair app.TokenPair) tokenResponse {
 	return tokenResponse{
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    pair.ExpiresIn,
+		AccessToken:       pair.AccessToken,
+		RefreshToken:      pair.RefreshToken,
+		TokenType:         "Bearer",
+		ExpiresIn:         pair.ExpiresIn,
+		AbsoluteExpiresAt: zeroAsNil(pair.AbsoluteExpiresAt),
 	}
 }
 
@@ -820,15 +870,27 @@ func actorFrom(r *http.Request) (app.SessionActor, error) {
 	}, nil
 }
 
-// clientIP 提取客户端 IP；只用于计算不可逆摘要，不直接落库。
-func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if first, _, ok := strings.Cut(forwarded, ","); ok {
-			return strings.TrimSpace(first)
-		}
-		return strings.TrimSpace(forwarded)
+// clientIPHash 返回客户端 IP 摘要；配置 hash_key 时使用带密钥 HMAC。
+func (h *Handler) clientIPHash(r *http.Request) string {
+	return app.ClientRef(h.hasher, app.HashDomainClientIP, h.clientIP(r))
+}
+
+// clientUAHash 返回 User-Agent 摘要；与 IP 使用不同域，禁止交叉复用。
+func (h *Handler) clientUAHash(r *http.Request) string {
+	return app.ClientRef(h.hasher, app.HashDomainClientUA, r.UserAgent())
+}
+
+// clientIP 使用可信代理解析器获取客户端 IP；只用于计算不可逆摘要，不直接落库。
+func (h *Handler) clientIP(r *http.Request) string {
+	return h.clientIPResolver().ClientIP(r)
+}
+
+// clientIPResolver 返回解析器；nil 接收者等价于不信任任何代理头（只使用 RemoteAddr）。
+func (h *Handler) clientIPResolver() *pkghttpx.ClientIPResolver {
+	if h == nil {
+		return nil
 	}
-	return r.RemoteAddr
+	return h.ipResolver
 }
 
 // zeroAsNil 把零值时间转换为 null，避免响应出现 0001-01-01。

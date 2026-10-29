@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -48,12 +49,38 @@ type AccountState struct {
 	FetchedAt time.Time
 }
 
+// SessionState 是撤销检查所需的会话最小快照（IDN-P1-02）。
+//
+// Status / RevokedAt / ExpiresAt 必须来自同一次读取；FetchedAt 用于陈旧度判定，
+// 与账号快照共享 state_ttl 上限，保证会话撤销的最长可见延迟 ≤60s。
+type SessionState struct {
+	// Status 会话状态；revoked / expired 拒绝，active / rotated 放行。
+	Status domain.SessionStatus
+	// RevokedAt 撤销时间；零值表示未撤销。
+	RevokedAt time.Time
+	// ExpiresAt 会话绝对过期时间（UTC）；零值表示未知，由令牌自身 exp 兜底。
+	ExpiresAt time.Time
+	// FetchedAt 该快照回源数据库的时间；零值表示旧格式缓存，必须回源刷新。
+	FetchedAt time.Time
+}
+
+// Revoked 报告会话是否已不可用：撤销、过期或超过绝对到期时间都拒绝。
+//
+// rotated 会话放行：旧 Access Token 在自身 exp 前仍应可用，避免刷新成功后
+// 客户端仍在途的旧令牌被立刻打成 401。
+func (s SessionState) Revoked(now time.Time) bool {
+	if s.Status == domain.SessionStatusRevoked || s.Status == domain.SessionStatusExpired {
+		return true
+	}
+	return !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt)
+}
+
 // RevocationStore 是撤销状态的持久化端口（Redis / 内存）。
 //
 // 约定：
-//   - LoadAccountState 未命中返回 found=false，不得用零值代替「未知」；
+//   - LoadAccountState / LoadSessionState 未命中返回 found=false，不得用零值代替「未知」；
 //   - 读写错误必须原样返回，由 RevocationChecker 按 failure_mode 决定放行或拒绝；
-//   - jti 黑名单 TTL 为令牌剩余寿命，过期即自然清除。
+//   - 账号 / 会话快照 TTL 与 state_ttl 一致（≤60s），jti 黑名单 TTL 为令牌剩余寿命。
 type RevocationStore interface {
 	// LoadAccountState 读取账号撤销快照。
 	LoadAccountState(ctx context.Context, accountID string) (AccountState, bool, error)
@@ -61,6 +88,12 @@ type RevocationStore interface {
 	SaveAccountState(ctx context.Context, accountID string, state AccountState, ttl time.Duration) error
 	// DeleteAccountState 删除账号撤销快照，使下一次校验必然回源数据库。
 	DeleteAccountState(ctx context.Context, accountID string) error
+	// LoadSessionState 读取会话撤销快照。
+	LoadSessionState(ctx context.Context, sessionID string) (SessionState, bool, error)
+	// SaveSessionState 写入会话撤销快照，ttl 必须 > 0。
+	SaveSessionState(ctx context.Context, sessionID string, state SessionState, ttl time.Duration) error
+	// DeleteSessionState 删除会话撤销快照，使下一次校验必然回源数据库。
+	DeleteSessionState(ctx context.Context, sessionID string) error
 	// RevokeToken 把 jti 写入黑名单，ttl 为令牌剩余寿命。
 	RevokeToken(ctx context.Context, jti string, ttl time.Duration) error
 	// IsTokenRevoked 报告 jti 是否在黑名单中。
@@ -73,6 +106,8 @@ type RevocationStore interface {
 type RevocationObserver interface {
 	// OnAccountStateWriteFailure 记录一次快照写入失败；op 为 set | delete。
 	OnAccountStateWriteFailure(ctx context.Context, op string, err error)
+	// OnRevocationStoreFailure 记录一次撤销存储读 / 回源失败；op 为 account_load | session_load | token_load。
+	OnRevocationStoreFailure(ctx context.Context, op string, err error)
 }
 
 // RevocationCheckerOption 配置 RevocationChecker。
@@ -96,12 +131,24 @@ func WithRevocationObserver(observer RevocationObserver) RevocationCheckerOption
 	}
 }
 
+// WithRevocationSessions 注入会话仓储，启用 Access Token 的 sid 会话状态校验（IDN-P1-02）。
+//
+// 未注入时跳过会话校验，仅保留账号级撤销；生产装配必须注入。
+func WithRevocationSessions(sessions domain.SessionRepository) RevocationCheckerOption {
+	return func(c *RevocationChecker) {
+		if sessions != nil {
+			c.sessions = sessions
+		}
+	}
+}
+
 // RevocationChecker 实现 internal/security.RevocationChecker（docs/identity-authn.md §6.2）。
 //
-// 校验顺序：账号状态 → token_version → jti 黑名单。
+// 校验顺序：账号状态 → token_version → 会话状态（sid）→ jti 黑名单。
 // 任一环节依赖不可用时按 failure_mode 返回 ErrUnavailable（fail_closed）或放行（fail_open）。
 type RevocationChecker struct {
 	accounts    domain.AccountRepository
+	sessions    domain.SessionRepository
 	store       RevocationStore
 	failureMode string
 	stateTTL    time.Duration
@@ -152,6 +199,10 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 	}
 	state, _, err := c.loadState(ctx, accountID)
 	if err != nil {
+		// 账号不存在是确定性拒绝，不是存储故障，不计入依赖失败指标。
+		if !errors.Is(err, apperr.ErrNotFound) {
+			c.notifyStoreFailure(ctx, "account_load", err)
+		}
 		return c.failure(err)
 	}
 	if state.Status == domain.AccountStatusDisabled {
@@ -161,9 +212,15 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 	if !ok || version < state.Version {
 		return invalidToken()
 	}
+	if sessionID, ok := claimSessionID(claims); ok && c.sessions != nil {
+		if err := c.checkSession(ctx, sessionID); err != nil {
+			return err
+		}
+	}
 	if claims.ID != "" {
 		revoked, err := c.store.IsTokenRevoked(ctx, claims.ID)
 		if err != nil {
+			c.notifyStoreFailure(ctx, "token_load", err)
 			return c.failure(err)
 		}
 		if revoked {
@@ -187,10 +244,15 @@ func (c *RevocationChecker) loadState(ctx context.Context, accountID string) (Ac
 
 // isFresh 报告快照是否仍在允许陈旧度内；零值 FetchedAt 视为陈旧（旧格式缓存）。
 func (c *RevocationChecker) isFresh(state AccountState) bool {
-	if state.FetchedAt.IsZero() {
+	return c.freshAt(state.FetchedAt)
+}
+
+// freshAt 报告回源时间是否仍在允许陈旧度内；零值视为陈旧（旧格式缓存）。
+func (c *RevocationChecker) freshAt(fetchedAt time.Time) bool {
+	if fetchedAt.IsZero() {
 		return false
 	}
-	elapsed := c.clock.Now().Sub(state.FetchedAt)
+	elapsed := c.clock.Now().Sub(fetchedAt)
 	// 时钟回拨时 elapsed 为负：按新鲜处理，避免把所有请求同时打到数据库。
 	if elapsed < 0 {
 		return true
@@ -233,12 +295,84 @@ func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) 
 	return state, true, nil
 }
 
+// checkSession 校验 Access Token 的 sid 对应会话是否已被撤销（IDN-P1-02）。
+func (c *RevocationChecker) checkSession(ctx context.Context, sessionID string) error {
+	state, err := c.loadSessionState(ctx, sessionID)
+	if err != nil {
+		// 会话不存在视为确定性拒绝（已撤销且被清理），不是存储故障。
+		if !errors.Is(err, apperr.ErrNotFound) {
+			c.notifyStoreFailure(ctx, "session_load", err)
+		}
+		return c.failure(err)
+	}
+	if state.Revoked(c.clock.Now()) {
+		return invalidToken()
+	}
+	return nil
+}
+
+// loadSessionState 读取会话快照：命中且未超过陈旧度直接复用，否则回源数据库并回填。
+func (c *RevocationChecker) loadSessionState(ctx context.Context, sessionID string) (SessionState, error) {
+	state, hit, err := c.store.LoadSessionState(ctx, sessionID)
+	if err != nil {
+		return SessionState{}, err
+	}
+	if hit && c.freshAt(state.FetchedAt) {
+		return state, nil
+	}
+	return c.refetchSessionState(ctx, sessionID)
+}
+
+// refetchSessionState 回源数据库并回填会话快照；同一会话的并发回源合并为一次。
+//
+// 会话不存在视为确定性拒绝：撤销后即使被清理任务删除也不能放行。
+func (c *RevocationChecker) refetchSessionState(ctx context.Context, sessionID string) (SessionState, error) {
+	value, err, _ := c.refetch.Do("sid:"+sessionID, func() (any, error) {
+		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
+		if loaded, hit, loadErr := c.store.LoadSessionState(ctx, sessionID); loadErr != nil {
+			return nil, loadErr
+		} else if hit && c.freshAt(loaded.FetchedAt) {
+			return loaded, nil
+		}
+		session, dbErr := c.sessions.FindByID(ctx, sessionID)
+		if dbErr != nil {
+			return nil, dbErr
+		}
+		state := SessionState{
+			Status:    session.Status,
+			RevokedAt: timeOrZero(session.RevokedAt),
+			ExpiresAt: session.ExpiresAt,
+			FetchedAt: c.clock.Now(),
+		}
+		if saveErr := c.store.SaveSessionState(ctx, sessionID, state, c.stateTTL); saveErr != nil {
+			c.notifyWriteFailure(ctx, "session_set", saveErr)
+		}
+		return state, nil
+	})
+	if err != nil {
+		return SessionState{}, err
+	}
+	state, ok := value.(SessionState)
+	if !ok {
+		return SessionState{}, apperr.Internal("revocation checker: unexpected session state type", nil)
+	}
+	return state, nil
+}
+
 // notifyWriteFailure 上报快照写入失败；观测器缺失时静默，由 TTL 兜底。
 func (c *RevocationChecker) notifyWriteFailure(ctx context.Context, op string, err error) {
 	if c.observer == nil {
 		return
 	}
 	c.observer.OnAccountStateWriteFailure(ctx, op, err)
+}
+
+// notifyStoreFailure 上报撤销存储读 / 回源失败；观测器缺失时静默。
+func (c *RevocationChecker) notifyStoreFailure(ctx context.Context, op string, err error) {
+	if c.observer == nil {
+		return
+	}
+	c.observer.OnRevocationStoreFailure(ctx, op, err)
 }
 
 // failure 按故障策略返回：fail_closed 输出 50300，fail_open 放行。
@@ -367,6 +501,34 @@ func claimVersion(claims jwt.Claims) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// claimSessionID 从 sid 声明读取会话主键；缺失或空串表示无法做会话校验。
+func claimSessionID(claims jwt.Claims) (string, bool) {
+	if claims.Extra == nil {
+		return "", false
+	}
+	raw, ok := claims.Extra["sid"]
+	if !ok || raw == nil {
+		return "", false
+	}
+	sid, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	sid = strings.TrimSpace(sid)
+	if sid == "" {
+		return "", false
+	}
+	return sid, true
+}
+
+// timeOrZero 解引用可空时间；nil 返回零值，避免把「未撤销」误判为已撤销。
+func timeOrZero(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
 }
 
 // invalidToken 构造统一的 40100 错误（不暴露具体撤销原因）。

@@ -2,6 +2,7 @@ package identityruntime
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/pkg/circuitbreaker"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	pkgsms "github.com/admin-frame/admin-frame/pkg/sms"
 )
 
@@ -34,13 +37,15 @@ func buildChannelC(
 	identities domain.OAuthIdentityRepository,
 	guard *app.LoginGuard,
 	authSvc *app.AuthService,
+	hasher *crypto.Hasher,
+	metrics app.Metrics,
 	restHandler *rest.Handler,
 ) (*identityc.Handler, error) {
-	smsService, err := buildSMSLoginService(deps, cfg, accounts, guard, authSvc)
+	smsService, err := buildSMSLoginService(deps, cfg, accounts, guard, authSvc, hasher, metrics)
 	if err != nil {
 		return nil, err
 	}
-	oauthService, err := buildOAuthService(deps, cfg, accounts, identities, authSvc)
+	oauthService, err := buildOAuthService(deps, cfg, accounts, identities, authSvc, hasher, metrics)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +60,8 @@ func buildChannelC(
 		OAuth:     oauthService,
 		Auth:      authSvc,
 		Providers: providers,
+		ClientIP:  deps.ClientIP,
+		Hasher:    hasher,
 	})
 	if err != nil {
 		return nil, err
@@ -69,6 +76,8 @@ func buildSMSLoginService(
 	accounts domain.AccountRepository,
 	guard *app.LoginGuard,
 	authSvc *app.AuthService,
+	hasher *crypto.Hasher,
+	metrics app.Metrics,
 ) (*app.SMSLoginService, error) {
 	smsCfg := cfg.Identity.SMS
 	if !smsCfg.Enabled {
@@ -86,7 +95,16 @@ func buildSMSLoginService(
 	if err != nil {
 		return nil, apperr.Internal("identity sms driver: "+smsCfg.Driver, err)
 	}
-	codeSender, err := identitysms.NewCodeSender(sender, smsCfg.TemplateID, smsCfg.SignName, smsCfg.Locale)
+	breaker, err := buildSMSBreaker(smsCfg, deps.Logger)
+	if err != nil {
+		return nil, apperr.Internal("identity sms circuit breaker", err)
+	}
+	alertSink := buildSMSAlertSink(deps, metrics)
+	codeSender, err := identitysms.NewCodeSender(
+		sender, smsCfg.TemplateID, smsCfg.SignName, smsCfg.Locale,
+		identitysms.WithBreaker(breaker),
+		identitysms.WithAlertSink(alertSink),
+	)
 	if err != nil {
 		return nil, apperr.Internal("identity sms code sender", err)
 	}
@@ -99,11 +117,14 @@ func buildSMSLoginService(
 		Limiter:        limiter,
 		Sender:         codeSender,
 		Auth:           authSvc,
+		Hasher:         hasher,
+		Metrics:        metrics,
 		CodeTTL:        smsCfg.CodeTTL,
 		ResendInterval: smsCfg.ResendInterval,
 		MaxAttempts:    smsCfg.MaxAttempts,
 		DailyPerPhone:  smsCfg.DailyPerPhone,
 		HourlyPerIP:    smsCfg.HourlyPerIP,
+		DailyBudget:    smsCfg.DailyBudget,
 	})
 	if err != nil {
 		return nil, apperr.Internal("identity sms login service", err)
@@ -122,6 +143,51 @@ func buildSMSCodeStores(deps *platform.Deps) (app.SMSCodeStore, app.SMSRateLimit
 		identitycache.NewMemorySMSRateLimiter(nil)
 }
 
+// buildSMSBreaker 按配置构造供应商熔断器（IDN-P2-05）。
+//
+// 永久拒绝（模板/签名非法、号码非法）不视为供应商故障，不触发熔断。
+func buildSMSBreaker(cfg platform.IdentitySMSConfig, logger *slog.Logger) (*circuitbreaker.Breaker, error) {
+	failures := cfg.BreakerFailures
+	if failures <= 0 {
+		failures = 5
+	}
+	return circuitbreaker.New(circuitbreaker.Config{
+		Name:    "identity-sms-" + cfg.Driver,
+		Timeout: cfg.BreakerTimeout,
+		ReadyToTrip: func(counts circuitbreaker.Counts) bool {
+			return int(counts.ConsecutiveFailures) >= failures
+		},
+		IsSuccessful: identitysms.BreakerIsSuccessful,
+		OnStateChange: func(name string, from, to circuitbreaker.State) {
+			if logger != nil {
+				logger.Warn("identity sms circuit breaker",
+					"provider", name, "from", from.String(), "to", to.String())
+			}
+		},
+	})
+}
+
+// smsAlertObserver 是告警指标的可选能力，避免在 app.Metrics 接口上扩散基础设施细节。
+type smsAlertObserver interface {
+	ObserveSMSProviderAlert(kind, provider string)
+}
+
+// buildSMSAlertSink 构造供应商告警出口：错误日志 + 指标计数，不包含 PII。
+func buildSMSAlertSink(deps *platform.Deps, metrics app.Metrics) identitysms.AlertSink {
+	if deps == nil || (deps.Logger == nil && metrics == nil) {
+		return nil
+	}
+	return func(alert identitysms.Alert) {
+		if deps.Logger != nil {
+			deps.Logger.Error("identity sms provider alert",
+				"alert", alert.Kind, "provider", alert.Provider, "code", alert.Code)
+		}
+		if observer, ok := metrics.(smsAlertObserver); ok {
+			observer.ObserveSMSProviderAlert(alert.Kind, alert.Provider)
+		}
+	}
+}
+
 // buildOAuthService 构造 OAuth 登录服务；未配置 provider 时返回 nil。
 func buildOAuthService(
 	deps *platform.Deps,
@@ -129,6 +195,8 @@ func buildOAuthService(
 	accounts domain.AccountRepository,
 	identities domain.OAuthIdentityRepository,
 	authSvc *app.AuthService,
+	hasher *crypto.Hasher,
+	metrics app.Metrics,
 ) (*app.OAuthService, error) {
 	providerCfgs := cfg.Identity.OAuth.Providers
 	if len(providerCfgs) == 0 {
@@ -166,6 +234,10 @@ func buildOAuthService(
 	} else {
 		states = identitycache.NewMemoryOAuthStateStore(nil)
 	}
+	limiter, err := buildOAuthLimiter(cfg, deps)
+	if err != nil {
+		return nil, err
+	}
 
 	service, err := app.NewOAuthService(app.OAuthServiceConfig{
 		Providers:     providers,
@@ -174,8 +246,11 @@ func buildOAuthService(
 		Accounts:      accounts,
 		IDs:           deps.IDs,
 		Auth:          authSvc,
+		Hasher:        hasher,
 		AutoProvision: cfg.Identity.OAuth.AutoProvision,
 		StateTTL:      app.DefaultOAuthStateTTL,
+		Metrics:       metrics,
+		Limiter:       limiter,
 	})
 	if err != nil {
 		return nil, apperr.Internal("identity oauth service", err)
