@@ -16,6 +16,7 @@
 | `iam.breakglass.active` | P1 | 存在有效破玻璃授权（`iam_breakglass_active > 0`） | [iam.md](./iam.md) |
 | `iam.outbox.backlog` | P1 | 平台 Outbox 中 IAM 主题积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），通常为 `cmd/worker` 未运行或审计出口不可用，审计延迟且可能丢失 | [iam.md](./iam.md) |
 | `async.outbox.backlog` | P1 | 通用 Outbox 积压（pending > 1000 或 lag > 300s），审计/通知延迟 | [async-dlq.md](./async-dlq.md) |
+| `identity.sms.balance_low` | P1 | 短信供应商余额不足，C 端验证码发送失败（`identity_sms_provider_alerts_total{kind="insufficient_balance"}`） | [identity-sms-balance.md](./identity-sms-balance.md) |
 | `async.dlq.depth` | P2 | 存在未重放的死信事件（`async_dlq_depth > 0`） | [async-dlq.md](./async-dlq.md) |
 | `async.outbox.dead` | P2 | Outbox 出现新的死信/毒消息 | [async-dlq.md](./async-dlq.md) |
 | `async.broker.publish_error` | P2 | NATS JetStream 发布失败率升高（`async.driver=nats`） | [async-dlq.md](./async-dlq.md) |

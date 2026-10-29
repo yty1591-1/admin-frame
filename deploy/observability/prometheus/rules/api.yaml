@@ -33,6 +33,17 @@ groups:
           description: "当前 P99 {{ $value }}s；对照 DB 池等待与下游 P99。"
           runbook_url: docs/runbooks/api-5xx-spike.md
 
+      - alert: SMSProviderBalanceLow
+        expr: increase(identity_sms_provider_alerts_total{kind="insufficient_balance"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: P1
+          alert_id: identity.sms.balance_low
+        annotations:
+          summary: "短信供应商余额不足（{{ $labels.provider }}）"
+          description: "厂商返回余额不足错误；C 端验证码发送将失败，立即充值或切换供应商。"
+          runbook_url: docs/runbooks/identity-sms-balance.md
+
       - alert: WorkerQueueLag
         expr: max by (service) (async_outbox_lag_seconds) > 300
         for: 10m
