@@ -175,12 +175,11 @@ func (r *SQLRoleRepository) update(ctx context.Context, role *domain.Role, expec
 	if err != nil {
 		return err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
+	// 乐观锁已由上面的 SELECT ... FOR UPDATE + version 比对完成；
+	// MySQL RowsAffected 默认统计「实际变更行」，幂等写入（无字段变化）会返回 0，
+	// 不能据此判为版本冲突，否则同值保存（如只改前置角色）会被误拒。
+	if _, err := result.RowsAffected(); err != nil {
 		return err
-	}
-	if affected == 0 {
-		return apperr.Conflict("role version conflict")
 	}
 	return r.syncRoleDetails(ctx, tx, role, roleID)
 }
