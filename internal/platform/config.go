@@ -1521,8 +1521,9 @@ func (c *Config) validateIdentity() []error {
 	if c.Identity.LoginRateLimit.Burst < 1 {
 		errs = append(errs, errors.New("identity.login_rate_limit.burst must be >= 1"))
 	}
-	if c.Channel != "c" {
-		// MFA 只属于 A/B 端；C 端没有 TOTP 绑定，不参与强制校验。
+	// MFA 仅 A 端实现（docs/identity-authn.md §7）：B / C 端既不校验也不支持绑定。
+	switch c.Channel {
+	case "admin":
 		if isProdLikeEnv(c.Env) && !c.Identity.MFA.AdminRequired {
 			errs = append(errs, errors.New("identity.mfa.admin_required must be true in prod/staging"))
 		}
@@ -1533,6 +1534,11 @@ func (c *Config) validateIdentity() []error {
 			} else if key == nil {
 				errs = append(errs, errors.New("identity.mfa.secret_key is required when identity.mfa.admin_required=true"))
 			}
+		}
+	case "biz":
+		// 显式 fail fast：避免「配置写了强制 MFA，运行时却完全不校验」的假安全。
+		if c.Identity.MFA.AdminRequired {
+			errs = append(errs, errors.New("identity.mfa.admin_required must be false on channel=biz (MFA is admin-only)"))
 		}
 	}
 	if strings.TrimSpace(c.Identity.MFA.Issuer) == "" {

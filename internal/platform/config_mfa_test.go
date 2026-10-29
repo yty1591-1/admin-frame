@@ -116,6 +116,48 @@ func TestValidateMFARequiresAdminMFAInProduction(t *testing.T) {
 	}
 }
 
+// mfaBizConfig 返回启用身份域的 B 端配置（MFA 不参与）。
+func mfaBizConfig() *platform.Config {
+	cfg := mfaBaseConfig()
+	cfg.Channel = "biz"
+	cfg.Auth = prodJWTConfig()
+	cfg.Auth.ExpectedChannel = "biz"
+	cfg.Auth.JWT.Audience = []string{"biz"}
+	cfg.Identity.MFA.AdminRequired = false
+	cfg.Identity.MFA.SecretKey = ""
+	return cfg
+}
+
+// TestValidateMFAAdminOnly 验证 B 端禁止强制 MFA，且不设置即可通过校验。
+func TestValidateMFAAdminOnly(t *testing.T) {
+	biz := mfaBizConfig()
+	if err := biz.Validate(); err != nil {
+		t.Fatalf("biz baseline without mfa: %v", err)
+	}
+
+	// B 端显式设置 admin_required=true 必须启动失败，避免「配置有效但运行不校验」。
+	invalid := mfaBizConfig()
+	invalid.Identity.MFA.AdminRequired = true
+	invalid.Identity.MFA.SecretKey = mfaRawKey
+	if err := invalid.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.mfa.admin_required must be false on channel=biz") {
+		t.Fatalf("err=%v want biz admin_required rejection", err)
+	}
+
+	// 生产 B 端同理（不因 env 放宽）。
+	invalidProd := mfaBizConfig()
+	invalidProd.Env = "prod"
+	invalidProd.ID = prodIDConfig()
+	invalidProd.Storage.Driver = "s3"
+	invalidProd.DB = platform.DBConfig{Driver: "mysql", DSN: "biz:biz@tcp(127.0.0.1:3306)/biz"}
+	invalidProd.Identity.MFA.AdminRequired = true
+	invalidProd.Identity.MFA.SecretKey = mfaRawKey
+	if err := invalidProd.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.mfa.admin_required must be false on channel=biz") {
+		t.Fatalf("err=%v want prod biz admin_required rejection", err)
+	}
+}
+
 // TestValidateMFARequiresSecretKey 验证 admin_required=true 时必须配置可用密钥。
 func TestValidateMFARequiresSecretKey(t *testing.T) {
 	missing := mfaBaseConfig()

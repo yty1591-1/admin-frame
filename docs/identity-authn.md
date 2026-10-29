@@ -391,6 +391,8 @@ type RevocationChecker interface {
 
 ## 七、A 端 MFA 与 SSO
 
+> **适用端别**：MFA 仅 A 端实现。B 端配置 `identity.mfa.admin_required=true` 会在启动校验阶段失败；B / C 端运行时固定按 `false` 处理，不装配 MFA 密文与票据，也不下发强制绑定挑战。启动日志会打印实际生效值，供运维核对。
+
 ### 7.1 TOTP
 
 - 新增 `pkg/totp`：HMAC-SHA1、30 秒步长、6 位、允许 ±1 个窗口；仅依赖标准库，不引入第三方。
@@ -692,6 +694,7 @@ identity:
 | 必填 | `identity.enabled=true` 时 `auth.mode` 必须为 `jwt`，且 `auth.jwt.active_kid` 存在 |
 | 生产强制 | `auth.mode=jwt`；`identity.enabled=true`；`revocation.driver=redis`；`revocation.failure_mode=fail_closed`；A 端 `mfa.admin_required=true` |
 | 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空（C 端无可用登录方式） |
+| MFA 端别 | 仅 `channel=admin` 支持；`channel=biz` 设置 `mfa.admin_required=true` 启动失败；`channel=c` 忽略该配置 |
 | 密钥 | `secret_key` 不得写入示例配置；`admin_required=true` 时必填，须为 32 字节（raw / hex / base64 / base64url）；生产由环境变量注入，ENT-07 接入密钥托管后再切换 |
 | 脱敏 | `LogValue` 输出 `secret_key` 为掩码；provider `client_secret` 只输出是否配置 |
 

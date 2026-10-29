@@ -121,6 +121,7 @@ iam:
 
 # 身份域认证端点（docs/identity-authn.md）；默认关闭，保持既有「只验签」行为。
 # 启用前置：auth.mode=jwt、redis.addr 非空（需补充 redis 段）、生产必须 fail_closed。
+# MFA 仅 A 端支持：B 端不得设置 mfa.admin_required=true（启动校验会直接失败）。
 identity:
   enabled: false
   access_ttl: 15m                 # [5m, 1h]

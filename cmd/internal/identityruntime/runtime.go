@@ -61,12 +61,13 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	// C 端不使用 MFA：跳过密文与票据装配，避免本地无 Redis 时启动失败。
+	// MFA 仅 A 端实现（docs/identity-authn.md §7）：B / C 端不装配密文与票据，
+	// 也不在运行时触发强制绑定，避免「配置写了 MFA、运行时不生效」的假安全。
 	var (
 		mfaCipher *crypto.AEAD
 		tickets   app.MFATicketStore
 	)
-	if channel != domain.ChannelC {
+	if channel == domain.ChannelAdmin {
 		mfaCipher, err = buildMFACipher(cfg)
 		if err != nil {
 			return nil, err
@@ -149,8 +150,16 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	mfaAdminRequired := cfg.Identity.MFA.AdminRequired
-	if channel == domain.ChannelC {
+	if channel != domain.ChannelAdmin {
 		mfaAdminRequired = false
+	}
+	if deps.Logger != nil {
+		// 打印实际生效值，避免运维把「配置项存在」误认为「运行时已校验」。
+		deps.Logger.Info("identity mfa policy",
+			"channel", string(channel),
+			"admin_required", mfaAdminRequired,
+			"configured_admin_required", cfg.Identity.MFA.AdminRequired,
+		)
 	}
 
 	// 审计出口：启用异步时写入 identity.audit Outbox（与业务写入同事务），
