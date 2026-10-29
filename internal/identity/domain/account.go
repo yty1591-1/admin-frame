@@ -102,6 +102,8 @@ type Account struct {
 	PasswordUpdatedAt *time.Time
 	// LockedUntil 锁定到期时间（UTC）；仅 status=locked 时有值。
 	LockedUntil *time.Time
+	// MustChangePassword 管理员重置密码后置位，改密成功后清除。
+	MustChangePassword bool
 	// CreatedAt / UpdatedAt UTC。
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -298,7 +300,9 @@ func (a *Account) Delete(now time.Time) error {
 	return nil
 }
 
-// ChangePassword 记录改密并递增 TokenVersion；调用方须同时撤销全部会话。
+// ChangePassword 记录改密并递增 TokenVersion；成功后清除强制改密标记。
+//
+// 调用方须同时撤销全部会话。
 func (a *Account) ChangePassword(now time.Time) error {
 	if err := a.ensureNotDeleted(); err != nil {
 		return err
@@ -309,7 +313,64 @@ func (a *Account) ChangePassword(now time.Time) error {
 	}
 	changedAt := utcNow(now)
 	a.PasswordUpdatedAt = &changedAt
+	a.MustChangePassword = false
 	a.TokenVersion++
+	a.touch(now)
+	return nil
+}
+
+// ResetPassword 由管理员重置密码：递增 TokenVersion 并置强制改密标记。
+//
+// 不在此处撤销会话；调用方须在同一事务内撤销全部会话。
+func (a *Account) ResetPassword(now time.Time) error {
+	if err := a.ensureNotDeleted(); err != nil {
+		return err
+	}
+	if a.Status == AccountStatusDisabled {
+		return errConflict(ErrInvalidAccountTransition,
+			"account %s is disabled, cannot reset password", a.ID)
+	}
+	changedAt := utcNow(now)
+	a.PasswordUpdatedAt = &changedAt
+	a.MustChangePassword = true
+	a.TokenVersion++
+	a.touch(now)
+	return nil
+}
+
+// Restore 恢复软删账号；subject 唯一键仍归本账号，旧会话不恢复。
+//
+// 未删除账号调用时幂等返回 nil。
+func (a *Account) Restore(now time.Time) error {
+	if a.DeletedAt == nil {
+		return nil
+	}
+	a.DeletedAt = nil
+	a.Status = AccountStatusActive
+	a.LockedUntil = nil
+	a.touch(now)
+	return nil
+}
+
+// RebindSubject 更换登录主体（C 端手机号换绑）；不递增 TokenVersion。
+//
+// 会话与撤销版本由用例编排；subject 规范化后仍需满足长度约束。
+func (a *Account) RebindSubject(subject string, now time.Time) error {
+	if err := a.ensureNotDeleted(); err != nil {
+		return err
+	}
+	if a.Status == AccountStatusDisabled || a.Status == AccountStatusLocked {
+		return errConflict(ErrInvalidAccountTransition,
+			"account %s must be active or pending to rebind subject, current status %s", a.ID, a.Status)
+	}
+	normalized := NormalizeSubject(subject)
+	if normalized == "" {
+		return errInvalid(ErrEmptyInput, "subject is required")
+	}
+	if len(normalized) > MaxSubjectLen {
+		return errInvalid(ErrInvalidAccount, "subject exceeds %d bytes", MaxSubjectLen)
+	}
+	a.Subject = normalized
 	a.touch(now)
 	return nil
 }

@@ -34,6 +34,7 @@ admin-v1-auth-login:
                         - $ref: "../../components.yaml#/components/schemas/TokenPair"
                         - $ref: "../../components.yaml#/components/schemas/MFAChallenge"
                         - $ref: "../../components.yaml#/components/schemas/MFABindingRequired"
+                        - $ref: "../../components.yaml#/components/schemas/PasswordChangeRequired"
       "400":
         $ref: "../../components.yaml#/components/responses/BadRequest"
       "401":
@@ -181,6 +182,595 @@ admin-v1-auth-sessions-by-id:
         description: no content
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-password-change:
+  post:
+    tags: [auth]
+    summary: 自助修改密码
+    description: |
+      校验旧密码与新密码策略；成功后递增账号 `token_version` 并撤销全部会话，
+      旧访问令牌与刷新令牌立即不可用，用户需重新登录。
+      新密码与旧密码相同返回 40000；旧密码错误统一 40100。
+    operationId: adminAuthChangePassword
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/ChangePasswordRequest"
+    responses:
+      "200":
+        description: 强制改密完成：返回令牌，或仍需 MFA 的中间态
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      oneOf:
+                        - $ref: "../../components.yaml#/components/schemas/TokenPair"
+                        - $ref: "../../components.yaml#/components/schemas/MFAChallenge"
+                        - $ref: "../../components.yaml#/components/schemas/MFABindingRequired"
+      "204":
+        description: no content（Bearer 自助改密）
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts:
+  get:
+    tags: [auth]
+    summary: 列出身份账号
+    description: |
+      需要权限点 `identity:account:read`。按创建时间倒序分页；`status` 与 `keyword`
+      （主体子串）可选，软删账号同样返回并带 `deleted_at`。
+    operationId: adminAuthListAccounts
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: page
+        in: query
+        description: 页码，从 1 开始
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        description: 每页条数，服务端上限 100
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [pending, active, locked, disabled]
+      - name: keyword
+        in: query
+        description: 主体关键词（子串匹配，大小写不敏感）
+        schema:
+          type: string
+          maxLength: 255
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/AccountListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id:
+  get:
+    tags: [auth]
+    summary: 查看账号详情
+    description: 需要权限点 `identity:account:read`；返回凭据与 MFA 状态，软删账号同样可查。
+    operationId: adminAuthGetAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/AccountDetail"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+  delete:
+    tags: [auth]
+    summary: 软删账号
+    description: |
+      需要权限点 `identity:account:write`。递增 token_version 并撤销全部会话；
+      subject 仍占用唯一键，可通过 restore 恢复。
+    operationId: adminAuthDeleteAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-lock:
+  post:
+    tags: [auth]
+    summary: 手动锁定账号
+    description: |
+      需要权限点 `identity:account:write`。递增 token_version、撤销全部会话并写
+      `auth.account.locked`；`duration_minutes` 省略时使用默认锁定策略。
+    operationId: adminAuthLockAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountLockRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-password-reset:
+  post:
+    tags: [auth]
+    summary: 重置账号密码
+    description: |
+      需要权限点 `identity:account:write`。生成一次性临时口令并置强制改密标记；
+      用户下次登录只返回 `PasswordChangeRequired`，改密后才签发令牌。
+      响应中的临时口令只出现一次，必须经安全通道交付给用户。
+    operationId: adminAuthResetAccountPassword
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "200":
+        description: 临时口令
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/ResetPasswordData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-restore:
+  post:
+    tags: [auth]
+    summary: 恢复软删账号
+    description: 需要权限点 `identity:account:write`；不恢复旧会话，用户须重新登录。
+    operationId: adminAuthRestoreAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-sessions:
+  get:
+    tags: [auth]
+    summary: 列出目标账号会话
+    description: 需要权限点 `identity:account:read`；返回目标账号全部会话，current 恒为 false。
+    operationId: adminAuthListAccountSessions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/AuthSessionListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-sessions-by-sid:
+  delete:
+    tags: [auth]
+    summary: 撤销目标账号指定会话
+    description: |
+      需要权限点 `identity:account:write`。仅撤销会话与刷新能力；
+      已签发的 Access Token 仍有效到自然过期（IDN-P1-02 修复后收紧）。
+    operationId: adminAuthRevokeAccountSession
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+      - name: sid
+        in: path
+        required: true
+        description: 会话 ID
+        schema:
+          type: string
+          minLength: 1
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-sessions-revoke-all:
+  post:
+    tags: [auth]
+    summary: 撤销目标账号全部会话
+    description: |
+      需要权限点 `identity:account:write`。递增 token_version 并撤销全部会话，
+      旧 Access Token 在 ≤60s 内失效。
+    operationId: adminAuthRevokeAccountSessions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-disable:
+  post:
+    tags: [auth]
+    summary: 停用账号
+    description: |
+      需要权限点 `identity:account:write`。停用后递增 `token_version`、撤销全部会话，
+      旧令牌在 ≤60s 内失效。已停用账号幂等返回 204，不重复写审计。
+    operationId: adminAuthDisableAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-enable:
+  post:
+    tags: [auth]
+    summary: 启用账号
+    description: |
+      需要权限点 `identity:account:write`。恢复停用账号，不恢复旧会话，用户必须重新登录。
+      目标账号未停用返回 40900。
+    operationId: adminAuthEnableAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-unlock:
+  post:
+    tags: [auth]
+    summary: 解锁账号
+    description: |
+      需要权限点 `identity:account:write`。管理员手动解除失败锁定并写审计；
+      未锁定账号幂等返回 204，停用账号返回 40900。
+    operationId: adminAuthUnlockAccount
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-auth-accounts-by-id-mfa-reset:
+  post:
+    tags: [auth]
+    summary: 重置账号 MFA
+    description: |
+      需要权限点 `identity:account:write`。用户丢失 TOTP 设备与恢复码时的兜底：
+      删除绑定、递增 `token_version`、撤销全部会话并写 `auth.mfa.reset`。
+      未绑定 MFA 返回 40400；本端点不校验动态码，必须经审批流程后调用。
+    operationId: adminAuthResetAccountMFA
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 账号 ID
+        schema:
+          type: string
+          minLength: 1
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/AccountActionRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
       "404":
         $ref: "../../components.yaml#/components/responses/NotFound"
       "500":

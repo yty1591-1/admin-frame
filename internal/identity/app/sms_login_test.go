@@ -89,6 +89,168 @@ func (f *smsFixture) seedPhoneAccount(t *testing.T, phone string) *domain.Accoun
 	return account
 }
 
+// TestSMSRegisterCreatesConsumerAccount 验证短信注册开户、重复注册与后续登录。
+func TestSMSRegisterCreatesConsumerAccount(t *testing.T) {
+	f := newSMSFixture(t, nil)
+	ctx := context.Background()
+	phone := "+8613800138000"
+
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	result, err := f.svc.Register(ctx, app.SMSLoginInput{
+		Phone: phone, Code: f.sender.code, TraceID: "trace-register",
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if result.AccessToken == "" || result.RefreshToken == "" || result.AccountID == "" {
+		t.Fatalf("register must return tokens, got %+v", result)
+	}
+
+	account, err := f.accounts.FindByID(ctx, result.AccountID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.Status != domain.AccountStatusActive || account.Channel != domain.ChannelC {
+		t.Fatalf("account = %+v, want active C account", account)
+	}
+	credential, err := f.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePhone)
+	if err != nil {
+		t.Fatalf("phone credential must exist: %v", err)
+	}
+	if credential.Hash != app.HashAccountRef(domain.ChannelC, phone) {
+		t.Fatalf("phone credential hash = %q, want account ref digest", credential.Hash)
+	}
+
+	// 重复注册：验证码有效但手机号已注册，统一 40100，不暴露账号存在。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	requireAppCode(t, mustRegister(f, phone), apperr.CodeUnauthorized)
+
+	// 已开户手机号可正常验证码登录。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send for login: %v", err)
+	}
+	if _, err := f.svc.Login(ctx, app.SMSLoginInput{Phone: phone, Code: f.sender.code, TraceID: "trace-login"}); err != nil {
+		t.Fatalf("login after register: %v", err)
+	}
+}
+
+// TestSMSRebindPhone 验证手机号换绑：主体与凭据切换、旧会话撤销、旧号失效。
+func TestSMSRebindPhone(t *testing.T) {
+	f := newSMSFixture(t, nil)
+	ctx := context.Background()
+	oldPhone := "+8613800138001"
+	newPhone := "+8613800138002"
+
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
+		t.Fatalf("send old: %v", err)
+	}
+	registered, err := f.svc.Register(ctx, app.SMSLoginInput{Phone: oldPhone, Code: f.sender.code, TraceID: "trace-reg"})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
+		t.Fatalf("send new: %v", err)
+	}
+	actor := app.SessionActor{AccountID: registered.AccountID, SessionID: registered.SessionID, TraceID: "trace-rebind"}
+	if err := f.svc.Rebind(ctx, app.SMSRebindInput{
+		Actor: actor, Phone: newPhone, Code: f.sender.code,
+	}); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+
+	account, err := f.accounts.FindByID(ctx, registered.AccountID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.Subject != "phone:"+app.HashAccountRef(domain.ChannelC, newPhone) {
+		t.Fatalf("subject = %q, want new phone subject", account.Subject)
+	}
+	credential, err := f.credentials.FindByAccount(ctx, registered.AccountID, domain.CredentialTypePhone)
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if credential.Hash != app.HashAccountRef(domain.ChannelC, newPhone) {
+		t.Fatalf("credential hash = %q, want new phone digest", credential.Hash)
+	}
+	if account.TokenVersion != 2 {
+		t.Fatalf("token_version = %d, want 2", account.TokenVersion)
+	}
+	if session := f.sessionOf(t, registered.SessionID); session.Status != domain.SessionStatusRevoked {
+		t.Fatalf("sessions must be revoked on rebind: %+v", session)
+	}
+
+	// 旧手机号不再能登录；新手机号可登录。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
+		t.Fatalf("send old after rebind: %v", err)
+	}
+	requireAppCode(t, mustLogin(f, oldPhone), apperr.CodeUnauthorized)
+
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
+		t.Fatalf("send new for login: %v", err)
+	}
+	if _, err := f.svc.Login(ctx, app.SMSLoginInput{Phone: newPhone, Code: f.sender.code, TraceID: "trace-new-login"}); err != nil {
+		t.Fatalf("login with new phone: %v", err)
+	}
+}
+
+// mustLogin 使用最近一次发送的验证码执行登录。
+func mustLogin(f *smsFixture, phone string) error {
+	_, err := f.svc.Login(context.Background(), app.SMSLoginInput{
+		Phone: phone, Code: f.sender.code, TraceID: "trace-login",
+	})
+	return err
+}
+
+// TestDeleteConsumerAccount 验证消费者自助注销：软删、会话撤销与登录拒绝。
+func TestDeleteConsumerAccount(t *testing.T) {
+	f := newSMSFixture(t, nil)
+	ctx := context.Background()
+	phone := "+8613800138003"
+
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	registered, err := f.svc.Register(ctx, app.SMSLoginInput{Phone: phone, Code: f.sender.code, TraceID: "trace-reg"})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := f.authFixture.svc.DeleteConsumerAccount(ctx, app.SessionActor{
+		AccountID: registered.AccountID, SessionID: registered.SessionID, TraceID: "trace-delete",
+	}); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+
+	account, err := f.accounts.FindByID(ctx, registered.AccountID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.DeletedAt == nil || account.Status != domain.AccountStatusDisabled {
+		t.Fatalf("account must be soft deleted: %+v", account)
+	}
+	if session := f.sessionOf(t, registered.SessionID); session.Status != domain.SessionStatusRevoked {
+		t.Fatalf("sessions must be revoked on deletion: %+v", session)
+	}
+	requireAppCode(t, mustLogin(f, phone), apperr.CodeUnauthorized)
+}
+
+// mustRegister 使用最近一次发送的验证码执行注册。
+func mustRegister(f *smsFixture, phone string) error {
+	_, err := f.svc.Register(context.Background(), app.SMSLoginInput{
+		Phone: phone, Code: f.sender.code, TraceID: "trace-register-dup",
+	})
+	return err
+}
+
 func TestSMSLoginSendValidation(t *testing.T) {
 	cases := []struct {
 		name  string

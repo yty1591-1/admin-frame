@@ -7,20 +7,31 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
+	"github.com/admin-frame/admin-frame/internal/shared/auth"
 )
 
 // Register 将 A 端认证路由挂到 mux。
 //
-// login / refresh 不挂鉴权（分别凭密码与刷新令牌），其余端点必须携带 Bearer；
-// 本包不注册权限点：已认证账号管理自己的会话，不需要额外 RBAC 授权。
-func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) http.Handler) {
+// login / refresh 不挂鉴权（分别凭密码与刷新令牌），其余端点必须携带 Bearer。
+// 自助端点（会话、改密、MFA）只需本人登录；账号查询要求
+// `identity:account:read`，账号处置要求 `identity:account:write`，
+// 禁止匿名或仅凭登录即可查看 / 操作他人账号。
+func Register(
+	mux *http.ServeMux,
+	h *rest.Handler,
+	authMW func(http.Handler) http.Handler,
+	permMW auth.PermissionMiddleware,
+) {
 	if mux == nil || h == nil {
 		return
 	}
 	if authMW == nil {
 		authMW = func(next http.Handler) http.Handler { return next }
 	}
+	accountWrite := permission(permMW, string(iam.PermIdentityAccountWrite))
+	accountRead := permission(permMW, string(iam.PermIdentityAccountRead))
 
 	mux.HandleFunc("POST /admin/v1/auth/login", h.Login)
 	mux.HandleFunc("POST /admin/v1/auth/refresh", h.Refresh)
@@ -31,21 +42,67 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// MFA：setup / verify 支持「已登录 Bearer」与「登录前票据」两条入口；
 	// 是否带 Authorization 决定走哪条，票据本身由用例层校验。
 	mux.HandleFunc("POST /admin/v1/auth/mfa/setup",
-		mfaTicketOrBearer(http.HandlerFunc(h.SetupMFA), authMW(http.HandlerFunc(h.SetupMFA))))
+		ticketOrBearer(http.HandlerFunc(h.SetupMFA), authMW(http.HandlerFunc(h.SetupMFA))))
 	mux.HandleFunc("POST /admin/v1/auth/mfa/verify",
-		mfaTicketOrBearer(http.HandlerFunc(h.VerifyMFA), authMW(http.HandlerFunc(h.VerifyMFA))))
+		ticketOrBearer(http.HandlerFunc(h.VerifyMFA), authMW(http.HandlerFunc(h.VerifyMFA))))
 	mux.Handle("POST /admin/v1/auth/mfa/disable", authMW(http.HandlerFunc(h.DisableMFA)))
 
 	// 会话管理：列表、单会话撤销与全量撤销。
 	mux.Handle("GET /admin/v1/auth/sessions", authMW(http.HandlerFunc(h.ListSessions)))
 	mux.Handle("DELETE /admin/v1/auth/sessions/{id}", authMW(http.HandlerFunc(h.RevokeSession)))
 	mux.Handle("POST /admin/v1/auth/sessions/revoke-all", authMW(http.HandlerFunc(h.LogoutAll)))
+
+	// 改密：Bearer 走自助改密；无 Authorization 时按强制改密票据处理。
+	mux.HandleFunc("POST /admin/v1/auth/password/change",
+		ticketOrBearer(http.HandlerFunc(h.ChangePassword), authMW(http.HandlerFunc(h.ChangePassword))))
+
+	// 账号查询：identity:account:read。
+	mux.Handle("GET /admin/v1/auth/accounts",
+		authMW(accountRead(http.HandlerFunc(h.ListAccounts))))
+	mux.Handle("GET /admin/v1/auth/accounts/{id}",
+		authMW(accountRead(http.HandlerFunc(h.GetAccount))))
+	mux.Handle("GET /admin/v1/auth/accounts/{id}/sessions",
+		authMW(accountRead(http.HandlerFunc(h.ListAccountSessions))))
+
+	// 账号生命周期管理：必须额外持有 identity:account:write。
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/disable",
+		authMW(accountWrite(http.HandlerFunc(h.DisableAccount))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/enable",
+		authMW(accountWrite(http.HandlerFunc(h.EnableAccount))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/lock",
+		authMW(accountWrite(http.HandlerFunc(h.LockAccount))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/unlock",
+		authMW(accountWrite(http.HandlerFunc(h.UnlockAccount))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/mfa/reset",
+		authMW(accountWrite(http.HandlerFunc(h.ResetAccountMFA))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/password/reset",
+		authMW(accountWrite(http.HandlerFunc(h.ResetAccountPassword))))
+	mux.Handle("DELETE /admin/v1/auth/accounts/{id}",
+		authMW(accountWrite(http.HandlerFunc(h.DeleteAccount))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/restore",
+		authMW(accountWrite(http.HandlerFunc(h.RestoreAccount))))
+	mux.Handle("DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}",
+		authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSession))))
+	mux.Handle("POST /admin/v1/auth/accounts/{id}/sessions/revoke-all",
+		authMW(accountWrite(http.HandlerFunc(h.RevokeAccountSessions))))
 }
 
-// mfaTicketOrBearer 按是否携带 Authorization 切换鉴权：
-// 无头走票据路径（setup 凭 mfa_setup_ticket，verify 凭 mfa_ticket / mfa_setup_ticket），
-// 有头走 Bearer 路径。两种票据都由用例层校验，路由层不解析请求体。
-func mfaTicketOrBearer(ticketPath, authPath http.Handler) http.HandlerFunc {
+// permission 返回权限中间件；未注入时失败关闭（403），禁止账号管理端点裸奔。
+func permission(permMW auth.PermissionMiddleware, code string) func(http.Handler) http.Handler {
+	if permMW == nil {
+		return func(http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "permission middleware is not configured", http.StatusForbidden)
+			})
+		}
+	}
+	return permMW(code)
+}
+
+// ticketOrBearer 按是否携带 Authorization 切换鉴权：
+// 无头走票据路径（MFA 票据 / 强制改密票据），有头走 Bearer 路径。
+// 票据本身由用例层校验，路由层不解析请求体。
+func ticketOrBearer(ticketPath, authPath http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 			ticketPath.ServeHTTP(w, r)

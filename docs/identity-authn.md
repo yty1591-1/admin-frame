@@ -563,7 +563,8 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
   - 单手机号每日上限、单 IP 每小时上限（`identity.sms.*`）；
   - 验证码最多尝试 5 次，超限作废并记审计；
   - 响应恒定（无论手机号是否存在），防枚举。
-- 未注册手机号不自动建号：验证码校验通过但账号不存在时返回 `40100`（与验证码错误一致）。
+- 未注册手机号不自动建号：登录端点验证码校验通过但账号不存在时返回 `40100`（与验证码错误一致）。
+- `POST /c/v1/auth/sms/register`：验证码通过后在同一事务内创建账号（`subject = "phone:" + sha256(手机号)`）、手机号凭据与 `auth.account.created` 审计，并直接签发令牌；已注册手机号与验证码错误统一 `40100`，并发开户由 `(channel, subject)` 唯一键兜底。
 - 日志与审计禁止出现完整手机号；只记录不可逆摘要。
 
 ### 8.2 OAuth 授权码
@@ -614,8 +615,18 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 - 软删使用 `deleted_at`；唯一键须保证软删后标识不可复用（账号 `subject` 不复用）。
 - 外键仅用于阻止悬空会话与凭据（`RESTRICT`）；会话清理走独立保留期任务，不在 API 进程执行。
 - 密码哈希、刷新哈希长度预留 ≥ 255；TOTP 密文使用 `VARBINARY` 或 `TEXT`。
+- `identity_account.must_change_password`（`000010` 迁移）标记管理员重置密码后尚未改密；为 1 时登录只下发 `password_change_ticket`。
 
-### 9.3 保留与清理
+### 9.3 账号生命周期与强制改密（IDN-P0-02）
+
+- A 端运营接口分两类权限：查询用 `identity:account:read`，处置用 `identity:account:write`；未注入权限中间件时失败关闭（403）。
+- 列表按创建时间倒序分页，支持 `status` 与 `keyword`（主体子串）；软删账号照常返回并带 `deleted_at`。
+- 管理员重置密码返回一次性临时口令，同时置 `must_change_password`、递增 `token_version` 并撤销全部会话；临时口令不写日志、不入审计。
+- 用户凭临时口令登录只得到 `200 {"password_change_required": true, "password_change_ticket": "..."}`；凭票据调用 `POST /admin/v1/auth/password/change` 完成改密后才签发令牌（若已绑定 MFA，则改密后仍需完成两步校验）。
+- 软删账号保留 `subject` 唯一键，恢复不恢复旧会话，`token_version` 不递减。
+- C 端换绑手机号会同时更新 `subject` 与 `phone` 凭据、递增 `token_version` 并撤销全部会话；自助注销为软删。
+
+### 9.4 保留与清理
 
 - `identity_login_attempt` 保留期与审计策略一致，默认 180 天，由独立任务清理。
 - `identity_session` 过期记录保留 30 天后清理；清理任务不得删除 `revoked` 状态未满保留期的记录。
@@ -748,7 +759,24 @@ identity:
 | A | `GET /admin/v1/auth/sessions` | Bearer | 列出本账号会话 |
 | A | `DELETE /admin/v1/auth/sessions/{id}` | Bearer | 撤销指定会话 |
 | A | `POST /admin/v1/auth/sessions/revoke-all` | Bearer | 撤销全部会话 |
+| A | `POST /admin/v1/auth/password/change` | Bearer / `password_change_ticket` | 自助改密或强制改密（递增 `token_version`、撤销全部会话） |
+| A | `GET /admin/v1/auth/accounts` | Bearer + `identity:account:read` | 账号列表（分页、状态 / 关键词筛选，含软删） |
+| A | `GET /admin/v1/auth/accounts/{id}` | Bearer + `identity:account:read` | 账号详情（凭据与 MFA 状态） |
+| A | `GET /admin/v1/auth/accounts/{id}/sessions` | Bearer + `identity:account:read` | 目标账号会话列表 |
+| A | `POST /admin/v1/auth/accounts/{id}/disable` | Bearer + `identity:account:write` | 停用账号并撤销全部会话 |
+| A | `POST /admin/v1/auth/accounts/{id}/enable` | Bearer + `identity:account:write` | 恢复停用账号（不恢复旧会话） |
+| A | `POST /admin/v1/auth/accounts/{id}/lock` | Bearer + `identity:account:write` | 主动锁定（可设时长）并撤销全部会话 |
+| A | `POST /admin/v1/auth/accounts/{id}/unlock` | Bearer + `identity:account:write` | 管理员解锁 |
+| A | `POST /admin/v1/auth/accounts/{id}/mfa/reset` | Bearer + `identity:account:write` | 重置 MFA（丢失设备兜底） |
+| A | `POST /admin/v1/auth/accounts/{id}/password/reset` | Bearer + `identity:account:write` | 重置密码，返回一次性临时口令并强制改密 |
+| A | `DELETE /admin/v1/auth/accounts/{id}` | Bearer + `identity:account:write` | 软删账号 |
+| A | `POST /admin/v1/auth/accounts/{id}/restore` | Bearer + `identity:account:write` | 恢复软删账号 |
+| A | `DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}` | Bearer + `identity:account:write` | 撤销目标账号指定会话 |
+| A | `POST /admin/v1/auth/accounts/{id}/sessions/revoke-all` | Bearer + `identity:account:write` | 撤销目标账号全部会话 |
 | C | `POST /c/v1/auth/sms/send` | 无 | 发送验证码 |
+| C | `POST /c/v1/auth/sms/register` | 无 | 验证码注册开户并登录（方案 A） |
+| C | `POST /c/v1/auth/phone/rebind` | Bearer | 换绑手机号并撤销全部会话 |
+| C | `DELETE /c/v1/auth/account` | Bearer | 用户自助注销（软删） |
 | C | `POST /c/v1/auth/oauth/{provider}/authorize` | 无 | 发起授权，返回 state 与授权地址 |
 | C | `POST /c/v1/auth/oauth/{provider}/callback` | 无 | 授权码回调 |
 

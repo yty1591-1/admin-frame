@@ -64,6 +64,98 @@ c-v1-auth-login:
       "503":
         $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
 
+c-v1-auth-sms-register:
+  post:
+    tags: [auth]
+    summary: 短信验证码注册并登录
+    description: |
+      验证码通过后创建 C 端账号（手机号摘要主体）与手机号凭据，并直接签发令牌（方案 A）。
+      已注册手机号与验证码错误统一返回 40100，避免通过注册端点枚举手机号；
+      开户与审计在同一事务内完成。短信未启用时路由不存在（404）。
+    operationId: cAuthSMSRegister
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SMSLoginRequest"
+    responses:
+      "200":
+        description: 令牌对
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TokenPair"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-phone-rebind:
+  post:
+    tags: [auth]
+    summary: 换绑手机号
+    description: |
+      需已登录 C 端账号。先用 `sms/send` 向新手机号发送验证码，再调用本端点；
+      成功后更新账号主体与手机号凭据、递增 token_version 并撤销全部会话，
+      用户需用新手机号重新登录。新手机号已被占用返回 40900。
+    operationId: cAuthRebindPhone
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SMSLoginRequest"
+    responses:
+      "204":
+        description: no content
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-account:
+  delete:
+    tags: [auth]
+    summary: 注销账号
+    description: |
+      用户自助注销（软删）：递增 token_version、撤销全部会话并写 `auth.account.deleted`；
+      手机号主体仍占用唯一键，不允许立即被他人重新注册。
+    operationId: cAuthDeleteAccount
+    security:
+      - bearerAuth: []
+    responses:
+      "204":
+        description: no content
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
 c-v1-auth-oauth-by-provider-authorize:
   post:
     tags: [auth]

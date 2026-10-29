@@ -13,6 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
+	"github.com/admin-frame/admin-frame/pkg/jwt"
 )
 
 // DefaultSessionIdleTimeout 是默认空闲会话上限（docs/identity-authn.md §10）。
@@ -87,6 +88,10 @@ type LoginResult struct {
 	MFABindingRequired bool
 	// MFASetupTicket 是强制绑定票据；仅在 MFABindingRequired 时返回。
 	MFASetupTicket string
+	// PasswordChangeRequired 表示管理员重置密码后必须先完成改密。
+	PasswordChangeRequired bool
+	// PasswordChangeTicket 是强制改密票据；仅在 PasswordChangeRequired 时返回。
+	PasswordChangeTicket string
 }
 
 // RefreshInput 是刷新令牌入参。
@@ -402,7 +407,29 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
 		}
 	}
-	gate, err := s.mfaChallenge(ctx, account, in.TraceID)
+	// 管理员重置密码后必须先完成改密：只下发一次性票据，不签发业务令牌。
+	if account.MustChangePassword {
+		ticket, issueErr := s.tokens.IssuePasswordChangeTicket(account.ID)
+		if issueErr != nil {
+			return LoginResult{}, issueErr
+		}
+		return LoginResult{
+			AccountID:              account.ID,
+			PasswordChangeRequired: true,
+			PasswordChangeTicket:   ticket.Ticket,
+		}, nil
+	}
+	return s.challengeOrComplete(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+}
+
+// challengeOrComplete 在密码 / 改密票据通过后执行 MFA 闸门或直接完成登录。
+func (s *AuthService) challengeOrComplete(
+	ctx context.Context,
+	account *domain.Account,
+	now time.Time,
+	ipHash, uaHash, traceID string,
+) (LoginResult, error) {
+	gate, err := s.mfaChallenge(ctx, account, traceID)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -428,8 +455,18 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			MFATicket:   ticket.Ticket,
 		}, nil
 	default:
-		return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+		return s.completeLogin(ctx, account, now, ipHash, uaHash, traceID)
 	}
+}
+
+// IssuePasswordChangeTicket 签发强制改密票据（IDN-P0-02）。
+func (s *TokenService) IssuePasswordChangeTicket(accountID string) (MFATicket, error) {
+	return s.issueScopedTicket(accountID, passwordChangeTicketScope, PasswordChangeTicketTTL)
+}
+
+// ParsePasswordChangeTicket 校验并解析强制改密票据。
+func (s *TokenService) ParsePasswordChangeTicket(raw string) (jwt.Claims, error) {
+	return s.parseScopedTicket(raw, passwordChangeTicketScope)
 }
 
 // VerifiedLoginInput 是外部验证（短信验证码 / OAuth）通过后的登录入参。

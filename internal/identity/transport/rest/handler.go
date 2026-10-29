@@ -5,6 +5,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // HandlerConfig 是认证 Handler 的装配参数。
@@ -29,8 +31,9 @@ type HandlerConfig struct {
 
 // Handler 处理认证 HTTP 请求。
 type Handler struct {
-	auth    *app.AuthService
-	channel domain.Channel
+	auth     *app.AuthService
+	accounts *app.AccountService
+	channel  domain.Channel
 }
 
 // NewHandler 构造认证 Handler。
@@ -41,10 +44,17 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if err := cfg.Channel.Validate(); err != nil {
 		return nil, err
 	}
-	return &Handler{auth: cfg.Auth, channel: cfg.Channel}, nil
+	accounts, err := app.NewAccountService(cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
+	return &Handler{auth: cfg.Auth, accounts: accounts, channel: cfg.Channel}, nil
 }
 
 // Login POST /{channel}/v1/auth/login
+//
+// A/B 端密码登录。账号不存在、密码错误、停用与锁定统一返回 40100；A 端可能返回
+// MFA 挑战或强制改密中间态，这些中间态均不包含业务令牌。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req loginRequest
@@ -63,15 +73,24 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	if result.MFABindingRequired {
+	writeLoginResult(w, traceID, result)
+}
+
+// writeLoginResult 统一输出登录中间态与正式令牌。
+func writeLoginResult(w http.ResponseWriter, traceID string, result app.LoginResult) {
+	switch {
+	case result.PasswordChangeRequired:
+		httpx.OK(w, passwordChangeRequiredResponse{
+			PasswordChangeRequired: true,
+			PasswordChangeTicket:   result.PasswordChangeTicket,
+		}, traceID)
+	case result.MFABindingRequired:
 		httpx.OK(w, mfaBindingResponse{MFABindingRequired: true, MFASetupTicket: result.MFASetupTicket}, traceID)
-		return
-	}
-	if result.MFARequired {
+	case result.MFARequired:
 		httpx.OK(w, mfaChallengeResponse{MFARequired: true, MFATicket: result.MFATicket}, traceID)
-		return
+	default:
+		httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 	}
-	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 }
 
 // Me GET /admin/v1/me
@@ -198,7 +217,291 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ChangePassword POST /admin/v1/auth/password/change
+//
+// 两种入口：Bearer 自助改密（校验旧密码，204）；或凭 password_change_ticket
+// 完成管理员重置后的强制改密（直接返回 TokenPair 或 MFA 中间态）。
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	var req changePasswordRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if strings.TrimSpace(req.PasswordChangeTicket) != "" {
+		result, err := h.auth.CompletePasswordChange(r.Context(), app.CompletePasswordChangeInput{
+			Ticket:      req.PasswordChangeTicket,
+			NewPassword: req.NewPassword,
+			IPHash:      app.HashClientRef(clientIP(r)),
+			UAHash:      app.HashClientRef(r.UserAgent()),
+			TraceID:     traceID,
+		})
+		if err != nil {
+			httpx.FromError(w, err, traceID)
+			return
+		}
+		writeLoginResult(w, traceID, result)
+		return
+	}
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if err := h.accounts.ChangePassword(r.Context(), app.ChangePasswordInput{
+		Actor:       actor,
+		OldPassword: req.OldPassword,
+		NewPassword: req.NewPassword,
+	}); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DisableAccount POST /admin/v1/auth/accounts/{id}/disable
+//
+// 需要 identity:account:write。停用后递增 token_version、撤销全部会话；
+// 已停用账号幂等返回 204，不重复写审计。
+func (h *Handler) DisableAccount(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.Disable(ctx, in)
+	})
+}
+
+// EnableAccount POST /admin/v1/auth/accounts/{id}/enable
+//
+// 需要 identity:account:write。恢复停用账号，不恢复旧会话，用户须重新登录；
+// 目标账号未停用时返回 40900。
+func (h *Handler) EnableAccount(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.Enable(ctx, in)
+	})
+}
+
+// UnlockAccount POST /admin/v1/auth/accounts/{id}/unlock
+//
+// 需要 identity:account:write。解除失败锁定并写审计；已解锁账号幂等返回 204，
+// 停用账号返回 40900。
+func (h *Handler) UnlockAccount(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.Unlock(ctx, in)
+	})
+}
+
+// ResetAccountMFA POST /admin/v1/auth/accounts/{id}/mfa/reset
+//
+// 需要 identity:account:write。删除 MFA 绑定、递增 token_version 并撤销全部会话，
+// 用于用户丢失 TOTP 设备与恢复码的兜底；未绑定账号返回 40400。
+func (h *Handler) ResetAccountMFA(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.ResetMFA(ctx, in)
+	})
+}
+
+// accountOperation 统一解析管理员操作请求并执行用例。
+func (h *Handler) accountOperation(
+	w http.ResponseWriter,
+	r *http.Request,
+	apply func(context.Context, app.AccountOperationInput) error,
+) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req accountActionRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if err := apply(r.Context(), app.AccountOperationInput{
+		Actor:           actor,
+		TargetAccountID: r.PathValue("id"),
+		Reason:          req.Reason,
+	}); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListAccounts GET /admin/v1/auth/accounts
+//
+// 需要 identity:account:read。分页列出本端账号（created_at 倒序），支持状态与
+// 主体关键词筛选；软删账号同样返回并带 deleted_at。
+func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	page, err := pagination.Parse(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	query := r.URL.Query()
+	items, total, err := h.accounts.List(r.Context(), app.AccountListInput{
+		Status:  strings.TrimSpace(query.Get("status")),
+		Keyword: strings.TrimSpace(query.Get("keyword")),
+		Limit:   page.Limit(),
+		Offset:  page.Offset(),
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	out := make([]accountDTO, 0, len(items))
+	for _, item := range items {
+		out = append(out, accountDTOFrom(item))
+	}
+	httpx.OK(w, accountListResponse{Items: out, Total: total}, traceID)
+}
+
+// GetAccount GET /admin/v1/auth/accounts/{id}
+//
+// 需要 identity:account:read。返回账号状态、锁定到期、凭据与 MFA 状态；
+// 软删账号同样可查，便于恢复。
+func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	detail, err := h.accounts.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, accountDetailDTO{
+		accountDTO:         accountDTOFrom(detail.AccountSummary),
+		MFAEnabled:         detail.MFAEnabled,
+		MustChangePassword: detail.MustChangePassword,
+		HasPassword:        detail.HasPassword,
+		PhoneBound:         detail.PhoneBound,
+	}, traceID)
+}
+
+// LockAccount POST /admin/v1/auth/accounts/{id}/lock
+//
+// 需要 identity:account:write。按 duration_minutes 主动锁定（默认锁定策略），
+// 递增 token_version 并撤销全部会话；已锁定账号幂等返回 204。
+func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req accountLockRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if err := h.accounts.Lock(r.Context(), app.LockAccountInput{
+		AccountOperationInput: app.AccountOperationInput{
+			Actor:           actor,
+			TargetAccountID: r.PathValue("id"),
+			Reason:          req.Reason,
+		},
+		Duration: time.Duration(req.DurationMinutes) * time.Minute,
+	}); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ResetAccountPassword POST /admin/v1/auth/accounts/{id}/password/reset
+//
+// 返回一次性临时口令；响应不得缓存（no-store 由后续安全头统一补齐）。
+func (h *Handler) ResetAccountPassword(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req accountActionRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	temporary, err := h.accounts.ResetPassword(r.Context(), app.AccountOperationInput{
+		Actor:           actor,
+		TargetAccountID: r.PathValue("id"),
+		Reason:          req.Reason,
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, resetPasswordResponse{TemporaryPassword: temporary}, traceID)
+}
+
+// DeleteAccount DELETE /admin/v1/auth/accounts/{id}
+//
+// 需要 identity:account:write。软删账号、递增 token_version 并撤销全部会话；
+// subject 仍占用唯一键，可通过 restore 恢复。
+func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.Delete(ctx, in)
+	})
+}
+
+// RestoreAccount POST /admin/v1/auth/accounts/{id}/restore
+//
+// 需要 identity:account:write。恢复软删账号为 active，不恢复旧会话，
+// token_version 不递减；未删除账号幂等返回 204。
+func (h *Handler) RestoreAccount(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.Restore(ctx, in)
+	})
+}
+
+// ListAccountSessions GET /admin/v1/auth/accounts/{id}/sessions
+//
+// 需要 identity:account:read。列出目标账号全部会话，管理员视角 current 恒为 false；
+// 不返回任何令牌、IP 或 UA 原文。
+func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	sessions, err := h.accounts.ListTargetSessions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, sessionListResponseFrom(sessions), traceID)
+}
+
+// RevokeAccountSession DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}
+//
+// 需要 identity:account:write。仅撤销会话与刷新能力；已签发的 Access Token
+// 仍有效到自然过期（IDN-P1-02 修复后收紧）。他人会话与不存在统一 404。
+func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if err := h.accounts.RevokeTargetSession(r.Context(), app.AccountOperationInput{
+		Actor:           actor,
+		TargetAccountID: r.PathValue("id"),
+	}, r.PathValue("sid")); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RevokeAccountSessions POST /admin/v1/auth/accounts/{id}/sessions/revoke-all
+//
+// 需要 identity:account:write。递增 token_version 并撤销目标账号全部会话，
+// 旧 Access Token 在 ≤60s 内失效。
+func (h *Handler) RevokeAccountSessions(w http.ResponseWriter, r *http.Request) {
+	h.accountOperation(w, r, func(ctx context.Context, in app.AccountOperationInput) error {
+		return h.accounts.RevokeTargetSessions(ctx, in)
+	})
+}
+
 // Refresh POST /{channel}/v1/auth/refresh
+//
+// 凭一次性刷新令牌轮换并签发新令牌；已轮换令牌再次出现视为重放，
+// 撤销整条会话链并返回 40100。
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req refreshRequest
@@ -218,6 +521,8 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // Logout POST /{channel}/v1/auth/logout
+//
+// 撤销当前会话并把当前 Access Token 的 jti 加入黑名单；幂等，重复登出返回 204。
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -233,6 +538,8 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // LogoutAll POST /{channel}/v1/auth/logout-all
+//
+// 递增 token_version 并撤销账号全部会话；旧 Access Token 在 ≤60s 内失效。
 func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -248,6 +555,8 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSessions GET /admin/v1/auth/sessions
+//
+// 列出本账号会话；仅返回状态与时间字段，不返回任何令牌、IP 或 UA 原文。
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -260,6 +569,11 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	httpx.OK(w, sessionListResponseFrom(sessions), traceID)
+}
+
+// sessionListResponseFrom 把会话视图转换为响应 DTO。
+func sessionListResponseFrom(sessions []app.SessionView) sessionListResponse {
 	items := make([]sessionDTO, 0, len(sessions))
 	for _, view := range sessions {
 		items = append(items, sessionDTO{
@@ -273,10 +587,13 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			RevokedAt:     view.RevokedAt,
 		})
 	}
-	httpx.OK(w, sessionListResponse{Items: items}, traceID)
+	return sessionListResponse{Items: items}
 }
 
 // RevokeSession DELETE /admin/v1/auth/sessions/{id}
+//
+// 撤销本账号指定会话；他人会话与不存在统一返回 404，避免横向枚举。
+// 撤销当前会话时同时拉黑当前 jti。
 func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -337,6 +654,83 @@ type mfaVerifyRequest struct {
 // mfaDisableRequest 解绑请求。
 type mfaDisableRequest struct {
 	Code string `json:"code"`
+}
+
+// changePasswordRequest 改密请求。
+//
+// 两种模式：Bearer 自助改密需 old_password + new_password；
+// 强制改密需 password_change_ticket + new_password（不得同时提交 old_password）。
+type changePasswordRequest struct {
+	OldPassword          string `json:"old_password,omitempty"`
+	NewPassword          string `json:"new_password"`
+	PasswordChangeTicket string `json:"password_change_ticket,omitempty"`
+}
+
+// accountActionRequest 管理员账号操作请求；reason 可选，写入审计。
+type accountActionRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// accountLockRequest 管理员锁定请求；duration_minutes 可选，默认锁定策略。
+type accountLockRequest struct {
+	Reason          string `json:"reason,omitempty"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+}
+
+// passwordChangeRequiredResponse 强制改密中间态；不包含任何业务令牌。
+type passwordChangeRequiredResponse struct {
+	PasswordChangeRequired bool   `json:"password_change_required"`
+	PasswordChangeTicket   string `json:"password_change_ticket"`
+}
+
+// resetPasswordResponse 重置密码响应；临时口令只出现一次，禁止缓存与日志。
+type resetPasswordResponse struct {
+	TemporaryPassword string `json:"temporary_password"`
+}
+
+// accountDTO 账号列表项。
+type accountDTO struct {
+	ID           string     `json:"id"`
+	Subject      string     `json:"subject"`
+	Channel      string     `json:"channel"`
+	Status       string     `json:"status"`
+	MerchantID   string     `json:"merchant_id,omitempty"`
+	TokenVersion int64      `json:"token_version"`
+	LockedUntil  *time.Time `json:"locked_until,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// accountDetailDTO 账号详情；补充凭据与 MFA 状态。
+type accountDetailDTO struct {
+	accountDTO
+	MFAEnabled         bool `json:"mfa_enabled"`
+	MustChangePassword bool `json:"must_change_password"`
+	HasPassword        bool `json:"has_password"`
+	PhoneBound         bool `json:"phone_bound"`
+}
+
+// accountListResponse 账号列表响应。
+type accountListResponse struct {
+	Items []accountDTO `json:"items"`
+	Total int          `json:"total"`
+}
+
+// accountDTOFrom 把用例视图转换为响应 DTO。
+func accountDTOFrom(view app.AccountSummary) accountDTO {
+	return accountDTO{
+		ID:           view.ID,
+		Subject:      view.Subject,
+		Channel:      view.Channel.String(),
+		Status:       view.Status.String(),
+		MerchantID:   view.MerchantID,
+		TokenVersion: view.TokenVersion,
+		LockedUntil:  view.LockedUntil,
+		DeletedAt:    view.DeletedAt,
+		CreatedAt:    view.CreatedAt,
+		UpdatedAt:    view.UpdatedAt,
+	}
 }
 
 // tokenResponse 登录 / 刷新成功响应；令牌原文只在此出现一次。

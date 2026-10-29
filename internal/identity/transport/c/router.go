@@ -15,10 +15,13 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 	}
 	if h.sms != nil {
 		mux.HandleFunc("POST /c/v1/auth/sms/send", h.SendSMSCode)
+		mux.HandleFunc("POST /c/v1/auth/sms/register", h.Register)
+		mux.Handle("POST /c/v1/auth/phone/rebind", authMW(http.HandlerFunc(h.RebindPhone)))
 	}
 	mux.HandleFunc("POST /c/v1/auth/login", h.Login)
 	mux.HandleFunc("POST /c/v1/auth/refresh", h.rest.Refresh)
 	mux.Handle("POST /c/v1/auth/logout", authMW(http.HandlerFunc(h.rest.Logout)))
+	mux.Handle("DELETE /c/v1/auth/account", authMW(http.HandlerFunc(h.DeleteAccount)))
 	for _, provider := range h.providers {
 		mux.HandleFunc("POST /c/v1/auth/oauth/"+provider+"/authorize", h.OAuthAuthorize)
 		mux.HandleFunc("POST /c/v1/auth/oauth/"+provider+"/callback", h.OAuthCallback)

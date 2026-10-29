@@ -38,6 +38,10 @@ const (
 	PermSodRead PermissionCode = "iam:sod:read"
 	// PermSodWrite 管理互斥角色组（RBAC2），含成员与阈值变更。
 	PermSodWrite PermissionCode = "iam:sod:write"
+	// PermIdentityAccountRead 查看身份账号列表 / 详情与目标账号会话（A 端专属）。
+	PermIdentityAccountRead PermissionCode = "identity:account:read"
+	// PermIdentityAccountWrite 管理身份账号生命周期（停用 / 启用 / 锁定 / 解锁 / 重置密码 / 重置 MFA / 软删恢复）。
+	PermIdentityAccountWrite PermissionCode = "identity:account:write"
 	// PermChangeRead 查看高风险变更审批单。
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。

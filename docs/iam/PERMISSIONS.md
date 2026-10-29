@@ -57,6 +57,8 @@
 | `iam:menu:write` | admin | 否 | 活跃 | 创建、更新、停用菜单资源；仅影响入口展示，不构成鉴权边界 |
 | `iam:sod:read` | both | 否 | 活跃 | 查看 RBAC2 互斥角色组及其存量违规；B 端限本商户 |
 | `iam:sod:write` | both | 否 | 活跃 | 创建、更新、停用互斥角色组；变更前强制存量违规预检 |
+| `identity:account:read` | admin | 否 | 活跃 | 查询账号列表 / 详情与目标账号会话；不包含任何处置动作 |
+| `identity:account:write` | admin | 否 | 活跃 | 停用、启用、锁定、解锁、重置密码、重置 MFA、软删恢复；高风险操作需走审批后执行 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。

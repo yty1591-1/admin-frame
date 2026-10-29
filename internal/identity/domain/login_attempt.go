@@ -55,6 +55,8 @@ const (
 	LoginReasonMFAFailed = "mfa_failed"
 	// LoginReasonReplay 刷新令牌重放。
 	LoginReasonReplay = "reuse_detected"
+	// LoginReasonRegistration C 端手机号自助开户。
+	LoginReasonRegistration = "registration"
 )
 
 // LoginAttempt 是一次登录尝试的不可变记录。

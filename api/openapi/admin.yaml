@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 6.0.0
+  version: 6.1.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -15,6 +15,7 @@ info:
     5.1.0：新增 `GET /admin/v1/me`（当前主体资料）。
     6.0.0：角色 `scope_type` 枚举由 `admin` 更正为 `platform`，与后端 RBAC 语义一致（破坏性）；
     登记角色模板端点与契约（`/admin/v1/iam/role-templates*`）。
+    6.1.0：新增自助改密与账号生命周期管理端点（停用 / 启用 / 解锁 / 重置 MFA）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -63,6 +64,32 @@ paths:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-mfa-verify'
   /admin/v1/auth/mfa/disable:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-mfa-disable'
+  /admin/v1/auth/password/change:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-password-change'
+  /admin/v1/auth/accounts:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts'
+  /admin/v1/auth/accounts/{id}:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id'
+  /admin/v1/auth/accounts/{id}/lock:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-lock'
+  /admin/v1/auth/accounts/{id}/password/reset:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-password-reset'
+  /admin/v1/auth/accounts/{id}/restore:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-restore'
+  /admin/v1/auth/accounts/{id}/sessions:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-sessions'
+  /admin/v1/auth/accounts/{id}/sessions/{sid}:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-sessions-by-sid'
+  /admin/v1/auth/accounts/{id}/sessions/revoke-all:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-sessions-revoke-all'
+  /admin/v1/auth/accounts/{id}/disable:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-disable'
+  /admin/v1/auth/accounts/{id}/enable:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-enable'
+  /admin/v1/auth/accounts/{id}/unlock:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-unlock'
+  /admin/v1/auth/accounts/{id}/mfa/reset:
+    $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-mfa-reset'
   /admin/v1/me:
     $ref: './paths/admin/me.yaml#/admin-v1-me'
   /admin/v1/iam/permissions:

@@ -16,6 +16,8 @@ const (
 	MFATicketTTL = 5 * time.Minute
 	// MFASetupTicketTTL 是强制绑定票据有效期；绑定需扫码与录入首码，故长于两步登录。
 	MFASetupTicketTTL = 10 * time.Minute
+	// PasswordChangeTicketTTL 是强制改密票据有效期。
+	PasswordChangeTicketTTL = 5 * time.Minute
 )
 
 // 票据声明（docs/identity-authn.md §7.2、§7.2.1）。
@@ -24,6 +26,8 @@ const (
 	mfaTicketScope = "mfa"
 	// mfaSetupTicketScope 强制绑定票据 scope，只允许调用 mfa/setup 与 mfa/verify。
 	mfaSetupTicketScope = "mfa_setup"
+	// passwordChangeTicketScope 强制改密票据 scope，只允许调用密码修改端点。
+	passwordChangeTicketScope = "password_change"
 )
 
 // MFATicket 是一次两步登录挑战签发的短期票据。

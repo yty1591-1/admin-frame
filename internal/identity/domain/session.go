@@ -56,6 +56,8 @@ const (
 	RevokeReasonAccountDisabled RevokeReason = "account_disabled"
 	// RevokeReasonPasswordChanged 密码已修改。
 	RevokeReasonPasswordChanged RevokeReason = "password_changed"
+	// RevokeReasonPhoneChanged C 端手机号换绑。
+	RevokeReasonPhoneChanged RevokeReason = "phone_changed"
 )
 
 // Validate 校验撤销原因非空且在列宽内。

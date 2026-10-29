@@ -19,7 +19,7 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	if identityRT != nil && identityRT.Handler != nil {
-		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW)
+		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -12,7 +13,7 @@ import (
 
 // accountSelectColumns 是账号表的显式列清单（禁止 SELECT *，DATA-04）。
 const accountSelectColumns = `id, channel, subject, status, token_version, version, merchant_id,
-	password_updated_at, locked_until, created_at, updated_at, deleted_at`
+	password_updated_at, locked_until, must_change_password, created_at, updated_at, deleted_at`
 
 // SQLAccountRepository 是 MySQL 8.0 的账号仓储实现。
 //
@@ -83,11 +84,11 @@ func (r *SQLAccountRepository) insert(ctx context.Context, account *domain.Accou
 	}
 	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_account
 		(id, channel, subject, status, token_version, version, merchant_id,
-		 password_updated_at, locked_until, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 password_updated_at, locked_until, must_change_password, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		accountID, string(account.Channel), account.Subject, string(account.Status),
 		account.TokenVersion, account.Version, account.MerchantID,
-		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil),
+		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil), account.MustChangePassword,
 		account.CreatedAt.UTC(), account.UpdatedAt.UTC(), nullTime(account.DeletedAt))
 	return conflictOnDuplicate(err, "account subject already exists in this channel")
 }
@@ -100,10 +101,10 @@ func (r *SQLAccountRepository) update(ctx context.Context, account *domain.Accou
 	}
 	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_account
 		SET status = ?, token_version = ?, version = ?, password_updated_at = ?,
-		    locked_until = ?, updated_at = ?, deleted_at = ?
+		    locked_until = ?, must_change_password = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ? AND version = ?`,
 		string(account.Status), account.TokenVersion, account.Version,
-		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil),
+		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil), account.MustChangePassword,
 		account.UpdatedAt.UTC(), nullTime(account.DeletedAt), accountID, expectedVersion)
 	if err != nil {
 		return err
@@ -131,6 +132,91 @@ func (r *SQLAccountRepository) versionFailure(ctx context.Context, accountID int
 	return apperr.Conflict(conflictMessage)
 }
 
+// List 按端别 / 状态 / 关键词分页列出账号（含软删），按创建时间倒序。
+func (r *SQLAccountRepository) List(ctx context.Context, filter domain.AccountListFilter) ([]*domain.Account, int, error) {
+	if filter.Channel == "" {
+		return nil, 0, apperr.BadRequest("channel is required")
+	}
+	if err := filter.Channel.Validate(); err != nil {
+		return nil, 0, err
+	}
+	conditions := []string{"channel = ?"}
+	args := []any{string(filter.Channel)}
+	if filter.Status != "" {
+		if err := filter.Status.Validate(); err != nil {
+			return nil, 0, err
+		}
+		conditions = append(conditions, "status = ?")
+		args = append(args, string(filter.Status))
+	}
+	if keyword := domain.NormalizeSubject(filter.Keyword); keyword != "" {
+		conditions = append(conditions, "subject LIKE ?")
+		args = append(args, "%"+keyword+"%")
+	}
+	where := strings.Join(conditions, " AND ")
+
+	var total int
+	if err := r.exec(ctx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM identity_account WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	query := `SELECT ` + accountSelectColumns + ` FROM identity_account WHERE ` + where +
+		` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
+	rows, err := r.exec(ctx).QueryContext(ctx, query, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	accounts := make([]*domain.Account, 0, limit)
+	for rows.Next() {
+		account, scanErr := scanAccount(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return accounts, total, nil
+}
+
+// RebindSubject 更新登录主体；channel / merchant_id 仍不可变。
+func (r *SQLAccountRepository) RebindSubject(ctx context.Context, account *domain.Account, expectedVersion int64) error {
+	if account == nil {
+		return apperr.BadRequest("account is required")
+	}
+	accountID, err := parseID(account.ID)
+	if err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_account
+		SET subject = ?, version = ?, updated_at = ?
+		WHERE id = ? AND version = ?`,
+		account.Subject, account.Version, account.UpdatedAt.UTC(), accountID, expectedVersion)
+	if err != nil {
+		return conflictOnDuplicate(err, "account subject already exists in this channel")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected > 0 {
+		return nil
+	}
+	return r.versionFailure(ctx, accountID, "account version conflict", "account not found")
+}
+
 // scanAccount 扫描一行账号；可空列允许 NULL。
 func scanAccount(row scanRow) (*domain.Account, error) {
 	var (
@@ -142,7 +228,8 @@ func scanAccount(row scanRow) (*domain.Account, error) {
 	err := row.Scan(
 		&account.ID, &account.Channel, &account.Subject, &account.Status,
 		&account.TokenVersion, &account.Version, &account.MerchantID,
-		&passwordUpdatedAt, &lockedUntil, &account.CreatedAt, &account.UpdatedAt, &deletedAt,
+		&passwordUpdatedAt, &lockedUntil, &account.MustChangePassword,
+		&account.CreatedAt, &account.UpdatedAt, &deletedAt,
 	)
 	if err != nil {
 		return nil, err

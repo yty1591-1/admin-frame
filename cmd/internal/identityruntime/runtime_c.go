@@ -53,6 +53,7 @@ func buildChannelC(
 		Rest:      restHandler,
 		SMS:       smsService,
 		OAuth:     oauthService,
+		Auth:      authSvc,
 		Providers: providers,
 	})
 	if err != nil {

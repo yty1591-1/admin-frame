@@ -11,7 +11,8 @@ import (
 //   - 未找到返回 apperr.NotFound（errors.Is(err, apperr.ErrNotFound)）；
 //   - Save 必须使用 expectedVersion 做乐观锁，冲突返回 apperr.Conflict；
 //   - Save 的 expectedVersion 为 0 表示创建；
-//   - channel / subject / merchant_id 创建后不可变，仓储须拒绝变更；
+//   - channel / merchant_id 创建后不可变，仓储须拒绝变更；
+//   - subject 只能通过 RebindSubject 变更（C 端手机号换绑），Save 须拒绝；
 //   - 读方法返回副本，调用方修改返回值不得影响仓储内部状态。
 type AccountRepository interface {
 	// FindByID 按主键加载账号。
@@ -20,6 +21,26 @@ type AccountRepository interface {
 	FindBySubject(ctx context.Context, channel Channel, subject string) (*Account, error)
 	// Save 创建或更新账号；expectedVersion 为 0 表示创建。
 	Save(ctx context.Context, account *Account, expectedVersion int64) error
+	// List 按端别 / 状态 / 关键词分页列出账号（含软删），返回当页与总数。
+	List(ctx context.Context, filter AccountListFilter) ([]*Account, int, error)
+	// RebindSubject 更新登录主体；expectedVersion 用于乐观锁。
+	RebindSubject(ctx context.Context, account *Account, expectedVersion int64) error
+}
+
+// AccountListFilter 是账号列表查询条件。
+//
+// 只允许 A 端运营查询；关键词匹配 subject 子串，禁止用于 B/C 端自助接口。
+type AccountListFilter struct {
+	// Channel 端别；必填。
+	Channel Channel
+	// Status 状态过滤；空值表示不过滤。
+	Status AccountStatus
+	// Keyword 主体关键词；空值表示不过滤。
+	Keyword string
+	// Limit 每页条数；调用方负责上限钳制。
+	Limit int
+	// Offset 偏移量；按 created_at、id 倒序。
+	Offset int
 }
 
 // CredentialRepository 是凭据的持久化端口。

@@ -319,6 +319,22 @@ var entries = []Entry{
 		Sort:        250,
 		Description: "创建、更新、停用互斥角色组；变更前强制存量违规预检。",
 	},
+	{
+		Code:        iam.PermIdentityAccountRead,
+		Name:        "查看身份账号",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        255,
+		Description: "查询账号列表 / 详情与目标账号会话；不包含任何处置动作。",
+	},
+	{
+		Code:        iam.PermIdentityAccountWrite,
+		Name:        "管理身份账号",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        260,
+		Description: "停用、启用、解锁身份账号与重置 MFA；高风险操作需走审批后执行。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。

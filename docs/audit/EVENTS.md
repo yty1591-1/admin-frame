@@ -6,9 +6,16 @@
 |--------|----|------|----------|----------|--------|
 | `auth.login` | A/B/C | 登录成功 | 认证 | 180d | active |
 | `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | active |
-| `auth.account.created` | A/B | 运维 seed CLI 开通账号（含首个管理员） | 认证 | 180d | active |
+| `auth.account.created` | A/B/C | 运维 seed CLI 开通账号（含首个管理员）/ C 端短信自助开户 | 认证 | 180d | active |
 | `auth.account.locked` | A/B/C | 登录失败达阈值触发账号锁定 | 认证 | 180d | active |
-| `auth.account.disabled` | A | 管理员停用账号 | 认证 | 180d | planned |
+| `auth.account.disabled` | A | 管理员停用账号（同时撤销全部会话） | 认证 | 180d | active |
+| `auth.account.enabled` | A | 管理员恢复停用账号 | 认证 | 180d | active |
+| `auth.account.unlocked` | A | 管理员手动解锁账号 | 认证 | 180d | active |
+| `auth.account.deleted` | A/C | 软删账号（管理员注销 / 用户自助注销） | 认证 | 180d | active |
+| `auth.account.restored` | A | 管理员恢复软删账号 | 认证 | 180d | active |
+| `auth.password.changed` | A | 用户自助改密 / 强制改密完成（递增 token_version 并撤销全部会话） | 认证 | 180d | active |
+| `auth.password.reset` | A | 管理员重置密码（生成一次性临时口令并置强制改密标记） | 认证 | 180d | active |
+| `auth.phone.rebound` | C | C 端手机号换绑（撤销全部会话） | 认证 | 180d | active |
 | `auth.logout` | A/B/C | 登出当前会话（幂等） | 认证 | 180d | active |
 | `auth.token.refresh` | A/B/C | 刷新令牌成功轮换 | 认证 | 180d | active |
 | `auth.token.reused` | A/B/C | 刷新令牌重放，触发整链撤销 | 认证 | 180d | active |
@@ -16,6 +23,7 @@
 | `auth.mfa.bound` | A | MFA 绑定完成 | 认证 | 180d | active |
 | `auth.mfa.failed` | A | MFA 动态码 / 恢复码校验失败 | 认证 | 180d | active |
 | `auth.mfa.disabled` | A | MFA 解绑（同时撤销全部会话） | 认证 | 180d | active |
+| `auth.mfa.reset` | A | 管理员重置 MFA 绑定（用户丢失 TOTP 与恢复码的兜底） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
 | `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
 | `rbac.breakglass` | A | 破玻璃申请 / 审批 / 生效 / 撤销 | 权限 | 180d | active |

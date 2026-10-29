@@ -277,6 +277,137 @@ components:
           type: string
           minLength: 6
           description: 6 位 TOTP 动态码或一次性恢复码
+    ChangePasswordRequest:
+      type: object
+      required: [new_password]
+      additionalProperties: false
+      description: |
+        两种模式：
+        - Bearer 自助改密：必须提交 `old_password`；
+        - 强制改密：提交 `password_change_ticket`，不得携带 `Authorization`，也无需 `old_password`。
+        成功后递增 token_version 并撤销全部会话。
+      properties:
+        old_password:
+          type: string
+          minLength: 1
+          description: 当前密码；仅本次请求使用，禁止写日志
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: 新密码；须满足密码策略且不得与当前密码 / 临时口令相同
+        password_change_ticket:
+          type: string
+          minLength: 1
+          description: 管理员重置密码后登录返回的一次性改密票据；5 分钟有效、一次性消费
+    PasswordChangeRequired:
+      type: object
+      required: [password_change_required, password_change_ticket]
+      additionalProperties: false
+      description: |
+        管理员重置密码后，登录只返回该中间态，不签发任何业务令牌；
+        凭 `password_change_ticket` 调用 `POST /admin/v1/auth/password/change` 完成改密。
+      properties:
+        password_change_required:
+          type: boolean
+          enum: [true]
+        password_change_ticket:
+          type: string
+          minLength: 1
+          description: 强制改密票据；scope=password_change，一次性消费，禁止写日志
+    AccountActionRequest:
+      type: object
+      additionalProperties: false
+      description: 管理员账号操作的可选原因；写入审计 reason，禁止包含 PII。
+      properties:
+        reason:
+          type: string
+          maxLength: 64
+          description: 操作原因（如 left_company / lost_device）；空值时使用服务端默认原因
+    AccountLockRequest:
+      type: object
+      additionalProperties: false
+      description: 管理员主动锁定；duration_minutes 省略时使用默认锁定策略。
+      properties:
+        reason:
+          type: string
+          maxLength: 64
+          description: 锁定原因；写入审计
+        duration_minutes:
+          type: integer
+          minimum: 1
+          maximum: 10080
+          description: 锁定时长（分钟），范围 [1, 10080]（7 天）
+    AccountSummary:
+      type: object
+      required: [id, subject, channel, status, token_version, created_at, updated_at]
+      additionalProperties: false
+      description: 账号摘要；软删账号同样返回，并附带 deleted_at。
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+          description: 规范化登录主体（C 端为不可逆手机号摘要）
+        channel:
+          type: string
+          enum: [admin, biz, c]
+        status:
+          type: string
+          enum: [pending, active, locked, disabled]
+        merchant_id:
+          type: string
+        token_version:
+          type: integer
+          format: int64
+        locked_until:
+          type: string
+          format: date-time
+          description: 锁定到期时间；未锁定时省略
+        deleted_at:
+          type: string
+          format: date-time
+          description: 软删时间；未删除时省略
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AccountDetail:
+      allOf:
+        - $ref: "#/components/schemas/AccountSummary"
+        - type: object
+          required: [mfa_enabled, must_change_password, has_password, phone_bound]
+          properties:
+            mfa_enabled:
+              type: boolean
+            must_change_password:
+              type: boolean
+            has_password:
+              type: boolean
+            phone_bound:
+              type: boolean
+    AccountListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSummary"
+        total:
+          type: integer
+          minimum: 0
+    ResetPasswordData:
+      type: object
+      required: [temporary_password]
+      additionalProperties: false
+      description: 一次性临时口令；只在本次响应出现，禁止缓存与日志。
+      properties:
+        temporary_password:
+          type: string
+          minLength: 1
     AuthSession:
       type: object
       required: [id, current, status, created_at, last_used_at, expires_at]

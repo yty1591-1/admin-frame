@@ -9,6 +9,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
@@ -20,6 +21,8 @@ type HandlerConfig struct {
 	SMS *app.SMSLoginService
 	// OAuth OAuth 登录服务；未配置 provider 时为 nil。
 	OAuth *app.OAuthService
+	// Auth 认证用例服务；用于自助注销等与短信无关的 C 端操作。
+	Auth *app.AuthService
 	// Providers 已配置的 provider，用于路由裁剪。
 	Providers []string
 }
@@ -29,6 +32,7 @@ type Handler struct {
 	rest      *rest.Handler
 	sms       *app.SMSLoginService
 	oauth     *app.OAuthService
+	auth      *app.AuthService
 	providers []string
 }
 
@@ -43,10 +47,13 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 			providers = append(providers, trimmed)
 		}
 	}
-	return &Handler{rest: cfg.Rest, sms: cfg.SMS, oauth: cfg.OAuth, providers: providers}, nil
+	return &Handler{rest: cfg.Rest, sms: cfg.SMS, oauth: cfg.OAuth, auth: cfg.Auth, providers: providers}, nil
 }
 
 // SendSMSCode POST /c/v1/auth/sms/send
+//
+// 发送 6 位短信验证码。响应与手机号是否存在无关（统一 204），防止枚举；
+// 受重发间隔、单手机号日限与单 IP 小时限约束，超限返回 42900。
 func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req smsSendRequest
@@ -69,6 +76,9 @@ func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 }
 
 // Login POST /c/v1/auth/login
+//
+// 短信验证码登录：验证码错误、过期与未注册手机号统一返回 40100，不自动建号；
+// 成功后创建 C 端会话并签发访问 / 刷新令牌。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req smsLoginRequest
@@ -94,7 +104,106 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 }
 
+// Register POST /c/v1/auth/sms/register
+//
+// 验证码通过后为未注册手机号开户并直接签发令牌；已注册与验证码错误统一 40100。
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	var req smsLoginRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.sms == nil {
+		httpx.FromError(w, apperr.Unavailable("sms registration is not enabled"), traceID)
+		return
+	}
+	result, err := h.sms.Register(r.Context(), app.SMSLoginInput{
+		Phone:   req.Phone,
+		Code:    req.Code,
+		IPHash:  app.HashClientRef(clientIP(r)),
+		UAHash:  app.HashClientRef(r.UserAgent()),
+		TraceID: traceID,
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
+}
+
+// RebindPhone POST /c/v1/auth/phone/rebind
+//
+// 校验新手机号验证码后换绑；成功后撤销全部会话，用户需用新手机号重新登录。
+func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req smsRebindRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.sms == nil {
+		httpx.FromError(w, apperr.Unavailable("phone rebind is not enabled"), traceID)
+		return
+	}
+	if err := h.sms.Rebind(r.Context(), app.SMSRebindInput{
+		Actor:  actor,
+		Phone:  req.Phone,
+		Code:   req.Code,
+		IPHash: app.HashClientRef(clientIP(r)),
+	}); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteAccount DELETE /c/v1/auth/account
+//
+// 用户自助注销（软删）；手机号主体仍占用唯一键，不允许立即被他人重新注册。
+func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.auth == nil {
+		httpx.FromError(w, apperr.Unavailable("account deletion is not configured"), traceID)
+		return
+	}
+	if err := h.auth.DeleteConsumerAccount(r.Context(), actor); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// cActorFrom 从鉴权上下文构造 C 端用例入参。
+func cActorFrom(r *http.Request) (app.SessionActor, error) {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		return app.SessionActor{}, apperr.Unauthorized("missing authentication context")
+	}
+	return app.SessionActor{
+		AccountID:      p.SubjectID,
+		SessionID:      p.SessionID,
+		TokenID:        p.TokenID,
+		TokenExpiresAt: p.TokenExpiresAt,
+		MerchantID:     p.MerchantID,
+		TraceID:        httpx.TraceIDFromContext(r.Context()),
+	}, nil
+}
+
 // OAuthAuthorize POST /c/v1/auth/oauth/{provider}/authorize
+//
+// 为指定 provider 生成一次性 state 与 PKCE verifier，返回第三方授权地址；
+// provider 未配置时路由不存在（404），state 有效期 10 分钟。
 func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	if h.oauth == nil {
@@ -113,6 +222,9 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 }
 
 // OAuthCallback POST /c/v1/auth/oauth/{provider}/callback
+//
+// 校验 state / PKCE 后换取外部身份并完成登录；state 无效、provider 不匹配、
+// 授权码被拒与未映射身份统一 40100，IdP 故障返回 50300。
 func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req oauthCallbackRequest
@@ -146,6 +258,12 @@ type smsSendRequest struct {
 
 // smsLoginRequest 是短信验证码登录请求。
 type smsLoginRequest struct {
+	Phone string `json:"phone"`
+	Code  string `json:"code"`
+}
+
+// smsRebindRequest 是手机号换绑请求。
+type smsRebindRequest struct {
 	Phone string `json:"phone"`
 	Code  string `json:"code"`
 }

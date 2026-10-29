@@ -188,41 +188,13 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) error {
 
 // Login 校验验证码并完成登录；任何失败分支都返回统一 40100 文案。
 func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginResult, error) {
-	phone := strings.TrimSpace(in.Phone)
-	code := strings.TrimSpace(in.Code)
-	if !e164Pattern.MatchString(phone) || !smsCodePattern.MatchString(code) {
-		return LoginResult{}, apperr.BadRequest("phone or code format is invalid")
-	}
-	phoneHash := HashAccountRef(domain.ChannelC, phone)
-	if err := s.guard.CheckRateLimit(loginRateKey(domain.ChannelC, phoneHash, in.IPHash)); err != nil {
+	phoneHash, err := s.verifyInput(in)
+	if err != nil {
 		return LoginResult{}, err
 	}
-
-	storedHash, err := s.codes.Get(ctx, phoneHash)
-	if err != nil {
-		if errors.Is(err, apperr.ErrNotFound) {
-			return LoginResult{}, smsInvalidCode()
-		}
-		return LoginResult{}, unavailableSMS()
+	if err := s.consumeCode(ctx, phoneHash, strings.TrimSpace(in.Code), in.TraceID); err != nil {
+		return LoginResult{}, err
 	}
-	expectedHash := hashSMSCode(phoneHash, code)
-	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(expectedHash)) != 1 {
-		attempts, incrErr := s.codes.IncrAttempts(ctx, phoneHash, s.codeTTL)
-		if incrErr != nil {
-			return LoginResult{}, unavailableSMS()
-		}
-		if attempts >= s.maxAttempts {
-			// 达到上限直接作废验证码，强制重新发送。
-			_ = s.codes.Delete(ctx, phoneHash)
-			_ = s.codes.ResetAttempts(ctx, phoneHash)
-		}
-		if err := s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, in.TraceID); err != nil {
-			return LoginResult{}, err
-		}
-		return LoginResult{}, smsInvalidCode()
-	}
-	_ = s.codes.Delete(ctx, phoneHash)
-	_ = s.codes.ResetAttempts(ctx, phoneHash)
 
 	account, err := s.accounts.FindBySubject(ctx, domain.ChannelC, phoneSubject(phoneHash))
 	if err != nil {
@@ -241,6 +213,162 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 		UAHash:    in.UAHash,
 		TraceID:   in.TraceID,
 	})
+}
+
+// Register 校验验证码后为未注册手机号开户并直接登录（IDN-P0-02 方案 A）。
+//
+// 已注册手机号与验证码错误统一返回 40100，避免通过注册端点枚举手机号。
+func (s *SMSLoginService) Register(ctx context.Context, in SMSLoginInput) (LoginResult, error) {
+	phoneHash, err := s.verifyInput(in)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := s.consumeCode(ctx, phoneHash, strings.TrimSpace(in.Code), in.TraceID); err != nil {
+		return LoginResult{}, err
+	}
+	return s.auth.RegisterConsumerByPhone(ctx, ConsumerRegisterInput{
+		PhoneHash: phoneHash,
+		IPHash:    in.IPHash,
+		UAHash:    in.UAHash,
+		TraceID:   in.TraceID,
+	})
+}
+
+// verifyInput 校验手机号 / 验证码格式并执行登录限流，返回规范化后的手机号摘要。
+//
+// 限流器不接收 context（进程内 / Redis 实现自带超时），因此本方法不需要 ctx。
+func (s *SMSLoginService) verifyInput(in SMSLoginInput) (string, error) {
+	phone := strings.TrimSpace(in.Phone)
+	code := strings.TrimSpace(in.Code)
+	if !e164Pattern.MatchString(phone) || !smsCodePattern.MatchString(code) {
+		return "", apperr.BadRequest("phone or code format is invalid")
+	}
+	phoneHash := HashAccountRef(domain.ChannelC, phone)
+	if err := s.guard.CheckRateLimit(loginRateKey(domain.ChannelC, phoneHash, in.IPHash)); err != nil {
+		return "", err
+	}
+	return phoneHash, nil
+}
+
+// consumeCode 校验并消费验证码；成功后删除验证码与错误计数，失败走统一 40100。
+func (s *SMSLoginService) consumeCode(ctx context.Context, phoneHash, code, traceID string) error {
+	storedHash, err := s.codes.Get(ctx, phoneHash)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return smsInvalidCode()
+		}
+		return unavailableSMS()
+	}
+	expectedHash := hashSMSCode(phoneHash, code)
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(expectedHash)) != 1 {
+		attempts, incrErr := s.codes.IncrAttempts(ctx, phoneHash, s.codeTTL)
+		if incrErr != nil {
+			return unavailableSMS()
+		}
+		if attempts >= s.maxAttempts {
+			// 达到上限直接作废验证码，强制重新发送。
+			_ = s.codes.Delete(ctx, phoneHash)
+			_ = s.codes.ResetAttempts(ctx, phoneHash)
+		}
+		if err := s.auth.RecordExternalLoginFailure(ctx, phoneHash, domain.LoginReasonBadCredential, traceID); err != nil {
+			return err
+		}
+		return smsInvalidCode()
+	}
+	_ = s.codes.Delete(ctx, phoneHash)
+	_ = s.codes.ResetAttempts(ctx, phoneHash)
+	return nil
+}
+
+// ConsumerRegisterInput 是 C 端手机号开户入参。
+type ConsumerRegisterInput struct {
+	// PhoneHash 手机号不可逆摘要；作为账号主体与凭据哈希。
+	PhoneHash string
+	// IPHash / UAHash 客户端摘要。
+	IPHash string
+	UAHash string
+	// TraceID 请求关联 ID。
+	TraceID string
+}
+
+// RegisterConsumerByPhone 在同一事务内创建 C 端账号、手机号凭据与开户审计，并完成登录。
+//
+// 手机号摘要主体唯一：并发重复开户由唯一键兜底，冲突统一返回 40100。
+func (s *AuthService) RegisterConsumerByPhone(ctx context.Context, in ConsumerRegisterInput) (LoginResult, error) {
+	if s.channel != domain.ChannelC {
+		return LoginResult{}, apperr.BadRequest("consumer registration is only supported on channel=c")
+	}
+	phoneHash := strings.TrimSpace(in.PhoneHash)
+	if phoneHash == "" {
+		return LoginResult{}, invalidCredentials()
+	}
+	var result LoginResult
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		res, err := s.registerConsumerInTx(txCtx, phoneHash, in)
+		if err != nil {
+			return err
+		}
+		result = res
+		return nil
+	}); err != nil {
+		return LoginResult{}, err
+	}
+	return result, nil
+}
+
+// registerConsumerInTx 是 RegisterConsumerByPhone 的事务内实现。
+func (s *AuthService) registerConsumerInTx(
+	ctx context.Context,
+	phoneHash string,
+	in ConsumerRegisterInput,
+) (LoginResult, error) {
+	now := s.clock.Now().UTC()
+	accountID, err := s.ids.NextString()
+	if err != nil {
+		return LoginResult{}, apperr.Internal("generate account id failed", err)
+	}
+	account, err := domain.NewAccount(domain.NewAccountParams{
+		ID:      accountID,
+		Channel: domain.ChannelC,
+		Subject: phoneSubject(phoneHash),
+		Now:     now,
+	})
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := s.accounts.Save(ctx, account, 0); err != nil {
+		if errors.Is(err, apperr.ErrConflict) {
+			// 手机号已注册：与验证码错误统一文案，禁止枚举。
+			return LoginResult{}, invalidCredentials()
+		}
+		return LoginResult{}, apperr.Internal("create account failed", err)
+	}
+	credentialID, err := s.ids.NextString()
+	if err != nil {
+		return LoginResult{}, apperr.Internal("generate credential id failed", err)
+	}
+	credential, err := domain.NewCredential(domain.NewCredentialParams{
+		ID:        credentialID,
+		AccountID: account.ID,
+		Type:      domain.CredentialTypePhone,
+		Hash:      phoneHash,
+		Algorithm: "sha256",
+		Now:       now,
+	})
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := s.credentials.Save(ctx, credential); err != nil {
+		return LoginResult{}, apperr.Internal("save phone credential failed", err)
+	}
+	if err := s.emitAudit(ctx, audit.ActionAuthAccountCreated, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeSuccess, domain.LoginReasonRegistration, in.TraceID, nil); err != nil {
+		return LoginResult{}, err
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		return LoginResult{}, err
+	}
+	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
 }
 
 // RecordExternalLoginFailure 记录外部登录失败审计；actor 使用不可逆账号摘要。
