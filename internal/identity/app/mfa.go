@@ -589,14 +589,13 @@ func (s *AuthService) revokeAllSessionsInTx(ctx context.Context, account *domain
 }
 
 // saveRevocationState 在事务提交后刷新账号撤销快照；Redis 写入不可回滚。
+//
+// 解绑等操作已经提交，快照失效失败不得改变业务结果：交给失效器回退 DEL 并告警。
 func (s *AuthService) saveRevocationState(ctx context.Context, account *domain.Account) error {
-	if s.revocation == nil || account == nil {
+	if account == nil {
 		return nil
 	}
-	state := AccountState{Version: account.TokenVersion, Status: account.Status}
-	if err := s.revocation.SaveAccountState(ctx, account.ID, state, s.accountStateTTL()); err != nil {
-		return apperr.Internal("refresh revocation state failed", err)
-	}
+	s.invalidateAccountState(ctx, account.ID, AccountState{Version: account.TokenVersion, Status: account.Status})
 	return nil
 }
 

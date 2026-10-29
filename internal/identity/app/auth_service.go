@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,9 +29,15 @@ type AuthServiceConfig struct {
 	Password    *PasswordService
 	Tokens      *TokenService
 	Revocation  RevocationStore
-	Audit       audit.Emitter
-	IDs         IDGenerator
-	Channel     domain.Channel
+	// RevocationStateTTL 账号撤销快照最大陈旧度；≤0 使用 DefaultAccountStateTTL。
+	RevocationStateTTL time.Duration
+	// RevocationObserver 接收撤销快照写入失败；可为 nil。
+	RevocationObserver RevocationObserver
+	// Logger 仅用于「业务已提交、缓存失效失败」的告警日志；可为 nil。
+	Logger  *slog.Logger
+	Audit   audit.Emitter
+	IDs     IDGenerator
+	Channel domain.Channel
 	// UoW 是事务边界；nil 退化为 NoopUnitOfWork（内存模式与单测）。
 	UoW UnitOfWork
 	// MFA 是 TOTP 绑定仓储；admin_required=true 时必填。
@@ -132,26 +139,28 @@ type MeView struct {
 
 // AuthService 编排登录、刷新、登出与会话撤销（docs/identity-authn.md §5）。
 type AuthService struct {
-	accounts    domain.AccountRepository
-	credentials domain.CredentialRepository
-	sessions    domain.SessionRepository
-	guard       *LoginGuard
-	password    *PasswordService
-	tokens      *TokenService
-	revocation  RevocationStore
-	audit       audit.Emitter
-	ids         IDGenerator
-	channel     domain.Channel
-	uow         UnitOfWork
-	idleTimeout time.Duration
-	service     string
-	actorType   string
-	clock       Clock
-	mfa         domain.MFAEnrollmentRepository
-	mfaCipher   *crypto.AEAD
-	mfaTickets  MFATicketStore
-	mfaIssuer   string
-	mfaRequired bool
+	accounts     domain.AccountRepository
+	credentials  domain.CredentialRepository
+	sessions     domain.SessionRepository
+	guard        *LoginGuard
+	password     *PasswordService
+	tokens       *TokenService
+	revocation   RevocationStore
+	invalidation *RevocationInvalidator
+	logger       *slog.Logger
+	audit        audit.Emitter
+	ids          IDGenerator
+	channel      domain.Channel
+	uow          UnitOfWork
+	idleTimeout  time.Duration
+	service      string
+	actorType    string
+	clock        Clock
+	mfa          domain.MFAEnrollmentRepository
+	mfaCipher    *crypto.AEAD
+	mfaTickets   MFATicketStore
+	mfaIssuer    string
+	mfaRequired  bool
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -197,27 +206,42 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if uow == nil {
 		uow = NoopUnitOfWork{}
 	}
+	var invalidation *RevocationInvalidator
+	if cfg.Revocation != nil {
+		var err error
+		invalidation, err = NewRevocationInvalidator(
+			cfg.Revocation,
+			cfg.RevocationStateTTL,
+			cfg.RevocationObserver,
+			WithInvalidatorClock(clock),
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	svc := &AuthService{
-		accounts:    cfg.Accounts,
-		credentials: cfg.Credentials,
-		sessions:    cfg.Sessions,
-		guard:       cfg.Guard,
-		password:    cfg.Password,
-		tokens:      cfg.Tokens,
-		revocation:  cfg.Revocation,
-		audit:       cfg.Audit,
-		ids:         cfg.IDs,
-		channel:     cfg.Channel,
-		uow:         uow,
-		idleTimeout: idle,
-		service:     cfg.Service,
-		actorType:   actorType,
-		clock:       clock,
-		mfa:         cfg.MFA,
-		mfaCipher:   cfg.MFACipher,
-		mfaTickets:  cfg.MFATickets,
-		mfaIssuer:   mfaIssuer,
-		mfaRequired: cfg.MFAAdminRequired,
+		accounts:     cfg.Accounts,
+		credentials:  cfg.Credentials,
+		sessions:     cfg.Sessions,
+		guard:        cfg.Guard,
+		password:     cfg.Password,
+		tokens:       cfg.Tokens,
+		revocation:   cfg.Revocation,
+		invalidation: invalidation,
+		logger:       cfg.Logger,
+		audit:        cfg.Audit,
+		ids:          cfg.IDs,
+		channel:      cfg.Channel,
+		uow:          uow,
+		idleTimeout:  idle,
+		service:      cfg.Service,
+		actorType:    actorType,
+		clock:        clock,
+		mfa:          cfg.MFA,
+		mfaCipher:    cfg.MFACipher,
+		mfaTickets:   cfg.MFATickets,
+		mfaIssuer:    mfaIssuer,
+		mfaRequired:  cfg.MFAAdminRequired,
 	}
 	return svc, nil
 }
@@ -668,10 +692,9 @@ func (s *AuthService) LogoutAll(ctx context.Context, actor SessionActor) error {
 	}); err != nil {
 		return err
 	}
-	if s.revocation != nil && state != nil {
-		if err := s.revocation.SaveAccountState(ctx, actor.AccountID, *state, s.accountStateTTL()); err != nil {
-			return apperr.Internal("refresh revocation state failed", err)
-		}
+	if state != nil {
+		// 业务已提交：快照失效失败只告警，不把成功结果改成失败（下次校验会回源 DB）。
+		s.invalidateAccountState(ctx, actor.AccountID, *state)
 	}
 	return s.revokeCurrentToken(ctx, actor, now)
 }
@@ -892,13 +915,23 @@ func (s *AuthService) revokeCurrentToken(ctx context.Context, actor SessionActor
 	return nil
 }
 
-// accountStateTTL 返回账号撤销快照缓存 TTL：access_ttl + leeway，下限 1h。
-func (s *AuthService) accountStateTTL() time.Duration {
-	ttl := s.tokens.AccessTTL() + time.Minute
-	if ttl < minAccountStateTTL {
-		return minAccountStateTTL
+// invalidateAccountState 刷新账号撤销快照；失败只写告警，不改变已提交的业务结果。
+func (s *AuthService) invalidateAccountState(ctx context.Context, accountID string, state AccountState) {
+	if s.invalidation == nil {
+		return
 	}
-	return ttl
+	if err := s.invalidation.Invalidate(ctx, accountID, state); err != nil {
+		s.logError("identity revocation state invalidate failed",
+			"account_ref", shortHash(accountID), "error", err)
+	}
+}
+
+// logError 输出告警日志；未注入 logger 时静默（指标仍会记录失败）。
+func (s *AuthService) logError(msg string, args ...any) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Error(msg, args...)
 }
 
 // emitAudit 写入审计事件；未配置 emitter 时跳过。

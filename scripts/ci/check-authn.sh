@@ -24,7 +24,7 @@ if ! command -v go >/dev/null 2>&1; then
   done
 fi
 if command -v go >/dev/null 2>&1; then
-  if ! go test -count=1 ./internal/platform/ -run 'TestValidateMFA|TestValidateSMS|TestValidateOAuth|TestValidateCChannel'; then
+  if ! go test -count=1 ./internal/platform/ -run 'TestValidateMFA|TestValidateSMS|TestValidateOAuth|TestValidateCChannel|TestValidateRevocationStateTTL'; then
     echo "ERROR: identity config validation tests failed" >&2
     FAIL=1
   else

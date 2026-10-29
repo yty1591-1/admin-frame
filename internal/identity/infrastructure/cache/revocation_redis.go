@@ -65,9 +65,20 @@ func (s *RedisRevocationStore) SaveAccountState(ctx context.Context, accountID s
 	if strings.TrimSpace(accountID) == "" {
 		return apperr.BadRequest("account id is required")
 	}
-	value := fmt.Sprintf("%d|%s", state.Version, state.Status)
+	value := fmt.Sprintf("%d|%s|%d", state.Version, state.Status, state.FetchedAt.UnixMilli())
 	if err := s.cache.Set(ctx, stateKeyPrefix+accountID, []byte(value), ttl); err != nil {
 		return fmt.Errorf("identity revocation set: %w", err)
+	}
+	return nil
+}
+
+// DeleteAccountState 删除账号撤销快照；用于写入失败后的失效兜底。
+func (s *RedisRevocationStore) DeleteAccountState(ctx context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return apperr.BadRequest("account id is required")
+	}
+	if err := s.cache.Delete(ctx, stateKeyPrefix+accountID); err != nil {
+		return fmt.Errorf("identity revocation delete: %w", err)
 	}
 	return nil
 }
@@ -97,10 +108,12 @@ func (s *RedisRevocationStore) IsTokenRevoked(ctx context.Context, jti string) (
 	return true, nil
 }
 
-// decodeState 解析 "<version>|<status>" 快照。
+// decodeState 解析 "<version>|<status>|<fetched_at_ms>" 快照。
+//
+// 兼容旧格式 "<version>|<status>"：FetchedAt 留零值，由检查器判定为陈旧并回源刷新。
 func decodeState(raw []byte) (app.AccountState, error) {
-	parts := strings.SplitN(string(raw), "|", 2)
-	if len(parts) != 2 {
+	parts := strings.SplitN(string(raw), "|", 3)
+	if len(parts) < 2 {
 		return app.AccountState{}, fmt.Errorf("identity revocation: malformed state")
 	}
 	version, err := strconv.ParseInt(parts[0], 10, 64)
@@ -111,5 +124,13 @@ func decodeState(raw []byte) (app.AccountState, error) {
 	if err := status.Validate(); err != nil {
 		return app.AccountState{}, err
 	}
-	return app.AccountState{Version: version, Status: status}, nil
+	state := app.AccountState{Version: version, Status: status}
+	if len(parts) == 3 {
+		ms, parseErr := strconv.ParseInt(parts[2], 10, 64)
+		if parseErr != nil || ms < 0 {
+			return app.AccountState{}, fmt.Errorf("identity revocation: malformed fetched_at")
+		}
+		state.FetchedAt = time.UnixMilli(ms).UTC()
+	}
+	return state, nil
 }

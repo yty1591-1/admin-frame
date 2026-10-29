@@ -35,6 +35,7 @@ auth:
 #   revocation:
 #     driver: redis              # 生产唯一实现
 #     failure_mode: fail_closed  # fail_closed|fail_open
+#     state_ttl: 30s             # 账号快照最大陈旧度 [1s, 60s]
 #   password:
 #     min_length: 12
 #     max_length: 128

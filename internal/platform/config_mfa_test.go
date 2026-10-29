@@ -148,6 +148,27 @@ func TestValidateMFAIssuerRequired(t *testing.T) {
 	}
 }
 
+// TestValidateRevocationStateTTL 验证撤销快照陈旧度必须落在 [1s, 60s]。
+func TestValidateRevocationStateTTL(t *testing.T) {
+	tooLong := mfaProdConfig()
+	tooLong.Identity.Revocation.StateTTL = 90 * time.Second
+	if err := tooLong.Validate(); err == nil || !strings.Contains(err.Error(), "state_ttl must be <= 60s") {
+		t.Fatalf("err=%v want state_ttl upper bound rejection", err)
+	}
+
+	tooShort := mfaBaseConfig()
+	tooShort.Identity.Revocation.StateTTL = 500 * time.Millisecond
+	if err := tooShort.Validate(); err == nil || !strings.Contains(err.Error(), "state_ttl must be >= 1s") {
+		t.Fatalf("err=%v want state_ttl lower bound rejection", err)
+	}
+
+	valid := mfaProdConfig()
+	valid.Identity.Revocation.StateTTL = 30 * time.Second
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid state_ttl: %v", err)
+	}
+}
+
 // TestConfigLogValueHidesMFASecretKey 验证日志快照只暴露是否配置密钥。
 func TestConfigLogValueHidesMFASecretKey(t *testing.T) {
 	cfg := mfaBaseConfig()

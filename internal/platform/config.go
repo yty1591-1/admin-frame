@@ -196,12 +196,22 @@ type IdentitySessionConfig struct {
 	MaxPerAccount int `yaml:"max_per_account"`
 }
 
+// 账号撤销快照陈旧度边界，与 internal/identity/app 保持一致（docs/identity-authn.md §6.1）。
+const (
+	// identityMinRevocationStateTTL 快照最小陈旧度，避免每请求回源。
+	identityMinRevocationStateTTL = time.Second
+	// identityMaxRevocationStateTTL 快照硬上限，对应「≤60s 生效」的安全承诺。
+	identityMaxRevocationStateTTL = 60 * time.Second
+)
+
 // IdentityRevocationConfig 是撤销存储参数。
 type IdentityRevocationConfig struct {
 	// Driver 驱动；当前仅 redis。
 	Driver string `yaml:"driver"`
 	// FailureMode Redis 故障策略：fail_closed（默认）| fail_open。
 	FailureMode string `yaml:"failure_mode"`
+	// StateTTL 账号撤销快照最大陈旧度；超过即强制回源数据库，上限 60s。
+	StateTTL time.Duration `yaml:"state_ttl"`
 }
 
 // IdentityLockoutConfig 是登录失败锁定参数。
@@ -706,6 +716,7 @@ func (c Config) LogValue() slog.Value {
 			slog.Group("revocation",
 				slog.String("driver", c.Identity.Revocation.Driver),
 				slog.String("failure_mode", c.Identity.Revocation.FailureMode),
+				slog.Duration("state_ttl", c.Identity.Revocation.StateTTL),
 			),
 			slog.Group("mfa",
 				slog.Bool("admin_required", c.Identity.MFA.AdminRequired),
@@ -925,6 +936,14 @@ func (c *Config) applyIdentityDefaults() {
 	}
 	if c.Identity.Revocation.FailureMode == "" {
 		c.Identity.Revocation.FailureMode = RateLimitFailureClosed
+	}
+	if c.Identity.Revocation.StateTTL == 0 {
+		// 默认 min(access_ttl + 1m, 60s)：常规 15m access_ttl 下即 60s。
+		accessLeeway := c.Identity.AccessTTL + time.Minute
+		if accessLeeway > identityMaxRevocationStateTTL {
+			accessLeeway = identityMaxRevocationStateTTL
+		}
+		c.Identity.Revocation.StateTTL = accessLeeway
 	}
 	if c.Identity.Lockout.MaxFailures == 0 {
 		c.Identity.Lockout.MaxFailures = 5
@@ -1477,6 +1496,15 @@ func (c *Config) validateIdentity() []error {
 	}
 	if isProdLikeEnv(c.Env) && c.Identity.Revocation.FailureMode == RateLimitFailureOpen {
 		errs = append(errs, errors.New("identity.revocation.failure_mode must be fail_closed in prod/staging"))
+	}
+	// 0 表示由默认值填充（直接构造 Config 的单测路径），不作为非法值处理。
+	if c.Identity.Revocation.StateTTL != 0 {
+		if c.Identity.Revocation.StateTTL < identityMinRevocationStateTTL {
+			errs = append(errs, errors.New("identity.revocation.state_ttl must be >= 1s"))
+		}
+		if c.Identity.Revocation.StateTTL > identityMaxRevocationStateTTL {
+			errs = append(errs, errors.New("identity.revocation.state_ttl must be <= 60s"))
+		}
 	}
 	if c.Identity.Lockout.MaxFailures < 1 {
 		errs = append(errs, errors.New("identity.lockout.max_failures must be >= 1"))

@@ -560,6 +560,125 @@ func TestAuthServiceListAndRevokeSessions(t *testing.T) {
 	}
 }
 
+// countingAccounts 统计回源数据库次数，用于断言快照命中时不查库。
+type countingAccounts struct {
+	domain.AccountRepository
+	findByID int
+}
+
+// FindByID 统计调用次数后委托给被包装仓储。
+func (c *countingAccounts) FindByID(ctx context.Context, id string) (*domain.Account, error) {
+	c.findByID++
+	return c.AccountRepository.FindByID(ctx, id)
+}
+
+// recordingObserver 记录撤销快照写入失败的 op 序列。
+type recordingObserver struct {
+	ops []string
+}
+
+// OnAccountStateWriteFailure 追加失败操作名。
+func (o *recordingObserver) OnAccountStateWriteFailure(_ context.Context, op string, _ error) {
+	o.ops = append(o.ops, op)
+}
+
+// flakyRevocationStore 可分别模拟 SET / DEL 失败。
+type flakyRevocationStore struct {
+	*cache.MemoryRevocationStore
+	failSave   bool
+	failDelete bool
+}
+
+// SaveAccountState 按 failSave 决定是否失败。
+func (s *flakyRevocationStore) SaveAccountState(ctx context.Context, accountID string, state app.AccountState, ttl time.Duration) error {
+	if s.failSave {
+		return errStoreDown
+	}
+	return s.MemoryRevocationStore.SaveAccountState(ctx, accountID, state, ttl)
+}
+
+// DeleteAccountState 按 failDelete 决定是否失败。
+func (s *flakyRevocationStore) DeleteAccountState(ctx context.Context, accountID string) error {
+	if s.failDelete {
+		return errStoreDown
+	}
+	return s.MemoryRevocationStore.DeleteAccountState(ctx, accountID)
+}
+
+// TestRevocationInvalidatorFallsBackToDelete 验证 SET 失败时回退 DEL 并上报指标。
+func TestRevocationInvalidatorFallsBackToDelete(t *testing.T) {
+	ctx := context.Background()
+	base := cache.NewMemoryRevocationStore()
+	observer := &recordingObserver{}
+	store := &flakyRevocationStore{MemoryRevocationStore: base, failSave: true}
+	invalidator, err := app.NewRevocationInvalidator(store, time.Minute, observer)
+	if err != nil {
+		t.Fatalf("new invalidator: %v", err)
+	}
+	state := app.AccountState{Version: 2, Status: domain.AccountStatusActive}
+	if err := invalidator.Invalidate(ctx, "acct-1", state); err != nil {
+		t.Fatalf("delete fallback must succeed: %v", err)
+	}
+	if len(observer.ops) != 1 || observer.ops[0] != "set" {
+		t.Fatalf("observer ops = %v, want [set]", observer.ops)
+	}
+	if _, hit, loadErr := base.LoadAccountState(ctx, "acct-1"); loadErr != nil || hit {
+		t.Fatalf("snapshot must be deleted for next refetch, hit=%v err=%v", hit, loadErr)
+	}
+}
+
+// TestRevocationInvalidatorReportsBothFailures 验证 SET 与 DEL 都失败时返回错误。
+func TestRevocationInvalidatorReportsBothFailures(t *testing.T) {
+	ctx := context.Background()
+	observer := &recordingObserver{}
+	store := &flakyRevocationStore{
+		MemoryRevocationStore: cache.NewMemoryRevocationStore(),
+		failSave:              true,
+		failDelete:            true,
+	}
+	invalidator, err := app.NewRevocationInvalidator(store, time.Minute, observer)
+	if err != nil {
+		t.Fatalf("new invalidator: %v", err)
+	}
+	if err := invalidator.Invalidate(ctx, "acct-1", app.AccountState{Version: 2}); err == nil {
+		t.Fatal("both failures must return error")
+	}
+	if len(observer.ops) != 2 || observer.ops[0] != "set" || observer.ops[1] != "delete" {
+		t.Fatalf("observer ops = %v, want [set delete]", observer.ops)
+	}
+}
+
+// TestLogoutAllToleratesRevocationCacheFailure 验证缓存整体不可用不改变登出全部的业务结果。
+func TestLogoutAllToleratesRevocationCacheFailure(t *testing.T) {
+	ctx := context.Background()
+	observer := &recordingObserver{}
+	store := &flakyRevocationStore{
+		MemoryRevocationStore: cache.NewMemoryRevocationStore(),
+		failSave:              true,
+		failDelete:            true,
+	}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.Revocation = store
+		cfg.RevocationObserver = observer
+	})
+	f.seedAccount(t, "acct-1", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	actor := app.SessionActor{AccountID: login.AccountID, SessionID: login.SessionID}
+	if err := f.svc.LogoutAll(ctx, actor); err != nil {
+		t.Fatalf("logout-all must succeed even when cache write fails: %v", err)
+	}
+	account, err := f.accounts.FindByID(ctx, "acct-1")
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.TokenVersion != 2 {
+		t.Fatalf("token version = %d, want 2", account.TokenVersion)
+	}
+	if len(observer.ops) != 2 {
+		t.Fatalf("observer ops = %v, want set and delete failures", observer.ops)
+	}
+}
+
 // brokenRevocationStore 模拟 Redis 不可用。
 type brokenRevocationStore struct{}
 
@@ -571,6 +690,10 @@ func (brokenRevocationStore) LoadAccountState(context.Context, string) (app.Acco
 }
 
 func (brokenRevocationStore) SaveAccountState(context.Context, string, app.AccountState, time.Duration) error {
+	return errStoreDown
+}
+
+func (brokenRevocationStore) DeleteAccountState(context.Context, string) error {
 	return errStoreDown
 }
 
@@ -662,6 +785,77 @@ func TestRevocationChecker(t *testing.T) {
 		}
 		requireAppCode(t, missingChecker.Check(ctx, jwt.Claims{Subject: "ghost", Extra: map[string]any{"ver": int64(1)}}),
 			apperr.CodeUnauthorized)
+	})
+
+	t.Run("stale_snapshot_refetches_database", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		store := cache.NewMemoryRevocationStore()
+		clock := &fixedClock{now: now}
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, 30*time.Second,
+			app.WithRevocationClock(clock))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		// 预热一份已超过陈旧度的 active 快照，模拟数据库被直接改动而缓存未刷新。
+		stale := app.AccountState{
+			Version:   account.TokenVersion,
+			Status:    domain.AccountStatusActive,
+			FetchedAt: now.Add(-time.Minute),
+		}
+		if err := store.SaveAccountState(ctx, "acct-1", stale, time.Hour); err != nil {
+			t.Fatalf("prime snapshot: %v", err)
+		}
+		version := account.Version
+		if err := account.Disable(now); err != nil {
+			t.Fatalf("disable account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, version); err != nil {
+			t.Fatalf("save disabled account: %v", err)
+		}
+
+		claims := jwt.Claims{Subject: "acct-1", ID: "jti-1", Extra: map[string]any{"ver": int64(stale.Version)}}
+		requireAppCode(t, checker.Check(ctx, claims), apperr.CodeUnauthorized)
+	})
+
+	t.Run("fresh_snapshot_avoids_database", func(t *testing.T) {
+		base := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := base.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		counted := &countingAccounts{AccountRepository: base}
+		store := cache.NewMemoryRevocationStore()
+		clock := &fixedClock{now: now}
+		fresh := app.AccountState{
+			Version:   account.TokenVersion,
+			Status:    domain.AccountStatusActive,
+			FetchedAt: now,
+		}
+		if err := store.SaveAccountState(ctx, "acct-1", fresh, time.Hour); err != nil {
+			t.Fatalf("prime snapshot: %v", err)
+		}
+		checker, err := app.NewRevocationChecker(counted, store, app.RevocationFailClosed, 30*time.Second,
+			app.WithRevocationClock(clock))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		claims := jwt.Claims{Subject: "acct-1", ID: "jti-1", Extra: map[string]any{"ver": int64(fresh.Version)}}
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("fresh snapshot must pass: %v", err)
+		}
+		if counted.findByID != 0 {
+			t.Fatalf("fresh snapshot must not hit database, calls=%d", counted.findByID)
+		}
 	})
 
 	t.Run("claims_without_subject_are_rejected", func(t *testing.T) {

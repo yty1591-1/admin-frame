@@ -65,6 +65,17 @@ func (s *MemoryRevocationStore) SaveAccountState(_ context.Context, accountID st
 	return nil
 }
 
+// DeleteAccountState 删除账号撤销快照，使下一次校验回源数据库。
+func (s *MemoryRevocationStore) DeleteAccountState(_ context.Context, accountID string) error {
+	if accountID == "" {
+		return apperr.BadRequest("account id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.states, accountID)
+	return nil
+}
+
 // RevokeToken 把 jti 写入黑名单。
 func (s *MemoryRevocationStore) RevokeToken(_ context.Context, jti string, ttl time.Duration) error {
 	if jti == "" {

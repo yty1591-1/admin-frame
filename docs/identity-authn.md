@@ -335,12 +335,15 @@ sequenceDiagram
 
 | 键 | 值 | TTL | 用途 |
 |---|---|---|---|
-| `authn:ver:<account_id>` | `token_version` | `access_ttl + leeway`（下限 1h） | 账号级撤销；校验令牌 `ver` 是否小于当前值 |
+| `authn:ver:<account_id>` | `token_version\|status\|fetched_at` | `identity.revocation.state_ttl`（默认 `min(access_ttl+1m, 60s)`，硬上限 60s） | 账号级撤销；校验令牌 `ver` 与账号状态，`fetched_at` 用于陈旧度判定 |
 | `authn:revoked:<jti>` | `1` | 令牌剩余寿命 | 单会话撤销 |
 
 - 所有键统一带环境前缀（复用 `pkg/redis` 的 `KeyPrefix`），跨环境互不影响。
 - 写入使用 `SET ... EX`；撤销检查只读，不延长 TTL。
 - 版本读取未命中时回源数据库并回填短 TTL；禁止因未命中直接放行（必须先回源）。
+- **数据库是唯一事实源，Redis 只做加速层**：命中快照后若 `now - fetched_at` 超过 `state_ttl`（生产上限 60s），必须回源数据库并回填；回源按 `account_id` 合并（singleflight），避免失效瞬间打爆 DB。
+- **变更路径统一失效**：禁用、改密、删除、MFA 解绑、`logout_all` 等所有 `token_version` 变更在事务提交后必须经失效器刷新快照；`SET` 失败时回退 `DEL`，使下一次校验必然回源。缓存写入失败只告警（`identity_revocation_cache_write_error_total{op}`），不得把已提交的业务结果改成失败。
+- 旧格式快照（缺失 `fetched_at`）一律视为陈旧，首次命中即回源升级格式。
 
 ### 6.2 校验链路
 
@@ -364,7 +367,8 @@ type RevocationChecker interface {
 |---|---|---|
 | 单会话登出 | `authn:revoked:<jti>` | 下一次请求立即生效 |
 | 账号禁用 | DB `token_version++` + `authn:ver` + 撤销全部会话 | ≤ 60s（`AC-ENT-01-1`） |
-| 修改密码 | 同账号禁用 | ≤ 60s |
+| 修改密码 / 登出全部 / MFA 解绑 | 同账号禁用（事务提交后统一失效快照） | ≤ 60s |
+| 快照写入失败 | 回退 `DEL`，下一次校验回源 DB；仍失败由 `state_ttl` 过期兜底 | ≤ 60s |
 | 刷新令牌重放 | 撤销 family | 下一次刷新立即生效 |
 | 角色 / 权限变更 | IAM 快照失效（不属本域） | 既有 IAM 语义 |
 
@@ -637,6 +641,7 @@ identity:
   revocation:
     driver: redis              # redis 为生产唯一实现
     failure_mode: fail_closed  # fail_closed|fail_open
+    state_ttl: 30s             # 账号快照最大陈旧度，默认 min(access_ttl+1m, 60s)
   password:
     min_length: 12
     max_length: 128
@@ -674,6 +679,7 @@ identity:
 |---|---|
 | 枚举 | `revocation.driver` 仅 `redis`；`failure_mode` 仅 `fail_closed` / `fail_open` |
 | 范围 | `access_ttl ∈ [5m, 1h]`；`refresh_ttl > access_ttl`；`idle_timeout > 0`；`max_failures ≥ 1` |
+| 撤销陈旧度 | `revocation.state_ttl ∈ [1s, 60s]`；未配置时取 `min(access_ttl+1m, 60s)`，禁止超过 60s |
 | 必填 | `identity.enabled=true` 时 `auth.mode` 必须为 `jwt`，且 `auth.jwt.active_kid` 存在 |
 | 生产强制 | `auth.mode=jwt`；`identity.enabled=true`；`revocation.driver=redis`；`revocation.failure_mode=fail_closed`；A 端 `mfa.admin_required=true` |
 | 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空（C 端无可用登录方式） |

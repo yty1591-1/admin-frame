@@ -131,6 +131,7 @@ identity:
   revocation:
     driver: redis                 # redis 为生产唯一实现
     failure_mode: fail_closed     # fail_closed|fail_open；prod/staging 强制 fail_closed
+    state_ttl: 30s                # 账号快照最大陈旧度 [1s, 60s]，默认 min(access_ttl+1m, 60s)
   lockout:
     max_failures: 5
     window: 15m

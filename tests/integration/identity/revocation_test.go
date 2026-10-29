@@ -29,7 +29,7 @@ var idSeq int64
 // nextID 生成唯一的 BIGINT 主键字符串。
 //
 // 唯一性不仅为了避免主键冲突，也避免 Redis 撤销快照在多次运行之间残留：
-// 快照 TTL 至少 1 小时，固定 ID 会让「停用后拒绝」的断言读到上一轮的 active 状态。
+// 固定 ID 会让「停用后拒绝」的断言读到上一轮遗留的快照状态。
 func nextID() string {
 	n := atomic.AddInt64(&idSeq, 1)
 	return strconv.FormatInt(time.Now().UnixNano()+n, 10)
