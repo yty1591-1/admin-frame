@@ -246,6 +246,129 @@ func TestMFASetRecoveryCodesValidation(t *testing.T) {
 	}
 }
 
+func TestMFAEnrollmentTryConsumeStep(t *testing.T) {
+	enrollment, err := NewMFAEnrollment("1001", []byte("ciphertext"), baseTime)
+	if err != nil {
+		t.Fatalf("NewMFAEnrollment() error = %v", err)
+	}
+	later := baseTime.Add(time.Minute)
+	if got := enrollment.TryConsumeStep(42, later); !got {
+		t.Fatal("first step must be consumed")
+	}
+	if enrollment.LastUsedStep != 42 {
+		t.Fatalf("LastUsedStep = %d, want 42", enrollment.LastUsedStep)
+	}
+	if got := enrollment.TryConsumeStep(42, later); got {
+		t.Fatal("replayed step must be rejected")
+	}
+	if got := enrollment.TryConsumeStep(41, later); got {
+		t.Fatal("older step must be rejected")
+	}
+	if got := enrollment.TryConsumeStep(43, later); !got {
+		t.Fatal("newer step must be consumed")
+	}
+	if !enrollment.UpdatedAt.Equal(later) {
+		t.Fatalf("UpdatedAt = %v, want %v", enrollment.UpdatedAt, later)
+	}
+}
+
+func TestMFAEnrollmentRotateSecret(t *testing.T) {
+	enrollment, err := NewMFAEnrollment("1001", []byte("old"), baseTime)
+	if err != nil {
+		t.Fatalf("NewMFAEnrollment() error = %v", err)
+	}
+	before := enrollment.Version
+	later := baseTime.Add(time.Minute)
+	if err := enrollment.RotateSecret([]byte("new"), later); err != nil {
+		t.Fatalf("RotateSecret() error = %v", err)
+	}
+	if string(enrollment.SecretCiphertext) != "new" {
+		t.Fatalf("SecretCiphertext = %q, want new", enrollment.SecretCiphertext)
+	}
+	if enrollment.Version != before+1 {
+		t.Fatalf("Version = %d, want %d", enrollment.Version, before+1)
+	}
+	if err := enrollment.RotateSecret(nil, later); !errors.Is(err, ErrInvalidMFA) {
+		t.Fatalf("RotateSecret(empty) error = %v, want ErrInvalidMFA", err)
+	}
+	if err := enrollment.RotateSecret(make([]byte, MaxMFASecretLen+1), later); !errors.Is(err, ErrInvalidMFA) {
+		t.Fatalf("RotateSecret(too long) error = %v, want ErrInvalidMFA", err)
+	}
+}
+
+func TestMFAEnrollmentRecoveryCodes(t *testing.T) {
+	enrollment, err := NewMFAEnrollment("1001", []byte("ciphertext"), baseTime)
+	if err != nil {
+		t.Fatalf("NewMFAEnrollment() error = %v", err)
+	}
+	later := baseTime.Add(time.Minute)
+	if err := enrollment.SetRecoveryCodes([]string{"hash-1", "hash-2"}, later); err != nil {
+		t.Fatalf("SetRecoveryCodes() error = %v", err)
+	}
+	if !enrollment.HasRecoveryCode("hash-1") {
+		t.Fatal("HasRecoveryCode(hash-1) = false, want true")
+	}
+	if enrollment.HasRecoveryCode(" ") {
+		t.Fatal("HasRecoveryCode(blank) = true, want false")
+	}
+	if enrollment.HasRecoveryCode("hash-3") {
+		t.Fatal("HasRecoveryCode(hash-3) = true, want false")
+	}
+
+	if !enrollment.UseRecoveryCode("hash-1", later) {
+		t.Fatal("UseRecoveryCode(hash-1) = false, want true")
+	}
+	if len(enrollment.RecoveryCodeHashes) != 1 || enrollment.RecoveryCodeHashes[0] != "hash-2" {
+		t.Fatalf("recovery codes = %v, want [hash-2]", enrollment.RecoveryCodeHashes)
+	}
+	if enrollment.UseRecoveryCode("hash-1", later) {
+		t.Fatal("reused recovery code must be rejected")
+	}
+	if enrollment.UseRecoveryCode("", later) {
+		t.Fatal("blank recovery code must be rejected")
+	}
+	if !enrollment.UseRecoveryCode("hash-2", later) {
+		t.Fatal("UseRecoveryCode(hash-2) = false, want true")
+	}
+	if enrollment.RecoveryCodeHashes == nil || len(enrollment.RecoveryCodeHashes) != 0 {
+		t.Fatalf("recovery codes = %v, want empty non-nil slice", enrollment.RecoveryCodeHashes)
+	}
+}
+
+func TestAccountStatusValidate(t *testing.T) {
+	valid := []AccountStatus{
+		AccountStatusPending, AccountStatusActive, AccountStatusLocked, AccountStatusDisabled,
+	}
+	for _, status := range valid {
+		if err := status.Validate(); err != nil {
+			t.Fatalf("Validate(%s) error = %v", status, err)
+		}
+	}
+	if err := AccountStatus("expired").Validate(); !errors.Is(err, ErrInvalidAccountStatus) {
+		t.Fatalf("Validate(invalid) error = %v, want ErrInvalidAccountStatus", err)
+	}
+}
+
+func TestEntityEnumString(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "channel", got: ChannelBiz.String(), want: "biz"},
+		{name: "account status", got: AccountStatusLocked.String(), want: "locked"},
+		{name: "credential type", got: CredentialTypePhone.String(), want: "phone"},
+		{name: "login outcome", got: LoginOutcomeDenied.String(), want: "denied"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("String() = %q, want %q", tt.got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewLoginAttemptValidation(t *testing.T) {
 	tests := []struct {
 		name    string

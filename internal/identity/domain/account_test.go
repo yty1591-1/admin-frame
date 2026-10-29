@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,3 +368,129 @@ func TestAccountCanAuthenticate(t *testing.T) {
 
 // timePtr 返回时间指针。
 func timePtr(value time.Time) *time.Time { return &value }
+
+func TestAccountResetPassword(t *testing.T) {
+	account := mustAccount(t, nil)
+	if err := account.Activate(baseTime); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	before := account.TokenVersion
+	later := baseTime.Add(time.Minute)
+	if err := account.ResetPassword(later); err != nil {
+		t.Fatalf("ResetPassword() error = %v", err)
+	}
+	if !account.MustChangePassword {
+		t.Fatal("MustChangePassword = false, want true")
+	}
+	if account.TokenVersion != before+1 {
+		t.Fatalf("TokenVersion = %d, want %d", account.TokenVersion, before+1)
+	}
+	if account.PasswordUpdatedAt == nil || !account.PasswordUpdatedAt.Equal(later) {
+		t.Fatalf("PasswordUpdatedAt = %v, want %v", account.PasswordUpdatedAt, later)
+	}
+
+	account.Status = AccountStatusDisabled
+	if err := account.ResetPassword(later); !errors.Is(err, ErrInvalidAccountTransition) {
+		t.Fatalf("ResetPassword(disabled) error = %v, want ErrInvalidAccountTransition", err)
+	}
+
+	if err := account.Delete(later); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if err := account.ResetPassword(later); !errors.Is(err, ErrAccountDeleted) {
+		t.Fatalf("ResetPassword(deleted) error = %v, want ErrAccountDeleted", err)
+	}
+}
+
+func TestAccountRestore(t *testing.T) {
+	account := mustAccount(t, nil)
+	if err := account.Restore(baseTime); err != nil {
+		t.Fatalf("Restore(not deleted) error = %v", err)
+	}
+
+	if err := account.Delete(baseTime); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if !account.IsDeleted() {
+		t.Fatal("account must be deleted")
+	}
+
+	later := baseTime.Add(time.Minute)
+	if err := account.Restore(later); err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+	if account.IsDeleted() {
+		t.Fatal("account must be restored")
+	}
+	if account.Status != AccountStatusActive {
+		t.Fatalf("status = %s, want active", account.Status)
+	}
+	if account.LockedUntil != nil {
+		t.Fatalf("LockedUntil = %v, want nil", account.LockedUntil)
+	}
+	if !account.UpdatedAt.Equal(later) {
+		t.Fatalf("UpdatedAt = %v, want %v", account.UpdatedAt, later)
+	}
+}
+
+func TestAccountRebindSubject(t *testing.T) {
+	account := mustAccount(t, func(p *NewAccountParams) {
+		p.Channel = ChannelC
+		p.Subject = "13800000000"
+	})
+	if err := account.RebindSubject(" 13900000000 ", baseTime); err != nil {
+		t.Fatalf("RebindSubject() error = %v", err)
+	}
+	if account.Subject != "13900000000" {
+		t.Fatalf("Subject = %q, want 13900000000", account.Subject)
+	}
+	if account.TokenVersion != 1 {
+		t.Fatalf("TokenVersion = %d, want unchanged 1", account.TokenVersion)
+	}
+
+	if err := account.RebindSubject("  ", baseTime); !errors.Is(err, ErrEmptyInput) {
+		t.Fatalf("RebindSubject(blank) error = %v, want ErrEmptyInput", err)
+	}
+	long := strings.Repeat("x", MaxSubjectLen+1)
+	if err := account.RebindSubject(long, baseTime); !errors.Is(err, ErrInvalidAccount) {
+		t.Fatalf("RebindSubject(too long) error = %v, want ErrInvalidAccount", err)
+	}
+
+	account.Status = AccountStatusDisabled
+	if err := account.RebindSubject("13900000000", baseTime); !errors.Is(err, ErrInvalidAccountTransition) {
+		t.Fatalf("RebindSubject(disabled) error = %v, want ErrInvalidAccountTransition", err)
+	}
+
+	account.Status = AccountStatusLocked
+	if err := account.RebindSubject("13900000000", baseTime); !errors.Is(err, ErrInvalidAccountTransition) {
+		t.Fatalf("RebindSubject(locked) error = %v, want ErrInvalidAccountTransition", err)
+	}
+
+	account.Status = AccountStatusActive
+	account.DeletedAt = timePtr(baseTime)
+	if err := account.RebindSubject("13900000000", baseTime); !errors.Is(err, ErrAccountDeleted) {
+		t.Fatalf("RebindSubject(deleted) error = %v, want ErrAccountDeleted", err)
+	}
+}
+
+func TestAccountBumpTokenVersion(t *testing.T) {
+	account := mustAccount(t, nil)
+	beforeToken := account.TokenVersion
+	beforeVersion := account.Version
+	if err := account.BumpTokenVersion(baseTime.Add(time.Minute)); err != nil {
+		t.Fatalf("BumpTokenVersion() error = %v", err)
+	}
+	if account.TokenVersion != beforeToken+1 {
+		t.Fatalf("TokenVersion = %d, want %d", account.TokenVersion, beforeToken+1)
+	}
+	if account.Version != beforeVersion+1 {
+		t.Fatalf("Version = %d, want %d", account.Version, beforeVersion+1)
+	}
+
+	if err := account.Delete(baseTime); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if err := account.BumpTokenVersion(baseTime); !errors.Is(err, ErrAccountDeleted) {
+		t.Fatalf("BumpTokenVersion(deleted) error = %v, want ErrAccountDeleted", err)
+	}
+}
