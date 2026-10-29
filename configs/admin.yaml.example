@@ -13,6 +13,7 @@ http:
   idle_timeout: 60s
   timeout: 30s
   body_limit_bytes: 33554432
+  trusted_proxies: []             # 可信代理 CIDR（如 10.0.0.0/8）；为空时不解析 X-Forwarded-For
 
 log:
   level: info
@@ -105,17 +106,36 @@ iam:
 
 # 身份域认证端点（docs/identity-authn.md）；默认关闭，保持既有「只验签」行为。
 # 启用前置：auth.mode=jwt（A 端必须配置 auth.jwt.keys 与 active_kid）、redis.addr 非空。
+# 生产额外要求：db.driver 非 memory、async.enabled=true（审计 Outbox）、identity.hash_key 已注入。
 identity:
   enabled: false
   access_ttl: 15m                 # [5m, 1h]
   refresh_ttl: 168h               # 必须大于 access_ttl
   session:
     idle_timeout: 72h             # (0, refresh_ttl]
+    absolute_ttl: 720h            # 设备绝对生命上限，必须大于 refresh_ttl（30d）
     max_per_account: 10
+  retention:
+    session_days: 30              # 会话保留天数，生产 >= 7
+    login_attempt_days: 180       # 登录尝试保留天数，生产 >= 180
+    cleanup_interval: 1h          # worker 清理间隔，>= 1m
   revocation:
     driver: redis                 # redis 为生产唯一实现
     failure_mode: fail_closed     # fail_closed|fail_open；prod/staging 强制 fail_closed
     state_ttl: 30s                # 账号快照最大陈旧度 [1s, 60s]，默认 min(access_ttl+1m, 60s)
+  password:
+    min_length: 12                # >= 8
+    max_length: 128               # <= 4096
+    require_complexity: true      # 至少三类字符
+    max_concurrent: 0             # Argon2 并发上限；0=2×CPU，超限排队
+    wait_timeout: 2s              # 排队超时返回 50300 [100ms, 30s]
+  mfa:
+    admin_required: false         # prod/staging 强制 true
+    issuer: AdminFrame
+    # 32B 主密钥；生产用 ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY 注入，禁止写入仓库。
+    secret_key: ""
+    keys: []                      # [{id, key}] 密钥环；生产走环境变量
+    active_key_id: ""             # keys 非空时必填
   lockout:
     max_failures: 5
     window: 15m
@@ -123,6 +143,12 @@ identity:
   login_rate_limit:
     rps: 1
     burst: 5
+    failure_mode: fail_closed     # Redis 不可用时拒绝（生产强制）
+  # PII / 短信码摘要主密钥（IDN-P1-06）：32 字节，prod/staging 必填。
+  # 禁止写入仓库；生产用 ADMIN_FRAME_IDENTITY_HASH_KEY 注入。
+  hash_key: ""
+  hash_key_id: v1                # 摘要前缀，仅 [A-Za-z0-9_-]，≤16 字节
+  previous_hash_keys: []         # 轮换期历史密钥 [{id, key}]，双读用；主 key 稳定后清空
 
 # Redis：iam.cache.driver=redis 时必填；密码走 ADMIN_FRAME_REDIS_PASSWORD。
 redis:

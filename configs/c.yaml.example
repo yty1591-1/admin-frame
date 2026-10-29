@@ -12,6 +12,7 @@ http:
   idle_timeout: 60s
   timeout: 30s
   body_limit_bytes: 33554432
+  trusted_proxies: []             # 可信代理 CIDR；为空时不解析 X-Forwarded-For
 
 log:
   level: info
@@ -25,13 +26,19 @@ auth:
   expected_channel: c
 
 # 身份域（ENT-01 阶段 4）：默认关闭；启用时 auth.mode 必须为 jwt。
+# 生产额外要求：db.driver 非 memory、async.enabled=true（审计 Outbox）、identity.hash_key 已注入。
 # identity:
 #   enabled: true
 #   access_ttl: 15m
 #   refresh_ttl: 168h
 #   session:
 #     idle_timeout: 72h
+#     absolute_ttl: 720h             # 设备绝对生命上限，必须大于 refresh_ttl
 #     max_per_account: 10
+#   retention:
+#     session_days: 30               # >= 7
+#     login_attempt_days: 180        # >= 180
+#     cleanup_interval: 1h           # >= 1m
 #   revocation:
 #     driver: redis              # 生产唯一实现
 #     failure_mode: fail_closed  # fail_closed|fail_open
@@ -40,6 +47,8 @@ auth:
 #     min_length: 12
 #     max_length: 128
 #     require_complexity: true
+#     max_concurrent: 0            # Argon2 并发上限；0=2×CPU
+#     wait_timeout: 2s             # 排队超时返回 50300
 #   lockout:
 #     max_failures: 5
 #     window: 15m
@@ -47,6 +56,10 @@ auth:
 #   login_rate_limit:
 #     rps: 1
 #     burst: 5
+#     failure_mode: fail_closed  # Redis 不可用时拒绝（生产强制）
+#   hash_key: ""                 # PII / 短信码摘要主密钥（32B），prod/staging 必填；生产走 ADMIN_FRAME_IDENTITY_HASH_KEY
+#   hash_key_id: v1              # 摘要前缀，仅 [A-Za-z0-9_-]，≤16 字节
+#   previous_hash_keys: []       # 轮换期历史密钥 [{id, key}]，双读用
 #   sms:
 #     enabled: true
 #     driver: memory             # memory(本地) | aliyun(生产)
@@ -58,8 +71,15 @@ auth:
 #     resend_interval: 60s
 #     daily_per_phone: 10
 #     hourly_per_ip: 30
+#     daily_budget: 0            # 全局日预算；0=不限，生产建议设置
+#     breaker_failures: 5        # 连续失败阈值；达到后熔断供应商
+#     breaker_timeout: 60s       # 熔断打开时长 [1s, 10m]
 #   oauth:
 #     auto_provision: false
+#     rate_limit:                  # authorize/callback IP 级 + 全局限流（IDN-P2-05）
+#       rps: 1
+#       burst: 5
+#       failure_mode: fail_closed
 #     providers:
 #       - name: example
 #         client_id: ""

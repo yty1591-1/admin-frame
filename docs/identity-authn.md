@@ -51,7 +51,7 @@
 | 账号域 | `Account`、`Credential`、`Session`、`MFAEnrollment`、`LoginAttempt` 与状态机 |
 | 三端令牌 | Access JWT + 一次性 Refresh Token；三端 issuer / audience / 密钥隔离 |
 | 生命周期 | 登录、刷新、登出、单会话撤销、全端撤销、账号禁用 / 锁定 |
-| 撤销 | 账号级 `token_version` + 单会话 `jti` 黑名单 |
+| 撤销 | 账号级 `token_version` + 会话级 `authn:sid` 快照 + 单会话 `jti` 黑名单 |
 | A 端 | TOTP MFA、会话管理；OIDC / SSO 预留接口与开关 |
 | C 端 | 短信验证码登录、OAuth 授权码登录；防枚举、防刷 |
 | 审计 | 登录、登出、刷新、重放、撤销、MFA、锁定事件的 Outbox 落库 |
@@ -122,10 +122,10 @@ rg -n "func .*Cache\)|func .*Lock\)|AsyncRuntime" pkg/redis internal/platform
 | `Account` | `ID`、`Channel`、`Subject`、`Status`、`TokenVersion`、`MerchantID`、`PasswordUpdatedAt`、`DeletedAt` | `(channel, subject)` 全局唯一；`token_version ≥ 1` 且只增不减；禁用账号任何登录路径均拒绝 |
 | `Credential` | `AccountID`、`Type`、`Hash`、`Algorithm`、`UpdatedAt` | 同一账号同一类型仅一条有效凭据；只存哈希，不存明文 |
 | `Session` | `ID`、`AccountID`、`FamilyID`、`RefreshHash`、`Status`、`TokenVersion`、`ExpiresAt`、`RevokedAt`、`RevokedReason` | `RefreshHash` 全局唯一；`rotated` 会话不可再次使用；同一 `FamilyID` 共享撤销量 |
-| `MFAEnrollment` | `AccountID`、`SecretCiphertext`、`ConfirmedAt`、`RecoveryCodeHashes` | 未确认的绑定不得用于登录；密钥必须加密存储 |
+| `MFAEnrollment` | `AccountID`、`SecretCiphertext`、`ConfirmedAt`、`LastUsedStep`、`Version`、`RecoveryCodeHashes` | 未确认的绑定不得用于登录；密钥必须加密存储；同一 TOTP 时间步只能消费一次 |
 | `LoginAttempt` | `Channel`、`AccountRef`、`Outcome`、`Reason`、`IPHash`、`UAHash`、`OccurredAt` | 不存明文手机号 / 邮箱 / 密码；保留期遵循审计策略 |
 
-`AccountRef` 为 `subject` 的规范化哈希或不可逆标识，用于失败计数与审计关联，禁止直接落明文。
+`AccountRef` 为 `subject` 的规范化摘要，用于失败计数与审计关联，禁止直接落明文；生产格式为 `<hash_key_id>:<hex HMAC-SHA256>`（见 §9.5，`IDN-P1-06`），未配置密钥的本地 / 测试环境回退为旧 64 位无前缀摘要。
 
 ### 3.2 账号状态机
 
@@ -208,7 +208,8 @@ active ──刷新──► rotated
 - 32 字节密码学随机数，Base64URL 编码，不携带业务语义，不使用 JWT。
 - 出参只出现一次；库内仅存 SHA-256 哈希，按哈希比较，避免时序侧信道。
 - 前缀区分端别（如 `ar_` / `br_` / `cr_`），便于日志排查时识别类型而不泄露内容。
-- 默认有效期 168 小时（`identity.refresh_ttl`）；支持 `session.idle_timeout` 绝对空闲上限。
+- 默认有效期 168 小时（`identity.refresh_ttl`）；支持 `session.idle_timeout` 空闲上限。
+- 设备另受绝对生命上限 `identity.session.absolute_ttl`（默认 720h）约束：每次刷新只能在该上限内滑动，超限后刷新返回 `40100` 并撤销整条设备链。
 
 ### 4.3 密钥环与 `kid`
 
@@ -286,6 +287,7 @@ sequenceDiagram
 要点：
 
 - 账号不存在与密码错误返回同一文案、同一状态码、近似耗时，防枚举。
+- 时序对齐（`IDN-P2-04`）：账号不存在、无密码凭据、`locked` / `disabled` 分支在返回统一 `40100` 前，都会对启动时预计算的占位哈希执行一次真实校验（`PasswordService.VerifyDummy`），使耗时与真实密码校验一致；残余差异仅剩登录尝试 / 审计写入与网络噪声。
 - 失败计数按 `(channel, account_ref)` 累计；达到阈值转 `locked`，写审计。
 - 登录成功后若 `NeedsRehash` 为真，在事务内透明升级密码哈希。
 - 登录失败不创建会话；成功但需 MFA 时也不创建正式会话，只返回短期票据。
@@ -322,17 +324,19 @@ sequenceDiagram
 2. 并发刷新使用数据库行锁或乐观锁；只有一个请求成功，其余按重放处理。
 3. 重放触发**整条会话链**撤销，并记录 `auth.token.reused`，而不是只拒绝当前请求。
 4. 刷新不改变 `token_version`；仅登出全部 / 禁用 / 改密才递增。
+5. 令牌代过期时间取 `min(now + refresh_ttl, 设备绝对到期时间)`；达到设备绝对上限后拒绝刷新并撤销该设备。
 
 ### 5.3 登出
 
-- 默认 `logout`：撤销当前会话（`status=revoked`），把当前 Access 的 `jti` 写入 `authn:revoked:<jti>`，TTL 为令牌剩余寿命。
+- 默认 `logout`：撤销当前会话（`status=revoked`），写 `authn:sid:<session_id>` 使该会话的 Access Token ≤60s 失效，并把当前 Access 的 `jti` 写入 `authn:revoked:<jti>`（TTL 为令牌剩余寿命）。
 - `logout_all`：递增 `token_version`、撤销该账号全部会话，写 `authn:ver:<account_id>`。
 - 登出幂等：重复登出返回 204，不产生额外审计噪声（或记 `auth.logout` 一次）。
 
 ### 5.4 会话边界
 
 - 单账号活跃会话数受 `identity.session.max_per_account` 限制；超限时按最久未使用淘汰并记审计。
-- 会话列表只返回 `session_id`、创建时间、最后使用时间、IP / UA 摘要、状态，不返回令牌。
+- 设备受绝对生命上限 `identity.session.absolute_ttl` 约束；登录 / 刷新响应与会话列表返回 `absolute_expires_at`，刷新不会延长该值。
+- 会话列表只返回 `session_id`、创建时间、最后使用时间、绝对到期时间、IP / UA 摘要、状态，不返回令牌。
 - 管理员撤销会话只需 `session_id`，不接触令牌原文。
 
 ---
@@ -344,6 +348,7 @@ sequenceDiagram
 | 键 | 值 | TTL | 用途 |
 |---|---|---|---|
 | `authn:ver:<account_id>` | `token_version\|status\|fetched_at` | `identity.revocation.state_ttl`（默认 `min(access_ttl+1m, 60s)`，硬上限 60s） | 账号级撤销；校验令牌 `ver` 与账号状态，`fetched_at` 用于陈旧度判定 |
+| `authn:sid:<session_id>` | `status\|revoked_at\|expires_at\|fetched_at` | `identity.revocation.state_ttl`（≤60s） | 会话级撤销；Access Token 的 `sid` 命中且为 `revoked`/`expired` 时拒绝 |
 | `authn:revoked:<jti>` | `1` | 令牌剩余寿命 | 单会话撤销 |
 | `authn:fail:<channel>:login_fail:<account_ref>` | 失败次数 | `identity.lockout.window` | 登录失败窗口计数；跨副本共享，Redis 不可用时回退登录尝试表 |
 
@@ -367,18 +372,21 @@ type RevocationChecker interface {
 
 - `NewJWTAuth` 增加 `WithRevocationChecker` 选项；在签名 / `iss` / `aud` / `exp` 通过后执行。
 - 返回 `apperr.ErrUnavailable` 时中间件输出 `50300`；返回 `ErrUnauthorized` 时输出 `40100`。
-- 校验顺序：签名 → 时间 → issuer / audience / channel → 账号状态 → `token_version` → `jti` 黑名单。
+- 校验顺序：签名 → 时间 → issuer / audience / channel → 账号状态 → `token_version` → 会话状态（`sid`）→ `jti` 黑名单。
+- 会话状态：`sid` 命中 `authn:sid` 且为 `revoked` / `expired`（或已过 `expires_at`）时拒绝；`rotated` 放行，保证刷新成功后仍在途的旧 Access Token 不被误杀。
+- 会话快照与账号快照共享陈旧度上限：命中后超过 `state_ttl` 必须回源 `identity_session`，回源失败按 `failure_mode` 处理；会话不存在视为确定性拒绝。
 - 撤销检查结果不得使用长 TTL 进程内缓存；如需缓存，上限 5 秒且必须可主动失效。
 
 ### 6.3 失效时限
 
 | 场景 | 生效路径 | 目标时限 |
 |---|---|---|
-| 单会话登出 | `authn:revoked:<jti>` | 下一次请求立即生效 |
+| 单会话登出 | `authn:revoked:<jti>` + `authn:sid` | 下一次请求立即生效 |
+| 管理员 / 用户撤销其它设备 | DB `status=revoked` + `authn:sid` | ≤ 60s |
 | 账号禁用 | DB `token_version++` + `authn:ver` + 撤销全部会话 | ≤ 60s（`AC-ENT-01-1`） |
 | 修改密码 / 登出全部 / MFA 解绑 | 同账号禁用（事务提交后统一失效快照） | ≤ 60s |
 | 快照写入失败 | 回退 `DEL`，下一次校验回源 DB；仍失败由 `state_ttl` 过期兜底 | ≤ 60s |
-| 刷新令牌重放 | 撤销 family | 下一次刷新立即生效 |
+| 刷新令牌重放 | 撤销 family + 写 `authn:sid`（含已 rotated 的历代会话） | ≤ 60s（已签发 Access Token 同步失效） |
 | 角色 / 权限变更 | IAM 快照失效（不属本域） | 既有 IAM 语义 |
 
 ### 6.4 故障策略
@@ -386,6 +394,29 @@ type RevocationChecker interface {
 - `identity.revocation.failure_mode=fail_closed`：Redis 不可用返回 `50300`，禁止放行；生产强制。
 - `fail_open` 仅允许非生产环境，且需在配置评审中说明；启动时 `Validate` 拒绝生产使用。
 - 数据库不可用同样失败关闭；禁止「读不到账号就当作有效」。
+
+### 6.5 监控与告警（IDN-P1-03）
+
+- 撤销 / 回源失败必须留痕：`refreshInTx` 在整链撤销失败时返回 `50300` 并回滚事务，禁止只提交 `auth.token.reused` 而未真正撤销。
+- 日志为结构化 Error 级，字段只允许 `trace_id`、`channel`、`account_ref` / `family_ref`（摘要）、`reason`、`error_class`；禁止密码、令牌原文、验证码、TOTP 密钥、恢复码与手机号 / 邮箱原文。
+- 指标由 `internal/identity/observability` 统一注册，标签只使用低基数枚举值。
+
+| 指标 | 类型 | 关键标签 | 告警建议 |
+|---|---|---|---|
+| `identity_login_total` | counter | `channel`、`result`、`reason` | 失败率突增（5m 相对基线） |
+| `identity_login_duration_seconds` | histogram | `channel` | p99 异常（依赖或 Argon2 排队） |
+| `identity_lockout_total` | counter | `channel` | 突增视为暴力破解 / 恶意锁定 |
+| `identity_mfa_verify_total` | counter | `result` | 失败率突增 |
+| `identity_mfa_recovery_used_total` | counter | — | 任何非零都通知账号所有者并检查恢复码剩余量 |
+| `identity_refresh_total` | counter | `result` | 失败率突增 |
+| `identity_token_reuse_total` | counter | — | 任何非零立即告警 |
+| `identity_session_revoke_total` | counter | `reason`、`result` | 异常批量撤销；`result=failure` 立即告警 |
+| `identity_revocation_store_errors_total` | counter | `op` | 任何非零告警（已失败关闭） |
+| `identity_revocation_cache_write_error_total` | counter | `op` | 任何非零告警（依赖 ≤60s TTL 兜底） |
+| `identity_sms_send_total` | counter | `result` | 失败率 / 发送量突增 |
+| `identity_oauth_callback_total` | counter | `provider`、`result` | 失败率突增 |
+
+- 建议告警：`rate(identity_token_reuse_total[5m]) > 0`、`rate(identity_revocation_store_errors_total[5m]) > 0`、`rate(identity_session_revoke_total{result="failure"}[5m]) > 0`、`rate(identity_mfa_recovery_used_total[5m]) > 0`、登录失败率超过基线、锁定量突增、短信失败率或发送量突增。
 
 ---
 
@@ -397,8 +428,11 @@ type RevocationChecker interface {
 
 - 新增 `pkg/totp`：HMAC-SHA1、30 秒步长、6 位、允许 ±1 个窗口；仅依赖标准库，不引入第三方。
 - 密钥生成 20 字节随机数，Base32 展示；数据库存 **AES-GCM 密文**，密钥来自 `identity.mfa.secret_key`（非生产）或 ENT-07 密钥托管（生产）。
-- 恢复码一次性使用，仅存哈希；使用后立即失效。
+- **TOTP 防重放（IDN-P1-05）**：`identity_mfa.last_used_step` 记录已消费时间步；校验成功时用 `version` 乐观锁 CAS 推进，同一时间步第二次使用按重放拒绝。
+- **恢复码（IDN-P1-05）**：10 字节（80 bit）随机数、按 4 位分组展示；存储为 `SHA-256("recovery|<accountID>|<code>")`（账号加盐）；消费使用 `JSON_REMOVE + JSON_SEARCH` 原子删除，禁止“读整表 → 删除 → 写回”。使用后写 `auth.mfa.recovery_used`（含剩余数量）。
+- **密钥轮换**：`identity.mfa.keys[]` + `active_key_id` 组成密钥环，密文头携带 key id；旧格式（单 `secret_key`）仍可解密，并在登录成功后自动重加密为 active key。轮换期间必须保留 `secret_key` 作为 legacy 解密回退，确认所有绑定都重加密后再移除。
 - 绑定流程：`mfa/setup` 返回密钥与 `otpauth://` URI → `mfa/verify` 校验首个动态码 → 标记 `confirmed_at` → 写 `auth.mfa.bound`。
+- 并发：`identity_mfa.version` 作为乐观锁，`Confirm` / 消费时间步 / 解绑与校验冲突时以“已删除”或“已消费”为准，禁止 upsert 复活。
 
 ### 7.2 两步登录
 
@@ -409,6 +443,8 @@ type RevocationChecker interface {
   - 未绑定 MFA 的 A 端账号登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`，不签发管理令牌，由客户端就地引导绑定（§7.2.1）；
   - 已绑定但两步未完成，绝不签发管理令牌（`AC-ENT-01-4`）。
 - `mfa_ticket` 重放：一次性消费（Redis `SETNX`），失败次数计入锁定。
+- `mfa_setup_ticket` 重放：返回 `40100` 但**不计入失败次数**（避免恶意锁定），仅写 `auth.mfa.ticket_replay`。
+- MFA 校验同时使用票据 jti + 账号级双维度限流，防止轮换票据刷码。
 
 ### 7.2.1 强制绑定 MFA 的契约与首个管理员 bootstrap
 
@@ -563,6 +599,7 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
   - 单手机号每日上限、单 IP 每小时上限（`identity.sms.*`）；
   - 验证码最多尝试 5 次，超限作废并记审计；
   - 响应恒定（无论手机号是否存在），防枚举。
+- 供应商熔断与余额告警（`IDN-P2-05`）：连续可重试故障达到 `identity.sms.breaker_failures`（默认 5）后打开熔断，`breaker_timeout`（默认 60s）内不再触网；模板 / 签名 / 号码等永久拒绝不计入熔断。厂商返回余额不足（如 `isv.AMOUNT_NOT_ENOUGH`）时写 Error 日志并递增 `identity_sms_provider_alerts_total{kind="insufficient_balance"}`。
 - 未注册手机号不自动建号：登录端点验证码校验通过但账号不存在时返回 `40100`（与验证码错误一致）。
 - `POST /c/v1/auth/sms/register`：验证码通过后在同一事务内创建账号（`subject = "phone:" + sha256(手机号)`）、手机号凭据与 `auth.account.created` 审计，并直接签发令牌；已注册手机号与验证码错误统一 `40100`，并发开户由 `(channel, subject)` 唯一键兜底。
 - 日志与审计禁止出现完整手机号；只记录不可逆摘要。
@@ -579,12 +616,25 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 
 | 端点 | 分桶键 | 默认 |
 |---|---|---|
-| 登录 | `channel + subject 摘要 + IP` | 1 rps / burst 5 |
-| 发送验证码 | `channel + 手机号摘要 + IP` | 每 60s 1 次 |
+| 登录 | 账号级 `channel:login:<account_ref>` + IP 级 `channel:login::<ip_hash>` | 双维度各 1 rps / burst 5，任一超限即拒绝 |
+| 发送验证码 | 手机号级 + IP 级 + 全局日预算 | 每 60s 1 次；单手机号日限、单 IP 时限、`daily_budget` |
 | 刷新 | `channel + session 摘要` | 5 rps / burst 10 |
 | MFA 校验 | `channel + account + IP` | 1 rps / burst 5 |
+| OAuth authorize / callback | 全局 `authorize:global` / `callback:global` + IP 级 | 1 rps / burst 5，Redis `fail_closed`（`IDN-P2-05`） |
 
-认证端点不挂全局 `AuthMW`，但必须挂独立限流中间件；限流命中返回 `42900`。
+- 认证端点不挂全局 `AuthMW`，但必须挂独立限流中间件；限流命中返回 `42900` 并带 `Retry-After`。
+- 登录限流有 Redis 时使用 `pkg/ratelimit.NewRedisKeyed` 跨副本共享配额，`identity.login_rate_limit.failure_mode` 生产强制 `fail_closed`；无 Redis 时退化为进程内实现（仅单副本）。
+- OAuth 同样使用 `pkg/ratelimit.NewRedisKeyed`（键前缀 `identity:oauth:`），authorize 与 callback 各自检查全局 + 单 IP，防止刷爆 state 键空间。
+- 短信发送失败会回滚重发窗口（`ResetResend`），避免用户没收到验证码却被锁在重发间隔内。
+- 短信供应商熔断（`IDN-P2-05`）：`pkg/circuitbreaker` 包裹发送调用，打开期间直接 50300；状态迁移写 Warn 日志（provider / from / to）。
+- 余额告警：`identity_sms_provider_alerts_total{kind,provider}` 任何非零都应配置告警规则并通知运维；告警日志只含 kind / provider / 厂商码，不含手机号与正文。
+- Argon2 并发保护（`IDN-P2-05`）：`identity.password.max_concurrent`（默认 `2×CPU`）限制同时校验数量，`wait_timeout` 内拿不到槽位返回 `50300`，且不计入登录失败、不触发锁定。
+
+### 8.4 客户端 IP 与可信代理（IDN-P1-04）
+
+- 统一由 `pkg/httpx.ClientIPResolver` 解析客户端 IP：只有 `http.trusted_proxies`（CIDR 列表）内的请求才解析 `X-Forwarded-For`，并从右向左跳过可信代理取第一个不可信地址。
+- 未配置可信代理或来源不可信时忽略 XFF，直接使用 `RemoteAddr` 并去掉端口；IPv6 统一为规范文本，保证同一地址的不同连接共享限流键。
+- identity 的 A/B/C 端 Handler 与平台级 `rate_limit` 共用同一解析器，禁止各自实现 XFF 解析。
 
 ---
 
@@ -594,6 +644,7 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 
 - 文件：`migrations/000001_create_identity_tables.{up,down}.sql`。
 - 编号说明：迁移已按领域合并为 `000001`～`000004`：`000001` 身份域、`000002` IAM 结构（含菜单）、`000003` IAM 种子、`000004` 平台异步；后续变更从 `000005` 顺延。
+- `000013_widen_identity_hash_columns` 将 `account_ref` / `ip_hash` / `ua_hash` 扩至 128 字符，容纳 `<key_id>:<hex>` 摘要（`IDN-P1-06`）。
 - 只由 `cmd/migrate` 或部署 Job 执行；API / worker 启动只校验版本，不执行迁移（`DATA_STANDARDS`）。
 
 ### 9.2 表结构
@@ -603,7 +654,7 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 | `identity_account` | `id BIGINT` | `UNIQUE(channel, subject)`；`INDEX(channel, status)` | 账号状态与 `token_version` |
 | `identity_credential` | `id BIGINT` | `UNIQUE(account_id, credential_type)` | 密码 / 手机号绑定；只存哈希 |
 | `identity_session` | `id BIGINT` | `UNIQUE(refresh_token_hash)`；`INDEX(account_id, status)`；`INDEX(family_id)` | 刷新会话链 |
-| `identity_mfa` | `account_id BIGINT` | 主键即账号 | TOTP 密文、恢复码哈希 |
+| `identity_mfa` | `account_id BIGINT` | 主键即账号；`version` 乐观锁 | TOTP 密文、恢复码哈希、`last_used_step` |
 | `identity_login_attempt` | `id BIGINT` | `INDEX(channel, account_ref, occurred_at)` | 失败计数与审计关联 |
 | `identity_oauth_identity` | `id BIGINT` | `UNIQUE(provider, provider_subject)` | 外部身份映射 |
 
@@ -632,6 +683,17 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 - `identity_session` 过期记录保留 30 天后清理；清理任务不得删除 `revoked` 状态未满保留期的记录。
 - 不在 API 进程内做批量删除；清理逻辑由 worker 或独立 Job 执行。
 
+### 9.5 PII 摘要与域隔离（IDN-P1-06）
+
+所有低熵标识统一使用带密钥摘要，实现位于 `pkg/crypto/hasher.go` 与 `internal/identity/app/hashing.go`。
+
+- 算法：`HMAC-SHA256(key, domain || "|" || value)`；`value` 在调用侧规范化：账号 / 手机号主体去首尾空白并小写，客户端 IP / UA 仅去首尾空白；`account-ref` 的输入为 `<channel>|<subject>`，`sms-code` 为 `<phoneRef>|<code>`。
+- 存储格式：`<key_id>:<hex>`；`key_id` 取自 `identity.hash_key_id`（默认 `v1`），仅 `[A-Za-z0-9_-]` 且 ≤ 16 字节。
+- 域（domain）清单：`account-ref`、`client-ip`、`client-ua`、`phone-subject`、`sms-code`、`recovery-code`、`oauth-subject`；跨域不可复用。
+- 短信码：`HMAC-SHA256(key, "sms-code|" + phoneRef + "|" + code)`，校验使用常量时间比较；Redis / 备份泄露后无 key 无法离线枚举。
+- 轮换：`identity.hash_key` 切换并把旧 key 放入 `previous_hash_keys`，写入始终使用 active key，读取遍历 active + 历史 key 双读；确认历史数据自然淘汰（最长不超过登录尝试 / 会话保留期）后再移除旧 key。
+- 兼容：未配置 `hash_key`（local / test）时回退旧无盐 SHA-256；prod / staging 启动校验强制要求 `hash_key`，且 `identity_account.subject` 中的 `phone:<digest>` 只在新建 / 换绑时按新格式写入，存量账号保留旧值（不可反推）。
+
 ---
 
 ## 十、配置规划
@@ -659,15 +721,22 @@ identity:
   refresh_ttl: 168h
   session:
     idle_timeout: 72h
-    max_per_account: 10
+    absolute_ttl: 720h         # 设备绝对生命上限，必须大于 refresh_ttl
+    max_per_account: 10        # 单账号活跃设备上限，按 family 淘汰生效
+  retention:
+    session_days: 30           # 生产 >= 7
+    login_attempt_days: 180    # 生产 >= 180
+    cleanup_interval: 1h       # >= 1m
   revocation:
     driver: redis              # redis 为生产唯一实现
     failure_mode: fail_closed  # fail_closed|fail_open
     state_ttl: 30s             # 账号快照最大陈旧度，默认 min(access_ttl+1m, 60s)
   password:
-    min_length: 12
-    max_length: 128
-    require_complexity: true
+    min_length: 12             # >= 8
+    max_length: 128            # <= 4096
+    require_complexity: true   # 至少三类字符；显式 false 才关闭
+    max_concurrent: 0          # Argon2 并发上限；0=2×CPU
+    wait_timeout: 2s           # 获取槽位等待上限 [100ms, 30s]，超时 50300
   lockout:
     max_failures: 5
     window: 15m
@@ -675,10 +744,16 @@ identity:
   mfa:
     admin_required: true
     issuer: AdminFrame
-    secret_key: ""             # 仅非生产；生产走 ENT-07 密钥托管
+    secret_key: ""             # 旧格式回退密钥；仅非生产，生产走 ENT-07 密钥托管
+    active_key_id: ""          # keys 非空时必填
+    keys: []                   # [{id, key}] 密钥环；key 为 32 字节，生产走环境变量
   login_rate_limit:
     rps: 1
     burst: 5
+    failure_mode: fail_closed  # Redis 不可用时拒绝（生产强制）
+  hash_key: ""                 # PII / 短信码摘要主密钥，32 字节；prod/staging 必填，走 ADMIN_FRAME_IDENTITY_HASH_KEY
+  hash_key_id: v1              # 摘要前缀，仅 [A-Za-z0-9_-]，≤16 字节
+  previous_hash_keys: []       # 轮换期历史密钥 [{id, key}]，双读用
   sms:
     enabled: false
     driver: memory             # memory（本地 / 测试）| aliyun（生产必须）
@@ -690,8 +765,15 @@ identity:
     resend_interval: 60s
     daily_per_phone: 10
     hourly_per_ip: 30
+    daily_budget: 0            # 0=不限
+    breaker_failures: 5        # 连续可重试故障阈值
+    breaker_timeout: 60s       # 熔断打开时长 [1s, 10m]
   oauth:
     auto_provision: false
+    rate_limit:                # authorize / callback 全局限流（IDN-P2-05）
+      rps: 1
+      burst: 5
+      failure_mode: fail_closed
     providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, userinfo_url, redirect_uri, scopes, subject_field}]
 ```
 
@@ -700,13 +782,22 @@ identity:
 | 场景 | 规则 |
 |---|---|
 | 枚举 | `revocation.driver` 仅 `redis`；`failure_mode` 仅 `fail_closed` / `fail_open` |
-| 范围 | `access_ttl ∈ [5m, 1h]`；`refresh_ttl > access_ttl`；`idle_timeout > 0`；`max_failures ≥ 1` |
+| 范围 | `access_ttl ∈ [5m, 1h]`；`refresh_ttl > access_ttl`；`idle_timeout ∈ (0, refresh_ttl]`；`absolute_ttl > refresh_ttl`；`max_failures ≥ 1`；`max_per_account ≥ 1`（按 family 淘汰生效） |
+| 密码策略 | `password.min_length ∈ [8, max_length]`；`max_length ≤ 4096`；未配置时取 12～128 且 `require_complexity=true`；显式 `false` 才关闭复杂度 |
+| 密码并发 | `password.max_concurrent ≥ 0`（0=2×CPU）；`password.wait_timeout ∈ [100ms, 30s]`，0 取默认 2s；超出等待返回 50300 |
+| OAuth 限流 | `oauth.rate_limit.rps ≥ 0`、`burst ≥ 0`（0 取默认 1 / 5）；`failure_mode` 仅 `fail_closed` / `fail_open`，prod/staging 强制 `fail_closed` |
+| 短信熔断 | `sms.breaker_failures ≥ 0`（0=5）；`sms.breaker_timeout ∈ [1s, 10m]`，0 取默认 60s |
+| 持久化 | prod/staging 且 `identity.enabled=true` 时 `db.driver` 不得为 `memory`；运行时 `db.driver` 非 memory 但无数据库连接直接启动失败，禁止回退内存仓储 |
+| 审计出口 | prod/staging 且 `identity.enabled=true` 时 `async.enabled=true`（审计写入 Outbox）；启动日志输出 `identity audit sink`（`outbox` / `slog`） |
 | 撤销陈旧度 | `revocation.state_ttl ∈ [1s, 60s]`；未配置时取 `min(access_ttl+1m, 60s)`，禁止超过 60s |
 | 必填 | `identity.enabled=true` 时 `auth.mode` 必须为 `jwt`，且 `auth.jwt.active_kid` 存在 |
 | 生产强制 | `auth.mode=jwt`；`identity.enabled=true`；`revocation.driver=redis`；`revocation.failure_mode=fail_closed`；A 端 `mfa.admin_required=true` |
+| 限流 | `login_rate_limit.failure_mode` 仅 `fail_closed` / `fail_open`，prod/staging 强制 `fail_closed`；`sms.daily_budget ≥ 0` |
+| 可信代理 | `http.trusted_proxies` 每项必须是合法 CIDR；为空表示不解析 XFF |
 | 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空（C 端无可用登录方式） |
 | MFA 端别 | 仅 `channel=admin` 支持；`channel=biz` 设置 `mfa.admin_required=true` 启动失败；`channel=c` 忽略该配置 |
-| 密钥 | `secret_key` 不得写入示例配置；`admin_required=true` 时必填，须为 32 字节（raw / hex / base64 / base64url）；生产由环境变量注入，ENT-07 接入密钥托管后再切换 |
+| 密钥 | `secret_key` 不得写入示例配置；`admin_required=true` 时 `secret_key` 或 `keys` 至少一个；密钥须为 32 字节（raw / hex / base64 / base64url）；`keys` 非空时 `active_key_id` 必填且必须命中；生产由环境变量注入，ENT-07 接入密钥托管后再切换 |
+| 摘要密钥 | prod/staging **强制** `identity.hash_key`（32 字节，同编码规则）；`hash_key_id` 仅 `[A-Za-z0-9_-]` 且 ≤ 16 字节，缺省 `v1`；`previous_hash_keys[].id` 不得重复且不得与 active 相同；配置历史密钥但缺主密钥启动失败；示例配置中的 `hash_key` 必须为空 |
 | 脱敏 | `LogValue` 输出 `secret_key` 为掩码；provider `client_secret` 只输出是否配置 |
 
 环境变量前缀统一 `ADMIN_FRAME_IDENTITY_<SECTION>_<KEY>`（如 `ADMIN_FRAME_IDENTITY_REVOCATION_FAILURE_MODE`）。
@@ -722,21 +813,24 @@ identity:
 | 事件 | 触发 | 关键字段 | 说明 |
 |---|---|---|---|
 | `auth.login` | 登录成功 | `actor_id`、`channel`、`merchant_id`、`trace_id` | 不记录令牌 |
-| `auth.login_failed` | 登录失败 | 同上 + `reason`（`bad_credential` / `locked` / `disabled` / `mfa_pending`） | 文案对外统一 |
+| `auth.login_failed` | 登录失败；MFA 校验遇到 locked / disabled | 同上 + `reason`（`bad_credential` / `locked` / `disabled` / `mfa_pending`） | 文案对外统一；MFA 分支只在拒绝前写一条 |
+| `auth.account.created` | 短信自助开户 / OAuth 自动建号 | `actor_type`（OAuth 为 `system`）、`attrs.provider`（仅 provider 名） | 与账号写入同事务；不记录外部主体原文 |
 | `auth.logout` | 登出 / 会话撤销 | `actor_id`、`session_id` 摘要 | 幂等 |
 | `auth.token.refresh` | 刷新成功 | `actor_id`、`family_id` 摘要 | 不记录令牌 |
 | `auth.token.reused` | 刷新令牌重放 | 同上 + `reason=reuse_detected` | 触发整链撤销 |
 | `auth.token.revoked` | 单会话 / 全端撤销 | `actor_id`、`session_id` 摘要 | 含管理员操作 |
 | `auth.mfa.bound` | MFA 绑定完成 | `actor_id` | 不记录密钥 / 恢复码 |
 | `auth.mfa.failed` | MFA 校验失败 | `actor_id`、`reason` | 计入锁定 |
+| `auth.mfa.recovery_used` | 恢复码消费成功 | `actor_id`、`attrs.remaining` | 不记录码值；剩余数量用于告警 |
 | `auth.mfa.disabled` | MFA 解绑 | `actor_id` | 同时递增 `token_version` 并撤销全部会话 |
 | `auth.account.locked` | 达到失败阈值 | `actor_id`、`channel` | 由系统触发 |
 | `auth.account.disabled` | 管理员停用账号 | 操作人 + 目标账号 | 同时撤销会话 |
 
 ### 11.2 落库与一致性
 
-- 审计写入与账号 / 会话写入必须**同一事务**：复用 IAM 的 UnitOfWork + `async_outbox` 模式（`topic=audit.event`）。
+- 审计写入与账号 / 会话写入必须**同一事务**：复用 IAM 的 UnitOfWork + `async_outbox` 模式（`topic=audit.event`）；OAuth 自动建号的账号、外部身份映射与 `auth.account.created` 必须原子提交。
 - 内存模式（`db.driver=memory`）允许退化为直接 `SlogEmitter`，仅限 local / test。
+- 生产链路固定为 `identity.audit` Outbox → worker `AuditEventHandler`；在审计库 / SIEM 接入前，worker 输出结构化 `audit_event` 日志，必须配置日志采集与保留 ≥180 天（风险例外，需在部署清单中登记）。启动日志打印 `identity audit sink`，便于核对。
 - 审计失败时认证关键写入必须回滚（失败关闭）；禁止「登录成功但审计丢失」。
 - 事件不得包含令牌、密码、验证码、完整手机号、TOTP 密钥、恢复码。
 - 同步更新 [`docs/audit/EVENTS.md`](./audit/EVENTS.md) 与 `internal/shared/audit/actions.go`；新增 action 必须进入 `KnownActions()` 并由单测固定。
@@ -788,6 +882,7 @@ identity:
 - 错误信封沿用 `httpx` 统一格式；登录失败统一 `40100`，不区分账号不存在 / 密码错误。
 - 强制绑定 MFA：登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`；该票据只能调用 `mfa/setup` 与 `mfa/verify`，绑定成功后直接返回 `TokenPair`（§7.2.1）。
 - 认证端点必须声明 `Idempotency-Key` 可选策略（写接口），刷新与登出按幂等语义处理。
+- 禁止缓存（`IDN-P2-03`）：所有认证、账号与 `/me` 端点由路由层统一追加 `Cache-Control: no-store, no-cache, must-revalidate, private`、`Pragma: no-cache`、`Expires: 0`、`Vary: Authorization`（`pkg/httpx.NoStoreMiddleware`）；登录 / 刷新 / MFA setup 的敏感载荷禁止经浏览器或共享缓存复用。
 
 ### 12.3 OpenAPI
 
@@ -898,12 +993,14 @@ internal/identity/
 
 | 检查 | 规则 |
 |---|---|
-| 生产配置 | `env=prod` 时禁止 `auth.mode=demo`；强制 `identity.enabled=true`、`revocation.driver=redis`、`revocation.failure_mode=fail_closed`、A 端 `mfa.admin_required=true` |
+| 生产配置 | `env=prod` 时禁止 `auth.mode=demo`；强制 `identity.enabled=true`、`revocation.driver=redis`、`revocation.failure_mode=fail_closed`、A 端 `mfa.admin_required=true`、`db.driver != memory`、`async.enabled=true` |
 | 契约 | `api/openapi/{admin,biz,c}.yaml` 均存在 `login` / `refresh` / `logout` path |
 | 撤销路径 | `internal/security` 存在 `RevocationChecker` 引用，且有测试文件引用 |
 | 迁移 | `000001_create_identity_tables.{up,down}.sql` 成对存在，编号不重复 |
 | 审计 | 新增 action 在 `KnownActions()` 与 `EVENTS.md` 同时存在 |
-| 密钥 | 示例配置不含明文 `secret_key` / `client_secret` |
+| 密钥 | 示例配置不含明文 `secret_key` / `client_secret` / `hash_key`；`pkg/crypto/hasher.go` 存在已知向量测试 |
+| 安全响应头 | 三端认证路由统一挂 `pkg/httpx.NoStoreMiddleware`；`transport/*/router_test.go` 断言 login / mfa/setup / me 带 `no-store` |
+| 时序对齐 | 登录的账号不存在 / 无凭据 / locked / disabled 分支均调用 `PasswordService.VerifyDummy`；`TestLoginDummyVerifyAlignment` 固定该行为 |
 
 门禁必须验证「违规即失败」：在 PR 中提供临时违规样例的失败输出。
 
@@ -918,6 +1015,7 @@ internal/identity/
 | 刷新并发导致会话被误撤销 | 用户被登出 | 行锁 / 乐观锁 + 单请求成功语义 | 降低并发窗口、保留审计重放记录 |
 | 短信 / OAuth 供应商不稳定 | C 端无法登录 | 超时 + 熔断 + 降级提示；双登录方式 | 关闭该登录方式开关 |
 | TOTP 密钥泄露 | A 端账号被接管 | AES-GCM 加密、密钥托管、恢复码一次性 | 强制重置 MFA 并撤销全部会话 |
+| PII 摘要密钥泄露 / 轮换失误 | 旧摘要可被枚举或双读中断 | `hash_key` 仅环境变量注入；轮换保留 `previous_hash_keys` 双读，待历史数据过期后再移除 | 回退到上一 key 并恢复 `previous_hash_keys` 配置；无需回滚数据 |
 | 账号迁移遗漏 | 部分用户无法登录 | 导入脚本 + 核对报告 + 只增不删 | 回滚迁移并恢复备份 |
 | 审计与业务写入不同事务 | 审计丢失 | 复用 UnitOfWork + `async_outbox`；失败关闭 | 修复事务边界后重放 Outbox |
 

@@ -5,8 +5,8 @@
 | action | 端 | 说明 | 保留类别 | 最短保留 | status |
 |--------|----|------|----------|----------|--------|
 | `auth.login` | A/B/C | 登录成功 | 认证 | 180d | active |
-| `auth.login_failed` | A/B/C | 登录失败（含防爆破关联） | 认证 | 180d | active |
-| `auth.account.created` | A/B/C | 运维 seed CLI 开通账号（含首个管理员）/ C 端短信自助开户 | 认证 | 180d | active |
+| `auth.login_failed` | A/B/C | 登录失败（含防爆破关联）；MFA 校验遇到 locked / disabled 同样记此事件 | 认证 | 180d | active |
+| `auth.account.created` | A/B/C | 运维 seed CLI 开通账号（含首个管理员）/ C 端短信自助开户 / OAuth 自动建号（`actor_type=system`，仅记录 provider） | 认证 | 180d | active |
 | `auth.account.locked` | A/B/C | 登录失败达阈值触发账号锁定 | 认证 | 180d | active |
 | `auth.account.disabled` | A | 管理员停用账号（同时撤销全部会话） | 认证 | 180d | active |
 | `auth.account.enabled` | A | 管理员恢复停用账号 | 认证 | 180d | active |
@@ -24,6 +24,9 @@
 | `auth.mfa.failed` | A | MFA 动态码 / 恢复码校验失败 | 认证 | 180d | active |
 | `auth.mfa.disabled` | A | MFA 解绑（同时撤销全部会话） | 认证 | 180d | active |
 | `auth.mfa.reset` | A | 管理员重置 MFA 绑定（用户丢失 TOTP 与恢复码的兜底） | 认证 | 180d | active |
+| `auth.mfa.recovery_used` | A | 使用一次性恢复码完成 MFA（含剩余数量） | 认证 | 180d | active |
+| `auth.mfa.ticket_replay` | A | 强制绑定票据重放被拒绝（不计入失败次数） | 认证 | 180d | active |
+| `auth.session.evicted` | A/B/C | 超出单账号设备上限，最久未使用的设备被淘汰（同时撤销该设备） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
 | `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
 | `rbac.breakglass` | A | 破玻璃申请 / 审批 / 生效 / 撤销 | 权限 | 180d | active |
