@@ -35,7 +35,7 @@ func Register(
 	accountRead := permission(permMW, string(iam.PermIdentityAccountRead))
 
 	// 认证与账号端点可能返回令牌、MFA 密钥与账号敏感信息，统一禁止缓存（IDN-P2-03）。
-	secure := func(next http.Handler) http.Handler { return pkghttpx.NoStoreMiddleware(next) }
+	secure := pkghttpx.NoStoreMiddleware
 
 	mux.Handle("POST /admin/v1/auth/login", secure(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /admin/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))

@@ -599,9 +599,9 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionListQuery 解析设备会话分页参数。
-func sessionListQuery(r *http.Request) (string, int, error) {
-	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
-	limit := 0
+func sessionListQuery(r *http.Request) (cursor string, limit int, err error) {
+	cursor = strings.TrimSpace(r.URL.Query().Get("cursor"))
+	limit = 0
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {

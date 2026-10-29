@@ -46,7 +46,7 @@ const (
 	// MetricReasonOK 正常完成。
 	MetricReasonOK = "ok"
 	// MetricReasonBadCredential 账号不存在或凭据错误（对客户端统一文案）。
-	MetricReasonBadCredential = "bad_credential"
+	MetricReasonBadCredential = "bad_credential" //nolint:gosec // G101: 指标原因字面量，不是凭证
 	// MetricReasonMFARequired 需要完成两步验证。
 	MetricReasonMFARequired = "mfa_required"
 	// MetricReasonMFABindingRequired 需要先绑定 MFA。

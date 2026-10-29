@@ -60,7 +60,7 @@ func (r *MemoryMFAEnrollmentRepository) ConsumeRecoveryCode(
 	_ context.Context,
 	accountID, codeHash string,
 	now time.Time,
-) (int, bool, error) {
+) (remaining int, consumed bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	existing, ok := r.enrollments[accountID]

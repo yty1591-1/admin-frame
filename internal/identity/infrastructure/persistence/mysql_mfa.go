@@ -101,7 +101,7 @@ func (r *SQLMFAEnrollmentRepository) ConsumeRecoveryCode(
 	ctx context.Context,
 	accountID, codeHash string,
 	now time.Time,
-) (int, bool, error) {
+) (remaining int, consumed bool, err error) {
 	id, err := parseID(accountID)
 	if err != nil {
 		return 0, false, err
@@ -124,9 +124,9 @@ func (r *SQLMFAEnrollmentRepository) ConsumeRecoveryCode(
 	if err != nil {
 		return 0, false, apperr.Internal("check recovery code result failed", err)
 	}
-	remaining, countErr := r.recoveryCodeCount(ctx, id)
-	if countErr != nil {
-		return 0, false, countErr
+	remaining, err = r.recoveryCodeCount(ctx, id)
+	if err != nil {
+		return 0, false, err
 	}
 	return remaining, affected > 0, nil
 }

@@ -16,7 +16,7 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 		return
 	}
 	// 认证响应含令牌 / 验证码语义，统一禁止缓存（IDN-P2-03）。
-	secure := func(next http.Handler) http.Handler { return pkghttpx.NoStoreMiddleware(next) }
+	secure := pkghttpx.NoStoreMiddleware
 	if h.sms != nil {
 		mux.Handle("POST /c/v1/auth/sms/send", secure(http.HandlerFunc(h.SendSMSCode)))
 		mux.Handle("POST /c/v1/auth/sms/register", secure(http.HandlerFunc(h.Register)))
