@@ -16,6 +16,12 @@ import (
 const sodGroupSelectColumns = `id, channel, merchant_id, code, name, description,
 	max_active_roles, status, version, created_by, updated_by, created_at, updated_at, deleted_at`
 
+// sodGroupSelectColumnsAliased 是 JOIN 场景下的列清单：组表与组-角色关系表
+// 存在 id / channel / merchant_id / created_at 等同名列，不限定表别名会报
+// MySQL 1052（ambiguous column）。字段顺序必须与 sodGroupSelectColumns 一致。
+const sodGroupSelectColumnsAliased = `g.id, g.channel, g.merchant_id, g.code, g.name, g.description,
+	g.max_active_roles, g.status, g.version, g.created_by, g.updated_by, g.created_at, g.updated_at, g.deleted_at`
+
 // SQLSodGroupRepository 是 MySQL 8.0 的互斥角色组仓储实现。
 //
 // 组主体与组-角色关系在同一事务内写入，避免出现「组已生效、成员缺失」的中间态；
@@ -231,7 +237,7 @@ func (r *SQLSodGroupRepository) ListByRole(
 		return nil, err
 	}
 	rows, err := r.exec(ctx).QueryContext(ctx,
-		`SELECT `+sodGroupSelectColumns+`
+		`SELECT `+sodGroupSelectColumnsAliased+`
 		 FROM iam_sod_group g
 		 JOIN iam_sod_group_role gr ON gr.group_id = g.id
 		 WHERE g.deleted_at IS NULL
