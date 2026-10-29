@@ -12,7 +12,6 @@ import { Page } from '@vben/common-ui';
 import {
   Button,
   Drawer,
-  Input,
   message,
   Modal,
   Space,
@@ -108,7 +107,6 @@ const grantSubmitting = ref(false);
 const granting = ref<RoleTemplate>();
 const grantPermissions = ref<string[]>([]);
 const grantScopes = ref<DataScope[]>([]);
-const grantReason = ref('');
 
 const driftOpen = ref(false);
 const driftLoading = ref(false);
@@ -149,13 +147,6 @@ const editFields = computed<FormField[]>(() => [
     required: true,
   },
   { component: 'textarea', label: '描述', name: 'description', span: 2 },
-  {
-    component: 'textarea',
-    label: '变更原因',
-    name: 'reason',
-    rows: 2,
-    span: 2,
-  },
 ]);
 
 const instantiateFields: FormField[] = [
@@ -244,7 +235,6 @@ async function handleEdit(payload: Record<string, any>) {
     await updateTemplateApi(editing.value.id, {
       description: payload.description,
       name: payload.name,
-      reason: payload.reason,
       status: payload.status,
       version: editing.value.version,
     });
@@ -271,7 +261,6 @@ async function openGrant(item: RoleTemplate) {
   granting.value = item;
   grantPermissions.value = [...item.permissions];
   grantScopes.value = item.data_scopes.map((scope) => ({ ...scope }));
-  grantReason.value = '';
   grantOpen.value = true;
 }
 
@@ -284,7 +273,6 @@ async function saveGrant() {
     await replaceTemplatePermissionsApi(granting.value.id, {
       data_scopes: grantScopes.value,
       permissions: grantPermissions.value,
-      reason: grantReason.value,
       version: granting.value.version,
     });
     message.success('模板权限基线已保存');
@@ -524,10 +512,6 @@ onMounted(fetchList);
         <div>
           <p class="text-foreground mb-2 text-sm font-medium">数据范围</p>
           <DataScopeEditor v-model="grantScopes" />
-        </div>
-        <div>
-          <p class="text-muted-foreground mb-1 text-xs">变更原因</p>
-          <Input.TextArea v-model:value="grantReason" :rows="2" />
         </div>
       </div>
     </Drawer>

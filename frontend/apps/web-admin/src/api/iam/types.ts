@@ -369,7 +369,6 @@ export interface CreateTemplatePayload {
 export interface UpdateTemplatePayload {
   description?: string;
   name?: string;
-  reason?: string;
   status?: RoleStatus;
   version: number;
 }

@@ -103,8 +103,6 @@ components:
           type: integer
           format: int64
           minimum: 1
-        reason:
-          type: string
 
     ReplaceTemplatePermissionsRequest:
       type: object
@@ -124,8 +122,6 @@ components:
           type: integer
           format: int64
           minimum: 1
-        reason:
-          type: string
 
     DeleteRoleTemplateRequest:
       type: object

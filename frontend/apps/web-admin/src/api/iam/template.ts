@@ -63,7 +63,6 @@ export async function replaceTemplatePermissionsApi(
   payload: {
     data_scopes?: DataScope[];
     permissions: string[];
-    reason?: string;
     version: number;
   },
 ): Promise<RoleTemplate> {
