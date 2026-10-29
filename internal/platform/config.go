@@ -366,12 +366,12 @@ type IdentityHashKeyConfig struct {
 }
 
 // DecodeHashKeys 解码摘要密钥环；未配置主密钥时返回空。
-func (c IdentityConfig) DecodeHashKeys() (string, map[string][]byte, error) {
-	active := strings.TrimSpace(c.HashKeyID)
+func (c IdentityConfig) DecodeHashKeys() (active string, keys map[string][]byte, err error) {
+	active = strings.TrimSpace(c.HashKeyID)
 	if active == "" && strings.TrimSpace(c.HashKey) != "" {
 		active = "v1"
 	}
-	keys := make(map[string][]byte, 1+len(c.PreviousHashKeys))
+	keys = make(map[string][]byte, 1+len(c.PreviousHashKeys))
 	if strings.TrimSpace(c.HashKey) == "" {
 		if len(c.PreviousHashKeys) > 0 {
 			return "", nil, errors.New("identity.previous_hash_keys requires identity.hash_key")
@@ -1859,8 +1859,8 @@ func (c *Config) validateIdentity() []error {
 			errs = append(errs, keysErr)
 		}
 		active := strings.TrimSpace(c.Identity.MFA.ActiveKeyID)
-		switch {
-		case active == "":
+		switch active {
+		case "":
 			errs = append(errs, errors.New("identity.mfa.active_key_id is required when identity.mfa.keys is set"))
 		default:
 			if _, ok := keys[active]; !ok {
