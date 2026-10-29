@@ -51,6 +51,7 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 		"DELETE FROM identity_mfa",
 		"DELETE FROM identity_login_attempt",
 		"DELETE FROM identity_session",
+		"DELETE FROM identity_session_family",
 		"DELETE FROM identity_credential",
 		"DELETE FROM identity_account",
 		"DELETE FROM async_consumed",

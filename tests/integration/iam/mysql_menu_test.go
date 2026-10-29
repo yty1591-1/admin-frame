@@ -18,9 +18,9 @@ import (
 func insertMenu(ctx context.Context, t *testing.T, id int64, channel, code, parent, routeName string) error {
 	t.Helper()
 	_, err := testDB(t).ExecContext(ctx, `INSERT INTO iam_menu
-		(id, channel, code, parent_code, route_name, title, updated_by, created_at, updated_at)
-		VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, 'itest', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`,
-		id, channel, code, parent, routeName, "集成测试菜单")
+		(id, channel, code, parent_code, route_name, route_path, title, updated_by, created_at, updated_at)
+		VALUES (?, ?, ?, NULLIF(?, ''), ?, CONCAT('/', REPLACE(?, '.', '/')), ?, 'itest', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`,
+		id, channel, code, parent, routeName, code, "集成测试菜单")
 	return err
 }
 
