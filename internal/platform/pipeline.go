@@ -4,14 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 	"github.com/admin-frame/admin-frame/pkg/idempotency"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/middleware"
@@ -43,6 +42,8 @@ type PipelineDeps struct {
 	Tracer  *tracing.Provider
 	// Redis 共享客户端；限流 / 幂等 driver=redis 时必需。
 	Redis *redis.Client
+	// ClientIP 是可信代理解析器；nil 表示不信任任何代理头。
+	ClientIP *pkghttpx.ClientIPResolver
 }
 
 // NewPipeline 按固定顺序装配入口中间件。
@@ -80,7 +81,7 @@ func NewPipeline(cfg PipelineConfig, deps PipelineDeps) (func(http.Handler) http
 	if cfg.BodyLimitBytes > 0 {
 		mws = append(mws, bodyLimit(cfg.BodyLimitBytes))
 	}
-	limited, err := newRateLimit(cfg.RateLimit, cfg.Channel, deps.Redis)
+	limited, err := newRateLimit(cfg.RateLimit, cfg.Channel, deps.Redis, deps.ClientIP)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,12 @@ func bodyLimit(limit int64) middleware.Middleware {
 }
 
 // newRateLimit 构造按调用方分桶的令牌桶限流中间件。
-func newRateLimit(cfg RateLimitConfig, channel string, redisClient *redis.Client) (middleware.Middleware, error) {
+func newRateLimit(
+	cfg RateLimitConfig,
+	channel string,
+	redisClient *redis.Client,
+	clientIP *pkghttpx.ClientIPResolver,
+) (middleware.Middleware, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -153,7 +159,7 @@ func newRateLimit(cfg RateLimitConfig, channel string, redisClient *redis.Client
 	}
 	return middleware.RateLimit(middleware.RateLimitConfig{
 		Buckets: buckets,
-		KeyFunc: rateLimitKeyFunc(cfg.Key, channel),
+		KeyFunc: rateLimitKeyFunc(cfg.Key, channel, clientIP),
 		OnLimited: func(w http.ResponseWriter, r *http.Request, result ratelimit.Result) {
 			if result.RetryAfter > 0 {
 				w.Header().Set("Retry-After", middleware.RetryAfterSeconds(result.RetryAfter))
@@ -194,9 +200,9 @@ func newIdempotency(cfg IdempotencyConfig, redisClient *redis.Client) (middlewar
 }
 
 // rateLimitKeyFunc 按策略生成限流键；身份未建立时回退客户端 IP，避免匿名流量共享单桶。
-func rateLimitKeyFunc(strategy, channel string) func(*http.Request) string {
+func rateLimitKeyFunc(strategy, channel string, resolver *pkghttpx.ClientIPResolver) func(*http.Request) string {
 	return func(r *http.Request) string {
-		ip := clientIP(r)
+		ip := resolver.ClientIP(r)
 		identity := contextx.IdentityFrom(r.Context())
 		switch strategy {
 		case RateLimitKeyClient:
@@ -215,18 +221,4 @@ func rateLimitKeyFunc(strategy, channel string) func(*http.Request) string {
 			return channel
 		}
 	}
-}
-
-// clientIP 返回客户端 IP；代理场景取 X-Forwarded-For 首段。
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

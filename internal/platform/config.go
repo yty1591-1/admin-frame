@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/pkg/config"
+	"github.com/admin-frame/admin-frame/pkg/password"
 )
 
 // envPrefix 是本进程所有环境变量的统一前缀（CONFIG_STANDARDS CFG-04）。
@@ -82,12 +84,22 @@ type IdentityConfig struct {
 	RefreshTTL time.Duration `yaml:"refresh_ttl"`
 	// Session 会话策略。
 	Session IdentitySessionConfig `yaml:"session"`
+	// Retention 身份域数据保留与清理策略。
+	Retention IdentityRetentionConfig `yaml:"retention"`
 	// Revocation 撤销存储参数。
 	Revocation IdentityRevocationConfig `yaml:"revocation"`
 	// Lockout 登录失败锁定策略。
 	Lockout IdentityLockoutConfig `yaml:"lockout"`
 	// LoginRateLimit 登录限流参数。
 	LoginRateLimit IdentityLoginRateLimitConfig `yaml:"login_rate_limit"`
+	// Password 密码强度策略（IDN-P2-01）；未配置时使用内置默认值。
+	Password IdentityPasswordConfig `yaml:"password"`
+	// HashKey 是 PII / 短信码摘要的 HMAC 主密钥（32 字节），生产必填（IDN-P1-06）。
+	HashKey string `yaml:"hash_key"`
+	// HashKeyID 写入摘要前缀；默认 v1。
+	HashKeyID string `yaml:"hash_key_id"`
+	// PreviousHashKeys 轮换期的历史密钥，用于双读。
+	PreviousHashKeys []IdentityHashKeyConfig `yaml:"previous_hash_keys"`
 	// MFA A 端多因素认证参数。
 	MFA IdentityMFAConfig `yaml:"mfa"`
 	// SMS C 端短信验证码参数。
@@ -118,12 +130,32 @@ type IdentitySMSConfig struct {
 	DailyPerPhone int `yaml:"daily_per_phone"`
 	// HourlyPerIP 同一 IP 每小时发送上限，默认 30。
 	HourlyPerIP int `yaml:"hourly_per_ip"`
+	// DailyBudget 全局日发送预算；0 表示不限制（IDN-P1-04）。
+	DailyBudget int `yaml:"daily_budget"`
+	// BreakerFailures 连续失败达到该值后打开供应商熔断；0 表示默认 5（IDN-P2-05）。
+	BreakerFailures int `yaml:"breaker_failures"`
+	// BreakerTimeout 熔断打开持续时间；0 表示默认 60s，范围 [1s, 10m]。
+	BreakerTimeout time.Duration `yaml:"breaker_timeout"`
 }
+
+// SMS 供应商熔断默认值（IDN-P2-05）。
+const (
+	// identityDefaultSMSBreakerFailures 连续失败阈值。
+	identityDefaultSMSBreakerFailures = 5
+	// identityDefaultSMSBreakerTimeout 熔断打开时长。
+	identityDefaultSMSBreakerTimeout = 60 * time.Second
+	// identityMinSMSBreakerTimeout 允许配置的最小熔断时长。
+	identityMinSMSBreakerTimeout = time.Second
+	// identityMaxSMSBreakerTimeout 允许配置的最大熔断时长。
+	identityMaxSMSBreakerTimeout = 10 * time.Minute
+)
 
 // IdentityOAuthConfig 是 C 端 OAuth 授权码登录参数（docs/identity-authn.md §8.2 / §10）。
 type IdentityOAuthConfig struct {
 	// AutoProvision 未映射身份是否自动建号；默认关闭（失败关闭）。
 	AutoProvision bool `yaml:"auto_provision"`
+	// RateLimit authorize / callback 的 IP 级与全局限流（IDN-P2-05）。
+	RateLimit IdentityLoginRateLimitConfig `yaml:"rate_limit"`
 	// Providers 已配置的第三方身份提供方；为空时不注册 OAuth 路由。
 	Providers []IdentityOAuthProviderConfig `yaml:"providers"`
 }
@@ -162,14 +194,69 @@ type IdentityMFAConfig struct {
 	// Issuer 写入 otpauth URI，默认 AdminFrame。
 	Issuer string `yaml:"issuer"`
 	// SecretKey 是 TOTP 密钥的 AES-256 主密钥，仅允许通过环境变量注入（SEC-01）。
+	// 未配置 keys 时作为唯一密钥；配置 keys 后作为旧密文的解密回退。
 	SecretKey string `yaml:"secret_key"`
+	// Keys 是 MFA 密钥环，支持按 key id 轮换（IDN-P1-05）。
+	Keys []IdentityMFAKeyConfig `yaml:"keys"`
+	// ActiveKeyID 指定当前加密密钥；Keys 非空时必填。
+	ActiveKeyID string `yaml:"active_key_id"`
+}
+
+// IdentityMFAKeyConfig 是密钥环中的一项。
+type IdentityMFAKeyConfig struct {
+	// ID key id，最长 16 字节，写入密文头。
+	ID string `yaml:"id"`
+	// Key 32 字节密钥（raw / hex / base64 / base64url），生产走环境变量。
+	Key string `yaml:"key"`
+}
+
+// DecodeKeys 解码密钥环；id 重复、缺失或密钥非法时返回错误。
+func (m IdentityMFAConfig) DecodeKeys() (map[string][]byte, error) {
+	if len(m.Keys) == 0 {
+		return nil, nil
+	}
+	keys := make(map[string][]byte, len(m.Keys))
+	for _, item := range m.Keys {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return nil, errors.New("identity.mfa.keys id is required")
+		}
+		if len(id) > 16 {
+			return nil, errors.New("identity.mfa.keys id must be <= 16 bytes")
+		}
+		if _, dup := keys[id]; dup {
+			return nil, fmt.Errorf("identity.mfa.keys has duplicate id: %s", id)
+		}
+		key, err := decodeMFAKey(item.Key)
+		if err != nil {
+			return nil, err
+		}
+		if key == nil {
+			return nil, fmt.Errorf("identity.mfa.keys key is required for id %s", id)
+		}
+		keys[id] = key
+	}
+	return keys, nil
 }
 
 // DecodeSecretKey 解码 mfa.secret_key；未配置时返回 nil，不做长度校验。
 //
 // 依次尝试 32 字节原始值、hex、标准 Base64、RawURL Base64，均失败返回错误。
 func (m IdentityMFAConfig) DecodeSecretKey() ([]byte, error) {
-	raw := strings.TrimSpace(m.SecretKey)
+	if strings.TrimSpace(m.SecretKey) == "" {
+		return nil, nil
+	}
+	return decodeMFAKey(m.SecretKey)
+}
+
+// decodeMFAKey 解码 32 字节密钥；空值返回 (nil, nil)。
+func decodeMFAKey(value string) ([]byte, error) {
+	return decodeKey(value, "identity.mfa.secret_key")
+}
+
+// decodeKey 解码 32 字节密钥并附带字段路径；空值返回 (nil, nil)。
+func decodeKey(value, field string) ([]byte, error) {
+	raw := strings.TrimSpace(value)
 	if raw == "" {
 		return nil, nil
 	}
@@ -185,15 +272,28 @@ func (m IdentityMFAConfig) DecodeSecretKey() ([]byte, error) {
 	if decoded, err := base64.RawURLEncoding.DecodeString(raw); err == nil && len(decoded) == 32 {
 		return decoded, nil
 	}
-	return nil, errors.New("identity.mfa.secret_key must be a 32-byte key encoded as raw, hex, base64 or base64url")
+	return nil, fmt.Errorf("%s must be a 32-byte key encoded as raw, hex, base64 or base64url", field)
 }
 
 // IdentitySessionConfig 是会话策略参数。
 type IdentitySessionConfig struct {
 	// IdleTimeout 会话空闲上限；必须为正且不超过 refresh_ttl。
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
+	// AbsoluteTTL 设备绝对生命上限；刷新令牌只能在该上限内滑动续期（IDN-P1-07）。
+	// 必须大于 refresh_ttl，默认 720h（30d）。
+	AbsoluteTTL time.Duration `yaml:"absolute_ttl"`
 	// MaxPerAccount 单账号最大活跃会话数。
 	MaxPerAccount int `yaml:"max_per_account"`
+}
+
+// IdentityRetentionConfig 是身份域数据保留与清理策略（IDN-P1-01）。
+type IdentityRetentionConfig struct {
+	// SessionDays rotated / revoked / expired 会话与设备的保留天数；生产 ≥7。
+	SessionDays int `yaml:"session_days"`
+	// LoginAttemptDays 登录尝试记录保留天数；生产 ≥180。
+	LoginAttemptDays int `yaml:"login_attempt_days"`
+	// CleanupInterval worker 清理任务执行间隔；默认 1h。
+	CleanupInterval time.Duration `yaml:"cleanup_interval"`
 }
 
 // 账号撤销快照陈旧度边界，与 internal/identity/app 保持一致（docs/identity-authn.md §6.1）。
@@ -214,6 +314,42 @@ type IdentityRevocationConfig struct {
 	StateTTL time.Duration `yaml:"state_ttl"`
 }
 
+// 密码策略边界，与 internal/identity/app 默认值保持一致（docs/identity-authn.md §10）。
+const (
+	// identityDefaultPasswordMinLength 默认最小字符数。
+	identityDefaultPasswordMinLength = 12
+	// identityDefaultPasswordMaxLength 默认最大字符数。
+	identityDefaultPasswordMaxLength = 128
+	// identityMinPasswordLength 允许配置的最小长度下限。
+	identityMinPasswordLength = 8
+)
+
+// 密码校验并发保护默认值（IDN-P2-05）。
+const (
+	// identityDefaultPasswordWaitTimeout 获取并发槽位的默认等待上限。
+	identityDefaultPasswordWaitTimeout = 2 * time.Second
+	// identityMinPasswordWaitTimeout 允许配置的最小等待上限。
+	identityMinPasswordWaitTimeout = 100 * time.Millisecond
+	// identityMaxPasswordWaitTimeout 允许配置的最大等待上限。
+	identityMaxPasswordWaitTimeout = 30 * time.Second
+)
+
+// IdentityPasswordConfig 是密码强度策略（IDN-P2-01）与 Argon2 并发保护（IDN-P2-05）。
+//
+// 零值字段由默认策略填充：12～128 字符且要求复杂度；显式配置时以配置为准。
+type IdentityPasswordConfig struct {
+	// MinLength 最小字符数；0 表示使用默认 12。
+	MinLength int `yaml:"min_length"`
+	// MaxLength 最大字符数；0 表示使用默认 128。
+	MaxLength int `yaml:"max_length"`
+	// RequireComplexity 是否要求至少三类字符；nil 表示使用默认 true。
+	RequireComplexity *bool `yaml:"require_complexity"`
+	// MaxConcurrent 同时执行的密码哈希 / 校验上限；0 表示默认 2×CPU（IDN-P2-05）。
+	MaxConcurrent int `yaml:"max_concurrent"`
+	// WaitTimeout 获取并发槽位的等待上限；0 表示默认 2s，超时返回 50300。
+	WaitTimeout time.Duration `yaml:"wait_timeout"`
+}
+
 // IdentityLockoutConfig 是登录失败锁定参数。
 type IdentityLockoutConfig struct {
 	MaxFailures int           `yaml:"max_failures"`
@@ -221,10 +357,61 @@ type IdentityLockoutConfig struct {
 	Duration    time.Duration `yaml:"duration"`
 }
 
-// IdentityLoginRateLimitConfig 是登录限流参数。
+// IdentityHashKeyConfig 是摘要历史密钥。
+type IdentityHashKeyConfig struct {
+	// ID key id，仅允许字母 / 数字 / 下划线 / 短横线，最长 16 字节。
+	ID string `yaml:"id"`
+	// Key 32 字节密钥（raw / hex / base64 / base64url）。
+	Key string `yaml:"key"`
+}
+
+// DecodeHashKeys 解码摘要密钥环；未配置主密钥时返回空。
+func (c IdentityConfig) DecodeHashKeys() (string, map[string][]byte, error) {
+	active := strings.TrimSpace(c.HashKeyID)
+	if active == "" && strings.TrimSpace(c.HashKey) != "" {
+		active = "v1"
+	}
+	keys := make(map[string][]byte, 1+len(c.PreviousHashKeys))
+	if strings.TrimSpace(c.HashKey) == "" {
+		if len(c.PreviousHashKeys) > 0 {
+			return "", nil, errors.New("identity.previous_hash_keys requires identity.hash_key")
+		}
+		return "", nil, nil
+	}
+	key, err := decodeKey(c.HashKey, "identity.hash_key")
+	if err != nil {
+		return "", nil, err
+	}
+	if key == nil {
+		return "", nil, errors.New("identity.hash_key is required")
+	}
+	keys[active] = key
+	for _, item := range c.PreviousHashKeys {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return "", nil, errors.New("identity.previous_hash_keys id is required")
+		}
+		if _, dup := keys[id]; dup {
+			return "", nil, fmt.Errorf("identity.previous_hash_keys has duplicate id: %s", id)
+		}
+		previous, decodeErr := decodeKey(item.Key, "identity.previous_hash_keys.key")
+		if decodeErr != nil {
+			return "", nil, decodeErr
+		}
+		if previous == nil {
+			return "", nil, fmt.Errorf("identity.previous_hash_keys key is required for id %s", id)
+		}
+		keys[id] = previous
+	}
+	return active, keys, nil
+}
+
+// IdentityLoginRateLimitConfig 是登录限流参数（账号级与 IP 级双维度）。
 type IdentityLoginRateLimitConfig struct {
 	RPS   float64 `yaml:"rps"`
 	Burst int     `yaml:"burst"`
+	// FailureMode Redis 故障策略：fail_closed（默认）| fail_open；prod/staging 强制 fail_closed。
+	FailureMode string `yaml:"failure_mode"`
 }
 
 // ID 节点号来源（id.node_id_source）。
@@ -527,6 +714,9 @@ type HTTPConfig struct {
 	Timeout time.Duration `yaml:"timeout"`
 	// BodyLimitBytes 请求体上限；≤0 表示不限制（文件上传接口须显式放大）。
 	BodyLimitBytes int64 `yaml:"body_limit_bytes"`
+	// TrustedProxies 可信代理 CIDR 列表；只有来自这些地址的请求才解析 X-Forwarded-For。
+	// 为空表示不信任任何代理头，直接使用 RemoteAddr（IDN-P1-04）。
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // RateLimitConfig 入口限流（REL-05）；按调用方维度分桶（见 middleware.DefaultRateLimitKey）。
@@ -928,8 +1118,20 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.Session.IdleTimeout == 0 {
 		c.Identity.Session.IdleTimeout = 72 * time.Hour
 	}
+	if c.Identity.Session.AbsoluteTTL == 0 {
+		c.Identity.Session.AbsoluteTTL = 720 * time.Hour
+	}
 	if c.Identity.Session.MaxPerAccount == 0 {
 		c.Identity.Session.MaxPerAccount = 10
+	}
+	if c.Identity.Retention.SessionDays == 0 {
+		c.Identity.Retention.SessionDays = 30
+	}
+	if c.Identity.Retention.LoginAttemptDays == 0 {
+		c.Identity.Retention.LoginAttemptDays = 180
+	}
+	if c.Identity.Retention.CleanupInterval == 0 {
+		c.Identity.Retention.CleanupInterval = time.Hour
 	}
 	if c.Identity.Revocation.Driver == "" {
 		c.Identity.Revocation.Driver = IdentityRevocationDriverRedis
@@ -960,6 +1162,24 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.LoginRateLimit.Burst == 0 {
 		c.Identity.LoginRateLimit.Burst = 5
 	}
+	if c.Identity.LoginRateLimit.FailureMode == "" {
+		c.Identity.LoginRateLimit.FailureMode = RateLimitFailureClosed
+	}
+	if c.Identity.HashKeyID == "" && strings.TrimSpace(c.Identity.HashKey) != "" {
+		c.Identity.HashKeyID = "v1"
+	}
+	if c.Identity.Password.WaitTimeout == 0 {
+		c.Identity.Password.WaitTimeout = identityDefaultPasswordWaitTimeout
+	}
+	if c.Identity.OAuth.RateLimit.RPS == 0 {
+		c.Identity.OAuth.RateLimit.RPS = 1
+	}
+	if c.Identity.OAuth.RateLimit.Burst == 0 {
+		c.Identity.OAuth.RateLimit.Burst = 5
+	}
+	if c.Identity.OAuth.RateLimit.FailureMode == "" {
+		c.Identity.OAuth.RateLimit.FailureMode = RateLimitFailureClosed
+	}
 	if c.Identity.MFA.Issuer == "" {
 		c.Identity.MFA.Issuer = identityDefaultMFAIssuer
 	}
@@ -980,6 +1200,12 @@ func (c *Config) applyIdentityDefaults() {
 	}
 	if c.Identity.SMS.HourlyPerIP == 0 {
 		c.Identity.SMS.HourlyPerIP = 30
+	}
+	if c.Identity.SMS.BreakerFailures == 0 {
+		c.Identity.SMS.BreakerFailures = identityDefaultSMSBreakerFailures
+	}
+	if c.Identity.SMS.BreakerTimeout == 0 {
+		c.Identity.SMS.BreakerTimeout = identityDefaultSMSBreakerTimeout
 	}
 	for i := range c.Identity.OAuth.Providers {
 		if strings.TrimSpace(c.Identity.OAuth.Providers[i].SubjectField) == "" {
@@ -1177,6 +1403,14 @@ func (c *Config) validateHTTP() []error {
 	}
 	if c.HTTP.BodyLimitBytes < 0 {
 		errs = append(errs, errors.New("http.body_limit_bytes must be >= 0"))
+	}
+	for _, raw := range c.HTTP.TrustedProxies {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(raw)); err != nil {
+			errs = append(errs, errors.New("http.trusted_proxies must be valid CIDR"))
+		}
 	}
 	return errs
 }
@@ -1454,6 +1688,21 @@ func (c *Config) validateIAM() []error {
 	return errs
 }
 
+// validHashKeyID 报告 key id 是否仅含字母 / 数字 / 下划线 / 短横线且长度 ≤16。
+func validHashKeyID(id string) bool {
+	if id == "" || len(id) > 16 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // validateIdentity 校验身份域开关、TTL、撤销存储与端别约束（docs/identity-authn.md §10.2）。
 //
 // 未启用时不校验派生字段，保持历史配置可直接启动；错误只包含字段路径。
@@ -1478,8 +1727,30 @@ func (c *Config) validateIdentity() []error {
 	if c.Identity.Session.IdleTimeout <= 0 || c.Identity.Session.IdleTimeout > c.Identity.RefreshTTL {
 		errs = append(errs, errors.New("identity.session.idle_timeout must be in (0, identity.refresh_ttl]"))
 	}
+	// 0 表示由默认值填充（直接构造 Config 的单测路径），不作为非法值处理。
+	if c.Identity.Session.AbsoluteTTL != 0 && c.Identity.Session.AbsoluteTTL <= c.Identity.RefreshTTL {
+		errs = append(errs, errors.New("identity.session.absolute_ttl must be greater than identity.refresh_ttl"))
+	}
 	if c.Identity.Session.MaxPerAccount < 1 {
 		errs = append(errs, errors.New("identity.session.max_per_account must be >= 1"))
+	}
+	// 身份域账号与会话必须跨重启保留并跨副本可见（IDN-P2-01）。
+	if isProdLikeEnv(c.Env) && c.DB.Driver == "memory" {
+		errs = append(errs, errors.New("db.driver must not be memory when identity.enabled=true in prod/staging"))
+	}
+	// 生产必须把认证审计落库（Outbox），禁止仅写进程日志（IDN-P2-01）。
+	if isProdLikeEnv(c.Env) && !c.Async.Enabled {
+		errs = append(errs, errors.New("async.enabled must be true when identity.enabled=true in prod/staging"))
+	}
+	errs = append(errs, c.validateIdentityPassword()...)
+	if c.Identity.Retention.SessionDays < 7 {
+		errs = append(errs, errors.New("identity.retention.session_days must be >= 7"))
+	}
+	if c.Identity.Retention.LoginAttemptDays < 180 {
+		errs = append(errs, errors.New("identity.retention.login_attempt_days must be >= 180"))
+	}
+	if c.Identity.Retention.CleanupInterval < time.Minute {
+		errs = append(errs, errors.New("identity.retention.cleanup_interval must be >= 1m"))
 	}
 	switch c.Identity.Revocation.Driver {
 	case IdentityRevocationDriverRedis:
@@ -1521,6 +1792,39 @@ func (c *Config) validateIdentity() []error {
 	if c.Identity.LoginRateLimit.Burst < 1 {
 		errs = append(errs, errors.New("identity.login_rate_limit.burst must be >= 1"))
 	}
+	switch c.Identity.LoginRateLimit.FailureMode {
+	// 空值表示由默认值填充（直接构造 Config 的单测路径）。
+	case "", RateLimitFailureClosed, RateLimitFailureOpen:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.login_rate_limit.failure_mode: %s", c.Identity.LoginRateLimit.FailureMode))
+	}
+	if isProdLikeEnv(c.Env) && c.Identity.LoginRateLimit.FailureMode == RateLimitFailureOpen {
+		errs = append(errs, errors.New("identity.login_rate_limit.failure_mode must be fail_closed in prod/staging"))
+	}
+	// 摘要主密钥：生产必须配置，轮换期的历史密钥只用于双读。
+	if isProdLikeEnv(c.Env) && strings.TrimSpace(c.Identity.HashKey) == "" {
+		errs = append(errs, errors.New("identity.hash_key is required in prod/staging"))
+	}
+	if c.Identity.HashKey != "" || len(c.Identity.PreviousHashKeys) > 0 {
+		active, keys, hashErr := c.Identity.DecodeHashKeys()
+		if hashErr != nil {
+			errs = append(errs, hashErr)
+		} else {
+			if !validHashKeyID(active) {
+				errs = append(errs, fmt.Errorf("identity.hash_key_id is invalid: %q", active))
+			}
+			for _, item := range c.Identity.PreviousHashKeys {
+				if !validHashKeyID(strings.TrimSpace(item.ID)) {
+					errs = append(errs, fmt.Errorf("identity.previous_hash_keys id is invalid: %q", item.ID))
+				}
+			}
+			for id := range keys {
+				if !validHashKeyID(id) {
+					errs = append(errs, fmt.Errorf("identity hash key id is invalid: %q", id))
+				}
+			}
+		}
+	}
 	// MFA 仅 A 端实现（docs/identity-authn.md §7）：B / C 端既不校验也不支持绑定。
 	switch c.Channel {
 	case "admin":
@@ -1528,11 +1832,16 @@ func (c *Config) validateIdentity() []error {
 			errs = append(errs, errors.New("identity.mfa.admin_required must be true in prod/staging"))
 		}
 		if c.Identity.MFA.AdminRequired {
+			keys, keysErr := c.Identity.MFA.DecodeKeys()
+			if keysErr != nil {
+				errs = append(errs, keysErr)
+			}
 			key, err := c.Identity.MFA.DecodeSecretKey()
 			if err != nil {
 				errs = append(errs, err)
-			} else if key == nil {
-				errs = append(errs, errors.New("identity.mfa.secret_key is required when identity.mfa.admin_required=true"))
+			}
+			if len(keys) == 0 && key == nil {
+				errs = append(errs, errors.New("identity.mfa.secret_key or identity.mfa.keys is required when identity.mfa.admin_required=true"))
 			}
 		}
 	case "biz":
@@ -1544,8 +1853,60 @@ func (c *Config) validateIdentity() []error {
 	if strings.TrimSpace(c.Identity.MFA.Issuer) == "" {
 		errs = append(errs, errors.New("identity.mfa.issuer must not be empty"))
 	}
+	if len(c.Identity.MFA.Keys) > 0 {
+		keys, keysErr := c.Identity.MFA.DecodeKeys()
+		if keysErr != nil {
+			errs = append(errs, keysErr)
+		}
+		active := strings.TrimSpace(c.Identity.MFA.ActiveKeyID)
+		switch {
+		case active == "":
+			errs = append(errs, errors.New("identity.mfa.active_key_id is required when identity.mfa.keys is set"))
+		default:
+			if _, ok := keys[active]; !ok {
+				errs = append(errs, fmt.Errorf("identity.mfa.active_key_id %q is not in identity.mfa.keys", active))
+			}
+		}
+	}
 	errs = append(errs, c.validateIdentitySMS()...)
 	errs = append(errs, c.validateIdentityOAuth()...)
+	return errs
+}
+
+// validateIdentityPassword 校验密码策略范围（IDN-P2-01）。
+//
+// 零值字段按默认策略（12～128）处理；错误只包含字段路径与边界值。
+func (c *Config) validateIdentityPassword() []error {
+	var errs []error
+	minLength := c.Identity.Password.MinLength
+	if minLength == 0 {
+		minLength = identityDefaultPasswordMinLength
+	}
+	maxLength := c.Identity.Password.MaxLength
+	if maxLength == 0 {
+		maxLength = identityDefaultPasswordMaxLength
+	}
+	if minLength < identityMinPasswordLength {
+		errs = append(errs, fmt.Errorf("identity.password.min_length must be >= %d", identityMinPasswordLength))
+	}
+	if maxLength < minLength {
+		errs = append(errs, errors.New("identity.password.max_length must be >= identity.password.min_length"))
+	}
+	if maxLength > password.MaxPasswordBytes {
+		errs = append(errs, fmt.Errorf("identity.password.max_length must be <= %d", password.MaxPasswordBytes))
+	}
+	if c.Identity.Password.MaxConcurrent < 0 {
+		errs = append(errs, errors.New("identity.password.max_concurrent must be >= 0"))
+	}
+	// 0 表示由默认值填充（2s）。
+	if c.Identity.Password.WaitTimeout != 0 {
+		if c.Identity.Password.WaitTimeout < identityMinPasswordWaitTimeout {
+			errs = append(errs, errors.New("identity.password.wait_timeout must be >= 100ms"))
+		}
+		if c.Identity.Password.WaitTimeout > identityMaxPasswordWaitTimeout {
+			errs = append(errs, errors.New("identity.password.wait_timeout must be <= 30s"))
+		}
+	}
 	return errs
 }
 
@@ -1587,6 +1948,21 @@ func (c *Config) validateIdentitySMS() []error {
 	if sms.HourlyPerIP < 1 {
 		errs = append(errs, errors.New("identity.sms.hourly_per_ip must be >= 1"))
 	}
+	if sms.DailyBudget < 0 {
+		errs = append(errs, errors.New("identity.sms.daily_budget must be >= 0"))
+	}
+	if sms.BreakerFailures < 0 {
+		errs = append(errs, errors.New("identity.sms.breaker_failures must be >= 0"))
+	}
+	// 0 表示由默认值填充（60s）。
+	if sms.BreakerTimeout != 0 {
+		if sms.BreakerTimeout < identityMinSMSBreakerTimeout {
+			errs = append(errs, errors.New("identity.sms.breaker_timeout must be >= 1s"))
+		}
+		if sms.BreakerTimeout > identityMaxSMSBreakerTimeout {
+			errs = append(errs, errors.New("identity.sms.breaker_timeout must be <= 10m"))
+		}
+	}
 	if isProdLikeEnv(c.Env) && driver == IdentitySMSDriverMemory {
 		errs = append(errs, errors.New("identity.sms.driver must not be memory in prod/staging"))
 	}
@@ -1603,6 +1979,24 @@ func (c *Config) validateIdentityOAuth() []error {
 	if c.Channel == "c" && isProdLikeEnv(c.Env) &&
 		!c.Identity.SMS.Enabled && len(providers) == 0 {
 		errs = append(errs, errors.New("channel=c requires identity.sms.enabled or at least one identity.oauth.providers in prod/staging"))
+	}
+	if len(providers) > 0 {
+		rate := c.Identity.OAuth.RateLimit
+		// 0 表示由默认值填充（1 rps / burst 5），直接构造 Config 的单测路径依赖该语义。
+		if rate.RPS < 0 {
+			errs = append(errs, errors.New("identity.oauth.rate_limit.rps must be >= 0"))
+		}
+		if rate.Burst < 0 {
+			errs = append(errs, errors.New("identity.oauth.rate_limit.burst must be >= 0"))
+		}
+		switch rate.FailureMode {
+		case "", RateLimitFailureClosed, RateLimitFailureOpen:
+		default:
+			errs = append(errs, fmt.Errorf("unsupported identity.oauth.rate_limit.failure_mode: %s", rate.FailureMode))
+		}
+		if isProdLikeEnv(c.Env) && rate.FailureMode == RateLimitFailureOpen {
+			errs = append(errs, errors.New("identity.oauth.rate_limit.failure_mode must be fail_closed in prod/staging"))
+		}
 	}
 	seen := make(map[string]struct{}, len(providers))
 	for i, provider := range providers {

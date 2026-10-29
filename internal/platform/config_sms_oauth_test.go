@@ -61,6 +61,11 @@ func cBaseConfig() *platform.Config {
 				IdleTimeout:   72 * time.Hour,
 				MaxPerAccount: 10,
 			},
+			Retention: platform.IdentityRetentionConfig{
+				SessionDays:      30,
+				LoginAttemptDays: 180,
+				CleanupInterval:  time.Hour,
+			},
 			Revocation: platform.IdentityRevocationConfig{
 				Driver:      platform.IdentityRevocationDriverRedis,
 				FailureMode: platform.RateLimitFailureClosed,
@@ -94,7 +99,10 @@ func cProdConfig() *platform.Config {
 	cfg.ID = prodIDConfig()
 	cfg.Storage.Driver = "s3"
 	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+	cfg.Async.Enabled = true
 	cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+	cfg.Identity.HashKey = "01234567890123456789012345678901"
+	cfg.Identity.HashKeyID = "v1"
 	return cfg
 }
 
@@ -179,6 +187,16 @@ func TestValidateSMSRules(t *testing.T) {
 			name:   "hourly ip limit invalid",
 			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.HourlyPerIP = 0 },
 			want:   "identity.sms.hourly_per_ip must be >= 1",
+		},
+		{
+			name:   "negative breaker failures",
+			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.BreakerFailures = -1 },
+			want:   "identity.sms.breaker_failures must be >= 0",
+		},
+		{
+			name:   "breaker timeout too short",
+			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.BreakerTimeout = 500 * time.Millisecond },
+			want:   "identity.sms.breaker_timeout must be >= 1s",
 		},
 		{
 			name: "memory driver in prod",
@@ -288,6 +306,28 @@ func TestValidateOAuthRules(t *testing.T) {
 				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].auth_url",
+		},
+		{
+			name: "negative oauth rps",
+			mutate: func(cfg *platform.Config) {
+				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+				cfg.Identity.OAuth.RateLimit.RPS = -1
+			},
+			want: "identity.oauth.rate_limit.rps must be >= 0",
+		},
+		{
+			name: "oauth fail_open in prod",
+			mutate: func(cfg *platform.Config) {
+				cfg.Env = "prod"
+				cfg.Auth = cJWTConfig()
+				cfg.ID = prodIDConfig()
+				cfg.Storage.Driver = "s3"
+				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+				cfg.Identity.OAuth.RateLimit.FailureMode = platform.RateLimitFailureOpen
+			},
+			want: "identity.oauth.rate_limit.failure_mode must be fail_closed",
 		},
 		{
 			name: "http url in prod",

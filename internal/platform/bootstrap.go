@@ -13,6 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/health"
+	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
@@ -43,6 +44,8 @@ type Deps struct {
 	RequirePermission auth.PermissionMiddleware
 	// Health 用于 Register 阶段追加就绪检查（如仓储 ping）。
 	Health *health.Handler
+	// ClientIP 是可信代理解析器；nil 表示不信任任何代理头。
+	ClientIP *pkghttpx.ClientIPResolver
 	// Background 注册进程级后台任务（如 IAM outbox 投递）。
 	//
 	// 只允许在装配阶段（NewAuthorizer / Register）调用；任务在路由注册完成后启动，
@@ -171,6 +174,11 @@ func Run(ctx context.Context, opts Options) (err error) {
 		hh.Register("redis", redisClient.Checker())
 	}
 
+	clientIPResolver, err := pkghttpx.NewClientIPResolver(cfg.HTTP.TrustedProxies)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+
 	background := &backgroundTasks{}
 	deps := &Deps{
 		Config:     cfg,
@@ -181,6 +189,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Database:   database,
 		Redis:      redisClient,
 		IDs:        ids,
+		ClientIP:   clientIPResolver,
 		Health:     hh,
 		Background: background.add,
 	}
@@ -245,10 +254,11 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Idempotency:    cfg.Idempotency,
 		CORS:           cfg.CORS,
 	}, PipelineDeps{
-		Logger:  logger,
-		Metrics: met,
-		Tracer:  tp,
-		Redis:   redisClient,
+		Logger:   logger,
+		Metrics:  met,
+		Tracer:   tp,
+		Redis:    redisClient,
+		ClientIP: clientIPResolver,
 	})
 	if err != nil {
 		return err
