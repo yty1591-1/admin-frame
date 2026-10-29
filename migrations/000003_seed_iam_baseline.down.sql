@@ -9,7 +9,8 @@ DELETE FROM iam_menu WHERE channel = 'admin' AND code IN (
 DELETE FROM iam_menu WHERE channel = 'admin' AND code = 'system';
 
 DELETE FROM iam_menu WHERE channel = 'admin' AND code IN (
-    'iam.permission', 'iam.binding', 'iam.template', 'iam.change', 'iam.breakglass', 'iam.check'
+    'iam.permission', 'iam.binding', 'iam.template', 'iam.change', 'iam.breakglass',
+    'iam.check', 'iam.sod'
 );
 DELETE FROM iam_menu WHERE channel = 'admin' AND code = 'iam';
 
@@ -47,5 +48,9 @@ WHERE code IN (
     'iam:change:request',
     'iam:change:review',
     'iam:menu:read',
-    'iam:menu:write'
+    'iam:menu:write',
+    'iam:sod:read',
+    'iam:sod:write',
+    'identity:account:read',
+    'identity:account:write'
 );

@@ -21,7 +21,7 @@
 | D2 | **服务端权威** | JWT 只承载身份与渠道，**不承载权限点全集**；每次鉴权以 IAM 存储为准，避免「令牌未过期 = 权限未撤销」。 |
 | D3 | **RBAC + 数据范围** | 功能权限（`resource:action`）+ 数据范围（`all` / `merchant` / `self` / `merchant_set`）分离建模；只做 RBAC 不足以满足 SEC-14。 |
 | D4 | **默认拒绝、失败关闭** | 未认证 401、无权限 403、鉴权依赖不可用 503（稳定码 `50300`，已批准新增），**任何异常都不得放行**。 |
-| D5 | **单亲角色继承（RBAC1）** | `iam_role.parent_id` 支持「同端别、同商户」内的单亲角色树：子角色向上继承全部祖先的权限与数据范围。不做多重继承与拒绝规则；破玻璃角色不参与继承；深度上限 `domain.MaxRoleHierarchyDepth`（8），写入时检测自引用与成环。迁移见 `migrations/000005_add_iam_role_hierarchy.up.sql`。 |
+| D5 | **单亲角色继承（RBAC1）** | `iam_role.parent_id` 支持「同端别、同商户」内的单亲角色树：子角色向上继承全部祖先的权限与数据范围。不做多重继承与拒绝规则；破玻璃角色不参与继承；深度上限 `domain.MaxRoleHierarchyDepth`（8），写入时检测自引用与成环。迁移见 `migrations/000002_create_iam_tables.up.sql`（角色继承已并入基线）。 |
 | D6 | **权限点目录代码所有、数据库只读同步** | 权限码是稳定契约，禁止在管理 API 中随意新建；目录由迁移种子入库，启动期校验，CI 校验唯一性与格式。 |
 | D7 | **`pkg/rbac` 保持纯判定** | 不把数据库、缓存、租户逻辑塞进 `pkg/rbac`；动态权限通过 `security.Authorizer` 的 `SnapshotLoader` 端口注入。 |
 | D8 | **两级缓存 + 有界陈旧** | L1 进程内 3s、L2 Redis 5m，写路径主动删除；权限撤销对外生效 ≤ 3s（L2 删除失败时告警，最坏 5m）。 |
@@ -262,7 +262,7 @@ async_outbox（ENT-03）    审计与缓存失效事件（topic=iam.audit / iam.
 
 ### 5.3 DDL（MySQL 基线）
 
-> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含菜单 / 路由资源表、审批单 `merchant_id` 商户维度与 `idx_iam_change_merchant_status`）；种子：`000003_seed_iam_baseline.up.sql` / `.down.sql`（权限目录 + 破玻璃角色 + 菜单）。平台异步表见 `000004_create_async_outbox.up.sql` / `.down.sql`。RBAC1 / RBAC2 增量见 `000005_add_iam_role_hierarchy`、`000006_add_iam_rbac2_constraints` 与 `000007_seed_rbac2_permissions`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
+> **迁移文件**：`migrations/000002_create_iam_tables.up.sql` / `.down.sql`（含菜单 / 路由资源表、审批单 `merchant_id` 商户维度、`idx_iam_change_merchant_status`、RBAC1 角色继承与 RBAC2 互斥组 / 前置角色 / 基数约束）；种子：`000003_seed_iam_baseline.up.sql` / `.down.sql`（权限目录 + 破玻璃角色 + 菜单 + 已启用页面状态）。平台异步表见 `000004_create_async_outbox.up.sql` / `.down.sql`。命名遵循 DATA-01，up / down 必须配对；已应用的迁移文件不得重写（checksum 漂移会被迁移框架拒绝），新增权限点写入新的 `*_seed_*.up.sql`。
 >
 > **M1 前置决策（2026-10-21 已确认）**：
 >

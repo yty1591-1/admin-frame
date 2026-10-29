@@ -1,8 +1,11 @@
--- IAM（RBAC 权限管理）模块表结构（模块基线，含菜单 / 路由资源）。
+-- IAM（RBAC 权限管理）模块基线：权限目录、菜单、角色、模板、授权绑定、数据范围、
+-- 变更审批、静态职责分离（SOD）与前置角色。
+-- 本文件由增量迁移按领域合并而成（原 000002 / 000005 / 000006）：
+-- 角色继承（parent_id）与 RBAC2 约束（互斥组 / 前置角色 / 角色基数）已直接体现在基线结构中。
 -- 数据库基线：MySQL 8.0.19+（InnoDB / utf8mb4_0900_ai_ci）。
 -- 设计要点：
 --   1. 功能权限（iam_role_permission）与数据范围（iam_role_data_scope）正交；
---   2. 角色扁平、无继承，通过一个主体绑定多个角色表达组合；
+--   2. 角色扁平、无继承，通过一个主体绑定多个角色表达组合；RBAC1 单亲继承见 parent_id；
 --   3. 时间列统一 DATETIME(3) + 应用写入 UTC，避免 TIMESTAMP 的 2038 上限与隐式时区转换；
 --   4. JSON 列使用原生 JSON 类型，由数据库校验合法性；
 --   5. 外键用于阻止悬空授权、跨端 / 跨商户绑定与误删（RESTRICT），业务删除仍以软删为主；
@@ -22,6 +25,10 @@
 --      - 自引用外键保证父子节点同端，避免跨端挂载；
 --      - 种子维护基线，运营通过管理接口调整展示字段；version 提供乐观锁，
 --        避免并发编辑同一条菜单时后写覆盖先写。
+--  10. RBAC1 / RBAC2：
+--      - parent_id 为「同端别 + 同商户」内的单亲角色树，复合自引用外键拒绝跨端 / 跨商户继承；
+--      - iam_sod_group 表达同租户内互斥角色集，iam_role_prerequisite 表达前置角色；
+--      - max_bindings 为单角色最大有效绑定数，NULL 表示不限。
 
 CREATE TABLE IF NOT EXISTS iam_permission (
     code             VARCHAR(128)  NOT NULL                  COMMENT '权限点稳定标识，resource:action 或 domain:resource:action，全小写；发布后不可改名或复用',
@@ -88,6 +95,8 @@ CREATE TABLE IF NOT EXISTS iam_role (
     channel          VARCHAR(16)   NOT NULL                  COMMENT '角色所属端别：admin=A端平台 / biz=B端商户',
     scope_type       VARCHAR(16)   NOT NULL                  COMMENT '角色作用域：platform=A端全局 / merchant=B端单商户',
     merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''       COMMENT 'B端所属商户ID；scope_type=platform 时为空串，禁止用空串代表“全部商户”',
+    parent_id        BIGINT        NULL                      COMMENT '父角色ID；NULL=根角色（无继承）；父角色须同端别、同商户',
+    max_bindings     INT           NULL                      COMMENT '单角色最大有效绑定数（RBAC2 基数约束）；NULL=不限',
     code             VARCHAR(64)   NOT NULL                  COMMENT '角色编码，端内（同商户）唯一；软删后不可复用，防止重建洗白',
     name             VARCHAR(128)  NOT NULL                  COMMENT '角色显示名',
     description      VARCHAR(512)  NOT NULL DEFAULT ''       COMMENT '角色说明，建议写清职责边界',
@@ -104,10 +113,14 @@ CREATE TABLE IF NOT EXISTS iam_role (
     PRIMARY KEY (id),
     UNIQUE KEY uk_iam_role_scope_code (channel, merchant_id, code) COMMENT '端内角色编码唯一，绑定与授权的幂等防线',
     UNIQUE KEY uk_iam_role_id_channel (id, channel) COMMENT '供数据范围 / 绑定复合外键引用，库层防止跨端引用',
-    UNIQUE KEY uk_iam_role_id_scope (id, channel, merchant_id) COMMENT '供绑定复合外键引用，库层防止跨商户绑定',
+    UNIQUE KEY uk_iam_role_id_scope (id, channel, merchant_id) COMMENT '供绑定 / 继承 / RBAC2 复合外键引用，库层防止跨商户绑定',
     KEY idx_iam_role_merchant_status (merchant_id, status) COMMENT 'B端按商户 + 状态列角色',
     KEY idx_iam_role_channel_scope (channel, scope_type, status) COMMENT 'A端按端别 + 作用域列角色',
     KEY idx_iam_role_template (template_id, template_version) COMMENT '模板漂移扫描：按模板聚合实例并比对基线版本',
+    KEY idx_iam_role_parent (parent_id, channel, merchant_id) COMMENT '按父角色查子树，同时作为复合外键的索引',
+    CONSTRAINT fk_iam_role_parent FOREIGN KEY (parent_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT ck_iam_role_channel CHECK (channel IN ('admin', 'biz')),
     CONSTRAINT ck_iam_role_scope_type CHECK (scope_type IN ('platform', 'merchant')),
     CONSTRAINT ck_iam_role_tenant CHECK (
@@ -116,9 +129,10 @@ CREATE TABLE IF NOT EXISTS iam_role (
     ),
     CONSTRAINT ck_iam_role_type CHECK (role_type IN ('system', 'custom', 'breakglass')),
     CONSTRAINT ck_iam_role_status CHECK (status IN ('active', 'disabled')),
-    CONSTRAINT ck_iam_role_version CHECK (version >= 1)
+    CONSTRAINT ck_iam_role_version CHECK (version >= 1),
+    CONSTRAINT ck_iam_role_max_bindings CHECK (max_bindings IS NULL OR max_bindings >= 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  COMMENT='IAM 角色定义，按端别与商户作用域隔离；角色扁平、无继承';
+  COMMENT='IAM 角色定义，按端别与商户作用域隔离；支持同租户内单亲继承，不参与破玻璃继承';
 
 CREATE TABLE IF NOT EXISTS iam_role_template (
     id               BIGINT        NOT NULL                  COMMENT '模板主键，雪花 ID（固定种子可用保留段）',
@@ -292,3 +306,70 @@ CREATE TABLE IF NOT EXISTS iam_change_request (
     CONSTRAINT ck_iam_change_payload CHECK (JSON_TYPE(payload) = 'OBJECT')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='IAM 高风险变更审批单；申请人与审批人强制不同，审批通过后才落到目标表';
+
+CREATE TABLE IF NOT EXISTS iam_sod_group (
+    id               BIGINT        NOT NULL                  COMMENT '互斥角色组主键，雪花 ID',
+    channel          VARCHAR(16)   NOT NULL                  COMMENT 'admin=A端平台 / biz=B端商户',
+    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''       COMMENT 'B端所属商户ID；A端为空串',
+    code             VARCHAR(64)   NOT NULL                  COMMENT '组编码，端内（同商户）唯一；软删后不可复用',
+    name             VARCHAR(128)  NOT NULL                  COMMENT '组显示名',
+    description      VARCHAR(512)  NOT NULL DEFAULT ''       COMMENT '组说明，建议写清互斥的业务理由',
+    max_active_roles INT           NOT NULL DEFAULT 1        COMMENT '同一主体在组内至多同时持有的角色数；1=两两互斥',
+    status           VARCHAR(16)   NOT NULL DEFAULT 'active' COMMENT 'active=生效 / disabled=停用（停用后不再拦截新绑定）',
+    version          BIGINT        NOT NULL DEFAULT 1        COMMENT '乐观锁版本；更新须 WHERE version=?，冲突返回 40900',
+    created_by       VARCHAR(64)   NOT NULL                  COMMENT '创建人 subject_id',
+    updated_by       VARCHAR(64)   NOT NULL                  COMMENT '最后更新人 subject_id',
+    created_at       DATETIME(3)   NOT NULL                  COMMENT '创建时间（UTC，毫秒精度）',
+    updated_at       DATETIME(3)   NOT NULL                  COMMENT '最后更新时间（UTC，毫秒精度）',
+    deleted_at       DATETIME(3)   NULL                      COMMENT '软删时间（UTC）；NULL=未删除，非空后 code 不可复用',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_iam_sod_group_scope_code (channel, merchant_id, code) COMMENT '端内组编码唯一',
+    UNIQUE KEY uk_iam_sod_group_id_scope (id, channel, merchant_id) COMMENT '供组-角色复合外键引用，库层防止跨商户组合',
+    KEY idx_iam_sod_group_status (channel, merchant_id, status) COMMENT '按端别 + 商户 + 状态列组',
+    CONSTRAINT ck_iam_sod_group_channel CHECK (channel IN ('admin', 'biz')),
+    CONSTRAINT ck_iam_sod_group_tenant CHECK (
+        (channel = 'admin' AND merchant_id = '')
+     OR (channel = 'biz' AND merchant_id <> '')
+    ),
+    CONSTRAINT ck_iam_sod_group_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT ck_iam_sod_group_max_active CHECK (max_active_roles BETWEEN 1 AND 64),
+    CONSTRAINT ck_iam_sod_group_version CHECK (version >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='RBAC2 静态职责分离组：同组角色不可被同一主体同时持有';
+
+CREATE TABLE IF NOT EXISTS iam_sod_group_role (
+    group_id         BIGINT        NOT NULL                  COMMENT '互斥组ID，关联 iam_sod_group.id',
+    role_id          BIGINT        NOT NULL                  COMMENT '组内角色ID，关联 iam_role.id',
+    channel          VARCHAR(16)   NOT NULL                  COMMENT '冗余端别；由复合外键锁定与组 / 角色一致',
+    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''       COMMENT '冗余商户ID；由复合外键锁定与组 / 角色一致',
+    granted_by       VARCHAR(64)   NOT NULL                  COMMENT '最近一次写入人 subject_id',
+    created_at       DATETIME(3)   NOT NULL                  COMMENT '加入组的时间（UTC，毫秒精度）',
+    PRIMARY KEY (group_id, role_id),
+    KEY idx_iam_sod_group_role_role (role_id) COMMENT '反查某角色属于哪些互斥组，绑定期校验主路径',
+    CONSTRAINT fk_iam_sod_group_role_group FOREIGN KEY (group_id, channel, merchant_id)
+        REFERENCES iam_sod_group (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_iam_sod_group_role_role FOREIGN KEY (role_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='互斥组 → 角色；复合外键阻止跨端 / 跨商户组合';
+
+CREATE TABLE IF NOT EXISTS iam_role_prerequisite (
+    role_id          BIGINT        NOT NULL                  COMMENT '需要前置条件的角色ID',
+    required_role_id BIGINT        NOT NULL                  COMMENT '授予 role_id 前必须已持有的角色ID',
+    channel          VARCHAR(16)   NOT NULL                  COMMENT '冗余端别；由复合外键锁定与两个角色一致',
+    merchant_id      VARCHAR(64)   NOT NULL DEFAULT ''       COMMENT '冗余商户ID；由复合外键锁定与两个角色一致',
+    created_by       VARCHAR(64)   NOT NULL                  COMMENT '写入人 subject_id',
+    created_at       DATETIME(3)   NOT NULL                  COMMENT '写入时间（UTC，毫秒精度）',
+    PRIMARY KEY (role_id, required_role_id),
+    KEY idx_iam_role_prerequisite_required (required_role_id) COMMENT '删除 / 停用前置角色前的影响面检查',
+    CONSTRAINT fk_iam_role_prerequisite_role FOREIGN KEY (role_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_iam_role_prerequisite_required FOREIGN KEY (required_role_id, channel, merchant_id)
+        REFERENCES iam_role (id, channel, merchant_id)
+        ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT ck_iam_role_prerequisite_self CHECK (role_id <> required_role_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  COMMENT='RBAC2 前置角色：授予 role_id 前必须已持有 required_role_id';

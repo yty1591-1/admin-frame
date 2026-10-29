@@ -265,7 +265,7 @@ func (s *Session) touch(now time.Time) {
 	s.Version++
 }
 
-// MaxDeviceLabelLen 设备标签列宽上限（migrations/000011）。
+// MaxDeviceLabelLen 设备标签列宽上限（migrations/000001）。
 const MaxDeviceLabelLen = 64
 
 // SessionFamily 是设备会话：同一登录链的所有令牌代共享一个 family。

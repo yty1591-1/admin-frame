@@ -644,7 +644,7 @@ printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
 
 - 文件：`migrations/000001_create_identity_tables.{up,down}.sql`。
 - 编号说明：迁移已按领域合并为 `000001`～`000004`：`000001` 身份域、`000002` IAM 结构（含菜单）、`000003` IAM 种子、`000004` 平台异步；后续变更从 `000005` 顺延。
-- `000013_widen_identity_hash_columns` 将 `account_ref` / `ip_hash` / `ua_hash` 扩至 128 字符，容纳 `<key_id>:<hex>` 摘要（`IDN-P1-06`）。
+- 摘要列（`account_ref` / `ip_hash` / `ua_hash`）宽度为 128，容纳 `<key_id>:<hex>` 格式（`IDN-P1-06`）；已随基线合并进 `000001`。
 - 只由 `cmd/migrate` 或部署 Job 执行；API / worker 启动只校验版本，不执行迁移（`DATA_STANDARDS`）。
 
 ### 9.2 表结构
