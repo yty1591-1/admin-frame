@@ -380,6 +380,16 @@ func TestNewLoginAttemptValidation(t *testing.T) {
 			name:   "success without reason",
 			mutate: func(p *NewLoginAttemptParams) { p.Outcome = LoginOutcomeSuccess; p.Reason = "" },
 		},
+		{
+			// 回归：生产摘要为 `<hash_key_id>:<hex HMAC-SHA256>`，比无前缀的 64 位更长，
+			// 长度上限必须容纳 key id 前缀，否则登录成功与失败都无法写入尝试记录。
+			name: "keyed digest within limit",
+			mutate: func(p *NewLoginAttemptParams) {
+				p.AccountRef = "v1:" + strings.Repeat("a", 64)
+				p.IPHash = "v1:" + strings.Repeat("b", 64)
+				p.UAHash = "v1:" + strings.Repeat("c", 64)
+			},
+		},
 		{name: "missing id", mutate: func(p *NewLoginAttemptParams) { p.ID = "" }, wantErr: ErrEmptyInput},
 		{name: "bad channel", mutate: func(p *NewLoginAttemptParams) { p.Channel = "x" }, wantErr: ErrInvalidChannel},
 		{name: "missing account ref", mutate: func(p *NewLoginAttemptParams) { p.AccountRef = "" }, wantErr: ErrInvalidLoginAttempt},

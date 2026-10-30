@@ -5,13 +5,18 @@ import (
 	"time"
 )
 
-// 登录尝试字段上限，与 migrations/000001 的列宽一致。
+// 登录尝试字段上限，与 migrations/000001 的列宽（VARCHAR(128)）一致。
+//
+// 生产摘要格式为 `<hash_key_id>:<hex HMAC-SHA256>`（见 app.AccountRef / ClientRef），
+// 因此上限必须覆盖「key id ≤16 字节 + 分隔符 + 64 位十六进制」，不能按无前缀的 64 计。
 const (
-	// MaxAccountRefLen 账号不可逆摘要长度上限（SHA-256 十六进制）。
-	MaxAccountRefLen = 64
-	// MaxIPHashLen / MaxUAHashLen IP 与 UA 摘要长度上限。
-	MaxIPHashLen = 64
-	MaxUAHashLen = 64
+	// maxKeyedDigestLen 带 key id 前缀的摘要长度上限。
+	maxKeyedDigestLen = 16 + 1 + 64
+	// MaxAccountRefLen 账号不可逆摘要长度上限（含 key id 前缀）。
+	MaxAccountRefLen = maxKeyedDigestLen
+	// MaxIPHashLen / MaxUAHashLen IP 与 UA 摘要长度上限（含 key id 前缀）。
+	MaxIPHashLen = maxKeyedDigestLen
+	MaxUAHashLen = maxKeyedDigestLen
 	// MaxLoginReasonLen 登录原因最大字节数。
 	MaxLoginReasonLen = 64
 )
