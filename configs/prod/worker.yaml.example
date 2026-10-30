@@ -1,0 +1,135 @@
+# 异步 worker 生产环境配置示例（CONFIG_STANDARDS CFG-01/03/05/06）。
+# 复制为 configs/prod-worker.yaml 使用；worker 不对外提供 HTTP，是 Outbox Relay 与
+# 消费任务的独占宿主，生产必须常驻，且 API 侧 async.outbox.publish_in_api=false。
+# 密钥全部由环境变量注入，随机示例值见 configs/prod/env.example。
+
+env: prod
+service: worker
+channel: worker
+addr: ":8090"                    # 仅用于进程内调试 / 探针预留，不对外暴露
+shutdown_timeout: 30s            # 给未完成的 relay 批次留出退出时间
+
+http:
+  read_header_timeout: 5s
+  read_timeout: 15s
+  write_timeout: 30s
+  idle_timeout: 60s
+  timeout: 15s                   # prod 启动校验要求 > 0
+  body_limit_bytes: 16777216
+  max_header_bytes: 1048576
+  trusted_proxies: []
+
+log:
+  level: info
+  format: json
+
+auth:
+  # worker 不提供 HTTP；但 prod 禁止 demo，且校验要求 audience 包含 channel。
+  mode: jwt
+  expected_channel: worker
+  jwt:
+    alg: HS256
+    issuer: https://iam.prod.example.com
+    audience: [worker]
+    leeway: 30s
+    secret: ""                   # ADMIN_FRAME_AUTH_JWT_SECRET（与 API 共用密钥）
+
+id:
+  node_id: 3                     # worker 非必填，但多副本时仍须唯一
+  node_id_source: env
+
+# worker 不接收外部写请求，幂等与限流保持关闭（prod 对启用的驱动有 redis 约束）。
+idempotency:
+  enabled: false
+  driver: memory
+  header: Idempotency-Key
+  ttl: 24h
+  required: false
+  max_body_bytes: 1048576
+
+rate_limit:
+  enabled: false
+  driver: memory
+  key: channel
+  failure_mode: fail_open
+  rps: 100
+  burst: 200
+  idle_ttl: 10m
+
+# 生产核心：worker 独占 Outbox 投递；API 侧必须 publish_in_api=false。
+async:
+  enabled: true
+  driver: db
+  broker:
+    url: ""
+    stream: async
+    subject_prefix: async
+    ack_wait: 30s
+    max_deliver: 10
+  outbox:
+    publish_in_api: false
+    poll_interval: 1s
+    batch_size: 200              # worker 可高于 API 默认批次
+    lease: 30s
+    max_attempts: 10
+    concurrency: 4               # 多副本时按总吞吐调整，注意租约竞争
+  consumer:
+    concurrency: 8
+    visibility_timeout: 60s
+    retry_backoff: exponential
+
+# worker 不挂载 IAM：mode 必须 off。
+iam:
+  mode: off
+  load_timeout: 300ms
+  cache:
+    driver: memory
+    l1_ttl: 3s
+    l2_ttl: 5m
+    negative_ttl: 30s
+    key_prefix: iam
+    l1_max_entries: 10000
+  limits:
+    max_roles_per_subject: 20
+    max_permissions_per_role: 200
+    max_bindings_per_subject: 50
+    max_custom_roles_per_merchant: 50
+  security:
+    allow_wildcard: false
+    require_reason: true
+  breakglass:
+    enabled: false
+  approval:
+    enabled: false
+  constraints:
+    mode: off
+
+identity:
+  enabled: false                 # worker 不签发令牌，只执行会话/登录尝试清理任务
+
+redis:
+  addr: ""                        # ADMIN_FRAME_REDIS_ADDR；异步消费幂等需要
+  username: ""
+  password: ""                    # ADMIN_FRAME_REDIS_PASSWORD
+  db: 0
+  key_prefix: "admin-frame:prod:"
+
+db:
+  driver: mysql
+  dsn: ""                         # ADMIN_FRAME_DB_DSN
+
+storage:
+  driver: s3
+  key_prefix: "prod/worker/"
+  s3:
+    endpoint: https://s3.ap-southeast-1.amazonaws.com
+    region: ap-southeast-1
+    bucket: admin-frame-prod
+    force_path_style: false
+
+tracing:
+  enabled: true
+  exporter: otlp
+  endpoint: otel-collector.observability.svc:4318
+  insecure: true
+  sample_ratio: 0.1

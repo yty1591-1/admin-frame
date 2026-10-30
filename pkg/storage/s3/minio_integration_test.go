@@ -12,7 +12,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/storage/storagetest"
 )
 
-// 联调：docker compose -f docker-compose.storage.yml up -d
+// 联调：docker compose -f docker-compose.integration.yml up -d
 // 然后：go test -tags=minio ./pkg/storage/s3/ -count=1
 func TestMinIOContract(t *testing.T) {
 	endpoint := envOr("STORAGE_MINIO_ENDPOINT", "http://127.0.0.1:9000")

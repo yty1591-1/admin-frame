@@ -28,16 +28,12 @@ fi
 
 COMPOSE_FILE="docker-compose.integration.yml"
 
-export TEST_MYSQL_PORT="${TEST_MYSQL_PORT:-3307}"
-export TEST_REDIS_PORT="${TEST_REDIS_PORT:-6380}"
-export TEST_S3_PORT="${TEST_S3_PORT:-9010}"
-export TEST_S3_CONSOLE_PORT="${TEST_S3_CONSOLE_PORT:-9011}"
-
-export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:${TEST_MYSQL_PORT})/admin_frame_test?parseTime=true&loc=UTC"
+# 端口与 docker-compose.integration.yml 保持固定一致；compose 不再读取环境变量覆盖。
+export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:3306)/admin_frame_test?parseTime=true&loc=UTC"
 # 兼容既有 tests/integration/iam（沿用其 IAM_TEST_MYSQL_DSN 开关，避免复制测试代码）。
 export IAM_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
-export TEST_REDIS_ADDR="127.0.0.1:${TEST_REDIS_PORT}"
-export TEST_S3_ENDPOINT="http://127.0.0.1:${TEST_S3_PORT}"
+export TEST_REDIS_ADDR="127.0.0.1:6379"
+export TEST_S3_ENDPOINT="http://127.0.0.1:9000"
 export TEST_S3_ACCESS_KEY="minioadmin"
 export TEST_S3_SECRET_KEY="minioadmin"
 export TEST_S3_BUCKET="admin-frame"

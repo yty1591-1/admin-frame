@@ -225,7 +225,7 @@ storage:
 | 阶段 | 交付 | 验收 |
 |------|------|------|
 | **M0** | 注册表 + `Open` + 内置 memory/local + 本文档 | ✅ |
-| **M1** | `pkg/storage/s3`（含 `minio`）+ `storagetest` + `docker-compose.storage.yml` | ✅；联调：`go test -tags=minio ./pkg/storage/s3/` |
+| **M1** | `pkg/storage/s3`（含 `minio`）+ `storagetest` + `docker-compose.integration.yml` | ✅；联调：`go test -tags=minio ./pkg/storage/s3/` |
 | **M2** | `oss` / `cos` / `obs` L1 + `ValidateCloudL1` | ✅ |
 | **M3** | platform `OpenStorage` + yaml/env + 三端/worker 装配 + `/readyz` storage | ✅ |
 | **M4** | 各厂商 L2 原生 SDK（`native=true`） | ✅ OSS / COS / OBS |
