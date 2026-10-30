@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Biz API (B)
-  version: 5.0.0
+  version: 5.1.0
   description: |
     商家/企业端。数据范围强制 Token 内 `merchant_id`。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -10,6 +10,7 @@ info:
     4.0.0：`Permission` 移除 `action` / `kind` / `parent_code` / `path`，`resource` 改为服务端生成（破坏性）；
     新增 `GET /biz/v1/menus` 与 `MenuTreeNode`；移除冗余的 `/biz/v1/iam/permissions/tree`。
     5.0.0：`GET /biz/v1/menus` 重命名为 `GET /biz/v1/iam/me/menus`，与 `/iam/me/permissions` 对齐（破坏性）。
+    5.1.0：新增 `GET /biz/v1/me`（当前主体资料），与 A 端 `/admin/v1/me` 字段对齐。
 servers:
   - url: http://localhost:8082
     description: 本地直连（make run-biz）
@@ -43,6 +44,8 @@ paths:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-logout'
   /biz/v1/auth/logout-all:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-logout-all'
+  /biz/v1/me:
+    $ref: './paths/biz/me.yaml#/biz-v1-me'
   /biz/v1/iam/permissions:
     $ref: './paths/biz/iam-permissions.yaml#/biz-v1-iam-permissions'
   /biz/v1/iam/roles:

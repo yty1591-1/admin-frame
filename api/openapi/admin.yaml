@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 6.1.0
+  version: 6.2.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -16,6 +16,8 @@ info:
     6.0.0：角色 `scope_type` 枚举由 `admin` 更正为 `platform`，与后端 RBAC 语义一致（破坏性）；
     登记角色模板端点与契约（`/admin/v1/iam/role-templates*`）。
     6.1.0：新增自助改密与账号生命周期管理端点（停用 / 启用 / 解锁 / 重置 MFA）。
+    6.2.0：`GET /admin/v1/me` 增补 `has_password` / `phone_bound` / `password_updated_at` /
+    `must_change_password`（纯增量），供前端安全设置页展示真实状态。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）

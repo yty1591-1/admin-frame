@@ -3,11 +3,23 @@ components:
     MeView:
       type: object
       required:
-        [subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version]
+        [
+          subject_id,
+          subject,
+          channel,
+          merchant_id,
+          status,
+          mfa_enabled,
+          has_password,
+          phone_bound,
+          must_change_password,
+          token_version,
+        ]
       additionalProperties: false
       description: |
         当前登录主体资料。A 端 `channel` 恒为 `admin`，`merchant_id` 恒为空串。
         角色与权限不在此响应中，统一走 `GET /admin/v1/iam/me/permissions`。
+        凭据类字段只表达「是否具备」，不回显手机号 / 邮箱等原文。
       properties:
         subject_id:
           type: string
@@ -27,6 +39,19 @@ components:
         mfa_enabled:
           type: boolean
           description: MFA 绑定是否已确认（仅 ConfirmedAt 非空时为 true）
+        has_password:
+          type: boolean
+          description: 账号是否已设置密码凭据
+        phone_bound:
+          type: boolean
+          description: 是否已绑定手机凭据；号码本身为不可逆摘要，任何响应均不回显
+        password_updated_at:
+          type: string
+          format: date-time
+          description: 最近一次改密时间；从未改密或从未设置密码时省略
+        must_change_password:
+          type: boolean
+          description: 管理员重置密码后尚未改密时为 true，前端须引导改密
         token_version:
           type: integer
           format: int64

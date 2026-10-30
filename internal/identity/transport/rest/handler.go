@@ -120,14 +120,20 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	// HasPassword / PhoneBound / PasswordUpdatedAt / MustChangePassword 供安全设置页
+	// 展示真实状态，避免前端出现虚构的绑定信息。
 	httpx.OK(w, meResponse{
-		SubjectID:    view.SubjectID,
-		Subject:      view.Subject,
-		Channel:      view.Channel.String(),
-		MerchantID:   view.MerchantID,
-		Status:       view.Status.String(),
-		MFAEnabled:   view.MFAEnabled,
-		TokenVersion: view.TokenVersion,
+		SubjectID:          view.SubjectID,
+		Subject:            view.Subject,
+		Channel:            view.Channel.String(),
+		MerchantID:         view.MerchantID,
+		Status:             view.Status.String(),
+		MFAEnabled:         view.MFAEnabled,
+		HasPassword:        view.HasPassword,
+		PhoneBound:         view.PhoneBound,
+		PasswordUpdatedAt:  view.PasswordUpdatedAt,
+		MustChangePassword: view.MustChangePassword,
+		TokenVersion:       view.TokenVersion,
 	}, traceID)
 }
 
@@ -787,13 +793,17 @@ type tokenResponse struct {
 
 // meResponse 当前主体资料；不含角色与权限。
 type meResponse struct {
-	SubjectID    string `json:"subject_id"`
-	Subject      string `json:"subject"`
-	Channel      string `json:"channel"`
-	MerchantID   string `json:"merchant_id"`
-	Status       string `json:"status"`
-	MFAEnabled   bool   `json:"mfa_enabled"`
-	TokenVersion int64  `json:"token_version"`
+	SubjectID          string     `json:"subject_id"`
+	Subject            string     `json:"subject"`
+	Channel            string     `json:"channel"`
+	MerchantID         string     `json:"merchant_id"`
+	Status             string     `json:"status"`
+	MFAEnabled         bool       `json:"mfa_enabled"`
+	HasPassword        bool       `json:"has_password"`
+	PhoneBound         bool       `json:"phone_bound"`
+	PasswordUpdatedAt  *time.Time `json:"password_updated_at,omitempty"`
+	MustChangePassword bool       `json:"must_change_password"`
+	TokenVersion       int64      `json:"token_version"`
 }
 
 // sessionDTO 会话列表项；不包含任何令牌或 IP / UA 原文。

@@ -1,0 +1,60 @@
+components:
+  schemas:
+    MeView:
+      type: object
+      required:
+        [
+          subject_id,
+          subject,
+          channel,
+          merchant_id,
+          status,
+          mfa_enabled,
+          has_password,
+          phone_bound,
+          must_change_password,
+          token_version,
+        ]
+      additionalProperties: false
+      description: |
+        当前登录主体资料。B 端 `channel` 恒为 `biz`，`merchant_id` 非空且由令牌推导，
+        绝不接受请求参数覆盖。角色与权限不在此响应中，统一走
+        `GET /biz/v1/iam/me/permissions`。
+        凭据类字段只表达「是否具备」，不回显手机号 / 邮箱等原文。
+      properties:
+        subject_id:
+          type: string
+          description: 账号主键，与令牌 `sub` 一致
+        subject:
+          type: string
+          description: 规范化登录主体（trim + 小写）
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        merchant_id:
+          type: string
+          minLength: 1
+          description: 商户 ID；恒等于令牌内商户
+        status:
+          type: string
+          enum: [pending, active, locked, disabled]
+          description: 账号生命周期状态
+        mfa_enabled:
+          type: boolean
+          description: MFA 绑定是否已确认；B 端不提供 MFA 端点，当前恒为 false
+        has_password:
+          type: boolean
+          description: 账号是否已设置密码凭据
+        phone_bound:
+          type: boolean
+          description: 是否已绑定手机凭据；号码本身为不可逆摘要，任何响应均不回显
+        password_updated_at:
+          type: string
+          format: date-time
+          description: 最近一次改密时间；从未改密或从未设置密码时省略
+        must_change_password:
+          type: boolean
+          description: 管理员重置密码后尚未改密时为 true，前端须引导改密
+        token_version:
+          type: integer
+          format: int64
+          description: 账号级撤销版本，只读

@@ -159,6 +159,14 @@ type MeView struct {
 	Status domain.AccountStatus
 	// MFAEnabled 表示 MFA 绑定是否已确认。
 	MFAEnabled bool
+	// HasPassword 表示账号已设置密码凭据。
+	HasPassword bool
+	// PasswordUpdatedAt 最近一次改密时间；nil 表示从未设置密码或从未改密。
+	PasswordUpdatedAt *time.Time
+	// MustChangePassword 表示管理员重置密码后尚未完成改密。
+	MustChangePassword bool
+	// PhoneBound 表示账号已绑定手机号凭据；号码本身不可回显。
+	PhoneBound bool
 	// TokenVersion 账号级撤销版本，只读。
 	TokenVersion int64
 }
@@ -1022,14 +1030,40 @@ func (s *AuthService) Me(ctx context.Context, actor SessionActor) (MeView, error
 			return MeView{}, apperr.Internal("load mfa enrollment failed", mfaErr)
 		}
 	}
+	// 凭据查询失败必须失败关闭：把「查询失败」当成「未设置」会让安全设置页
+	// 展示错误状态，比直接报错更难发现。
+	hasPassword, phoneBound := false, false
+	if s.credentials != nil {
+		credentials, credErr := s.credentials.ListByAccount(ctx, account.ID)
+		if credErr != nil {
+			return MeView{}, apperr.Internal("list credentials failed", credErr)
+		}
+		for _, credential := range credentials {
+			switch credential.Type {
+			case domain.CredentialTypePassword:
+				hasPassword = true
+			case domain.CredentialTypePhone:
+				phoneBound = true
+			}
+		}
+	}
+	var passwordUpdatedAt *time.Time
+	if account.PasswordUpdatedAt != nil {
+		at := *account.PasswordUpdatedAt
+		passwordUpdatedAt = &at
+	}
 	return MeView{
-		SubjectID:    account.ID,
-		Subject:      account.Subject,
-		Channel:      account.Channel,
-		MerchantID:   account.MerchantID,
-		Status:       account.Status,
-		MFAEnabled:   mfaEnabled,
-		TokenVersion: account.TokenVersion,
+		SubjectID:          account.ID,
+		Subject:            account.Subject,
+		Channel:            account.Channel,
+		MerchantID:         account.MerchantID,
+		Status:             account.Status,
+		MFAEnabled:         mfaEnabled,
+		HasPassword:        hasPassword,
+		PasswordUpdatedAt:  passwordUpdatedAt,
+		MustChangePassword: account.MustChangePassword,
+		PhoneBound:         phoneBound,
+		TokenVersion:       account.TokenVersion,
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -50,6 +51,68 @@ func TestMeReturnsAccountProfile(t *testing.T) {
 	}
 	if view.TokenVersion < 1 {
 		t.Fatalf("token_version = %d, want >= 1", view.TokenVersion)
+	}
+}
+
+func TestMeReportsCredentialAndPasswordState(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	account := f.seedAccount(t, "acct-creds-me", "creds@example.com", "Correct#Passw0rd")
+	activateAccount(t, f, account)
+
+	view, err := f.svc.Me(ctx, app.SessionActor{AccountID: account.ID})
+	if err != nil {
+		t.Fatalf("me: %v", err)
+	}
+	if !view.HasPassword {
+		t.Fatal("has_password = false, want true for seeded password credential")
+	}
+	if view.PhoneBound {
+		t.Fatal("phone_bound = true, want false before binding phone")
+	}
+	if view.MustChangePassword {
+		t.Fatal("must_change_password = true, want false")
+	}
+	if view.PasswordUpdatedAt != nil {
+		t.Fatalf("password_updated_at = %v, want nil before first password change", view.PasswordUpdatedAt)
+	}
+
+	// 绑定手机凭据后 phone_bound 必须为 true；号码本身永不回显。
+	phone, err := domain.NewCredential(domain.NewCredentialParams{
+		ID:        "cred-phone-" + account.ID,
+		AccountID: account.ID,
+		Type:      domain.CredentialTypePhone,
+		Hash:      "hash$phone",
+		Algorithm: "hmac-sha256",
+		Now:       f.clock.Now(),
+	})
+	if err != nil {
+		t.Fatalf("new phone credential: %v", err)
+	}
+	if err := f.credentials.Save(ctx, phone); err != nil {
+		t.Fatalf("save phone credential: %v", err)
+	}
+
+	// 改密时间与管理员的强制改密标记必须原样透出。
+	changedAt := f.clock.Now().Add(-time.Hour)
+	account.PasswordUpdatedAt = &changedAt
+	account.MustChangePassword = true
+	if err := f.accounts.Save(ctx, account, account.Version); err != nil {
+		t.Fatalf("save account: %v", err)
+	}
+
+	view, err = f.svc.Me(ctx, app.SessionActor{AccountID: account.ID})
+	if err != nil {
+		t.Fatalf("me after updates: %v", err)
+	}
+	if !view.PhoneBound {
+		t.Fatal("phone_bound = false, want true after binding phone")
+	}
+	if !view.MustChangePassword {
+		t.Fatal("must_change_password = false, want true")
+	}
+	if view.PasswordUpdatedAt == nil || !view.PasswordUpdatedAt.Equal(changedAt) {
+		t.Fatalf("password_updated_at = %v, want %v", view.PasswordUpdatedAt, changedAt)
 	}
 }
 

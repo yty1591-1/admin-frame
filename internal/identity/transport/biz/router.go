@@ -29,4 +29,7 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /biz/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))
 	mux.Handle("POST /biz/v1/auth/logout", secure(authMW(http.HandlerFunc(h.Logout))))
 	mux.Handle("POST /biz/v1/auth/logout-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
+	// GET /biz/v1/me 返回当前商户员工资料；仅需认证，不额外要求权限点。
+	// 响应含账号状态等敏感字段，统一禁止缓存。
+	mux.Handle("GET /biz/v1/me", secure(authMW(http.HandlerFunc(h.Me))))
 }
