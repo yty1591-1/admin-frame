@@ -26,6 +26,12 @@ type ExtendOptions<T = any> = {
    * - data: 解构响应的BODY数据，只返回其中的data节点数据（会检查status和code是否为成功状态）。
    */
   responseReturn?: 'body' | 'data' | 'raw';
+  /**
+   * 为 true 时跳过全局错误提示（`errorMessageResponseInterceptor`），
+   * 错误仍会以 rejected promise 形式抛出，由调用方自行展示。
+   * 用于「探测 / 可选能力」类请求，避免用户看到一个与页面无关的 toast。
+   */
+  skipErrorMessage?: boolean;
 };
 type RequestClientConfig<T = any> = AxiosRequestConfig<T> & ExtendOptions<T>;
 

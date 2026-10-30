@@ -1,39 +1,47 @@
 <script setup lang="ts">
+import type { SecuritySchemaItem } from '@vben/common-ui';
+
 import { computed } from 'vue';
 
 import { ProfileSecuritySetting } from '@vben/common-ui';
 
-const formSchema = computed(() => {
+/**
+ * 示例数据：仅演示「状态徽标 + 操作入口」的排版，不含任何真实账号信息。
+ */
+const formSchema = computed((): SecuritySchemaItem[] => {
   return [
     {
-      value: true,
       fieldName: 'accountPassword',
       label: '账户密码',
-      description: '当前密码强度：强',
+      status: 'bound',
+      statusLabel: '已设置',
+      description: '上次修改：2026-01-01 09:00',
+      actionLabel: '修改密码',
     },
     {
-      value: true,
       fieldName: 'securityPhone',
       label: '密保手机',
-      description: '已绑定手机：138****8293',
+      status: 'unbound',
+      description: '未绑定手机，请联系管理员绑定',
     },
     {
-      value: true,
       fieldName: 'securityQuestion',
       label: '密保问题',
-      description: '未设置密保问题，密保问题可有效保护账户安全',
+      status: 'unavailable',
+      description: '系统暂未开通该能力',
     },
     {
-      value: true,
       fieldName: 'securityEmail',
       label: '备用邮箱',
-      description: '已绑定邮箱：ant***sign.com',
+      status: 'unavailable',
+      description: '系统暂未开通该能力',
     },
     {
-      value: false,
       fieldName: 'securityMfa',
       label: 'MFA 设备',
+      status: 'unbound',
       description: '未绑定 MFA 设备，绑定后，可以进行二次确认',
+      actionLabel: '绑定 MFA',
     },
   ];
 });

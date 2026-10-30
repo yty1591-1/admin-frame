@@ -1,19 +1,20 @@
 <script lang="ts" setup>
 import type { MfaSetupData } from '#/api/core/auth';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
-import { Alert, Button, Input, message, Modal, Spin } from 'ant-design-vue';
+import { Alert, Button, Input, message, Modal } from 'ant-design-vue';
 import QRCode from 'qrcode';
 
-import { getMeApi } from '#/api';
 import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 
-const authStore = useAuthStore();
+const emit = defineEmits<{
+  /** 绑定 / 解绑成功后通知父级重新拉取 /me。 */
+  refresh: [];
+}>();
 
-const loading = ref(true);
-const mfaEnabled = ref(false);
+const authStore = useAuthStore();
 
 const setupVisible = ref(false);
 const setupLoading = ref(false);
@@ -63,20 +64,6 @@ const canUnbind = computed(() => {
   return unbindCode.value.replaceAll('-', '').length >= 6 && !unbinding.value;
 });
 
-async function loadStatus() {
-  loading.value = true;
-  try {
-    const me = await getMeApi();
-    mfaEnabled.value = me.mfa_enabled;
-  } catch {
-    // 状态加载失败时保持未绑定展示，避免误判
-  } finally {
-    loading.value = false;
-  }
-}
-
-onMounted(loadStatus);
-
 async function openBind() {
   setupLoading.value = true;
   bindError.value = '';
@@ -106,7 +93,7 @@ async function confirmBind() {
     await authStore.confirmMfaBindingForAccount(bindCode.value);
     setupVisible.value = false;
     message.success($t('profile.mfaBindSuccess'));
-    await loadStatus();
+    emit('refresh');
   } catch (error) {
     bindError.value = errorMessageOf(error, $t('profile.mfaCodeInvalid'));
   } finally {
@@ -130,6 +117,7 @@ async function confirmUnbind() {
     // 解绑成功后服务端撤销全部会话，store 内会同步登出并跳转登录页
     await authStore.disableMfaForAccount(unbindCode.value);
     unbindVisible.value = false;
+    emit('refresh');
   } catch (error) {
     unbindError.value = errorMessageOf(error, $t('profile.mfaUnbindFailed'));
   } finally {
@@ -152,142 +140,113 @@ function downloadRecoveryCodes() {
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+defineExpose({ openBind, openUnbind });
 </script>
-
 <template>
-  <div class="rounded-lg border p-4">
-    <div class="flex flex-row items-center justify-between">
-      <div class="space-y-0.5">
-        <p class="text-base font-medium">{{ $t('profile.mfaDevice') }}</p>
-        <p class="text-muted-foreground text-sm">
-          <Spin v-if="loading" size="small" />
-          <template v-else>
-            {{
-              mfaEnabled
-                ? $t('profile.mfaBoundDesc')
-                : $t('profile.mfaUnboundDesc')
-            }}
-          </template>
+  <Modal
+    v-model:open="setupVisible"
+    :cancel-text="$t('common.cancel')"
+    :confirm-loading="binding"
+    :ok-button-props="{ disabled: !canBind }"
+    :ok-text="$t('profile.mfaBindConfirm')"
+    :title="$t('profile.mfaBindTitle')"
+    :width="460"
+    @ok="confirmBind"
+  >
+    <Alert
+      v-if="bindError"
+      :message="bindError"
+      class="mb-3"
+      show-icon
+      type="error"
+    />
+    <div v-if="setupData" class="space-y-4">
+      <div class="bg-muted rounded-lg p-4">
+        <p class="text-muted-foreground mb-3 text-center text-xs">
+          {{ $t('profile.mfaBindScanTip') }}
         </p>
-      </div>
-      <Button v-if="mfaEnabled" :disabled="loading" danger @click="openUnbind">
-        {{ $t('profile.mfaUnbind') }}
-      </Button>
-      <Button
-        v-else
-        :disabled="loading"
-        :loading="setupLoading"
-        type="primary"
-        @click="openBind"
-      >
-        {{ $t('profile.mfaBind') }}
-      </Button>
-    </div>
-
-    <Modal
-      v-model:open="setupVisible"
-      :confirm-loading="binding"
-      :ok-button-props="{ disabled: !canBind }"
-      :width="460"
-      :cancel-text="$t('common.cancel')"
-      :ok-text="$t('profile.mfaBindConfirm')"
-      :title="$t('profile.mfaBindTitle')"
-      @ok="confirmBind"
-    >
-      <Alert
-        v-if="bindError"
-        :message="bindError"
-        class="mb-3"
-        show-icon
-        type="error"
-      />
-      <div v-if="setupData" class="space-y-4">
-        <div class="bg-muted rounded-lg p-4">
-          <p class="text-muted-foreground mb-3 text-center text-xs">
-            {{ $t('profile.mfaBindScanTip') }}
-          </p>
-          <img
-            v-if="qrDataUrl"
-            :src="qrDataUrl"
-            alt="otpauth"
-            class="mx-auto h-40 w-40"
-          />
-          <div class="mt-3 text-center">
-            <span class="text-muted-foreground text-xs">
-              {{ $t('profile.mfaSecret') }}
-            </span>
-            <p class="text-foreground mt-1 font-mono text-xs break-all">
-              {{ setupData.secret }}
-            </p>
-          </div>
-        </div>
-
-        <div class="bg-muted rounded-lg p-4">
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <span class="text-muted-foreground text-xs">
-              {{ $t('profile.mfaRecoveryCodes') }}
-            </span>
-            <Button size="small" type="link" @click="downloadRecoveryCodes">
-              {{ $t('profile.mfaDownloadRecoveryCodes') }}
-            </Button>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <span
-              v-for="item in setupData.recovery_codes"
-              :key="item"
-              class="text-foreground bg-card rounded px-2 py-1 font-mono text-xs"
-            >
-              {{ item }}
-            </span>
-          </div>
-        </div>
-
-        <Input
-          v-model:value="bindCode"
-          :disabled="!!bindError"
-          :maxlength="6"
-          :placeholder="$t('profile.mfaCodePlaceholder')"
-          autocomplete="one-time-code"
-          class="text-center text-lg tracking-[0.5em]"
-          inputmode="numeric"
-          size="large"
-          @press-enter="confirmBind"
+        <img
+          v-if="qrDataUrl"
+          :src="qrDataUrl"
+          alt="otpauth"
+          class="mx-auto h-40 w-40"
         />
+        <div class="mt-3 text-center">
+          <span class="text-muted-foreground text-xs">
+            {{ $t('profile.mfaSecret') }}
+          </span>
+          <p class="text-foreground mt-1 font-mono text-xs break-all">
+            {{ setupData.secret }}
+          </p>
+        </div>
       </div>
-    </Modal>
 
-    <Modal
-      v-model:open="unbindVisible"
-      :confirm-loading="unbinding"
-      :ok-button-props="{ disabled: !canUnbind }"
-      :cancel-text="$t('common.cancel')"
-      :ok-text="$t('profile.mfaUnbindConfirm')"
-      :title="$t('profile.mfaUnbindTitle')"
-      @ok="confirmUnbind"
-    >
-      <Alert
-        v-if="unbindError"
-        :message="unbindError"
-        class="mb-3"
-        show-icon
-        type="error"
-      />
-      <p class="text-muted-foreground mb-3 text-sm">
-        {{ $t('profile.mfaUnbindWarning') }}
-      </p>
+      <div class="bg-muted rounded-lg p-4">
+        <div class="mb-2 flex items-center justify-between gap-2">
+          <span class="text-muted-foreground text-xs">
+            {{ $t('profile.mfaRecoveryCodes') }}
+          </span>
+          <Button size="small" type="link" @click="downloadRecoveryCodes">
+            {{ $t('profile.mfaDownloadRecoveryCodes') }}
+          </Button>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <span
+            v-for="item in setupData.recovery_codes"
+            :key="item"
+            class="text-foreground bg-card rounded px-2 py-1 font-mono text-xs"
+          >
+            {{ item }}
+          </span>
+        </div>
+      </div>
+
       <Input
-        v-model:value="unbindCode"
-        :disabled="!!unbindError"
-        :maxlength="19"
-        :placeholder="$t('profile.mfaUnbindCodePlaceholder')"
-        autocomplete="off"
-        class="text-center text-base tracking-wider"
+        v-model:value="bindCode"
+        :disabled="!!bindError"
+        :maxlength="6"
+        :placeholder="$t('profile.mfaCodePlaceholder')"
+        autocomplete="one-time-code"
+        class="text-center text-lg tracking-[0.5em]"
+        inputmode="numeric"
         size="large"
-        @press-enter="confirmUnbind"
+        @press-enter="confirmBind"
       />
-      <p class="text-muted-foreground mt-2 text-xs">
-        {{ $t('profile.mfaUnbindCodeTip') }}
-      </p>
-    </Modal>
-  </div>
+    </div>
+  </Modal>
+
+  <Modal
+    v-model:open="unbindVisible"
+    :cancel-text="$t('common.cancel')"
+    :confirm-loading="unbinding"
+    :ok-button-props="{ disabled: !canUnbind }"
+    :ok-text="$t('profile.mfaUnbindConfirm')"
+    :title="$t('profile.mfaUnbindTitle')"
+    @ok="confirmUnbind"
+  >
+    <Alert
+      v-if="unbindError"
+      :message="unbindError"
+      class="mb-3"
+      show-icon
+      type="error"
+    />
+    <p class="text-muted-foreground mb-3 text-sm">
+      {{ $t('profile.mfaUnbindWarning') }}
+    </p>
+    <Input
+      v-model:value="unbindCode"
+      :disabled="!!unbindError"
+      :maxlength="19"
+      :placeholder="$t('profile.mfaUnbindCodePlaceholder')"
+      autocomplete="off"
+      class="text-center text-base tracking-wider"
+      size="large"
+      @press-enter="confirmUnbind"
+    />
+    <p class="text-muted-foreground mt-2 text-xs">
+      {{ $t('profile.mfaUnbindCodeTip') }}
+    </p>
+  </Modal>
 </template>

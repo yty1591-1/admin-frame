@@ -31,6 +31,11 @@ const tabs = ref([
     value: 'notice',
   },
 ]);
+
+/** 安全设置页的操作入口可直接跳转到其他页签（如「修改密码」）。 */
+function handleChangeTab(value: string) {
+  tabsValue.value = value;
+}
 </script>
 <template>
   <Profile
@@ -41,7 +46,10 @@ const tabs = ref([
   >
     <template #content>
       <ProfileBase v-if="tabsValue === 'basic'" />
-      <ProfileSecuritySetting v-if="tabsValue === 'security'" />
+      <ProfileSecuritySetting
+        v-if="tabsValue === 'security'"
+        @change-tab="handleChangeTab"
+      />
       <ProfilePasswordSetting v-if="tabsValue === 'password'" />
       <ProfileNotificationSetting v-if="tabsValue === 'notice'" />
     </template>

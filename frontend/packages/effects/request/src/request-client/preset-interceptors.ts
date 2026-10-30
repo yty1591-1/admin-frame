@@ -118,6 +118,11 @@ export const errorMessageResponseInterceptor = (
         return Promise.reject(error);
       }
 
+      // 调用方显式声明跳过提示（探测类请求）：只透传错误，不弹 toast。
+      if (error?.config?.skipErrorMessage === true) {
+        return Promise.reject(error);
+      }
+
       const err: string = error?.toString?.() ?? '';
       let errMsg = '';
       if (err?.includes('Network Error')) {
