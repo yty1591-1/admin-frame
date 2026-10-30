@@ -306,6 +306,11 @@ foreach ($r in $roots) {
 - **影响**：视觉完整度很高，一旦用户查看即露馅，且会让安全相关信息失去可信度。
 - **建议**：能接后端就接（`/me` 返回脱敏手机 / 邮箱、`password_updated_at` 换算"上次修改"）；短期无法接入则改为"未绑定 / 待接入"的中性占位，**不要展示虚构的具体值**。
 - **验收**：页面所有安全字段均来自接口或显式占位。
+- **修复结论（2026-10-30）**：
+  - 契约：`GET /admin/v1/me` 增补 `has_password` / `phone_bound` / `password_updated_at` / `must_change_password`（A 接口 6.2.0），新增 `GET /biz/v1/me`（B 接口 5.1.0），实现见 `internal/identity/app/auth_service.go` 的 `Me()` 与 `transport/biz/router.go`。
+  - 数据边界：手机号在 `identity_credential` 只存不可逆摘要，**只能展示"已绑定 / 未绑定"，无法回显号码**；系统无 email 与密保问题模型，两项固定为"暂未开通"，不再出现任何虚构值。
+  - 前端：`ProfileSecuritySetting` 从 `Switch` 改为「状态徽标 + 操作入口」；A 端页面按 `/me` 真实字段渲染，加载失败只显示错误与重试，`must_change_password` 为真时顶部告警；B 端因认证契约未迁移（FEREV-04），请求失败整页降级为"资料接口未接通"。
+  - 遗留：B 端在 FEREV-04 完成前看不到真实安全状态，属预期中间态。
 
 #### FEREV-19 两端视觉人格不统一
 
@@ -334,7 +339,7 @@ foreach ($r in $roots) {
 
 - [x] **FEREV-01** 登录页文案品牌化（app 级 locale 覆盖 `pageTitle` / `pageDesc` / `loginSubtitle`，不动公共包默认值）
 - [x] **FEREV-02** 在 app `preferences.ts` 覆盖 logo / 头像为本地资源，移除 `unpkg.com` 依赖（含历史缓存幂等迁移）
-- [ ] **FEREV-03** 安全设置页「未绑定 / 接入中」占位替换虚构值
+- [x] **FEREV-03** 安全设置页接入 `/me` 真实状态（密码 / 手机 / MFA 展示真实绑定状态，无数据模型的项显式标注"暂未开通"）
 - [ ] **FEREV-09** 删除原因三处改为可输入（或至少从常量集中管理）
 
 > 这四项不改动任何请求逻辑与权限，可独立提交、独立回滚，收益 / 风险比最高。

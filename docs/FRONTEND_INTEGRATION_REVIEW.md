@@ -273,6 +273,10 @@ async function doRefreshToken() {
   "merchant_id": "",
   "status": "active",
   "mfa_enabled": true,
+  "has_password": true,
+  "phone_bound": false,
+  "password_updated_at": "2026-09-30T08:00:00Z",
+  "must_change_password": false,
   "token_version": 3
 }
 ```
@@ -287,7 +291,13 @@ async function doRefreshToken() {
 | `merchant_id` | `Account.MerchantID` | B 端非空，A 端恒为空串（禁止用空串表示全部商户） |
 | `status` | `Account.Status` | `pending` / `active` / `locked` / `disabled` |
 | `mfa_enabled` | `MFAEnrollment.IsConfirmed()` | 前端据此决定是否提示绑定 |
+| `has_password` | `identity_credential` 中是否存在 `password` | 安全设置页展示「已设置 / 未设置」 |
+| `phone_bound` | `identity_credential` 中是否存在 `phone` | 手机号只存不可逆摘要，**任何响应都不回显号码** |
+| `password_updated_at` | `Account.PasswordUpdatedAt` | 从未改密时省略该字段 |
+| `must_change_password` | `Account.MustChangePassword` | 为 true 时前端须引导改密 |
 | `token_version` | `Account.TokenVersion` | 只读，排查令牌失效用 |
+
+> 2026-10-30 增补：后 4 个字段由 FEREV-03（安全设置页硬编码假数据）带出。系统无 email 与密保问题数据模型，安全设置页对这两项只能显示「暂未开通」。
 
 **不放进 `/me` 的字段**：`roles` / `permissions` / `data_scopes` 仍走 `/iam/me/permissions`。原因：`internal/identity/transport/rest` 当前只依赖身份用例（`handler.go:27-45`），把 IAM 快照注进来会让身份域反向依赖权限域。前端两次并行请求即可，`authStore` 已是 `Promise.all` 结构（`src/store/auth.ts:43-46`）。
 
@@ -299,7 +309,7 @@ async function doRefreshToken() {
 2. 不变量校验：`account.Channel == handler.channel`、未软删、状态非 `disabled`；任一不满足统一返回 `40100`（不区分原因，避免泄露账号是否存在）。
 3. `internal/identity/transport/rest`：新增 `Me` handler + DTO，`Handler` 保持只依赖一个用例门面。
 4. 路由：`transport/admin/router.go` 增 `GET /admin/v1/me`、`transport/biz/router.go` 增 `GET /biz/v1/me`，均挂 `authMW`。
-5. 契约：`api/openapi/{admin,biz}.yaml` 增路径，`components.yaml` 增 `MeView` schema，`make openapi` 通过。
+5. 契约：`api/openapi/{admin,biz}.yaml` 增路径，`schemas/{admin,biz}/me.yaml` 定义 `MeView`，`make openapi` 通过。
 
 > 本地注意：`auth.mode=demo` 时令牌形如 `admin.<id>`，`/me` 会用 `<id>` 去 `identity_account` 查账号。内存库没种子数据时一律 `40100`，所以「手工塞 demo token 调 `/me`」走不通；前端联调必须走 `identity.enabled=true` 的真实登录（见 §5）。
 
@@ -314,6 +324,10 @@ export interface MeView {
   merchant_id: string;
   status: 'active' | 'disabled' | 'locked' | 'pending';
   mfa_enabled: boolean;
+  has_password: boolean;
+  phone_bound: boolean;
+  password_updated_at?: string;
+  must_change_password: boolean;
   token_version: number;
 }
 
@@ -539,7 +553,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 | ID | 缺口 | 现状 | 建议契约 |
 |---|---|---|---|
-| GAP-01 | 用户资料 | 无端点；`/user/info` 是 mock 遗留 | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000007` 另开。详见 §3 FEINT-05 |
+| GAP-01 | 用户资料 | **已完成**：`GET /admin/v1/me`（A）/ `GET /biz/v1/me`（B） | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, has_password, phone_bound, password_updated_at, must_change_password, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000007` 另开。详见 §3 FEINT-05 |
 | GAP-09 | 菜单资源 | 无菜单表、无菜单端点 | **已决策方案 B**：新增 `iam_menu` + `GET /{channel}/v1/menus`，前端切 `accessMode: backend`。详见 §6「GAP-09 菜单：方案 B 设计」 |
 | GAP-10 | 审计查询 | 权限点 `audit:read` 已存在，无端点 | `GET /admin/v1/audit/events?action&subject&from&to` |
 | GAP-11 | 配置中心 | 权限点 `config:read/write` 已存在，无端点 | `GET/PUT /admin/v1/configs/{key}`，写入走审批 |
