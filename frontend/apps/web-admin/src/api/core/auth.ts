@@ -25,15 +25,17 @@ export interface TokenPairVM {
 }
 
 /**
- * 登录结果三态（api/openapi/paths/admin/auth.yaml#admin-v1-auth-login）。
+ * 登录结果四态（api/openapi/paths/admin/auth.yaml#admin-v1-auth-login）。
  *
  * - token：直接拿到令牌对；
  * - mfa-challenge：已完成密码校验，需再用 mfa_ticket 完成第二步；
- * - mfa-binding：A 端强制绑定，需用 mfa_setup_ticket 完成绑定后才会签发令牌。
+ * - mfa-binding：A 端强制绑定，需用 mfa_setup_ticket 完成绑定后才会签发令牌；
+ * - password-change：管理员重置密码后必须先凭 password_change_ticket 完成改密。
  */
 export type LoginOutcome =
   | { kind: 'mfa-binding'; ticket: string }
   | { kind: 'mfa-challenge'; ticket: string }
+  | { kind: 'password-change'; ticket: string }
   | { kind: 'token'; tokens: TokenPairVM };
 
 /** MFA 绑定初始化数据；密钥与恢复码只在本次响应出现。 */
@@ -64,12 +66,35 @@ export function toTokenPairVM(dto: TokenPairDTO): TokenPairVM {
   };
 }
 
-/** 登录响应的三态载荷；成功时即 TokenPair。 */
+/**
+ * 登录 / 改密响应的中间态载荷；成功时即 TokenPair。
+ *
+ * 服务端返回顺序：强制改密 → 强制绑定 → 两步校验 → 令牌。
+ */
 interface LoginPayload extends Partial<TokenPairDTO> {
   mfa_binding_required?: boolean;
   mfa_required?: boolean;
   mfa_setup_ticket?: string;
   mfa_ticket?: string;
+  password_change_required?: boolean;
+  password_change_ticket?: string;
+}
+
+/** 把登录信封载荷映射为四态；login 与 password/change 共用同一套中间态。 */
+function parseLoginPayload(payload: LoginPayload): LoginOutcome {
+  if (payload.password_change_required) {
+    return {
+      kind: 'password-change',
+      ticket: payload.password_change_ticket ?? '',
+    };
+  }
+  if (payload.mfa_binding_required) {
+    return { kind: 'mfa-binding', ticket: payload.mfa_setup_ticket ?? '' };
+  }
+  if (payload.mfa_required) {
+    return { kind: 'mfa-challenge', ticket: payload.mfa_ticket ?? '' };
+  }
+  return { kind: 'token', tokens: toTokenPairVM(payload as TokenPairDTO) };
 }
 
 /**
@@ -88,14 +113,55 @@ export async function loginApi(data: {
   if (envelope.code !== 0) {
     throw new Error(envelope.message || 'login failed');
   }
-  const payload = envelope.data ?? {};
-  if (payload.mfa_binding_required) {
-    return { kind: 'mfa-binding', ticket: payload.mfa_setup_ticket ?? '' };
+  return parseLoginPayload(envelope.data ?? {});
+}
+
+/**
+ * 强制改密（管理员重置密码后）。
+ *
+ * 使用一次性 password_change_ticket，不携带 Authorization；成功后可能直接
+ * 返回令牌，也可能仍需 MFA 校验 / 绑定，因此复用登录四态。
+ */
+export async function completePasswordChangeApi(params: {
+  newPassword: string;
+  ticket: string;
+}): Promise<LoginOutcome> {
+  const res = await baseRequestClient.post<
+    AxiosResponse<Envelope<LoginPayload>>
+  >('/auth/password/change', {
+    new_password: params.newPassword,
+    password_change_ticket: params.ticket,
+  });
+  const envelope = res.data;
+  if (envelope.code !== 0) {
+    throw new Error(envelope.message || 'password change failed');
   }
-  if (payload.mfa_required) {
-    return { kind: 'mfa-challenge', ticket: payload.mfa_ticket ?? '' };
-  }
-  return { kind: 'token', tokens: toTokenPairVM(payload as TokenPairDTO) };
+  return parseLoginPayload(envelope.data ?? {});
+}
+
+/**
+ * 自助改密（Bearer）。
+ *
+ * 走无拦截器的 baseRequestClient：旧密码错误返回 40100（HTTP 401），
+ * 若走 requestClient 会触发令牌刷新 / 重认证，把正常输错密码演变成登出。
+ * 后端成功返回 204 无 body，因此使用 raw。
+ * 成功后服务端递增 token_version 并撤销全部会话，调用方需引导重新登录。
+ */
+export async function changePasswordApi(params: {
+  accessToken?: null | string;
+  newPassword: string;
+  oldPassword: string;
+}): Promise<void> {
+  await baseRequestClient.post(
+    '/auth/password/change',
+    { new_password: params.newPassword, old_password: params.oldPassword },
+    {
+      headers: params.accessToken
+        ? { Authorization: `Bearer ${params.accessToken}` }
+        : {},
+      responseReturn: 'raw',
+    },
+  );
 }
 
 /**
@@ -167,6 +233,56 @@ export async function mfaVerifyApi(params: {
     throw new Error(envelope.message || 'mfa verify failed');
   }
   return toTokenPairVM(envelope.data);
+}
+
+/**
+ * 已登录账号初始化（或重新初始化）TOTP 绑定。
+ *
+ * 带 Bearer 且不提交票据，走「已登录绑定」入口；已确认绑定时返回 40900。
+ */
+export async function mfaSetupSessionApi(): Promise<MfaSetupData> {
+  const data = await requestClient.post<MfaSetupData>('/auth/mfa/setup', {});
+  return data;
+}
+
+/**
+ * 已登录账号用动态码确认首次绑定；成功返回 204。
+ *
+ * 动态码错误同样返回 40100（HTTP 401），因此必须绕开 requestClient 的
+ * 401 自动刷新，否则一次输错就会被判定为登录失效。
+ */
+export async function confirmMfaBindingSessionApi(
+  code: string,
+  accessToken?: null | string,
+): Promise<void> {
+  await baseRequestClient.post(
+    '/auth/mfa/verify',
+    { code },
+    {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      responseReturn: 'raw',
+    },
+  );
+}
+
+/**
+ * 解绑 MFA。
+ *
+ * 提交当前动态码或一次性恢复码；错误码与确认绑定相同，同样走 baseRequestClient。
+ * 成功后服务端撤销该账号全部会话并递增 token_version，调用方必须引导重新登录。
+ */
+export async function disableMfaApi(
+  code: string,
+  accessToken?: null | string,
+): Promise<void> {
+  await baseRequestClient.post(
+    '/auth/mfa/disable',
+    { code },
+    {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      responseReturn: 'raw',
+    },
+  );
 }
 
 /** 当前主体的角色与权限快照。 */

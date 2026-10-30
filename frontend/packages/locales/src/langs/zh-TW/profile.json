@@ -1,4 +1,26 @@
 {
   "updatePassword": "更新密碼",
-  "updateBasicProfile": "更新基本資訊"
+  "updateBasicProfile": "更新基本資訊",
+  "passwordChangeSuccess": "密碼修改成功，請重新登入",
+  "passwordChangeFailed": "密碼修改失敗",
+  "mfaBindSuccess": "MFA 綁定成功",
+  "mfaCodeInvalid": "動態碼驗證失敗，請重試",
+  "mfaUnbindFailed": "解綁失敗，請檢查動態碼",
+  "mfaDevice": "MFA 設備",
+  "mfaBoundDesc": "已綁定身份驗證器，登入時需要完成二次驗證",
+  "mfaUnboundDesc": "未綁定，A 端生產環境強制綁定後才能登入",
+  "mfaBind": "綁定 MFA",
+  "mfaUnbind": "解綁 MFA",
+  "mfaBindTitle": "綁定身份驗證器",
+  "mfaBindScanTip": "使用身份驗證器掃描二維碼，或手動輸入密鑰",
+  "mfaSecret": "密鑰",
+  "mfaRecoveryCodes": "恢復碼（僅顯示一次，請妥善保存）",
+  "mfaDownloadRecoveryCodes": "下載恢復碼",
+  "mfaCodePlaceholder": "請輸入身份驗證器中的 6 位動態碼",
+  "mfaUnbindTitle": "解綁 MFA",
+  "mfaUnbindWarning": "解綁後該賬號的全部會話將被撤銷，需要重新登入。",
+  "mfaUnbindCodePlaceholder": "動態碼或一次性恢復碼",
+  "mfaUnbindCodeTip": "恢復碼為保存的 16 位字母數字串，可帶連字號",
+  "mfaBindConfirm": "完成綁定",
+  "mfaUnbindConfirm": "確認解綁"
 }

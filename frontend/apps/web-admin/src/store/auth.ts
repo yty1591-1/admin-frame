@@ -13,11 +13,15 @@ import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
 
 import {
+  completePasswordChangeApi,
+  confirmMfaBindingSessionApi,
+  disableMfaApi,
   getMyPermissionsApi,
   getUserInfoApi,
   loginApi,
   logoutApi,
   mfaSetupApi,
+  mfaSetupSessionApi,
   mfaVerifyApi,
 } from '#/api';
 import { $t } from '#/locales';
@@ -32,8 +36,8 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 密码登录。
    *
-   * 返回三态：拿到令牌时已在本方法内完成落库与跳转；
-   * MFA 中间态由登录页接管后续步骤，任何中间态都不会写入令牌。
+   * 返回四态：拿到令牌时已在本方法内完成落库与跳转；
+   * 改密 / MFA 中间态由登录页接管后续步骤，任何中间态都不会写入令牌。
    */
   async function authLogin(params: Recordable<any>): Promise<LoginOutcome> {
     loginLoading.value = true;
@@ -42,6 +46,27 @@ export const useAuthStore = defineStore('auth', () => {
         password: params.password,
         username: params.username,
       });
+      if (outcome.kind === 'token') {
+        await completeLogin(outcome.tokens);
+      }
+      return outcome;
+    } finally {
+      loginLoading.value = false;
+    }
+  }
+
+  /**
+   * 强制改密：管理员重置密码后，凭一次性票据提交新密码。
+   *
+   * 结果同样可能是令牌、MFA 挑战或强制绑定，由登录页继续接管后续步骤。
+   */
+  async function completePasswordChange(
+    ticket: string,
+    newPassword: string,
+  ): Promise<LoginOutcome> {
+    loginLoading.value = true;
+    try {
+      const outcome = await completePasswordChangeApi({ newPassword, ticket });
       if (outcome.kind === 'token') {
         await completeLogin(outcome.tokens);
       }
@@ -81,6 +106,26 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       loginLoading.value = false;
     }
+  }
+
+  /** 已登录账号初始化 TOTP 绑定；密钥与恢复码只在本次响应出现。 */
+  async function startMfaBindingForAccount(): Promise<MfaSetupData> {
+    return await mfaSetupSessionApi();
+  }
+
+  /** 已登录账号用动态码确认首次绑定。 */
+  async function confirmMfaBindingForAccount(code: string) {
+    await confirmMfaBindingSessionApi(code, accessStore.accessToken);
+  }
+
+  /**
+   * 解绑当前账号 MFA。
+   *
+   * 成功后服务端撤销全部会话，这里统一走登出，避免继续使用失效令牌。
+   */
+  async function disableMfaForAccount(code: string) {
+    await disableMfaApi(code, accessStore.accessToken);
+    await logout();
   }
 
   /** 统一落库双令牌 → 拉取资料与权限 → 跳转。 */
@@ -154,11 +199,15 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     $reset,
     authLogin,
+    completePasswordChange,
     confirmMfaBinding,
+    confirmMfaBindingForAccount,
+    disableMfaForAccount,
     fetchUserInfo,
     loginLoading,
     logout,
     startMfaBinding,
+    startMfaBindingForAccount,
     verifyMfaChallenge,
   };
 });

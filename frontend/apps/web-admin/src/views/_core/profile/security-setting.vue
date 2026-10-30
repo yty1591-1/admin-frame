@@ -3,6 +3,8 @@ import { computed } from 'vue';
 
 import { ProfileSecuritySetting } from '@vben/common-ui';
 
+import MfaSetting from './mfa-setting.vue';
+
 const formSchema = computed(() => {
   return [
     {
@@ -29,15 +31,12 @@ const formSchema = computed(() => {
       label: '备用邮箱',
       description: '已绑定邮箱：ant***sign.com',
     },
-    {
-      value: false,
-      fieldName: 'securityMfa',
-      label: 'MFA 设备',
-      description: '未绑定 MFA 设备，绑定后，可以进行二次确认',
-    },
   ];
 });
 </script>
 <template>
-  <ProfileSecuritySetting :form-schema="formSchema" />
+  <div class="space-y-6">
+    <ProfileSecuritySetting :form-schema="formSchema" />
+    <MfaSetting />
+  </div>
 </template>

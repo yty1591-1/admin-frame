@@ -1,4 +1,26 @@
 {
   "updatePassword": "Update Password",
-  "updateBasicProfile": "Update Basic Profile"
+  "updateBasicProfile": "Update Basic Profile",
+  "passwordChangeSuccess": "Password updated. Please sign in again.",
+  "passwordChangeFailed": "Failed to update password",
+  "mfaBindSuccess": "MFA bound successfully",
+  "mfaCodeInvalid": "Invalid code, please try again",
+  "mfaUnbindFailed": "Failed to unbind MFA. Check the code and try again.",
+  "mfaDevice": "MFA device",
+  "mfaBoundDesc": "Authenticator bound; a second factor is required at sign-in",
+  "mfaUnboundDesc": "Not bound; A-side production requires binding before sign-in",
+  "mfaBind": "Bind MFA",
+  "mfaUnbind": "Unbind MFA",
+  "mfaBindTitle": "Set up authenticator",
+  "mfaBindScanTip": "Scan the QR code with your authenticator, or enter the secret manually",
+  "mfaSecret": "Secret",
+  "mfaRecoveryCodes": "Recovery codes (shown only once, keep them safe)",
+  "mfaDownloadRecoveryCodes": "Download recovery codes",
+  "mfaCodePlaceholder": "Enter the 6-digit code from your authenticator",
+  "mfaUnbindTitle": "Unbind MFA",
+  "mfaUnbindWarning": "Unbinding revokes all sessions for this account; you will need to sign in again.",
+  "mfaUnbindCodePlaceholder": "Authenticator code or one-time recovery code",
+  "mfaUnbindCodeTip": "Recovery codes are 16 alphanumeric characters, dashes allowed",
+  "mfaBindConfirm": "Complete binding",
+  "mfaUnbindConfirm": "Confirm unbind"
 }

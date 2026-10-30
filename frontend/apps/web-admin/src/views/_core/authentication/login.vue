@@ -2,7 +2,7 @@
 import type { VbenFormSchema } from '@vben/common-ui';
 import type { Recordable } from '@vben/types';
 
-import type { MfaSetupData } from '#/api/core/auth';
+import type { LoginOutcome, MfaSetupData } from '#/api/core/auth';
 
 import { computed, onUnmounted, ref } from 'vue';
 
@@ -15,15 +15,21 @@ import { useAuthStore } from '#/store';
 
 import MfaBinding from './mfa-binding.vue';
 import MfaVerify from './mfa-verify.vue';
+import PasswordChange from './password-change.vue';
 
 defineOptions({ name: 'Login' });
 
-type LoginStep = 'mfa-binding' | 'mfa-challenge' | 'password';
+type LoginStep =
+  | 'mfa-binding'
+  | 'mfa-challenge'
+  | 'password'
+  | 'password-change';
 
 const authStore = useAuthStore();
 
 const step = ref<LoginStep>('password');
 const challengeTicket = ref('');
+const passwordChangeTicket = ref('');
 const setupTicket = ref('');
 const setupData = ref<MfaSetupData>();
 const errorText = ref('');
@@ -119,6 +125,7 @@ function applyLoginError(error: unknown, invalidateTicket = false) {
 function resetToPassword() {
   step.value = 'password';
   challengeTicket.value = '';
+  passwordChangeTicket.value = '';
   setupTicket.value = '';
   setupData.value = undefined;
   errorText.value = '';
@@ -129,18 +136,42 @@ async function handlePasswordSubmit(values: Recordable<any>) {
   errorText.value = '';
   try {
     const outcome = await authStore.authLogin(values);
-    if (outcome.kind === 'mfa-challenge') {
-      challengeTicket.value = outcome.ticket;
-      step.value = 'mfa-challenge';
-      return;
-    }
-    if (outcome.kind === 'mfa-binding') {
-      setupTicket.value = outcome.ticket;
-      setupData.value = await authStore.startMfaBinding(outcome.ticket);
-      step.value = 'mfa-binding';
-    }
+    await advanceStep(outcome);
   } catch (error) {
     applyLoginError(error);
+  }
+}
+
+/** 中间态统一路由：改密 → MFA 挑战 / 强制绑定；拿到令牌时 store 已完成跳转。 */
+async function advanceStep(outcome: LoginOutcome) {
+  if (outcome.kind === 'password-change') {
+    passwordChangeTicket.value = outcome.ticket;
+    step.value = 'password-change';
+    return;
+  }
+  if (outcome.kind === 'mfa-challenge') {
+    challengeTicket.value = outcome.ticket;
+    step.value = 'mfa-challenge';
+    return;
+  }
+  if (outcome.kind === 'mfa-binding') {
+    setupTicket.value = outcome.ticket;
+    setupData.value = await authStore.startMfaBinding(outcome.ticket);
+    step.value = 'mfa-binding';
+  }
+}
+
+async function handlePasswordChangeSubmit(newPassword: string) {
+  errorText.value = '';
+  try {
+    const outcome = await authStore.completePasswordChange(
+      passwordChangeTicket.value,
+      newPassword,
+    );
+    await advanceStep(outcome);
+  } catch (error) {
+    // 改密票据一次性，400/401 说明票据已失效，只能退回密码登录
+    applyLoginError(error, true);
   }
 }
 
@@ -176,6 +207,14 @@ onUnmounted(stopCooldown);
     :show-register="false"
     :show-third-party-login="false"
     @submit="handlePasswordSubmit"
+  />
+
+  <PasswordChange
+    v-else-if="step === 'password-change'"
+    :error-text="errorText"
+    :loading="authStore.loginLoading"
+    @back="resetToPassword"
+    @submit="handlePasswordChangeSubmit"
   />
 
   <MfaVerify
