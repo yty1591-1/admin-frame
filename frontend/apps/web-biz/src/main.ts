@@ -1,7 +1,7 @@
 import { initPreferences } from '@vben/preferences';
 import { unmountGlobalLoading } from '@vben/utils';
 
-import { overridesPreferences } from './preferences';
+import { migrateLegacyBrandAssets, overridesPreferences } from './preferences';
 
 /**
  * 应用初始化完成之后再进行页面加载渲染
@@ -18,6 +18,9 @@ async function initApplication() {
     namespace,
     overrides: overridesPreferences,
   });
+
+  // 历史缓存里可能仍是 CDN 品牌资源，缓存优先于 overrides，需一次性改写
+  migrateLegacyBrandAssets();
 
   // 启动应用并挂载
   // vue应用主要逻辑及视图

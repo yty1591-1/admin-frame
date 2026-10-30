@@ -1,4 +1,13 @@
-import { defineOverridesPreferences } from '@vben/preferences';
+import { defineOverridesPreferences, preferences, updatePreferences } from '@vben/preferences';
+
+/**
+ * 品牌静态资源地址。
+ *
+ * 基于 `VITE_BASE` 拼接，保证子路径部署（如 `/biz/`）时资源仍可命中；
+ * 资源位于 app 的 `public/brand/`，不走外网 CDN。
+ */
+const LOGO_URL = `${import.meta.env.BASE_URL}brand/logo.svg`;
+const AVATAR_URL = `${import.meta.env.BASE_URL}brand/avatar.svg`;
 
 /**
  * 应用配置
@@ -17,6 +26,10 @@ export const overridesPreferences = defineOverridesPreferences({
      */
     defaultHomePath: '/member/list',
     /**
+     * 默认头像，用于用户未设置头像时的占位。
+     */
+    defaultAvatar: AVATAR_URL,
+    /**
      * 权限模式：
      * - frontend：菜单与路由由前端 route modules 定义，按用户角色过滤；
      * - backend：菜单由后端 GET /v1/iam/me/menus 下发并按权限点裁剪，前端只做组件映射。
@@ -26,6 +39,9 @@ export const overridesPreferences = defineOverridesPreferences({
      */
     accessMode: 'backend',
   },
+  logo: {
+    source: LOGO_URL,
+  },
   copyright: {
     companyName: 'Admin Frame',
     companySiteLink: '',
@@ -34,3 +50,29 @@ export const overridesPreferences = defineOverridesPreferences({
     icpLink: '',
   },
 });
+
+/**
+ * 把历史缓存中的 CDN 品牌资源改写为本地资源。
+ *
+ * 背景：偏好设置按 namespace 持久化到 localStorage，且合并时缓存优先于
+ * `overridesPreferences`（见 `@vben-core/preferences` 的 `initPreferences`）。
+ * 若不做迁移，已访问过的浏览器仍会继续使用旧地址，表现为「改了代码但没生效」。
+ *
+ * 幂等：当前值已是本地路径时直接返回，不会产生多余写入。
+ * 注意：不 bump `VITE_APP_VERSION` 清理缓存，因为那样会连带清掉 token 存储
+ * 导致全员重新登录。
+ */
+export function migrateLegacyBrandAssets() {
+  const currentLogo = preferences.logo.source ?? '';
+  const currentAvatar = preferences.app.defaultAvatar ?? '';
+  const usesRemoteAsset = currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
+
+  if (!usesRemoteAsset) {
+    return;
+  }
+
+  updatePreferences({
+    app: { defaultAvatar: AVATAR_URL },
+    logo: { source: LOGO_URL },
+  });
+}
