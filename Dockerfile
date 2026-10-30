@@ -39,5 +39,3 @@ FROM runtime AS c-api
 FROM runtime AS worker
 # 迁移 Job 专用镜像（ENT-05 T7）；与 API 共用运行时基座与迁移文件。
 FROM runtime AS migrate
-# 首个管理员开通 Job 专用镜像（identity-authn §7.2.1 D4）；只用于一次性 seed。
-FROM runtime AS identity-seed

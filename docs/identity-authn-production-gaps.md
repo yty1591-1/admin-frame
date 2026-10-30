@@ -80,7 +80,7 @@
 
 **现状（证据）**
 
-- 只有 `cmd/identity-seed` 能创建 A/B 账号，且明确拒绝 C 端：[main.go](../cmd/identity-seed/main.go#L334-L345)。
+- A/B 端首个管理员由迁移 [`000005_seed_bootstrap_admin`](../migrations/000005_seed_bootstrap_admin.up.sql) 开通；C 端只能走短信 / OAuth 自助开户，没有密码凭据。
 - 应用层没有改密、重置密码、禁用、启用、解锁、重置 MFA 的用例或 HTTP 端点。`Account.Disable`、`ChangePassword`、`Unlock` 只被领域测试调用：[account.go](../internal/identity/domain/account.go#L253-L313)。
 - C 端短信登录按 `phone:<hash>` 查找已存在账号，找不到直接失败：[sms_login.go](../internal/identity/app/sms_login.go#L227-L243)；仓库内没有任何创建 `phone` 凭据或绑定手机号的路径（`CredentialTypePhone` 只在领域与测试中出现）。
 - OAuth 只有在 `auto_provision=true` 时才自动建号：[oauth.go](../internal/identity/app/oauth.go#L228-L280)；默认 `auto_provision=false`。

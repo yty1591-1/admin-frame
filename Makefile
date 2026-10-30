@@ -6,7 +6,7 @@ LDFLAGS := -s -w
 GOIMPORTS ?= $(GO) run golang.org/x/tools/cmd/goimports@v0.30.0
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
-.PHONY: build build-admin build-biz build-c build-worker build-migrate build-seed \
+.PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
@@ -15,7 +15,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
         check-authn check-deploy check-alerts check-backup gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
-build: build-admin build-biz build-c build-worker build-migrate build-seed
+build: build-admin build-biz build-c build-worker build-migrate
 
 build-admin:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/admin-api ./cmd/admin-api
@@ -31,9 +31,6 @@ build-worker:
 
 build-migrate:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/migrate ./cmd/migrate
-
-build-seed:
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/identity-seed ./cmd/identity-seed
 
 run-admin: build-admin
 	./$(BIN_DIR)/admin-api -config configs/admin.yaml
@@ -241,7 +238,6 @@ docker:
 	docker build --target c-api --build-arg CMD=c-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/c-api:local .
 	docker build --target worker --build-arg CMD=worker --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/worker:local .
 	docker build --target migrate --build-arg CMD=migrate --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/migrate:local .
-	docker build --target identity-seed --build-arg CMD=identity-seed --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/identity-seed:local .
 
 docker-admin:
 	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .
@@ -256,7 +252,7 @@ docker-push:
 		echo "error: set VERSION=<semver|sha>; the local tag must not be pushed (RELS-01/§9)" >&2; \
 		exit 1; \
 	fi
-	@set -e; for cmd in admin-api biz-api c-api worker migrate identity-seed; do \
+	@set -e; for cmd in admin-api biz-api c-api worker migrate; do \
 		img="$(IMAGE_REGISTRY)/$(IMAGE_NAMESPACE)/$$cmd:$(VERSION)"; \
 		echo "==> push $$img"; \
 		docker build --target $$cmd \

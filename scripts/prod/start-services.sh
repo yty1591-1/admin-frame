@@ -2,7 +2,7 @@
 # 以生产配置启动三端 + worker 的本地/预发编排脚本。
 #
 # 用法：
-#   bash scripts/prod/start-services.sh <start|stop|restart|status|seed> [选项]
+#   bash scripts/prod/start-services.sh <start|stop|restart|status> [选项]
 #
 # 选项：
 #   --no-build          跳过 go build，直接使用 bin/ 下已有二进制
@@ -20,14 +20,12 @@
 #   5. PIDs 与日志写入 bin/run/（已被 /bin/ 忽略），不会污染工作区。
 #   6. Windows 下若 bash 来自 WSL，脚本会自动切到 Git Bash：WSL 启动原生 Windows
 #      进程时只透传 WSLENV 白名单，导出的 ADMIN_FRAME_* 会丢失。
-#   7. identity.enabled=true 时，先用 seed 开通首个账号（A/B 端；C 端短信自助注册）：
-#        IDENTITY_SEED_SUBJECT=<登录名> IDENTITY_SEED_PASSWORD=<口令> \
-#        bash scripts/prod/start-services.sh seed
-#      可选：IDENTITY_SEED_CHANNEL=admin|biz、IDENTITY_SEED_MERCHANT_ID、IDENTITY_SEED_NODE_ID。
+#   7. 首个管理员由迁移 000005 创建（账号 + 密码凭据 + system_admin 角色 + 绑定）：
+#        首次登录强制改密，再按 A 端策略完成 MFA 绑定；无需额外的 seed CLI。
 #   8. Windows 下 start/restart 必须在原生 Git Bash 窗口执行，不要从 WSL 终端调用：
 #      互操作层拉起的 Git Bash 持有隐藏控制台，脚本退出后控制台关闭，服务会收到
 #      CTRL_CLOSE_EVENT（Go 运行时映射为 SIGTERM）并被优雅停机，日志表现为启动成功
-#      后立刻出现 "shutdown requested" → "server stopped"。stop/status/seed 不受此限制；
+#      后立刻出现 "shutdown requested" → "server stopped"。stop/status 不受此限制；
 #      WSL 下的自动切换只能保住环境变量，无法保住进程生命周期。
 
 set -euo pipefail
@@ -69,11 +67,6 @@ API_HOST="${API_HOST:-127.0.0.1}"
 ADMIN_API_PORT="${ADMIN_API_PORT:-8081}"
 BIZ_API_PORT="${BIZ_API_PORT:-8082}"
 C_API_PORT="${C_API_PORT:-8083}"
-# seed 子命令参数：首个账号的端别 / 登录名 / 雪花节点号（须与运行中的 API 节点不同）。
-IDENTITY_SEED_CHANNEL="${IDENTITY_SEED_CHANNEL:-admin}"
-IDENTITY_SEED_SUBJECT="${IDENTITY_SEED_SUBJECT:-}"
-IDENTITY_SEED_MERCHANT_ID="${IDENTITY_SEED_MERCHANT_ID:-}"
-IDENTITY_SEED_NODE_ID="${IDENTITY_SEED_NODE_ID:-100}"
 
 ROLES=(worker admin-api biz-api c-api)
 # role -> 配置中的端别，用于拼接默认配置文件名。
@@ -103,7 +96,7 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 parse_args() {
@@ -114,9 +107,9 @@ parse_args() {
   fi
   shift || true
   case "$action" in
-    start | stop | restart | status | seed) ACTION="$action" ;;
+    start | stop | restart | status) ACTION="$action" ;;
     -h | --help | help) usage; exit 0 ;;
-    *) die "未知子命令：$action（可用：start|stop|restart|status|seed）" ;;
+    *) die "未知子命令：$action（可用：start|stop|restart|status）" ;;
   esac
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -352,34 +345,10 @@ do_status() {
   printf '\n日志目录：%s\n' "$LOG_DIR"
 }
 
-# do_seed 开通首个身份域账号（cmd/identity-seed）；口令只走环境变量或 stdin，不进命令行。
-do_seed() {
-  load_env
-  [[ -n "$IDENTITY_SEED_SUBJECT" ]] || die "请设置 IDENTITY_SEED_SUBJECT（A/B 端登录名或邮箱）"
-  if [[ "$IDENTITY_SEED_CHANNEL" == "biz" && -z "$IDENTITY_SEED_MERCHANT_ID" ]]; then
-    die "IDENTITY_SEED_CHANNEL=biz 时必须设置 IDENTITY_SEED_MERCHANT_ID"
-  fi
-  local bin="$BIN_DIR/identity-seed$EXE"
-  if [[ ! -f "$bin" ]]; then
-    command -v "$GO" >/dev/null 2>&1 || die "未找到 go，无法构建 identity-seed"
-    log "构建 identity-seed ..."
-    "$GO" build -ldflags "-s -w" -o "$bin" ./cmd/identity-seed
-  fi
-  local args=(-channel "$IDENTITY_SEED_CHANNEL" -subject "$IDENTITY_SEED_SUBJECT" -node-id "$IDENTITY_SEED_NODE_ID")
-  [[ -n "$IDENTITY_SEED_MERCHANT_ID" ]] && args+=(-merchant-id "$IDENTITY_SEED_MERCHANT_ID")
-  if [[ -z "${IDENTITY_SEED_PASSWORD:-}" ]]; then
-    warn "未设置 IDENTITY_SEED_PASSWORD，改为从 stdin 读取口令"
-    "$bin" "${args[@]}" -password-stdin
-  else
-    "$bin" "${args[@]}"
-  fi
-}
-
 parse_args "$@"
 case "$ACTION" in
   start) do_start ;;
   stop) do_stop ;;
   restart) do_stop; do_start ;;
   status) do_status ;;
-  seed) do_seed ;;
 esac

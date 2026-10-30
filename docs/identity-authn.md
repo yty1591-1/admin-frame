@@ -4,7 +4,7 @@
 > **定位**：定义账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；解决「只有验签、没有登录」的上线阻断问题
 > **适用范围**：`internal/identity/`、`internal/security/`、`internal/shared/{auth,audit,apperr}`、`internal/platform/`、`pkg/{jwt,totp,password,crypto,redis,sms}`、`cmd/`、`migrations/`、`api/openapi/`、`scripts/ci/`、`docs/`
 > **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md) `ENT-01`、[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) `ENT-01`、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §10、[`rbac-iam.md`](./rbac-iam.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md) `SEC-04`、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`docs/audit/EVENTS.md`](./audit/EVENTS.md)
-> **最后更新**：2026-10-25（§7.2.1 强制绑定契约定稿并落地：`mfa_setup_ticket` + `cmd/identity-seed`）
+> **最后更新**：2026-10-30（首个管理员改为迁移 `000005_seed_bootstrap_admin` 创建，移除 `cmd/identity-seed`）
 > **变更方式**：调整领域模型、撤销语义、表结构或验收标准须同步更新 [`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) 与 [`production-readiness-gaps.md`](./production-readiness-gaps.md)，经架构 Owner 与安全 Reviewer 评审后合入
 
 ---
@@ -448,7 +448,7 @@ type RevocationChecker interface {
 
 ### 7.2.1 强制绑定 MFA 的契约与首个管理员 bootstrap
 
-> **状态**：已定稿并落地（D1=①、D2=①、D3=①、D4=① seed CLI、D5 按建议实现）。
+> **状态**：已定稿并落地（D1=①、D2=①、D3=①、D4=① 迁移脚本、D5 按建议实现）。
 
 **落地前的问题（代码事实）**
 
@@ -456,7 +456,7 @@ type RevocationChecker interface {
 |---|---|---|
 | 1 | 未绑定 MFA 且 `admin_required=true` 时返回 `401 / 40100`，`message` 为自由文本 `mfa binding required`，与「账号不存在 / 密码错误 / 锁定 / 停用」**同一业务码**；错误信封无子码字段，客户端无法结构化判定 | [`mfa.go`](../internal/identity/app/mfa.go) |
 | 2 | `mfa/setup`、`mfa/disable` 均挂在 `authMW` 之后，没有令牌就不可能完成首次绑定 | [`router.go`](../internal/identity/transport/admin/router.go) |
-| 3 | prod / staging **强制** `identity.mfa.admin_required=true`，而仓库内不存在账号或 MFA 绑定的初始化入口 → 新环境首个管理员没有任何可用登录路径（bootstrap 死锁），只能人工改库 | [`config.go`](../internal/platform/config.go) |
+| 3 | prod / staging **强制** `identity.mfa.admin_required=true`，仓库内必须有账号初始化入口，否则新环境首个管理员没有任何可用登录路径（bootstrap 死锁）；现已由迁移 `000005_seed_bootstrap_admin` 提供 | [`config.go`](../internal/platform/config.go)、[`000005`](../migrations/000005_seed_bootstrap_admin.up.sql) |
 | 4 | 契约闭合：`MFAChallenge` 为 `additionalProperties: false` 且 `required: [mfa_required, mfa_ticket]`；登录 200 为 `TokenPair \| MFAChallenge` 的 `oneOf`。后端若直接加字段而不改契约，消费方会报「响应格式非法」 | [`components.yaml`](../api/openapi/components.yaml) |
 | 5 | 消费方可能把 `40100` 统一映射为「账号或密码错误」，用户会反复重试密码直到锁定 | 契约语义见 [`components.yaml`](../api/openapi/components.yaml) |
 
@@ -467,7 +467,7 @@ type RevocationChecker interface {
 | D1 | 登录响应如何表达「需绑定」 | ① 200 新增分支 ② 新业务码（如 `40110`）③ 保持 `40100` + 文案 | ①：密码已通过，属「认证未完成」，不是错误 |
 | D2 | 绑定凭据形态 | ① 独立 `mfa_setup_ticket` ② 半权限 Access Token（`scope=mfa_setup`）③ 一次性邀请码 | ①：不引入可访问业务接口的中间态令牌 |
 | D3 | 绑定完成后的会话 | ① 直接签发 `TokenPair` ② 返回 204 并要求重新登录 | ①：一次交互完成，票据生命周期更短 |
-| D4 | 首个管理员 bootstrap | ① 运维 seed CLI ② 一次性邀请码 ③ 部署期注入 | ①（已实现 `cmd/identity-seed`）：口令只走 stdin / 环境变量，账号+凭据+审计同事务 |
+| D4 | 首个管理员 bootstrap | ① 迁移脚本 ② 一次性邀请码 ③ 部署期注入 | ①（已实现 `migrations/000005_seed_bootstrap_admin`）：账号、凭据、`system_admin` 角色、授权绑定与审计在同一迁移事务内提交 |
 | D5 | 失败语义 | 绑定失败是否计入锁定、票据重放是否作废、重复 `setup` 是否覆盖未确认绑定 | 与 `mfa/verify` 的 `mfaFailure` 对齐；重放返回 `40100` 且无副作用 |
 
 **已定稿契约（D1=①、D2=①、D3=①、D4=①、D5=按建议）**
@@ -554,28 +554,23 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 +        - 携带 `mfa_setup_ticket`（且无 `Authorization`）：强制绑定流程，成功后返回 `TokenPair`。
 ```
 
-**首个管理员 bootstrap（D4=① `cmd/identity-seed`）**
+**首个管理员 bootstrap（D4=① 迁移 `000005_seed_bootstrap_admin`）**
 
-```bash
-# 口令从 stdin 读取（推荐）；也可用 IDENTITY_SEED_PASSWORD 环境变量。
-printf '%s' "$ADMIN_INITIAL_PASSWORD" | identity-seed \
-  -db-driver mysql \
-  -channel admin \
-  -subject admin@example.com \
-  -password-stdin
-```
-
-- 唯一写入口径：账号、密码凭据、`auth.account.created` Outbox 审计事件在**同一事务**内提交；任一步失败整体回滚。
-- **不写 TOTP 密钥**：账号创建后首次登录返回 `200 + mfa_setup_ticket`，由浏览器完成绑定，运维全程不接触 MFA 密钥。
-- 口令**禁止**出现在命令行参数、日志与审计 `attrs`；stdout 只输出 `status / account_id / trace_id` 等可核对摘要。
-- 幂等：账号已存在时只做只读探测并返回 `status=exists`，不修改密码、不重复写审计、也不需要再次提供口令。
-- `-dry-run` 只校验参数与库连通性并输出计划，不写任何数据；`-node-id` 必须与在线 API 节点不同，避免雪花 ID 冲突。
-- 镜像：`make build-seed` 产出 `bin/identity-seed`；Docker 目标 `identity-seed`（见 `Dockerfile`）。
+- 迁移在同一事务内创建：`identity_account`（`must_change_password=1`）、`identity_credential`（Argon2id）、
+  `iam_role(system_admin)`、逐项权限授权、`all` 数据范围、`iam_role_binding`，以及 `auth.account.created` 审计事件。
+- 只在账号不存在时创建；已有环境（历史上用 CLI 开通）只补角色与绑定，不覆盖密码、不改变已确认状态。
+- 初始口令是仓库内公开的演练值，因此**依赖强制改密**在首次登录时替换；首次登录顺序为
+  「强制改密 → MFA 强制绑定 → 获得管理令牌」，运维全程不接触 TOTP 密钥。
+- 登录名通过迁移脚本内的 `@subject` 修改（默认 `admin@example.com`）；角色固定 `system_admin`，
+  逐项授予生效的 A 端权限并排除 `iam:breakglass:approve`，不写 `*`。
+- 回滚迁移 `000005_seed_bootstrap_admin.down.sql` 只删除迁移自身写入的固定主键账号与角色数据，
+  已有会话时删除会因外键 `RESTRICT` 失败，属预期保护。
 
 **验收（已并入 §15）**
 
 - `AC-ENT-01-6`：未绑定账号在 `admin_required=true` 下可凭登录返回的 `mfa_setup_ticket` 完成绑定并直接获得令牌，全程无需人工改库。
-- `AC-ENT-01-7`：首个管理员可由 `identity-seed` 重复执行开通；开通路径可审计，日志与命令行不回显口令与 TOTP 密钥。
+- `AC-ENT-01-7`：首个管理员由迁移 `000005_seed_bootstrap_admin` 幂等开通（账号已存在时只补授权），
+  开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
 ### 7.3 SSO / OIDC 预留
@@ -976,7 +971,7 @@ internal/identity/
 | `AC-ENT-01-4` | 登录失败限流与锁定生效；A 端未完成 MFA 不得获得管理令牌 | `internal/identity/app/lockout_test.go`、`internal/identity/app/mfa_test.go` | 同上 |
 | `AC-ENT-01-5` | 登录、登出、失败、锁定、MFA 绑定均产生审计事件 | `internal/identity/app/audit_test.go`、`docs/audit/EVENTS.md` | `bash scripts/ci/check-audit.sh` |
 | `AC-ENT-01-6` | `admin_required=true` 下未绑定账号可凭 `mfa_setup_ticket` 完成绑定并直接获得令牌 | `internal/identity/app/mfa_test.go` | `go test ./internal/identity/...` |
-| `AC-ENT-01-7` | 首个管理员可由 `cmd/identity-seed` 幂等开通，口令与 TOTP 密钥不入日志 / 命令行 | `cmd/identity-seed/main_test.go` | `go test ./cmd/identity-seed/...` |
+| `AC-ENT-01-7` | 首个管理员由迁移 `000005` 幂等开通（账号已存在时只补授权），口令与 TOTP 密钥不入日志 / 命令行 | [`000005_seed_bootstrap_admin.up.sql`](../migrations/000005_seed_bootstrap_admin.up.sql) | `bash scripts/ci/check-migrations.sh` |
 
 补充用例要求：
 
@@ -1030,7 +1025,7 @@ internal/identity/
 | 0 契约 | 本文档、OpenAPI 骨架、配置字段与 `Validate`、迁移草案、审计 action 目录 | T1/T2/T9 前置 | 文档评审通过；`check-openapi` 通过 |
 | 1 账号域 | domain + 仓储 + 密码策略 + 锁定 + 迁移 + 单测 | T1/T2/T3 | 状态机与仓储用例全绿 |
 | 2 令牌闭环 | `pkg/jwt` kid / 密钥环、签发、登录 / 刷新 / 登出、撤销 checker、A/B 端点 | T4/T5/T6/T10 | `AC-ENT-01-1/2/3/5` 通过 |
-| 3 MFA | TOTP、`mfa_ticket`、`mfa_setup_ticket` 强制绑定、`identity-seed` bootstrap、会话管理 | T8 | `AC-ENT-01-4/6/7` 通过 |
+| 3 MFA | TOTP、`mfa_ticket`、`mfa_setup_ticket` 强制绑定、`000005` 迁移 bootstrap、会话管理 | T8 | `AC-ENT-01-4/6/7` 通过 |
 | 4 C 端 | 短信验证码、防刷、OAuth 回调、OIDC 预留 | T6（C）/T7 | C 端登录与限流用例通过 |
 | 5 收口 | 审计回写、`check-authn`、全量门禁、真实依赖集成测试、状态回写 | T9/T10 | `make ci` + `make test-integration` 全绿 |
 

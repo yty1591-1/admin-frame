@@ -67,7 +67,7 @@
 | 镜像扫描 | Trivy（CRITICAL/HIGH，`ignore-unfixed`） | [.github/workflows/image.yml](../.github/workflows/image.yml) |
 | 镜像构建 | Docker Buildx，多架构 `linux/amd64,linux/arm64`，`CGO_ENABLED=0` | [Dockerfile](../Dockerfile) |
 | 迁移 | 自研 `cmd/migrate`（up/down/status/version，支持 dry-run、advisory lock） | `make build-migrate` |
-| 账号开通 | 自研 `cmd/identity-seed`（仅 A/B 端；口令走 stdin / `IDENTITY_SEED_PASSWORD`，不写 TOTP 密钥） | `make build-seed` |
+| 账号开通 | 首个管理员由迁移 `000005_seed_bootstrap_admin` 创建（账号 + 凭据 + system_admin + 绑定，首次登录强制改密） | `make migrate-up` |
 | 集成测试依赖 | MySQL 8.0、Redis 7、MinIO | [docker-compose.integration.yml](../docker-compose.integration.yml) |
 
 ## 3. 部署拓扑
