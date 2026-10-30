@@ -6,7 +6,8 @@ import { $t } from '#/locales';
  * 个人中心
  *
  * 由布局右上角用户下拉菜单进入，因此不在菜单中显示。
- * 该路由需要登录态，所以放在 modules 下走权限拦截，而不是 core 路由。
+ * 注意：accessMode=backend 时前端 modules 路由不参与生成，页面必须同时登记在
+ * `iam_menu`（见迁移 000006_seed_profile_menu）；本文件仅在 accessMode=frontend 时生效。
  */
 const routes: RouteRecordRaw[] = [
   {
