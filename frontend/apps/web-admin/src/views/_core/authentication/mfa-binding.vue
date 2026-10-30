@@ -37,12 +37,7 @@ watch(code, (value) => {
 });
 
 const canSubmit = computed(() => {
-  return (
-    /^\d{6}$/.test(code.value) &&
-    !props.loading &&
-    !props.errorText &&
-    props.cooldown <= 0
-  );
+  return /^\d{6}$/.test(code.value) && !props.loading && !props.errorText && props.cooldown <= 0;
 });
 
 onMounted(async () => {
@@ -82,24 +77,13 @@ function downloadRecoveryCodes() {
       {{ $t('authentication.mfaBindingSubtitle') }}
     </p>
 
-    <Alert
-      v-if="errorText"
-      :message="errorText"
-      class="mb-4"
-      show-icon
-      type="error"
-    />
+    <Alert v-if="errorText" :message="errorText" class="mb-4" show-icon type="error" />
 
     <div class="bg-muted mb-4 rounded-lg p-4">
       <p class="text-muted-foreground mb-3 text-center text-xs">
         {{ $t('authentication.mfaScanTip') }}
       </p>
-      <img
-        v-if="qrDataUrl"
-        :src="qrDataUrl"
-        alt="otpauth"
-        class="mx-auto h-40 w-40"
-      />
+      <img v-if="qrDataUrl" :src="qrDataUrl" alt="otpauth" class="mx-auto h-40 w-40" />
       <div class="mt-3 text-center">
         <span class="text-muted-foreground text-xs">
           {{ $t('authentication.mfaSecret') }}
@@ -151,9 +135,7 @@ function downloadRecoveryCodes() {
       type="primary"
       @click="handleSubmit"
     >
-      {{
-        cooldown > 0 ? `${cooldown}s` : $t('authentication.mfaConfirmBinding')
-      }}
+      {{ cooldown > 0 ? `${cooldown}s` : $t('authentication.mfaConfirmBinding') }}
     </Button>
 
     <Button block class="mt-3" type="link" @click="emit('back')">

@@ -65,13 +65,7 @@ function handleSubmit() {
       {{ $t('authentication.passwordChangeSubtitle') }}
     </p>
 
-    <Alert
-      v-if="errorText"
-      :message="errorText"
-      class="mb-4"
-      show-icon
-      type="error"
-    />
+    <Alert v-if="errorText" :message="errorText" class="mb-4" show-icon type="error" />
 
     <div class="space-y-3">
       <div>
