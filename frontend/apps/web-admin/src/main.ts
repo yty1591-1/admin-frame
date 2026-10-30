@@ -31,4 +31,4 @@ async function initApplication() {
   unmountGlobalLoading();
 }
 
-initApplication();
+await initApplication();
