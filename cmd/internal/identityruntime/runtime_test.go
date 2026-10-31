@@ -65,6 +65,29 @@ func TestNewFailsFastWithoutDatabase(t *testing.T) {
 	}
 }
 
+// TestCleanupHandleStopWaitsForInFlightBatch 验证停机等待当前批次完成并有超时兜底（REL-08）。
+func TestCleanupHandleStopWaitsForInFlightBatch(t *testing.T) {
+	done := make(chan struct{})
+	handle := &CleanupHandle{cancel: func() {}, done: done}
+	stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		close(done)
+	}()
+	if err := handle.Stop(stopCtx); err != nil {
+		t.Fatalf("stop should wait for in-flight batch: %v", err)
+	}
+
+	// 批次超过停机窗口：Stop 返回超时而不是无限阻塞。
+	blocked := &CleanupHandle{cancel: func() {}, done: make(chan struct{})}
+	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer timeoutCancel()
+	if err := blocked.Stop(timeoutCtx); err == nil {
+		t.Fatal("stop must return timeout when batch exceeds shutdown window")
+	}
+}
+
 // TestRunCleanupOnceSkipsWhenLockHeld 验证未获得分布式锁时跳过整轮清理（REL-02）。
 func TestRunCleanupOnceSkipsWhenLockHeld(t *testing.T) {
 	sessions := &cleanupSessionsStub{}

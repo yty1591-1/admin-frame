@@ -314,18 +314,43 @@ func RegisterAsync(deps *platform.Deps) error {
 	return nil
 }
 
+// cleanupBatchTimeout 是单轮清理的硬上限；停机时等待在途批次最多这么久。
+const cleanupBatchTimeout = 2 * time.Minute
+
+// CleanupHandle 持有清理循环的取消与完成信号，供优雅停机等待在途批次。
+type CleanupHandle struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// Stop 停止调度并等待当前批次完成；调用方 ctx 超时表示停机窗口已用尽。
+func (h *CleanupHandle) Stop(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
+	h.cancel()
+	select {
+	case <-h.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // StartCleanup 启动身份域保留期清理任务（仅在 worker 调用）。
 //
 // worker 的 identity.enabled 必须保持 false（鉴权配置校验不允许 worker 启用身份域），
 // 但清理仍必须运行：这里只以“存在持久化数据库”为开关，避免生产清理任务被静默跳过。
 // 内存仓储（deps.Database=nil）不做清理：重启即丢数据，无需保留期。
-func StartCleanup(ctx context.Context, deps *platform.Deps) error {
+//
+// 返回句柄用于优雅停机：Stop 会先停止 ticker，再等待当前批次完成（REL-08）。
+func StartCleanup(ctx context.Context, deps *platform.Deps) (*CleanupHandle, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
-		return nil
+		return nil, nil
 	}
 	repos, err := buildRepositories(deps, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	retention := deps.Config.Identity.Retention
 	policy := app.RetentionPolicy{
@@ -335,7 +360,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	}
 	cleanup, err := app.NewSessionCleanup(repos.sessions, repos.attempts, policy, deps.Logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	interval := retention.CleanupInterval
 	if interval <= 0 {
@@ -345,7 +370,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	if deps.Metrics != nil {
 		cleanupMetrics, metricsErr := identityobs.NewCleanupMetrics(deps.Metrics.RegistererWithoutChannel())
 		if metricsErr != nil {
-			return metricsErr
+			return nil, metricsErr
 		}
 		observer = cleanupMetrics
 	}
@@ -354,13 +379,15 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	if deps.Config.DB.Driver == "mysql" {
 		mysqlLock, lockErr := persistence.NewMySQLCleanupLock(deps.Database.SQL(), "identity:cleanup")
 		if lockErr != nil {
-			return lockErr
+			return nil, lockErr
 		}
 		locker = mysqlLock
 	} else if deps.Logger != nil {
 		deps.Logger.Warn("identity cleanup runs without distributed lock", "db_driver", deps.Config.DB.Driver)
 	}
-	go runCleanupLoop(ctx, cleanup, interval, deps.Logger, locker, observer)
+	loopCtx, cancel := context.WithCancel(ctx)
+	handle := &CleanupHandle{cancel: cancel, done: make(chan struct{})}
+	go runCleanupLoop(loopCtx, handle.done, cleanup, interval, deps.Logger, locker, observer)
 	if deps.Logger != nil {
 		deps.Logger.Info("identity cleanup started",
 			"interval", interval.String(),
@@ -370,20 +397,27 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 			"distributed_lock", locker != nil,
 		)
 	}
-	return nil
+	return handle, nil
 }
 
 // runCleanupLoop 立即执行一次清理后按间隔重复，直到进程退出。
+//
+// 停机时停止调度，但当前批次使用独立超时 context 继续完成（REL-08）；
+// 批次结束后关闭 done，供 Stop 等待。
 func runCleanupLoop(
 	ctx context.Context,
+	done chan struct{},
 	cleanup *app.SessionCleanup,
 	interval time.Duration,
 	logger *slog.Logger,
 	locker app.CleanupLock,
 	observer app.CleanupObserver,
 ) {
+	defer close(done)
 	run := func() {
-		runCleanupOnce(ctx, cleanup, locker, observer, logger, time.Now().UTC())
+		workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupBatchTimeout)
+		defer cancel()
+		runCleanupOnce(workCtx, cleanup, locker, observer, logger, time.Now().UTC())
 	}
 	run()
 	ticker := time.NewTicker(interval)

@@ -88,7 +88,8 @@ func run(configPath, replayDLQ string) error {
 	if err := identityruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register identity async handlers: %w", err)
 	}
-	if err := identityruntime.StartCleanup(ctx, deps); err != nil {
+	cleanupHandle, err := identityruntime.StartCleanup(ctx, deps)
+	if err != nil {
 		return fmt.Errorf("identity cleanup: %w", err)
 	}
 
@@ -107,6 +108,12 @@ func run(configPath, replayDLQ string) error {
 	)
 	if err := asyncRuntime.Run(ctx); err != nil {
 		return err
+	}
+	// 优雅停机：等待在途清理批次完成，避免归档事务被取消（REL-08）。
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer stopCancel()
+	if stopErr := cleanupHandle.Stop(stopCtx); stopErr != nil {
+		logger.Warn("identity cleanup did not finish before shutdown", "error", stopErr)
 	}
 	logger.Info("worker shutting down")
 	return nil
