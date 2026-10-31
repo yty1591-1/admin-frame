@@ -257,6 +257,35 @@ func (s *PasswordService) HashContext(ctx context.Context, plain string) (encode
 	return s.Hash(plain)
 }
 
+// HashContextWithPolicy 使用调用方指定的策略校验并哈希（BIZ-04 租户覆盖）。
+//
+// 策略零值回退当前全局策略；并发槽位与非并发约束与 HashContext 一致。
+func (s *PasswordService) HashContextWithPolicy(
+	ctx context.Context,
+	policy PasswordPolicy,
+	plain string,
+) (encoded, algorithm string, err error) {
+	if policy == (PasswordPolicy{}) {
+		policy = s.policy
+	}
+	if err := policy.Validate(); err != nil {
+		return "", "", apperr.Internal("invalid password policy", err)
+	}
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
+	if err := policy.ValidatePassword(plain); err != nil {
+		return "", "", err
+	}
+	encoded, err = s.hasher.Hash([]byte(plain))
+	if err != nil {
+		return "", "", apperr.Internal("password hashing failed", err)
+	}
+	return encoded, string(s.hasher.Algorithm()), nil
+}
+
 // Hash 校验强度后哈希明文，返回编码串与算法标识。
 //
 // 仅供装配期预热与非并发场景使用；请求路径请使用 HashContext。

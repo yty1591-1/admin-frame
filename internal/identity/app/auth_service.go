@@ -88,6 +88,8 @@ type AuthServiceConfig struct {
 	// MFAStepUpReuseGrace 登录后立即 step-up 时允许复用已消费时间步的宽限窗口（BIZ-08）；
 	// 0 使用默认 2m，负值显式关闭。
 	MFAStepUpReuseGrace time.Duration
+	// PasswordPolicyFor 返回商户生效的密码策略（BIZ-04）；nil 时使用全局策略。
+	PasswordPolicyFor func(merchantID string) PasswordPolicy
 	// TemporaryPasswordLength 管理员重置口令的临时密码长度；≤0 使用默认 20。
 	TemporaryPasswordLength int
 	// MFAAdminRequired 表示 A 端强制绑定 MFA。
@@ -110,6 +112,18 @@ type AuthServiceConfig struct {
 	// ActorType 写入审计事件的 actor_type；空值时按端别推导。
 	ActorType string
 	Clock     Clock
+}
+
+// passwordPolicyForAccount 返回账号生效的密码策略（BIZ-04）；无覆盖时使用全局策略。
+func (s *AuthService) passwordPolicyForAccount(merchantID string) PasswordPolicy {
+	if s.passwordPolicyFor != nil {
+		if policy := s.passwordPolicyFor(merchantID); policy != (PasswordPolicy{}) {
+			if err := policy.Validate(); err == nil {
+				return policy
+			}
+		}
+	}
+	return s.password.Policy()
 }
 
 // AuthService 编排登录、刷新、登出与会话撤销（docs/identity-authn.md §5）。
@@ -150,6 +164,7 @@ type AuthService struct {
 	mfaRecoveryCodes int
 	stepUpReuseGrace time.Duration
 	temporaryPasswordLength int
+	passwordPolicyFor func(merchantID string) PasswordPolicy
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -276,6 +291,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaRecoveryCodes: recoveryCodes,
 		stepUpReuseGrace: stepUpReuseGrace,
 		temporaryPasswordLength: tempPasswordLength,
+		passwordPolicyFor: cfg.PasswordPolicyFor,
 	}
 	return svc, nil
 }

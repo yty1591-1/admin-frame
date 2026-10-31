@@ -70,6 +70,23 @@ func TestPasswordPolicyValidate(t *testing.T) {
 	}
 }
 
+// TestHashContextWithPolicyEnforcesTenantStricterPolicy 验证租户覆盖可收紧强度（BIZ-04）。
+func TestHashContextWithPolicyEnforcesTenantStricterPolicy(t *testing.T) {
+	svc, err := NewPasswordService(fastHasher(t), DefaultPasswordPolicy())
+	if err != nil {
+		t.Fatalf("NewPasswordService() error = %v", err)
+	}
+	strict := PasswordPolicy{MinLength: 16, MaxLength: 64, RequireComplexity: true}
+	// 14 字符：满足全局 12 位，但不满足租户 16 位。
+	const password14 = "Aa1#shortpassw"
+	if _, _, err := svc.HashContextWithPolicy(context.Background(), strict, password14); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("tenant policy error = %v, want bad request", err)
+	}
+	if _, _, err := svc.HashContextWithPolicy(context.Background(), PasswordPolicy{}, password14); err != nil {
+		t.Fatalf("global policy should accept 14-char complex password, got %v", err)
+	}
+}
+
 func TestPasswordPolicyValidatePassword(t *testing.T) {
 	policy := DefaultPasswordPolicy()
 	tests := []struct {

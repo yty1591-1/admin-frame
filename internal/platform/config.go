@@ -456,6 +456,23 @@ type IdentityPasswordConfig struct {
 	HistoryWindow time.Duration `yaml:"history_window"`
 	// TemporaryLength 管理员重置口令的临时密码长度；0 表示默认 20，范围 [16, 32]（MNT-05）。
 	TemporaryLength int `yaml:"temporary_length"`
+	// TenantOverrides 商户级密码策略覆盖（BIZ-04）；只能收紧、不能弱于全局下限。
+	TenantOverrides []IdentityPasswordTenantOverride `yaml:"tenant_overrides"`
+}
+
+// IdentityPasswordTenantOverride 是单个商户的密码策略覆盖。
+//
+// 安全下限：min_length 只能 >= 全局 min_length；max_length 只能 <= 全局 max_length；
+// require_complexity 只能为 true（不得关闭全局要求）。
+type IdentityPasswordTenantOverride struct {
+	// MerchantID 商户 ID；按规范化小写匹配。
+	MerchantID string `yaml:"merchant_id"`
+	// MinLength 最小长度；0 表示沿用全局。
+	MinLength int `yaml:"min_length"`
+	// MaxLength 最大长度；0 表示沿用全局。
+	MaxLength int `yaml:"max_length"`
+	// RequireComplexity 是否要求三类字符；nil 表示沿用全局。
+	RequireComplexity *bool `yaml:"require_complexity"`
 }
 
 // IdentityLockoutConfig 是登录失败锁定参数。
@@ -2128,6 +2145,40 @@ func (c *Config) validateIdentityPassword() []error {
 	if c.Identity.Password.TemporaryLength != 0 {
 		if c.Identity.Password.TemporaryLength < 16 || c.Identity.Password.TemporaryLength > 32 {
 			errs = append(errs, errors.New("identity.password.temporary_length must be in [16, 32]"))
+		}
+	}
+	globalComplexity := true
+	if c.Identity.Password.RequireComplexity != nil {
+		globalComplexity = *c.Identity.Password.RequireComplexity
+	}
+	seen := make(map[string]struct{}, len(c.Identity.Password.TenantOverrides))
+	for _, override := range c.Identity.Password.TenantOverrides {
+		merchantID := strings.ToLower(strings.TrimSpace(override.MerchantID))
+		if merchantID == "" {
+			errs = append(errs, errors.New("identity.password.tenant_overrides.merchant_id is required"))
+			continue
+		}
+		if _, dup := seen[merchantID]; dup {
+			errs = append(errs, fmt.Errorf("identity.password.tenant_overrides has duplicate merchant_id: %s", merchantID))
+			continue
+		}
+		seen[merchantID] = struct{}{}
+		tenantMin := override.MinLength
+		if tenantMin == 0 {
+			tenantMin = minLength
+		}
+		tenantMax := override.MaxLength
+		if tenantMax == 0 {
+			tenantMax = maxLength
+		}
+		if tenantMin < minLength {
+			errs = append(errs, fmt.Errorf("identity.password.tenant_overrides[%s].min_length must be >= global min_length", merchantID))
+		}
+		if tenantMax > maxLength || tenantMax < tenantMin {
+			errs = append(errs, fmt.Errorf("identity.password.tenant_overrides[%s].max_length must be within [min_length, global max_length]", merchantID))
+		}
+		if override.RequireComplexity != nil && globalComplexity && !*override.RequireComplexity {
+			errs = append(errs, fmt.Errorf("identity.password.tenant_overrides[%s] cannot relax require_complexity", merchantID))
 		}
 	}
 	return errs

@@ -132,7 +132,9 @@ func (s *AccountService) probeChangePassword(ctx context.Context, in ChangePassw
 	if err := s.auth.rejectRecentPasswordReuse(ctx, credential, in.NewPassword, s.auth.clock.Now().UTC()); err != nil {
 		return nil, err
 	}
-	encoded, algorithm, err := s.auth.password.HashContext(ctx, in.NewPassword)
+	// BIZ-04：按账号所属商户解析策略；无覆盖时等价于全局策略。
+	encoded, algorithm, err := s.auth.password.HashContextWithPolicy(
+		ctx, s.auth.passwordPolicyForAccount(loaded.MerchantID), in.NewPassword)
 	if err != nil {
 		return nil, err
 	}

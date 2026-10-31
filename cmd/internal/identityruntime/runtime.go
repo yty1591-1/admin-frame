@@ -319,6 +319,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		},
 		MFARecoveryCodeCount:   cfg.Identity.MFA.RecoveryCodeCount,
 		MFAStepUpReuseGrace:     cfg.Identity.MFA.StepUpReuseGrace,
+		PasswordPolicyFor:       passwordPolicyResolver(cfg),
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
 		MFAAdminRequired:       mfaAdminRequired,
 	})
@@ -668,6 +669,41 @@ func passwordPolicyFromConfig(cfg *platform.Config) app.PasswordPolicy {
 		policy.RequireComplexity = *cfg.Identity.Password.RequireComplexity
 	}
 	return policy
+}
+
+// passwordPolicyResolver 返回商户级密码策略解析器（BIZ-04）。
+//
+// 覆盖项在配置校验期已保证只会收紧；未命中或参数非法时返回零值，由 AuthService
+// 回退全局策略。
+func passwordPolicyResolver(cfg *platform.Config) func(merchantID string) app.PasswordPolicy {
+	overrides := make(map[string]app.PasswordPolicy, len(cfg.Identity.Password.TenantOverrides))
+	global := passwordPolicyFromConfig(cfg)
+	for _, override := range cfg.Identity.Password.TenantOverrides {
+		merchantID := strings.ToLower(strings.TrimSpace(override.MerchantID))
+		if merchantID == "" {
+			continue
+		}
+		policy := global
+		if override.MinLength > 0 {
+			policy.MinLength = override.MinLength
+		}
+		if override.MaxLength > 0 {
+			policy.MaxLength = override.MaxLength
+		}
+		if override.RequireComplexity != nil {
+			policy.RequireComplexity = *override.RequireComplexity
+		}
+		overrides[merchantID] = policy
+	}
+	if len(overrides) == 0 {
+		return nil
+	}
+	return func(merchantID string) app.PasswordPolicy {
+		if policy, ok := overrides[strings.ToLower(strings.TrimSpace(merchantID))]; ok {
+			return policy
+		}
+		return app.PasswordPolicy{}
+	}
 }
 
 // buildHasher 解析 PII 摘要密钥；未配置时返回 nil（仅本地/tests 回退无盐算法）。

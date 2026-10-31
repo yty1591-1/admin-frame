@@ -329,6 +329,34 @@ func TestValidateMFATOTPAndTemporaryPassword(t *testing.T) {
 	}
 }
 
+// TestValidateTenantPasswordOverrides 验证租户策略只能收紧（BIZ-04）。
+func TestValidateTenantPasswordOverrides(t *testing.T) {
+	add := func(cfg *platform.Config, override platform.IdentityPasswordTenantOverride) {
+		cfg.Identity.Password.TenantOverrides = append(cfg.Identity.Password.TenantOverrides, override)
+	}
+	valid := mfaBaseConfig()
+	add(valid, platform.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16, MaxLength: 64})
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid override: %v", err)
+	}
+	relaxed := mfaBaseConfig()
+	add(relaxed, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 8})
+	if err := relaxed.Validate(); err == nil || !strings.Contains(err.Error(), "min_length must be >= global") {
+		t.Fatalf("relaxed min error = %v", err)
+	}
+	tooLong := mfaBaseConfig()
+	add(tooLong, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MaxLength: 256})
+	if err := tooLong.Validate(); err == nil || !strings.Contains(err.Error(), "max_length must be within") {
+		t.Fatalf("too long max error = %v", err)
+	}
+	dup := mfaBaseConfig()
+	add(dup, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 16})
+	add(dup, platform.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16})
+	if err := dup.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate merchant_id") {
+		t.Fatalf("duplicate error = %v", err)
+	}
+}
+
 // TestValidateRevocationStateTTL 验证撤销快照陈旧度必须落在 [1s, 60s]。
 func TestValidateRevocationStateTTL(t *testing.T) {
 	tooLong := mfaProdConfig()
