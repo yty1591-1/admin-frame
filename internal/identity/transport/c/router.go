@@ -4,6 +4,7 @@ package c
 import (
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
@@ -15,8 +16,10 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 	if mux == nil || h == nil {
 		return
 	}
-	// 认证响应含令牌 / 验证码语义，统一禁止缓存（IDN-P2-03）。
-	secure := pkghttpx.NoStoreMiddleware
+	// 认证响应含令牌 / 验证码语义，统一禁止缓存（IDN-P2-03）；认证路由使用独立请求体上限（SEC-03）。
+	secure := func(next http.Handler) http.Handler {
+		return pkghttpx.NoStoreMiddleware(rest.AuthBodyLimit(next))
+	}
 	if h.sms != nil {
 		mux.Handle("POST /c/v1/auth/sms/send", secure(http.HandlerFunc(h.SendSMSCode)))
 		mux.Handle("POST /c/v1/auth/sms/register", secure(http.HandlerFunc(h.Register)))

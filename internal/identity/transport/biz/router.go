@@ -22,8 +22,10 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		authMW = func(next http.Handler) http.Handler { return next }
 	}
 
-	// 认证响应含令牌，统一禁止缓存（IDN-P2-03）。
-	secure := pkghttpx.NoStoreMiddleware
+	// 认证响应含令牌，统一禁止缓存（IDN-P2-03）；认证路由使用独立请求体上限（SEC-03）。
+	secure := func(next http.Handler) http.Handler {
+		return pkghttpx.NoStoreMiddleware(rest.AuthBodyLimit(next))
+	}
 
 	mux.Handle("POST /biz/v1/auth/login", secure(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /biz/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))

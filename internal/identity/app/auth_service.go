@@ -26,6 +26,20 @@ const DefaultSessionAbsoluteTTL = 720 * time.Hour
 // DefaultMaxSessionsPerAccount 是单账号默认活跃设备上限。
 const DefaultMaxSessionsPerAccount = 6
 
+// 认证输入长度上限（SEC-03）：在昂贵计算或外部调用前拒绝异常输入。
+const (
+	// maxLoginSubjectBytes 与 identity_account.subject_index 的来源列宽一致。
+	maxLoginSubjectBytes = 255
+	// maxLoginPasswordBytes 远大于密码策略上限，仅用于阻断超大输入。
+	maxLoginPasswordBytes = 4096
+	// maxRefreshTokenBytes 刷新令牌长度上限。
+	maxRefreshTokenBytes = 512
+	// maxOAuthCodeBytes OAuth 授权码长度上限。
+	maxOAuthCodeBytes = 2048
+	// maxOAuthStateBytes OAuth state 长度上限。
+	maxOAuthStateBytes = 1024
+)
+
 // AuthServiceConfig 是认证用例的装配参数。
 //
 // Channel 在装配期固定，禁止由 HTTP 请求指定，避免端别被请求参数劫持。
@@ -455,6 +469,10 @@ func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProb
 	if subject == "" || strings.TrimSpace(in.Password) == "" {
 		return nil, invalidCredentials()
 	}
+	// SEC-03：在 Argon2 之前拒绝异常长度的主体 / 口令，避免大输入放大 CPU 与内存。
+	if len(subject) > maxLoginSubjectBytes || len(in.Password) > maxLoginPasswordBytes {
+		return nil, invalidCredentials()
+	}
 	merchantID := strings.TrimSpace(in.MerchantID)
 	if s.channel == domain.ChannelBiz && merchantID == "" {
 		return nil, invalidCredentials()
@@ -851,6 +869,10 @@ type refreshOutcome struct {
 //
 // 已 rotated 的令牌再次出现视为重放：撤销整条家庭链并记 auth.token.reused。
 func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, error) {
+	// SEC-03：刷新令牌形态固定，超长输入在哈希与查库前直接拒绝。
+	if len(in.RefreshToken) > maxRefreshTokenBytes {
+		return TokenPair{}, invalidToken()
+	}
 	var outcome refreshOutcome
 	err := s.runTx(ctx, func(txCtx context.Context) error {
 		res, fnErr := s.refreshInTx(txCtx, in)

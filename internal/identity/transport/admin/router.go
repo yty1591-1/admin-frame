@@ -41,8 +41,11 @@ func Register(
 	accountDelete := permission(permMW, string(iam.PermIdentityAccountDelete))
 	accountSession := permission(permMW, string(iam.PermIdentityAccountSession))
 
-	// 认证与账号端点可能返回令牌、MFA 密钥与账号敏感信息，统一禁止缓存（IDN-P2-03）。
-	secure := pkghttpx.NoStoreMiddleware
+	// 认证与账号端点可能返回令牌、MFA 密钥与账号敏感信息，统一禁止缓存（IDN-P2-03）；
+	// 同时为认证路由设置独立请求体上限，避免全局 32MiB 被匿名请求放大（SEC-03）。
+	secure := func(next http.Handler) http.Handler {
+		return pkghttpx.NoStoreMiddleware(rest.AuthBodyLimit(next))
+	}
 
 	mux.Handle("POST /admin/v1/auth/login", secure(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /admin/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))

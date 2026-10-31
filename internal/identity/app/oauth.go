@@ -246,6 +246,10 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 	if code == "" || state == "" {
 		return LoginResult{}, oauthInvalid()
 	}
+	// SEC-03：回调参数在换取令牌前限制长度，避免超长输入占用网络与内存。
+	if len(code) > maxOAuthCodeBytes || len(state) > maxOAuthStateBytes {
+		return LoginResult{}, oauthInvalid()
+	}
 	provider, ok := s.providers[name]
 	if !ok {
 		return LoginResult{}, oauthInvalid()
