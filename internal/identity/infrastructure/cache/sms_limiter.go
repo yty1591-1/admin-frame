@@ -35,6 +35,7 @@ type MemorySMSRateLimiter struct {
 	daily  map[string]smsCounter
 	hourly map[string]smsCounter
 	now    func() time.Time
+	loc    *time.Location
 }
 
 // smsCounter 是带过期时间的计数器。
@@ -48,15 +49,26 @@ var _ app.SMSRateLimiter = (*MemorySMSRateLimiter)(nil)
 
 // NewMemorySMSRateLimiter 创建空的防刷存储；clock 为 nil 时使用系统时钟。
 func NewMemorySMSRateLimiter(clock app.Clock) *MemorySMSRateLimiter {
+	return NewMemorySMSRateLimiterWithLocation(clock, nil)
+}
+
+// NewMemorySMSRateLimiterWithLocation 按指定时区划分日 / 小时窗口（BIZ-05）。
+//
+// loc 为 nil 时使用 UTC；日窗口按 loc 的本地日期计算，避免跨时区配额偏差。
+func NewMemorySMSRateLimiterWithLocation(clock app.Clock, loc *time.Location) *MemorySMSRateLimiter {
 	now := systemNow
 	if clock != nil {
 		now = clock.Now
+	}
+	if loc == nil {
+		loc = time.UTC
 	}
 	return &MemorySMSRateLimiter{
 		resend: make(map[string]time.Time),
 		daily:  make(map[string]smsCounter),
 		hourly: make(map[string]smsCounter),
 		now:    now,
+		loc:    loc,
 	}
 }
 
@@ -88,7 +100,7 @@ func (l *MemorySMSRateLimiter) AllowDaily(_ context.Context, phoneHash string, l
 	if limit < 1 {
 		return false, apperr.BadRequest("sms daily limit must be >= 1")
 	}
-	return l.allow(l.daily, dayKey(l.now(), phoneHash), limit, smsDailyWindowTTL), nil
+	return l.allow(l.daily, dayKeyIn(l.now(), l.loc, phoneHash), limit, smsDailyWindowTTL), nil
 }
 
 // AllowHourlyIP 校验单 IP 小时发送上限。
@@ -107,7 +119,7 @@ func (l *MemorySMSRateLimiter) AllowGlobalDaily(_ context.Context, limit int) (b
 	if limit < 1 {
 		return false, apperr.BadRequest("sms daily budget must be >= 1")
 	}
-	return l.allow(l.daily, dayKey(l.now(), smsGlobalBudgetKey), limit, smsDailyWindowTTL), nil
+	return l.allow(l.daily, dayKeyIn(l.now(), l.loc, smsGlobalBudgetKey), limit, smsDailyWindowTTL), nil
 }
 
 // ResetResend 清除重发窗口占用，使发送失败后可以立即重试。
@@ -143,6 +155,7 @@ func (l *MemorySMSRateLimiter) allow(store map[string]smsCounter, key string, li
 type RedisSMSRateLimiter struct {
 	client *redis.Cache
 	now    func() time.Time
+	loc    *time.Location
 }
 
 // 编译期断言。
@@ -150,11 +163,23 @@ var _ app.SMSRateLimiter = (*RedisSMSRateLimiter)(nil)
 
 // NewRedisSMSRateLimiter 构造 Redis 防刷存储；client 为 nil 时操作失败关闭。
 func NewRedisSMSRateLimiter(client *redis.Cache, clock app.Clock) *RedisSMSRateLimiter {
+	return NewRedisSMSRateLimiterWithLocation(client, clock, nil)
+}
+
+// NewRedisSMSRateLimiterWithLocation 按指定时区划分日 / 小时窗口（BIZ-05）。
+func NewRedisSMSRateLimiterWithLocation(
+	client *redis.Cache,
+	clock app.Clock,
+	loc *time.Location,
+) *RedisSMSRateLimiter {
 	now := systemNow
 	if clock != nil {
 		now = clock.Now
 	}
-	return &RedisSMSRateLimiter{client: client, now: now}
+	if loc == nil {
+		loc = time.UTC
+	}
+	return &RedisSMSRateLimiter{client: client, now: now, loc: loc}
 }
 
 // AllowResend 使用 SETNX 抢占重发窗口；未抢到视为过于频繁。
@@ -186,7 +211,7 @@ func (l *RedisSMSRateLimiter) AllowDaily(ctx context.Context, phoneHash string, 
 	if limit < 1 {
 		return false, apperr.BadRequest("sms daily limit must be >= 1")
 	}
-	return l.allow(ctx, smsDailyKeyPrefix+dayKey(l.now(), phoneHash), limit, smsDailyWindowTTL)
+	return l.allow(ctx, smsDailyKeyPrefix+dayKeyIn(l.now(), l.loc, phoneHash), limit, smsDailyWindowTTL)
 }
 
 // AllowHourlyIP 校验单 IP 小时发送上限。
@@ -205,7 +230,7 @@ func (l *RedisSMSRateLimiter) AllowGlobalDaily(ctx context.Context, limit int) (
 	if limit < 1 {
 		return false, apperr.BadRequest("sms daily budget must be >= 1")
 	}
-	return l.allow(ctx, smsBudgetKeyPrefix+dayKey(l.now(), smsGlobalBudgetKey), limit, smsDailyWindowTTL)
+	return l.allow(ctx, smsBudgetKeyPrefix+dayKeyIn(l.now(), l.loc, smsGlobalBudgetKey), limit, smsDailyWindowTTL)
 }
 
 // ResetResend 删除重发窗口键，使发送失败后可以立即重试。
@@ -231,9 +256,12 @@ func (l *RedisSMSRateLimiter) allow(ctx context.Context, key string, limit int, 
 	return int(value) <= limit, nil
 }
 
-// dayKey 返回按 UTC 日期分桶的键后缀。
-func dayKey(now time.Time, hash string) string {
-	return now.UTC().Format("2006-01-02") + ":" + hash
+// dayKeyIn 返回按指定时区日期分桶的键后缀（BIZ-05）。
+func dayKeyIn(now time.Time, loc *time.Location, hash string) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return now.In(loc).Format("2006-01-02") + ":" + hash
 }
 
 // hourKey 返回按 UTC 小时分桶的键后缀。

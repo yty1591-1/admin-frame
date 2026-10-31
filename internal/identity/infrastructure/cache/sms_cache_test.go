@@ -114,6 +114,36 @@ func TestSMSCodeStore(t *testing.T) {
 	}
 }
 
+// TestSMSDailyQuotaTimezone 验证日配额按配置时区分桶（BIZ-05）。
+func TestSMSDailyQuotaTimezone(t *testing.T) {
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	ctx := context.Background()
+	// 2026-01-01 15:30 UTC = 上海 23:30；一小时后 = 上海次日 00:30。
+	first := time.Date(2026, 1, 1, 15, 30, 0, 0, time.UTC)
+	clock := &testClock{now: first}
+
+	local := NewMemorySMSRateLimiterWithLocation(clock, shanghai)
+	if ok, err := local.AllowDaily(ctx, "phone-1", 1); err != nil || !ok {
+		t.Fatalf("first local daily = %v, err=%v", ok, err)
+	}
+	utc := NewMemorySMSRateLimiterWithLocation(clock, time.UTC)
+	if ok, err := utc.AllowDaily(ctx, "phone-1", 1); err != nil || !ok {
+		t.Fatalf("first utc daily = %v, err=%v", ok, err)
+	}
+
+	clock.now = first.Add(time.Hour)
+	// 上海已跨日：允许第二次；UTC 仍同日：拒绝。
+	if ok, err := local.AllowDaily(ctx, "phone-1", 1); err != nil || !ok {
+		t.Fatalf("second local daily = %v, err=%v, want allowed after local midnight", ok, err)
+	}
+	if ok, _ := utc.AllowDaily(ctx, "phone-1", 1); ok {
+		t.Fatal("utc bucket must reject second send before UTC midnight")
+	}
+}
+
 func TestSMSRateLimiter(t *testing.T) {
 	ctx := context.Background()
 

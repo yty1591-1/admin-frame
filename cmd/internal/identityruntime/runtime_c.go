@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -118,7 +119,13 @@ func buildSMSLoginService(
 		return nil, apperr.Internal("identity sms code sender", err)
 	}
 
-	codes, limiter := buildSMSCodeStores(deps)
+	quotaLocation := time.UTC
+	if zone := strings.TrimSpace(smsCfg.QuotaTimezone); zone != "" {
+		if loc, locErr := time.LoadLocation(zone); locErr == nil {
+			quotaLocation = loc
+		}
+	}
+	codes, limiter := buildSMSCodeStores(deps, quotaLocation)
 	service, err := app.NewSMSLoginService(app.SMSLoginConfig{
 		Accounts:       accounts,
 		Guard:          guard,
@@ -143,14 +150,16 @@ func buildSMSLoginService(
 }
 
 // buildSMSCodeStores 优先使用 Redis（跨副本一致）；未配置 Redis 时退回进程内实现。
-func buildSMSCodeStores(deps *platform.Deps) (app.SMSCodeStore, app.SMSRateLimiter) {
+//
+// quotaLocation 决定日配额 / 全局预算的分桶时区（BIZ-05）。
+func buildSMSCodeStores(deps *platform.Deps, quotaLocation *time.Location) (app.SMSCodeStore, app.SMSRateLimiter) {
 	if deps.Redis != nil {
 		client := deps.Redis.Cache()
 		return identitycache.NewRedisSMSCodeStore(client),
-			identitycache.NewRedisSMSRateLimiter(client, nil)
+			identitycache.NewRedisSMSRateLimiterWithLocation(client, nil, quotaLocation)
 	}
 	return identitycache.NewMemorySMSCodeStore(nil),
-		identitycache.NewMemorySMSRateLimiter(nil)
+		identitycache.NewMemorySMSRateLimiterWithLocation(nil, quotaLocation)
 }
 
 // buildSMSBreaker 按配置构造供应商熔断器（IDN-P2-05）。
