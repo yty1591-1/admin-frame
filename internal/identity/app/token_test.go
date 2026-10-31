@@ -76,11 +76,15 @@ func TestMFATicketIssueAndParse(t *testing.T) {
 	}
 }
 
-// TestMFATicketOnlyIssuedOnAdmin 验证票据只在 A 端签发。
-func TestMFATicketOnlyIssuedOnAdmin(t *testing.T) {
-	svc, _ := newMFATicketService(t, domain.ChannelBiz)
-	if _, err := svc.IssueMFATicket("acct-1"); err == nil {
-		t.Fatal("biz channel must not issue mfa tickets")
+// TestMFATicketChannels 验证 A/B 端可签发、C 端拒绝（BIZ-03）。
+func TestMFATicketChannels(t *testing.T) {
+	biz, _ := newMFATicketService(t, domain.ChannelBiz)
+	if _, err := biz.IssueMFATicket("acct-1"); err != nil {
+		t.Fatalf("biz channel must issue mfa tickets: %v", err)
+	}
+	c, _ := newMFATicketService(t, domain.ChannelC)
+	if _, err := c.IssueMFATicket("acct-1"); err == nil {
+		t.Fatal("c channel must not issue mfa tickets")
 	}
 }
 

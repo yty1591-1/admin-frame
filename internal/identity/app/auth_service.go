@@ -92,7 +92,11 @@ type AuthServiceConfig struct {
 	PasswordPolicyFor func(merchantID string) PasswordPolicy
 	// TemporaryPasswordLength 管理员重置口令的临时密码长度；≤0 使用默认 20。
 	TemporaryPasswordLength int
-	// MFAAdminRequired 表示 A 端强制绑定 MFA。
+	// MFAChannels 是允许使用 MFA 的端别；nil 时仅 admin（BIZ-03）。
+	MFAChannels map[domain.Channel]bool
+	// MFARequired 表示当前端别强制绑定 MFA（BIZ 端由配置显式开启）。
+	MFARequired bool
+	// MFAAdminRequired 表示 A 端强制绑定 MFA（兼容既有配置）。
 	MFAAdminRequired bool
 	// IdleTimeout 会话空闲上限；≤0 时使用 72h。
 	IdleTimeout time.Duration
@@ -113,6 +117,9 @@ type AuthServiceConfig struct {
 	ActorType string
 	Clock     Clock
 }
+
+// mfaEnabled 报告当前端别是否允许 MFA（BIZ-03）。
+func (s *AuthService) mfaEnabled() bool { return s.mfaChannels[s.channel] }
 
 // passwordPolicyForAccount 返回账号生效的密码策略（BIZ-04）；无覆盖时使用全局策略。
 func (s *AuthService) passwordPolicyForAccount(merchantID string) PasswordPolicy {
@@ -159,6 +166,7 @@ type AuthService struct {
 	mfaCipher       MFASecretCipher
 	mfaTickets      MFATicketStore
 	mfaIssuer       string
+	mfaChannels     map[domain.Channel]bool
 	mfaRequired     bool
 	mfaTOTP         totp.Policy
 	mfaRecoveryCodes int
@@ -213,9 +221,14 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if clock == nil {
 		clock = realClock{}
 	}
-	if cfg.Channel == domain.ChannelAdmin && cfg.MFAAdminRequired {
+	mfaChannels := cfg.MFAChannels
+	if len(mfaChannels) == 0 {
+		mfaChannels = map[domain.Channel]bool{domain.ChannelAdmin: true}
+	}
+	mfaRequired := cfg.MFARequired || (cfg.Channel == domain.ChannelAdmin && cfg.MFAAdminRequired)
+	if mfaChannels[cfg.Channel] && mfaRequired {
 		if cfg.MFA == nil || cfg.MFACipher == nil || cfg.MFATickets == nil {
-			return nil, apperr.Internal("mfa dependencies are required when admin_required=true", nil)
+			return nil, apperr.Internal("mfa dependencies are required when mfa is required", nil)
 		}
 	}
 	mfaIssuer := strings.TrimSpace(cfg.MFAIssuer)
@@ -286,7 +299,8 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaCipher:       cfg.MFACipher,
 		mfaTickets:      cfg.MFATickets,
 		mfaIssuer:       mfaIssuer,
-		mfaRequired:     cfg.MFAAdminRequired,
+		mfaChannels:     mfaChannels,
+		mfaRequired:     mfaRequired,
 		mfaTOTP:         mfaTOTP,
 		mfaRecoveryCodes: recoveryCodes,
 		stepUpReuseGrace: stepUpReuseGrace,

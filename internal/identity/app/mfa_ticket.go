@@ -67,8 +67,8 @@ func (s *TokenService) issueScopedTicket(accountID, scope string, ttl time.Durat
 	if strings.TrimSpace(accountID) == "" {
 		return MFATicket{}, apperr.Internal("mfa ticket account id is required", nil)
 	}
-	if s.channel != domain.ChannelAdmin {
-		return MFATicket{}, apperr.Internal("mfa ticket is only supported on admin channel", nil)
+	if s.channel != domain.ChannelAdmin && s.channel != domain.ChannelBiz {
+		return MFATicket{}, apperr.Internal("mfa ticket is only supported on admin/biz channel", nil)
 	}
 	now := s.clock.Now().UTC()
 	jti, err := s.ids.NextString()
@@ -77,13 +77,13 @@ func (s *TokenService) issueScopedTicket(accountID, scope string, ttl time.Durat
 	}
 	claims := jwt.Claims{
 		Subject:   accountID,
-		Audience:  []string{string(domain.ChannelAdmin)},
+		Audience:  []string{string(s.channel)},
 		IssuedAt:  now,
 		ExpiresAt: now.Add(ttl),
 		ID:        jti,
 		Extra: map[string]any{
 			"scope":   scope,
-			"channel": string(domain.ChannelAdmin),
+			"channel": string(s.channel),
 		},
 	}
 	ticket, err := s.signer.Sign(claims)
@@ -95,7 +95,7 @@ func (s *TokenService) issueScopedTicket(accountID, scope string, ttl time.Durat
 
 // ParseMFATicket 校验并解析两步登录票据。
 //
-// 只接受 admin 端、scope=mfa 的票据；失败统一 40100，不区分具体原因。
+// 只接受当前端别（admin / biz）、scope=mfa 的票据；失败统一 40100，不区分具体原因。
 func (s *TokenService) ParseMFATicket(raw string) (jwt.Claims, error) {
 	return s.parseScopedTicket(raw, mfaTicketScope)
 }
@@ -126,10 +126,10 @@ func (s *TokenService) parseScopedTicket(raw, scope string) (jwt.Claims, error) 
 	if claims.GetString("scope") != scope {
 		return jwt.Claims{}, invalidToken()
 	}
-	if claims.GetString("channel") != string(domain.ChannelAdmin) {
+	if claims.GetString("channel") != string(s.channel) {
 		return jwt.Claims{}, invalidToken()
 	}
-	if !containsAudience(claims.Audience, string(domain.ChannelAdmin)) {
+	if !containsAudience(claims.Audience, string(s.channel)) {
 		return jwt.Claims{}, invalidToken()
 	}
 	return claims, nil

@@ -165,6 +165,22 @@ func TestMFASetupAndBindingConfirmation(t *testing.T) {
 	})
 }
 
+// TestMFAEnabledOnBizChannel 验证 B 端可按配置启用 TOTP（BIZ-03）。
+func TestMFAEnabledOnBizChannel(t *testing.T) {
+	f := newAuthFixture(t, domain.ChannelBiz, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAChannels = map[domain.Channel]bool{domain.ChannelBiz: true}
+		cfg.MFARequired = true
+	})
+	f.seedAccount(t, "acct-biz-mfa", "biz-user", "Biz#Passw0rd")
+	secret, _ := bindMFA(t, f, "acct-biz-mfa")
+	if secret == "" {
+		t.Fatal("biz mfa setup must return a secret")
+	}
+	if result := loginWithMFA(t, f, "biz-user", "Biz#Passw0rd"); result.AccessToken == "" {
+		t.Fatal("biz login with mfa must issue a token")
+	}
+}
+
 func TestMFATwoStepLogin(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin)

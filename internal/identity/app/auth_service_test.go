@@ -190,11 +190,16 @@ func newAuthFixture(t *testing.T, channel domain.Channel, opts ...withAuthConfig
 // seedAccount 写入 pending 账号与密码凭据；首次登录会激活账号。
 func (f *authFixture) seedAccount(t *testing.T, id, subject, plainPassword string) *domain.Account {
 	t.Helper()
+	merchantID := ""
+	if f.channel == domain.ChannelBiz {
+		merchantID = "m-1"
+	}
 	account, err := domain.NewAccount(domain.NewAccountParams{
-		ID:      id,
-		Channel: f.channel,
-		Subject: subject,
-		Now:     f.clock.Now(),
+		ID:         id,
+		Channel:    f.channel,
+		Subject:    subject,
+		MerchantID: merchantID,
+		Now:        f.clock.Now(),
 	})
 	if err != nil {
 		t.Fatalf("new account: %v", err)

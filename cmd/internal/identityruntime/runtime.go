@@ -102,13 +102,14 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	// MFA 仅 A 端实现（docs/identity-authn.md §7）：B / C 端不装配密文与票据，
-	// 也不在运行时触发强制绑定，避免「配置写了 MFA、运行时不生效」的假安全。
+	// BIZ-03：仅对配置启用的端别装配 MFA 密文与票据；未启用端别不注册绑定能力，
+	// 避免「配置写了 MFA、运行时不生效」的假安全。
+	mfaChannels := identityMFAChannels(cfg)
 	var (
 		mfaCipher app.MFASecretCipher
 		tickets   app.MFATicketStore
 	)
-	if channel == domain.ChannelAdmin {
+	if mfaChannels[channel] {
 		mfaCipher, err = buildMFACipher(cfg)
 		if err != nil {
 			return nil, err
@@ -241,16 +242,22 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("identity revocation checker: %w", err)
 	}
 
-	mfaAdminRequired := cfg.Identity.MFA.AdminRequired
-	if channel != domain.ChannelAdmin {
-		mfaAdminRequired = false
+	mfaRequired := false
+	switch channel {
+	case domain.ChannelAdmin:
+		mfaRequired = cfg.Identity.MFA.AdminRequired
+	case domain.ChannelBiz:
+		mfaRequired = cfg.Identity.MFA.BizRequired
 	}
+	mfaRequired = mfaRequired && mfaChannels[channel]
 	if deps.Logger != nil {
 		// 打印实际生效值，避免运维把「配置项存在」误认为「运行时已校验」。
 		deps.Logger.Info("identity mfa policy",
 			"channel", string(channel),
-			"admin_required", mfaAdminRequired,
+			"mfa_enabled", mfaChannels[channel],
+			"mfa_required", mfaRequired,
 			"configured_admin_required", cfg.Identity.MFA.AdminRequired,
+			"configured_biz_required", cfg.Identity.MFA.BizRequired,
 		)
 	}
 
@@ -321,7 +328,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		MFAStepUpReuseGrace:     cfg.Identity.MFA.StepUpReuseGrace,
 		PasswordPolicyFor:       passwordPolicyResolver(cfg),
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
-		MFAAdminRequired:       mfaAdminRequired,
+		MFAChannels:             mfaChannels,
+		MFARequired:             mfaRequired,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity auth service: %w", err)
@@ -669,6 +677,23 @@ func passwordPolicyFromConfig(cfg *platform.Config) app.PasswordPolicy {
 		policy.RequireComplexity = *cfg.Identity.Password.RequireComplexity
 	}
 	return policy
+}
+
+// identityMFAChannels 解析允许 MFA 的端别；空配置默认仅 admin（BIZ-03）。
+func identityMFAChannels(cfg *platform.Config) map[domain.Channel]bool {
+	channels := make(map[domain.Channel]bool, len(cfg.Identity.MFA.Channels))
+	for _, name := range cfg.Identity.MFA.Channels {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case string(domain.ChannelAdmin):
+			channels[domain.ChannelAdmin] = true
+		case string(domain.ChannelBiz):
+			channels[domain.ChannelBiz] = true
+		}
+	}
+	if len(channels) == 0 {
+		channels[domain.ChannelAdmin] = true
+	}
+	return channels
 }
 
 // passwordPolicyResolver 返回商户级密码策略解析器（BIZ-04）。

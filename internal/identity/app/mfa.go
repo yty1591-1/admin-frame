@@ -36,8 +36,19 @@ const defaultRecoveryCodeCount = 10
 // defaultStepUpReuseGrace 是登录后立即 step-up 的默认复用宽限（BIZ-08）。
 const defaultStepUpReuseGrace = 2 * time.Minute
 
+// MFAFactor 是多因素因子标识（BIZ-03 预留扩展点）。
+//
+// 当前仅实现 TOTP；新增因子（WebAuthn / 推送）时在 SetupMFA / VerifyMFA 增加分支，
+// 并保持一次性票据与时间步防重放语义。
+type MFAFactor string
+
+// MFAFactorTOTP 基于时间的一次性密码。
+const MFAFactorTOTP MFAFactor = "totp"
+
 // MFASetupResult 是绑定初始化结果；密钥与恢复码只返回一次。
 type MFASetupResult struct {
+	// Factor 绑定的因子类型；当前恒为 totp。
+	Factor MFAFactor
 	// Secret Base32 编码的 TOTP 密钥，供客户端录入。
 	Secret string
 	// OTPAuthURI otpauth:// 扫描录入地址。
@@ -98,8 +109,8 @@ type MFAVerifyResult struct {
 //
 // 登录前强制绑定凭 SetupTicket，已登录绑定凭 Actor；已确认绑定再次调用返回 40900。
 func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupResult, error) {
-	if s.channel != domain.ChannelAdmin {
-		return MFASetupResult{}, apperr.BadRequest("mfa is only supported on admin channel")
+	if !s.mfaEnabled() {
+		return MFASetupResult{}, apperr.BadRequest("mfa is not enabled for this channel")
 	}
 	if s.mfa == nil || s.mfaCipher == nil {
 		return MFASetupResult{}, apperr.Unavailable("mfa is not configured")
@@ -158,6 +169,7 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 
 	encoded := totp.EncodeSecret(secret)
 	return MFASetupResult{
+		Factor:        MFAFactorTOTP,
 		Secret:        encoded,
 		OTPAuthURI:    totp.ProvisioningURIWith(s.mfaIssuer, account.Subject, encoded, s.mfaTOTP),
 		RecoveryCodes: codes,
@@ -240,8 +252,8 @@ func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVeri
 
 // verifyMFAInTx 是 VerifyMFA 的事务内实现。
 func (s *AuthService) verifyMFAInTx(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
-	if s.channel != domain.ChannelAdmin {
-		return MFAVerifyResult{}, apperr.BadRequest("mfa is only supported on admin channel")
+	if !s.mfaEnabled() {
+		return MFAVerifyResult{}, apperr.BadRequest("mfa is not enabled for this channel")
 	}
 	if s.mfa == nil || s.mfaCipher == nil || s.mfaTickets == nil {
 		return MFAVerifyResult{}, apperr.Unavailable("mfa is not configured")
@@ -267,8 +279,8 @@ func (s *AuthService) verifyMFAInTx(ctx context.Context, in MFAVerifyInput) (MFA
 //
 // 解绑、会话撤销与审计在同一事务内；撤销快照在提交后写入。
 func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code string) error {
-	if s.channel != domain.ChannelAdmin {
-		return apperr.BadRequest("mfa is only supported on admin channel")
+	if !s.mfaEnabled() {
+		return apperr.BadRequest("mfa is not enabled for this channel")
 	}
 	if s.mfa == nil || s.mfaCipher == nil {
 		return apperr.Unavailable("mfa is not configured")
@@ -326,10 +338,10 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 
 // requireAdminStepUp 校验管理员特权操作的二次 MFA。
 //
-// 仅在 A 端且 admin_required=true 时强制；非强制环境（本地/测试）直接放行，
-// 生产由配置校验保证 admin_required=true。调用方必须在同一事务内、执行特权操作前调用。
+// 仅在已启用 MFA 且当前端别强制绑定时校验；非强制环境（本地/测试）直接放行。
+// 调用方必须在同一事务内、执行特权操作前调用。
 func (s *AuthService) requireAdminStepUp(ctx context.Context, actor SessionActor, code string) error {
-	if s.channel != domain.ChannelAdmin || !s.mfaRequired || s.mfa == nil {
+	if !s.mfaEnabled() || !s.mfaRequired || s.mfa == nil {
 		return nil
 	}
 	started := time.Now()
@@ -429,7 +441,7 @@ func (s *AuthService) mfaChallenge(
 	account *domain.Account,
 	traceID string,
 ) (mfaGate, error) {
-	if s.channel != domain.ChannelAdmin {
+	if !s.mfaEnabled() {
 		return mfaGateNotRequired, nil
 	}
 	if s.mfa == nil {

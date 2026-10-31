@@ -257,6 +257,10 @@ const identityDefaultMFAIssuer = "AdminFrame"
 type IdentityMFAConfig struct {
 	// AdminRequired 表示 A 端密码登录后必须完成 TOTP 才能获得管理令牌；生产强制开启。
 	AdminRequired bool `yaml:"admin_required"`
+	// Channels 允许启用 MFA 的端别；空表示仅 admin（BIZ-03）。只支持 admin / biz。
+	Channels []string `yaml:"channels"`
+	// BizRequired 表示 B 端强制绑定 MFA；需同时把 biz 加入 Channels。
+	BizRequired bool `yaml:"biz_required"`
 	// Issuer 写入 otpauth URI，默认 AdminFrame。
 	Issuer string `yaml:"issuer"`
 	// SecretKey 是 TOTP 密钥的 AES-256 主密钥，仅允许通过环境变量注入（SEC-01）。
@@ -2035,7 +2039,31 @@ func (c *Config) validateIdentity() []error {
 			}
 		}
 	}
-	// MFA 仅 A 端实现（docs/identity-authn.md §7）：B / C 端既不校验也不支持绑定。
+	// BIZ-03：MFA 端别策略。Channels 为空时仅 admin；biz_required 必须同时启用 biz。
+	mfaChannels := make(map[string]struct{}, len(c.Identity.MFA.Channels))
+	for _, channel := range c.Identity.MFA.Channels {
+		name := strings.ToLower(strings.TrimSpace(channel))
+		switch name {
+		case "admin", "biz":
+		default:
+			errs = append(errs, fmt.Errorf("unsupported identity.mfa.channels entry: %s", channel))
+			continue
+		}
+		if _, dup := mfaChannels[name]; dup {
+			errs = append(errs, fmt.Errorf("identity.mfa.channels has duplicate entry: %s", name))
+		}
+		mfaChannels[name] = struct{}{}
+	}
+	if len(mfaChannels) == 0 {
+		mfaChannels["admin"] = struct{}{}
+	}
+	_, bizEnabled := mfaChannels["biz"]
+	if c.Identity.MFA.BizRequired && !bizEnabled {
+		errs = append(errs, errors.New("identity.mfa.biz_required requires biz in identity.mfa.channels"))
+	}
+	if _, enabled := mfaChannels[c.Channel]; !enabled && c.Identity.MFA.BizRequired && c.Channel == "biz" {
+		errs = append(errs, errors.New("identity.mfa.biz_required requires the current channel=biz to be enabled"))
+	}
 	switch c.Channel {
 	case "admin":
 		if isProdLikeEnv(c.Env) && !c.Identity.MFA.AdminRequired {
@@ -2057,7 +2085,20 @@ func (c *Config) validateIdentity() []error {
 	case "biz":
 		// 显式 fail fast：避免「配置写了强制 MFA，运行时却完全不校验」的假安全。
 		if c.Identity.MFA.AdminRequired {
-			errs = append(errs, errors.New("identity.mfa.admin_required must be false on channel=biz (MFA is admin-only)"))
+			errs = append(errs, errors.New("identity.mfa.admin_required must be false on channel=biz"))
+		}
+		if c.Identity.MFA.BizRequired {
+			keys, keysErr := c.Identity.MFA.DecodeKeys()
+			if keysErr != nil {
+				errs = append(errs, keysErr)
+			}
+			key, err := c.Identity.MFA.DecodeSecretKey()
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if len(keys) == 0 && key == nil {
+				errs = append(errs, errors.New("identity.mfa.secret_key or identity.mfa.keys is required when identity.mfa.biz_required=true"))
+			}
 		}
 	}
 	if strings.TrimSpace(c.Identity.MFA.Issuer) == "" {
