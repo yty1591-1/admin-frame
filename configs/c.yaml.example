@@ -71,7 +71,7 @@ auth:
 #     resend_interval: 60s
 #     daily_per_phone: 10
 #     hourly_per_ip: 30
-#     daily_budget: 0            # 全局日预算；0=不限，生产建议设置
+#     daily_budget: 0            # 全局日预算；0=不限（仅本地/测试），prod/staging 必须 >0
 #     breaker_failures: 5        # 连续失败阈值；达到后熔断供应商
 #     breaker_timeout: 60s       # 熔断打开时长 [1s, 10m]
 #   oauth:

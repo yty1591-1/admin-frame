@@ -109,6 +109,7 @@ iam:
 #   2) identity.hash_key（32B）与 mfa.secret_key 已由 Secret 注入；
 #   3) redis.addr 可用，revocation.driver=redis、failure_mode=fail_closed；
 #   4) 短信（推荐 aliyun，禁止 memory）或 OAuth 提供方（https 回调）至少配置一项；
+#      启用短信时必须设置 identity.sms.daily_budget > 0（SEC-09）。
 #   5) db 持久化、async.enabled=true（审计 Outbox）。
 identity:
   enabled: false
