@@ -213,6 +213,12 @@ type IdentityOAuthConfig struct {
 	AutoProvision bool `yaml:"auto_provision"`
 	// RateLimit authorize / callback 的 IP 级与全局限流（IDN-P2-05）。
 	RateLimit IdentityLoginRateLimitConfig `yaml:"rate_limit"`
+	// Timeout 单次 IdP 调用超时；0 表示默认 5s，范围 [1s, 30s]（PERF-06）。
+	Timeout time.Duration `yaml:"timeout"`
+	// BreakerFailures 连续失败阈值；0 表示默认 5。
+	BreakerFailures int `yaml:"breaker_failures"`
+	// BreakerTimeout 熔断打开持续时间；0 表示默认 60s，范围 [1s, 10m]。
+	BreakerTimeout time.Duration `yaml:"breaker_timeout"`
 	// Providers 已配置的第三方身份提供方；为空时不注册 OAuth 路由。
 	Providers []IdentityOAuthProviderConfig `yaml:"providers"`
 }
@@ -1304,6 +1310,15 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.OAuth.RateLimit.FailureMode == "" {
 		c.Identity.OAuth.RateLimit.FailureMode = RateLimitFailureClosed
 	}
+	if c.Identity.OAuth.Timeout == 0 {
+		c.Identity.OAuth.Timeout = 5 * time.Second
+	}
+	if c.Identity.OAuth.BreakerFailures == 0 {
+		c.Identity.OAuth.BreakerFailures = 5
+	}
+	if c.Identity.OAuth.BreakerTimeout == 0 {
+		c.Identity.OAuth.BreakerTimeout = 60 * time.Second
+	}
 	if c.Identity.MFA.Issuer == "" {
 		c.Identity.MFA.Issuer = identityDefaultMFAIssuer
 	}
@@ -2186,6 +2201,18 @@ func (c *Config) validateIdentityOAuth() []error {
 		}
 		if isProdLikeEnv(c.Env) && rate.FailureMode == RateLimitFailureOpen {
 			errs = append(errs, errors.New("identity.oauth.rate_limit.failure_mode must be fail_closed in prod/staging"))
+		}
+		// 0 表示默认值；显式配置时校验范围。
+		if c.Identity.OAuth.Timeout != 0 &&
+			(c.Identity.OAuth.Timeout < time.Second || c.Identity.OAuth.Timeout > 30*time.Second) {
+			errs = append(errs, errors.New("identity.oauth.timeout must be in [1s, 30s]"))
+		}
+		if c.Identity.OAuth.BreakerFailures < 0 {
+			errs = append(errs, errors.New("identity.oauth.breaker_failures must be >= 0"))
+		}
+		if c.Identity.OAuth.BreakerTimeout != 0 &&
+			(c.Identity.OAuth.BreakerTimeout < time.Second || c.Identity.OAuth.BreakerTimeout > 10*time.Minute) {
+			errs = append(errs, errors.New("identity.oauth.breaker_timeout must be in [1s, 10m]"))
 		}
 	}
 	seen := make(map[string]struct{}, len(providers))

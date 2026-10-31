@@ -12,6 +12,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/circuitbreaker"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 )
 
@@ -66,6 +67,10 @@ type OAuthServiceConfig struct {
 	Metrics Metrics
 	// Limiter 是 authorize / callback 的 IP 级与全局限流器；nil 时仅保留 provider 超时（IDN-P2-05）。
 	Limiter LoginLimiter
+	// BreakerFailures 是 provider 连续失败阈值；≤0 使用 5（PERF-06）。
+	BreakerFailures int
+	// BreakerTimeout 是熔断打开时长；≤0 使用 60s。
+	BreakerTimeout time.Duration
 }
 
 // AuthorizeResult 是授权发起结果。
@@ -103,6 +108,7 @@ type OAuthService struct {
 	hasher        *crypto.Hasher
 	metrics       Metrics
 	limiter       LoginLimiter
+	breakers      map[string]*circuitbreaker.Breaker
 }
 
 // NewOAuthService 构造 OAuth 登录服务；依赖缺失或参数越界时返回错误。
@@ -116,11 +122,35 @@ func NewOAuthService(cfg OAuthServiceConfig) (*OAuthService, error) {
 		stateTTL = DefaultOAuthStateTTL
 	}
 	providers := make(map[string]OAuthProvider, len(cfg.Providers))
+	breakers := make(map[string]*circuitbreaker.Breaker, len(cfg.Providers))
+	failures := cfg.BreakerFailures
+	if failures <= 0 {
+		failures = 5
+	}
+	breakerTimeout := cfg.BreakerTimeout
+	if breakerTimeout <= 0 {
+		breakerTimeout = time.Minute
+	}
 	for name, provider := range cfg.Providers {
 		if provider == nil {
 			return nil, apperr.Internal("oauth provider is nil", nil)
 		}
 		providers[name] = provider
+		breaker, err := circuitbreaker.New(circuitbreaker.Config{
+			Name:    "oauth:" + name,
+			Timeout: breakerTimeout,
+			ReadyToTrip: func(counts circuitbreaker.Counts) bool {
+				return counts.ConsecutiveFailures >= uint32(failures)
+			},
+			// 4xx / invalid_grant 是业务拒绝，不应打开 provider 熔断。
+			IsSuccessful: func(err error) bool {
+				return err == nil || errors.Is(err, apperr.ErrUnauthorized)
+			},
+		})
+		if err != nil {
+			return nil, apperr.Internal("build oauth breaker", err)
+		}
+		breakers[name] = breaker
 	}
 	return &OAuthService{
 		providers:     providers,
@@ -134,6 +164,7 @@ func NewOAuthService(cfg OAuthServiceConfig) (*OAuthService, error) {
 		hasher:        cfg.Hasher,
 		metrics:       cfg.Metrics,
 		limiter:       cfg.Limiter,
+		breakers:      breakers,
 	}, nil
 }
 
@@ -265,7 +296,22 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		return LoginResult{}, oauthInvalid()
 	}
 
-	info, err := provider.Exchange(ctx, code, saved.Verifier)
+	var info OAuthIdentityInfo
+	exchange := func() error {
+		var exchangeErr error
+		info, exchangeErr = provider.Exchange(ctx, code, saved.Verifier)
+		return exchangeErr
+	}
+	if breaker := s.breakers[name]; breaker != nil {
+		if breakerErr := breaker.Do(exchange); breakerErr != nil {
+			if errors.Is(breakerErr, circuitbreaker.ErrOpen) {
+				return LoginResult{}, apperr.Unavailable("oauth provider temporarily unavailable")
+			}
+			err = breakerErr
+		}
+	} else {
+		err = exchange()
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, apperr.ErrUnauthorized):

@@ -122,6 +122,32 @@ type denyLimiter struct{ retryAfter time.Duration }
 // Allow 返回拒绝与建议等待时长。
 func (l denyLimiter) Allow(string) (bool, time.Duration) { return false, l.retryAfter }
 
+// TestOAuthProviderBreakerOpensAfterFailures 验证 provider 连续失败后熔断（PERF-06）。
+func TestOAuthProviderBreakerOpensAfterFailures(t *testing.T) {
+	ctx := context.Background()
+	provider := &fakeProvider{name: "test", subject: "sub-1", err: apperr.Unavailable("provider down")}
+	f := newOAuthFixture(t, true, provider)
+	for i := 0; i < 5; i++ {
+		authorize, err := f.svc.Authorize(ctx, "test")
+		if err != nil {
+			t.Fatalf("authorize %d: %v", i, err)
+		}
+		_, err = f.svc.Callback(ctx, app.OAuthCallbackInput{Provider: "test", Code: "code", State: authorize.State})
+		if err == nil {
+			t.Fatalf("callback %d must fail", i)
+		}
+	}
+	authorize, err := f.svc.Authorize(ctx, "test")
+	if err != nil {
+		t.Fatalf("authorize after breaker: %v", err)
+	}
+	_, err = f.svc.Callback(ctx, app.OAuthCallbackInput{Provider: "test", Code: "code", State: authorize.State})
+	if err == nil || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("open breaker error = %v, want temporarily unavailable", err)
+	}
+	requireAppCode(t, err, apperr.CodeServiceUnavailable)
+}
+
 // TestOAuthRateLimit 验证 authorize / callback 超限返回 42900（IDN-P2-05）。
 func TestOAuthRateLimit(t *testing.T) {
 	ctx := context.Background()

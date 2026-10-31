@@ -19,7 +19,7 @@ import (
 
 // 默认 HTTP 超时与响应体上限。
 const (
-	defaultHTTPTimeout = 10 * time.Second
+	defaultHTTPTimeout = 5 * time.Second
 	maxResponseBytes   = 1 << 20
 )
 
@@ -37,6 +37,8 @@ type Config struct {
 	Scopes       []string
 	// SubjectField 是 userinfo JSON 中主体标识的字段名；默认 sub。
 	SubjectField string
+	// Timeout 单次出站调用超时；≤0 使用默认 5s（PERF-06）。
+	Timeout time.Duration
 	// HTTPClient 是出站客户端；nil 时使用带超时的默认客户端。
 	HTTPClient *http.Client
 }
@@ -68,7 +70,11 @@ func NewOAuth2Provider(cfg Config) (*OAuth2Provider, error) {
 	cfg.SubjectField = subjectField
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: defaultHTTPTimeout}
+		timeout := cfg.Timeout
+		if timeout <= 0 {
+			timeout = defaultHTTPTimeout
+		}
+		client = &http.Client{Timeout: timeout}
 	}
 	return &OAuth2Provider{cfg: cfg, client: client}, nil
 }

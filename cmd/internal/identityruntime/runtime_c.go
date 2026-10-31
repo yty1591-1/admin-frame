@@ -221,6 +221,7 @@ func buildOAuthService(
 			RedirectURI:  providerCfg.RedirectURI,
 			Scopes:       providerCfg.Scopes,
 			SubjectField: providerCfg.SubjectField,
+			Timeout:      cfg.Identity.OAuth.Timeout,
 		})
 		if err != nil {
 			return nil, apperr.Internal("identity oauth provider "+providerCfg.Name, err)
@@ -251,6 +252,8 @@ func buildOAuthService(
 		StateTTL:      app.DefaultOAuthStateTTL,
 		Metrics:       metrics,
 		Limiter:       limiter,
+		BreakerFailures: cfg.Identity.OAuth.BreakerFailures,
+		BreakerTimeout:  cfg.Identity.OAuth.BreakerTimeout,
 	})
 	if err != nil {
 		return nil, apperr.Internal("identity oauth service", err)
