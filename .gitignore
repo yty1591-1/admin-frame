@@ -13,5 +13,7 @@ configs/*.yaml
 /tmp*
 .idea/
 .vscode/
+# 本地智能体工作记忆，不得入库
+/.workbuddy/
 *.swp
 .DS_Store
