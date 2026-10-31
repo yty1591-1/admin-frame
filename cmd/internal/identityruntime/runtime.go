@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	goruntime "runtime"
+	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
@@ -71,6 +72,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, apperr.Internal("identity is only supported on admin/biz/c channel", nil)
 	}
 	channel := domain.Channel(cfg.Channel)
+	// OPS-06：prod/staging 启动期断言关键依赖未回退内存，避免配置错误静默降级。
+	if err := assertNoMemoryFallback(deps, cfg); err != nil {
+		return nil, err
+	}
 
 	piiHasher, err := buildHasher(cfg)
 	if err != nil {
@@ -561,6 +566,42 @@ func runCleanupOnce(
 	if stats.BatchLimitHit && logger != nil {
 		logger.Warn("identity cleanup reached batch limit", "detail", "increase batch_size/max_batches_per_run or shorten interval")
 	}
+}
+
+// assertNoMemoryFallback 在 prod/staging 启动期校验运行时依赖（OPS-06）。
+//
+// 配置校验只能证明「配置写了生产值」，无法证明装配期真的拿到了数据库 / Redis / Outbox；
+// 这里按实际 deps 断言，检测到回退立即失败并打印明确日志，禁止静默降级。
+func assertNoMemoryFallback(deps *platform.Deps, cfg *platform.Config) error {
+	env := strings.TrimSpace(cfg.Env)
+	prodLike := strings.EqualFold(env, "prod") || strings.EqualFold(env, "staging")
+	if !prodLike {
+		return nil
+	}
+	var fallbacks []string
+	if deps.Database == nil || cfg.DB.Driver == "" || strings.EqualFold(cfg.DB.Driver, "memory") {
+		fallbacks = append(fallbacks, "database")
+	}
+	if deps.Redis == nil {
+		fallbacks = append(fallbacks, "redis")
+	}
+	if deps.Async == nil {
+		fallbacks = append(fallbacks, "audit_outbox")
+	}
+	if len(fallbacks) > 0 {
+		if deps.Logger != nil {
+			deps.Logger.Error("identity runtime fallback detected",
+				"env", env, "fallbacks", strings.Join(fallbacks, ","))
+		}
+		return apperr.Internal(fmt.Sprintf(
+			"identity runtime requires persistent dependencies when env=%s, fallbacks: %s",
+			env, strings.Join(fallbacks, ",")), nil)
+	}
+	if deps.Logger != nil {
+		deps.Logger.Info("identity runtime dependency check",
+			"env", env, "database", cfg.DB.Driver, "redis", "required", "audit_sink", "outbox")
+	}
+	return nil
 }
 
 // repositories 汇总身份域六个仓储，避免装配函数返回过多位置参数。
