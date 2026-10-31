@@ -55,6 +55,8 @@ config:
     login_rate_limit:
       rps: 1
       burst: 5
+      ip_rps: 20
+      ip_burst: 40
       failure_mode: fail_closed
     hash_key_id: v1
     previous_hash_keys: []

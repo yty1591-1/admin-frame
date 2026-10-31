@@ -350,6 +350,31 @@ func TestLoginGuardCheckRateLimit(t *testing.T) {
 	}
 }
 
+// TestLoginGuardIndependentIPLimiter 验证账号级与 IP 级使用独立配额（PERF-05）。
+func TestLoginGuardIndependentIPLimiter(t *testing.T) {
+	account := &stubLimiter{allowed: true}
+	ip := &stubLimiter{allowed: false, retryAfter: 5 * time.Second}
+	fixture := newGuardFixture(t, app.DefaultLockoutPolicy(),
+		app.WithLoginLimiter(account), app.WithIPRateLimiter(ip))
+	err := fixture.guard.CheckRateLimitPair("account-key", "ip-key")
+	if err == nil {
+		t.Fatal("IP limiter denial must reject login")
+	}
+	guardCode(t, err, apperr.CodeTooManyRequests)
+	if len(account.keys) != 1 || account.keys[0] != "account-key" {
+		t.Fatalf("account limiter keys = %v", account.keys)
+	}
+	if len(ip.keys) != 1 || ip.keys[0] != "ip-key" {
+		t.Fatalf("ip limiter keys = %v", ip.keys)
+	}
+
+	// 未注入 IP 限流器时回退账号级，保持旧行为。
+	fallback := newGuardFixture(t, app.DefaultLockoutPolicy(), app.WithLoginLimiter(&stubLimiter{allowed: true}))
+	if err := fallback.guard.CheckRateLimitPair("a", "ip"); err != nil {
+		t.Fatalf("fallback limiter must allow: %v", err)
+	}
+}
+
 func TestHashAccountRef(t *testing.T) {
 	first := app.HashAccountRef(domain.ChannelAdmin, "  Alice@Example.COM ")
 	second := app.HashAccountRef(domain.ChannelAdmin, "alice@example.com")

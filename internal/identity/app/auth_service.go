@@ -512,11 +512,12 @@ func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProb
 		merchantID = ""
 	}
 	accountRef := AccountRef(s.hasher, s.channel, subject)
-	rateKeys := []string{loginRateKey(s.channel, accountRef, "")}
+	accountKey := loginRateKey(s.channel, accountRef, "")
+	ipKey := ""
 	if in.IPHash != "" {
-		rateKeys = append(rateKeys, loginRateKey(s.channel, "", in.IPHash))
+		ipKey = loginRateKey(s.channel, "", in.IPHash)
 	}
-	if err := s.guard.CheckRateLimit(rateKeys...); err != nil {
+	if err := s.guard.CheckRateLimitPair(accountKey, ipKey); err != nil {
 		// 限流拒绝是安全事件；审计失败不把 429 变成 503。
 		_ = s.emitAudit(ctx, audit.ActionAuthRateLimited, accountRef, merchantID, "account", accountRef,
 			audit.OutcomeDenied, MetricReasonRateLimited, in.TraceID, nil)

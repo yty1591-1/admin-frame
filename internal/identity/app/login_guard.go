@@ -90,10 +90,21 @@ type LoginFailureCounter interface {
 type LoginGuardOption func(*LoginGuard)
 
 // WithLoginLimiter 注入登录限流器；默认不启用。
-func WithLoginLimiter(limiter LoginLimiter) LoginGuardOption {
+func WithLoginLimiter(limiter LoginLimiter) (option LoginGuardOption) {
 	return func(g *LoginGuard) {
 		if limiter != nil {
 			g.limiter = limiter
+		}
+	}
+}
+
+// WithIPRateLimiter 注入 IP 级登录限流器；与账号级独立配置（PERF-05）。
+//
+// 未注入时 IP 维度回退账号级限流器，保持旧行为与单测兼容。
+func WithIPRateLimiter(limiter LoginLimiter) LoginGuardOption {
+	return func(g *LoginGuard) {
+		if limiter != nil {
+			g.ipLimiter = limiter
 		}
 	}
 }
@@ -130,6 +141,7 @@ type LoginGuard struct {
 	ids      IDGenerator
 	policy   LockoutPolicy
 	limiter  LoginLimiter
+	ipLimiter LoginLimiter
 	counter  LoginFailureCounter
 	hasher   *crypto.Hasher
 }
@@ -166,7 +178,34 @@ func NewLoginGuard(
 //
 // 传入的 key 相互独立（账号级、IP 级），任一超限即拒绝；返回建议等待时长为各维度最大值。
 func (g *LoginGuard) CheckRateLimit(keys ...string) error {
-	if g.limiter == nil {
+	return g.checkRateLimitWith(g.limiter, keys...)
+}
+
+// CheckRateLimitPair 使用账号级与 IP 级独立限流器校验登录（PERF-05）。
+//
+// accountKey 为空时跳过账号维度；ipKey 为空时跳过 IP 维度；
+// IP 限流器未注入时回退账号级限流器。
+func (g *LoginGuard) CheckRateLimitPair(accountKey, ipKey string) error {
+	if g.limiter == nil && g.ipLimiter == nil {
+		return nil
+	}
+	accountLimiter := g.limiter
+	if accountLimiter == nil {
+		accountLimiter = g.ipLimiter
+	}
+	if err := g.checkRateLimitWith(accountLimiter, accountKey); err != nil {
+		return err
+	}
+	ipLimiter := g.ipLimiter
+	if ipLimiter == nil {
+		ipLimiter = accountLimiter
+	}
+	return g.checkRateLimitWith(ipLimiter, ipKey)
+}
+
+// checkRateLimitWith 用指定限流器校验一组 key。
+func (g *LoginGuard) checkRateLimitWith(limiter LoginLimiter, keys ...string) error {
+	if limiter == nil {
 		return nil
 	}
 	var retryAfter time.Duration
@@ -181,7 +220,7 @@ func (g *LoginGuard) CheckRateLimit(keys ...string) error {
 			continue
 		}
 		seen[trimmed] = struct{}{}
-		allowed, after := g.limiter.Allow(trimmed)
+		allowed, after := limiter.Allow(trimmed)
 		if allowed {
 			continue
 		}

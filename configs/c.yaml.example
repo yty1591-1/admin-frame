@@ -54,8 +54,10 @@ auth:
 #     window: 15m
 #     duration: 15m
 #   login_rate_limit:
-#     rps: 1
+#     rps: 1                     # 账号级
 #     burst: 5
+#     ip_rps: 20                 # IP 级独立配额（PERF-05）
+#     ip_burst: 40
 #     failure_mode: fail_closed  # Redis 不可用时拒绝（生产强制）
 #   hash_key: ""                 # PII / 短信码摘要主密钥（32B），prod/staging 必填；生产走 ADMIN_FRAME_IDENTITY_HASH_KEY
 #   hash_key_id: v1              # 摘要前缀，仅 [A-Za-z0-9_-]，≤16 字节

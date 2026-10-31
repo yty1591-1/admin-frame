@@ -35,6 +35,9 @@ const loginLimiterIdleTTL = 10 * time.Minute
 // loginLimiterKeyPrefix 是 Redis 限流键的业务前缀（与平台级限流隔离）。
 const loginLimiterKeyPrefix = "identity:login:"
 
+// loginIPLimiterKeyPrefix 是 IP 级登录限流键前缀（PERF-05）。
+const loginIPLimiterKeyPrefix = "identity:login:ip:"
+
 // oauthLimiterKeyPrefix 是 OAuth authorize / callback 限流键前缀（IDN-P2-05）。
 const oauthLimiterKeyPrefix = "identity:oauth:"
 
@@ -142,6 +145,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	loginIPLimiter, err := buildLoginIPLimiter(cfg, deps)
+	if err != nil {
+		return nil, err
+	}
 	// 失败计数跨副本共享；Redis 缺失时守卫回退登录尝试表计数。
 	var failureCounter app.LoginFailureCounter
 	if deps.Redis != nil {
@@ -158,6 +165,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		},
 		app.WithHasher(piiHasher),
 		app.WithLoginLimiter(limiter),
+		app.WithIPRateLimiter(loginIPLimiter),
 		app.WithLoginFailureCounter(failureCounter),
 	)
 	if err != nil {
@@ -673,6 +681,12 @@ func buildRevocationStore(deps *platform.Deps) (app.RevocationStore, error) {
 func buildLoginLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.LoginRateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, loginLimiterKeyPrefix, "login")
+}
+
+// buildLoginIPLimiter 构造 IP 级登录限流器，使用独立配额（PERF-05）。
+func buildLoginIPLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+	rate := cfg.Identity.LoginRateLimit
+	return buildKeyedLimiter(deps, rate.IPRPS, rate.IPBurst, rate.FailureMode, loginIPLimiterKeyPrefix, "login-ip")
 }
 
 // buildOAuthLimiter 构造 authorize / callback 的 IP 级与全局限流器（IDN-P2-05）。

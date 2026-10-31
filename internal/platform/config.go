@@ -496,6 +496,9 @@ func (c IdentityConfig) DecodeHashKeys() (active string, keys map[string][]byte,
 type IdentityLoginRateLimitConfig struct {
 	RPS   float64 `yaml:"rps"`
 	Burst int     `yaml:"burst"`
+	// IPRPS / IPBurst 是 IP 级独立配额；0 表示默认 20 rps / burst 40（PERF-05）。
+	IPRPS  float64 `yaml:"ip_rps"`
+	IPBurst int    `yaml:"ip_burst"`
 	// FailureMode Redis 故障策略：fail_closed（默认）| fail_open；prod/staging 强制 fail_closed。
 	FailureMode string `yaml:"failure_mode"`
 }
@@ -1265,6 +1268,12 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.LoginRateLimit.FailureMode == "" {
 		c.Identity.LoginRateLimit.FailureMode = RateLimitFailureClosed
 	}
+	if c.Identity.LoginRateLimit.IPRPS == 0 {
+		c.Identity.LoginRateLimit.IPRPS = 20
+	}
+	if c.Identity.LoginRateLimit.IPBurst == 0 {
+		c.Identity.LoginRateLimit.IPBurst = 40
+	}
 	if c.Identity.RefreshRateLimit.RPS == 0 {
 		c.Identity.RefreshRateLimit.RPS = 10
 	}
@@ -1931,6 +1940,12 @@ func (c *Config) validateIdentity() []error {
 	}
 	if isProdLikeEnv(c.Env) && c.Identity.LoginRateLimit.FailureMode == RateLimitFailureOpen {
 		errs = append(errs, errors.New("identity.login_rate_limit.failure_mode must be fail_closed in prod/staging"))
+	}
+	if c.Identity.LoginRateLimit.IPRPS < 0 {
+		errs = append(errs, errors.New("identity.login_rate_limit.ip_rps must be >= 0"))
+	}
+	if c.Identity.LoginRateLimit.IPBurst < 0 {
+		errs = append(errs, errors.New("identity.login_rate_limit.ip_burst must be >= 0"))
 	}
 	// 0 表示由默认值填充（10 rps / burst 20）；仅拒绝负值与非法枚举。
 	if c.Identity.RefreshRateLimit.RPS < 0 {

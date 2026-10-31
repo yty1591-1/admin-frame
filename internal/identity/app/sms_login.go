@@ -312,11 +312,12 @@ func (s *SMSLoginService) verifyInput(in SMSLoginInput) (string, error) {
 		return "", apperr.BadRequest("phone or code format is invalid")
 	}
 	phoneHash := PhoneRef(s.hasher, phone)
-	rateKeys := []string{loginRateKey(domain.ChannelC, phoneHash, "")}
+	accountKey := loginRateKey(domain.ChannelC, phoneHash, "")
+	ipKey := ""
 	if in.IPHash != "" {
-		rateKeys = append(rateKeys, loginRateKey(domain.ChannelC, "", in.IPHash))
+		ipKey = loginRateKey(domain.ChannelC, "", in.IPHash)
 	}
-	if err := s.guard.CheckRateLimit(rateKeys...); err != nil {
+	if err := s.guard.CheckRateLimitPair(accountKey, ipKey); err != nil {
 		return "", err
 	}
 	return phoneHash, nil
