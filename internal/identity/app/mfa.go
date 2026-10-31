@@ -210,6 +210,7 @@ func (s *AuthService) loadMFAAccount(ctx context.Context, accountID string, now 
 // 票据优先且互斥：Ticket 非空按两步登录；SetupTicket 非空按强制绑定；
 // 两者同时出现返回 40000，避免请求语义歧义。
 func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVerifyResult, error) {
+	started := time.Now()
 	var result MFAVerifyResult
 	err := s.runTx(ctx, func(txCtx context.Context) error {
 		res, err := s.verifyMFAInTx(txCtx, in)
@@ -225,6 +226,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVeri
 			status = MetricResultFailure
 		}
 		s.metrics.ObserveMFAVerify(ctx, status)
+		s.metrics.ObserveMFAVerifyDuration(ctx, status, time.Since(started))
 	}
 	if err != nil {
 		return MFAVerifyResult{}, err
@@ -327,6 +329,20 @@ func (s *AuthService) requireAdminStepUp(ctx context.Context, actor SessionActor
 	if s.channel != domain.ChannelAdmin || !s.mfaRequired || s.mfa == nil {
 		return nil
 	}
+	started := time.Now()
+	err := s.requireAdminStepUpCode(ctx, actor, code)
+	if s.metrics != nil {
+		status := MetricResultSuccess
+		if err != nil {
+			status = MetricResultFailure
+		}
+		s.metrics.ObserveStepUpDuration(ctx, status, time.Since(started))
+	}
+	return err
+}
+
+// requireAdminStepUpCode 是 step-up 的实际校验逻辑（OPS-03 计时在外层完成）。
+func (s *AuthService) requireAdminStepUpCode(ctx context.Context, actor SessionActor, code string) error {
 	if strings.TrimSpace(actor.AccountID) == "" {
 		return invalidToken()
 	}

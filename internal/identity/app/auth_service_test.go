@@ -815,6 +815,26 @@ func (m *recordingMetrics) ObserveMFAVerify(_ context.Context, result string) {
 	m.add("mfa_verify", result)
 }
 
+// ObserveMFAVerifyDuration 实现 app.Metrics。
+func (m *recordingMetrics) ObserveMFAVerifyDuration(_ context.Context, result string, _ time.Duration) {
+	m.add("mfa_verify_duration", result)
+}
+
+// ObserveRefreshDuration 实现 app.Metrics。
+func (m *recordingMetrics) ObserveRefreshDuration(_ context.Context, result string, _ time.Duration) {
+	m.add("refresh_duration", result)
+}
+
+// ObserveStepUpDuration 实现 app.Metrics。
+func (m *recordingMetrics) ObserveStepUpDuration(_ context.Context, result string, _ time.Duration) {
+	m.add("step_up_duration", result)
+}
+
+// ObserveOAuthCallbackDuration 实现 app.Metrics。
+func (m *recordingMetrics) ObserveOAuthCallbackDuration(_ context.Context, provider, result string, _ time.Duration) {
+	m.add("oauth_callback_duration", provider, result)
+}
+
 // ObserveMFARecoveryUsed 实现 app.Metrics。
 func (m *recordingMetrics) ObserveMFARecoveryUsed(_ context.Context, remaining int) {
 	m.add("mfa_recovery_used", strconv.Itoa(remaining))

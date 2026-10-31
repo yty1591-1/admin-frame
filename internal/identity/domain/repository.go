@@ -91,6 +91,10 @@ type SessionRepository interface {
 	//
 	// afterLastUsed / afterID 为空表示第一页；limit <= 0 使用调用方默认值。
 	ListFamiliesByAccount(ctx context.Context, accountID string, afterLastUsed time.Time, afterID string, limit int) ([]*SessionFamily, error)
+	// CountActiveFamilies 统计当前仍有效的设备会话数（status=active 且未过空闲 / 绝对上限）。
+	//
+	// 仅供容量指标使用；调用方需自备超时，禁止在认证热路径阻塞调用。
+	CountActiveFamilies(ctx context.Context, now time.Time) (int64, error)
 	// ListActiveByFamily 返回 family 下仍可能持有有效 Access Token 的会话（active / rotated）。
 	//
 	// activeSince 由调用方按 access_ttl 计算；实现必须按 last_used_at 过滤并设置硬上限，

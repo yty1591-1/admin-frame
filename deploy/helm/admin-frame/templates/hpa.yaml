@@ -21,5 +21,15 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ $w.autoscaling.targetCPUUtilizationPercentage }}
+{{- range $m := $w.autoscaling.podsMetrics }}
+    # 身份域认证 QPS 等按 Pod 暴露的辅助信号（需部署 Prometheus Adapter）。
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $m.name }}
+        target:
+          type: AverageValue
+          averageValue: {{ $m.averageValue }}
+{{- end }}
 {{- end }}
 {{- end }}

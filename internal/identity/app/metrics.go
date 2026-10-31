@@ -22,10 +22,16 @@ type Metrics interface {
 	ObserveLockout(ctx context.Context, channel domain.Channel)
 	// ObserveMFAVerify 记录一次 MFA 校验结果。
 	ObserveMFAVerify(ctx context.Context, result string)
+	// ObserveMFAVerifyDuration 记录一次 MFA 校验耗时（OPS-03）。
+	ObserveMFAVerifyDuration(ctx context.Context, result string, duration time.Duration)
 	// ObserveMFARecoveryUsed 记录一次恢复码使用及剩余数量。
 	ObserveMFARecoveryUsed(ctx context.Context, remaining int)
 	// ObserveRefresh 记录一次刷新结果。
 	ObserveRefresh(ctx context.Context, result string)
+	// ObserveRefreshDuration 记录一次刷新耗时（OPS-03）。
+	ObserveRefreshDuration(ctx context.Context, result string, duration time.Duration)
+	// ObserveStepUpDuration 记录一次管理员二次 MFA 耗时（OPS-03）。
+	ObserveStepUpDuration(ctx context.Context, result string, duration time.Duration)
 	// ObserveTokenReuse 记录一次刷新令牌重放。
 	ObserveTokenReuse(ctx context.Context)
 	// ObserveSessionRevoke 记录一次设备撤销；reason 为 RevokeReason，result=success|failure。
@@ -34,6 +40,8 @@ type Metrics interface {
 	ObserveSMSSend(ctx context.Context, result string)
 	// ObserveOAuthCallback 记录一次 OAuth 回调结果。
 	ObserveOAuthCallback(ctx context.Context, provider, result string)
+	// ObserveOAuthCallbackDuration 记录一次 OAuth 回调耗时（OPS-03）。
+	ObserveOAuthCallbackDuration(ctx context.Context, provider, result string, duration time.Duration)
 }
 
 // 指标结果与原因的稳定枚举值。

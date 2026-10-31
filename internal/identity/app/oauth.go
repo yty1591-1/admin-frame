@@ -241,6 +241,7 @@ func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash
 
 // Callback 校验 state 与授权码，完成身份映射与登录。
 func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (result LoginResult, err error) {
+	started := time.Now()
 	providerName := strings.TrimSpace(in.Provider)
 	defer func() {
 		outcome := audit.OutcomeSuccess
@@ -266,6 +267,7 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 			status = MetricResultFailure
 		}
 		s.metrics.ObserveOAuthCallback(ctx, strings.TrimSpace(in.Provider), status)
+		s.metrics.ObserveOAuthCallbackDuration(ctx, strings.TrimSpace(in.Provider), status, time.Since(started))
 	}
 	defer deferred()
 	if err := s.checkRateLimit("callback", in.IPHash); err != nil {

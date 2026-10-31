@@ -898,6 +898,7 @@ type refreshOutcome struct {
 //
 // 已 rotated 的令牌再次出现视为重放：撤销整条家庭链并记 auth.token.reused。
 func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, error) {
+	started := time.Now()
 	// SEC-03：刷新令牌形态固定，超长输入在哈希与查库前直接拒绝。
 	if len(in.RefreshToken) > maxRefreshTokenBytes {
 		return TokenPair{}, invalidToken()
@@ -923,6 +924,7 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, 
 			result = MetricResultFailure
 		}
 		s.metrics.ObserveRefresh(ctx, result)
+		s.metrics.ObserveRefreshDuration(ctx, result, time.Since(started))
 	}
 	if err != nil {
 		return TokenPair{}, err

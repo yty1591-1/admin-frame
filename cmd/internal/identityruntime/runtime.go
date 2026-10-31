@@ -25,6 +25,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/password"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 )
@@ -192,14 +193,24 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	var identityMetrics app.Metrics
 	var revocationObserver app.RevocationObserver
 	var revocationCacheObserver app.RevocationCacheObserver
+	var identityObserver *identityobs.Metrics
 	if deps.Metrics != nil {
 		observer, obsErr := identityobs.NewMetrics(deps.Metrics.RegistererWithoutChannel())
 		if obsErr != nil {
 			return nil, obsErr
 		}
+		identityObserver = observer
 		identityMetrics = observer
 		revocationObserver = observer
 		revocationCacheObserver = observer
+		// PERF-08：活跃设备数按抓取时查询，作为 HPA / Dashboard 的辅助信号。
+		if gaugeErr := observer.RegisterSessionGauge(func() (int64, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			return repos.sessions.CountActiveFamilies(ctx, time.Now().UTC())
+		}); gaugeErr != nil {
+			return nil, fmt.Errorf("identity session gauge: %w", gaugeErr)
+		}
 	}
 
 	// 撤销快照 L1：账号 / 会话快照先读进程内缓存，未命中再读 Redis（IDN-GAP-P1-02）。
@@ -244,6 +255,19 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if deps.Async != nil {
 		auditEmitter = app.OutboxEmitter{Events: deps.Async.Store()}
 		auditSink = "outbox"
+		// OPS-04：identity.audit 积压与最老事件年龄必须可观测。
+		if identityObserver != nil {
+			store := deps.Async.Store()
+			stats, ok := store.(outbox.TopicStatReader)
+			if !ok {
+				return nil, fmt.Errorf("identity async: outbox store does not support topic stats")
+			}
+			if gaugeErr := identityObserver.RegisterOutboxGauges(
+				identityTopicStatsCounter(stats, app.TopicAudit),
+			); gaugeErr != nil {
+				return nil, fmt.Errorf("identity outbox gauges: %w", gaugeErr)
+			}
+		}
 	}
 	if deps.Logger != nil {
 		// 启动日志标记审计出口，避免运维误判「审计已落库」。
@@ -298,7 +322,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 
 	runtime := &Runtime{Checker: checker, Handler: handler}
 	if channel == domain.ChannelC {
-		cHandler, cErr := buildChannelC(deps, cfg, repos.accounts, repos.oauthIdentities, guard, authSvc, piiHasher, identityMetrics, handler)
+		cHandler, cErr := buildChannelC(deps, cfg, repos.accounts, repos.oauthIdentities, guard,
+			authSvc, piiHasher, identityMetrics, identityObserver, handler)
 		if cErr != nil {
 			return nil, cErr
 		}
@@ -331,6 +356,26 @@ func RegisterAsync(deps *platform.Deps) error {
 		return fmt.Errorf("identity async handler %s: %w", app.TopicAudit, err)
 	}
 	return nil
+}
+
+// identityTopicStatsCounter 采集 identity.audit 积压数与最老事件延迟（OPS-04）。
+func identityTopicStatsCounter(reader outbox.TopicStatReader, topic string) func() (int, float64, error) {
+	return func() (int, float64, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stats, err := reader.TopicStats(ctx, topic)
+		if err != nil {
+			return 0, 0, err
+		}
+		lag := 0.0
+		if !stats.OldestCreatedAt.IsZero() {
+			lag = time.Since(stats.OldestCreatedAt).Seconds()
+			if lag < 0 {
+				lag = 0
+			}
+		}
+		return stats.Pending, lag, nil
+	}
 }
 
 // cleanupBatchTimeout 是单轮清理的硬上限；停机时等待在途批次最多这么久。

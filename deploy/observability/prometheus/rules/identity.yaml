@@ -126,6 +126,95 @@ groups:
           description: "单轮清理未清空，存在积压；上调 batch_size/max_batches_per_run 或缩短 cleanup_interval。"
           runbook_url: docs/runbooks/identity-auth-failure.md
 
+      - alert: IdentityRefreshLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(identity_refresh_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.refresh.latency
+        annotations:
+          summary: "刷新令牌 P95 超过 500ms"
+          description: "结合 DB / Redis 时延与撤销快照写入失败排查；持续超阈值会影响会话续期体验。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityMFALatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(identity_mfa_verify_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.mfa.latency
+        annotations:
+          summary: "MFA 校验 P95 超过 500ms"
+          description: "TOTP / 恢复码校验与票据消费变慢；检查数据库锁等待与限流命中。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityStepUpLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(identity_step_up_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.step_up.latency
+        annotations:
+          summary: "特权操作 step-up P95 超过 500ms"
+          description: "管理员高频操作被 MFA 校验拖慢；检查 MFA 限流与数据库负载。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityOAuthLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(identity_oauth_callback_duration_seconds_bucket[5m])) by (le, provider)
+          ) > 3
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.oauth.latency
+        annotations:
+          summary: "OAuth 回调 P95 超过 3s"
+          description: "IdP 响应变慢或网络抖动；结合 provider 熔断状态与超时配置排查。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityOutboxBacklog
+        expr: identity_outbox_pending > 0
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.outbox.backlog
+        annotations:
+          summary: "identity.audit Outbox 存在积压"
+          description: "审计事件未投递；检查 worker 存活、审计表写入与死信累积。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityOutboxLagHigh
+        expr: identity_outbox_lag_seconds > 300
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.outbox.lag
+        annotations:
+          summary: "identity.audit 最老事件积压超过 5 分钟"
+          description: "审计延迟影响合规；优先检查消费者吞吐与下游审计库。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentitySMSBreakerOpen
+        expr: identity_sms_breaker_open == 1
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.sms.breaker_open
+        annotations:
+          summary: "短信供应商熔断打开"
+          description: "验证码通道不可用；检查供应商余额、网络与凭据，恢复后熔断会自动半开探测。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
       - alert: IdentityCleanupNotRunning
         expr: absent(identity_cleanup_runs_total)
         for: 2h

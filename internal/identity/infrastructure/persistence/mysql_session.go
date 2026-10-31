@@ -366,6 +366,19 @@ func (r *SQLSessionRepository) ListFamiliesByAccount(
 	return out, nil
 }
 
+// CountActiveFamilies 统计仍有效的设备会话数（PERF-08）。
+func (r *SQLSessionRepository) CountActiveFamilies(ctx context.Context, now time.Time) (int64, error) {
+	var count int64
+	err := r.exec(ctx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM identity_session_family
+		 WHERE status = ? AND expires_at > ? AND absolute_expires_at > ?`,
+		string(domain.SessionStatusActive), now.UTC(), now.UTC()).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // ListActiveByFamily 只加载 activeSince 之后仍可能持有 Access Token 的 active / rotated 会话。
 //
 // 按 last_used_at 过滤后，正常设备在 access_ttl 内仅 1–2 行；

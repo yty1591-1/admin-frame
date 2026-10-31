@@ -11,6 +11,7 @@ import (
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	identityoauth "github.com/admin-frame/admin-frame/internal/identity/infrastructure/oauth"
 	identitysms "github.com/admin-frame/admin-frame/internal/identity/infrastructure/sms"
+	identityobs "github.com/admin-frame/admin-frame/internal/identity/observability"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -39,9 +40,10 @@ func buildChannelC(
 	authSvc *app.AuthService,
 	hasher *crypto.Hasher,
 	metrics app.Metrics,
+	observer *identityobs.Metrics,
 	restHandler *rest.Handler,
 ) (*identityc.Handler, error) {
-	smsService, err := buildSMSLoginService(deps, cfg, accounts, guard, authSvc, hasher, metrics)
+	smsService, err := buildSMSLoginService(deps, cfg, accounts, guard, authSvc, hasher, metrics, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +80,7 @@ func buildSMSLoginService(
 	authSvc *app.AuthService,
 	hasher *crypto.Hasher,
 	metrics app.Metrics,
+	observer *identityobs.Metrics,
 ) (*app.SMSLoginService, error) {
 	smsCfg := cfg.Identity.SMS
 	if !smsCfg.Enabled {
@@ -98,6 +101,12 @@ func buildSMSLoginService(
 	breaker, err := buildSMSBreaker(smsCfg, deps.Logger)
 	if err != nil {
 		return nil, apperr.Internal("identity sms circuit breaker", err)
+	}
+	// OPS-07：熔断状态必须可被采集；状态变化仍由 buildSMSBreaker 写告警日志。
+	if observer != nil {
+		if gaugeErr := observer.RegisterSMSBreakerGauge(func() string { return breaker.State().String() }); gaugeErr != nil {
+			return nil, apperr.Internal("identity sms breaker gauge", gaugeErr)
+		}
 	}
 	alertSink := buildSMSAlertSink(deps, metrics)
 	codeSender, err := identitysms.NewCodeSender(

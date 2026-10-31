@@ -278,6 +278,26 @@ func (r *MemorySessionRepository) ListFamiliesByAccount(
 // 高频刷新导致的单链膨胀（IDN-GAP-PERF-03）。
 const maxActiveSessionsPerFamily = 256
 
+// CountActiveFamilies 统计仍有效的设备会话数（PERF-08）。
+func (r *MemorySessionRepository) CountActiveFamilies(_ context.Context, now time.Time) (int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var count int64
+	for _, family := range r.families {
+		if family.Status != domain.SessionStatusActive {
+			continue
+		}
+		if !family.ExpiresAt.After(now) {
+			continue
+		}
+		if !family.AbsoluteExpiresAt.IsZero() && !family.AbsoluteExpiresAt.After(now) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
 // ListActiveByFamily 返回 family 下 activeSince 之后仍可能持有 Access Token 的会话。
 func (r *MemorySessionRepository) ListActiveByFamily(
 	_ context.Context,

@@ -124,6 +124,8 @@ workloads:
       minReplicas: 1
       maxReplicas: 4
       targetCPUUtilizationPercentage: 70
+      # 可选：按 Pod 暴露的辅助信号（如 identity_login_qps），需 Prometheus Adapter。
+      podsMetrics: []
     pdb:
       enabled: false
       minAvailable: 1
