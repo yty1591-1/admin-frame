@@ -40,12 +40,15 @@ function statusMetaOf(item: SecuritySchemaItem) {
 }
 </script>
 <template>
-  <div class="space-y-4">
-    <template v-if="loading">
+  <div>
+    <div
+      v-if="loading"
+      class="divide-y divide-border overflow-hidden rounded-xl border border-border"
+    >
       <div
         v-for="index in formSchema.length || 5"
         :key="index"
-        class="flex flex-row items-center justify-between rounded-lg border p-4"
+        class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
       >
         <div class="space-y-2">
           <div class="bg-muted h-4 w-24 animate-pulse rounded"></div>
@@ -53,16 +56,19 @@ function statusMetaOf(item: SecuritySchemaItem) {
         </div>
         <VbenSpinner class="size-4" />
       </div>
-    </template>
-    <template v-else>
+    </div>
+    <div
+      v-else
+      class="divide-y divide-border overflow-hidden rounded-xl border border-border"
+    >
       <div
         v-for="item in formSchema"
         :key="item.fieldName"
-        class="flex flex-row items-center justify-between gap-4 rounded-lg border p-4"
+        class="hover:bg-accent/40 flex flex-col gap-3 p-4 transition-colors sm:flex-row sm:items-center sm:justify-between"
       >
-        <div class="space-y-1">
-          <div class="flex flex-row items-center gap-2">
-            <span class="text-base font-medium">{{ item.label }}</span>
+        <div class="min-w-0 space-y-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm font-medium">{{ item.label }}</span>
             <Badge
               :class="
                 item.status === 'unavailable' ? 'text-muted-foreground' : ''
@@ -79,6 +85,7 @@ function statusMetaOf(item: SecuritySchemaItem) {
         <VbenButton
           v-if="item.actionLabel"
           :disabled="item.actionDisabled"
+          class="h-9 w-full shrink-0 px-4 sm:w-auto"
           size="sm"
           variant="outline"
           @click="emit('action', item.fieldName)"
@@ -86,6 +93,6 @@ function statusMetaOf(item: SecuritySchemaItem) {
           {{ item.actionLabel }}
         </VbenButton>
       </div>
-    </template>
+    </div>
   </div>
 </template>

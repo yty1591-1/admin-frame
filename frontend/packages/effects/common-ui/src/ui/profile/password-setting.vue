@@ -25,7 +25,9 @@ const emit = defineEmits<{
 const [Form, formApi] = useVbenForm(
   reactive({
     commonConfig: {
-      labelWidth: 130,
+      // 弹窗最窄只有 92vw（约 330px），固定 130px 会在窄屏吃掉四成输入宽度；
+      // auto 按当前 label 的最大宽度对齐，窄屏/多语言切换都不会挤坏输入框。
+      labelWidth: 'auto',
       // 所有表单项
       componentProps: {
         class: 'w-full',

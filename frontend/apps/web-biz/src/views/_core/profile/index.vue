@@ -1,49 +1,49 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, markRaw, ref } from 'vue';
 
 import { Profile } from '@vben/common-ui';
+import { LockKeyhole, MonitorSmartphone, UserRoundPen } from '@vben/icons';
 import { useUserStore } from '@vben/stores';
 
+import { $t } from '#/locales';
+
 import ProfileBase from './base-setting.vue';
-import ProfileNotificationSetting from './notification-setting.vue';
-import ProfilePasswordSetting from './password-setting.vue';
 import ProfileSecuritySetting from './security-setting.vue';
+import ProfileSessionSetting from './session-setting.vue';
 
 const userStore = useUserStore();
 
-const tabsValue = ref<string>('basic');
+const tabsValue = ref<string>('profile');
 
-const tabs = ref([
+const tabs = computed(() => [
   {
-    label: '基本设置',
-    value: 'basic',
+    label: $t('profile.tabProfile'),
+    value: 'profile',
+    icon: markRaw(UserRoundPen),
   },
   {
-    label: '安全设置',
+    label: $t('profile.tabSecurity'),
     value: 'security',
+    icon: markRaw(LockKeyhole),
   },
   {
-    label: '修改密码',
-    value: 'password',
-  },
-  {
-    label: '新消息提醒',
-    value: 'notice',
+    label: $t('profile.tabDevices'),
+    value: 'sessions',
+    icon: markRaw(MonitorSmartphone),
   },
 ]);
 </script>
 <template>
   <Profile
     v-model:model-value="tabsValue"
-    title="个人中心"
-    :user-info="userStore.userInfo"
     :tabs="tabs"
+    :title="$t('profile.title')"
+    :user-info="userStore.userInfo"
   >
     <template #content>
-      <ProfileBase v-if="tabsValue === 'basic'" />
+      <ProfileBase v-if="tabsValue === 'profile'" />
       <ProfileSecuritySetting v-if="tabsValue === 'security'" />
-      <ProfilePasswordSetting v-if="tabsValue === 'password'" />
-      <ProfileNotificationSetting v-if="tabsValue === 'notice'" />
+      <ProfileSessionSetting v-if="tabsValue === 'sessions'" />
     </template>
   </Profile>
 </template>

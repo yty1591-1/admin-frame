@@ -14,15 +14,12 @@ import { getMeApi } from '#/api';
 import { $t } from '#/locales';
 
 import MfaSetting from './mfa-setting.vue';
-
-const emit = defineEmits<{
-  /** 请求父级切换到其他页签（如修改密码）。 */
-  changeTab: [value: string];
-}>();
+import PasswordDialog from './password-dialog.vue';
 
 const loading = ref(true);
 const loadFailed = ref(false);
 const me = ref<MeView | null>(null);
+const passwordDialogOpen = ref(false);
 const mfaSettingRef = ref<{
   openBind: () => void;
   openUnbind: () => void;
@@ -119,7 +116,8 @@ const formSchema = computed((): SecuritySchemaItem[] => {
 
 function handleAction(fieldName: string) {
   if (fieldName === 'accountPassword') {
-    emit('changeTab', 'password');
+    // 改密改为弹窗：不再占一级页签，也不打断当前页面的上下文。
+    passwordDialogOpen.value = true;
     return;
   }
   if (fieldName === 'securityMfa') {
@@ -132,23 +130,25 @@ function handleAction(fieldName: string) {
 }
 </script>
 <template>
-  <div class="space-y-6">
+  <div class="space-y-5">
     <Alert
       v-if="me?.must_change_password"
       :message="$t('profile.securityMustChangePassword')"
-      class="mb-4"
       show-icon
       type="warning"
     />
 
-    <div v-if="loadFailed" class="mb-4 flex items-center gap-3">
+    <div
+      v-if="loadFailed"
+      class="flex flex-col items-start gap-3 rounded-xl border border-dashed p-5 sm:flex-row sm:items-center sm:justify-between"
+    >
       <Alert
-        class="flex-1"
+        class="w-full flex-1"
         :message="$t('profile.securityProfileLoadFailed')"
         show-icon
         type="error"
       />
-      <Button size="small" @click="loadMe">
+      <Button class="shrink-0" @click="loadMe">
         {{ $t('profile.securityRetry') }}
       </Button>
     </div>
@@ -161,5 +161,7 @@ function handleAction(fieldName: string) {
       />
       <MfaSetting ref="mfaSettingRef" @refresh="loadMe" />
     </template>
+
+    <PasswordDialog v-model:open="passwordDialogOpen" />
   </div>
 </template>

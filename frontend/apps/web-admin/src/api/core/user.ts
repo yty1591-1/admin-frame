@@ -8,6 +8,12 @@ import { requestClient } from '#/api/request';
 /** GET /admin/v1/me 的响应（api/openapi/schemas/admin/me.yaml#MeView）。 */
 export interface MeView {
   channel: 'admin' | 'biz';
+  /**
+   * 展示昵称；服务端始终返回，空串表示未设置。
+   *
+   * 前端统一用 `display_name || subject` 展示，避免出现空白身份卡。
+   */
+  display_name: string;
   /** 是否已设置密码凭据。 */
   has_password: boolean;
   merchant_id: string;
@@ -34,17 +40,36 @@ export async function getMeApi(config?: RequestClientConfig): Promise<MeView> {
 }
 
 /**
+ * 更新当前登录主体资料（`PATCH /admin/v1/me`）。
+ *
+ * 仅支持展示昵称：传空串表示清除，服务端返回更新后的完整资料，
+ * 调用方应直接用返回值刷新本地用户信息，避免再发一次 GET /me。
+ */
+export async function updateMyProfileApi(
+  data: { display_name: string },
+  config?: RequestClientConfig,
+): Promise<MeView> {
+  return requestClient.request<MeView>('/me', {
+    ...config,
+    data,
+    method: 'PATCH',
+  });
+}
+
+/**
  * 获取用户信息。
  *
- * identity_account 暂无 display_name / avatar_url，昵称回退 subject、头像用默认值。
+ * 昵称为空时回退登录名；头像固定空串，让 `VbenAvatar` 用昵称首字母兜底，
+ * 从而不再依赖 `preferences.app.defaultAvatar` 的远端 unpkg 资源（FEREV-02）。
  */
 export async function getUserInfoApi(): Promise<UserInfo> {
   const me = await getMeApi();
+  const displayName = me.display_name || me.subject;
   return {
-    avatar: preferences.app.defaultAvatar,
+    avatar: '',
     desc: '',
     homePath: preferences.app.defaultHomePath,
-    realName: me.subject,
+    realName: displayName,
     roles: [],
     token: '',
     userId: me.subject_id,

@@ -8,20 +8,19 @@ import { computed, onMounted, ref } from 'vue';
 import { ProfileSecuritySetting } from '@vben/common-ui';
 
 import { Alert, Button } from 'ant-design-vue';
-import dayjs from 'dayjs';
 
 import { getMeApi } from '#/api';
 import { $t } from '#/locales';
 
 const loading = ref(true);
-/** 资料接口不可用：B 端认证尚未迁移到真实契约（FEREV-04）。 */
+/** 资料接口不可用时整页降级为「暂不可用」，不把失败渲染成「未绑定」。 */
 const unavailable = ref(false);
 const me = ref<MeView | null>(null);
 
 /**
  * 拉取当前主体资料。
  *
- * B 端 mock 环境没有 `/me`，请求必然失败；此时整页降级为「暂不可用」，
+ * `/me` 已接通真实后端；请求失败（网络、令牌失效）时才降级，
  * 绝不把失败渲染成「未绑定」。
  */
 async function loadMe() {
@@ -38,19 +37,6 @@ async function loadMe() {
 }
 
 onMounted(loadMe);
-
-const passwordDescription = computed(() => {
-  const data = me.value;
-  if (!data?.has_password) {
-    return $t('profile.securityPasswordUnsetDesc');
-  }
-  if (!data.password_updated_at) {
-    return $t('profile.securityPasswordNeverUpdated');
-  }
-  return $t('profile.securityPasswordUpdatedAt', {
-    time: dayjs(data.password_updated_at).format('YYYY-MM-DD HH:mm'),
-  });
-});
 
 const formSchema = computed((): SecuritySchemaItem[] => {
   const data = me.value;
@@ -95,11 +81,9 @@ const formSchema = computed((): SecuritySchemaItem[] => {
     {
       fieldName: 'accountPassword',
       label: $t('profile.securityAccountPassword'),
-      status: data.has_password ? 'bound' : 'unbound',
-      statusLabel: data.has_password
-        ? $t('profile.securityStatusSet')
-        : $t('profile.securityStatusUnset'),
-      description: passwordDescription.value,
+      // B 端没有自助改密端点：即使 /me 能返回 has_password，也不给操作入口。
+      status: 'unavailable',
+      description: $t('profile.securityPasswordUnavailableDesc'),
     },
     {
       fieldName: 'securityPhone',
@@ -131,15 +115,18 @@ const formSchema = computed((): SecuritySchemaItem[] => {
 });
 </script>
 <template>
-  <div class="space-y-6">
-    <div v-if="unavailable" class="flex items-center gap-3">
+  <div class="space-y-5">
+    <div
+      v-if="unavailable"
+      class="flex flex-col items-start gap-3 rounded-xl border border-dashed p-5 sm:flex-row sm:items-center sm:justify-between"
+    >
       <Alert
-        class="flex-1"
+        class="w-full flex-1"
         :message="$t('profile.securityProfileUnavailable')"
         show-icon
         type="info"
       />
-      <Button size="small" @click="loadMe">
+      <Button class="shrink-0" @click="loadMe">
         {{ $t('profile.securityRetry') }}
       </Button>
     </div>

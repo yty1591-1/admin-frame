@@ -63,6 +63,7 @@ export {
   MessageSquareCode,
   Minimize,
   Minimize2,
+  MonitorSmartphone,
   MoonStar,
   Paintbrush,
   Palette,

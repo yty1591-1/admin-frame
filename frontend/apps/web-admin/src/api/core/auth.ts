@@ -1,4 +1,4 @@
-import type { AxiosResponse } from '@vben/request';
+import type { AxiosResponse, RequestClientConfig } from '@vben/request';
 
 import { baseRequestClient, requestClient } from '#/api/request';
 
@@ -294,4 +294,59 @@ export async function getMyPermissionsApi(): Promise<SubjectPermissions> {
 export async function getAccessCodesApi(): Promise<string[]> {
   const permissions = await getMyPermissionsApi();
   return permissions.permissions;
+}
+
+/** 设备会话（api/openapi/components.yaml#AuthSession）；不含任何令牌。 */
+export interface AuthSessionDTO {
+  absolute_expires_at: string;
+  created_at: string;
+  /** 是否为当前请求使用的设备。 */
+  current: boolean;
+  expires_at: string;
+  /** 设备（family）ID，撤销时作为路径参数。 */
+  id: string;
+  idle_expires_at?: string;
+  ip_hash?: string;
+  last_used_at: string;
+  revoked_at?: string;
+  status: 'active' | 'expired' | 'revoked' | 'rotated';
+  ua_hash?: string;
+}
+
+/** 设备会话分页结果。 */
+export interface AuthSessionListDTO {
+  items: AuthSessionDTO[];
+  next_cursor?: string;
+}
+
+/** 列出本账号的设备会话（`GET /admin/v1/auth/sessions`）。 */
+export async function listMySessionsApi(
+  params: { cursor?: string; limit?: number } = {},
+  config?: Omit<RequestClientConfig, 'params'>,
+): Promise<AuthSessionListDTO> {
+  return requestClient.get<AuthSessionListDTO>('/auth/sessions', {
+    ...config,
+    params,
+  });
+}
+
+/** 撤销指定设备会话（`DELETE /admin/v1/auth/sessions/{id}`）。 */
+export async function revokeMySessionApi(
+  id: string,
+  config?: RequestClientConfig,
+): Promise<void> {
+  await requestClient.delete(`/auth/sessions/${encodeURIComponent(id)}`, {
+    ...config,
+    responseReturn: 'raw',
+  });
+}
+
+/** 撤销全部会话（`POST /admin/v1/auth/sessions/revoke-all`），语义等同 logout-all。 */
+export async function revokeAllMySessionsApi(
+  config?: RequestClientConfig,
+): Promise<void> {
+  await requestClient.post('/auth/sessions/revoke-all', undefined, {
+    ...config,
+    responseReturn: 'raw',
+  });
 }
