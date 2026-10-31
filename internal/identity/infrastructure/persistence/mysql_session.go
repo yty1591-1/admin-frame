@@ -612,11 +612,11 @@ func insertArchivedFamilies(ctx context.Context, tx *sql.Tx, ids []int64, archiv
 	placeholders, args := idPlaceholders(ids, archivedAt.UTC())
 	_, err := tx.ExecContext(ctx, `INSERT INTO identity_session_family_archive
 		(family_id, account_id, status, version, created_at, last_used_at, expires_at,
-		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason,
-		 updated_at, archived_at)
+		 absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
+		 device_label, revoked_at, revoked_reason, updated_at, archived_at)
 		SELECT family_id, account_id, status, version, created_at, last_used_at, expires_at,
-		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason,
-		 updated_at, ?
+		 absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
+		 device_label, revoked_at, revoked_reason, updated_at, ?
 		FROM identity_session_family WHERE family_id IN (`+placeholders+`)`, args...)
 	return err
 }
