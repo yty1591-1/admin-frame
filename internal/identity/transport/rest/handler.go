@@ -378,6 +378,11 @@ func (h *Handler) accountOperation(
 // 主体关键词筛选；软删账号同样返回并带 deleted_at。
 func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
 	page, err := pagination.Parse(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -385,6 +390,7 @@ func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	query := r.URL.Query()
 	items, total, err := h.accounts.List(r.Context(), app.AccountListInput{
+		Actor:   actor,
 		Status:  strings.TrimSpace(query.Get("status")),
 		Keyword: strings.TrimSpace(query.Get("keyword")),
 		Limit:   page.Limit(),

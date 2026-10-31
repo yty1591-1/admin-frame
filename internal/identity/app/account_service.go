@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -425,6 +426,8 @@ type AccountDetail struct {
 
 // AccountListInput 是账号列表查询入参。
 type AccountListInput struct {
+	// Actor 执行查询的管理员；用于审计 actor_id。
+	Actor SessionActor
 	// Status 状态过滤；空值表示不过滤。
 	Status string
 	// Keyword 主体关键词；空值表示不过滤。
@@ -442,7 +445,12 @@ type LockAccountInput struct {
 }
 
 // List 分页列出本端账号（含软删），按创建时间倒序。
+//
+// 批量读取登录主体属于敏感操作，成功后写 auth.account.read（scope=list，SEC-08）。
 func (s *AccountService) List(ctx context.Context, in AccountListInput) ([]AccountSummary, int, error) {
+	if strings.TrimSpace(in.Actor.AccountID) == "" {
+		return nil, 0, invalidToken()
+	}
 	status := domain.AccountStatus(strings.TrimSpace(in.Status))
 	if status != "" {
 		if err := status.Validate(); err != nil {
@@ -473,6 +481,22 @@ func (s *AccountService) List(ctx context.Context, in AccountListInput) ([]Accou
 	out := make([]AccountSummary, 0, len(accounts))
 	for _, account := range accounts {
 		out = append(out, accountSummaryOf(account))
+	}
+	attrs := map[string]string{
+		"scope":  "list",
+		"limit":  strconv.Itoa(limit),
+		"offset": strconv.Itoa(offset),
+	}
+	if status != "" {
+		attrs["status"] = status.String()
+	}
+	if in.Keyword != "" {
+		// 只记录存在关键词，不写主体原文（避免审计二次留存 PII）。
+		attrs["keyword_present"] = "true"
+	}
+	if err := s.auth.emitAudit(ctx, audit.ActionAuthAccountRead, in.Actor.AccountID, in.Actor.MerchantID,
+		"account", "list", audit.OutcomeSuccess, "", in.Actor.TraceID, attrs); err != nil {
+		return nil, 0, err
 	}
 	return out, total, nil
 }

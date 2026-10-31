@@ -247,10 +247,11 @@ func TestAccountServiceDisableEnableUnlock(t *testing.T) {
 	}
 }
 
-// TestAccountServiceListAndGet 验证账号列表分页、筛选与详情。
+// TestAccountServiceListAndGet 验证账号列表分页、筛选、详情与读取审计。
 func TestAccountServiceListAndGet(t *testing.T) {
 	ctx := context.Background()
-	f := newAuthFixture(t, domain.ChannelAdmin)
+	capture := &captureEmitter{}
+	f := newAuthFixture(t, domain.ChannelAdmin, withCapture(capture))
 	f.seedAccount(t, "acct-list-1", "alice", "Correct#Passw0rd")
 	f.seedAccount(t, "acct-list-2", "bob", "Correct#Passw0rd")
 	f.seedAccount(t, "acct-list-3", "carol", "Correct#Passw0rd")
@@ -259,19 +260,28 @@ func TestAccountServiceListAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new account service: %v", err)
 	}
-	items, total, err := svc.List(ctx, app.AccountListInput{Limit: 2, Offset: 0})
+	actor := app.SessionActor{AccountID: "acct-admin", TraceID: "trace-list"}
+	items, total, err := svc.List(ctx, app.AccountListInput{Actor: actor, Limit: 2, Offset: 0})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if total != 3 || len(items) != 2 {
 		t.Fatalf("total=%d items=%d, want 3/2", total, len(items))
 	}
-	filtered, total, err := svc.List(ctx, app.AccountListInput{Keyword: "ali"})
+	filtered, total, err := svc.List(ctx, app.AccountListInput{Actor: actor, Keyword: "ali"})
 	if err != nil {
 		t.Fatalf("list keyword: %v", err)
 	}
 	if total != 1 || len(filtered) != 1 || filtered[0].Subject != "alice" {
 		t.Fatalf("keyword filter = %+v total=%d, want alice only", filtered, total)
+	}
+	// 列表读取必须留痕，且只标记关键词存在，不记录主体原文（SEC-08）。
+	listEvents := capture.byAction(audit.ActionAuthAccountRead)
+	if len(listEvents) != 2 {
+		t.Fatalf("list read audits = %d, want 2: %+v", len(listEvents), capture.snapshot())
+	}
+	if listEvents[1].Attrs["scope"] != "list" || listEvents[1].Attrs["keyword_present"] != "true" {
+		t.Fatalf("list audit attrs = %+v", listEvents[1].Attrs)
 	}
 
 	detail, err := svc.Get(ctx, app.SessionActor{AccountID: "acct-admin", TraceID: "trace-read"}, "acct-list-1")
