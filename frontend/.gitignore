@@ -5,14 +5,11 @@ dist-ssr
 dist.zip
 dist.tar
 dist.war
-.nitro
-.output
 *-dist.zip
 *-dist.tar
 *-dist.war
 coverage
 *.local
-**/.vitepress/cache
 .cache
 .turbo
 .temp
@@ -21,7 +18,6 @@ dev-dist
 yarn.lock
 package-lock.json
 .VSCodeCounter
-**/backend-mock/data
 .omx
 .pnpm-store
 # local env files
