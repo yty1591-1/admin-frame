@@ -22,10 +22,11 @@ fi
 COVER_MIN="${TEST_DOMAIN_COVER_MIN:-70}"
 PLATFORM_COVER_MIN="${TEST_PLATFORM_COVER_MIN:-70}"
 SECURITY_COVER_MIN="${TEST_SECURITY_COVER_MIN:-80}"
-# MNT-03：身份域高风险编排与路由层覆盖率门禁。
+# MNT-03 / R-01：身份域编排、路由与 handler 层覆盖率门禁。
+# handler 层已补齐 E2E 用例，基线从 15% 上调到 70%，与其他层同口径。
 IDENTITY_APP_COVER_MIN="${TEST_IDENTITY_APP_COVER_MIN:-75}"
 IDENTITY_ROUTER_COVER_MIN="${TEST_IDENTITY_ROUTER_COVER_MIN:-70}"
-IDENTITY_HANDLER_COVER_MIN="${TEST_IDENTITY_HANDLER_COVER_MIN:-15}"
+IDENTITY_HANDLER_COVER_MIN="${TEST_IDENTITY_HANDLER_COVER_MIN:-70}"
 REQUIRED_TESTS=(TestBizRoleTenantIsolation TestBizChangeRequestTenantIsolation)
 # 仅扫描 Go 源码目录：仓库根下有 frontend/node_modules（数万文件），
 # 整树递归 grep 在 WSL 的 /mnt/d（9p）上单次可达数十分钟。
