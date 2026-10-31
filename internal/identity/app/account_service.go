@@ -93,10 +93,61 @@ type AccountOperationInput struct {
 	MFACode string
 }
 
+// passwordChangeProbe 是事务外完成旧密码校验与新密码哈希的结果（IDN-GAP-PERF-01）。
+type passwordChangeProbe struct {
+	// credentialHash 事务外读到的哈希，用于事务内检测并发改密。
+	credentialHash string
+	// encoded / algorithm 事务外计算的新哈希，事务内直接落库。
+	encoded   string
+	algorithm string
+}
+
+// probeChangePassword 在事务外完成旧密码校验与新密码哈希，避免 Argon2 占用数据库事务。
+func (s *AccountService) probeChangePassword(ctx context.Context, in ChangePasswordInput) (*passwordChangeProbe, error) {
+	loaded, err := s.auth.accounts.FindByID(ctx, in.Actor.AccountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, invalidToken()
+		}
+		return nil, apperr.Internal("load account failed", err)
+	}
+	if loaded.Channel != s.auth.channel || loaded.Status != domain.AccountStatusActive {
+		return nil, invalidToken()
+	}
+	credential, err := s.auth.credentials.FindByAccount(ctx, loaded.ID, domain.CredentialTypePassword)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, invalidCredentials()
+		}
+		return nil, apperr.Internal("load credential failed", err)
+	}
+	if _, err := s.auth.password.VerifyContext(ctx, credential.Hash, in.OldPassword); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(in.NewPassword) == in.OldPassword {
+		return nil, apperr.BadRequest("new password must differ from the current password")
+	}
+	encoded, algorithm, err := s.auth.password.HashContext(ctx, in.NewPassword)
+	if err != nil {
+		return nil, err
+	}
+	return &passwordChangeProbe{
+		credentialHash: credential.Hash,
+		encoded:        encoded,
+		algorithm:      algorithm,
+	}, nil
+}
+
 // ChangePassword 校验旧密码后改密：递增 token_version、撤销全部会话并写审计。
+//
+// Argon2 校验与哈希在事务外完成，事务内只做哈希一致性复核与写入。
 func (s *AccountService) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
 	if strings.TrimSpace(in.Actor.AccountID) == "" {
 		return invalidToken()
+	}
+	probe, err := s.probeChangePassword(ctx, in)
+	if err != nil {
+		return err
 	}
 	now := s.auth.clock.Now().UTC()
 	var account *domain.Account
@@ -118,17 +169,11 @@ func (s *AccountService) ChangePassword(ctx context.Context, in ChangePasswordIn
 			}
 			return apperr.Internal("load credential failed", err)
 		}
-		if _, err := s.auth.password.Verify(credential.Hash, in.OldPassword); err != nil {
-			return err
+		if credential.Hash != probe.credentialHash {
+			// probe 与事务之间密码被并发修改：拒绝本次改密，避免覆盖新凭据。
+			return apperr.Conflict("password credential was modified concurrently, please retry")
 		}
-		if strings.TrimSpace(in.NewPassword) == in.OldPassword {
-			return apperr.BadRequest("new password must differ from the current password")
-		}
-		encoded, algorithm, err := s.auth.password.Hash(in.NewPassword)
-		if err != nil {
-			return err
-		}
-		if err := credential.ReplaceHash(encoded, algorithm, now); err != nil {
+		if err := credential.ReplaceHash(probe.encoded, probe.algorithm, now); err != nil {
 			return err
 		}
 		if err := s.auth.credentials.Save(txCtx, credential); err != nil {
@@ -533,8 +578,17 @@ func (s *AccountService) Lock(ctx context.Context, in LockAccountInput) error {
 // ResetPassword 管理员重置密码：生成一次性临时口令并置强制改密标记。
 //
 // 返回的临时口令只在本次响应出现，禁止写日志；用户首次登录只拿到改密票据。
+// Argon2 哈希在事务外完成，避免占用数据库事务（IDN-GAP-PERF-01）。
 func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationInput) (string, error) {
+	// 先校验目标账号存在且属于本端，避免对无效目标执行 Argon2。
+	if _, err := s.auth.targetAccount(ctx, in.TargetAccountID); err != nil {
+		return "", err
+	}
 	temporary, err := generateTemporaryPassword()
+	if err != nil {
+		return "", err
+	}
+	encoded, algorithm, err := s.auth.password.HashContext(ctx, temporary)
 	if err != nil {
 		return "", err
 	}
@@ -554,10 +608,6 @@ func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationI
 				return apperr.NotFound("password credential not found")
 			}
 			return apperr.Internal("load credential failed", err)
-		}
-		encoded, algorithm, err := s.auth.password.Hash(temporary)
-		if err != nil {
-			return err
 		}
 		if err := credential.ReplaceHash(encoded, algorithm, now); err != nil {
 			return err

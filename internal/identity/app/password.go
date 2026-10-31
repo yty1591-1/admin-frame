@@ -244,7 +244,22 @@ func (s *PasswordService) acquire(ctx context.Context) (func(), error) {
 // Policy 返回当前生效的策略。
 func (s *PasswordService) Policy() PasswordPolicy { return s.policy }
 
+// HashContext 在并发槽位内校验强度并哈希明文，超时返回 50300。
+//
+// 所有生产写路径（改密、重置密码、强制改密、登录重哈希）都必须使用本方法，
+// 保证 Argon2 受 max_concurrent 约束，且不占用数据库事务（IDN-GAP-PERF-01）。
+func (s *PasswordService) HashContext(ctx context.Context, plain string) (encoded, algorithm string, err error) {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
+	return s.Hash(plain)
+}
+
 // Hash 校验强度后哈希明文，返回编码串与算法标识。
+//
+// 仅供装配期预热与非并发场景使用；请求路径请使用 HashContext。
 func (s *PasswordService) Hash(plain string) (encoded, algorithm string, err error) {
 	if err := s.policy.ValidatePassword(plain); err != nil {
 		return "", "", err
