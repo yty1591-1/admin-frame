@@ -1,0 +1,62 @@
+c-v1-me:
+  get:
+    tags: [auth]
+    summary: 当前登录主体资料
+    description: |
+      仅需认证。C 端个人中心基础资料；不返回手机号原文，角色与权限不在身份域。
+    operationId: cGetMe
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/c/me.yaml#/components/schemas/MeView"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+  patch:
+    tags: [auth]
+    summary: 更新当前登录主体资料
+    description: |
+      仅需认证。当前仅支持修改展示昵称 `display_name`，传空串表示清除；
+      改名不递增 `token_version`，不会使任何会话失效。
+    operationId: cUpdateMe
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/c/me.yaml#/components/schemas/MeUpdateRequest"
+    responses:
+      "200":
+        description: 更新后的资料
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/c/me.yaml#/components/schemas/MeView"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

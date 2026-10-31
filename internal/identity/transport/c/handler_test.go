@@ -108,6 +108,15 @@ func TestRegisterRoutes(t *testing.T) {
 			name: "login_wrong_method", method: http.MethodGet, path: "/c/v1/auth/login",
 			wantHTTP: http.StatusMethodNotAllowed,
 		},
+		{
+			// BIZ-01：未携带认证上下文时个人中心返回 40100，而非 404。
+			name: "me_requires_auth", method: http.MethodGet, path: "/c/v1/me",
+			wantHTTP: http.StatusUnauthorized, wantCode: 40100,
+		},
+		{
+			name: "me_patch_requires_auth", method: http.MethodPatch, path: "/c/v1/me",
+			body: `{"display_name":"Nick"}`, wantHTTP: http.StatusUnauthorized, wantCode: 40100,
+		},
 	}
 
 	for _, tc := range cases {

@@ -1,0 +1,69 @@
+components:
+  schemas:
+    MeView:
+      type: object
+      required:
+        [
+          subject_id,
+          subject,
+          display_name,
+          channel,
+          status,
+          mfa_enabled,
+          has_password,
+          phone_bound,
+          must_change_password,
+          token_version,
+        ]
+      additionalProperties: false
+      description: |
+        C 端当前登录主体资料（BIZ-01）。`channel` 恒为 `c`，不含商户字段。
+        凭据类字段只表达「是否具备」，不回显手机号原文。
+      properties:
+        subject_id:
+          type: string
+          description: 账号主键，与令牌 `sub` 一致
+        subject:
+          type: string
+          description: 规范化登录主体（C 端为手机号摘要对应的账号标识，不回显号码）
+        display_name:
+          type: string
+          maxLength: 64
+          description: 展示昵称；空串表示未设置，前端回退 `subject`
+        channel:
+          type: string
+          enum: [c]
+          description: 固定为 c
+        status:
+          type: string
+          enum: [pending, active, locked, disabled]
+          description: 账号生命周期状态
+        mfa_enabled:
+          type: boolean
+          description: 是否已确认 MFA 绑定（C 端当前恒为 false）
+        has_password:
+          type: boolean
+          description: 是否已设置密码凭据
+        phone_bound:
+          type: boolean
+          description: 是否已绑定手机凭据；号码本身永不回显
+        password_updated_at:
+          type: string
+          format: date-time
+          description: 最近一次改密时间；从未改密时省略
+        must_change_password:
+          type: boolean
+          description: 是否需要先完成改密
+        token_version:
+          type: integer
+          format: int64
+          description: 账号级撤销版本（只读）
+    MeUpdateRequest:
+      type: object
+      required: [display_name]
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          maxLength: 64
+          description: 展示昵称；空串表示清除

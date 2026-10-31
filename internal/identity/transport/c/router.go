@@ -29,6 +29,9 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 	mux.Handle("POST /c/v1/auth/refresh", secure(http.HandlerFunc(h.rest.Refresh)))
 	mux.Handle("POST /c/v1/auth/logout", secure(authMW(http.HandlerFunc(h.rest.Logout))))
 	mux.Handle("DELETE /c/v1/auth/account", secure(authMW(http.HandlerFunc(h.DeleteAccount))))
+	// BIZ-01：C 端个人中心；仅需认证，不回显手机号等 PII，写入审计。
+	mux.Handle("GET /c/v1/me", secure(authMW(http.HandlerFunc(h.rest.Me))))
+	mux.Handle("PATCH /c/v1/me", secure(authMW(http.HandlerFunc(h.rest.UpdateMe))))
 	for _, provider := range h.providers {
 		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/authorize", secure(http.HandlerFunc(h.OAuthAuthorize)))
 		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/callback", secure(http.HandlerFunc(h.OAuthCallback)))
