@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 6.2.0
+  version: 6.3.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -18,6 +18,7 @@ info:
     6.1.0：新增自助改密与账号生命周期管理端点（停用 / 启用 / 解锁 / 重置 MFA）。
     6.2.0：`GET /admin/v1/me` 增补 `has_password` / `phone_bound` / `password_updated_at` /
     `must_change_password`（纯增量），供前端安全设置页展示真实状态。
+    6.3.0：新增 `PATCH /admin/v1/me` 与 `MeView.display_name`（纯增量），支持自助修改展示昵称。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）

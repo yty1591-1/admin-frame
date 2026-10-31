@@ -151,6 +151,8 @@ type MeView struct {
 	SubjectID string
 	// Subject 规范化登录主体（trim + 小写）。
 	Subject string
+	// DisplayName 展示昵称；空串表示未设置，前端回退 Subject。
+	DisplayName string
 	// Channel 账号所属端别；必须与装配端别一致。
 	Channel domain.Channel
 	// MerchantID B 端商户 ID；A / C 端为空串。
@@ -1004,20 +1006,83 @@ func (s *AuthService) listFamilies(
 // 只读：不写审计、不碰会话；不存在、软删、端别不一致与停用统一返回 40100，
 // 避免通过该端点枚举账号状态。
 func (s *AuthService) Me(ctx context.Context, actor SessionActor) (MeView, error) {
-	if strings.TrimSpace(actor.AccountID) == "" {
+	account, err := s.loadActiveAccount(ctx, actor.AccountID)
+	if err != nil {
+		return MeView{}, err
+	}
+	return s.buildMeView(ctx, account)
+}
+
+// UpdateProfileInput 是更新当前登录主体资料的入参。
+type UpdateProfileInput struct {
+	SessionActor
+	// DisplayName 展示昵称；空串表示清除，由前端回退登录主体。
+	DisplayName string
+}
+
+// UpdateProfile 更新当前登录主体的展示昵称。
+//
+// 只改展示字段：不递增 TokenVersion、不撤销会话，改昵称不会把用户踢下线。
+// 成功后直接返回完整的 MeView，省掉前端一次 GET /me 往返。
+// 审计只记录被改动的字段名，不记录昵称原文——昵称可能包含真实姓名等个人信息。
+func (s *AuthService) UpdateProfile(ctx context.Context, in UpdateProfileInput) (MeView, error) {
+	if strings.TrimSpace(in.AccountID) == "" {
 		return MeView{}, invalidToken()
 	}
-	account, err := s.accounts.FindByID(ctx, actor.AccountID)
+	now := s.clock.Now().UTC()
+	var updated *domain.Account
+	if err := s.runTx(ctx, func(txCtx context.Context) error {
+		account, err := s.loadActiveAccount(txCtx, in.AccountID)
+		if err != nil {
+			return err
+		}
+		expected := account.Version
+		if renameErr := account.RenameDisplayName(in.DisplayName, now); renameErr != nil {
+			return renameErr
+		}
+		if saveErr := s.accounts.Save(txCtx, account, expected); saveErr != nil {
+			if errors.Is(saveErr, apperr.ErrConflict) {
+				return apperr.Conflict("account was modified concurrently, please retry")
+			}
+			return apperr.Internal("save account failed", saveErr)
+		}
+		if auditErr := s.emitAudit(txCtx, audit.ActionAuthProfileUpdated, account.ID, account.MerchantID,
+			"account", account.ID, audit.OutcomeSuccess, "", in.TraceID,
+			map[string]string{"changed_fields": "display_name"}); auditErr != nil {
+			return auditErr
+		}
+		updated = account
+		return nil
+	}); err != nil {
+		return MeView{}, err
+	}
+	return s.buildMeView(ctx, updated)
+}
+
+// loadActiveAccount 加载当前请求可用的账号。
+//
+// 不存在 / 软删 / 端别不一致 / 停用统一返回 40100：资料端点不能成为账号状态探测器。
+// Me 与 UpdateProfile 共用同一组不变量，避免两处判断漂移。
+func (s *AuthService) loadActiveAccount(ctx context.Context, accountID string) (*domain.Account, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return nil, invalidToken()
+	}
+	account, err := s.accounts.FindByID(ctx, accountID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			return MeView{}, invalidToken()
+			return nil, invalidToken()
 		}
-		return MeView{}, apperr.Internal("load account failed", err)
+		return nil, apperr.Internal("load account failed", err)
 	}
 	if account == nil || account.DeletedAt != nil || account.Channel != s.channel ||
 		account.Status == domain.AccountStatusDisabled {
-		return MeView{}, invalidToken()
+		return nil, invalidToken()
 	}
+	return account, nil
+}
+
+// buildMeView 组装资料视图。
+func (s *AuthService) buildMeView(ctx context.Context, account *domain.Account) (MeView, error) {
 	mfaEnabled := false
 	if s.mfa != nil {
 		enrollment, mfaErr := s.mfa.FindByAccount(ctx, account.ID)
@@ -1055,6 +1120,7 @@ func (s *AuthService) Me(ctx context.Context, actor SessionActor) (MeView, error
 	return MeView{
 		SubjectID:          account.ID,
 		Subject:            account.Subject,
+		DisplayName:        account.DisplayName,
 		Channel:            account.Channel,
 		MerchantID:         account.MerchantID,
 		Status:             account.Status,

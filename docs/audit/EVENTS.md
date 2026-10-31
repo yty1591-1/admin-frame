@@ -15,6 +15,7 @@
 | `auth.account.restored` | A | 管理员恢复软删账号 | 认证 | 180d | active |
 | `auth.password.changed` | A | 用户自助改密 / 强制改密完成（递增 token_version 并撤销全部会话） | 认证 | 180d | active |
 | `auth.password.reset` | A | 管理员重置密码（生成一次性临时口令并置强制改密标记） | 认证 | 180d | active |
+| `auth.profile.updated` | A/B | 用户自助修改资料（仅 `display_name`；只记字段名，不记昵称原文） | 认证 | 180d | active |
 | `auth.phone.rebound` | C | C 端手机号换绑（撤销全部会话） | 认证 | 180d | active |
 | `auth.logout` | A/B/C | 登出当前会话（幂等） | 认证 | 180d | active |
 | `auth.token.refresh` | A/B/C | 刷新令牌成功轮换 | 认证 | 180d | active |

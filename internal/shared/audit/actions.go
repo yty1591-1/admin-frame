@@ -13,6 +13,7 @@ const (
 	ActionAuthAccountRestored = "auth.account.restored"
 	ActionAuthPasswordChanged = "auth.password.changed"
 	ActionAuthPasswordReset   = "auth.password.reset"
+	ActionAuthProfileUpdated  = "auth.profile.updated"
 	ActionAuthPhoneRebound    = "auth.phone.rebound"
 	ActionAuthLogout          = "auth.logout"
 	ActionAuthTokenRefresh    = "auth.token.refresh" //nolint:gosec // G101: 审计动作名，不是凭证
@@ -51,6 +52,7 @@ func KnownActions() []string {
 		ActionAuthAccountRestored,
 		ActionAuthPasswordChanged,
 		ActionAuthPasswordReset,
+		ActionAuthProfileUpdated,
 		ActionAuthPhoneRebound,
 		ActionAuthLogout,
 		ActionAuthTokenRefresh,

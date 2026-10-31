@@ -119,7 +119,7 @@ rg -n "func .*Cache\)|func .*Lock\)|AsyncRuntime" pkg/redis internal/platform
 
 | 实体 | 关键字段 | 不变量 |
 |---|---|---|
-| `Account` | `ID`、`Channel`、`Subject`、`Status`、`TokenVersion`、`MerchantID`、`PasswordUpdatedAt`、`DeletedAt` | `(channel, subject)` 全局唯一；`token_version ≥ 1` 且只增不减；禁用账号任何登录路径均拒绝 |
+| `Account` | `ID`、`Channel`、`Subject`、`DisplayName`、`Status`、`TokenVersion`、`MerchantID`、`PasswordUpdatedAt`、`DeletedAt` | `(channel, subject)` 全局唯一；`token_version ≥ 1` 且只增不减；禁用账号任何登录路径均拒绝；`DisplayName` 仅用于展示（≤64 rune、禁控制字符、空串回退 `subject`），改名不递增 `token_version` |
 | `Credential` | `AccountID`、`Type`、`Hash`、`Algorithm`、`UpdatedAt` | 同一账号同一类型仅一条有效凭据；只存哈希，不存明文 |
 | `Session` | `ID`、`AccountID`、`FamilyID`、`RefreshHash`、`Status`、`TokenVersion`、`ExpiresAt`、`RevokedAt`、`RevokedReason` | `RefreshHash` 全局唯一；`rotated` 会话不可再次使用；同一 `FamilyID` 共享撤销量 |
 | `MFAEnrollment` | `AccountID`、`SecretCiphertext`、`ConfirmedAt`、`LastUsedStep`、`Version`、`RecoveryCodeHashes` | 未确认的绑定不得用于登录；密钥必须加密存储；同一 TOTP 时间步只能消费一次 |

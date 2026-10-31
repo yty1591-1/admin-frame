@@ -88,6 +88,7 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionAuthAccountRestored: true,
 		audit.ActionAuthPasswordChanged: true,
 		audit.ActionAuthPasswordReset:   true,
+		audit.ActionAuthProfileUpdated:  true,
 		audit.ActionAuthPhoneRebound:    true,
 		audit.ActionAuthMFAReset:        true,
 		audit.ActionAuthMFARecoveryUsed: true,

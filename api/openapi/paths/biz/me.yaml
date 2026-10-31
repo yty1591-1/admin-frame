@@ -27,3 +27,40 @@ biz-v1-me:
         $ref: "../../components.yaml#/components/responses/InternalError"
       "503":
         $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+  patch:
+    tags: [auth]
+    summary: 更新当前登录主体资料
+    description: |
+      仅需认证，不额外要求权限点。当前仅支持修改展示昵称 `display_name`：
+      传空串表示清除（前端回退 `subject`）。改名不递增 `token_version`，
+      因此不会使任何会话失效；成功后直接返回更新后的完整资料。
+      `merchant_id` 不受本端点影响，始终由令牌推导。
+    operationId: bizUpdateMe
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/biz/me.yaml#/components/schemas/MeUpdateRequest"
+    responses:
+      "200":
+        description: 更新后的资料
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/me.yaml#/components/schemas/MeView"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

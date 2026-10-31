@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // 账号字段上限，与 migrations/000001 的列宽一致。
@@ -13,6 +15,8 @@ const (
 	MaxMerchantIDLen = 64
 	// MaxAccountIDLen 雪花 ID 字符串最大长度，防止异常入参写坏 BIGINT 列。
 	MaxAccountIDLen = 64
+	// MaxDisplayNameLen 展示昵称最大 rune 数；列宽 64 字节以上，中文按 rune 计数更贴合使用者预期。
+	MaxDisplayNameLen = 64
 )
 
 // Channel 身份域端别。与 IAM 的 admin / biz 不同，身份域额外覆盖 C 端。
@@ -90,6 +94,10 @@ type Account struct {
 	Channel Channel
 	// Subject 规范化后的登录主体；同一端别内唯一。
 	Subject string
+	// DisplayName 展示昵称；空串表示未设置，前端回退 Subject。
+	//
+	// 不参与唯一键与鉴权，改名不影响任何会话或令牌。
+	DisplayName string
 	// Status 生命周期状态。
 	Status AccountStatus
 	// TokenVersion 账号级撤销版本，签发令牌写入 ver，校验时比较。
@@ -373,6 +381,33 @@ func (a *Account) RebindSubject(subject string, now time.Time) error {
 	a.Subject = normalized
 	a.touch(now)
 	return nil
+}
+
+// RenameDisplayName 修改展示昵称；传空串表示清除，由前端回退登录主体。
+//
+// 昵称只用于展示：不参与唯一键、不参与鉴权，也不递增 TokenVersion，
+// 因此改昵称不会踢掉任何会话。长度按 rune 计数，禁止控制字符与零宽字符，
+// 避免昵称在页面上出现换行注入或视觉空白。
+func (a *Account) RenameDisplayName(name string, now time.Time) error {
+	if err := a.ensureNotDeleted(); err != nil {
+		return err
+	}
+	trimmed := strings.TrimSpace(name)
+	if utf8.RuneCountInString(trimmed) > MaxDisplayNameLen {
+		return errInvalid(ErrInvalidAccount, "display name exceeds %d characters", MaxDisplayNameLen)
+	}
+	if strings.ContainsFunc(trimmed, isInvisibleRune) {
+		return errInvalid(ErrInvalidAccount, "display name must not contain control or zero-width characters")
+	}
+	a.DisplayName = trimmed
+	a.touch(now)
+	return nil
+}
+
+// isInvisibleRune 判定控制字符与格式化字符（含零宽连接符、BOM），它们会让昵称在界面上
+// 变成看不见的空白，或破坏日志与导出行结构。
+func isInvisibleRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // BumpTokenVersion 递增账号撤销版本（logout-all / 全端撤销）。

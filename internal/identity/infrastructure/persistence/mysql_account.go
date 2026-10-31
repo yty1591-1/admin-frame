@@ -12,7 +12,7 @@ import (
 )
 
 // accountSelectColumns 是账号表的显式列清单（禁止 SELECT *，DATA-04）。
-const accountSelectColumns = `id, channel, subject, status, token_version, version, merchant_id,
+const accountSelectColumns = `id, channel, subject, display_name, status, token_version, version, merchant_id,
 	password_updated_at, locked_until, must_change_password, created_at, updated_at, deleted_at`
 
 // SQLAccountRepository 是 MySQL 8.0 的账号仓储实现。
@@ -83,10 +83,10 @@ func (r *SQLAccountRepository) insert(ctx context.Context, account *domain.Accou
 		return err
 	}
 	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_account
-		(id, channel, subject, status, token_version, version, merchant_id,
+		(id, channel, subject, display_name, status, token_version, version, merchant_id,
 		 password_updated_at, locked_until, must_change_password, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		accountID, string(account.Channel), account.Subject, string(account.Status),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		accountID, string(account.Channel), account.Subject, account.DisplayName, string(account.Status),
 		account.TokenVersion, account.Version, account.MerchantID,
 		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil), account.MustChangePassword,
 		account.CreatedAt.UTC(), account.UpdatedAt.UTC(), nullTime(account.DeletedAt))
@@ -100,9 +100,10 @@ func (r *SQLAccountRepository) update(ctx context.Context, account *domain.Accou
 		return err
 	}
 	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_account
-		SET status = ?, token_version = ?, version = ?, password_updated_at = ?,
+		SET display_name = ?, status = ?, token_version = ?, version = ?, password_updated_at = ?,
 		    locked_until = ?, must_change_password = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ? AND version = ?`,
+		account.DisplayName,
 		string(account.Status), account.TokenVersion, account.Version,
 		nullTime(account.PasswordUpdatedAt), nullTime(account.LockedUntil), account.MustChangePassword,
 		account.UpdatedAt.UTC(), nullTime(account.DeletedAt), accountID, expectedVersion)
@@ -226,7 +227,7 @@ func scanAccount(row scanRow) (*domain.Account, error) {
 		deletedAt         sql.NullTime
 	)
 	err := row.Scan(
-		&account.ID, &account.Channel, &account.Subject, &account.Status,
+		&account.ID, &account.Channel, &account.Subject, &account.DisplayName, &account.Status,
 		&account.TokenVersion, &account.Version, &account.MerchantID,
 		&passwordUpdatedAt, &lockedUntil, &account.MustChangePassword,
 		&account.CreatedAt, &account.UpdatedAt, &deletedAt,

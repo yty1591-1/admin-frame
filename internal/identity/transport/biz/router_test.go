@@ -32,6 +32,7 @@ func TestAuthRoutesNoStore(t *testing.T) {
 	}{
 		{name: "login", method: http.MethodPost, path: "/biz/v1/auth/login", body: `{"subject":`},
 		{name: "me", method: http.MethodGet, path: "/biz/v1/me"},
+		{name: "update_me", method: http.MethodPatch, path: "/biz/v1/me", body: `{"display_name":`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

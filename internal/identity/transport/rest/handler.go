@@ -122,19 +122,40 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 	// HasPassword / PhoneBound / PasswordUpdatedAt / MustChangePassword 供安全设置页
 	// 展示真实状态，避免前端出现虚构的绑定信息。
-	httpx.OK(w, meResponse{
-		SubjectID:          view.SubjectID,
-		Subject:            view.Subject,
-		Channel:            view.Channel.String(),
-		MerchantID:         view.MerchantID,
-		Status:             view.Status.String(),
-		MFAEnabled:         view.MFAEnabled,
-		HasPassword:        view.HasPassword,
-		PhoneBound:         view.PhoneBound,
-		PasswordUpdatedAt:  view.PasswordUpdatedAt,
-		MustChangePassword: view.MustChangePassword,
-		TokenVersion:       view.TokenVersion,
-	}, traceID)
+	httpx.OK(w, meResponseFrom(view), traceID)
+}
+
+// UpdateMe PATCH /admin/v1/me
+//
+// 只允许改展示昵称：字段缺失按 400 处理，传空串表示清除（前端回退登录主体）。
+// 不要求额外权限点，与 GET /me 同级；成功直接返回更新后的完整资料。
+func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req updateMeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	// 用指针区分「未传字段」与「显式清空」：前者是客户端缺陷，后者是合法操作。
+	if req.DisplayName == nil {
+		httpx.FromError(w, apperr.BadRequest("display_name is required"), traceID)
+		return
+	}
+	actor.TraceID = traceID
+	view, err := h.auth.UpdateProfile(r.Context(), app.UpdateProfileInput{
+		SessionActor: actor,
+		DisplayName:  *req.DisplayName,
+	})
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, meResponseFrom(view), traceID)
 }
 
 // SetupMFA POST /admin/v1/auth/mfa/setup
@@ -793,8 +814,10 @@ type tokenResponse struct {
 
 // meResponse 当前主体资料；不含角色与权限。
 type meResponse struct {
-	SubjectID          string     `json:"subject_id"`
-	Subject            string     `json:"subject"`
+	SubjectID string `json:"subject_id"`
+	Subject   string `json:"subject"`
+	// DisplayName 展示昵称；始终序列化，空串表示未设置（前端回退 subject）。
+	DisplayName        string     `json:"display_name"`
 	Channel            string     `json:"channel"`
 	MerchantID         string     `json:"merchant_id"`
 	Status             string     `json:"status"`
@@ -804,6 +827,30 @@ type meResponse struct {
 	PasswordUpdatedAt  *time.Time `json:"password_updated_at,omitempty"`
 	MustChangePassword bool       `json:"must_change_password"`
 	TokenVersion       int64      `json:"token_version"`
+}
+
+// meResponseFrom 把用例视图转换为响应 DTO，供 GET /me 与 PATCH /me 复用。
+func meResponseFrom(view app.MeView) meResponse {
+	return meResponse{
+		SubjectID:          view.SubjectID,
+		Subject:            view.Subject,
+		DisplayName:        view.DisplayName,
+		Channel:            view.Channel.String(),
+		MerchantID:         view.MerchantID,
+		Status:             view.Status.String(),
+		MFAEnabled:         view.MFAEnabled,
+		HasPassword:        view.HasPassword,
+		PhoneBound:         view.PhoneBound,
+		PasswordUpdatedAt:  view.PasswordUpdatedAt,
+		MustChangePassword: view.MustChangePassword,
+		TokenVersion:       view.TokenVersion,
+	}
+}
+
+// updateMeRequest 更新当前主体资料的请求体。
+type updateMeRequest struct {
+	// DisplayName 必填字段：nil 表示客户端未传（400），空串表示清除昵称。
+	DisplayName *string `json:"display_name"`
 }
 
 // sessionDTO 会话列表项；不包含任何令牌或 IP / UA 原文。

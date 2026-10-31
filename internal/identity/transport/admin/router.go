@@ -40,6 +40,8 @@ func Register(
 	mux.Handle("POST /admin/v1/auth/login", secure(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /admin/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))
 	mux.Handle("GET /admin/v1/me", secure(authMW(http.HandlerFunc(h.Me))))
+	// PATCH /admin/v1/me 只改展示昵称；与 GET 同级，仅需认证。
+	mux.Handle("PATCH /admin/v1/me", secure(authMW(http.HandlerFunc(h.UpdateMe))))
 	mux.Handle("POST /admin/v1/auth/logout", secure(authMW(http.HandlerFunc(h.Logout))))
 	mux.Handle("POST /admin/v1/auth/logout-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
 

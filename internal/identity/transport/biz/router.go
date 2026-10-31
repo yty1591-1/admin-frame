@@ -32,4 +32,6 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// GET /biz/v1/me 返回当前商户员工资料；仅需认证，不额外要求权限点。
 	// 响应含账号状态等敏感字段，统一禁止缓存。
 	mux.Handle("GET /biz/v1/me", secure(authMW(http.HandlerFunc(h.Me))))
+	// PATCH /biz/v1/me 只改展示昵称；与 GET 同级，仅需认证。
+	mux.Handle("PATCH /biz/v1/me", secure(authMW(http.HandlerFunc(h.UpdateMe))))
 }

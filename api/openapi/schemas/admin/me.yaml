@@ -6,6 +6,7 @@ components:
         [
           subject_id,
           subject,
+          display_name,
           channel,
           merchant_id,
           status,
@@ -27,6 +28,12 @@ components:
         subject:
           type: string
           description: 规范化登录主体（trim + 小写）
+        display_name:
+          type: string
+          maxLength: 64
+          description: |
+            展示昵称；始终返回，空串表示未设置，前端回退 `subject`。
+            唯一可自助编辑的字段，通过 `PATCH /admin/v1/me` 修改。
         channel:
           $ref: "./common.yaml#/components/schemas/Channel"
         merchant_id:
@@ -56,3 +63,15 @@ components:
           type: integer
           format: int64
           description: 账号级撤销版本，只读
+    MeUpdateRequest:
+      type: object
+      required: [display_name]
+      additionalProperties: false
+      description: |
+        更新当前主体资料。当前只支持展示昵称；`display_name` 必填，
+        传空串表示清除（前端回退 `subject`）。超长（>64 字符）或含控制字符返回 `40000`。
+      properties:
+        display_name:
+          type: string
+          maxLength: 64
+          description: 展示昵称；允许空串，不允许控制字符与零宽字符

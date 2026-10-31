@@ -473,6 +473,49 @@ func TestAccountRebindSubject(t *testing.T) {
 	}
 }
 
+// TestAccountRenameDisplayName 覆盖昵称的裁剪、清空、长度与不可见字符约束。
+func TestAccountRenameDisplayName(t *testing.T) {
+	account := mustAccount(t, nil)
+	beforeToken := account.TokenVersion
+
+	if err := account.RenameDisplayName("  张三  ", baseTime); err != nil {
+		t.Fatalf("RenameDisplayName() error = %v", err)
+	}
+	if account.DisplayName != "张三" {
+		t.Fatalf("DisplayName = %q, want 张三 (trimmed)", account.DisplayName)
+	}
+	if account.TokenVersion != beforeToken {
+		t.Fatalf("TokenVersion = %d, want unchanged %d: renaming must not revoke sessions", account.TokenVersion, beforeToken)
+	}
+
+	// 空串与纯空白都表示清除昵称，由前端回退登录主体。
+	if err := account.RenameDisplayName("   ", baseTime); err != nil {
+		t.Fatalf("RenameDisplayName(clear) error = %v", err)
+	}
+	if account.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want empty after clear", account.DisplayName)
+	}
+
+	// 按 rune 计数：MaxDisplayNameLen 个中文必须通过，多一个才拒绝。
+	if err := account.RenameDisplayName(strings.Repeat("长", MaxDisplayNameLen), baseTime); err != nil {
+		t.Fatalf("RenameDisplayName(max length) error = %v", err)
+	}
+	if err := account.RenameDisplayName(strings.Repeat("长", MaxDisplayNameLen+1), baseTime); !errors.Is(err, ErrInvalidAccount) {
+		t.Fatalf("RenameDisplayName(too long) error = %v, want ErrInvalidAccount", err)
+	}
+
+	for _, name := range []string{"张\n三", "张\u200b三", "张\t三"} {
+		if err := account.RenameDisplayName(name, baseTime); !errors.Is(err, ErrInvalidAccount) {
+			t.Fatalf("RenameDisplayName(%q) error = %v, want ErrInvalidAccount", name, err)
+		}
+	}
+
+	account.DeletedAt = timePtr(baseTime)
+	if err := account.RenameDisplayName("张三", baseTime); !errors.Is(err, ErrAccountDeleted) {
+		t.Fatalf("RenameDisplayName(deleted) error = %v, want ErrAccountDeleted", err)
+	}
+}
+
 func TestAccountBumpTokenVersion(t *testing.T) {
 	account := mustAccount(t, nil)
 	beforeToken := account.TokenVersion
