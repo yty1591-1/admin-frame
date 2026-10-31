@@ -134,6 +134,7 @@ func buildSMSLoginService(
 		DailyPerPhone:  smsCfg.DailyPerPhone,
 		HourlyPerIP:    smsCfg.HourlyPerIP,
 		DailyBudget:    smsCfg.DailyBudget,
+		DefaultRegion:  smsCfg.DefaultRegion,
 	})
 	if err != nil {
 		return nil, apperr.Internal("identity sms login service", err)

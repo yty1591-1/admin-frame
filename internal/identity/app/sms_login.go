@@ -29,6 +29,46 @@ const (
 // e164Pattern 校验 E.164 手机号：+ 加国家码与号码，总长 3-16 位数字。
 var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{2,14}$`)
 
+// regionDialCodes 是可选默认地区的国家码（BIZ-07）。
+//
+// 与 internal/platform 的 identitySMSRegions 保持一致；新增地区需同时更新两处。
+var regionDialCodes = map[string]string{
+	"CN": "86", "HK": "852", "TW": "886", "MO": "853",
+	"US": "1", "CA": "1", "GB": "44", "JP": "81",
+	"SG": "65", "DE": "49", "FR": "33", "AU": "61",
+}
+
+// normalizeSMSPhone 把手机号规范化为 E.164（BIZ-07）。
+//
+// 契约默认只接受 E.164；配置 default_region 后，允许省略国家码的本地号码
+// （去掉前导 0 后补地区国家码）。返回 false 表示格式非法。
+func normalizeSMSPhone(raw, region string) (string, bool) {
+	phone := strings.TrimSpace(raw)
+	if e164Pattern.MatchString(phone) {
+		return phone, true
+	}
+	region = strings.ToUpper(strings.TrimSpace(region))
+	dialCode, ok := regionDialCodes[region]
+	if !ok {
+		return "", false
+	}
+	var digits strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	national := strings.TrimLeft(digits.String(), "0")
+	if national == "" || len(national) > 14 {
+		return "", false
+	}
+	candidate := "+" + dialCode + national
+	if !e164Pattern.MatchString(candidate) {
+		return "", false
+	}
+	return candidate, true
+}
+
 // smsCodePattern 校验 6 位数字验证码。
 var smsCodePattern = regexp.MustCompile(`^\d{6}$`)
 
@@ -84,6 +124,9 @@ type SMSLoginConfig struct {
 	HourlyPerIP    int
 	// DailyBudget 全局日发送预算；0 表示不限制。
 	DailyBudget int
+	// DefaultRegion 可选默认地区（ISO 3166-1 alpha-2）；配置后允许本地号码补国家码（BIZ-07）。
+	// 未配置时仅接受 E.164。
+	DefaultRegion string
 }
 
 // SendSMSCodeInput 是发送验证码入参。
@@ -127,6 +170,7 @@ type SMSLoginService struct {
 	dailyPerPhone  int
 	hourlyPerIP    int
 	dailyBudget    int
+	defaultRegion  string
 }
 
 // NewSMSLoginService 构造短信登录服务；依赖缺失或参数越界时返回错误。
@@ -156,6 +200,7 @@ func NewSMSLoginService(cfg SMSLoginConfig) (*SMSLoginService, error) {
 		dailyPerPhone:  cfg.DailyPerPhone,
 		hourlyPerIP:    cfg.HourlyPerIP,
 		dailyBudget:    cfg.DailyBudget,
+		defaultRegion:  strings.ToUpper(strings.TrimSpace(cfg.DefaultRegion)),
 	}, nil
 }
 
@@ -171,8 +216,8 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err er
 		}
 		s.metrics.ObserveSMSSend(ctx, result)
 	}()
-	phone := strings.TrimSpace(in.Phone)
-	if !e164Pattern.MatchString(phone) {
+	phone, ok := normalizeSMSPhone(in.Phone, s.defaultRegion)
+	if !ok {
 		return apperr.BadRequest("phone must be in E.164 format")
 	}
 	phoneHash := PhoneRef(s.hasher, phone)
@@ -306,9 +351,9 @@ func (s *SMSLoginService) Register(ctx context.Context, in SMSLoginInput) (Login
 //
 // 限流器不接收 context（进程内 / Redis 实现自带超时），因此本方法不需要 ctx。
 func (s *SMSLoginService) verifyInput(in SMSLoginInput) (string, error) {
-	phone := strings.TrimSpace(in.Phone)
+	phone, ok := normalizeSMSPhone(in.Phone, s.defaultRegion)
 	code := strings.TrimSpace(in.Code)
-	if !e164Pattern.MatchString(phone) || !smsCodePattern.MatchString(code) {
+	if !ok || !smsCodePattern.MatchString(code) {
 		return "", apperr.BadRequest("phone or code format is invalid")
 	}
 	phoneHash := PhoneRef(s.hasher, phone)

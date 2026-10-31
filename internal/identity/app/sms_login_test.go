@@ -277,6 +277,33 @@ func mustRegister(f *smsFixture, phone string) error {
 	return err
 }
 
+// TestSMSDefaultRegionNormalization 验证本地号码按默认地区补国家码（BIZ-07）。
+func TestSMSDefaultRegionNormalization(t *testing.T) {
+	ctx := context.Background()
+	f := newSMSFixture(t, func(cfg *app.SMSLoginConfig) {
+		cfg.DefaultRegion = "CN"
+	})
+	// 带分隔符的本地号码应被规范化为 +8613800138000。
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: "138-0013-8000"}); err != nil {
+		t.Fatalf("send local phone: %v", err)
+	}
+	if _, err := f.svc.Register(ctx, app.SMSLoginInput{
+		Phone: "13800138000", Code: f.sender.code, TraceID: "trace-region",
+	}); err != nil {
+		t.Fatalf("register local phone: %v", err)
+	}
+	// 规范化后与 E.164 输入必须指向同一账号 / 验证码；推进时钟跨过重发间隔。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: "+8613800138000"}); err != nil {
+		t.Fatalf("send e164 phone: %v", err)
+	}
+	if _, err := f.svc.Login(ctx, app.SMSLoginInput{
+		Phone: "+8613800138000", Code: f.sender.code, TraceID: "trace-region-login",
+	}); err != nil {
+		t.Fatalf("login with e164 phone: %v", err)
+	}
+}
+
 func TestSMSLoginSendValidation(t *testing.T) {
 	cases := []struct {
 		name  string

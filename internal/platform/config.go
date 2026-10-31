@@ -177,6 +177,9 @@ type IdentitySMSConfig struct {
 	SignName string `yaml:"sign_name"`
 	// Locale 语言/地区提示（如 zh-CN）。
 	Locale string `yaml:"locale"`
+	// DefaultRegion 可选默认地区（ISO 3166-1 alpha-2，如 CN）；配置后允许本地号码
+	// 自动补国家码，未配置时仅接受 E.164（BIZ-07）。
+	DefaultRegion string `yaml:"default_region"`
 	// CodeTTL 验证码有效期，默认 5m，上限 15m。
 	CodeTTL time.Duration `yaml:"code_ttl"`
 	// MaxAttempts 单个验证码允许的最大错误次数，默认 5。
@@ -2206,7 +2209,21 @@ func (c *Config) validateIdentitySMS() []error {
 	if isProdLikeEnv(c.Env) && driver == IdentitySMSDriverMemory {
 		errs = append(errs, errors.New("identity.sms.driver must not be memory in prod/staging"))
 	}
+	if region := strings.ToUpper(strings.TrimSpace(sms.DefaultRegion)); region != "" {
+		if _, ok := identitySMSRegions[region]; !ok {
+			errs = append(errs, fmt.Errorf("unsupported identity.sms.default_region: %s", sms.DefaultRegion))
+		}
+	}
 	return errs
+}
+
+// identitySMSRegions 是允许的短信默认地区及其国家码（BIZ-07）。
+//
+// 与 internal/identity/app 的 regionDialCodes 保持一致；新增地区需同时更新两处。
+var identitySMSRegions = map[string]string{
+	"CN": "86", "HK": "852", "TW": "886", "MO": "853",
+	"US": "1", "CA": "1", "GB": "44", "JP": "81",
+	"SG": "65", "DE": "49", "FR": "33", "AU": "61",
 }
 
 // validateIdentityOAuth 校验 OAuth 提供方参数（docs/identity-authn.md §8.2 / §10.2）。
