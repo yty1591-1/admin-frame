@@ -1,0 +1,108 @@
+# 身份域生产启用 overlay（IDN-GAP-P0-01）。
+#
+# 使用方式（必须放在 values-prod.yaml 之后，确保覆盖 prod 的 identity.enabled=false）：
+#   helm upgrade --install admin-frame deploy/helm/admin-frame \
+#     -f deploy/helm/admin-frame/values.yaml \
+#     -f deploy/helm/admin-frame/values-prod.yaml \
+#     -f deploy/helm/admin-frame/values-identity-enabled.yaml
+#
+# 前置条件（缺一启动失败，属于预期失败关闭）：
+#   1. Secret `admin-frame-identity` 存在，且包含：
+#        hash_key      32 字节（64 位十六进制）HMAC 主密钥
+#        mfa_secret_key 32 字节（64 位十六进制）AES-GCM 主密钥
+#   2. auth.jwt 使用 RS256 密钥环，且私钥文件已挂载（登录令牌由本服务签发）。
+#   3. Redis 可用；db.driver=mysql；async.enabled=true。
+#   4. C 端还需配置 identity.sms（driver=aliyun，禁止 memory）或至少一个
+#      identity.oauth.providers；否则请保持 c.configOverrides.identity.enabled=false。
+#   5. C 端 OAuth provider 的 client secret 环境变量名由
+#      identity.oauth.providers[].client_secret_env 指定，必须由 Secret 注入。
+#   6. 短信 AK/SK 环境变量：ALIYUN_SMS_ACCESS_KEY_ID / ALIYUN_SMS_ACCESS_KEY_SECRET。
+#
+# 本 overlay 只启用 A/B 端；worker 与 C 端默认关闭，避免 worker 因
+# “identity 仅支持 admin/biz/c” 启动校验失败。
+
+config:
+  identity:
+    # 全局保持关闭，由各 workload 的 configOverrides 精确启用。
+    enabled: false
+    access_ttl: 15m
+    refresh_ttl: 168h
+    session:
+      idle_timeout: 72h
+      absolute_ttl: 720h
+      max_per_account: 10
+    retention:
+      session_days: 30
+      login_attempt_days: 180
+      cleanup_interval: 1h
+    revocation:
+      driver: redis
+      failure_mode: fail_closed
+      state_ttl: 30s
+    password:
+      min_length: 12
+      max_length: 128
+      require_complexity: true
+      max_concurrent: 0
+      wait_timeout: 2s
+    mfa:
+      admin_required: false
+      issuer: AdminFrame
+    lockout:
+      max_failures: 5
+      window: 15m
+      duration: 15m
+    login_rate_limit:
+      rps: 1
+      burst: 5
+      failure_mode: fail_closed
+    hash_key_id: v1
+    previous_hash_keys: []
+
+identitySecrets:
+  enabled: true
+  secretName: admin-frame-identity
+  hashKeyKey: hash_key
+  mfaSecretKey: mfa_secret_key
+
+workloads:
+  admin:
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: true
+      # 管理端写请求幂等：客户端可携带 Idempotency-Key；未强制，避免登录等
+      # 无幂等键的请求被误拒。需要强约束时可改 required: true 并同步客户端。
+      idempotency:
+        enabled: true
+        driver: redis
+        header: Idempotency-Key
+        ttl: 24h
+        required: false
+        max_body_bytes: 1048576
+      # 管理端按用户限流，限制密码重置 / MFA 重置 / 批量撤销等脚本化滥用。
+      rate_limit:
+        enabled: true
+        driver: redis
+        key: channel_user
+        failure_mode: fail_closed
+        rps: 20
+        burst: 40
+        idle_ttl: 10m
+  biz:
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: false
+  c:
+    # C 端启用前必须先补齐短信或 OAuth provider；否则保持关闭。
+    configOverrides:
+      identity:
+        enabled: false
+  worker:
+    # worker 不提供认证 transport，启用会被启动校验拒绝。
+    configOverrides:
+      identity:
+        enabled: false

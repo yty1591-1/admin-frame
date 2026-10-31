@@ -1,0 +1,105 @@
+# 身份域核心告警（IDN-GAP-P0-06）。
+#
+# 指标由 internal/identity/observability 注册；标签均为低基数枚举。
+# 注意：登录失败率告警需结合业务基线调整阈值，避免把正常的密码输错误报为故障。
+
+groups:
+  - name: admin-frame-identity
+    rules:
+      - alert: IdentityTokenReuseDetected
+        expr: increase(identity_token_reuse_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: identity.token.reuse
+        annotations:
+          summary: "检测到刷新令牌重放"
+          description: "5 分钟内出现刷新令牌重放，整条设备链已被撤销；立即排查账号是否被盗用。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityLockoutSpike
+        expr: sum(increase(identity_lockout_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: identity.lockout.spike
+        annotations:
+          summary: "账号锁定次数异常升高"
+          description: "5 分钟内锁定超过 5 次，可能是撞库或锁定阈值配置过低；结合登录失败原因排查。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityRevocationStoreErrors
+        expr: sum(increase(identity_revocation_store_errors_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: P1
+          alert_id: identity.revocation.store_error
+        annotations:
+          summary: "撤销存储读 / 回源失败"
+          description: "Redis 或 DB 回源失败，可能触发 fail_closed 全量 503；检查 Redis 与数据库健康度。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityRevocationCacheWriteErrors
+        expr: sum(increase(identity_revocation_cache_write_error_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.revocation.cache_write_error
+        annotations:
+          summary: "撤销快照写入失败"
+          description: "撤销快照写 Redis 失败；最长 60s 后回源生效，需关注 Redis 抖动。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityRefreshFailureRateHigh
+        expr: |
+          (
+            sum(rate(identity_refresh_total{result="failure"}[5m]))
+            /
+            clamp_min(sum(rate(identity_refresh_total[5m])), 1e-9)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.refresh.failure_rate
+        annotations:
+          summary: "刷新令牌失败率超过 10%"
+          description: "结合 token reuse、撤销存储错误与账号状态排查；持续高失败率会影响会话续期。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityLoginFailureRateHigh
+        expr: |
+          (
+            sum(rate(identity_login_total{result="failure"}[5m]))
+            /
+            clamp_min(sum(rate(identity_login_total[5m])), 1e-9)
+          ) > 0.3
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.login.failure_rate
+        annotations:
+          summary: "登录失败率超过 30%"
+          description: "可能是撞库、凭据错误或上游依赖故障；结合 reason 标签与 AccessLog 排查。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityMFARecoveryUsed
+        expr: increase(identity_mfa_recovery_used_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          alert_id: identity.mfa.recovery_used
+        annotations:
+          summary: "有账号使用 MFA 恢复码"
+          description: "恢复码使用意味着用户丢失 TOTP 设备；建议通知账号所有者并核查操作来源。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentitySessionRevokeFailures
+        expr: sum(increase(identity_session_revoke_total{result="failure"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.session.revoke_failure
+        annotations:
+          summary: "设备会话撤销失败"
+          description: "撤销失败可能导致旧令牌继续可用；检查 DB/Redis 错误日志与事务回滚原因。"
+          runbook_url: docs/runbooks/identity-auth-failure.md

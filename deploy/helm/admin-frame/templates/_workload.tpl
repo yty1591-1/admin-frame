@@ -81,9 +81,23 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $w.resources | nindent 12 }}
-          {{- with $root.Values.env }}
+          {{- if or $root.Values.env $root.Values.identitySecrets.enabled }}
           env:
+            {{- with $root.Values.env }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if $root.Values.identitySecrets.enabled }}
+            - name: ADMIN_FRAME_IDENTITY_HASH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.identitySecrets.secretName }}
+                  key: {{ $root.Values.identitySecrets.hashKeyKey }}
+            - name: ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.identitySecrets.secretName }}
+                  key: {{ $root.Values.identitySecrets.mfaSecretKey }}
+            {{- end }}
           {{- end }}
           {{- with $root.Values.envFrom }}
           envFrom:

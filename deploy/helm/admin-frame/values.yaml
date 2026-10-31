@@ -84,6 +84,14 @@ jwtPublicKey:
   secretName: ""
   key: public.pem
 
+# 身份域密钥注入：values-identity-enabled.yaml 会打开并引用同一 Secret。
+# Secret 需包含 hash_key（32B HMAC 主密钥）与 mfa_secret_key（32B AES-GCM 主密钥）。
+identitySecrets:
+  enabled: false
+  secretName: admin-frame-identity
+  hashKeyKey: hash_key
+  mfaSecretKey: mfa_secret_key
+
 # 额外环境变量（Secret 引用示例见 values-prod.yaml）。
 env: []
 envFrom: []
@@ -280,7 +288,9 @@ networkPolicy:
   ingressNamespaceSelector:
     matchLabels:
       kubernetes.io/metadata.name: ingress-nginx
-  # 允许出站的依赖端口（DB/Redis/OTel）。
+  # 允许出站的依赖端口（DB/Redis/OTel/OAuth/短信 HTTPS）。
+  # 443 用于 C 端 OAuth2 IdP 与云短信 API；如强调最小权限，可改为
+  # 基于 to.namespaceSelector / ipBlock 的域名级策略。
   egressPorts:
     - port: 3306
       protocol: TCP
@@ -291,4 +301,8 @@ networkPolicy:
     - port: 4317
       protocol: TCP
     - port: 4318
+      protocol: TCP
+    - port: 443
+      protocol: TCP
+    - port: 80
       protocol: TCP
