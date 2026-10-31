@@ -101,6 +101,7 @@ func cProdConfig() *platform.Config {
 	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
 	cfg.Async.Enabled = true
 	cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+	cfg.Identity.SMS.DailyBudget = 1000
 	cfg.Identity.HashKey = "01234567890123456789012345678901"
 	cfg.Identity.HashKeyID = "v1"
 	return cfg
@@ -209,6 +210,20 @@ func TestValidateSMSRules(t *testing.T) {
 				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverMemory
 			},
 			want: "identity.sms.driver must not be memory in prod/staging",
+		},
+		{
+			name: "missing daily budget in prod",
+			mutate: func(cfg *platform.Config) {
+				cfg.Env = "prod"
+				cfg.Auth = cJWTConfig()
+				cfg.ID = prodIDConfig()
+				cfg.Storage.Driver = "s3"
+				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+				cfg.Identity.HashKey = "01234567890123456789012345678901"
+				cfg.Identity.SMS.DailyBudget = 0
+			},
+			want: "identity.sms.daily_budget must be > 0 in prod/staging",
 		},
 	}
 

@@ -2068,6 +2068,10 @@ func (c *Config) validateIdentitySMS() []error {
 	if sms.DailyBudget < 0 {
 		errs = append(errs, errors.New("identity.sms.daily_budget must be >= 0"))
 	}
+	// 生产必须有全局硬预算，防止分布式号码池绕过单手机号 / IP 限额造成费用攻击。
+	if isProdLikeEnv(c.Env) && sms.DailyBudget == 0 {
+		errs = append(errs, errors.New("identity.sms.daily_budget must be > 0 in prod/staging"))
+	}
 	if sms.BreakerFailures < 0 {
 		errs = append(errs, errors.New("identity.sms.breaker_failures must be >= 0"))
 	}
