@@ -2,9 +2,6 @@
 package c
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -72,7 +69,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req smsSendRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -98,7 +95,7 @@ func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req smsLoginRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -127,7 +124,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req smsLoginRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -161,7 +158,7 @@ func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req smsRebindRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -195,7 +192,7 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req smsDeleteRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := rest.DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -261,7 +258,7 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req oauthCallbackRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -347,31 +344,7 @@ func tokenResponseFrom(pair app.TokenPair) tokenResponse {
 	}
 }
 
-// decodeJSON 解码请求体；未知字段与格式错误统一返回 40000。
-func decodeJSON(r *http.Request, dst any) error {
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		return apperr.BadRequest("invalid request body")
-	}
-	return nil
-}
-
-// decodeOptionalJSON 解码可选请求体；空 body 视为未提供。
-func decodeOptionalJSON(r *http.Request, dst any) error {
-	if r.Body == nil {
-		return nil
-	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		return apperr.BadRequest("invalid request body")
-	}
-	return nil
-}
+// 请求体解码统一复用 transport/rest 的严格实现（SEC-10）。
 
 // clientIPHash 返回客户端 IP 摘要；配置 hash_key 时使用带密钥 HMAC。
 func (h *Handler) clientIPHash(r *http.Request) string {

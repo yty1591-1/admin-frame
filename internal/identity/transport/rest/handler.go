@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,7 +71,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req loginRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -139,7 +140,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateMeRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -167,7 +168,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req mfaSetupRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -204,7 +205,7 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req mfaVerifyRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -249,7 +250,7 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req mfaDisableRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -267,7 +268,7 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req changePasswordRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -356,7 +357,7 @@ func (h *Handler) accountOperation(
 		return
 	}
 	var req accountActionRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -444,7 +445,7 @@ func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req accountLockRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -474,7 +475,7 @@ func (h *Handler) ResetAccountPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req accountActionRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -548,7 +549,7 @@ func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req accountActionRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
+	if err := DecodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -581,7 +582,7 @@ func (h *Handler) RevokeAccountSessions(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	var req refreshRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -937,28 +938,56 @@ func tokenResponseFrom(pair app.TokenPair) tokenResponse {
 	}
 }
 
-// decodeJSON 解码请求体；未知字段与格式错误统一返回 40000。
-func decodeJSON(r *http.Request, dst any) error {
+// DecodeJSON 解码请求体；未知字段、尾随内容、错误 Content-Type 统一返回 40000（SEC-10）。
+func DecodeJSON(r *http.Request, dst any) error {
+	return decodeStrictJSON(r, dst, false)
+}
+
+// DecodeOptionalJSON 解码可选请求体：空 body 视为「未提供」，保持向后兼容。
+func DecodeOptionalJSON(r *http.Request, dst any) error {
+	return decodeStrictJSON(r, dst, true)
+}
+
+// decodeStrictJSON 是 A/B/C 三端共用的严格解码实现。
+func decodeStrictJSON(r *http.Request, dst any, optional bool) error {
+	if err := validateJSONContentType(r); err != nil {
+		return err
+	}
+	if r.Body == nil {
+		if optional {
+			return nil
+		}
+		return apperr.BadRequest("invalid request body")
+	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		if optional && errors.Is(err, io.EOF) {
+			return nil
+		}
 		return apperr.BadRequest("invalid request body")
+	}
+	// 拒绝多个 JSON 值 / 尾随非空内容，避免解析歧义影响审计与网关一致性。
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return apperr.BadRequest("request body must contain a single JSON object")
 	}
 	return nil
 }
 
-// decodeOptionalJSON 解码可选请求体：空 body 视为「未提供」，保持向后兼容。
-func decodeOptionalJSON(r *http.Request, dst any) error {
-	if r.Body == nil {
+// validateJSONContentType 校验 Content-Type；缺省时不拒绝（兼容内部调用与旧客户端），
+// 但显式声明的非 JSON 媒体类型一律拒绝。
+func validateJSONContentType(r *http.Request) error {
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
 		return nil
 	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		return apperr.BadRequest("invalid request body")
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return apperr.BadRequest("invalid content type")
+	}
+	if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+		return apperr.BadRequest("content type must be application/json")
 	}
 	return nil
 }
