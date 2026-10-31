@@ -34,8 +34,7 @@ func (r *MemoryCredentialRepository) FindByAccount(_ context.Context, accountID 
 	if !ok {
 		return nil, apperr.NotFound("credential not found")
 	}
-	cp := *credential
-	return &cp, nil
+	return cloneCredential(credential), nil
 }
 
 // ListByAccount 返回账号全部凭据，按类型排序。
@@ -47,8 +46,7 @@ func (r *MemoryCredentialRepository) ListByAccount(_ context.Context, accountID 
 		if key.accountID != accountID {
 			continue
 		}
-		cp := *credential
-		out = append(out, &cp)
+		out = append(out, cloneCredential(credential))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
 	return out, nil
@@ -63,6 +61,7 @@ func (r *MemoryCredentialRepository) Save(_ context.Context, credential *domain.
 	defer r.mu.Unlock()
 	key := credentialKey{accountID: credential.AccountID, typ: credential.Type}
 	cp := *credential
+	cp.PasswordHistory = append([]domain.PasswordHistoryEntry(nil), credential.PasswordHistory...)
 	if existing, ok := r.credentials[key]; ok {
 		cp.ID = existing.ID
 		cp.CreatedAt = existing.CreatedAt
@@ -89,4 +88,11 @@ func (r *MemoryCredentialRepository) findByIDLocked(id string) *domain.Credentia
 		}
 	}
 	return nil
+}
+
+// cloneCredential 深拷贝可变的密码历史切片，避免调用方追加修改仓储内部状态。
+func cloneCredential(credential *domain.Credential) *domain.Credential {
+	cp := *credential
+	cp.PasswordHistory = append([]domain.PasswordHistoryEntry(nil), credential.PasswordHistory...)
+	return &cp
 }

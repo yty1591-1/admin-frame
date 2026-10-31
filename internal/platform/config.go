@@ -430,6 +430,10 @@ type IdentityPasswordConfig struct {
 	MaxConcurrent int `yaml:"max_concurrent"`
 	// WaitTimeout 获取并发槽位的等待上限；0 表示默认 2s，超时返回 50300。
 	WaitTimeout time.Duration `yaml:"wait_timeout"`
+	// HistoryCount 密码历史保留条数；0 表示默认 5，用于阻止近期密码复用（SEC-06）。
+	HistoryCount int `yaml:"history_count"`
+	// HistoryWindow 密码复用限制窗口；0 表示默认 365 天。
+	HistoryWindow time.Duration `yaml:"history_window"`
 }
 
 // IdentityLockoutConfig 是登录失败锁定参数。
@@ -1276,6 +1280,12 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.Password.WaitTimeout == 0 {
 		c.Identity.Password.WaitTimeout = identityDefaultPasswordWaitTimeout
 	}
+	if c.Identity.Password.HistoryCount == 0 {
+		c.Identity.Password.HistoryCount = 5
+	}
+	if c.Identity.Password.HistoryWindow == 0 {
+		c.Identity.Password.HistoryWindow = 365 * 24 * time.Hour
+	}
 	if c.Identity.OAuth.RateLimit.RPS == 0 {
 		c.Identity.OAuth.RateLimit.RPS = 1
 	}
@@ -2061,6 +2071,12 @@ func (c *Config) validateIdentityPassword() []error {
 		if c.Identity.Password.WaitTimeout > identityMaxPasswordWaitTimeout {
 			errs = append(errs, errors.New("identity.password.wait_timeout must be <= 30s"))
 		}
+	}
+	if c.Identity.Password.HistoryCount < 0 || c.Identity.Password.HistoryCount > 20 {
+		errs = append(errs, errors.New("identity.password.history_count must be in [0, 20]"))
+	}
+	if c.Identity.Password.HistoryWindow < 0 || c.Identity.Password.HistoryWindow > 5*365*24*time.Hour {
+		errs = append(errs, errors.New("identity.password.history_window must be in [0, 5y]"))
 	}
 	return errs
 }

@@ -99,6 +99,45 @@ func TestAccountServicePrivilegedStepUpMFA(t *testing.T) {
 	}
 }
 
+// TestAccountServicePasswordHistoryRejectsReuse 验证窗口内历史密码复用被拒绝（SEC-06）。
+func TestAccountServicePasswordHistoryRejectsReuse(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.PasswordHistoryCount = 5
+		cfg.PasswordHistoryWindow = 365 * 24 * time.Hour
+	})
+	f.seedAccount(t, "acct-history", "alice", "Old#Password12")
+	login := f.login(t, "alice", "Old#Password12")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	actor := app.SessionActor{AccountID: login.AccountID, SessionID: login.SessionID, TraceID: "trace-history"}
+
+	for _, step := range []struct{ old, next string }{
+		{"Old#Password12", "Mid#Password12"},
+		{"Mid#Password12", "Next#Password12"},
+	} {
+		if err := svc.ChangePassword(ctx, app.ChangePasswordInput{
+			Actor: actor, OldPassword: step.old, NewPassword: step.next,
+		}); err != nil {
+			t.Fatalf("change %s -> %s: %v", step.old, step.next, err)
+		}
+	}
+	// 回退到最早的历史密码必须被拒绝。
+	requireAppCode(t, svc.ChangePassword(ctx, app.ChangePasswordInput{
+		Actor: actor, OldPassword: "Next#Password12", NewPassword: "Old#Password12",
+	}), apperr.CodeBadRequest)
+
+	credential, err := f.credentials.FindByAccount(ctx, login.AccountID, domain.CredentialTypePassword)
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if len(credential.PasswordHistory) != 2 {
+		t.Fatalf("password history = %d, want 2", len(credential.PasswordHistory))
+	}
+}
+
 // TestAccountServiceStepUpCoversLifecycleAndSessions 验证启用、锁定、解锁、恢复与
 // 单会话撤销均受 step-up 保护（IDN-GAP-SEC-02）：缺少 mfa_code 返回 40000。
 func TestAccountServiceStepUpCoversLifecycleAndSessions(t *testing.T) {

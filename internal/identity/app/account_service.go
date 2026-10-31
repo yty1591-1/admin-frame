@@ -128,6 +128,10 @@ func (s *AccountService) probeChangePassword(ctx context.Context, in ChangePassw
 	if strings.TrimSpace(in.NewPassword) == in.OldPassword {
 		return nil, apperr.BadRequest("new password must differ from the current password")
 	}
+	// SEC-06：历史密码复用必须在 Argon2 计算新哈希前拒绝。
+	if err := s.auth.rejectRecentPasswordReuse(ctx, credential, in.NewPassword, s.auth.clock.Now().UTC()); err != nil {
+		return nil, err
+	}
 	encoded, algorithm, err := s.auth.password.HashContext(ctx, in.NewPassword)
 	if err != nil {
 		return nil, err
@@ -174,6 +178,7 @@ func (s *AccountService) ChangePassword(ctx context.Context, in ChangePasswordIn
 			// probe 与事务之间密码被并发修改：拒绝本次改密，避免覆盖新凭据。
 			return apperr.Conflict("password credential was modified concurrently, please retry")
 		}
+		s.auth.recordPasswordChange(credential, now)
 		if err := credential.ReplaceHash(probe.encoded, probe.algorithm, now); err != nil {
 			return err
 		}
@@ -639,6 +644,7 @@ func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationI
 			}
 			return apperr.Internal("load credential failed", err)
 		}
+		s.auth.recordPasswordChange(credential, now)
 		if err := credential.ReplaceHash(encoded, algorithm, now); err != nil {
 			return err
 		}

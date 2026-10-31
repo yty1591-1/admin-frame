@@ -132,6 +132,10 @@ func (s *AuthService) probePasswordChangeCompletion(ctx context.Context, in Comp
 		// 哈希损坏 / 并发槽位超时属于服务端问题，必须失败关闭；仅“不匹配”可继续。
 		return nil, verifyErr
 	}
+	// SEC-06：强制改密同样禁止窗口内历史密码复用。
+	if err := s.rejectRecentPasswordReuse(ctx, credential, in.NewPassword, now); err != nil {
+		return nil, err
+	}
 	encoded, algorithm, err := s.password.HashContext(ctx, in.NewPassword)
 	if err != nil {
 		return nil, err
@@ -195,6 +199,7 @@ func (s *AuthService) completePasswordChangeInTx(
 		// probe 与事务之间密码被并发修改：拒绝本次改密，避免覆盖新凭据。
 		return LoginResult{}, apperr.Conflict("password credential was modified concurrently, please retry")
 	}
+	s.recordPasswordChange(credential, now)
 	if err := credential.ReplaceHash(probe.encoded, probe.algorithm, now); err != nil {
 		return LoginResult{}, err
 	}

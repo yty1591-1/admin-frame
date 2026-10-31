@@ -26,6 +26,14 @@ const DefaultSessionAbsoluteTTL = 720 * time.Hour
 // DefaultMaxSessionsPerAccount 是单账号默认活跃设备上限。
 const DefaultMaxSessionsPerAccount = 6
 
+// 默认密码历史策略（SEC-06）。
+const (
+	// defaultPasswordHistoryCount 默认保留的历史密码条数。
+	defaultPasswordHistoryCount = 5
+	// defaultPasswordHistoryWindow 默认复用限制窗口。
+	defaultPasswordHistoryWindow = 365 * 24 * time.Hour
+)
+
 // 认证输入长度上限（SEC-03）：在昂贵计算或外部调用前拒绝异常输入。
 const (
 	// maxLoginSubjectBytes 与 identity_account.subject_index 的来源列宽一致。
@@ -81,6 +89,10 @@ type AuthServiceConfig struct {
 	// SessionAbsoluteTTL 设备绝对生命上限；≤0 时使用 DefaultSessionAbsoluteTTL。
 	// 刷新只能在该上限内滑动续期（IDN-P1-07）。
 	SessionAbsoluteTTL time.Duration
+	// PasswordHistoryCount 密码历史保留条数；≤0 使用默认 5（SEC-06）。
+	PasswordHistoryCount int
+	// PasswordHistoryWindow 密码复用限制窗口；≤0 使用默认 365 天。
+	PasswordHistoryWindow time.Duration
 	// MaxPerAccount 单账号活跃设备上限；≤0 使用 DefaultMaxSessionsPerAccount。
 	MaxPerAccount int
 	// RefreshGrace 并发刷新宽限窗口；≤0 表示禁用（REL-06）。
@@ -224,6 +236,8 @@ type AuthService struct {
 	absoluteTTL     time.Duration
 	maxPerAccount   int
 	refreshGrace    time.Duration
+	passwordHistoryCount  int
+	passwordHistoryWindow time.Duration
 	service         string
 	actorType       string
 	clock           Clock
@@ -256,6 +270,14 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	maxPerAccount := cfg.MaxPerAccount
 	if maxPerAccount <= 0 {
 		maxPerAccount = DefaultMaxSessionsPerAccount
+	}
+	passwordHistoryCount := cfg.PasswordHistoryCount
+	if passwordHistoryCount <= 0 {
+		passwordHistoryCount = defaultPasswordHistoryCount
+	}
+	passwordHistoryWindow := cfg.PasswordHistoryWindow
+	if passwordHistoryWindow <= 0 {
+		passwordHistoryWindow = defaultPasswordHistoryWindow
 	}
 	actorType := cfg.ActorType
 	if actorType == "" {
@@ -320,6 +342,8 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		absoluteTTL:     absoluteTTL,
 		maxPerAccount:   maxPerAccount,
 		refreshGrace:    cfg.RefreshGrace,
+		passwordHistoryCount:  passwordHistoryCount,
+		passwordHistoryWindow: passwordHistoryWindow,
 		service:         cfg.Service,
 		actorType:       actorType,
 		clock:           clock,
@@ -1776,6 +1800,31 @@ func parseSessionCursor(raw string) (time.Time, string, error) {
 		return time.Time{}, "", apperr.BadRequest("invalid session cursor")
 	}
 	return time.UnixMilli(ms).UTC(), parts[1], nil
+}
+
+// rejectRecentPasswordReuse 拒绝窗口内的历史密码复用（SEC-06）。
+//
+// 仅比对历史哈希，不记录明文；哈希损坏或并发槽位超时按服务端错误失败关闭。
+func (s *AuthService) rejectRecentPasswordReuse(ctx context.Context, credential *domain.Credential, newPassword string, now time.Time) error {
+	if credential == nil || s.passwordHistoryCount <= 0 || s.passwordHistoryWindow <= 0 {
+		return nil
+	}
+	for _, entry := range credential.RecentPasswordHistory(now, s.passwordHistoryWindow) {
+		_, err := s.password.VerifyContext(ctx, entry.Hash, newPassword)
+		if err == nil {
+			return apperr.BadRequest("password was used recently")
+		}
+		if !errors.Is(err, apperr.ErrUnauthorized) {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordPasswordChange 把当前哈希写入历史，再替换为新哈希。
+func (s *AuthService) recordPasswordChange(credential *domain.Credential, now time.Time) {
+	credential.RecordPasswordChange(credential.Hash, credential.Algorithm, now,
+		s.passwordHistoryCount, s.passwordHistoryWindow)
 }
 
 // emitAudit 写入审计事件；未配置 emitter 时跳过。

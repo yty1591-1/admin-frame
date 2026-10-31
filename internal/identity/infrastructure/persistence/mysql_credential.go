@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -11,7 +12,7 @@ import (
 )
 
 // credentialSelectColumns 是凭据表的显式列清单。
-const credentialSelectColumns = `id, account_id, credential_type, credential_hash, algorithm, created_at, updated_at` //nolint:gosec // G101: SQL 列名，不是凭证
+const credentialSelectColumns = `id, account_id, credential_type, credential_hash, algorithm, password_history, created_at, updated_at` //nolint:gosec // G101: SQL 列名，不是凭证
 
 // SQLCredentialRepository 是 MySQL 8.0 的凭据仓储实现。
 //
@@ -95,19 +96,27 @@ func (r *SQLCredentialRepository) Save(ctx context.Context, credential *domain.C
 		accountID, string(credential.Type)).Scan(&existingID)
 	switch {
 	case err == nil:
+		history, historyErr := encodePasswordHistory(credential.PasswordHistory)
+		if historyErr != nil {
+			return historyErr
+		}
 		_, err = r.exec(ctx).ExecContext(ctx,
-			`UPDATE identity_credential SET credential_hash = ?, algorithm = ?, updated_at = ? WHERE id = ?`,
-			credential.Hash, credential.Algorithm, credential.UpdatedAt.UTC(), existingID)
+			`UPDATE identity_credential SET credential_hash = ?, algorithm = ?, password_history = ?, updated_at = ? WHERE id = ?`,
+			credential.Hash, credential.Algorithm, history, credential.UpdatedAt.UTC(), existingID)
 		return err
 	case errors.Is(err, sql.ErrNoRows):
 		newID, parseErr := parseID(credential.ID)
 		if parseErr != nil {
 			return parseErr
 		}
+		history, historyErr := encodePasswordHistory(credential.PasswordHistory)
+		if historyErr != nil {
+			return historyErr
+		}
 		_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_credential
-			(id, account_id, credential_type, credential_hash, algorithm, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			newID, accountID, string(credential.Type), credential.Hash, credential.Algorithm,
+			(id, account_id, credential_type, credential_hash, algorithm, password_history, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			newID, accountID, string(credential.Type), credential.Hash, credential.Algorithm, history,
 			credential.CreatedAt.UTC(), credential.UpdatedAt.UTC())
 		return conflictOnDuplicate(err, "credential already exists")
 	default:
@@ -128,15 +137,35 @@ func (r *SQLCredentialRepository) Delete(ctx context.Context, accountID string, 
 
 // scanCredential 扫描一行凭据。
 func scanCredential(row scanRow) (*domain.Credential, error) {
-	var credential domain.Credential
+	var (
+		credential domain.Credential
+		history    sql.NullString
+	)
 	err := row.Scan(
 		&credential.ID, &credential.AccountID, &credential.Type,
-		&credential.Hash, &credential.Algorithm, &credential.CreatedAt, &credential.UpdatedAt,
+		&credential.Hash, &credential.Algorithm, &history, &credential.CreatedAt, &credential.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	if history.Valid && history.String != "" {
+		if decodeErr := json.Unmarshal([]byte(history.String), &credential.PasswordHistory); decodeErr != nil {
+			return nil, apperr.Internal("decode password history failed", decodeErr)
+		}
+	}
 	credential.CreatedAt = credential.CreatedAt.UTC()
 	credential.UpdatedAt = credential.UpdatedAt.UTC()
 	return &credential, nil
+}
+
+// encodePasswordHistory 把历史哈希编码为 JSON；空历史写 NULL。
+func encodePasswordHistory(history []domain.PasswordHistoryEntry) (any, error) {
+	if len(history) == 0 {
+		return nil, nil
+	}
+	payload, err := json.Marshal(history)
+	if err != nil {
+		return nil, apperr.Internal("encode password history failed", err)
+	}
+	return string(payload), nil
 }

@@ -267,6 +267,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		SessionAbsoluteTTL: cfg.Identity.Session.AbsoluteTTL,
 		MaxPerAccount:      cfg.Identity.Session.MaxPerAccount,
 		RefreshGrace:       cfg.Identity.Session.RefreshGrace,
+		PasswordHistoryCount:  cfg.Identity.Password.HistoryCount,
+		PasswordHistoryWindow: cfg.Identity.Password.HistoryWindow,
 		Service:            cfg.Service,
 		MFA:                repos.mfa,
 		MFACipher:          mfaCipher,

@@ -48,9 +48,21 @@ type Credential struct {
 	Hash string
 	// Algorithm 哈希算法标识（password 为 argon2id / bcrypt；摘要类为 hmac-sha256 / sha256）。
 	Algorithm string
+	// PasswordHistory 最近若干次密码哈希；仅 password 凭据使用，不含明文（SEC-06）。
+	PasswordHistory []PasswordHistoryEntry
 	// CreatedAt / UpdatedAt UTC。
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// PasswordHistoryEntry 是一条历史密码哈希记录。
+type PasswordHistoryEntry struct {
+	// Hash 编码后的历史哈希。
+	Hash string `json:"hash"`
+	// Algorithm 历史哈希算法。
+	Algorithm string `json:"algorithm"`
+	// ChangedAt 该哈希退出使用的时间（UTC）。
+	ChangedAt time.Time `json:"changed_at"`
 }
 
 // NewCredentialParams 创建凭据的入参。
@@ -99,6 +111,65 @@ func (c *Credential) ReplaceHash(hash, algorithm string, now time.Time) error {
 	c.Algorithm = algorithm
 	c.UpdatedAt = utcNow(now)
 	return nil
+}
+
+// RecordPasswordChange 把旧密码哈希加入历史，并按数量与窗口裁剪（SEC-06）。
+//
+// previousHash 为空表示首次设置密码；retain ≤0 表示不保留历史。
+func (c *Credential) RecordPasswordChange(previousHash, previousAlgorithm string, now time.Time, retain int, window time.Duration) {
+	if strings.TrimSpace(previousHash) != "" {
+		c.PasswordHistory = append(c.PasswordHistory, PasswordHistoryEntry{
+			Hash:      previousHash,
+			Algorithm: previousAlgorithm,
+			ChangedAt: utcNow(now),
+		})
+	}
+	c.prunePasswordHistory(now, retain, window)
+}
+
+// RecentPasswordHistory 返回窗口内可用于复用校验的历史哈希。
+func (c *Credential) RecentPasswordHistory(now time.Time, window time.Duration) []PasswordHistoryEntry {
+	if window <= 0 {
+		return nil
+	}
+	cutoff := utcNow(now).Add(-window)
+	out := make([]PasswordHistoryEntry, 0, len(c.PasswordHistory))
+	for _, entry := range c.PasswordHistory {
+		if entry.Hash == "" {
+			continue
+		}
+		if entry.ChangedAt.Before(cutoff) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// prunePasswordHistory 按时间窗口与保留条数裁剪，仅保留最新记录。
+func (c *Credential) prunePasswordHistory(now time.Time, retain int, window time.Duration) {
+	if retain <= 0 {
+		c.PasswordHistory = nil
+		return
+	}
+	cutoff := time.Time{}
+	if window > 0 {
+		cutoff = utcNow(now).Add(-window)
+	}
+	kept := make([]PasswordHistoryEntry, 0, len(c.PasswordHistory))
+	for _, entry := range c.PasswordHistory {
+		if entry.Hash == "" {
+			continue
+		}
+		if !cutoff.IsZero() && entry.ChangedAt.Before(cutoff) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if len(kept) > retain {
+		kept = kept[len(kept)-retain:]
+	}
+	c.PasswordHistory = kept
 }
 
 // validateCredentialHash 校验哈希与算法标识非空且在列宽内。
