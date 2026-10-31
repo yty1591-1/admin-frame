@@ -1,4 +1,8 @@
-import { defineOverridesPreferences, preferences, updatePreferences } from '@vben/preferences';
+import {
+  defineOverridesPreferences,
+  preferences,
+  updatePreferences,
+} from '@vben/preferences';
 
 /**
  * 品牌静态资源地址。
@@ -38,6 +42,11 @@ export const overridesPreferences = defineOverridesPreferences({
      * 菜单由后端种子的 route name / component 驱动，必须与 views 目录保持一致。
      */
     accessMode: 'backend',
+    /**
+     * 刷新令牌：后端 refresh token 为一次性轮换，开启后由请求拦截器
+     * 自动换新并同批替换双令牌，避免访问令牌过期即整页登出。
+     */
+    enableRefreshToken: true,
   },
   logo: {
     source: LOGO_URL,
@@ -65,7 +74,8 @@ export const overridesPreferences = defineOverridesPreferences({
 export function migrateLegacyBrandAssets() {
   const currentLogo = preferences.logo.source ?? '';
   const currentAvatar = preferences.app.defaultAvatar ?? '';
-  const usesRemoteAsset = currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
+  const usesRemoteAsset =
+    currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
 
   if (!usesRemoteAsset) {
     return;

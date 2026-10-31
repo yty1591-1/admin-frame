@@ -75,6 +75,11 @@ async function fetchList() {
     });
     rows.value = items;
     pagination.total = total;
+  } catch {
+    // 后端尚未提供「商户成员列表」端点（见 src/api/system/member.ts）：
+    // 保持空表并继续渲染，避免登录后首屏被错误提示打断。
+    rows.value = [];
+    pagination.total = 0;
   } finally {
     loading.value = false;
   }
@@ -100,7 +105,10 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page description="商户成员列表（示例模块，可作为其他业务模块的模板）" title="成员管理">
+  <Page
+    description="商户成员列表（示例模块，可作为其他业务模块的模板）"
+    title="成员管理"
+  >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />
       <Space class="mt-2">

@@ -1,75 +1,124 @@
+import type { AxiosResponse } from '@vben/request';
+
 import { baseRequestClient, requestClient } from '#/api/request';
 
 /**
- * 认证接口
+ * B 端认证接口（admin-frame 契约）。
  *
- * 当前对接 Nitro Mock（api 前缀由 .env 的 VITE_GLOB_API_URL 决定）。
- * 切换 admin-frame 后端时，需要按下表调整本文件：
+ * | 前端函数        | admin-frame 契约                        |
+ * |-----------------|-----------------------------------------|
+ * | loginApi        | POST /biz/v1/auth/login                 |
+ * | refreshTokenApi | POST /biz/v1/auth/refresh               |
+ * | logoutApi       | POST /biz/v1/auth/logout（Bearer，204） |
+ * | getAccessCodesApi | GET /biz/v1/iam/me/permissions        |
  *
- * | 前端函数           | admin-frame 契约                        | 说明                              |
- * |--------------------|----------------------------------------|-----------------------------------|
- * | loginApi           | POST /biz/v1/auth/login                | 入参 subject + password            |
- * | refreshTokenApi    | POST /biz/v1/auth/refresh              | 入参 refresh_token（放入 body）     |
- * | logoutApi          | POST /biz/v1/auth/logout               | 需要 Bearer access_token           |
- * | getAccessCodesApi  | GET  /biz/v1/iam/me/permissions        | 取当前主体 permissions 数组         |
- *
- * 登录响应字段后端为 access_token / refresh_token（ snake_case ），
- * 与本文件 LoginResult 的 accessToken 不一致，接入时需在 api 层做一次映射。
- * 登录响应还有 MFAChallenge / MFABindingRequired 两种中间态，logout 等端点为 204。
- * 完整改造清单与验收标准见 docs/FRONTEND_INTEGRATION_REVIEW.md。
- * 后端成功响应为 { code, data, message, trace_id }，其中 code=0 视为成功，
- * 与 src/api/request.ts 中的默认拦截器约定一致，无需额外适配。
+ * 与 A 端不同，B 端登录没有 MFA / 强制改密中间态，成功即返回令牌对；
+ * 因此这里不需要四态解析，DTO 到页面模型的映射集中在本文件。
  */
-export namespace AuthApi {
-  /** 登录接口参数 */
-  export interface LoginParams {
-    password?: string;
-    username?: string;
-  }
 
-  /** 登录接口返回值 */
-  export interface LoginResult {
-    accessToken: string;
-  }
+/** 后端统一信封（api/openapi/components.yaml#Envelope）。 */
+interface Envelope<T> {
+  code: number;
+  data: T;
+  message: string;
+  trace_id?: string;
+}
 
-  export interface RefreshTokenResult {
-    data: string;
-    status: number;
-  }
+/** 契约中的令牌对（snake_case）。 */
+export interface TokenPairDTO {
+  access_token: string;
+  expires_in: number;
+  refresh_token: string;
+  token_type: 'Bearer';
+}
+
+/** 页面/store 只消费该视图，避免 snake_case 扩散。 */
+export interface TokenPairVM {
+  accessToken: string;
+  refreshToken: string;
+}
+
+/** 当前主体权限快照（api/openapi/schemas/biz/iam-permissions.yaml）。 */
+export interface SubjectPermissions {
+  channel: 'admin' | 'biz';
+  data_scopes: unknown[];
+  generated_at: string;
+  merchant_id?: string;
+  permissions: string[];
+  roles: string[];
+  snapshot_version: number;
+  subject_id: string;
+  subject_type: string;
+}
+
+/** 令牌 DTO → 页面模型。 */
+export function toTokenPairVM(dto: TokenPairDTO): TokenPairVM {
+  return {
+    accessToken: dto.access_token,
+    refreshToken: dto.refresh_token,
+  };
 }
 
 /**
- * 登录
+ * 密码登录。
+ *
+ * 入参沿用 UI 的 username，出参映射为契约要求的 subject；
+ * 服务端 channel / merchant_id 均由账号推导，传了会被拒绝（40000）。
  */
-export async function loginApi(data: AuthApi.LoginParams) {
-  return requestClient.post<AuthApi.LoginResult>('/auth/login', data);
+export async function loginApi(data: {
+  password: string;
+  username: string;
+}): Promise<TokenPairVM> {
+  const res = await baseRequestClient.post<
+    AxiosResponse<Envelope<TokenPairDTO>>
+  >('/auth/login', { password: data.password, subject: data.username });
+  const envelope = res.data;
+  if (envelope.code !== 0 || !envelope.data) {
+    throw new Error(envelope.message || 'login failed');
+  }
+  return toTokenPairVM(envelope.data);
 }
 
 /**
- * 刷新accessToken
+ * 刷新令牌（一次性轮换）。
+ *
+ * 成功后旧 refresh token 立即失效，重放会撤销整条会话链，
+ * 因此调用方必须在同一次赋值内替换两个令牌。
  */
-export async function refreshTokenApi() {
-  return baseRequestClient.post<AuthApi.RefreshTokenResult>(
-    '/auth/refresh',
-    undefined,
-    {
-      withCredentials: true,
-    },
-  );
+export async function refreshTokenApi(
+  refreshToken: string,
+): Promise<TokenPairVM> {
+  const res = await baseRequestClient.post<
+    AxiosResponse<Envelope<TokenPairDTO>>
+  >('/auth/refresh', { refresh_token: refreshToken });
+  const envelope = res.data;
+  if (envelope.code !== 0 || !envelope.data) {
+    throw new Error(envelope.message || 'refresh failed');
+  }
+  return toTokenPairVM(envelope.data);
 }
 
 /**
- * 退出登录
+ * 登出当前会话。
+ *
+ * 后端返回 204 无 body，必须用 raw 避免被信封拦截器判为失败；
+ * 使用无拦截器的 baseRequestClient 并显式带 Bearer：登出时令牌可能已过期，
+ * 若走 requestClient 会触发刷新/重认证，进而与 authStore.logout 形成递归。
  */
-export async function logoutApi() {
-  return baseRequestClient.post('/auth/logout', undefined, {
-    withCredentials: true,
+export async function logoutApi(accessToken?: null | string): Promise<void> {
+  await baseRequestClient.post('/auth/logout', undefined, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    responseReturn: 'raw',
   });
 }
 
-/**
- * 获取用户权限码
- */
-export async function getAccessCodesApi() {
-  return requestClient.get<string[]>('/auth/codes');
+/** 当前主体的角色与权限快照。 */
+export async function getMyPermissionsApi(): Promise<SubjectPermissions> {
+  return requestClient.get<SubjectPermissions>('/iam/me/permissions');
+}
+
+/** 仅返回权限码，供只需要 accessCodes 的调用方使用。 */
+export async function getAccessCodesApi(): Promise<string[]> {
+  const permissions = await getMyPermissionsApi();
+  return permissions.permissions;
 }

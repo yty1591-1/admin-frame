@@ -10,7 +10,12 @@ import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
 
-import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
+import {
+  getMyPermissionsApi,
+  getUserInfoApi,
+  loginApi,
+  logoutApi,
+} from '#/api';
 import { $t } from '#/locales';
 
 export const useAuthStore = defineStore('auth', () => {
@@ -21,65 +26,56 @@ export const useAuthStore = defineStore('auth', () => {
   const loginLoading = ref(false);
 
   /**
-   * 异步处理登录操作
-   * Asynchronously handle the login process
-   * @param params 登录表单数据
+   * 密码登录。
+   *
+   * B 端登录没有 MFA / 强制改密中间态，拿到令牌即代表登录成功，
+   * 因此在本方法内一次性完成「落库双令牌 → 拉资料与权限 → 跳转」。
    */
-  async function authLogin(
-    params: Recordable<any>,
-    onSuccess?: () => Promise<void> | void,
-  ) {
-    // 异步处理用户登录操作并获取 accessToken
-    let userInfo: null | UserInfo = null;
+  async function authLogin(params: Recordable<any>) {
+    loginLoading.value = true;
     try {
-      loginLoading.value = true;
-      const { accessToken } = await loginApi(params);
-
-      // 如果成功获取到 accessToken
-      if (accessToken) {
-        accessStore.setAccessToken(accessToken);
-
-        // 获取用户信息并存储到 accessStore 中
-        const [fetchUserInfoResult, accessCodes] = await Promise.all([
-          fetchUserInfo(),
-          getAccessCodesApi(),
-        ]);
-
-        userInfo = fetchUserInfoResult;
-
-        userStore.setUserInfo(userInfo);
-        accessStore.setAccessCodes(accessCodes);
-
-        if (accessStore.loginExpired) {
-          accessStore.setLoginExpired(false);
-        } else {
-          onSuccess
-            ? await onSuccess?.()
-            : await router.push(
-                userInfo.homePath || preferences.app.defaultHomePath,
-              );
-        }
-
-        if (userInfo?.realName) {
-          notification.success({
-            description: `${$t('authentication.loginSuccessDesc')}:${userInfo?.realName}`,
-            duration: 3,
-            message: $t('authentication.loginSuccess'),
-          });
-        }
-      }
+      const tokens = await loginApi({
+        password: params.password,
+        username: params.username,
+      });
+      await completeLogin(tokens);
     } finally {
       loginLoading.value = false;
     }
+  }
 
-    return {
-      userInfo,
-    };
+  /** 统一落库双令牌 → 拉取资料与权限 → 跳转。 */
+  async function completeLogin(tokens: {
+    accessToken: string;
+    refreshToken: string;
+  }) {
+    accessStore.setAccessToken(tokens.accessToken);
+    accessStore.setRefreshToken(tokens.refreshToken);
+
+    const userInfo = await fetchUserInfo();
+    if (accessStore.loginExpired) {
+      accessStore.setLoginExpired(false);
+    }
+
+    const redirect = router.currentRoute.value.query.redirect as
+      | string
+      | undefined;
+    await router.push(
+      redirect ? decodeURIComponent(redirect) : preferences.app.defaultHomePath,
+    );
+
+    if (userInfo?.realName) {
+      notification.success({
+        description: `${$t('authentication.loginSuccessDesc')}:${userInfo.realName}`,
+        duration: 3,
+        message: $t('authentication.loginSuccess'),
+      });
+    }
   }
 
   async function logout(redirect: boolean = true) {
     try {
-      await logoutApi();
+      await logoutApi(accessStore.accessToken);
     } catch {
       // 不做任何处理
     }
@@ -104,10 +100,20 @@ export const useAuthStore = defineStore('auth', () => {
     });
   }
 
-  async function fetchUserInfo() {
-    const userInfo = await getUserInfoApi();
-    userStore.setUserInfo(userInfo);
-    return userInfo;
+  /**
+   * 拉取当前主体资料与权限快照。
+   *
+   * 两个请求并行；角色来自权限快照而不是 /me，保持与 A 端一致的口径。
+   */
+  async function fetchUserInfo(): Promise<UserInfo> {
+    const [userInfo, permissions] = await Promise.all([
+      getUserInfoApi(),
+      getMyPermissionsApi(),
+    ]);
+    const merged = { ...userInfo, roles: permissions.roles };
+    userStore.setUserInfo(merged);
+    accessStore.setAccessCodes(permissions.permissions);
+    return merged;
   }
 
   function $reset() {
