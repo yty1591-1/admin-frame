@@ -98,6 +98,7 @@ func (r *MemoryAccountRepository) List(_ context.Context, filter domain.AccountL
 	defer r.mu.RUnlock()
 
 	keyword := domain.NormalizeSubject(filter.Keyword)
+	exact := domain.NormalizeSubject(filter.SubjectExact)
 	matched := make([]*domain.Account, 0, len(r.accounts))
 	for _, account := range r.accounts {
 		if filter.Channel != "" && account.Channel != filter.Channel {
@@ -106,7 +107,14 @@ func (r *MemoryAccountRepository) List(_ context.Context, filter domain.AccountL
 		if filter.Status != "" && account.Status != filter.Status {
 			continue
 		}
-		if keyword != "" && !strings.Contains(account.Subject, keyword) {
+		if filter.MerchantID != "" && account.MerchantID != filter.MerchantID {
+			continue
+		}
+		if exact != "" {
+			if account.Subject != exact {
+				continue
+			}
+		} else if keyword != "" && !strings.Contains(account.Subject, keyword) {
 			continue
 		}
 		matched = append(matched, cloneAccount(account))

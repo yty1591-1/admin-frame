@@ -210,12 +210,32 @@ func (r *SQLAccountRepository) List(ctx context.Context, filter domain.AccountLi
 		conditions = append(conditions, "status = ?")
 		args = append(args, string(filter.Status))
 	}
+	if filter.MerchantID != "" {
+		conditions = append(conditions, "merchant_id = ?")
+		args = append(args, filter.MerchantID)
+	}
+
+	// PERF-07：精确主体走 subject_index 索引，避免关键词路径的全量扫描。
+	if exact := domain.NormalizeSubject(filter.SubjectExact); exact != "" {
+		if r.protector == nil {
+			return nil, 0, apperr.Unavailable("subject protector is not configured")
+		}
+		index := r.protector.Index(filter.Channel, filter.MerchantID, exact)
+		if index == "" {
+			return nil, 0, apperr.Internal("subject index is empty", nil)
+		}
+		conditions = append(conditions, "subject_index = ?")
+		args = append(args, index)
+	}
+
 	where := strings.Join(conditions, " AND ")
 
 	// S5 后不再有明文主体列，关键词子串匹配无法下推到 SQL；
 	// 仅在该条件存在时按上限扫描并在内存解密过滤（管理端列表量级可控）。
-	if keyword := domain.NormalizeSubject(filter.Keyword); keyword != "" {
-		return r.listByKeyword(ctx, where, args, keyword, limit, offset)
+	if exact := domain.NormalizeSubject(filter.SubjectExact); exact == "" {
+		if keyword := domain.NormalizeSubject(filter.Keyword); keyword != "" {
+			return r.listByKeyword(ctx, where, args, keyword, limit, offset)
+		}
 	}
 
 	// 总数统计限制扫描上限，避免无界 COUNT。

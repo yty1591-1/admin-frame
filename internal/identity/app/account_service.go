@@ -437,6 +437,8 @@ type AccountListInput struct {
 	Status string
 	// Keyword 主体关键词；空值表示不过滤。
 	Keyword string
+	// SubjectExact 规范化主体精确值；非空时优先于 Keyword 并走索引（PERF-07）。
+	SubjectExact string
 	// Limit / Offset 分页；由服务端钳制。
 	Limit  int
 	Offset int
@@ -473,12 +475,17 @@ func (s *AccountService) List(ctx context.Context, in AccountListInput) ([]Accou
 	if offset < 0 {
 		offset = 0
 	}
+	exact := strings.TrimSpace(in.SubjectExact)
+	if len(exact) > maxLoginSubjectBytes {
+		return nil, 0, apperr.BadRequest("subject exceeds maximum length")
+	}
 	accounts, total, err := s.auth.accounts.List(ctx, domain.AccountListFilter{
-		Channel: s.auth.channel,
-		Status:  status,
-		Keyword: strings.TrimSpace(in.Keyword),
-		Limit:   limit,
-		Offset:  offset,
+		Channel:      s.auth.channel,
+		Status:       status,
+		Keyword:      strings.TrimSpace(in.Keyword),
+		SubjectExact: exact,
+		Limit:        limit,
+		Offset:       offset,
 	})
 	if err != nil {
 		return nil, 0, apperr.Internal("list accounts failed", err)
@@ -498,6 +505,9 @@ func (s *AccountService) List(ctx context.Context, in AccountListInput) ([]Accou
 	if in.Keyword != "" {
 		// 只记录存在关键词，不写主体原文（避免审计二次留存 PII）。
 		attrs["keyword_present"] = "true"
+	}
+	if exact != "" {
+		attrs["subject_exact_present"] = "true"
 	}
 	if err := s.auth.emitAudit(ctx, audit.ActionAuthAccountRead, in.Actor.AccountID, in.Actor.MerchantID,
 		"account", "list", audit.OutcomeSuccess, "", in.Actor.TraceID, attrs); err != nil {

@@ -396,11 +396,12 @@ func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	query := r.URL.Query()
 	items, total, err := h.accounts.List(r.Context(), app.AccountListInput{
-		Actor:   actor,
-		Status:  strings.TrimSpace(query.Get("status")),
-		Keyword: strings.TrimSpace(query.Get("keyword")),
-		Limit:   page.Limit(),
-		Offset:  page.Offset(),
+		Actor:        actor,
+		Status:       strings.TrimSpace(query.Get("status")),
+		Keyword:      strings.TrimSpace(query.Get("keyword")),
+		SubjectExact: strings.TrimSpace(query.Get("subject")),
+		Limit:        page.Limit(),
+		Offset:       page.Offset(),
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)

@@ -314,13 +314,26 @@ func TestAccountServiceListAndGet(t *testing.T) {
 	if total != 1 || len(filtered) != 1 || filtered[0].Subject != "alice" {
 		t.Fatalf("keyword filter = %+v total=%d, want alice only", filtered, total)
 	}
+	// PERF-07：精确主体优先于关键词，且大小写 / 空白归一化。
+	exact, total, err := svc.List(ctx, app.AccountListInput{
+		Actor: actor, SubjectExact: "  ALICE ", Keyword: "bob",
+	})
+	if err != nil {
+		t.Fatalf("list subject exact: %v", err)
+	}
+	if total != 1 || len(exact) != 1 || exact[0].Subject != "alice" {
+		t.Fatalf("subject exact = %+v total=%d, want alice only", exact, total)
+	}
 	// 列表读取必须留痕，且只标记关键词存在，不记录主体原文（SEC-08）。
 	listEvents := capture.byAction(audit.ActionAuthAccountRead)
-	if len(listEvents) != 2 {
-		t.Fatalf("list read audits = %d, want 2: %+v", len(listEvents), capture.snapshot())
+	if len(listEvents) != 3 {
+		t.Fatalf("list read audits = %d, want 3: %+v", len(listEvents), capture.snapshot())
 	}
 	if listEvents[1].Attrs["scope"] != "list" || listEvents[1].Attrs["keyword_present"] != "true" {
 		t.Fatalf("list audit attrs = %+v", listEvents[1].Attrs)
+	}
+	if listEvents[2].Attrs["subject_exact_present"] != "true" {
+		t.Fatalf("exact list audit attrs = %+v", listEvents[2].Attrs)
 	}
 
 	detail, err := svc.Get(ctx, app.SessionActor{AccountID: "acct-admin", TraceID: "trace-read"}, "acct-list-1")

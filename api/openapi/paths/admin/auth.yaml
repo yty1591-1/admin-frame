@@ -255,8 +255,9 @@ admin-v1-auth-accounts:
     tags: [auth]
     summary: 列出身份账号
     description: |
-      需要权限点 `identity:account:read`。按创建时间倒序分页；`status` 与 `keyword`
-      （主体子串）可选，软删账号同样返回并带 `deleted_at`。
+      需要权限点 `identity:account:read`。按创建时间倒序分页；`status`、`subject`
+      （主体精确匹配，走索引）与 `keyword`（主体子串）可选，软删账号同样返回并带
+      `deleted_at`。`subject` 非空时优先于 `keyword`。
     operationId: adminAuthListAccounts
     security:
       - bearerAuth: []
@@ -281,9 +282,15 @@ admin-v1-auth-accounts:
         schema:
           type: string
           enum: [pending, active, locked, disabled]
+      - name: subject
+        in: query
+        description: 主体精确匹配（大小写不敏感，走 subject_index 索引）
+        schema:
+          type: string
+          maxLength: 255
       - name: keyword
         in: query
-        description: 主体关键词（子串匹配，大小写不敏感）
+        description: 主体关键词（子串匹配，大小写不敏感；大租户建议改用 subject）
         schema:
           type: string
           maxLength: 255

@@ -39,6 +39,10 @@ type AccountListFilter struct {
 	Status AccountStatus
 	// Keyword 主体关键词；空值表示不过滤。
 	Keyword string
+	// SubjectExact 规范化后的主体精确值；非空时优先于 Keyword 并走 subject_index 索引（PERF-07）。
+	SubjectExact string
+	// MerchantID B 端商户过滤；空值表示不按商户过滤（A/C 端固定为空串）。
+	MerchantID string
 	// Limit 每页条数；调用方负责上限钳制。
 	Limit int
 	// Offset 偏移量；按 created_at、id 倒序。
