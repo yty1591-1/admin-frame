@@ -1470,6 +1470,35 @@ func (s *AuthService) createSession(
 	}, nil
 }
 
+// familyListPageSize 是设备淘汰扫描的固定页大小，避免依赖仓储对 limit=0 的归一化。
+const familyListPageSize = 100
+
+// listAllFamilies 游标分页读取账号全部设备，直到取完或达到扫描上限（PERF-04）。
+//
+// 仓储对 limit<=0 可能归一为 20；淘汰必须看到全部设备才能严格计算超限数量。
+func listAllFamilies(ctx context.Context, sessions domain.SessionRepository, accountID string) ([]*domain.SessionFamily, error) {
+	const maxFamilies = 10000
+	all := make([]*domain.SessionFamily, 0, familyListPageSize)
+	afterLastUsed := time.Time{}
+	afterID := ""
+	for len(all) < maxFamilies {
+		page, err := sessions.ListFamiliesByAccount(ctx, accountID, afterLastUsed, afterID, familyListPageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		all = append(all, page...)
+		last := page[len(page)-1]
+		afterLastUsed = last.LastUsedAt
+		afterID = last.ID
+		// 仓储可能把页大小归一化得更小，不能以 len(page)<请求页大小判定结束；
+		// 继续读取直到空页，保证拿到全部设备。
+	}
+	return all, nil
+}
+
 // evictFamilies 在创建新设备前淘汰最久未使用的设备，保证单账号活跃设备数受限。
 //
 // 采用「先淘汰再创建」而不是创建后回收：新设备永远不被自己的登录顶掉。
@@ -1478,7 +1507,7 @@ func (s *AuthService) evictFamilies(ctx context.Context, account *domain.Account
 	if s.maxPerAccount <= 0 {
 		return nil
 	}
-	families, err := s.sessions.ListFamiliesByAccount(ctx, account.ID, time.Time{}, "", 0)
+	families, err := listAllFamilies(ctx, s.sessions, account.ID)
 	if err != nil {
 		return apperr.Internal("list session families failed", err)
 	}
