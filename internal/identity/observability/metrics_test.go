@@ -50,6 +50,36 @@ func TestMetricsRecordCoreEvents(t *testing.T) {
 	}
 }
 
+// TestCleanupMetricsRecordRun 验证清理指标覆盖成功/失败/跳过与批次上限（OPS-02）。
+func TestCleanupMetricsRecordRun(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	m, err := NewCleanupMetrics(registry)
+	if err != nil {
+		t.Fatalf("NewCleanupMetrics() error = %v", err)
+	}
+	ctx := context.Background()
+	m.OnCleanupRun(ctx, app.CleanupRunResult{
+		Stats:    app.CleanupStats{ExpiredSessions: 2, DeletedLoginAttempts: 3, BatchLimitHit: true},
+		Duration: 100 * time.Millisecond,
+	})
+	m.OnCleanupRun(ctx, app.CleanupRunResult{Skipped: true, SkipReason: "lock_held"})
+	m.OnCleanupRun(ctx, app.CleanupRunResult{Err: errors.New("db down")})
+
+	counters := gatheredCounters(t, registry)
+	if got := counters["identity_cleanup_runs_total"]; got != 3 {
+		t.Fatalf("identity_cleanup_runs_total = %v, want 3", got)
+	}
+	if got := counters["identity_cleanup_rows_total"]; got != 5 {
+		t.Fatalf("identity_cleanup_rows_total = %v, want 5", got)
+	}
+	if got := counters["identity_cleanup_batch_limit_hit_total"]; got != 1 {
+		t.Fatalf("identity_cleanup_batch_limit_hit_total = %v, want 1", got)
+	}
+	if _, err := NewCleanupMetrics(registry); err == nil {
+		t.Fatalf("NewCleanupMetrics() on same registry must fail")
+	}
+}
+
 // gatheredCounters 汇总 Registry 中所有 counter 的值，按指标名累加各标签序列。
 func gatheredCounters(t *testing.T, registry *prometheus.Registry) map[string]float64 {
 	t.Helper()

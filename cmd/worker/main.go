@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,8 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/pkg/db"
+	pkgmetrics "github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
@@ -58,7 +61,15 @@ func run(configPath, replayDLQ string) error {
 		}
 	}()
 
-	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database}
+	met, err := pkgmetrics.New(pkgmetrics.Options{
+		Service: cfg.Service,
+		Channel: cfg.Channel,
+		Env:     cfg.Env,
+	})
+	if err != nil {
+		return fmt.Errorf("metrics: %w", err)
+	}
+	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met}
 	if replayDLQ != "" {
 		return replayDeadLetters(ctx, deps, replayDLQ, logger)
 	}
@@ -81,6 +92,10 @@ func run(configPath, replayDLQ string) error {
 		return fmt.Errorf("identity cleanup: %w", err)
 	}
 
+	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
+	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
+	defer stopHTTP()
+
 	logger.Info("worker started",
 		"db_driver", cfg.DB.Driver,
 		"async_driver", cfg.Async.Driver,
@@ -95,6 +110,57 @@ func run(configPath, replayDLQ string) error {
 	}
 	logger.Info("worker shutting down")
 	return nil
+}
+
+// startWorkerHTTP 启动 worker 的指标与探针端点，返回幂等的优雅关闭函数。
+//
+// 只暴露 /metrics、/healthz 与 /readyz；不挂载任何业务路由。
+func startWorkerHTTP(
+	cfg *platform.Config,
+	database *db.DB,
+	met *pkgmetrics.Metrics,
+	logger *slog.Logger,
+) func() {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", met.Handler())
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := database.Ping(pingCtx); err != nil {
+			http.Error(w, "database not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	addr := cfg.Addr
+	if addr == "" {
+		addr = ":8090"
+	}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
+	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("worker http server stopped", "error", err)
+		}
+	}()
+	logger.Info("worker http server started", "addr", addr)
+	return func() {
+		timeout := cfg.ShutdownTimeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("worker http server shutdown", "error", err)
+		}
+	}
 }
 
 // replayDeadLetters 把死信重置为 pending，由后续 Relay 重新投递。

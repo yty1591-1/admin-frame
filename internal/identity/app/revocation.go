@@ -173,6 +173,12 @@ const (
 	revocationStoreBreakerCooldown  = 10 * time.Second
 )
 
+// errRevocationStoreCircuitOpen 表示撤销存储处于熔断冷却期，jti 校验不再触网。
+//
+// jti 黑名单没有数据库事实源，无法回源；冷却期内直接按 failure_mode 返回，
+// 避免 Redis 故障时每个请求都等待读超时（REL-01）。
+var errRevocationStoreCircuitOpen = errors.New("revocation store circuit open")
+
 // RevocationChecker 实现 internal/security.RevocationChecker（docs/identity-authn.md §6.2）。
 //
 // 校验顺序：账号状态 → token_version → 会话状态（sid）→ jti 黑名单。
@@ -252,6 +258,11 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 		}
 	}
 	if claims.ID != "" {
+		// 熔断冷却期内 jti 无法校验且没有 DB 事实源：快速失败，禁止继续等待 Redis 超时。
+		if c.storeSkipped() {
+			c.notifyStoreFailure(ctx, "token_load", errRevocationStoreCircuitOpen)
+			return c.failure(errRevocationStoreCircuitOpen)
+		}
 		revoked, err := c.store.IsTokenRevoked(ctx, claims.ID)
 		if err != nil {
 			c.recordStoreFailure()
@@ -311,8 +322,10 @@ func (c *RevocationChecker) freshAt(fetchedAt time.Time) bool {
 func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) (AccountState, bool, error) {
 	value, err, _ := c.refetch.Do(accountID, func() (any, error) {
 		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
-		// 熔断期内跳过 Redis；读取失败时直接忽略并回源 DB（DB 才是事实源）。
-		if !c.storeSkipped() {
+		// 熔断期内跳过 Redis 读写：读取失败时直接回源 DB（DB 才是事实源），
+		// 回填也跳过，避免 Redis 故障时每个请求仍等待写超时（REL-01）。
+		skipStore := c.storeSkipped()
+		if !skipStore {
 			if loaded, hit, loadErr := c.store.LoadAccountState(ctx, accountID); loadErr == nil && hit && c.isFresh(loaded) {
 				c.recordStoreSuccess()
 				return loaded, nil
@@ -328,8 +341,10 @@ func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) 
 			Status:    account.Status,
 			FetchedAt: c.clock.Now(),
 		}
-		if saveErr := c.store.SaveAccountState(ctx, accountID, state, c.stateTTL); saveErr != nil {
-			c.notifyWriteFailure(ctx, "set", saveErr)
+		if !skipStore {
+			if saveErr := c.store.SaveAccountState(ctx, accountID, state, c.stateTTL); saveErr != nil {
+				c.notifyWriteFailure(ctx, "set", saveErr)
+			}
 		}
 		return state, nil
 	})
@@ -385,8 +400,9 @@ func (c *RevocationChecker) loadSessionState(ctx context.Context, sessionID stri
 func (c *RevocationChecker) refetchSessionState(ctx context.Context, sessionID string) (SessionState, error) {
 	value, err, _ := c.refetch.Do("sid:"+sessionID, func() (any, error) {
 		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
-		// 熔断期内跳过 Redis；读取失败时直接忽略并回源 DB（DB 才是事实源）。
-		if !c.storeSkipped() {
+		// 熔断期内跳过 Redis 读写，避免 Redis 故障时请求仍被写超时拖住（REL-01）。
+		skipStore := c.storeSkipped()
+		if !skipStore {
 			if loaded, hit, loadErr := c.store.LoadSessionState(ctx, sessionID); loadErr == nil && hit && c.freshAt(loaded.FetchedAt) {
 				c.recordStoreSuccess()
 				return loaded, nil
@@ -403,8 +419,10 @@ func (c *RevocationChecker) refetchSessionState(ctx context.Context, sessionID s
 			ExpiresAt: session.ExpiresAt,
 			FetchedAt: c.clock.Now(),
 		}
-		if saveErr := c.store.SaveSessionState(ctx, sessionID, state, c.stateTTL); saveErr != nil {
-			c.notifyWriteFailure(ctx, "session_set", saveErr)
+		if !skipStore {
+			if saveErr := c.store.SaveSessionState(ctx, sessionID, state, c.stateTTL); saveErr != nil {
+				c.notifyWriteFailure(ctx, "session_set", saveErr)
+			}
 		}
 		return state, nil
 	})

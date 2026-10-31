@@ -10,7 +10,7 @@ log:
   format: json
 
 auth:
-  # worker 不对外提供 HTTP，鉴权配置仅用于共享配置结构校验。
+  # worker 只暴露 /metrics、/healthz、/readyz，无业务路由；鉴权配置仅用于共享配置结构校验。
   mode: demo
   expected_channel: worker
 

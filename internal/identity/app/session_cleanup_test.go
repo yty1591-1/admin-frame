@@ -96,6 +96,32 @@ func TestSessionCleanupLoopsUntilDrained(t *testing.T) {
 	}
 }
 
+// TestSessionCleanupReportsBatchLimitHit 验证达到单轮批次上限时标记积压（OPS-02）。
+func TestSessionCleanupReportsBatchLimitHit(t *testing.T) {
+	sessions := &cleanupSessions{
+		expire:      []domain.SessionExpireResult{{Sessions: 1, Families: 1}},
+		deleteBatch: []domain.SessionDeleteResult{{Sessions: 1, Families: 1}},
+	}
+	attempts := &cleanupAttempts{results: []int{1}}
+	cleanup, err := app.NewSessionCleanup(sessions, attempts, app.RetentionPolicy{
+		SessionRetention:      time.Hour,
+		LoginAttemptRetention: time.Hour,
+		ArchiveRetention:      -time.Hour,
+		BatchSize:             1,
+		MaxBatchesPerRun:      1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("new cleanup: %v", err)
+	}
+	stats, err := cleanup.Run(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("run cleanup: %v", err)
+	}
+	if !stats.BatchLimitHit {
+		t.Fatalf("BatchLimitHit = false, want true (one full batch with max=1)")
+	}
+}
+
 // TestSessionCleanupArchivesAndPrunesArchive 验证默认路径按批归档并清理过期归档。
 func TestSessionCleanupArchivesAndPrunesArchive(t *testing.T) {
 	sessions := &cleanupSessions{

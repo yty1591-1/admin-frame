@@ -103,3 +103,36 @@ groups:
           summary: "设备会话撤销失败"
           description: "撤销失败可能导致旧令牌继续可用；检查 DB/Redis 错误日志与事务回滚原因。"
           runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityCleanupFailures
+        expr: increase(identity_cleanup_runs_total{result="failure"}[1h]) > 0
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.cleanup.failure
+        annotations:
+          summary: "身份域清理任务执行失败"
+          description: "检查 worker 日志、DB 连接与归档表锁；失败期间会话表会持续增长。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityCleanupBacklog
+        expr: increase(identity_cleanup_batch_limit_hit_total[1h]) > 0
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.cleanup.backlog
+        annotations:
+          summary: "身份域清理达到批次上限"
+          description: "单轮清理未清空，存在积压；上调 batch_size/max_batches_per_run 或缩短 cleanup_interval。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityCleanupNotRunning
+        expr: absent(identity_cleanup_runs_total)
+        for: 2h
+        labels:
+          severity: P2
+          alert_id: identity.cleanup.not_running
+        annotations:
+          summary: "身份域清理指标缺失"
+          description: "worker 未暴露清理指标或清理任务未启动；确认 worker ServiceMonitor 抓取与 StartCleanup 日志。"
+          runbook_url: docs/runbooks/identity-auth-failure.md

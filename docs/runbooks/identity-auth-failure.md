@@ -16,7 +16,7 @@
 
 | 现象 | 最可能原因 | 处置 |
 |---|---|---|
-| 全站 401/503，`revocation.store_error` 突增 | Redis 故障 | 确认 Redis 健康；账号/会话快照会自动回退 DB；jti 黑名单失败按 fail_closed 拒绝；恢复 Redis 后自动恢复 |
+| 全站 401/503，`revocation.store_error` 突增 | Redis 故障 | 确认 Redis 健康；账号/会话快照自动回退 DB；熔断打开后 jti 快速失败（不再逐请求等待超时）；恢复 Redis 后自动恢复 |
 | `identity.token.reuse` > 0 | 刷新令牌被重放 | 确认该设备链已撤销；通知账号所有者；检查客户端并发刷新逻辑 |
 | `identity.lockout.spike` | 撞库 / 锁定阈值过低 | 查看 reason 分布；必要时临时上调 `identity.lockout.max_failures` 或封禁来源 IP |
 | `identity.refresh.failure_rate` 高 | 会话过期 / 撤销 / 客户端时钟 | 检查 `identity_session` 状态与设备绝对到期；确认客户端时间同步 |
@@ -26,10 +26,14 @@
 
 ## 2. Redis 故障处置
 
-1. 不要立即重启全部 API Pod；readiness 已只绑定 DB，Pod 不会被批量摘流。
-2. 账号 / 会话撤销快照会自动回源 DB；jti 黑名单仍 fail_closed，登出后的 Access Token 会持续被拒绝直到 Redis 恢复。
-3. 若 Redis 长时间不可用，评估临时开启 `identity.revocation.failure_mode=fail_open` 的**安全代价**；生产默认禁止。
-4. Redis 恢复后确认 `identity_revocation_store_errors_total` 停止增长，并抽查撤销快照键。
+> 前置要求：Redis 必须为主从 / 哨兵 / 集群形态并跨可用区部署。jti 黑名单没有数据库事实源，
+> Redis 不可用时已认证请求会按 fail_closed 返回 503；这是安全优先的显式取舍（REL-01 / REL-04）。
+
+1. 不要立即重启全部 API Pod；readiness 只绑定 DB，Pod 不会被批量摘流。
+2. 账号 / 会话撤销快照自动回源 DB；连续 3 次失败后熔断 10s，冷却期内**跳过 Redis 读写**并直接回源 DB。
+3. 熔断期内 jti 校验直接快速失败（503），不再逐请求等待 3s 读超时，避免故障放大为请求雪崩。
+4. 若 Redis 长时间不可用，评估临时开启 `identity.revocation.failure_mode=fail_open` 的**安全代价**；生产默认禁止。
+5. Redis 恢复后确认 `identity_revocation_store_errors_total` 停止增长，并抽查撤销快照键；下一次冷却结束会自动重新探测 Redis。
 
 ## 3. 令牌重放处置
 
@@ -47,7 +51,9 @@
 
 ## 5. 清理积压处置
 
-1. 查看 `identity cleanup completed` 日志中的 deleted 数量。
-2. 若长期等于批大小，说明未追平：提高 `identity.retention.batch_size` / `max_batches_per_run` 或缩短 `cleanup_interval`。
-3. 确认 000008 索引已执行：`SHOW INDEX FROM identity_session` 应包含 `idx_identity_session_updated`。
-4. 避免在业务高峰执行大批量删除；可分时段观察 DB 锁等待。
+1. 看 `identity_cleanup_runs_total{result="failure|skipped"}`：`failure` 表示本轮执行失败，`skipped` 表示未获得分布式锁（另一副本在执行）。
+2. 看 `identity_cleanup_rows_total{kind=...}` 与 `identity_cleanup_duration_seconds` 评估吞吐。
+3. `identity_cleanup_batch_limit_hit_total` 增长表示单轮达到批次上限仍未清空：提高 `identity.retention.batch_size` / `max_batches_per_run` 或缩短 `cleanup_interval`。
+4. 确认 000008 索引已执行：`SHOW INDEX FROM identity_session` 应包含 `idx_identity_session_updated`。
+5. 清理任务通过 MySQL `GET_LOCK('identity:cleanup')` 互斥，多副本 worker 只会有一个执行；进程崩溃后连接断开自动释放。
+6. 避免在业务高峰执行大批量删除；可分时段观察 DB 锁等待。

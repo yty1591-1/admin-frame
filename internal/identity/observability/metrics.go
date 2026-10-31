@@ -43,6 +43,99 @@ var (
 	_ app.RevocationCacheObserver = (*Metrics)(nil)
 )
 
+// CleanupMetrics 是清理任务的独立指标集，供 worker 进程单独注册（OPS-02）。
+type CleanupMetrics struct {
+	runs           *prometheus.CounterVec
+	rows           *prometheus.CounterVec
+	duration       prometheus.Histogram
+	batchLimitHits prometheus.Counter
+}
+
+// 编译期断言。
+var _ app.CleanupObserver = (*CleanupMetrics)(nil)
+
+// NewCleanupMetrics 创建并注册清理指标；重复注册视为装配错误（fail-fast）。
+func NewCleanupMetrics(registerer prometheus.Registerer) (*CleanupMetrics, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("identity cleanup observability: registerer is required")
+	}
+	m := &CleanupMetrics{
+		runs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_cleanup_runs_total",
+			Help: "身份域清理任务执行轮次；result=success|failure|skipped。",
+		}, []string{"result"}),
+		rows: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_cleanup_rows_total",
+			Help: "身份域清理任务处理的累计行数；kind 为 expired/deleted/archived 等低基数类型。",
+		}, []string{"kind"}),
+		duration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "identity_cleanup_duration_seconds",
+			Help:    "身份域单轮清理耗时（秒）；包含过期标记、归档、删除与登录尝试清理。",
+			Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300, 600, 1800, 3600},
+		}),
+		batchLimitHits: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "identity_cleanup_batch_limit_hit_total",
+			Help: "身份域清理达到单轮批次上限仍未清空的次数；非零表示积压或吞吐不足。",
+		}),
+	}
+	for _, collector := range []prometheus.Collector{m.runs, m.rows, m.duration, m.batchLimitHits} {
+		if err := registerer.Register(collector); err != nil {
+			return nil, fmt.Errorf("identity cleanup observability: register metrics: %w", err)
+		}
+	}
+	for _, result := range []string{"success", "failure", "skipped"} {
+		m.runs.WithLabelValues(result)
+	}
+	for _, kind := range []string{
+		"expired_sessions", "expired_families",
+		"deleted_sessions", "deleted_families",
+		"archived_sessions", "archived_families",
+		"deleted_archived_sessions", "deleted_archived_families",
+		"deleted_login_attempts",
+	} {
+		m.rows.WithLabelValues(kind)
+	}
+	m.batchLimitHits.Add(0)
+	return m, nil
+}
+
+// OnCleanupRun 实现 app.CleanupObserver。
+func (m *CleanupMetrics) OnCleanupRun(_ context.Context, result app.CleanupRunResult) {
+	if m == nil {
+		return
+	}
+	status := "success"
+	switch {
+	case result.Skipped:
+		status = "skipped"
+	case result.Err != nil:
+		status = "failure"
+	}
+	m.runs.WithLabelValues(status).Inc()
+	if result.Skipped {
+		return
+	}
+	m.duration.Observe(result.Duration.Seconds())
+	for kind, value := range map[string]int{
+		"expired_sessions":          result.Stats.ExpiredSessions,
+		"expired_families":          result.Stats.ExpiredFamilies,
+		"deleted_sessions":          result.Stats.DeletedSessions,
+		"deleted_families":          result.Stats.DeletedFamilies,
+		"archived_sessions":         result.Stats.ArchivedSessions,
+		"archived_families":         result.Stats.ArchivedFamilies,
+		"deleted_archived_sessions": result.Stats.DeletedArchiveSessions,
+		"deleted_archived_families": result.Stats.DeletedArchiveFamilies,
+		"deleted_login_attempts":    result.Stats.DeletedLoginAttempts,
+	} {
+		if value > 0 {
+			m.rows.WithLabelValues(kind).Add(float64(value))
+		}
+	}
+	if result.Stats.BatchLimitHit {
+		m.batchLimitHits.Inc()
+	}
+}
+
 // NewMetrics 创建并注册指标；重复注册视为装配错误（fail-fast）。
 func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	if registerer == nil {

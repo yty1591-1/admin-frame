@@ -233,7 +233,7 @@ workloads:
     statefulset:
       enabled: false
     configOverrides: {}
-    # worker 不提供 HTTP 探针，依赖进程存活与积压告警（见 README）。
+    # worker 暴露 /metrics、/healthz、/readyz；生产 overlay 开启探针与 Service，供指标抓取。
     probes:
       enabled: false
     resources:

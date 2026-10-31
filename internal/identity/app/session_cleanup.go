@@ -49,6 +49,37 @@ type CleanupStats struct {
 	DeletedArchiveSessions int
 	DeletedArchiveFamilies int
 	DeletedLoginAttempts   int
+	// BatchLimitHit 表示本轮至少有一类清理达到了 MaxBatchesPerRun 仍未清空。
+	//
+	// 为 true 说明单轮吞吐不足，需要上调批大小/上限或缩短清理间隔（OPS-02）。
+	BatchLimitHit bool
+}
+
+// CleanupRunResult 是一次清理任务的执行结果，供指标与告警消费。
+type CleanupRunResult struct {
+	// Stats 本轮清理统计；失败时为已完成部分。
+	Stats CleanupStats
+	// Duration 本轮实际耗时。
+	Duration time.Duration
+	// Err 本轮失败原因；nil 表示成功。
+	Err error
+	// Skipped 表示本轮因未获得分布式锁而跳过。
+	Skipped bool
+	// SkipReason 跳过原因：lock_held | lock_error。
+	SkipReason string
+}
+
+// CleanupObserver 接收清理任务结果；未注入时为 no-op。
+type CleanupObserver interface {
+	OnCleanupRun(ctx context.Context, result CleanupRunResult)
+}
+
+// CleanupLock 是清理任务的分布式互斥端口。
+//
+// Acquire 返回 release 与是否获得锁；acquired=false 表示其他副本正在执行。
+// 实现须保证进程崩溃后锁自动释放（租约 / 连接级锁）。
+type CleanupLock interface {
+	Acquire(ctx context.Context) (release func(context.Context), acquired bool, err error)
 }
 
 // SessionCleanup 按保留期清理会话、设备与登录尝试（由 worker 周期调用）。
@@ -106,6 +137,9 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 		if expired.Sessions < c.policy.BatchSize && expired.Families < c.policy.BatchSize {
 			break
 		}
+		if batch == c.policy.MaxBatchesPerRun-1 {
+			stats.BatchLimitHit = true
+		}
 	}
 
 	// 会话保留期处理：默认归档 + 删除同事务；ArchiveRetention<=0 时回退到只删不归档。
@@ -122,6 +156,9 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 			if archived.Sessions < c.policy.BatchSize && archived.Families < c.policy.BatchSize {
 				break
 			}
+			if batch == c.policy.MaxBatchesPerRun-1 {
+				stats.BatchLimitHit = true
+			}
 		}
 		archiveCutoff := now.Add(-c.policy.ArchiveRetention).UTC()
 		for batch := 0; batch < c.policy.MaxBatchesPerRun; batch++ {
@@ -133,6 +170,9 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 			stats.DeletedArchiveFamilies += removed.Families
 			if removed.Sessions < c.policy.BatchSize && removed.Families < c.policy.BatchSize {
 				break
+			}
+			if batch == c.policy.MaxBatchesPerRun-1 {
+				stats.BatchLimitHit = true
 			}
 		}
 	} else {
@@ -146,6 +186,9 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 			if deleted.Sessions < c.policy.BatchSize && deleted.Families < c.policy.BatchSize {
 				break
 			}
+			if batch == c.policy.MaxBatchesPerRun-1 {
+				stats.BatchLimitHit = true
+			}
 		}
 	}
 
@@ -157,6 +200,9 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 		stats.DeletedLoginAttempts += attempts
 		if attempts < c.policy.BatchSize {
 			break
+		}
+		if batch == c.policy.MaxBatchesPerRun-1 {
+			stats.BatchLimitHit = true
 		}
 	}
 
@@ -171,6 +217,7 @@ func (c *SessionCleanup) Run(ctx context.Context, now time.Time) (CleanupStats, 
 			"deleted_archived_sessions", stats.DeletedArchiveSessions,
 			"deleted_archived_families", stats.DeletedArchiveFamilies,
 			"deleted_login_attempts", stats.DeletedLoginAttempts,
+			"batch_limit_hit", stats.BatchLimitHit,
 		)
 	}
 	return stats, nil

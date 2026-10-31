@@ -310,12 +310,11 @@ func RegisterAsync(deps *platform.Deps) error {
 
 // StartCleanup 启动身份域保留期清理任务（仅在 worker 调用）。
 //
-// identity.enabled=false 或使用内存仓储时不做清理（重启即丢数据，无需保留期）。
+// worker 的 identity.enabled 必须保持 false（鉴权配置校验不允许 worker 启用身份域），
+// 但清理仍必须运行：这里只以“存在持久化数据库”为开关，避免生产清理任务被静默跳过。
+// 内存仓储（deps.Database=nil）不做清理：重启即丢数据，无需保留期。
 func StartCleanup(ctx context.Context, deps *platform.Deps) error {
-	if deps == nil || deps.Config == nil || !deps.Config.Identity.Enabled {
-		return nil
-	}
-	if deps.Database == nil {
+	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil
 	}
 	repos, err := buildRepositories(deps, nil)
@@ -336,24 +335,49 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	if interval <= 0 {
 		interval = time.Hour
 	}
-	go runCleanupLoop(ctx, cleanup, interval, deps.Logger)
+	var observer app.CleanupObserver
+	if deps.Metrics != nil {
+		cleanupMetrics, metricsErr := identityobs.NewCleanupMetrics(deps.Metrics.RegistererWithoutChannel())
+		if metricsErr != nil {
+			return metricsErr
+		}
+		observer = cleanupMetrics
+	}
+	// 生产多副本 worker 必须互斥；MySQL GET_LOCK 为连接级锁，进程退出自动释放。
+	var locker app.CleanupLock
+	if deps.Config.DB.Driver == "mysql" {
+		mysqlLock, lockErr := persistence.NewMySQLCleanupLock(deps.Database.SQL(), "identity:cleanup")
+		if lockErr != nil {
+			return lockErr
+		}
+		locker = mysqlLock
+	} else if deps.Logger != nil {
+		deps.Logger.Warn("identity cleanup runs without distributed lock", "db_driver", deps.Config.DB.Driver)
+	}
+	go runCleanupLoop(ctx, cleanup, interval, deps.Logger, locker, observer)
 	if deps.Logger != nil {
 		deps.Logger.Info("identity cleanup started",
 			"interval", interval.String(),
 			"session_days", retention.SessionDays,
 			"login_attempt_days", retention.LoginAttemptDays,
 			"archive_days", retention.ArchiveDays,
+			"distributed_lock", locker != nil,
 		)
 	}
 	return nil
 }
 
 // runCleanupLoop 立即执行一次清理后按间隔重复，直到进程退出。
-func runCleanupLoop(ctx context.Context, cleanup *app.SessionCleanup, interval time.Duration, logger *slog.Logger) {
+func runCleanupLoop(
+	ctx context.Context,
+	cleanup *app.SessionCleanup,
+	interval time.Duration,
+	logger *slog.Logger,
+	locker app.CleanupLock,
+	observer app.CleanupObserver,
+) {
 	run := func() {
-		if _, err := cleanup.Run(ctx, time.Now().UTC()); err != nil && logger != nil {
-			logger.Error("identity cleanup failed", "error", err)
-		}
+		runCleanupOnce(ctx, cleanup, locker, observer, logger, time.Now().UTC())
 	}
 	run()
 	ticker := time.NewTicker(interval)
@@ -365,6 +389,73 @@ func runCleanupLoop(ctx context.Context, cleanup *app.SessionCleanup, interval t
 		case <-ticker.C:
 			run()
 		}
+	}
+}
+
+// runCleanupOnce 执行一轮清理：先抢分布式锁，未抢到则本轮跳过（REL-02）。
+func runCleanupOnce(
+	ctx context.Context,
+	cleanup *app.SessionCleanup,
+	locker app.CleanupLock,
+	observer app.CleanupObserver,
+	logger *slog.Logger,
+	now time.Time,
+) {
+	started := time.Now()
+	if locker != nil {
+		release, acquired, err := locker.Acquire(ctx)
+		if err != nil {
+			result := app.CleanupRunResult{
+				Duration:   time.Since(started),
+				Err:        err,
+				Skipped:    true,
+				SkipReason: "lock_error",
+			}
+			if observer != nil {
+				observer.OnCleanupRun(ctx, result)
+			}
+			if logger != nil {
+				logger.Error("identity cleanup lock failed", "error", err)
+			}
+			return
+		}
+		if !acquired {
+			result := app.CleanupRunResult{
+				Duration:   time.Since(started),
+				Skipped:    true,
+				SkipReason: "lock_held",
+			}
+			if observer != nil {
+				observer.OnCleanupRun(ctx, result)
+			}
+			if logger != nil {
+				logger.Info("identity cleanup skipped", "reason", "lock_held")
+			}
+			return
+		}
+		defer func() {
+			if release != nil {
+				release(ctx)
+			}
+		}()
+	}
+	stats, err := cleanup.Run(ctx, now)
+	result := app.CleanupRunResult{
+		Stats:    stats,
+		Duration: time.Since(started),
+		Err:      err,
+	}
+	if observer != nil {
+		observer.OnCleanupRun(ctx, result)
+	}
+	if err != nil {
+		if logger != nil {
+			logger.Error("identity cleanup failed", "error", err)
+		}
+		return
+	}
+	if stats.BatchLimitHit && logger != nil {
+		logger.Warn("identity cleanup reached batch limit", "detail", "increase batch_size/max_batches_per_run or shorten interval")
 	}
 }
 
