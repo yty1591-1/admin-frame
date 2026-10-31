@@ -183,7 +183,8 @@ func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
 //
 // 用户自助注销（软删）；手机号主体仍占用唯一键，不允许立即被他人重新注册。
 // 短信启用时请求体需携带当前手机号验证码（{"code":"123456"}）作为再认证；
-// 短信未启用或 OAuth-only 账号无手机号时退化为仅 Bearer。
+// 短信未启用或 OAuth-only 账号无手机号时要求最近一次登录在窗口内（8.4 R-8.4-04），
+// 否则返回 40100，用户需重新登录后再发起注销。
 func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := cActorFrom(r)

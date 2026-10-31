@@ -50,12 +50,12 @@ func (s *SMSLoginService) Rebind(ctx context.Context, in SMSRebindInput) error {
 // DeleteAccount 在验证当前手机号验证码后注销消费者账号。
 //
 // 已有手机号绑定的账号必须提供当前手机号验证码；OAuth-only 账号无手机号时
-// 仅能凭 Bearer 注销（后续可扩展 OAuth 再认证）。
+// 由 transport 走 DeleteConsumerAccount（要求最近登录，8.4 R-8.4-04）。
 func (s *SMSLoginService) DeleteAccount(ctx context.Context, actor SessionActor, code string) error {
 	if err := s.verifyCurrentPhone(ctx, actor, code); err != nil {
 		return err
 	}
-	return s.auth.DeleteConsumerAccount(ctx, actor)
+	return s.auth.DeleteConsumerAccountVerified(ctx, actor)
 }
 
 // verifyCurrentPhone 校验当前账号手机号的验证码。
@@ -164,13 +164,33 @@ func (s *AuthService) RebindConsumerPhone(ctx context.Context, actor SessionActo
 	return nil
 }
 
-// DeleteConsumerAccount 用户自助注销账号（软删）：撤销全部会话并记录审计。
+// DeleteConsumerAccount 用户自助注销（未经短信验证码再认证）。
+//
+// OAuth-only 账号没有手机号可收验证码，仅凭 Bearer 注销风险过高；
+// 因此要求设备会话在 delete_reauth_window 内完成过真实登录（8.4 R-8.4-04）。
 func (s *AuthService) DeleteConsumerAccount(ctx context.Context, actor SessionActor) error {
+	return s.deleteConsumerAccount(ctx, actor, false)
+}
+
+// DeleteConsumerAccountVerified 已通过短信验证码再认证后的自助注销。
+//
+// 验证码本身即强再认证，不再受最近登录窗口限制。
+func (s *AuthService) DeleteConsumerAccountVerified(ctx context.Context, actor SessionActor) error {
+	return s.deleteConsumerAccount(ctx, actor, true)
+}
+
+// deleteConsumerAccount 是两种入口的共用实现；reauthVerified 表示已完成短信再认证。
+func (s *AuthService) deleteConsumerAccount(ctx context.Context, actor SessionActor, reauthVerified bool) error {
 	if s.channel != domain.ChannelC {
 		return apperr.BadRequest("account deletion is only supported on channel=c")
 	}
 	if strings.TrimSpace(actor.AccountID) == "" {
 		return invalidToken()
+	}
+	if !reauthVerified {
+		if err := s.requireRecentLogin(ctx, actor); err != nil {
+			return err
+		}
 	}
 	now := s.clock.Now().UTC()
 	var account *domain.Account
@@ -210,4 +230,35 @@ func (s *AuthService) DeleteConsumerAccount(ctx context.Context, actor SessionAc
 	}
 	s.invalidateAccountState(ctx, account.ID, accountStateOf(account))
 	return s.revokeCurrentToken(ctx, actor, now)
+}
+
+// requireRecentLogin 要求当前设备会话在再认证窗口内完成过真实登录（8.4 R-8.4-04）。
+//
+// 设备家庭（family）的创建时间即该设备最近一次登录时间；刷新只轮换会话，
+// 不更新家庭创建时间，因此不能用最近刷新冒充重新登录。
+func (s *AuthService) requireRecentLogin(ctx context.Context, actor SessionActor) error {
+	if strings.TrimSpace(actor.SessionID) == "" {
+		return invalidToken()
+	}
+	session, err := s.sessions.FindByID(ctx, actor.SessionID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return invalidToken()
+		}
+		return apperr.Internal("load session failed", err)
+	}
+	family, err := s.sessions.FindFamily(ctx, session.FamilyID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return invalidToken()
+		}
+		return apperr.Internal("load session family failed", err)
+	}
+	if family.Status != domain.SessionStatusActive {
+		return invalidToken()
+	}
+	if s.clock.Now().UTC().Sub(family.CreatedAt) > s.deleteReauthWindow {
+		return apperr.Unauthorized("recent login is required to delete the account")
+	}
+	return nil
 }

@@ -348,6 +348,91 @@ func TestSMSDeleteAccountReauth(t *testing.T) {
 	requireAppCode(t, f2.svc.DeleteAccount(ctx, app.SessionActor{AccountID: oauthAccount.ID}, "123456"), apperr.CodeConflict)
 }
 
+// TestDeleteConsumerAccountRequiresRecentLogin 验证 OAuth-only 账号仅凭 Bearer
+// 注销时必须最近登录（8.4 R-8.4-04）。
+func TestDeleteConsumerAccountRequiresRecentLogin(t *testing.T) {
+	ctx := context.Background()
+	f := newSMSFixture(t, nil)
+	account := mustSeedOAuthAccount(t, f)
+
+	seedDevice := func(id string, createdAt time.Time) app.SessionActor {
+		t.Helper()
+		family, err := domain.NewSessionFamily(domain.NewSessionFamilyParams{
+			ID: "family-" + id, AccountID: account.ID,
+			ExpiresAt: createdAt.Add(app.DefaultSessionAbsoluteTTL), Now: createdAt,
+		})
+		if err != nil {
+			t.Fatalf("new session family: %v", err)
+		}
+		if err := f.sessions.SaveFamily(ctx, family, 0); err != nil {
+			t.Fatalf("save session family: %v", err)
+		}
+		session, err := domain.NewSession(domain.NewSessionParams{
+			ID: "sess-" + id, AccountID: account.ID, FamilyID: family.ID,
+			RefreshHash: "refresh-" + id, TokenVersion: account.TokenVersion,
+			ExpiresAt: createdAt.Add(15 * time.Minute), Now: createdAt,
+		})
+		if err != nil {
+			t.Fatalf("new session: %v", err)
+		}
+		if err := f.sessions.Save(ctx, session, 0); err != nil {
+			t.Fatalf("save session: %v", err)
+		}
+		return app.SessionActor{AccountID: account.ID, SessionID: session.ID, TraceID: "trace-delete"}
+	}
+
+	// 超过再认证窗口的历史登录：仅凭 Bearer 必须拒绝。
+	stale := seedDevice("old", f.clock.Now().Add(-11*time.Minute))
+	requireAppCode(t, f.authFixture.svc.DeleteConsumerAccount(ctx, stale), apperr.CodeUnauthorized)
+
+	// 无会话上下文（例如令牌来自已清理会话）同样失败关闭。
+	requireAppCode(t, f.authFixture.svc.DeleteConsumerAccount(ctx, app.SessionActor{AccountID: account.ID}),
+		apperr.CodeUnauthorized)
+
+	// 会话存在但设备家庭缺失：同样失败关闭。
+	orphan, err := domain.NewSession(domain.NewSessionParams{
+		ID: "sess-orphan", AccountID: account.ID, FamilyID: "family-missing",
+		RefreshHash: "refresh-orphan", TokenVersion: account.TokenVersion,
+		ExpiresAt: f.clock.Now().Add(15 * time.Minute), Now: f.clock.Now(),
+	})
+	if err != nil {
+		t.Fatalf("new orphan session: %v", err)
+	}
+	if err := f.sessions.Save(ctx, orphan, 0); err != nil {
+		t.Fatalf("save orphan session: %v", err)
+	}
+	requireAppCode(t, f.authFixture.svc.DeleteConsumerAccount(ctx,
+		app.SessionActor{AccountID: account.ID, SessionID: orphan.ID}), apperr.CodeUnauthorized)
+
+	// 设备已被撤销：即使家庭创建时间较新也必须拒绝。
+	revokedActor := seedDevice("revoked", f.clock.Now())
+	revokedFamily, err := f.sessions.FindFamily(ctx, "family-revoked")
+	if err != nil {
+		t.Fatalf("load family: %v", err)
+	}
+	expected := revokedFamily.Version
+	if err := revokedFamily.Revoke(domain.RevokeReasonLogout, f.clock.Now()); err != nil {
+		t.Fatalf("revoke family: %v", err)
+	}
+	if err := f.sessions.SaveFamily(ctx, revokedFamily, expected); err != nil {
+		t.Fatalf("save revoked family: %v", err)
+	}
+	requireAppCode(t, f.authFixture.svc.DeleteConsumerAccount(ctx, revokedActor), apperr.CodeUnauthorized)
+
+	// 最近登录：允许注销。
+	fresh := seedDevice("new", f.clock.Now())
+	if err := f.authFixture.svc.DeleteConsumerAccount(ctx, fresh); err != nil {
+		t.Fatalf("recent login must allow deletion: %v", err)
+	}
+	loaded, err := f.accounts.FindByID(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if loaded.DeletedAt == nil {
+		t.Fatal("account must be soft deleted")
+	}
+}
+
 // mustSeedOAuthAccount 写入一个无手机号的 C 端账号。
 func mustSeedOAuthAccount(t *testing.T, f *smsFixture) *domain.Account {
 	t.Helper()

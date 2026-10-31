@@ -25,6 +25,9 @@ const DefaultSessionAbsoluteTTL = 720 * time.Hour
 // DefaultMaxSessionsPerAccount 是单账号默认活跃设备上限。
 const DefaultMaxSessionsPerAccount = 6
 
+// DefaultDeleteReauthWindow 是 C 端自助注销要求的最近登录窗口（8.4 R-8.4-04）。
+const DefaultDeleteReauthWindow = 10 * time.Minute
+
 // 默认密码历史策略（SEC-06）。
 const (
 	// defaultPasswordHistoryCount 默认保留的历史密码条数。
@@ -92,6 +95,9 @@ type AuthServiceConfig struct {
 	PasswordPolicyFor func(merchantID string) PasswordPolicy
 	// TemporaryPasswordLength 管理员重置口令的临时密码长度；≤0 使用默认 20。
 	TemporaryPasswordLength int
+	// DeleteReauthWindow C 端自助注销要求的最近登录窗口（8.4 R-8.4-04）；
+	// ≤0 使用默认 10m。短信验证码再认证路径不受该窗口限制。
+	DeleteReauthWindow time.Duration
 	// MFAChannels 是允许使用 MFA 的端别；nil 时仅 admin（BIZ-03）。
 	MFAChannels map[domain.Channel]bool
 	// MFAFactors 是允许启用的因子白名单；nil 时仅 totp（BIZ-03）。
@@ -196,6 +202,7 @@ type AuthService struct {
 	mfaRecoveryCodes int
 	stepUpReuseGrace time.Duration
 	temporaryPasswordLength int
+	deleteReauthWindow time.Duration
 	passwordPolicyFor func(merchantID string) PasswordPolicy
 }
 
@@ -275,6 +282,10 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if tempPasswordLength <= 0 {
 		tempPasswordLength = defaultTemporaryPasswordLength
 	}
+	deleteReauthWindow := cfg.DeleteReauthWindow
+	if deleteReauthWindow <= 0 {
+		deleteReauthWindow = DefaultDeleteReauthWindow
+	}
 	stepUpReuseGrace := cfg.MFAStepUpReuseGrace
 	if stepUpReuseGrace == 0 {
 		stepUpReuseGrace = defaultStepUpReuseGrace
@@ -334,6 +345,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaRecoveryCodes: recoveryCodes,
 		stepUpReuseGrace: stepUpReuseGrace,
 		temporaryPasswordLength: tempPasswordLength,
+		deleteReauthWindow: deleteReauthWindow,
 		passwordPolicyFor: cfg.PasswordPolicyFor,
 	}
 	return svc, nil

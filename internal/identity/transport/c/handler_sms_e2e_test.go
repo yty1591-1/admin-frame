@@ -241,10 +241,11 @@ func TestE2ESMSDeleteAccount(t *testing.T) {
 	requireCErrorCode(t, recorder, apperr.CodeConflict)
 }
 
-// TestE2ESMSDeleteAccountWithoutSMS 覆盖未启用短信时仅凭 Bearer 注销。
+// TestE2ESMSDeleteAccountWithoutSMS 覆盖未启用短信时仅凭 Bearer 注销（8.4 R-8.4-04）。
 func TestE2ESMSDeleteAccountWithoutSMS(t *testing.T) {
 	f := newCFixture(t, withoutSMS())
 	account := f.seedAccount(t, "acct-delete", "delete@example.com", true)
+	f.seedDeviceSession(t, account.ID, f.clock.Now())
 
 	recorder := f.do(t, http.MethodDelete, "/c/v1/auth/account", "", account.ID)
 	requireCStatus(t, recorder, http.StatusNoContent)
@@ -256,7 +257,44 @@ func TestE2ESMSDeleteAccountWithoutSMS(t *testing.T) {
 		t.Fatalf("account must be soft deleted: %+v", reloaded)
 	}
 
+	// 最近登录已超出再认证窗口：必须重新登录后再注销。
+	stale := f.seedAccount(t, "acct-delete-stale", "stale@example.com", true)
+	f.seedDeviceSession(t, stale.ID, f.clock.Now().Add(-11*time.Minute))
+	recorder = f.do(t, http.MethodDelete, "/c/v1/auth/account", "", stale.ID)
+	requireCStatus(t, recorder, http.StatusUnauthorized)
+	requireCErrorCode(t, recorder, apperr.CodeUnauthorized)
+
 	recorder = f.do(t, http.MethodDelete, "/c/v1/auth/account", "", "")
 	requireCStatus(t, recorder, http.StatusUnauthorized)
 	requireCErrorCode(t, recorder, apperr.CodeUnauthorized)
+}
+
+// seedDeviceSession 为账号写入一个真实登录的设备家庭与会话。
+//
+// 认证中间件按 accountID 注入 SessionID=family-<accountID>，这里保持一致。
+func (f *cFixture) seedDeviceSession(t *testing.T, accountID string, createdAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	familyID := "family-" + accountID
+	family, err := domain.NewSessionFamily(domain.NewSessionFamilyParams{
+		ID: familyID, AccountID: accountID,
+		ExpiresAt: createdAt.Add(24 * time.Hour), Now: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("new session family: %v", err)
+	}
+	if err := f.sessions.SaveFamily(ctx, family, 0); err != nil {
+		t.Fatalf("save session family: %v", err)
+	}
+	session, err := domain.NewSession(domain.NewSessionParams{
+		ID: familyID, AccountID: accountID, FamilyID: familyID,
+		RefreshHash: "refresh-" + accountID, TokenVersion: 1,
+		ExpiresAt: createdAt.Add(15 * time.Minute), Now: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if err := f.sessions.Save(ctx, session, 0); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
 }

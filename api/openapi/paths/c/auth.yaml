@@ -144,7 +144,9 @@ c-v1-auth-account:
     description: |
       用户自助注销（软删）：递增 token_version、撤销全部会话并写 `auth.account.deleted`；
       手机号主体仍占用唯一键，不允许立即被他人重新注册。
-      短信启用时必须携带当前手机号验证码 `code` 作为再认证；OAuth-only 账号可省略。
+      短信启用时必须携带当前手机号验证码 `code` 作为再认证；
+      未启用短信或 OAuth-only 账号时，要求设备最近登录在再认证窗口内（默认 10 分钟），
+      否则返回 40100，用户需重新登录后再注销。
     operationId: cAuthDeleteAccount
     security:
       - bearerAuth: []

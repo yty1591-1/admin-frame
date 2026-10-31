@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Consumer API (C)
-  version: 4.2.0
+  version: 4.3.0
   description: |
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -13,6 +13,7 @@ info:
     账号注销新增可选当前手机号验证码再认证。
     4.1.0：新增 `GET/PATCH /c/v1/me`（C 端个人中心资料，纯增量）。
     4.2.0：新增外部身份绑定 / 解绑端点（`/c/v1/me/bindings`、`/c/v1/auth/bindings/{provider}/*`）。
+    4.3.0：OAuth-only 账号注销要求最近登录在再认证窗口内（8.4 R-8.4-04）。
 servers:
   - url: http://localhost:8083
     description: 本地直连（make run-c）
