@@ -2,6 +2,8 @@
 
 > 本文定义身份域（internal/identity）的生产 SLO、容量公式与压测方法。  
 > 指标来源：`internal/identity/observability` 注册的 `identity_*` 指标 + 平台 `http_server_*`。
+> 当前有效口径（2026-11，MNT-04）：刷新 / MFA / step-up / OAuth 均已注册时延直方图；
+> Redis 读口径按 L1 缓存与单 jti 校验更新，见 §2.2。
 
 ## 1. SLO
 
@@ -11,10 +13,14 @@
 | 登录 P95 | ≤ 300 ms | `identity_login_duration_seconds` p95 | API P99 告警联动 |
 | 登录 P99 | ≤ 800 ms | p99 | API P99 告警联动 |
 | 刷新成功率 | ≥ 99.9% | `identity_refresh_total` | `IdentityRefreshFailureRateHigh` |
-| 刷新 P95 | ≤ 150 ms | HTTP 指标按路由 | API P99 |
-| MFA 校验 P95 | ≤ 200 ms | MFA verify 指标 + HTTP | API P99 |
+| 刷新 P95 | ≤ 500 ms | `identity_refresh_duration_seconds` p95 | `IdentityRefreshLatencyP95High` |
+| MFA 校验 P95 | ≤ 500 ms | `identity_mfa_verify_duration_seconds` p95 | `IdentityMFALatencyP95High` |
+| step-up P95 | ≤ 500 ms | `identity_step_up_duration_seconds` p95 | `IdentityStepUpLatencyP95High` |
+| OAuth 回调 P95 | ≤ 3 s | `identity_oauth_callback_duration_seconds` p95（按 provider） | `IdentityOAuthLatencyP95High` |
 | 令牌重放 | 0 次/5m | `identity_token_reuse_total` | `IdentityTokenReuseDetected` |
 | 撤销存储错误 | 0 次/5m | `identity_revocation_store_errors_total` | `IdentityRevocationStoreErrors` |
+| 审计 Outbox 积压 | pending=0 且 lag ≤ 5m | `identity_outbox_pending` / `identity_outbox_lag_seconds` | `IdentityOutboxBacklog` / `IdentityOutboxLagHigh` |
+| 短信通道 | 熔断关闭 | `identity_sms_breaker_open` / `identity_sms_send_total{result=failure}` | `IdentitySMSBreakerOpen` |
 | 可用性 | 99.9%/月 | 5xx 比率 + 依赖健康 | `API5xxRateHigh` |
 
 > 登录成功率口径：故意排除限流与依赖不可用造成的失败，避免把攻击流量计入业务 SLO；安全侧另用 token reuse / lockout 告警。
@@ -30,9 +36,13 @@
 
 ### 2.2 Redis
 
-- 每个已认证请求 2–3 次 Redis 读：账号快照、会话快照、jti。
-- Redis 故障时账号/会话快照回退 DB；熔断 10s 内跳过 Redis，避免超时放大。
+- 每个已认证请求固定 **1 次 jti 校验读**（`identity_revocation_redis_calls_total{op="token_load"}`）。
+- 账号 / 会话撤销快照优先命中进程内 L1（`identity_revocation_l1_hit_total`）；未命中才读 Redis，
+  快照陈旧或 Redis 故障时回源 DB（`identity_revocation_db_refetch_total`）。
+- Redis 故障时账号/会话快照回退 DB；jti 校验按 `fail_closed` 拒绝；熔断 10s 内跳过 Redis，避免超时放大。
 - 账号快照回源频率 ≈ `活跃账号数 × 副本数 / state_ttl`；`state_ttl` 默认 30s，生产应观察 DB 回源 QPS。
+- 容量辅助信号：`identity_active_sessions`（活跃设备数）、`identity_login_qps`（单副本平均登录 QPS），
+  已接入 HPA Pods 指标（`values-prod.yaml` 的 `podsMetrics`）。
 
 ### 2.3 数据保留
 
@@ -47,7 +57,9 @@
    - 密码登录：正确密码 70%、错误密码 20%、不存在账号 10%。
    - 刷新：有效令牌 90%、已轮换令牌 10%（验证重放路径）。
    - MFA：TOTP 成功 / 错误各 50%。
-3. 采样：每档 10 分钟，记录 `identity_login_duration_seconds` p50/p95/p99、5xx、DB 连接池等待、Redis RTT。
+3. 采样：每档 10 分钟，记录 `identity_login_duration_seconds`、`identity_refresh_duration_seconds`、
+   `identity_mfa_verify_duration_seconds`、`identity_step_up_duration_seconds`、`identity_oauth_callback_duration_seconds`
+   的 p50/p95/p99，以及 5xx、DB 连接池等待、Redis RTT。
 4. 通过标准：P95/P99 满足第 1 节 SLO；无连接池等待；Redis 故障注入时账号/会话校验仍可用（jti 按 fail_closed 拒绝）。
 5. 故障注入：
    - 停 Redis：验证 DB 回退、熔断与告警；确认 Pod 不被 readiness 批量摘流。
