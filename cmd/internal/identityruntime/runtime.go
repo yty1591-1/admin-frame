@@ -297,12 +297,18 @@ func New(deps *platform.Deps) (*Runtime, error) {
 
 // RegisterAsync 注册身份域异步 topic handler（API 与 worker 共用）。
 //
-// 审计事件由本 handler 投递到审计出口；deps.Async 未启用时为空操作。
+// 审计事件由本 handler 投递到独立审计表（存在持久化数据库时）并旁路结构化日志；
+// 审计表写入失败按可重试错误处理，由 Relay 指数退避重试（event_id 幂等）。
 func RegisterAsync(deps *platform.Deps) error {
 	if deps == nil || deps.Async == nil {
 		return nil
 	}
-	if err := deps.Async.Register(app.TopicAudit, app.AuditEventHandler(audit.SlogEmitter{Log: deps.Logger})); err != nil {
+	emitters := audit.MultiEmitter{}
+	if deps.Database != nil {
+		emitters = append(emitters, audit.SQLEmitter{DB: deps.Database.SQL()})
+	}
+	emitters = append(emitters, audit.SlogEmitter{Log: deps.Logger})
+	if err := deps.Async.Register(app.TopicAudit, app.AuditEventHandler(emitters)); err != nil {
 		return fmt.Errorf("identity async handler %s: %w", app.TopicAudit, err)
 	}
 	return nil
