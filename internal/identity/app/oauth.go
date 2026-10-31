@@ -366,8 +366,31 @@ func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject, 
 			return apperr.Internal("build oauth identity failed", err)
 		}
 		if err := s.identities.Save(txCtx, identity); err != nil {
-			// 残留 pending 账号可被后续登录复用或人工清理。
-			return apperr.Unavailable("oauth identity store unavailable")
+			if !errors.Is(err, apperr.ErrConflict) {
+				return apperr.Unavailable("oauth identity store unavailable")
+			}
+			// REL-07：并发回调可能已写入映射。回查并复用已存在账号，避免 503 与孤儿账号。
+			existing, findErr := s.identities.FindByProviderSubject(txCtx, provider, subject)
+			if findErr != nil {
+				return apperr.Unavailable("oauth identity store unavailable")
+			}
+			existingAccount, loadErr := s.accounts.FindByID(txCtx, existing.AccountID)
+			if loadErr != nil {
+				return apperr.Internal("load mapped account failed", loadErr)
+			}
+			if created && account != nil && account.ID != existingAccount.ID {
+				// 本次新建但未建立映射：软删，避免留下可登录的孤儿账号。
+				expectedVersion := account.Version
+				if deleteErr := account.Delete(s.auth.clock.Now().UTC()); deleteErr != nil {
+					return deleteErr
+				}
+				if saveErr := s.accounts.Save(txCtx, account, expectedVersion); saveErr != nil {
+					return apperr.Internal("remove orphan account failed", saveErr)
+				}
+			}
+			account = existingAccount
+			created = false
+			return nil
 		}
 		if created {
 			// 只记录 provider 名，不写外部主体原文。
