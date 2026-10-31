@@ -237,6 +237,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		app.WithRevocationObserver(revocationObserver),
 		app.WithRevocationCacheObserver(revocationCacheObserver),
 		app.WithRevocationSessions(repos.sessions),
+		app.WithRevocationTokenGrace(cfg.Identity.Revocation.TokenGrace),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity revocation checker: %w", err)
@@ -328,6 +329,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		MFAStepUpReuseGrace:     cfg.Identity.MFA.StepUpReuseGrace,
 		PasswordPolicyFor:       passwordPolicyResolver(cfg),
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
+		DeleteReauthWindow:      cfg.Identity.Consumer.DeleteReauthWindow,
 		MFAChannels:             mfaChannels,
 		MFAFactors:              identityMFAFactors(cfg),
 		MFARequired:             mfaRequired,

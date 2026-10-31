@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -170,6 +171,18 @@ func WithRevocationSessions(sessions domain.SessionRepository) RevocationChecker
 	}
 }
 
+// WithRevocationTokenGrace 设置 jti 本地宽限（8.4 R-8.4-01）；≤0 表示禁用。
+//
+// 宽限只在 Redis 读失败或熔断冷却期内生效；正常路径仍逐请求校验黑名单。
+func WithRevocationTokenGrace(grace time.Duration) RevocationCheckerOption {
+	return func(c *RevocationChecker) {
+		if grace > MaxRevocationTokenGrace {
+			grace = MaxRevocationTokenGrace
+		}
+		c.tokenGrace = grace
+	}
+}
+
 // 撤销存储熔断参数：连续失败后短时跳过 Redis，直接回源数据库。
 //
 // Redis 只是加速层，数据库是唯一事实源；熔断用于避免 Redis 故障时每个请求
@@ -184,6 +197,21 @@ const (
 // jti 黑名单没有数据库事实源，无法回源；冷却期内直接按 failure_mode 返回，
 // 避免 Redis 故障时每个请求都等待读超时（REL-01）。
 var errRevocationStoreCircuitOpen = errors.New("revocation store circuit open")
+
+// jti 本地宽限参数（8.4 R-8.4-01）。
+//
+// jti 黑名单没有数据库事实源：Redis 故障时若一律 fail_closed，会让全部已认证请求
+// 在故障期间变成 503。折中方案是记录「最近一次验证为未撤销」的 jti，
+// 故障期间允许其在 min(宽限, 令牌剩余寿命) 内继续使用；超出宽限仍失败关闭。
+// 代价是撤销（登出 / 改密）在该副本上的可见延迟最多为一个宽限窗口，默认 30s。
+const (
+	// DefaultRevocationTokenGrace 默认 jti 本地宽限。
+	DefaultRevocationTokenGrace = 30 * time.Second
+	// MaxRevocationTokenGrace 宽限硬上限，避免放大撤销延迟。
+	MaxRevocationTokenGrace = 60 * time.Second
+	// revocationTokenCacheSweep 每写入多少条 jti 触发一次过期清理。
+	revocationTokenCacheSweep = 4096
+)
 
 // RevocationChecker 实现 internal/security.RevocationChecker（docs/identity-authn.md §6.2）。
 //
@@ -204,6 +232,11 @@ type RevocationChecker struct {
 	breakerMu      sync.Mutex
 	storeFailures  int
 	storeOpenUntil time.Time
+
+	// tokenGrace 是 jti 本地宽限；≤0 表示禁用（故障时一律失败关闭）。
+	tokenGrace time.Duration
+	tokens     sync.Map
+	tokenSeen  atomic.Int64
 }
 
 // NewRevocationChecker 构造撤销检查器；accounts / store 必填。
@@ -264,8 +297,12 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 		}
 	}
 	if claims.ID != "" {
-		// 熔断冷却期内 jti 无法校验且没有 DB 事实源：快速失败，禁止继续等待 Redis 超时。
+		// 熔断冷却期内 jti 无法校验且没有 DB 事实源：命中本地宽限则放行，
+		// 否则快速失败，禁止继续等待 Redis 超时。
 		if c.storeSkipped() {
+			if c.tokenRecentlyVerified(claims.ID, claims) {
+				return nil
+			}
 			c.notifyStoreFailure(ctx, "token_load", errRevocationStoreCircuitOpen)
 			return c.failure(errRevocationStoreCircuitOpen)
 		}
@@ -273,12 +310,19 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 		if err != nil {
 			c.recordStoreFailure()
 			c.notifyStoreFailure(ctx, "token_load", err)
+			// Redis 读失败时允许最近一次已验证未撤销的令牌在宽限内继续使用，
+			// 避免一次依赖故障放大为全量 503（8.4 R-8.4-01）。
+			if c.tokenRecentlyVerified(claims.ID, claims) {
+				return nil
+			}
 			return c.failure(err)
 		}
 		c.recordStoreSuccess()
 		if revoked {
+			c.forgetToken(claims.ID)
 			return invalidToken()
 		}
+		c.rememberToken(claims.ID, claims)
 	}
 	return nil
 }
@@ -482,6 +526,65 @@ func (c *RevocationChecker) recordStoreSuccess() {
 	defer c.breakerMu.Unlock()
 	c.storeFailures = 0
 	c.storeOpenUntil = time.Time{}
+}
+
+// rememberToken 记录一次「已验证未撤销」的 jti，有效期取 min(宽限, 令牌剩余寿命)。
+func (c *RevocationChecker) rememberToken(jti string, claims jwt.Claims) {
+	if c.tokenGrace <= 0 {
+		return
+	}
+	now := c.clock.Now()
+	until := now.Add(c.tokenGrace)
+	if !claims.ExpiresAt.IsZero() && claims.ExpiresAt.Before(until) {
+		until = claims.ExpiresAt
+	}
+	if !until.After(now) {
+		return
+	}
+	c.tokens.Store(jti, until)
+	if c.tokenSeen.Add(1) >= revocationTokenCacheSweep {
+		c.tokenSeen.Store(0)
+		c.sweepTokens(now)
+	}
+}
+
+// tokenRecentlyVerified 报告 jti 是否在本地宽限内验证过未撤销且令牌未过期。
+func (c *RevocationChecker) tokenRecentlyVerified(jti string, claims jwt.Claims) bool {
+	if c.tokenGrace <= 0 {
+		return false
+	}
+	now := c.clock.Now()
+	if !claims.ExpiresAt.IsZero() && !now.Before(claims.ExpiresAt) {
+		return false
+	}
+	value, ok := c.tokens.Load(jti)
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok {
+		c.tokens.Delete(jti)
+		return false
+	}
+	if now.Before(until) {
+		return true
+	}
+	c.tokens.Delete(jti)
+	return false
+}
+
+// forgetToken 在发现 jti 已撤销时清除本地记录，避免宽限期内被误放行。
+func (c *RevocationChecker) forgetToken(jti string) { c.tokens.Delete(jti) }
+
+// sweepTokens 清理已过期的本地记录；由写入计数触发，避免单独起后台协程。
+func (c *RevocationChecker) sweepTokens(now time.Time) {
+	c.tokens.Range(func(key, value any) bool {
+		until, ok := value.(time.Time)
+		if !ok || !now.Before(until) {
+			c.tokens.Delete(key)
+		}
+		return true
+	})
 }
 
 // notifyWriteFailure 上报快照写入失败；观测器缺失时静默，由 TTL 兜底。

@@ -1228,6 +1228,75 @@ func (brokenRevocationStore) IsTokenRevoked(context.Context, string) (bool, erro
 	return false, errStoreDown
 }
 
+// toggleRevocationStore 在测试中途把 Redis 从健康切换为故障（8.4 R-8.4-01）。
+type toggleRevocationStore struct {
+	inner *cache.MemoryRevocationStore
+	down  bool
+}
+
+func (s *toggleRevocationStore) fail() error {
+	if s.down {
+		return errStoreDown
+	}
+	return nil
+}
+
+func (s *toggleRevocationStore) LoadAccountState(ctx context.Context, id string) (app.AccountState, bool, error) {
+	if err := s.fail(); err != nil {
+		return app.AccountState{}, false, err
+	}
+	return s.inner.LoadAccountState(ctx, id)
+}
+
+func (s *toggleRevocationStore) SaveAccountState(ctx context.Context, id string, state app.AccountState, ttl time.Duration) error {
+	if err := s.fail(); err != nil {
+		return err
+	}
+	return s.inner.SaveAccountState(ctx, id, state, ttl)
+}
+
+func (s *toggleRevocationStore) DeleteAccountState(ctx context.Context, id string) error {
+	if err := s.fail(); err != nil {
+		return err
+	}
+	return s.inner.DeleteAccountState(ctx, id)
+}
+
+func (s *toggleRevocationStore) LoadSessionState(ctx context.Context, id string) (app.SessionState, bool, error) {
+	if err := s.fail(); err != nil {
+		return app.SessionState{}, false, err
+	}
+	return s.inner.LoadSessionState(ctx, id)
+}
+
+func (s *toggleRevocationStore) SaveSessionState(ctx context.Context, id string, state app.SessionState, ttl time.Duration) error {
+	if err := s.fail(); err != nil {
+		return err
+	}
+	return s.inner.SaveSessionState(ctx, id, state, ttl)
+}
+
+func (s *toggleRevocationStore) DeleteSessionState(ctx context.Context, id string) error {
+	if err := s.fail(); err != nil {
+		return err
+	}
+	return s.inner.DeleteSessionState(ctx, id)
+}
+
+func (s *toggleRevocationStore) RevokeToken(ctx context.Context, jti string, ttl time.Duration) error {
+	if err := s.fail(); err != nil {
+		return err
+	}
+	return s.inner.RevokeToken(ctx, jti, ttl)
+}
+
+func (s *toggleRevocationStore) IsTokenRevoked(ctx context.Context, jti string) (bool, error) {
+	if err := s.fail(); err != nil {
+		return false, err
+	}
+	return s.inner.IsTokenRevoked(ctx, jti)
+}
+
 func TestRevocationChecker(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
@@ -1297,6 +1366,161 @@ func TestRevocationChecker(t *testing.T) {
 		if !errors.Is(err, apperr.ErrUnavailable) {
 			t.Fatalf("error must wrap ErrUnavailable: %v", err)
 		}
+	})
+
+	t.Run("jti_grace_allows_recently_verified_token_during_outage", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		store := &toggleRevocationStore{inner: cache.NewMemoryRevocationStore()}
+		clock := &fixedClock{now: now}
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Minute,
+			app.WithRevocationClock(clock), app.WithRevocationTokenGrace(30*time.Second))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		claims := jwt.Claims{
+			Subject: "acct-1", ID: "jti-grace",
+			ExpiresAt: now.Add(time.Hour), Extra: map[string]any{"ver": int64(1)},
+		}
+		// 健康期完成一次校验，本地记录「未撤销」。
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("warm up check: %v", err)
+		}
+		store.down = true
+		// 故障期在宽限内仍放行，避免全量 503。
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("grace must allow recently verified token: %v", err)
+		}
+		// 超出宽限必须失败关闭。
+		clock.Advance(31 * time.Second)
+		requireAppCode(t, checker.Check(ctx, claims), apperr.CodeServiceUnavailable)
+		// 未验证过的 jti 在故障期不得借宽限放行。
+		fresh := jwt.Claims{
+			Subject: "acct-1", ID: "jti-new",
+			ExpiresAt: now.Add(2 * time.Hour), Extra: map[string]any{"ver": int64(1)},
+		}
+		requireAppCode(t, checker.Check(ctx, fresh), apperr.CodeServiceUnavailable)
+	})
+
+	t.Run("jti_grace_capped_by_token_expiry", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		store := &toggleRevocationStore{inner: cache.NewMemoryRevocationStore()}
+		clock := &fixedClock{now: now}
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Minute,
+			app.WithRevocationClock(clock), app.WithRevocationTokenGrace(30*time.Second))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		// 令牌剩余寿命短于宽限：本地记录必须以令牌到期时间为上限。
+		claims := jwt.Claims{
+			Subject: "acct-1", ID: "jti-short",
+			ExpiresAt: now.Add(10 * time.Second), Extra: map[string]any{"ver": int64(1)},
+		}
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("warm up check: %v", err)
+		}
+		store.down = true
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("grace must cover unexpired token: %v", err)
+		}
+		clock.Advance(11 * time.Second)
+		requireAppCode(t, checker.Check(ctx, claims), apperr.CodeServiceUnavailable)
+	})
+
+	t.Run("jti_grace_capped_by_config_max", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		store := &toggleRevocationStore{inner: cache.NewMemoryRevocationStore()}
+		clock := &fixedClock{now: now}
+		// 传入超过上限的宽限必须被夹到 60s。
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, 2*time.Minute,
+			app.WithRevocationClock(clock), app.WithRevocationTokenGrace(90*time.Second))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		claims := jwt.Claims{
+			Subject: "acct-1", ID: "jti-clamp",
+			ExpiresAt: now.Add(2 * time.Hour), Extra: map[string]any{"ver": int64(1)},
+		}
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("warm up check: %v", err)
+		}
+		store.down = true
+		clock.Advance(61 * time.Second)
+		requireAppCode(t, checker.Check(ctx, claims), apperr.CodeServiceUnavailable)
+	})
+
+	t.Run("jti_grace_sweeps_expired_entries", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		store := &toggleRevocationStore{inner: cache.NewMemoryRevocationStore()}
+		clock := &fixedClock{now: now}
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Minute,
+			app.WithRevocationClock(clock), app.WithRevocationTokenGrace(time.Second))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		// 写入足够多的 jti 以触发一次过期清理，避免本地记录无限增长。
+		for i := 0; i < 4200; i++ {
+			claims := jwt.Claims{
+				Subject: "acct-1", ID: "jti-sweep-" + strconv.Itoa(i),
+				ExpiresAt: now.Add(time.Hour), Extra: map[string]any{"ver": int64(1)},
+			}
+			if err := checker.Check(ctx, claims); err != nil {
+				t.Fatalf("check %d: %v", i, err)
+			}
+		}
+	})
+
+	t.Run("jti_grace_disabled_keeps_fail_closed", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		store := &toggleRevocationStore{inner: cache.NewMemoryRevocationStore()}
+		checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Minute,
+			app.WithRevocationClock(&fixedClock{now: now}), app.WithRevocationTokenGrace(-time.Second))
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		claims := jwt.Claims{
+			Subject: "acct-1", ID: "jti-grace-off",
+			ExpiresAt: now.Add(time.Hour), Extra: map[string]any{"ver": int64(1)},
+		}
+		if err := checker.Check(ctx, claims); err != nil {
+			t.Fatalf("warm up check: %v", err)
+		}
+		store.down = true
+		requireAppCode(t, checker.Check(ctx, claims), apperr.CodeServiceUnavailable)
 	})
 
 	t.Run("account_snapshot_falls_back_to_db_when_store_down", func(t *testing.T) {

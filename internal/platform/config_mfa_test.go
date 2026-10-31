@@ -358,6 +358,44 @@ func TestValidateMFAFactors(t *testing.T) {
 	}
 }
 
+// TestValidateRevocationTokenGraceAndConsumerWindow 验证 jti 宽限与注销再认证窗口边界（8.4）。
+func TestValidateRevocationTokenGraceAndConsumerWindow(t *testing.T) {
+	valid := mfaBaseConfig()
+	valid.Identity.Revocation.TokenGrace = 60 * time.Second
+	valid.Identity.Consumer.DeleteReauthWindow = 5 * time.Minute
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid windows rejected: %v", err)
+	}
+
+	// 负数表示显式关闭 jti 宽限，允许通过。
+	disabled := mfaBaseConfig()
+	disabled.Identity.Revocation.TokenGrace = -time.Second
+	if err := disabled.Validate(); err != nil {
+		t.Fatalf("negative token grace must disable: %v", err)
+	}
+
+	tooLongGrace := mfaBaseConfig()
+	tooLongGrace.Identity.Revocation.TokenGrace = 90 * time.Second
+	if err := tooLongGrace.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.revocation.token_grace must be <= 60s") {
+		t.Fatalf("err=%v want token_grace upper bound rejection", err)
+	}
+
+	tooLongWindow := mfaBaseConfig()
+	tooLongWindow.Identity.Consumer.DeleteReauthWindow = 45 * time.Minute
+	if err := tooLongWindow.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.consumer.delete_reauth_window must be in [1m, 30m]") {
+		t.Fatalf("err=%v want delete window upper bound rejection", err)
+	}
+
+	tooShortWindow := mfaBaseConfig()
+	tooShortWindow.Identity.Consumer.DeleteReauthWindow = 30 * time.Second
+	if err := tooShortWindow.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.consumer.delete_reauth_window must be in [1m, 30m]") {
+		t.Fatalf("err=%v want delete window lower bound rejection", err)
+	}
+}
+
 // TestValidateTenantPasswordOverrides 验证租户策略只能收紧（BIZ-04）。
 func TestValidateTenantPasswordOverrides(t *testing.T) {
 	add := func(cfg *platform.Config, override platform.IdentityPasswordTenantOverride) {

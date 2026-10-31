@@ -108,11 +108,22 @@ type IdentityConfig struct {
 	SMS IdentitySMSConfig `yaml:"sms"`
 	// OAuth C 端第三方授权参数。
 	OAuth IdentityOAuthConfig `yaml:"oauth"`
+	// Consumer C 端账号自助操作参数。
+	Consumer IdentityConsumerConfig `yaml:"consumer"`
 	// Subject 账号登录主体的 PII 加密 / 索引参数（IDN-GAP-P1-06）。
 	//
 	// 未配置时不启用双写与加密索引，登录仍按明文 subject 查询；
 	// 配置后进入 S1/S2 阶段：明文保留，同时写 subject_index / subject_ciphertext。
 	Subject IdentitySubjectConfig `yaml:"subject"`
+}
+
+// IdentityConsumerConfig 是 C 端账号自助操作参数（8.4 R-8.4-04）。
+type IdentityConsumerConfig struct {
+	// DeleteReauthWindow 自助注销要求的最近登录窗口；0 使用默认 10m，范围 [1m, 30m]。
+	//
+	// OAuth-only 账号没有手机号可收验证码，仅凭 Bearer 注销风险过高；
+	// 窗口由设备会话的创建时间（真实登录时刻）判定，超出即要求重新登录后再注销。
+	DeleteReauthWindow time.Duration `yaml:"delete_reauth_window"`
 }
 
 // IdentitySubjectConfig 是登录主体（PII）的加密与确定性索引参数。
@@ -412,6 +423,11 @@ type IdentityRevocationConfig struct {
 	LocalCacheTTL time.Duration `yaml:"local_cache_ttl"`
 	// LocalCacheCapacity L1 单个类别（账号 / 会话）的条目上限；0 使用默认 4096。
 	LocalCacheCapacity int `yaml:"local_cache_capacity"`
+	// TokenGrace jti 本地宽限；0 使用默认 30s，负数显式关闭，上限 60s（8.4 R-8.4-01）。
+	//
+	// Redis 故障时允许最近一次已验证未撤销的 jti 在该窗口内继续使用，
+	// 避免 fail_closed 放大为全量 503；代价是撤销可见延迟最多一个窗口。
+	TokenGrace time.Duration `yaml:"token_grace"`
 }
 
 // 撤销本地缓存参数（IDN-GAP-P1-02）。
@@ -424,6 +440,16 @@ const (
 	identityDefaultRevocationLocalCacheCapacity = 4096
 	// identityMaxRevocationLocalCacheCapacity 允许配置的 L1 容量上限。
 	identityMaxRevocationLocalCacheCapacity = 100000
+	// identityDefaultRevocationTokenGrace 默认 jti 本地宽限。
+	identityDefaultRevocationTokenGrace = 30 * time.Second
+	// identityMaxRevocationTokenGrace 宽限硬上限，避免放大撤销延迟。
+	identityMaxRevocationTokenGrace = 60 * time.Second
+	// identityDefaultConsumerDeleteReauthWindow 默认自助注销再认证窗口。
+	identityDefaultConsumerDeleteReauthWindow = 10 * time.Minute
+	// identityMinConsumerDeleteReauthWindow 再认证窗口下限。
+	identityMinConsumerDeleteReauthWindow = time.Minute
+	// identityMaxConsumerDeleteReauthWindow 再认证窗口上限。
+	identityMaxConsumerDeleteReauthWindow = 30 * time.Minute
 )
 
 // 密码策略边界，与 internal/identity/app 默认值保持一致（docs/identity-authn.md §10）。
@@ -1299,6 +1325,14 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.Revocation.LocalCacheCapacity <= 0 {
 		c.Identity.Revocation.LocalCacheCapacity = identityDefaultRevocationLocalCacheCapacity
 	}
+	// jti 宽限：0 使用默认 30s；负数表示显式关闭。
+	if c.Identity.Revocation.TokenGrace == 0 {
+		c.Identity.Revocation.TokenGrace = identityDefaultRevocationTokenGrace
+	}
+	// 自助注销再认证窗口：0 使用默认 10m。
+	if c.Identity.Consumer.DeleteReauthWindow == 0 {
+		c.Identity.Consumer.DeleteReauthWindow = identityDefaultConsumerDeleteReauthWindow
+	}
 	if c.Identity.Lockout.MaxFailures == 0 {
 		c.Identity.Lockout.MaxFailures = 5
 	}
@@ -1975,6 +2009,13 @@ func (c *Config) validateIdentity() []error {
 	}
 	if c.Identity.Revocation.LocalCacheCapacity > identityMaxRevocationLocalCacheCapacity {
 		errs = append(errs, errors.New("identity.revocation.local_cache_capacity must be <= 100000"))
+	}
+	if c.Identity.Revocation.TokenGrace > identityMaxRevocationTokenGrace {
+		errs = append(errs, errors.New("identity.revocation.token_grace must be <= 60s (negative disables)"))
+	}
+	if window := c.Identity.Consumer.DeleteReauthWindow; window > 0 &&
+		(window < identityMinConsumerDeleteReauthWindow || window > identityMaxConsumerDeleteReauthWindow) {
+		errs = append(errs, errors.New("identity.consumer.delete_reauth_window must be in [1m, 30m]"))
 	}
 	if c.Identity.Lockout.MaxFailures < 1 {
 		errs = append(errs, errors.New("identity.lockout.max_failures must be >= 1"))
