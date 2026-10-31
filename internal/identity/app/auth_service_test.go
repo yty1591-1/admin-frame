@@ -877,6 +877,49 @@ func TestRefreshReplayFailsClosedWhenRevokeFails(t *testing.T) {
 	}
 }
 
+// TestRefreshGraceAvoidsChainRevocation 验证短窗口并发刷新不撤销整链，超窗仍按重放（REL-06）。
+func TestRefreshGraceAvoidsChainRevocation(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureEmitter{}
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.RefreshGrace = 10 * time.Second
+	}, withCapture(capture))
+	f.seedAccount(t, "acct-grace", "grace", "Correct#Passw0rd")
+	login := f.login(t, "grace", "Correct#Passw0rd")
+
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken, TraceID: "trace-refresh-1"}); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	// 宽限窗口内重复提交旧令牌：返回 40100，但设备链保持可用。
+	_, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken, TraceID: "trace-grace"})
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+	family, err := f.sessions.FindFamily(ctx, login.SessionID)
+	if err != nil {
+		t.Fatalf("load family: %v", err)
+	}
+	if family.Status != domain.SessionStatusActive {
+		t.Fatalf("family must stay active within grace, got %s", family.Status)
+	}
+	if events := capture.byAction(audit.ActionAuthTokenReused); len(events) != 0 {
+		t.Fatalf("grace retry must not emit token.reused, got %d", len(events))
+	}
+
+	// 超出宽限窗口：按真实重放撤销整链并写审计。
+	f.clock.Advance(20 * time.Second)
+	_, err = f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken, TraceID: "trace-replay"})
+	requireAppCode(t, err, apperr.CodeUnauthorized)
+	family, err = f.sessions.FindFamily(ctx, login.SessionID)
+	if err != nil {
+		t.Fatalf("load family: %v", err)
+	}
+	if family.Status != domain.SessionStatusRevoked {
+		t.Fatalf("family must be revoked after grace, got %s", family.Status)
+	}
+	if events := capture.byAction(audit.ActionAuthTokenReused); len(events) != 1 {
+		t.Fatalf("replay audit = %d, want 1", len(events))
+	}
+}
+
 // TestMetricsRecordLoginRefreshAndRevoke 验证登录、刷新与设备撤销的关键路径有指标。
 func TestMetricsRecordLoginRefreshAndRevoke(t *testing.T) {
 	ctx := context.Background()

@@ -341,6 +341,11 @@ type IdentitySessionConfig struct {
 	AbsoluteTTL time.Duration `yaml:"absolute_ttl"`
 	// MaxPerAccount 单账号最大活跃会话数。
 	MaxPerAccount int `yaml:"max_per_account"`
+	// RefreshGrace 并发刷新宽限窗口；0 表示禁用，默认 10s，上限 60s（REL-06）。
+	//
+	// 窗口内同一已轮换令牌的并发重试只返回 40100，不撤销整链；
+	// 超出窗口仍按真实重放撤销整条会话链。
+	RefreshGrace time.Duration `yaml:"refresh_grace"`
 }
 
 // IdentityRetentionConfig 是身份域数据保留与清理策略（IDN-P1-01）。
@@ -1201,6 +1206,9 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.Session.MaxPerAccount == 0 {
 		c.Identity.Session.MaxPerAccount = 10
 	}
+	if c.Identity.Session.RefreshGrace == 0 {
+		c.Identity.Session.RefreshGrace = 10 * time.Second
+	}
 	if c.Identity.Retention.SessionDays == 0 {
 		c.Identity.Retention.SessionDays = 30
 	}
@@ -1830,6 +1838,10 @@ func (c *Config) validateIdentity() []error {
 	}
 	if c.Identity.Session.MaxPerAccount < 1 {
 		errs = append(errs, errors.New("identity.session.max_per_account must be >= 1"))
+	}
+	// 0 表示由默认值填充（10s）；宽限窗口必须有安全上限。
+	if c.Identity.Session.RefreshGrace < 0 || c.Identity.Session.RefreshGrace > 60*time.Second {
+		errs = append(errs, errors.New("identity.session.refresh_grace must be in [0, 60s]"))
 	}
 	// 身份域账号与会话必须跨重启保留并跨副本可见（IDN-P2-01）。
 	if isProdLikeEnv(c.Env) && c.DB.Driver == "memory" {

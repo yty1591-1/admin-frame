@@ -83,6 +83,8 @@ type AuthServiceConfig struct {
 	SessionAbsoluteTTL time.Duration
 	// MaxPerAccount 单账号活跃设备上限；≤0 使用 DefaultMaxSessionsPerAccount。
 	MaxPerAccount int
+	// RefreshGrace 并发刷新宽限窗口；≤0 表示禁用（REL-06）。
+	RefreshGrace time.Duration
 	// Service 写入审计事件的 service 字段。
 	Service string
 	// ActorType 写入审计事件的 actor_type；空值时按端别推导。
@@ -221,6 +223,7 @@ type AuthService struct {
 	idleTimeout     time.Duration
 	absoluteTTL     time.Duration
 	maxPerAccount   int
+	refreshGrace    time.Duration
 	service         string
 	actorType       string
 	clock           Clock
@@ -316,6 +319,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		idleTimeout:     idle,
 		absoluteTTL:     absoluteTTL,
 		maxPerAccount:   maxPerAccount,
+		refreshGrace:    cfg.RefreshGrace,
 		service:         cfg.Service,
 		actorType:       actorType,
 		clock:           clock,
@@ -919,6 +923,10 @@ func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refresh
 		return refreshOutcome{}, apperr.Internal("load session failed", err)
 	}
 	if session.Status == domain.SessionStatusRotated {
+		// REL-06：短窗口内的并发重试不撤销整链，避免网络重试 / 双击刷新误伤用户。
+		if s.refreshGrace > 0 && !session.UpdatedAt.IsZero() && now.Sub(session.UpdatedAt) <= s.refreshGrace {
+			return refreshOutcome{}, invalidToken()
+		}
 		outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
 		if revokeErr != nil {
 			return refreshOutcome{}, revokeErr
@@ -985,6 +993,10 @@ func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refresh
 	}
 	if saveErr := s.sessions.Save(ctx, session, expected); saveErr != nil {
 		if errors.Is(saveErr, apperr.ErrConflict) {
+			// REL-06：并发刷新冲突发生在同一次轮换窗口内，按短宽限处理，不撤销整链。
+			if s.refreshGrace > 0 {
+				return refreshOutcome{}, invalidToken()
+			}
 			// 并发刷新只有一个请求能完成 active → rotated，其余按重放处理。
 			outcome, revokeErr := s.revokeSessionFamily(ctx, session, now)
 			if revokeErr != nil {

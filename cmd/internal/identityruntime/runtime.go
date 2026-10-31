@@ -266,6 +266,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		IdleTimeout:        cfg.Identity.Session.IdleTimeout,
 		SessionAbsoluteTTL: cfg.Identity.Session.AbsoluteTTL,
 		MaxPerAccount:      cfg.Identity.Session.MaxPerAccount,
+		RefreshGrace:       cfg.Identity.Session.RefreshGrace,
 		Service:            cfg.Service,
 		MFA:                repos.mfa,
 		MFACipher:          mfaCipher,
