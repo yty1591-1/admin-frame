@@ -6,6 +6,8 @@ package rest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -35,6 +37,8 @@ type HandlerConfig struct {
 	ClientIP *pkghttpx.ClientIPResolver
 	// Hasher 是 IP / UA 摘要器；nil 时回退历史算法（仅限本地/tests）。
 	Hasher *crypto.Hasher
+	// EndpointLimiter 是 refresh / logout 的端点级限流器（SEC-04）；nil 时不限流。
+	EndpointLimiter app.LoginLimiter
 }
 
 // Handler 处理认证 HTTP 请求。
@@ -44,6 +48,7 @@ type Handler struct {
 	channel    domain.Channel
 	ipResolver *pkghttpx.ClientIPResolver
 	hasher     *crypto.Hasher
+	limiter    app.LoginLimiter
 }
 
 // NewHandler 构造认证 Handler。
@@ -60,7 +65,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	}
 	return &Handler{
 		auth: cfg.Auth, accounts: accounts, channel: cfg.Channel,
-		ipResolver: cfg.ClientIP, hasher: cfg.Hasher,
+		ipResolver: cfg.ClientIP, hasher: cfg.Hasher, limiter: cfg.EndpointLimiter,
 	}, nil
 }
 
@@ -586,6 +591,11 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if retryAfter, err := h.checkEndpointLimit(r, "refresh", req.RefreshToken); err != nil {
+		setRetryAfter(w, retryAfter)
+		httpx.FromError(w, err, traceID)
+		return
+	}
 	pair, err := h.auth.Refresh(r.Context(), app.RefreshInput{
 		RefreshToken: req.RefreshToken,
 		TraceID:      traceID,
@@ -605,6 +615,11 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if retryAfter, err := h.checkEndpointLimit(r, "logout", actor.AccountID); err != nil {
+		setRetryAfter(w, retryAfter)
 		httpx.FromError(w, err, traceID)
 		return
 	}
@@ -990,6 +1005,56 @@ func validateJSONContentType(r *http.Request) error {
 		return apperr.BadRequest("content type must be application/json")
 	}
 	return nil
+}
+
+// checkEndpointLimit 对 refresh / logout 执行 IP + 主体摘要双维度限流（SEC-04）。
+//
+// 返回建议等待时长；限流器未注入时直接放行。
+func (h *Handler) checkEndpointLimit(r *http.Request, endpoint, subject string) (time.Duration, error) {
+	if h.limiter == nil {
+		return 0, nil
+	}
+	keys := make([]string, 0, 2)
+	if ip := h.clientIPHash(r); ip != "" {
+		keys = append(keys, string(h.channel)+":"+endpoint+":ip:"+ip)
+	}
+	if ref := endpointSubjectRef(subject); ref != "" {
+		keys = append(keys, string(h.channel)+":"+endpoint+":subject:"+ref)
+	}
+	if len(keys) == 0 {
+		keys = append(keys, string(h.channel)+":"+endpoint+":global")
+	}
+	var retryAfter time.Duration
+	for _, key := range keys {
+		allowed, after := h.limiter.Allow(key)
+		if allowed {
+			continue
+		}
+		if after > retryAfter {
+			retryAfter = after
+		}
+		return retryAfter, apperr.TooManyRequests(endpoint + " rate limit exceeded")
+	}
+	return 0, nil
+}
+
+// endpointSubjectRef 返回主体（刷新令牌 / 账号 ID）的短摘要，禁止把原文写入限流键。
+func endpointSubjectRef(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// setRetryAfter 按秒向上取整写入 Retry-After。
+func setRetryAfter(w http.ResponseWriter, retryAfter time.Duration) {
+	if retryAfter <= 0 {
+		return
+	}
+	seconds := int((retryAfter + time.Second - 1) / time.Second)
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
 }
 
 // actorFrom 从鉴权上下文构造用例入参；缺少 Principal 视为未认证。

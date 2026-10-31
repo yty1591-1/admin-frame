@@ -96,11 +96,29 @@ workloads:
         enabled: true
         mfa:
           admin_required: false
+      # B 端匿名可写端点（refresh/logout）必须有独立限流，Redis 故障失败关闭（SEC-04）。
+      rate_limit:
+        enabled: true
+        driver: redis
+        key: client
+        failure_mode: fail_closed
+        rps: 20
+        burst: 40
+        idle_ttl: 10m
   c:
     # C 端启用前必须先补齐短信或 OAuth provider；否则保持关闭。
     configOverrides:
       identity:
         enabled: false
+      # C 端启用后，refresh/logout 与短信 / OAuth 回调共用独立限流（SEC-04）。
+      rate_limit:
+        enabled: true
+        driver: redis
+        key: client
+        failure_mode: fail_closed
+        rps: 20
+        burst: 40
+        idle_ttl: 10m
   worker:
     # worker 不提供认证 transport，启用会被启动校验拒绝。
     configOverrides:

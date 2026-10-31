@@ -38,6 +38,9 @@ const loginLimiterKeyPrefix = "identity:login:"
 // oauthLimiterKeyPrefix 是 OAuth authorize / callback 限流键前缀（IDN-P2-05）。
 const oauthLimiterKeyPrefix = "identity:oauth:"
 
+// refreshLimiterKeyPrefix 是 refresh / logout 端点限流键前缀（SEC-04）。
+const refreshLimiterKeyPrefix = "identity:refresh:"
+
 // Runtime 是身份域在本进程内的唯一实例集合。
 type Runtime struct {
 	// Checker 供 platform 注入 JWT 撤销检查；identity.enabled=false 时为 nil。
@@ -132,6 +135,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	limiter, err := buildLoginLimiter(cfg, deps)
+	if err != nil {
+		return nil, err
+	}
+	refreshLimiter, err := buildRefreshLimiter(cfg, deps)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +279,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Auth: authSvc, Channel: channel, ClientIP: deps.ClientIP, Hasher: piiHasher,
+		EndpointLimiter: refreshLimiter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity handler: %w", err)
@@ -668,6 +676,12 @@ func buildLoginLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimi
 func buildOAuthLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.OAuth.RateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, oauthLimiterKeyPrefix, "oauth")
+}
+
+// buildRefreshLimiter 构造 refresh / logout 的 IP + 主体双维度限流器（SEC-04）。
+func buildRefreshLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+	rate := cfg.Identity.RefreshRateLimit
+	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, refreshLimiterKeyPrefix, "refresh")
 }
 
 // buildKeyedLimiter 按 Redis 可用性选择跨副本或进程内令牌桶。

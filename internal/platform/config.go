@@ -92,6 +92,8 @@ type IdentityConfig struct {
 	Lockout IdentityLockoutConfig `yaml:"lockout"`
 	// LoginRateLimit 登录限流参数。
 	LoginRateLimit IdentityLoginRateLimitConfig `yaml:"login_rate_limit"`
+	// RefreshRateLimit refresh / logout 端点限流参数（SEC-04）。
+	RefreshRateLimit IdentityLoginRateLimitConfig `yaml:"refresh_rate_limit"`
 	// Password 密码强度策略（IDN-P2-01）；未配置时使用内置默认值。
 	Password IdentityPasswordConfig `yaml:"password"`
 	// HashKey 是 PII / 短信码摘要的 HMAC 主密钥（32 字节），生产必填（IDN-P1-06）。
@@ -1251,6 +1253,15 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.LoginRateLimit.FailureMode == "" {
 		c.Identity.LoginRateLimit.FailureMode = RateLimitFailureClosed
 	}
+	if c.Identity.RefreshRateLimit.RPS == 0 {
+		c.Identity.RefreshRateLimit.RPS = 10
+	}
+	if c.Identity.RefreshRateLimit.Burst == 0 {
+		c.Identity.RefreshRateLimit.Burst = 20
+	}
+	if c.Identity.RefreshRateLimit.FailureMode == "" {
+		c.Identity.RefreshRateLimit.FailureMode = RateLimitFailureClosed
+	}
 	if c.Identity.HashKeyID == "" && strings.TrimSpace(c.Identity.HashKey) != "" {
 		c.Identity.HashKeyID = "v1"
 	}
@@ -1898,6 +1909,21 @@ func (c *Config) validateIdentity() []error {
 	}
 	if isProdLikeEnv(c.Env) && c.Identity.LoginRateLimit.FailureMode == RateLimitFailureOpen {
 		errs = append(errs, errors.New("identity.login_rate_limit.failure_mode must be fail_closed in prod/staging"))
+	}
+	// 0 表示由默认值填充（10 rps / burst 20）；仅拒绝负值与非法枚举。
+	if c.Identity.RefreshRateLimit.RPS < 0 {
+		errs = append(errs, errors.New("identity.refresh_rate_limit.rps must be >= 0"))
+	}
+	if c.Identity.RefreshRateLimit.Burst < 0 {
+		errs = append(errs, errors.New("identity.refresh_rate_limit.burst must be >= 0"))
+	}
+	switch c.Identity.RefreshRateLimit.FailureMode {
+	case "", RateLimitFailureClosed, RateLimitFailureOpen:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.refresh_rate_limit.failure_mode: %s", c.Identity.RefreshRateLimit.FailureMode))
+	}
+	if isProdLikeEnv(c.Env) && c.Identity.RefreshRateLimit.FailureMode == RateLimitFailureOpen {
+		errs = append(errs, errors.New("identity.refresh_rate_limit.failure_mode must be fail_closed in prod/staging"))
 	}
 	// 摘要主密钥：生产必须配置，轮换期的历史密钥只用于双读。
 	if isProdLikeEnv(c.Env) && strings.TrimSpace(c.Identity.HashKey) == "" {
