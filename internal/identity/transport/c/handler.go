@@ -230,17 +230,38 @@ func cActorFrom(r *http.Request) (app.SessionActor, error) {
 	}, nil
 }
 
+// providerConfigured 报告 provider 是否在装配期白名单内。
+//
+// 白名单为空表示 OAuth 能力整体关闭：此时直接返回 50300 说明能力未启用，
+// 与「provider 未配置」的 40400 区分；路由注册同样以非空白名单为前提。
+func (h *Handler) providerConfigured(name string) bool {
+	if len(h.providers) == 0 {
+		return true
+	}
+	for _, provider := range h.providers {
+		if provider == name {
+			return true
+		}
+	}
+	return false
+}
+
 // OAuthAuthorize POST /c/v1/auth/oauth/{provider}/authorize
 //
 // 为指定 provider 生成一次性 state 与 PKCE verifier，返回第三方授权地址；
 // provider 未配置时路由不存在（404），state 有效期 10 分钟。
 func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
+	provider := strings.TrimSpace(r.PathValue("provider"))
+	if !h.providerConfigured(provider) {
+		httpx.FromError(w, apperr.NotFound("oauth provider is not configured"), traceID)
+		return
+	}
 	if h.oauth == nil {
 		httpx.FromError(w, apperr.Unavailable("oauth login is not enabled"), traceID)
 		return
 	}
-	result, err := h.oauth.AuthorizeWithClient(r.Context(), r.PathValue("provider"), h.clientIPHash(r), traceID)
+	result, err := h.oauth.AuthorizeWithClient(r.Context(), provider, h.clientIPHash(r), traceID)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -257,6 +278,11 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 // 授权码被拒与未映射身份统一 40100，IdP 故障返回 50300。
 func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
+	provider := strings.TrimSpace(r.PathValue("provider"))
+	if !h.providerConfigured(provider) {
+		httpx.FromError(w, apperr.NotFound("oauth provider is not configured"), traceID)
+		return
+	}
 	var req oauthCallbackRequest
 	if err := rest.DecodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -267,7 +293,7 @@ func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.oauth.Callback(r.Context(), app.OAuthCallbackInput{
-		Provider: r.PathValue("provider"),
+		Provider: provider,
 		Code:     req.Code,
 		State:    req.State,
 		IPHash:   h.clientIPHash(r),
@@ -339,11 +365,16 @@ func (h *Handler) OAuthBindAuthorize(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	provider := strings.TrimSpace(r.PathValue("provider"))
+	if !h.providerConfigured(provider) {
+		httpx.FromError(w, apperr.NotFound("oauth provider is not configured"), traceID)
+		return
+	}
 	if h.oauth == nil {
 		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
 		return
 	}
-	result, err := h.oauth.AuthorizeBinding(r.Context(), actor, r.PathValue("provider"), h.clientIPHash(r), traceID)
+	result, err := h.oauth.AuthorizeBinding(r.Context(), actor, provider, h.clientIPHash(r), traceID)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -366,12 +397,17 @@ func (h *Handler) OAuthBindCallback(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	provider := strings.TrimSpace(r.PathValue("provider"))
+	if !h.providerConfigured(provider) {
+		httpx.FromError(w, apperr.NotFound("oauth provider is not configured"), traceID)
+		return
+	}
 	if h.oauth == nil {
 		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
 		return
 	}
 	if err := h.oauth.CompleteBinding(r.Context(), actor, app.OAuthCallbackInput{
-		Provider: r.PathValue("provider"),
+		Provider: provider,
 		Code:     req.Code,
 		State:    req.State,
 		IPHash:   h.clientIPHash(r),

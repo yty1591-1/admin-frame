@@ -37,8 +37,10 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 	mux.Handle("DELETE /c/v1/me/bindings/{provider}", secure(authMW(http.HandlerFunc(h.Unbind))))
 	mux.Handle("POST /c/v1/auth/bindings/{provider}/authorize", secure(authMW(http.HandlerFunc(h.OAuthBindAuthorize))))
 	mux.Handle("POST /c/v1/auth/bindings/{provider}/callback", secure(authMW(http.HandlerFunc(h.OAuthBindCallback))))
-	for _, provider := range h.providers {
-		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/authorize", secure(http.HandlerFunc(h.OAuthAuthorize)))
-		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/callback", secure(http.HandlerFunc(h.OAuthCallback)))
+	if len(h.providers) > 0 {
+		// 使用通配符注册，handler 从路径取值；未配置的 provider 由用例层返回 40400。
+		// 若按字面量拼接注册，PathValue("provider") 为空，所有真实请求都会 40400。
+		mux.Handle("POST /c/v1/auth/oauth/{provider}/authorize", secure(http.HandlerFunc(h.OAuthAuthorize)))
+		mux.Handle("POST /c/v1/auth/oauth/{provider}/callback", secure(http.HandlerFunc(h.OAuthCallback)))
 	}
 }
