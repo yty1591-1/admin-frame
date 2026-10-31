@@ -80,11 +80,15 @@ type AuthServiceConfig struct {
 type LoginInput struct {
 	// Subject 登录主体（A/B 端为账号 / 邮箱）。
 	Subject string
+	// MerchantID B 端商户 ID；B 端必填，A/C 端忽略。
+	MerchantID string
 	// Password 明文密码；只在本层短暂存在，禁止写日志。
 	Password string
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生，仅用于会话展示。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -114,6 +118,8 @@ type LoginResult struct {
 type RefreshInput struct {
 	RefreshToken string
 	TraceID      string
+	// Device 当次刷新请求派生出的画像；仅用于补齐历史会话缺失的设备信息。
+	Device domain.DeviceInfo
 }
 
 // SessionActor 是需要认证上下文的用例入参。
@@ -138,9 +144,12 @@ type SessionView struct {
 	AbsoluteExpiresAt time.Time
 	IdleExpiresAt     time.Time
 	RevokedAt         *time.Time
-	// IPHash / UAHash 客户端摘要；禁止返回原文。
-	IPHash string
-	UAHash string
+	// DeviceLabel / DeviceType / OS / Browser / IPMasked 设备画像；供前端展示设备。
+	DeviceLabel string
+	DeviceType  string
+	OS          string
+	Browser     string
+	IPMasked    string
 }
 
 // MeView 是当前登录主体资料的对外视图。
@@ -340,18 +349,35 @@ func isRejected(err error) bool {
 
 // Login 校验密码并签发令牌；失败时不创建会话。
 //
+// 两阶段设计（IDN-GAP-P1-01）：
+//  1. probeLogin 在事务外完成限流、账号/凭据读取与 Argon2 校验，避免重 CPU
+//     计算占用数据库事务连接；
+//  2. 事务内重新加载账号与凭据并复核哈希/状态，再写登录尝试、审计、会话。
+//
 // 账号不存在、密码错误、停用与锁定统一返回 40100 文案，真实原因只写审计。
 func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, error) {
 	started := s.clock.Now()
+	probe, err := s.probeLogin(ctx, in)
+	if err != nil {
+		s.observeLogin(ctx, LoginResult{}, err, started)
+		return LoginResult{}, err
+	}
 	var result LoginResult
-	err := s.runTx(ctx, func(txCtx context.Context) error {
-		res, err := s.loginInTx(txCtx, in)
-		if err != nil {
-			return err
+	txStarted := s.clock.Now()
+	err = s.runTx(ctx, func(txCtx context.Context) error {
+		if probe.failure != nil {
+			return s.recordLoginFailureInTx(txCtx, probe, in)
+		}
+		res, completeErr := s.completeProbeInTx(txCtx, probe, in)
+		if completeErr != nil {
+			return completeErr
 		}
 		result = res
 		return nil
 	})
+	if s.metrics != nil {
+		s.metrics.ObserveLoginTxDuration(ctx, s.channel, s.clock.Now().Sub(txStarted))
+	}
 	s.observeLogin(ctx, result, err, started)
 	if err != nil {
 		return LoginResult{}, err
@@ -395,58 +421,201 @@ func loginFailureReason(err error) string {
 	return MetricReasonInternal
 }
 
-// loginInTx 是 Login 的事务内实现：失败尝试、审计与成功写入同一事务。
-func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult, error) {
-	now := s.clock.Now().UTC()
+// loginProbe 是事务外密码校验的结果，供事务内复核与收口。
+type loginProbe struct {
+	// account 事务外加载到的账号；账号不存在时为 nil。
+	account *domain.Account
+	// accountRef 账号主体摘要，用于审计关联。
+	accountRef string
+	// accountFound 报告账号是否存在。
+	accountFound bool
+	// credentialHash 事务外读取到的密码哈希，用于事务内比对是否被并发修改。
+	credentialHash string
+	// rehashEncoded / rehashAlgorithm 事务外计算的新哈希，事务内直接落库。
+	rehashEncoded   string
+	rehashAlgorithm string
+	// failure 需要落库后返回的业务失败（401/500）；nil 表示密码校验通过。
+	failure error
+	// reason 审计原因；success 时为空。
+	reason string
+	// countFailure 报告本次失败是否计入锁定阈值。
+	countFailure bool
+}
+
+// probeLogin 在事务外完成限流、账号/凭据读取与 Argon2 校验。
+//
+// 直接返回的错误（限流、依赖不可用、内部读取失败）不产生登录尝试写入；
+// 业务失败封装在 probe.failure 中，由事务内统一写 attempt/审计后返回。
+func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProbe, error) {
 	subject := domain.NormalizeSubject(in.Subject)
 	if subject == "" || strings.TrimSpace(in.Password) == "" {
-		return LoginResult{}, invalidCredentials()
+		return nil, invalidCredentials()
+	}
+	merchantID := strings.TrimSpace(in.MerchantID)
+	if s.channel == domain.ChannelBiz && merchantID == "" {
+		return nil, invalidCredentials()
+	}
+	if s.channel != domain.ChannelBiz {
+		if merchantID != "" {
+			return nil, apperr.BadRequest("merchant_id is not allowed on this channel")
+		}
+		merchantID = ""
 	}
 	accountRef := AccountRef(s.hasher, s.channel, subject)
-	// 账号级与 IP 级双维度限流：任一超限即拒绝，避免仅靠 IP 或仅靠账号被绕过。
 	rateKeys := []string{loginRateKey(s.channel, accountRef, "")}
 	if in.IPHash != "" {
 		rateKeys = append(rateKeys, loginRateKey(s.channel, "", in.IPHash))
 	}
 	if err := s.guard.CheckRateLimit(rateKeys...); err != nil {
-		return LoginResult{}, err
+		// 限流拒绝是安全事件；审计失败不把 429 变成 503。
+		_ = s.emitAudit(ctx, audit.ActionAuthRateLimited, accountRef, merchantID, "account", accountRef,
+			audit.OutcomeDenied, MetricReasonRateLimited, in.TraceID, nil)
+		return nil, err
 	}
 
-	account, err := s.accounts.FindBySubject(ctx, s.channel, subject)
+	account, err := s.accounts.FindBySubject(ctx, s.channel, merchantID, subject)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			// 账号不存在与密码错误必须返回同一文案与耗时：先执行一次占位校验（IDN-P2-04）。
-			// 无账号主键，不写登录尝试；并发槽位超时直接 50300。
 			if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
-				return LoginResult{}, dummyErr
+				return nil, dummyErr
 			}
-			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, accountRef, "", "account", accountRef,
-				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
-				return LoginResult{}, auditErr
+			return &loginProbe{
+				accountRef:   accountRef,
+				accountFound: false,
+				failure:      invalidCredentials(),
+				reason:       domain.LoginReasonBadCredential,
+			}, nil
+		}
+		return nil, apperr.Internal("load account failed", err)
+	}
+
+	if err := s.guard.Authorize(account, s.clock.Now().UTC()); err != nil {
+		if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
+			return nil, dummyErr
+		}
+		return &loginProbe{
+			account:      account,
+			accountRef:   accountRef,
+			accountFound: true,
+			failure:      err,
+			reason:       reasonFromAuthError(err),
+			countFailure: true,
+		}, nil
+	}
+
+	credential, err := s.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePassword)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
+				return nil, dummyErr
 			}
-			return LoginResult{}, invalidCredentials()
+			return &loginProbe{
+				account:      account,
+				accountRef:   accountRef,
+				accountFound: true,
+				failure:      invalidCredentials(),
+				reason:       domain.LoginReasonBadCredential,
+				countFailure: true,
+			}, nil
+		}
+		return nil, apperr.Internal("load credential failed", err)
+	}
+
+	needsRehash, err := s.password.VerifyContext(ctx, credential.Hash, in.Password)
+	if err != nil {
+		if errors.Is(err, apperr.ErrUnavailable) {
+			return nil, err
+		}
+		return &loginProbe{
+			account:        account,
+			accountRef:     accountRef,
+			accountFound:   true,
+			credentialHash: credential.Hash,
+			failure:        err,
+			reason:         domain.LoginReasonBadCredential,
+			countFailure:   true,
+		}, nil
+	}
+
+	probe := &loginProbe{
+		account:        account,
+		accountRef:     accountRef,
+		accountFound:   true,
+		credentialHash: credential.Hash,
+	}
+	if needsRehash {
+		encoded, algorithm, hashErr := s.password.Hash(in.Password)
+		if hashErr != nil {
+			return nil, hashErr
+		}
+		probe.rehashEncoded = encoded
+		probe.rehashAlgorithm = algorithm
+	}
+	return probe, nil
+}
+
+// recordLoginFailureInTx 在事务内写入失败的登录尝试与审计。
+//
+// 密码哈希已在 probeLogin 完成，本方法不再执行 Argon2。
+func (s *AuthService) recordLoginFailureInTx(ctx context.Context, probe *loginProbe, in LoginInput) error {
+	now := s.clock.Now().UTC()
+	if !probe.accountFound || probe.account == nil {
+		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, probe.accountRef, "", "account", probe.accountRef,
+			audit.OutcomeFailure, probe.reason, in.TraceID, nil); auditErr != nil {
+			return auditErr
+		}
+		return probe.failure
+	}
+
+	account, err := s.accounts.FindByID(ctx, probe.account.ID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, probe.account.ID, probe.account.MerchantID,
+				"account", probe.account.ID, audit.OutcomeFailure, probe.reason, in.TraceID, nil); auditErr != nil {
+				return auditErr
+			}
+			return probe.failure
+		}
+		return apperr.Internal("load account failed", err)
+	}
+
+	var lockedNow bool
+	if probe.countFailure {
+		lockedNow, err = s.guard.RecordFailure(ctx, account, normalizeReason(probe.reason), in.IPHash, in.UAHash, now)
+		if err != nil {
+			return apperr.Internal("record login failure failed", err)
+		}
+	}
+	if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeFailure, normalizeReason(probe.reason), in.TraceID, nil); auditErr != nil {
+		return auditErr
+	}
+	if lockedNow {
+		if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
+			return lockedErr
+		}
+	}
+	return probe.failure
+}
+
+// completeProbeInTx 在事务内复核账号/凭据状态并完成登录收口。
+//
+// 复核点：账号仍存在且可登录、密码哈希未被并发修改；复核通过后才允许
+// 重哈希、激活 pending、下发改密/MFA 票据或创建会话。
+func (s *AuthService) completeProbeInTx(ctx context.Context, probe *loginProbe, in LoginInput) (LoginResult, error) {
+	now := s.clock.Now().UTC()
+	account, err := s.accounts.FindByID(ctx, probe.account.ID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return LoginResult{}, s.auditLoginStateChanged(ctx, probe.account, in.TraceID, domain.LoginReasonBadCredential, invalidCredentials())
 		}
 		return LoginResult{}, apperr.Internal("load account failed", err)
 	}
-
 	if err := s.guard.Authorize(account, now); err != nil {
-		// locked / disabled 也在密码校验前返回：执行占位校验，避免通过耗时区分账号状态。
-		if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
-			return LoginResult{}, dummyErr
-		}
 		reason := reasonFromAuthError(err)
-		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, reason, in.IPHash, in.UAHash, now)
-		if recordErr != nil {
-			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
-		}
 		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
 			audit.OutcomeFailure, reason, in.TraceID, nil); auditErr != nil {
 			return LoginResult{}, auditErr
-		}
-		if lockedNow {
-			if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
-				return LoginResult{}, lockedErr
-			}
 		}
 		return LoginResult{}, err
 	}
@@ -454,56 +623,17 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 	credential, err := s.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePassword)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			// 无密码凭据（如仅手机号 / OAuth 账号）同样执行占位校验，避免泄露凭据类型。
-			if dummyErr := s.password.VerifyDummyContext(ctx); dummyErr != nil {
-				return LoginResult{}, dummyErr
-			}
-			lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
-			if recordErr != nil {
-				return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
-			}
-			if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-				audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
-				return LoginResult{}, auditErr
-			}
-			if lockedNow {
-				if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
-					return LoginResult{}, lockedErr
-				}
-			}
-			return LoginResult{}, invalidCredentials()
+			return LoginResult{}, s.auditLoginStateChanged(ctx, account, in.TraceID, domain.LoginReasonBadCredential, invalidCredentials())
 		}
 		return LoginResult{}, apperr.Internal("load credential failed", err)
 	}
-
-	needsRehash, err := s.password.VerifyContext(ctx, credential.Hash, in.Password)
-	if err != nil {
-		// 并发槽位超时 / 请求取消属于服务端过载，不记为凭据失败，避免误锁正常账号。
-		if errors.Is(err, apperr.ErrUnavailable) {
-			return LoginResult{}, err
-		}
-		lockedNow, recordErr := s.guard.RecordFailure(ctx, account, domain.LoginReasonBadCredential, in.IPHash, in.UAHash, now)
-		if recordErr != nil {
-			return LoginResult{}, apperr.Internal("record login failure failed", recordErr)
-		}
-		if auditErr := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
-			audit.OutcomeFailure, domain.LoginReasonBadCredential, in.TraceID, nil); auditErr != nil {
-			return LoginResult{}, auditErr
-		}
-		if lockedNow {
-			if lockedErr := s.emitAccountLocked(ctx, account, in.TraceID); lockedErr != nil {
-				return LoginResult{}, lockedErr
-			}
-		}
-		return LoginResult{}, err
+	if credential.Hash != probe.credentialHash {
+		// probe 与实际写入之间密码被修改：拒绝本次登录，避免签发旧凭据会话。
+		return LoginResult{}, s.auditLoginStateChanged(ctx, account, in.TraceID, domain.LoginReasonBadCredential, invalidCredentials())
 	}
 
-	if needsRehash {
-		encoded, algorithm, hashErr := s.password.Hash(in.Password)
-		if hashErr != nil {
-			return LoginResult{}, hashErr
-		}
-		if replaceErr := credential.ReplaceHash(encoded, algorithm, now); replaceErr != nil {
+	if probe.rehashEncoded != "" {
+		if replaceErr := credential.ReplaceHash(probe.rehashEncoded, probe.rehashAlgorithm, now); replaceErr != nil {
 			return LoginResult{}, replaceErr
 		}
 		if saveErr := s.credentials.Save(ctx, credential); saveErr != nil {
@@ -519,7 +649,6 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			return LoginResult{}, apperr.Internal("activate account failed", saveErr)
 		}
 	}
-	// 管理员重置密码后必须先完成改密：只下发一次性票据，不签发业务令牌。
 	if account.MustChangePassword {
 		ticket, issueErr := s.tokens.IssuePasswordChangeTicket(account.ID)
 		if issueErr != nil {
@@ -531,7 +660,19 @@ func (s *AuthService) loginInTx(ctx context.Context, in LoginInput) (LoginResult
 			PasswordChangeTicket:   ticket.Ticket,
 		}, nil
 	}
-	return s.challengeOrComplete(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	return s.challengeOrComplete(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
+}
+
+// auditLoginStateChanged 写登录失败审计并返回给定错误。
+func (s *AuthService) auditLoginStateChanged(ctx context.Context, account *domain.Account, traceID, reason string, failure error) error {
+	if account == nil {
+		return failure
+	}
+	if err := s.emitAudit(ctx, audit.ActionAuthLoginFailed, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeFailure, reason, traceID, nil); err != nil {
+		return err
+	}
+	return failure
 }
 
 // challengeOrComplete 在密码 / 改密票据通过后执行 MFA 闸门或直接完成登录。
@@ -539,7 +680,9 @@ func (s *AuthService) challengeOrComplete(
 	ctx context.Context,
 	account *domain.Account,
 	now time.Time,
-	ipHash, uaHash, traceID string,
+	ipHash, uaHash string,
+	device domain.DeviceInfo,
+	traceID string,
 ) (LoginResult, error) {
 	gate, err := s.mfaChallenge(ctx, account, traceID)
 	if err != nil {
@@ -567,7 +710,7 @@ func (s *AuthService) challengeOrComplete(
 			MFATicket:   ticket.Ticket,
 		}, nil
 	default:
-		return s.completeLogin(ctx, account, now, ipHash, uaHash, traceID)
+		return s.completeLogin(ctx, account, now, ipHash, uaHash, device, traceID)
 	}
 }
 
@@ -588,6 +731,8 @@ type VerifiedLoginInput struct {
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生，仅用于会话展示。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -646,7 +791,7 @@ func (s *AuthService) completeVerifiedLoginInTx(ctx context.Context, in Verified
 		}
 		return LoginResult{}, err
 	}
-	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
 }
 
 // completeLogin 完成已通过主体验证的登录收口：激活 pending、记录成功、创建会话与审计。
@@ -656,7 +801,9 @@ func (s *AuthService) completeLogin(
 	ctx context.Context,
 	account *domain.Account,
 	now time.Time,
-	ipHash, uaHash, traceID string,
+	ipHash, uaHash string,
+	device domain.DeviceInfo,
+	traceID string,
 ) (LoginResult, error) {
 	if account.Status == domain.AccountStatusPending {
 		expected := account.Version
@@ -670,7 +817,7 @@ func (s *AuthService) completeLogin(
 	if err := s.guard.RecordSuccess(ctx, account, ipHash, uaHash, now); err != nil {
 		return LoginResult{}, apperr.Internal("record login success failed", err)
 	}
-	result, err := s.createSession(ctx, account, now, ipHash, uaHash, traceID)
+	result, err := s.createSession(ctx, account, now, ipHash, uaHash, device, traceID)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -822,7 +969,7 @@ func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refresh
 		return refreshOutcome{}, apperr.Internal("rotate session failed", saveErr)
 	}
 
-	pair, sessionID, err := s.issueNewSession(ctx, account, session.FamilyID, now)
+	pair, sessionID, err := s.issueNewSession(ctx, account, session.FamilyID, now, in.Device)
 	if err != nil {
 		return refreshOutcome{}, err
 	}
@@ -980,6 +1127,7 @@ func (s *AuthService) listFamilies(
 	}
 	items := make([]SessionView, 0, len(families))
 	for _, family := range families {
+		device := family.Device.Sanitized()
 		items = append(items, SessionView{
 			ID:                family.ID,
 			Current:           family.ID == currentFamilyID,
@@ -989,8 +1137,11 @@ func (s *AuthService) listFamilies(
 			ExpiresAt:         family.ExpiresAt,
 			AbsoluteExpiresAt: family.AbsoluteExpiresAt,
 			RevokedAt:         family.RevokedAt,
-			IPHash:            family.IPHash,
-			UAHash:            family.UAHash,
+			DeviceLabel:       device.Label(),
+			DeviceType:        device.Type,
+			OS:                device.OS,
+			Browser:           device.Browser,
+			IPMasked:          device.IPMasked,
 		})
 	}
 	page := SessionPage{Items: items}
@@ -1190,7 +1341,9 @@ func (s *AuthService) createSession(
 	ctx context.Context,
 	account *domain.Account,
 	now time.Time,
-	ipHash, uaHash, traceID string,
+	ipHash, uaHash string,
+	device domain.DeviceInfo,
+	traceID string,
 ) (LoginResult, error) {
 	if err := s.evictFamilies(ctx, account, now, traceID); err != nil {
 		return LoginResult{}, err
@@ -1206,6 +1359,7 @@ func (s *AuthService) createSession(
 		AccountID:         account.ID,
 		IPHash:            ipHash,
 		UAHash:            uaHash,
+		Device:            device,
 		ExpiresAt:         expiresAt,
 		AbsoluteExpiresAt: absoluteExpiresAt,
 		Now:               now,
@@ -1282,6 +1436,7 @@ func (s *AuthService) issueNewSession(
 	account *domain.Account,
 	familyID string,
 	now time.Time,
+	device domain.DeviceInfo,
 ) (TokenPair, string, error) {
 	family, err := s.sessions.FindFamily(ctx, familyID)
 	if err != nil {
@@ -1304,6 +1459,8 @@ func (s *AuthService) issueNewSession(
 		}
 		return TokenPair{}, "", invalidToken()
 	}
+	// 历史会话可能缺少设备画像：用当次请求逐字段补全，随本次 Touch 一起落库。
+	family.Device.MergeMissing(device)
 	// 当前令牌代过期时间只能在设备绝对上限内滑动。
 	nextExpiry := now.Add(s.tokens.RefreshTTL())
 	if !family.AbsoluteExpiresAt.IsZero() && nextExpiry.After(family.AbsoluteExpiresAt) {

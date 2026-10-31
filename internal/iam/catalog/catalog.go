@@ -333,7 +333,31 @@ var entries = []Entry{
 		Channel:     ChannelAdmin,
 		Status:      StatusActive,
 		Sort:        260,
-		Description: "停用、启用、解锁身份账号与重置 MFA；高风险操作需走审批后执行。",
+		Description: "停用、启用、锁定、解锁与恢复身份账号；不包含凭据重置、删除与会话撤销。",
+	},
+	{
+		Code:        iam.PermIdentityAccountCredential,
+		Name:        "重置身份凭据",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        265,
+		Description: "重置目标账号密码或 MFA；属于账号接管高风险动作，必须与生命周期权限分离。",
+	},
+	{
+		Code:        iam.PermIdentityAccountDelete,
+		Name:        "删除身份账号",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        270,
+		Description: "软删目标账号；不可逆操作入口，不包含恢复与会话撤销。",
+	},
+	{
+		Code:        iam.PermIdentityAccountSession,
+		Name:        "撤销身份会话",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        275,
+		Description: "撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更。",
 	},
 }
 

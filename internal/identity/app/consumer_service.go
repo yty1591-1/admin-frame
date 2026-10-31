@@ -18,11 +18,16 @@ type SMSRebindInput struct {
 	Phone string
 	// Code 新手机号的验证码。
 	Code string
+	// OldCode 当前手机号的验证码；换绑属于账号接管高风险操作，必须同时证明持有旧号。
+	OldCode string
 	// IPHash 客户端 IP 摘要；用于限流。
 	IPHash string
 }
 
-// Rebind 校验新手机号验证码后完成换绑。
+// Rebind 校验新旧手机号验证码后完成换绑。
+//
+// 新号验证码证明对新号的控制，旧号验证码证明对当前账号的控制；
+// 仅凭 Bearer 无法换绑，避免令牌泄露后直接被接管。
 func (s *SMSLoginService) Rebind(ctx context.Context, in SMSRebindInput) error {
 	phoneHash, err := s.verifyInput(SMSLoginInput{
 		Phone:   in.Phone,
@@ -36,7 +41,57 @@ func (s *SMSLoginService) Rebind(ctx context.Context, in SMSRebindInput) error {
 	if err := s.consumeCode(ctx, phoneHash, strings.TrimSpace(in.Code), in.Actor.TraceID); err != nil {
 		return err
 	}
+	if err := s.verifyCurrentPhone(ctx, in.Actor, in.OldCode); err != nil {
+		return err
+	}
 	return s.auth.RebindConsumerPhone(ctx, in.Actor, phoneHash)
+}
+
+// DeleteAccount 在验证当前手机号验证码后注销消费者账号。
+//
+// 已有手机号绑定的账号必须提供当前手机号验证码；OAuth-only 账号无手机号时
+// 仅能凭 Bearer 注销（后续可扩展 OAuth 再认证）。
+func (s *SMSLoginService) DeleteAccount(ctx context.Context, actor SessionActor, code string) error {
+	if err := s.verifyCurrentPhone(ctx, actor, code); err != nil {
+		return err
+	}
+	return s.auth.DeleteConsumerAccount(ctx, actor)
+}
+
+// verifyCurrentPhone 校验当前账号手机号的验证码。
+//
+// 旧手机号摘要来自账号主体（phone:<hmac>），不要求客户端回传旧号明文。
+func (s *SMSLoginService) verifyCurrentPhone(ctx context.Context, actor SessionActor, code string) error {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return invalidToken()
+	}
+	account, err := s.accounts.FindByID(ctx, actor.AccountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return invalidToken()
+		}
+		return apperr.Internal("load account failed", err)
+	}
+	if account.Channel != domain.ChannelC {
+		return invalidToken()
+	}
+	subject := strings.TrimSpace(account.Subject)
+	if !strings.HasPrefix(subject, "phone:") {
+		// OAuth-only 账号没有手机号可校验；由调用方决定是否允许。
+		return apperr.Conflict("phone is not bound")
+	}
+	phoneHash := strings.TrimPrefix(subject, "phone:")
+	if strings.TrimSpace(phoneHash) == "" {
+		return invalidToken()
+	}
+	normalized := strings.TrimSpace(code)
+	if !smsCodePattern.MatchString(normalized) {
+		return apperr.BadRequest("phone or code format is invalid")
+	}
+	if err := s.guard.CheckRateLimit(loginRateKey(domain.ChannelC, phoneHash, "")); err != nil {
+		return err
+	}
+	return s.consumeCode(ctx, phoneHash, normalized, actor.TraceID)
 }
 
 // RebindConsumerPhone 把 C 端账号的登录主体与手机号凭据切换到新手机号。

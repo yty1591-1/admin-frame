@@ -16,6 +16,8 @@ import (
 type Metrics interface {
 	// ObserveLogin 记录一次登录尝试及其耗时；result=success|failure|challenge，reason 为粗粒度原因。
 	ObserveLogin(ctx context.Context, channel domain.Channel, result, reason string, duration time.Duration)
+	// ObserveLoginTxDuration 记录登录事务阶段耗时（不含事务外密码哈希）。
+	ObserveLoginTxDuration(ctx context.Context, channel domain.Channel, duration time.Duration)
 	// ObserveLockout 记录一次账号锁定迁移。
 	ObserveLockout(ctx context.Context, channel domain.Channel)
 	// ObserveMFAVerify 记录一次 MFA 校验结果。

@@ -84,6 +84,8 @@ type OAuthCallbackInput struct {
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -135,6 +137,25 @@ func NewOAuthService(cfg OAuthServiceConfig) (*OAuthService, error) {
 	}, nil
 }
 
+// oauthAuditReason 把 OAuth 错误映射为低基数审计原因；不含外部主体或令牌。
+func oauthAuditReason(err error) string {
+	switch {
+	case err == nil:
+		return "oauth_callback"
+	case errors.Is(err, apperr.ErrNotFound):
+		return "oauth_not_configured"
+	case errors.Is(err, apperr.ErrUnauthorized):
+		return "oauth_invalid"
+	case errors.Is(err, apperr.ErrUnavailable):
+		return "oauth_unavailable"
+	}
+	var limited *RateLimitedError
+	if errors.As(err, &limited) {
+		return "rate_limited"
+	}
+	return "oauth_failed"
+}
+
 // ProviderNames 返回已配置的 provider 名称（升序），供路由裁剪使用。
 func (s *OAuthService) ProviderNames() []string {
 	out := make([]string, 0, len(s.providers))
@@ -149,13 +170,13 @@ func (s *OAuthService) ProviderNames() []string {
 //
 // 无客户端摘要时仅受全局限流约束；HTTP 入口应调用 AuthorizeWithClient。
 func (s *OAuthService) Authorize(ctx context.Context, provider string) (AuthorizeResult, error) {
-	return s.AuthorizeWithClient(ctx, provider, "")
+	return s.AuthorizeWithClient(ctx, provider, "", "")
 }
 
 // AuthorizeWithClient 在 IP 级与全局限流通过后生成 state（IDN-P2-05）。
 //
 // 每次请求写一个 Redis state 键；限流用于封顶单 IP 与全局键增长速度。
-func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash string) (AuthorizeResult, error) {
+func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash, traceID string) (AuthorizeResult, error) {
 	if err := s.checkRateLimit("authorize", ipHash); err != nil {
 		return AuthorizeResult{}, err
 	}
@@ -179,12 +200,33 @@ func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash
 	if err != nil {
 		return AuthorizeResult{}, apperr.Internal("build oauth authorize url failed", err)
 	}
+	// 授权发起属于外部身份入口事件；审计失败时直接拒绝（state 由 TTL 自然过期）。
+	if auditErr := s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthOAuthAuthorize, "anonymous", "",
+		"oauth_provider", name, audit.OutcomeSuccess, "state_issued", traceID, nil); auditErr != nil {
+		return AuthorizeResult{}, auditErr
+	}
 	return AuthorizeResult{AuthorizeURL: url, State: state}, nil
 }
 
 // Callback 校验 state 与授权码，完成身份映射与登录。
 func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (result LoginResult, err error) {
+	providerName := strings.TrimSpace(in.Provider)
 	defer func() {
+		outcome := audit.OutcomeSuccess
+		reason := "oauth_callback"
+		if err != nil {
+			outcome = audit.OutcomeFailure
+			reason = oauthAuditReason(err)
+		}
+		resourceID := providerName
+		if resourceID == "" {
+			resourceID = "unknown"
+		}
+		// 回调失败同样记录，便于排查 IdP 异常与 state 重放；审计失败不覆盖业务结果。
+		_ = s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthOAuthCallback, "anonymous", "",
+			"oauth_provider", resourceID, outcome, reason, in.TraceID, nil)
+	}()
+	deferred := func() {
 		if s.metrics == nil {
 			return
 		}
@@ -193,7 +235,8 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 			status = MetricResultFailure
 		}
 		s.metrics.ObserveOAuthCallback(ctx, strings.TrimSpace(in.Provider), status)
-	}()
+	}
+	defer deferred()
 	if err := s.checkRateLimit("callback", in.IPHash); err != nil {
 		return LoginResult{}, err
 	}
@@ -242,6 +285,7 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		AccountID: account.ID,
 		IPHash:    in.IPHash,
 		UAHash:    in.UAHash,
+		Device:    in.Device,
 		TraceID:   in.TraceID,
 	})
 }
@@ -291,7 +335,7 @@ func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject, 
 		if err := s.accounts.Save(txCtx, provisioned, 0); err != nil {
 			if errors.Is(err, apperr.ErrConflict) {
 				// 并发建号：以已存在的账号为准，避免同一外部身份产生两个账号。
-				existing, loadErr := s.accounts.FindBySubject(txCtx, domain.ChannelC, provisioned.Subject)
+				existing, loadErr := s.accounts.FindBySubject(txCtx, domain.ChannelC, "", provisioned.Subject)
 				if loadErr != nil {
 					return apperr.Internal("load account failed", loadErr)
 				}

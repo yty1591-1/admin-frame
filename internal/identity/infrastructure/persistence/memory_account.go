@@ -11,10 +11,11 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
-// accountKey 是 (channel, subject) 唯一索引的内存表示。
+// accountKey 是 (channel, merchant_id, subject) 唯一索引的内存表示。
 type accountKey struct {
-	channel domain.Channel
-	subject string
+	channel    domain.Channel
+	merchantID string
+	subject    string
 }
 
 // MemoryAccountRepository 是基于内存 map 的账号仓储。
@@ -47,10 +48,10 @@ func (r *MemoryAccountRepository) FindByID(_ context.Context, id string) (*domai
 }
 
 // FindBySubject 按端别 + 规范化主体加载账号；软删账号仍可查到，用于阻止 subject 复用。
-func (r *MemoryAccountRepository) FindBySubject(_ context.Context, channel domain.Channel, subject string) (*domain.Account, error) {
+func (r *MemoryAccountRepository) FindBySubject(_ context.Context, channel domain.Channel, merchantID, subject string) (*domain.Account, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	id, ok := r.bySubject[accountKey{channel: channel, subject: domain.NormalizeSubject(subject)}]
+	id, ok := r.bySubject[accountKey{channel: channel, merchantID: merchantID, subject: domain.NormalizeSubject(subject)}]
 	if !ok {
 		return nil, apperr.NotFound("account not found")
 	}
@@ -70,9 +71,9 @@ func (r *MemoryAccountRepository) Save(_ context.Context, account *domain.Accoun
 		if exists {
 			return apperr.Conflict("account id already exists")
 		}
-		key := accountKey{channel: account.Channel, subject: account.Subject}
+		key := accountKey{channel: account.Channel, merchantID: account.MerchantID, subject: account.Subject}
 		if _, dup := r.bySubject[key]; dup {
-			return apperr.Conflict("account subject already exists in this channel")
+			return apperr.Conflict("account subject already exists in this tenant")
 		}
 		r.accounts[account.ID] = cloneAccount(account)
 		r.bySubject[key] = account.ID
@@ -147,11 +148,11 @@ func (r *MemoryAccountRepository) RebindSubject(_ context.Context, account *doma
 	if existing.Channel != account.Channel || existing.MerchantID != account.MerchantID {
 		return apperr.BadRequest("account channel and merchant are immutable")
 	}
-	newKey := accountKey{channel: account.Channel, subject: account.Subject}
+	newKey := accountKey{channel: account.Channel, merchantID: account.MerchantID, subject: account.Subject}
 	if id, dup := r.bySubject[newKey]; dup && id != account.ID {
-		return apperr.Conflict("account subject already exists in this channel")
+		return apperr.Conflict("account subject already exists in this tenant")
 	}
-	delete(r.bySubject, accountKey{channel: existing.Channel, subject: existing.Subject})
+	delete(r.bySubject, accountKey{channel: existing.Channel, merchantID: existing.MerchantID, subject: existing.Subject})
 	r.bySubject[newKey] = account.ID
 	r.accounts[account.ID] = cloneAccount(account)
 	return nil

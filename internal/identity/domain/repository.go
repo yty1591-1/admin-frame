@@ -17,8 +17,10 @@ import (
 type AccountRepository interface {
 	// FindByID 按主键加载账号。
 	FindByID(ctx context.Context, id string) (*Account, error)
-	// FindBySubject 按端别 + 规范化主体加载账号；软删账号仍返回，用于阻止 subject 复用。
-	FindBySubject(ctx context.Context, channel Channel, subject string) (*Account, error)
+	// FindBySubject 按端别 + 商户 + 规范化主体加载账号；软删账号仍返回，用于阻止 subject 复用。
+	//
+	// B 端以 merchant_id 隔离租户；A/C 端 merchant_id 固定为空串。
+	FindBySubject(ctx context.Context, channel Channel, merchantID, subject string) (*Account, error)
 	// Save 创建或更新账号；expectedVersion 为 0 表示创建。
 	Save(ctx context.Context, account *Account, expectedVersion int64) error
 	// List 按端别 / 状态 / 关键词分页列出账号（含软删），返回当页与总数。
@@ -91,6 +93,13 @@ type SessionRepository interface {
 	ExpireStale(ctx context.Context, now time.Time, limit int) (SessionExpireResult, error)
 	// DeleteExpiredBefore 删除 before 之前的 rotated / revoked / expired 会话与设备，单次最多 limit 条。
 	DeleteExpiredBefore(ctx context.Context, before time.Time, limit int) (SessionDeleteResult, error)
+	// ArchiveExpiredBefore 把 before 之前已失效的会话与设备移入归档表，单次最多 limit 条。
+	//
+	// 必须在同一事务内完成「写归档 + 删在线」，避免中断后出现只归档未删除的半状态；
+	// archivedAt 由调用方传入，保证多副本与重试的时间语义一致（IDN-GAP-P1-04）。
+	ArchiveExpiredBefore(ctx context.Context, before time.Time, limit int, archivedAt time.Time) (SessionDeleteResult, error)
+	// DeleteArchivedBefore 删除 archivedAt 早于 before 的归档记录，单次最多 limit 条。
+	DeleteArchivedBefore(ctx context.Context, before time.Time, limit int) (SessionDeleteResult, error)
 }
 
 // SessionExpireResult 汇总一次过期扫描的结果。
@@ -101,11 +110,13 @@ type SessionExpireResult struct {
 	Families int
 }
 
-// SessionDeleteResult 汇总一次保留期清理的结果。
+// SessionDeleteResult 汇总一次保留期清理 / 归档的结果。
+//
+// 归档与删除共用同一结构：调用方按上下文解释为「已归档」或「已删除」的数量。
 type SessionDeleteResult struct {
-	// Sessions 被删除的会话数。
+	// Sessions 被归档 / 删除的会话数。
 	Sessions int
-	// Families 被删除的设备数。
+	// Families 被归档 / 删除的设备数。
 	Families int
 }
 

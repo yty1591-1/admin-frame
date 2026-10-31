@@ -157,12 +157,32 @@ func TestSMSRebindPhone(t *testing.T) {
 	}
 
 	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
+		t.Fatalf("send old for reauth: %v", err)
+	}
+	oldCode := f.sender.code
+	f.clock.Advance(61 * time.Second)
 	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
 		t.Fatalf("send new: %v", err)
 	}
 	actor := app.SessionActor{AccountID: registered.AccountID, SessionID: registered.SessionID, TraceID: "trace-rebind"}
-	if err := f.svc.Rebind(ctx, app.SMSRebindInput{
+	// 缺少旧号验证码必须拒绝：仅持有 Bearer 不能换绑。
+	requireAppCode(t, f.svc.Rebind(ctx, app.SMSRebindInput{
 		Actor: actor, Phone: newPhone, Code: f.sender.code,
+	}), apperr.CodeBadRequest)
+	// 旧号验证码已在上一步被拒绝路径消费，重新发送后再换绑。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
+		t.Fatalf("resend old for reauth: %v", err)
+	}
+	oldCode = f.sender.code
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
+		t.Fatalf("resend new: %v", err)
+	}
+	newCode := f.sender.code
+	if err := f.svc.Rebind(ctx, app.SMSRebindInput{
+		Actor: actor, Phone: newPhone, Code: newCode, OldCode: oldCode,
 	}); err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
@@ -225,9 +245,14 @@ func TestDeleteConsumerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := f.authFixture.svc.DeleteConsumerAccount(ctx, app.SessionActor{
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send for delete reauth: %v", err)
+	}
+	deleteCode := f.sender.code
+	if err := f.svc.DeleteAccount(ctx, app.SessionActor{
 		AccountID: registered.AccountID, SessionID: registered.SessionID, TraceID: "trace-delete",
-	}); err != nil {
+	}, deleteCode); err != nil {
 		t.Fatalf("delete account: %v", err)
 	}
 

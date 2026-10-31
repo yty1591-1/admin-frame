@@ -75,11 +75,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.auth.Login(r.Context(), app.LoginInput{
-		Subject:  req.Subject,
-		Password: req.Password,
-		IPHash:   h.clientIPHash(r),
-		UAHash:   h.clientUAHash(r),
-		TraceID:  traceID,
+		Subject:    req.Subject,
+		MerchantID: req.MerchantID,
+		Password:   req.Password,
+		IPHash:     h.clientIPHash(r),
+		UAHash:     h.clientUAHash(r),
+		Device:     h.clientDevice(r),
+		TraceID:    traceID,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -182,6 +184,7 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 		SetupTicket: req.SetupTicket,
 		Actor:       actor,
 		IPHash:      h.clientIPHash(r),
+		TraceID:     traceID,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -221,6 +224,7 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		Actor:       actor,
 		IPHash:      h.clientIPHash(r),
 		UAHash:      h.clientUAHash(r),
+		Device:      h.clientDevice(r),
 		TraceID:     traceID,
 	})
 	if err != nil {
@@ -273,6 +277,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			NewPassword: req.NewPassword,
 			IPHash:      h.clientIPHash(r),
 			UAHash:      h.clientUAHash(r),
+			Device:      h.clientDevice(r),
 			TraceID:     traceID,
 		})
 		if err != nil {
@@ -359,6 +364,7 @@ func (h *Handler) accountOperation(
 		Actor:           actor,
 		TargetAccountID: r.PathValue("id"),
 		Reason:          req.Reason,
+		MFACode:         req.MFACode,
 	}); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -401,7 +407,12 @@ func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 // 软删账号同样可查，便于恢复。
 func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
-	detail, err := h.accounts.Get(r.Context(), r.PathValue("id"))
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	detail, err := h.accounts.Get(r.Context(), actor, r.PathValue("id"))
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -464,6 +475,7 @@ func (h *Handler) ResetAccountPassword(w http.ResponseWriter, r *http.Request) {
 		Actor:           actor,
 		TargetAccountID: r.PathValue("id"),
 		Reason:          req.Reason,
+		MFACode:         req.MFACode,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -495,15 +507,20 @@ func (h *Handler) RestoreAccount(w http.ResponseWriter, r *http.Request) {
 // ListAccountSessions GET /admin/v1/auth/accounts/{id}/sessions
 //
 // 需要 identity:account:read。按设备（family）分页列出目标账号会话，管理员视角 current 恒为 false；
-// 只返回 IP / UA 摘要，不返回原文。
+// 只返回设备画像，不返回 IP / UA 原文或摘要。
 func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := actorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
 	cursor, limit, err := sessionListQuery(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	page, err := h.accounts.ListTargetSessions(r.Context(), r.PathValue("id"), cursor, limit)
+	page, err := h.accounts.ListTargetSessions(r.Context(), actor, r.PathValue("id"), cursor, limit)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -556,6 +573,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	pair, err := h.auth.Refresh(r.Context(), app.RefreshInput{
 		RefreshToken: req.RefreshToken,
 		TraceID:      traceID,
+		Device:       h.clientDevice(r),
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
@@ -600,7 +618,7 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 
 // ListSessions GET /admin/v1/auth/sessions
 //
-// 按设备（family）分页列出本账号会话；只返回状态、时间与 IP / UA 摘要。
+// 按设备（family）分页列出本账号会话；只返回状态、时间与设备画像（不含 IP / UA 原文）。
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -653,8 +671,11 @@ func sessionListResponseFrom(page app.SessionPage) sessionListResponse {
 			AbsoluteExpiresAt: view.AbsoluteExpiresAt,
 			IdleExpiresAt:     zeroAsNil(view.IdleExpiresAt),
 			RevokedAt:         view.RevokedAt,
-			IPHash:            view.IPHash,
-			UAHash:            view.UAHash,
+			DeviceLabel:       view.DeviceLabel,
+			DeviceType:        view.DeviceType,
+			OS:                view.OS,
+			Browser:           view.Browser,
+			IPMasked:          view.IPMasked,
 		})
 	}
 	return sessionListResponse{Items: items, NextCursor: page.NextCursor}
@@ -678,10 +699,13 @@ func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// loginRequest 只接受主体与密码；channel / roles / merchant_id 一律由服务端推导。
+// loginRequest 只接受主体、密码与 B 端商户上下文。
+//
+// channel / roles 由服务端推导；merchant_id 仅 B 端必填，用于租户内主体唯一。
 type loginRequest struct {
-	Subject  string `json:"subject"`
-	Password string `json:"password"`
+	Subject    string `json:"subject"`
+	Password   string `json:"password"`
+	MerchantID string `json:"merchant_id,omitempty"`
 }
 
 // refreshRequest 刷新请求。
@@ -737,14 +761,20 @@ type changePasswordRequest struct {
 }
 
 // accountActionRequest 管理员账号操作请求；reason 可选，写入审计。
+//
+// mfa_code 用于特权操作二次认证（密码重置 / MFA 重置 / 删除 / 全量撤销）；
+// admin_required=true 时缺失会返回 40000，错误码会按 MFA 失败计入锁定。
 type accountActionRequest struct {
-	Reason string `json:"reason,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	MFACode string `json:"mfa_code,omitempty"`
 }
 
 // accountLockRequest 管理员锁定请求；duration_minutes 可选，默认锁定策略。
+// mfa_code 为特权操作二次认证；当前锁定不强制，保留字段以便统一扩展。
 type accountLockRequest struct {
 	Reason          string `json:"reason,omitempty"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	MFACode         string `json:"mfa_code,omitempty"`
 }
 
 // passwordChangeRequiredResponse 强制改密中间态；不包含任何业务令牌。
@@ -865,8 +895,14 @@ type sessionDTO struct {
 	AbsoluteExpiresAt time.Time  `json:"absolute_expires_at"`
 	IdleExpiresAt     *time.Time `json:"idle_expires_at,omitempty"`
 	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
-	IPHash            string     `json:"ip_hash,omitempty"`
-	UAHash            string     `json:"ua_hash,omitempty"`
+	// DeviceLabel 可直接展示的设备名（如 Chrome · Windows）；无法识别时省略。
+	DeviceLabel string `json:"device_label,omitempty"`
+	// DeviceType / OS / Browser 设备画像枚举；仅用于展示，不参与鉴权。
+	DeviceType string `json:"device_type,omitempty"`
+	OS         string `json:"os,omitempty"`
+	Browser    string `json:"browser,omitempty"`
+	// IPMasked 脱敏客户端 IP；IPv4 保留前两段，IPv6 保留前四组。
+	IPMasked string `json:"ip_masked,omitempty"`
 }
 
 // sessionListResponse 会话列表。
@@ -935,6 +971,11 @@ func (h *Handler) clientIPHash(r *http.Request) string {
 // clientUAHash 返回 User-Agent 摘要；与 IP 使用不同域，禁止交叉复用。
 func (h *Handler) clientUAHash(r *http.Request) string {
 	return app.ClientRef(h.hasher, app.HashDomainClientUA, r.UserAgent())
+}
+
+// clientDevice 从原始 UA / IP 派生可展示设备画像；原文不落库。
+func (h *Handler) clientDevice(r *http.Request) domain.DeviceInfo {
+	return domain.ParseDeviceInfo(r.UserAgent(), h.clientIP(r))
 }
 
 // clientIP 使用可信代理解析器获取客户端 IP；只用于计算不可逆摘要，不直接落库。

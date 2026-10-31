@@ -65,15 +65,27 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	channel := domain.Channel(cfg.Channel)
 
-	repos, err := buildRepositories(deps)
+	piiHasher, err := buildHasher(cfg)
+	if err != nil {
+		return nil, err
+	}
+	// PII 主体保护器：未配置 identity.subject.keys 时返回 nil，保持纯明文路径。
+	subjectProtector, err := buildSubjectProtector(cfg, piiHasher)
+	if err != nil {
+		return nil, err
+	}
+	if deps.Logger != nil && subjectProtector != nil {
+		deps.Logger.Info("identity subject protection enabled",
+			"stage", "S1/S2",
+			"note", "明文列保留，写入 index/ciphertext；S4/S5 需单独发布",
+		)
+	}
+
+	repos, err := buildRepositories(deps, subjectProtector)
 	if err != nil {
 		return nil, err
 	}
 	revocation, err := buildRevocationStore(deps)
-	if err != nil {
-		return nil, err
-	}
-	piiHasher, err := buildHasher(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +176,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	// 核心指标与撤销快照失败指标共享同一 Registry；未配置 Metrics 时降级为无观测。
 	var identityMetrics app.Metrics
 	var revocationObserver app.RevocationObserver
+	var revocationCacheObserver app.RevocationCacheObserver
 	if deps.Metrics != nil {
 		observer, obsErr := identityobs.NewMetrics(deps.Metrics.RegistererWithoutChannel())
 		if obsErr != nil {
@@ -171,7 +184,17 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		}
 		identityMetrics = observer
 		revocationObserver = observer
+		revocationCacheObserver = observer
 	}
+
+	// 撤销快照 L1：账号 / 会话快照先读进程内缓存，未命中再读 Redis（IDN-GAP-P1-02）。
+	// 负 TTL 表示显式关闭；构造器在 ttl<=0 时原样返回 inner，不改变行为。
+	revocation = identitycache.NewCachedRevocationStore(
+		revocation,
+		cfg.Identity.Revocation.LocalCacheTTL,
+		cfg.Identity.Revocation.LocalCacheCapacity,
+		revocationCacheObserver,
+	)
 
 	checker, err := app.NewRevocationChecker(
 		repos.accounts,
@@ -179,6 +202,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		cfg.Identity.Revocation.FailureMode,
 		cfg.Identity.Revocation.StateTTL,
 		app.WithRevocationObserver(revocationObserver),
+		app.WithRevocationCacheObserver(revocationCacheObserver),
 		app.WithRevocationSessions(repos.sessions),
 	)
 	if err != nil {
@@ -294,7 +318,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	if deps.Database == nil {
 		return nil
 	}
-	repos, err := buildRepositories(deps)
+	repos, err := buildRepositories(deps, nil)
 	if err != nil {
 		return err
 	}
@@ -302,6 +326,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 	policy := app.RetentionPolicy{
 		SessionRetention:      time.Duration(retention.SessionDays) * 24 * time.Hour,
 		LoginAttemptRetention: time.Duration(retention.LoginAttemptDays) * 24 * time.Hour,
+		ArchiveRetention:      time.Duration(retention.ArchiveDays) * 24 * time.Hour,
 	}
 	cleanup, err := app.NewSessionCleanup(repos.sessions, repos.attempts, policy, deps.Logger)
 	if err != nil {
@@ -317,6 +342,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) error {
 			"interval", interval.String(),
 			"session_days", retention.SessionDays,
 			"login_attempt_days", retention.LoginAttemptDays,
+			"archive_days", retention.ArchiveDays,
 		)
 	}
 	return nil
@@ -355,7 +381,7 @@ type repositories struct {
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
 //
 // db.driver 非 memory 却没有数据库连接时直接失败，禁止静默回退内存仓储（IDN-P2-01）。
-func buildRepositories(deps *platform.Deps) (repositories, error) {
+func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtector) (repositories, error) {
 	if deps.Database == nil {
 		if deps.Config != nil && deps.Config.DB.Driver != "" && deps.Config.DB.Driver != "memory" {
 			return repositories{}, fmt.Errorf(
@@ -374,7 +400,7 @@ func buildRepositories(deps *platform.Deps) (repositories, error) {
 	}
 	sqlDB := deps.Database.SQL()
 	return repositories{
-		accounts:        persistence.NewSQLAccountRepository(sqlDB),
+		accounts:        persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector)),
 		credentials:     persistence.NewSQLCredentialRepository(sqlDB),
 		sessions:        persistence.NewSQLSessionRepository(sqlDB),
 		attempts:        persistence.NewSQLLoginAttemptRepository(sqlDB),
@@ -412,6 +438,33 @@ func buildHasher(cfg *platform.Config) (*crypto.Hasher, error) {
 		return nil, fmt.Errorf("identity hasher: %w", err)
 	}
 	return hasher, nil
+}
+
+// buildSubjectProtector 构造 PII 主体保护器；未配置 subject 密钥环时返回 nil。
+//
+// subject_index 复用 identity.hash_key，subject_ciphertext 使用独立 PII 密钥环；
+// 只配置加密密钥却缺少 hash_key 时直接失败，避免写出无法按索引查找的账号。
+func buildSubjectProtector(cfg *platform.Config, hasher *crypto.Hasher) (persistence.SubjectProtector, error) {
+	keys, err := cfg.Identity.Subject.DecodeKeys()
+	if err != nil {
+		return nil, fmt.Errorf("identity subject keys: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if hasher == nil {
+		return nil, apperr.Internal("identity.hash_key is required when identity.subject.keys is set", nil)
+	}
+	legacy, err := cfg.Identity.Subject.DecodeLegacyKey()
+	if err != nil {
+		return nil, fmt.Errorf("identity subject legacy key: %w", err)
+	}
+	active := cfg.Identity.Subject.ActiveKeyID
+	ring, err := crypto.NewKeyRing(keys, active, legacy)
+	if err != nil {
+		return nil, fmt.Errorf("identity subject key ring: %w", err)
+	}
+	return persistence.NewSubjectProtector(hasher, ring), nil
 }
 
 // buildMFACipher 解析 MFA 密钥环；未配置时返回 nil（MFA 端点失败关闭）。
@@ -538,15 +591,16 @@ func (l loginLimiter) Allow(key string) (bool, time.Duration) {
 
 // registerHealth 把身份域真实外部依赖注册到 /readyz（OBS-03）。
 //
-// 内存仓储 / 未配置 Redis 时不注册假检查，避免就绪探针永远成功。
+// 只把数据库作为就绪硬依赖：Redis 是撤销加速层，故障时账号/会话快照回退 DB，
+// 若把 Redis 也绑定到 readiness，共享 Redis 的一次抖动会让全部副本同时摘流，
+// 把局部依赖故障放大为全站不可用。Redis 故障通过指标/告警与请求级 503 暴露。
+//
+// 内存仓储 / 未配置 DB 时不注册假检查，避免就绪探针永远成功。
 func registerHealth(deps *platform.Deps) {
 	if deps.Health == nil {
 		return
 	}
 	if deps.Database != nil {
 		deps.Health.Register("identity_db", deps.Database.Checker())
-	}
-	if deps.Redis != nil {
-		deps.Health.Register("identity_redis", deps.Redis.Checker())
 	}
 }

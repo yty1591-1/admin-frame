@@ -53,6 +53,8 @@ type MFASetupInput struct {
 	Actor SessionActor
 	// IPHash 客户端摘要；由 transport 计算，用于绑定限流。
 	IPHash string
+	// TraceID 请求关联 ID；用于审计。
+	TraceID string
 }
 
 // MFAVerifyInput 是 mfa/verify 的三种模式入参。
@@ -71,6 +73,8 @@ type MFAVerifyInput struct {
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -136,6 +140,15 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 	}
 	if err := s.mfa.Save(ctx, enrollment, expected); err != nil {
 		return MFASetupResult{}, apperr.Internal("save mfa enrollment failed", err)
+	}
+	// 绑定发起属于敏感安全事件：记录 setup 与 bound 两个阶段，便于区分「已下发密钥」与「已完成验证」。
+	traceID := in.TraceID
+	if traceID == "" {
+		traceID = in.Actor.TraceID
+	}
+	if err := s.emitAudit(ctx, audit.ActionAuthMFASetup, account.ID, account.MerchantID, "account", account.ID,
+		audit.OutcomeSuccess, "mfa_setup", traceID, nil); err != nil {
+		return MFASetupResult{}, err
 	}
 
 	encoded := totp.EncodeSecret(secret)
@@ -303,6 +316,55 @@ func (s *AuthService) DisableMFA(ctx context.Context, actor SessionActor, code s
 	return s.saveRevocationState(ctx, account)
 }
 
+// requireAdminStepUp 校验管理员特权操作的二次 MFA。
+//
+// 仅在 A 端且 admin_required=true 时强制；非强制环境（本地/测试）直接放行，
+// 生产由配置校验保证 admin_required=true。调用方必须在同一事务内、执行特权操作前调用。
+func (s *AuthService) requireAdminStepUp(ctx context.Context, actor SessionActor, code string) error {
+	if s.channel != domain.ChannelAdmin || !s.mfaRequired || s.mfa == nil {
+		return nil
+	}
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return invalidToken()
+	}
+	normalized := strings.TrimSpace(code)
+	if normalized == "" {
+		return apperr.BadRequest("mfa code is required for this privileged operation")
+	}
+	now := s.clock.Now().UTC()
+	account, err := s.accounts.FindByID(ctx, actor.AccountID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return invalidToken()
+		}
+		return apperr.Internal("load step-up account failed", err)
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		return err
+	}
+	if err := s.guard.CheckRateLimit(mfaAccountRateKey(s.channel, account.ID)); err != nil {
+		return err
+	}
+	enrollment, err := s.mfa.FindByAccount(ctx, account.ID)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return apperr.Conflict("mfa is not bound")
+		}
+		return apperr.Internal("load step-up enrollment failed", err)
+	}
+	if !enrollment.IsConfirmed() {
+		return apperr.Conflict("mfa is not confirmed")
+	}
+	outcome, _, err := s.verifyEnrollmentCode(ctx, account, enrollment, normalized, now, true, actor.TraceID)
+	if err != nil {
+		return err
+	}
+	if outcome != mfaCodeTOTP && outcome != mfaCodeRecovery {
+		return s.mfaFailure(ctx, account, "", "", actor.TraceID)
+	}
+	return nil
+}
+
 // mfaGate 是密码校验通过后的 MFA 闸门结论。
 type mfaGate int
 
@@ -420,7 +482,7 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 	if err := s.guard.RecordSuccess(ctx, account, in.IPHash, in.UAHash, now); err != nil {
 		return MFAVerifyResult{}, apperr.Internal("record login success failed", err)
 	}
-	result, err := s.createSession(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	result, err := s.createSession(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
@@ -506,7 +568,7 @@ func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (
 		return MFAVerifyResult{}, err
 	}
 
-	login, err := s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	login, err := s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}

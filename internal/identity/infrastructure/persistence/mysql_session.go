@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -17,7 +18,8 @@ const sessionSelectColumns = `id, account_id, family_id, refresh_token_hash, sta
 
 // familySelectColumns 是设备会话表的显式列清单。
 const familySelectColumns = `family_id, account_id, status, version, created_at, last_used_at, expires_at,
-	absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason, updated_at`
+	absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
+	device_label, revoked_at, revoked_reason, updated_at`
 
 // SQLSessionRepository 是 MySQL 8.0 的会话仓储实现。
 //
@@ -266,12 +268,14 @@ func (r *SQLSessionRepository) insertFamily(ctx context.Context, family *domain.
 	}
 	_, err = r.exec(ctx).ExecContext(ctx, `INSERT INTO identity_session_family
 		(family_id, account_id, status, version, created_at, last_used_at, expires_at,
-		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
+		 device_label, revoked_at, revoked_reason, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		familyID, accountID, string(family.Status), family.Version,
 		family.CreatedAt.UTC(), family.LastUsedAt.UTC(), family.ExpiresAt.UTC(),
-		family.AbsoluteExpiresAt.UTC(), family.IPHash, family.UAHash, family.DeviceLabel,
-		nullTime(family.RevokedAt), string(family.RevokedReason), family.UpdatedAt.UTC())
+		family.AbsoluteExpiresAt.UTC(), family.IPHash, family.UAHash,
+		family.Device.Type, family.Device.OS, family.Device.Browser, family.Device.IPMasked,
+		family.DeviceLabel, nullTime(family.RevokedAt), string(family.RevokedReason), family.UpdatedAt.UTC())
 	return conflictOnDuplicate(err, "session family id already exists")
 }
 
@@ -283,10 +287,13 @@ func (r *SQLSessionRepository) updateFamily(ctx context.Context, family *domain.
 	}
 	result, err := r.exec(ctx).ExecContext(ctx, `UPDATE identity_session_family
 		SET status = ?, version = ?, last_used_at = ?, expires_at = ?, absolute_expires_at = ?,
+		    device_type = ?, os_name = ?, browser_name = ?, ip_masked = ?,
 		    revoked_at = ?, revoked_reason = ?, updated_at = ?
 		WHERE family_id = ? AND version = ?`,
 		string(family.Status), family.Version, family.LastUsedAt.UTC(), family.ExpiresAt.UTC(),
-		family.AbsoluteExpiresAt.UTC(), nullTime(family.RevokedAt), string(family.RevokedReason),
+		family.AbsoluteExpiresAt.UTC(),
+		family.Device.Type, family.Device.OS, family.Device.Browser, family.Device.IPMasked,
+		nullTime(family.RevokedAt), string(family.RevokedReason),
 		family.UpdatedAt.UTC(), familyID, expectedVersion)
 	if err != nil {
 		return err
@@ -418,6 +425,8 @@ func (r *SQLSessionRepository) ExpireStale(ctx context.Context, now time.Time, l
 }
 
 // DeleteExpiredBefore 删除保留期外的会话与设备，单次最多 limit 条。
+//
+// 依赖 000008 新增的 updated_at 索引；调用方需按批循环直到本批未满。
 func (r *SQLSessionRepository) DeleteExpiredBefore(ctx context.Context, before time.Time, limit int) (domain.SessionDeleteResult, error) {
 	if limit <= 0 {
 		limit = 500
@@ -444,6 +453,176 @@ func (r *SQLSessionRepository) DeleteExpiredBefore(ctx context.Context, before t
 	return result, nil
 }
 
+// ArchiveExpiredBefore 在同一事务内把过期会话 / 设备写入归档表并删除在线行（IDN-GAP-P1-04）。
+//
+// 先按 updated_at 顺序选出本批主键，再以主键集合做 INSERT ... SELECT 与 DELETE，
+// 保证归档内容与删除行完全一致；任一步失败整体回滚，不会出现「已归档未删除」。
+// 仅由 worker 清理任务调用，不支持嵌套在请求事务中（需要独立的 sql.Tx 控制提交时机）。
+func (r *SQLSessionRepository) ArchiveExpiredBefore(
+	ctx context.Context,
+	before time.Time,
+	limit int,
+	archivedAt time.Time,
+) (domain.SessionDeleteResult, error) {
+	if r.sql == nil {
+		return domain.SessionDeleteResult{}, apperr.Unavailable("identity session repository is not configured")
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	tx, err := r.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.SessionDeleteResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var result domain.SessionDeleteResult
+	sessionIDs, err := selectArchiveIDs(ctx, tx, "identity_session", "id",
+		"status IN ('rotated', 'revoked', 'expired') AND updated_at < ?", before, limit)
+	if err != nil {
+		return result, err
+	}
+	if len(sessionIDs) > 0 {
+		if err := insertArchivedSessions(ctx, tx, sessionIDs, archivedAt); err != nil {
+			return result, err
+		}
+		if err := deleteByIDs(ctx, tx, "identity_session", "id", sessionIDs); err != nil {
+			return result, err
+		}
+		result.Sessions = len(sessionIDs)
+	}
+
+	familyIDs, err := selectArchiveIDs(ctx, tx, "identity_session_family", "family_id",
+		"status IN ('revoked', 'expired') AND updated_at < ?", before, limit)
+	if err != nil {
+		return result, err
+	}
+	if len(familyIDs) > 0 {
+		if err := insertArchivedFamilies(ctx, tx, familyIDs, archivedAt); err != nil {
+			return result, err
+		}
+		if err := deleteByIDs(ctx, tx, "identity_session_family", "family_id", familyIDs); err != nil {
+			return result, err
+		}
+		result.Families = len(familyIDs)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.SessionDeleteResult{}, err
+	}
+	return result, nil
+}
+
+// DeleteArchivedBefore 删除归档保留期外的历史会话 / 设备，单次最多 limit 条。
+func (r *SQLSessionRepository) DeleteArchivedBefore(
+	ctx context.Context,
+	before time.Time,
+	limit int,
+) (domain.SessionDeleteResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var result domain.SessionDeleteResult
+	sessionResult, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_session_archive
+		WHERE archived_at < ? ORDER BY archived_at LIMIT ?`, before.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := sessionResult.RowsAffected(); rowsErr == nil {
+		result.Sessions = int(affected)
+	}
+	familyResult, err := r.exec(ctx).ExecContext(ctx, `DELETE FROM identity_session_family_archive
+		WHERE archived_at < ? ORDER BY archived_at LIMIT ?`, before.UTC(), limit)
+	if err != nil {
+		return result, err
+	}
+	if affected, rowsErr := familyResult.RowsAffected(); rowsErr == nil {
+		result.Families = int(affected)
+	}
+	return result, nil
+}
+
+// selectArchiveIDs 选出本批待归档主键；idColumn 为对应用户表主键列名。
+func selectArchiveIDs(
+	ctx context.Context,
+	tx *sql.Tx,
+	table, idColumn, condition string,
+	before time.Time,
+	limit int,
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+idColumn+` FROM `+table+` WHERE `+condition+` ORDER BY updated_at LIMIT ?`,
+		before.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]int64, 0, limit)
+	for rows.Next() {
+		var id int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// insertArchivedSessions 以主键集合把在线会话复制到归档表。
+func insertArchivedSessions(ctx context.Context, tx *sql.Tx, ids []int64, archivedAt time.Time) error {
+	placeholders, args := idPlaceholders(ids, archivedAt.UTC())
+	_, err := tx.ExecContext(ctx, `INSERT INTO identity_session_archive
+		(id, account_id, family_id, refresh_token_hash, status, token_version, version,
+		 expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason,
+		 created_at, updated_at, archived_at)
+		SELECT id, account_id, family_id, refresh_token_hash, status, token_version, version,
+		 expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason,
+		 created_at, updated_at, ?
+		FROM identity_session WHERE id IN (`+placeholders+`)`, args...)
+	return err
+}
+
+// insertArchivedFamilies 以主键集合把在线设备会话复制到归档表。
+func insertArchivedFamilies(ctx context.Context, tx *sql.Tx, ids []int64, archivedAt time.Time) error {
+	placeholders, args := idPlaceholders(ids, archivedAt.UTC())
+	_, err := tx.ExecContext(ctx, `INSERT INTO identity_session_family_archive
+		(family_id, account_id, status, version, created_at, last_used_at, expires_at,
+		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason,
+		 updated_at, archived_at)
+		SELECT family_id, account_id, status, version, created_at, last_used_at, expires_at,
+		 absolute_expires_at, ip_hash, ua_hash, device_label, revoked_at, revoked_reason,
+		 updated_at, ?
+		FROM identity_session_family WHERE family_id IN (`+placeholders+`)`, args...)
+	return err
+}
+
+// deleteByIDs 按主键集合删除在线行。
+func deleteByIDs(ctx context.Context, tx *sql.Tx, table, idColumn string, ids []int64) error {
+	placeholders, args := idPlaceholders(ids)
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE `+idColumn+` IN (`+placeholders+`)`, args...)
+	return err
+}
+
+// idPlaceholders 构造 IN 列表占位符；extra 为插入 SELECT 的额外参数（放在最前）。
+func idPlaceholders(ids []int64, extra ...any) (string, []any) {
+	args := make([]any, 0, len(extra)+len(ids))
+	args = append(args, extra...)
+	var builder strings.Builder
+	for i, id := range ids {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString("?")
+		args = append(args, id)
+	}
+	return builder.String(), args
+}
+
 // scanFamily 扫描一行设备会话；可空列允许 NULL。
 func scanFamily(row scanRow) (*domain.SessionFamily, error) {
 	var (
@@ -453,7 +632,9 @@ func scanFamily(row scanRow) (*domain.SessionFamily, error) {
 	err := row.Scan(
 		&family.ID, &family.AccountID, &family.Status, &family.Version,
 		&family.CreatedAt, &family.LastUsedAt, &family.ExpiresAt, &family.AbsoluteExpiresAt,
-		&family.IPHash, &family.UAHash, &family.DeviceLabel, &revokedAt,
+		&family.IPHash, &family.UAHash,
+		&family.Device.Type, &family.Device.OS, &family.Device.Browser, &family.Device.IPMasked,
+		&family.DeviceLabel, &revokedAt,
 		&family.RevokedReason, &family.UpdatedAt,
 	)
 	if err != nil {

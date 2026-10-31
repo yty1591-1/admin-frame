@@ -289,6 +289,8 @@ type SessionFamily struct {
 	// IPHash / UAHash 客户端摘要；禁止存原文。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；只保存从 UA / IP 派生的结果，不保存原文。
+	Device DeviceInfo
 	// DeviceLabel 可选设备标签（如浏览器名），由客户端或前端填写。
 	DeviceLabel string
 	// RevokedAt 撤销时间；nil 表示未撤销。
@@ -305,6 +307,8 @@ type NewSessionFamilyParams struct {
 	AccountID string
 	IPHash    string
 	UAHash    string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生后传入。
+	Device DeviceInfo
 	// DeviceLabel 可选；超过 MaxDeviceLabelLen 会被拒绝。
 	DeviceLabel string
 	// ExpiresAt 当前令牌代的过期时间。
@@ -349,6 +353,7 @@ func NewSessionFamily(p NewSessionFamilyParams) (*SessionFamily, error) {
 		AbsoluteExpiresAt: absolute,
 		IPHash:            p.IPHash,
 		UAHash:            p.UAHash,
+		Device:            p.Device,
 		DeviceLabel:       p.DeviceLabel,
 		UpdatedAt:         now,
 	}, nil

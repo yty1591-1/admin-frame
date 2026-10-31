@@ -129,7 +129,7 @@ func TestOAuthRateLimit(t *testing.T) {
 
 	t.Run("authorize", func(t *testing.T) {
 		f := newOAuthFixtureWithLimiter(t, false, nil, limiter)
-		_, err := f.svc.AuthorizeWithClient(ctx, "test", "ip-hash")
+		_, err := f.svc.AuthorizeWithClient(ctx, "test", "ip-hash", "")
 		requireAppCode(t, err, apperr.CodeTooManyRequests)
 		var limited *app.RateLimitedError
 		if !errors.As(err, &limited) || limited.RetryAfter != limiter.retryAfter {

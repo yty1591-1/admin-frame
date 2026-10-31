@@ -2,6 +2,7 @@ package httpx
 
 import (
 	stderrors "errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -27,6 +28,11 @@ func OK(w http.ResponseWriter, data any, traceID string) {
 // 优先识别 *apperr.AppError（稳定契约码）；其余委托 pkg/httpx，
 // 并用 apperr 语义→数字码表覆盖可移植默认映射，保证与 OpenAPI ErrorCode 一致。
 func FromError(w http.ResponseWriter, err error, traceID string) {
+	// 5xx 根因必须可定位：响应体对客户端保持笼统文案，但服务端日志记录完整错误链。
+	if code := bizCodeOf(err); code >= 50000 {
+		slog.Default().Error("internal request failure",
+			"code", code, "trace_id", traceID, "error", err)
+	}
 	httpx.FromError(w, err, traceID,
 		httpx.WithBizCode(bizCodeOf),
 		httpx.WithStatus(statusOf),

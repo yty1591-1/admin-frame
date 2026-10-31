@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -38,12 +39,35 @@ func parseID(id string) (int64, error) {
 	return value, nil
 }
 
+// escapeLikePattern 转义 LIKE 模式中的通配符，避免用户输入 % / _ 扩大结果集。
+// MySQL 默认以反斜杠作为 LIKE 转义符。
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
+}
+
 // nullTime 把可空时间转换为 driver 可接受的值。
 func nullTime(value *time.Time) any {
 	if value == nil {
 		return nil
 	}
 	return value.UTC()
+}
+
+// nullString 把空串写为 NULL，避免 S1 可空列出现无意义的空串。
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// nullBytes 把空字节切片写为 NULL，供可空密文列使用。
+func nullBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
 }
 
 // nullableTime 把 sql.NullTime 转换为可空指针（UTC）。

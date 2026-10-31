@@ -14,19 +14,31 @@ import (
 //
 // 并发安全：内部使用 RWMutex；refresh_token_hash 全局唯一，
 // account_id / family_id / refresh_token_hash 创建后不可变。
+//
+// 归档：archive* 三个 map 模拟归档表，仅用于本地 / 单测验证清理任务语义，
+// 不参与任何在线鉴权查询。
 type MemorySessionRepository struct {
 	mu       sync.RWMutex
 	byID     map[string]*domain.Session
 	byHash   map[string]string
 	families map[string]*domain.SessionFamily
+
+	archivedSessions  map[string]*domain.Session
+	archivedFamilies  map[string]*domain.SessionFamily
+	archivedSessionAt map[string]time.Time
+	archivedFamilyAt  map[string]time.Time
 }
 
 // NewMemorySessionRepository 创建空的会话仓储。
 func NewMemorySessionRepository() *MemorySessionRepository {
 	return &MemorySessionRepository{
-		byID:     make(map[string]*domain.Session),
-		byHash:   make(map[string]string),
-		families: make(map[string]*domain.SessionFamily),
+		byID:              make(map[string]*domain.Session),
+		byHash:            make(map[string]string),
+		families:          make(map[string]*domain.SessionFamily),
+		archivedSessions:  make(map[string]*domain.Session),
+		archivedFamilies:  make(map[string]*domain.SessionFamily),
+		archivedSessionAt: make(map[string]time.Time),
+		archivedFamilyAt:  make(map[string]time.Time),
 	}
 }
 
@@ -349,6 +361,84 @@ func (r *MemorySessionRepository) DeleteExpiredBefore(_ context.Context, before 
 			continue
 		}
 		delete(r.families, id)
+		result.Families++
+	}
+	return result, nil
+}
+
+// ArchiveExpiredBefore 在内存中模拟「归档 + 删除」的原子迁移，行为与 SQL 实现一致。
+func (r *MemorySessionRepository) ArchiveExpiredBefore(
+	_ context.Context,
+	before time.Time,
+	limit int,
+	archivedAt time.Time,
+) (domain.SessionDeleteResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result domain.SessionDeleteResult
+	for id, session := range r.byID {
+		if result.Sessions >= limit {
+			break
+		}
+		if session.Status == domain.SessionStatusActive || !session.UpdatedAt.Before(before) {
+			continue
+		}
+		r.archivedSessions[id] = cloneSession(session)
+		r.archivedSessionAt[id] = archivedAt
+		delete(r.byID, id)
+		delete(r.byHash, session.RefreshHash)
+		result.Sessions++
+	}
+	for id, family := range r.families {
+		if result.Families >= limit {
+			break
+		}
+		if family.Status == domain.SessionStatusActive || !family.UpdatedAt.Before(before) {
+			continue
+		}
+		r.archivedFamilies[id] = cloneFamily(family)
+		r.archivedFamilyAt[id] = archivedAt
+		delete(r.families, id)
+		result.Families++
+	}
+	return result, nil
+}
+
+// DeleteArchivedBefore 删除归档时间早于 before 的历史记录，行为与 SQL 实现一致。
+func (r *MemorySessionRepository) DeleteArchivedBefore(
+	_ context.Context,
+	before time.Time,
+	limit int,
+) (domain.SessionDeleteResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result domain.SessionDeleteResult
+	for id, archivedAt := range r.archivedSessionAt {
+		if result.Sessions >= limit {
+			break
+		}
+		if !archivedAt.Before(before) {
+			continue
+		}
+		delete(r.archivedSessions, id)
+		delete(r.archivedSessionAt, id)
+		result.Sessions++
+	}
+	for id, archivedAt := range r.archivedFamilyAt {
+		if result.Families >= limit {
+			break
+		}
+		if !archivedAt.Before(before) {
+			continue
+		}
+		delete(r.archivedFamilies, id)
+		delete(r.archivedFamilyAt, id)
 		result.Families++
 	}
 	return result, nil

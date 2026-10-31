@@ -89,6 +89,8 @@ type AccountOperationInput struct {
 	TargetAccountID string
 	// Reason 操作原因；写入审计 reason，禁止包含 PII。
 	Reason string
+	// MFACode 特权操作的二次 MFA 动态码或恢复码；admin_required=true 时必填。
+	MFACode string
 }
 
 // ChangePassword 校验旧密码后改密：递增 token_version、撤销全部会话并写审计。
@@ -281,6 +283,9 @@ func (s *AccountService) ResetMFA(ctx context.Context, in AccountOperationInput)
 		if err != nil {
 			return err
 		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
+			return err
+		}
 		if _, err := s.auth.mfa.FindByAccount(txCtx, loaded.ID); err != nil {
 			if errors.Is(err, apperr.ErrNotFound) {
 				return apperr.NotFound("mfa enrollment not found")
@@ -425,9 +430,15 @@ func (s *AccountService) List(ctx context.Context, in AccountListInput) ([]Accou
 }
 
 // Get 返回账号详情；软删账号同样可查，便于恢复。
-func (s *AccountService) Get(ctx context.Context, targetAccountID string) (AccountDetail, error) {
+//
+// 读取用户 PII 属于敏感操作，成功读取后写 auth.account.read 审计。
+func (s *AccountService) Get(ctx context.Context, actor SessionActor, targetAccountID string) (AccountDetail, error) {
 	account, err := s.auth.loadAccountAny(ctx, targetAccountID)
 	if err != nil {
+		return AccountDetail{}, err
+	}
+	if err := s.auth.emitAudit(ctx, audit.ActionAuthAccountRead, actor.AccountID, account.MerchantID,
+		"account", account.ID, audit.OutcomeSuccess, "", actor.TraceID, nil); err != nil {
 		return AccountDetail{}, err
 	}
 	detail := AccountDetail{AccountSummary: accountSummaryOf(account), MustChangePassword: account.MustChangePassword}
@@ -534,6 +545,9 @@ func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationI
 		if err != nil {
 			return err
 		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
+			return err
+		}
 		credential, err := s.auth.credentials.FindByAccount(txCtx, loaded.ID, domain.CredentialTypePassword)
 		if err != nil {
 			if errors.Is(err, apperr.ErrNotFound) {
@@ -581,6 +595,9 @@ func (s *AccountService) Delete(ctx context.Context, in AccountOperationInput) e
 	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
 		loaded, err := s.auth.targetAccount(txCtx, in.TargetAccountID)
 		if err != nil {
+			return err
+		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
 			return err
 		}
 		expected := loaded.Version
@@ -644,9 +661,13 @@ func (s *AccountService) Restore(ctx context.Context, in AccountOperationInput) 
 }
 
 // ListTargetSessions 列出目标账号的设备会话（管理员视角均标记为非当前会话）。
-func (s *AccountService) ListTargetSessions(ctx context.Context, targetAccountID, cursor string, limit int) (SessionPage, error) {
+func (s *AccountService) ListTargetSessions(ctx context.Context, actor SessionActor, targetAccountID, cursor string, limit int) (SessionPage, error) {
 	account, err := s.auth.targetAccount(ctx, targetAccountID)
 	if err != nil {
+		return SessionPage{}, err
+	}
+	if err := s.auth.emitAudit(ctx, audit.ActionAuthSessionRead, actor.AccountID, account.MerchantID,
+		"account", account.ID, audit.OutcomeSuccess, "", actor.TraceID, nil); err != nil {
 		return SessionPage{}, err
 	}
 	return s.auth.listFamilies(ctx, account.ID, "", cursor, limit)
@@ -697,6 +718,9 @@ func (s *AccountService) RevokeTargetSessions(ctx context.Context, in AccountOpe
 	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
 		loaded, err := s.auth.targetAccount(txCtx, in.TargetAccountID)
 		if err != nil {
+			return err
+		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
 			return err
 		}
 		expected := loaded.Version

@@ -40,6 +40,8 @@ type CompletePasswordChangeInput struct {
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -154,7 +156,7 @@ func (s *AuthService) completePasswordChangeInTx(ctx context.Context, in Complet
 		audit.OutcomeSuccess, reasonPasswordResetCompletion, in.TraceID, nil); err != nil {
 		return LoginResult{}, err
 	}
-	return s.challengeOrComplete(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	return s.challengeOrComplete(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
 }
 
 // generateTemporaryPassword 生成满足复杂度要求的临时口令。

@@ -15,6 +15,8 @@ const (
 	ActionAuthPasswordReset   = "auth.password.reset"
 	ActionAuthProfileUpdated  = "auth.profile.updated"
 	ActionAuthPhoneRebound    = "auth.phone.rebound"
+	ActionAuthAccountRead     = "auth.account.read"
+	ActionAuthSessionRead     = "auth.session.read"
 	ActionAuthLogout          = "auth.logout"
 	ActionAuthTokenRefresh    = "auth.token.refresh" //nolint:gosec // G101: 审计动作名，不是凭证
 	ActionAuthTokenReused     = "auth.token.reused"  //nolint:gosec // G101: 审计动作名，不是凭证
@@ -23,8 +25,13 @@ const (
 	ActionAuthMFAFailed       = "auth.mfa.failed"
 	ActionAuthMFADisabled     = "auth.mfa.disabled"
 	ActionAuthMFAReset        = "auth.mfa.reset"
+	ActionAuthMFASetup        = "auth.mfa.setup"
 	ActionAuthMFARecoveryUsed = "auth.mfa.recovery_used"
 	ActionAuthMFATicketReplay = "auth.mfa.ticket_replay"
+	ActionAuthSMS             = "auth.sms.send"
+	ActionAuthOAuthAuthorize  = "auth.oauth.authorize"
+	ActionAuthOAuthCallback   = "auth.oauth.callback"
+	ActionAuthRateLimited     = "auth.rate_limited"
 	ActionAuthSessionEvicted  = "auth.session.evicted"
 	ActionRBACRoleChange      = "rbac.role_change"
 	ActionRBACBindingChange   = "rbac.binding_change"
@@ -54,6 +61,8 @@ func KnownActions() []string {
 		ActionAuthPasswordReset,
 		ActionAuthProfileUpdated,
 		ActionAuthPhoneRebound,
+		ActionAuthAccountRead,
+		ActionAuthSessionRead,
 		ActionAuthLogout,
 		ActionAuthTokenRefresh,
 		ActionAuthTokenReused,
@@ -62,8 +71,13 @@ func KnownActions() []string {
 		ActionAuthMFAFailed,
 		ActionAuthMFADisabled,
 		ActionAuthMFAReset,
+		ActionAuthMFASetup,
 		ActionAuthMFARecoveryUsed,
 		ActionAuthMFATicketReplay,
+		ActionAuthSMS,
+		ActionAuthOAuthAuthorize,
+		ActionAuthOAuthCallback,
+		ActionAuthRateLimited,
 		ActionAuthSessionEvicted,
 		ActionRBACRoleChange,
 		ActionRBACBindingChange,

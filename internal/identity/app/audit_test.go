@@ -198,6 +198,9 @@ func TestAuditMFAEvents(t *testing.T) {
 	f.login(t, "admin-mfa@example.com", "Sup3rSecret!Passw0rd")
 
 	bindMFA(t, f, "acc-audit-mfa")
+	if len(capture.byAction(audit.ActionAuthMFASetup)) != 1 {
+		t.Fatalf("expected auth.mfa.setup, got %+v", capture.snapshot())
+	}
 	if len(capture.byAction(audit.ActionAuthMFABound)) != 1 {
 		t.Fatalf("expected auth.mfa.bound, got %+v", capture.snapshot())
 	}

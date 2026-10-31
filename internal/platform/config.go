@@ -106,6 +106,61 @@ type IdentityConfig struct {
 	SMS IdentitySMSConfig `yaml:"sms"`
 	// OAuth C 端第三方授权参数。
 	OAuth IdentityOAuthConfig `yaml:"oauth"`
+	// Subject 账号登录主体的 PII 加密 / 索引参数（IDN-GAP-P1-06）。
+	//
+	// 未配置时不启用双写与加密索引，登录仍按明文 subject 查询；
+	// 配置后进入 S1/S2 阶段：明文保留，同时写 subject_index / subject_ciphertext。
+	Subject IdentitySubjectConfig `yaml:"subject"`
+}
+
+// IdentitySubjectConfig 是登录主体（PII）的加密与确定性索引参数。
+//
+// subject_index 由 identity.hash_key 计算 HMAC，复用既有摘要轮换；
+// subject_ciphertext 由本配置的 AES-256-GCM 密钥环加密，AAD 绑定 account_id。
+type IdentitySubjectConfig struct {
+	// Keys 加密密钥环，支持按 key id 轮换。
+	Keys []IdentityMFAKeyConfig `yaml:"keys"`
+	// ActiveKeyID 当前加密密钥；Keys 非空时必填。
+	ActiveKeyID string `yaml:"active_key_id"`
+	// LegacyKey 旧格式单密钥，仅用于解密历史密文；可为空。
+	LegacyKey string `yaml:"legacy_key"`
+}
+
+// DecodeKeys 解码主体加密密钥环；未配置时返回 nil。
+func (s IdentitySubjectConfig) DecodeKeys() (map[string][]byte, error) {
+	if len(s.Keys) == 0 {
+		return nil, nil
+	}
+	keys := make(map[string][]byte, len(s.Keys))
+	for _, item := range s.Keys {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return nil, errors.New("identity.subject.keys id is required")
+		}
+		if len(id) > 16 {
+			return nil, errors.New("identity.subject.keys id must be <= 16 bytes")
+		}
+		if _, dup := keys[id]; dup {
+			return nil, fmt.Errorf("identity.subject.keys has duplicate id: %s", id)
+		}
+		key, err := decodeKey(item.Key, "identity.subject.keys.key")
+		if err != nil {
+			return nil, err
+		}
+		if key == nil {
+			return nil, fmt.Errorf("identity.subject.keys key is required for id %s", id)
+		}
+		keys[id] = key
+	}
+	return keys, nil
+}
+
+// DecodeLegacyKey 解码旧格式单密钥；未配置返回 nil。
+func (s IdentitySubjectConfig) DecodeLegacyKey() ([]byte, error) {
+	if strings.TrimSpace(s.LegacyKey) == "" {
+		return nil, nil
+	}
+	return decodeKey(s.LegacyKey, "identity.subject.legacy_key")
 }
 
 // IdentitySMSConfig 是 C 端短信验证码参数（docs/identity-authn.md §8.1 / §10）。
@@ -292,6 +347,8 @@ type IdentityRetentionConfig struct {
 	SessionDays int `yaml:"session_days"`
 	// LoginAttemptDays 登录尝试记录保留天数；生产 ≥180。
 	LoginAttemptDays int `yaml:"login_attempt_days"`
+	// ArchiveDays 归档表保留天数；0 使用默认 365，负数关闭归档（回退到只删不归档）。
+	ArchiveDays int `yaml:"archive_days"`
 	// CleanupInterval worker 清理任务执行间隔；默认 1h。
 	CleanupInterval time.Duration `yaml:"cleanup_interval"`
 }
@@ -312,7 +369,25 @@ type IdentityRevocationConfig struct {
 	FailureMode string `yaml:"failure_mode"`
 	// StateTTL 账号撤销快照最大陈旧度；超过即强制回源数据库，上限 60s。
 	StateTTL time.Duration `yaml:"state_ttl"`
+	// LocalCacheTTL 进程内 L1 快照 TTL；0 使用默认 1s，负数关闭缓存（IDN-GAP-P1-02）。
+	//
+	// 该值同时是「撤销在本副本可见」的最长延迟；上限 5s，跨副本仍由 state_ttl 收敛。
+	LocalCacheTTL time.Duration `yaml:"local_cache_ttl"`
+	// LocalCacheCapacity L1 单个类别（账号 / 会话）的条目上限；0 使用默认 4096。
+	LocalCacheCapacity int `yaml:"local_cache_capacity"`
 }
+
+// 撤销本地缓存参数（IDN-GAP-P1-02）。
+const (
+	// identityDefaultRevocationLocalCacheTTL 默认 L1 TTL，与 ≤1s 撤销可见承诺一致。
+	identityDefaultRevocationLocalCacheTTL = time.Second
+	// identityMaxRevocationLocalCacheTTL L1 TTL 硬上限，避免配置过大放大撤销延迟。
+	identityMaxRevocationLocalCacheTTL = 5 * time.Second
+	// identityDefaultRevocationLocalCacheCapacity 默认 L1 容量上限。
+	identityDefaultRevocationLocalCacheCapacity = 4096
+	// identityMaxRevocationLocalCacheCapacity 允许配置的 L1 容量上限。
+	identityMaxRevocationLocalCacheCapacity = 100000
+)
 
 // 密码策略边界，与 internal/identity/app 默认值保持一致（docs/identity-authn.md §10）。
 const (
@@ -1130,6 +1205,10 @@ func (c *Config) applyIdentityDefaults() {
 	if c.Identity.Retention.LoginAttemptDays == 0 {
 		c.Identity.Retention.LoginAttemptDays = 180
 	}
+	// 0 使用默认 365 天；负数表示显式关闭归档。
+	if c.Identity.Retention.ArchiveDays == 0 {
+		c.Identity.Retention.ArchiveDays = 365
+	}
 	if c.Identity.Retention.CleanupInterval == 0 {
 		c.Identity.Retention.CleanupInterval = time.Hour
 	}
@@ -1146,6 +1225,13 @@ func (c *Config) applyIdentityDefaults() {
 			accessLeeway = identityMaxRevocationStateTTL
 		}
 		c.Identity.Revocation.StateTTL = accessLeeway
+	}
+	// 负数表示显式关闭 L1；0 使用默认 1s，避免「未配置」被误读为关闭。
+	if c.Identity.Revocation.LocalCacheTTL == 0 {
+		c.Identity.Revocation.LocalCacheTTL = identityDefaultRevocationLocalCacheTTL
+	}
+	if c.Identity.Revocation.LocalCacheCapacity <= 0 {
+		c.Identity.Revocation.LocalCacheCapacity = identityDefaultRevocationLocalCacheCapacity
 	}
 	if c.Identity.Lockout.MaxFailures == 0 {
 		c.Identity.Lockout.MaxFailures = 5
@@ -1749,6 +1835,10 @@ func (c *Config) validateIdentity() []error {
 	if c.Identity.Retention.LoginAttemptDays < 180 {
 		errs = append(errs, errors.New("identity.retention.login_attempt_days must be >= 180"))
 	}
+	// 归档保留期必须覆盖在线保留期；负数表示关闭归档，不参与比较。
+	if c.Identity.Retention.ArchiveDays > 0 && c.Identity.Retention.ArchiveDays < c.Identity.Retention.SessionDays {
+		errs = append(errs, errors.New("identity.retention.archive_days must be >= session_days (negative disables)"))
+	}
 	if c.Identity.Retention.CleanupInterval < time.Minute {
 		errs = append(errs, errors.New("identity.retention.cleanup_interval must be >= 1m"))
 	}
@@ -1776,6 +1866,14 @@ func (c *Config) validateIdentity() []error {
 		if c.Identity.Revocation.StateTTL > identityMaxRevocationStateTTL {
 			errs = append(errs, errors.New("identity.revocation.state_ttl must be <= 60s"))
 		}
+	}
+	// 负数表示关闭 L1；正数必须落在 (0, 5s]，避免缓存放大撤销延迟。
+	if c.Identity.Revocation.LocalCacheTTL > 0 &&
+		c.Identity.Revocation.LocalCacheTTL > identityMaxRevocationLocalCacheTTL {
+		errs = append(errs, errors.New("identity.revocation.local_cache_ttl must be <= 5s (negative disables)"))
+	}
+	if c.Identity.Revocation.LocalCacheCapacity > identityMaxRevocationLocalCacheCapacity {
+		errs = append(errs, errors.New("identity.revocation.local_cache_capacity must be <= 100000"))
 	}
 	if c.Identity.Lockout.MaxFailures < 1 {
 		errs = append(errs, errors.New("identity.lockout.max_failures must be >= 1"))
@@ -1866,6 +1964,25 @@ func (c *Config) validateIdentity() []error {
 			if _, ok := keys[active]; !ok {
 				errs = append(errs, fmt.Errorf("identity.mfa.active_key_id %q is not in identity.mfa.keys", active))
 			}
+		}
+	}
+	// PII subject 加密：配置密钥环时必须显式指定 active key，且密钥可解码。
+	if len(c.Identity.Subject.Keys) > 0 {
+		keys, keysErr := c.Identity.Subject.DecodeKeys()
+		if keysErr != nil {
+			errs = append(errs, keysErr)
+		}
+		active := strings.TrimSpace(c.Identity.Subject.ActiveKeyID)
+		switch active {
+		case "":
+			errs = append(errs, errors.New("identity.subject.active_key_id is required when identity.subject.keys is set"))
+		default:
+			if _, ok := keys[active]; !ok {
+				errs = append(errs, fmt.Errorf("identity.subject.active_key_id %q is not in identity.subject.keys", active))
+			}
+		}
+		if _, legacyErr := c.Identity.Subject.DecodeLegacyKey(); legacyErr != nil {
+			errs = append(errs, legacyErr)
 		}
 	}
 	errs = append(errs, c.validateIdentitySMS()...)

@@ -65,6 +65,39 @@ func TestAccountServiceChangePassword(t *testing.T) {
 	}
 }
 
+// TestAccountServicePrivilegedStepUpMFA 验证管理员特权操作的二次 MFA。
+func TestAccountServicePrivilegedStepUpMFA(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAAdminRequired = true
+	})
+	f.seedAccount(t, "acct-operator", "operator", "Operator#Pass12")
+	f.seedAccount(t, "acct-target", "target", "Target#Pass12")
+	secret, _ := bindMFA(t, f, "acct-operator")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	actor := app.SessionActor{AccountID: "acct-operator", TraceID: "trace-stepup"}
+
+	base := app.AccountOperationInput{
+		Actor:           actor,
+		TargetAccountID: "acct-target",
+		Reason:          "incident-response",
+	}
+	if _, err := svc.ResetPassword(ctx, base); err != nil {
+		requireAppCode(t, err, apperr.CodeBadRequest)
+	} else {
+		t.Fatal("reset password must require step-up mfa")
+	}
+
+	withCode := base
+	withCode.MFACode = totpCodeAt(t, secret, f.clock.Now())
+	if _, err := svc.ResetPassword(ctx, withCode); err != nil {
+		t.Fatalf("reset password with step-up mfa: %v", err)
+	}
+}
+
 // TestAccountServiceDisableEnableUnlock 验证管理员停用、启用与解锁。
 func TestAccountServiceDisableEnableUnlock(t *testing.T) {
 	ctx := context.Background()
@@ -169,7 +202,7 @@ func TestAccountServiceListAndGet(t *testing.T) {
 		t.Fatalf("keyword filter = %+v total=%d, want alice only", filtered, total)
 	}
 
-	detail, err := svc.Get(ctx, "acct-list-1")
+	detail, err := svc.Get(ctx, app.SessionActor{AccountID: "acct-admin", TraceID: "trace-read"}, "acct-list-1")
 	if err != nil {
 		t.Fatalf("get detail: %v", err)
 	}
@@ -241,7 +274,7 @@ func TestAccountServiceDeleteAndRestore(t *testing.T) {
 	if _, err := f.svc.Login(ctx, app.LoginInput{Subject: "erin", Password: "Correct#Passw0rd"}); !errors.Is(err, apperr.ErrUnauthorized) {
 		t.Fatalf("deleted login must be rejected, got %v", err)
 	}
-	detail, err := svc.Get(ctx, login.AccountID)
+	detail, err := svc.Get(ctx, app.SessionActor{AccountID: login.AccountID, TraceID: "trace-read"}, login.AccountID)
 	if err != nil {
 		t.Fatalf("get deleted account: %v", err)
 	}
@@ -275,7 +308,7 @@ func TestAccountServiceTargetSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new account service: %v", err)
 	}
-	page, err := svc.ListTargetSessions(ctx, first.AccountID, "", 0)
+	page, err := svc.ListTargetSessions(ctx, app.SessionActor{AccountID: "acct-admin", TraceID: "trace-read"}, first.AccountID, "", 0)
 	if err != nil {
 		t.Fatalf("list target sessions: %v", err)
 	}

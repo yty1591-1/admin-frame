@@ -92,6 +92,8 @@ type SendSMSCodeInput struct {
 	Phone string
 	// IPHash 客户端 IP 摘要；由 transport 计算。
 	IPHash string
+	// TraceID 请求关联 ID；用于审计。
+	TraceID string
 }
 
 // SMSLoginInput 是短信验证码登录入参。
@@ -103,6 +105,8 @@ type SMSLoginInput struct {
 	// IPHash / UAHash 客户端摘要；由 transport 计算。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -178,6 +182,7 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err er
 		return unavailableSMS()
 	}
 	if !allowed {
+		s.auditSMSDenied(ctx, phoneHash, in.TraceID, "sms_resend_limited")
 		return tooManySMS("sms code requested too frequently", retryAfter)
 	}
 	sent := false
@@ -190,12 +195,14 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err er
 	if ok, dailyErr := s.limiter.AllowDaily(ctx, phoneHash, s.dailyPerPhone); dailyErr != nil {
 		return unavailableSMS()
 	} else if !ok {
+		s.auditSMSDenied(ctx, phoneHash, in.TraceID, "sms_daily_limited")
 		return tooManySMS("sms daily limit exceeded", 0)
 	}
 	if ipHash := strings.TrimSpace(in.IPHash); ipHash != "" {
 		if ok, ipErr := s.limiter.AllowHourlyIP(ctx, ipHash, s.hourlyPerIP); ipErr != nil {
 			return unavailableSMS()
 		} else if !ok {
+			s.auditSMSDenied(ctx, phoneHash, in.TraceID, "sms_ip_limited")
 			return tooManySMS("sms hourly limit exceeded", 0)
 		}
 	}
@@ -203,6 +210,7 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err er
 		if ok, budgetErr := s.limiter.AllowGlobalDaily(ctx, s.dailyBudget); budgetErr != nil {
 			return unavailableSMS()
 		} else if !ok {
+			s.auditSMSDenied(ctx, phoneHash, in.TraceID, "sms_budget_exhausted")
 			return tooManySMS("sms daily budget exhausted", 0)
 		}
 	}
@@ -218,13 +226,30 @@ func (s *SMSLoginService) Send(ctx context.Context, in SendSMSCodeInput) (err er
 		_ = s.codes.Delete(ctx, phoneHash)
 		return unavailableSMS()
 	}
+	// 先落审计再发送：审计不可用时不发送验证码，避免「发出但无审计」。
+	if err := s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthSMS, phoneHash, "",
+		"phone_ref", phoneHash, audit.OutcomeSuccess, "sms_code_issued", in.TraceID, nil); err != nil {
+		_ = s.codes.Delete(ctx, phoneHash)
+		return unavailableSMS()
+	}
 	if err := s.sender.SendCode(ctx, phone, code); err != nil {
 		// 发送失败时删除已写入的验证码，避免「没收到但可用」。
 		_ = s.codes.Delete(ctx, phoneHash)
+		_ = s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthSMS, phoneHash, "",
+			"phone_ref", phoneHash, audit.OutcomeFailure, "sms_send_failed", in.TraceID, nil)
 		return unavailableSMS()
 	}
 	sent = true
 	return nil
+}
+
+// auditSMSDenied 记录一次短信限流拒绝；审计失败不改变 429 结果。
+func (s *SMSLoginService) auditSMSDenied(ctx context.Context, phoneHash, traceID, reason string) {
+	if s.auth == nil {
+		return
+	}
+	_ = s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthRateLimited, phoneHash, "",
+		"phone_ref", phoneHash, audit.OutcomeDenied, reason, traceID, nil)
 }
 
 // Login 校验验证码并完成登录；任何失败分支都返回统一 40100 文案。
@@ -237,7 +262,7 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 		return LoginResult{}, err
 	}
 
-	account, err := s.accounts.FindBySubject(ctx, domain.ChannelC, phoneSubject(phoneHash))
+	account, err := s.accounts.FindBySubject(ctx, domain.ChannelC, "", phoneSubject(phoneHash))
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
 			// D3：未注册手机号不自动建号，保持与错误验证码一致的响应。
@@ -252,6 +277,7 @@ func (s *SMSLoginService) Login(ctx context.Context, in SMSLoginInput) (LoginRes
 		AccountID: account.ID,
 		IPHash:    in.IPHash,
 		UAHash:    in.UAHash,
+		Device:    in.Device,
 		TraceID:   in.TraceID,
 	})
 }
@@ -271,6 +297,7 @@ func (s *SMSLoginService) Register(ctx context.Context, in SMSLoginInput) (Login
 		PhoneHash: phoneHash,
 		IPHash:    in.IPHash,
 		UAHash:    in.UAHash,
+		Device:    in.Device,
 		TraceID:   in.TraceID,
 	})
 }
@@ -331,6 +358,8 @@ type ConsumerRegisterInput struct {
 	// IPHash / UAHash 客户端摘要。
 	IPHash string
 	UAHash string
+	// Device 可展示设备画像；由 transport 从原始 UA / IP 派生。
+	Device domain.DeviceInfo
 	// TraceID 请求关联 ID。
 	TraceID string
 }
@@ -412,7 +441,7 @@ func (s *AuthService) registerConsumerInTx(
 	if err := s.guard.Authorize(account, now); err != nil {
 		return LoginResult{}, err
 	}
-	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.TraceID)
+	return s.completeLogin(ctx, account, now, in.IPHash, in.UAHash, in.Device, in.TraceID)
 }
 
 // RecordExternalLoginFailure 记录外部登录失败审计；actor 使用不可逆账号摘要。

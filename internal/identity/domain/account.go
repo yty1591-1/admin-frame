@@ -94,6 +94,14 @@ type Account struct {
 	Channel Channel
 	// Subject 规范化后的登录主体；同一端别内唯一。
 	Subject string
+	// SubjectIndex 是主体确定性索引（HMAC），仅由持久化层维护。
+	//
+	// S1/S2 阶段与明文双写、双读；S4 起作为唯一键，S5 后明文列下线。
+	SubjectIndex string
+	// SubjectCiphertext 是主体密文（AES-256-GCM），仅由持久化层维护。
+	//
+	// 领域层与用例不得直接读写；展示前由仓储解密回填 Subject。
+	SubjectCiphertext []byte
 	// DisplayName 展示昵称；空串表示未设置，前端回退 Subject。
 	//
 	// 不参与唯一键与鉴权，改名不影响任何会话或令牌。

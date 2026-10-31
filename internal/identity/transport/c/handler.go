@@ -3,10 +3,13 @@ package c
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
+	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
@@ -77,8 +80,9 @@ func (h *Handler) SendSMSCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.sms.Send(r.Context(), app.SendSMSCodeInput{
-		Phone:  req.Phone,
-		IPHash: h.clientIPHash(r),
+		Phone:   req.Phone,
+		IPHash:  h.clientIPHash(r),
+		TraceID: traceID,
 	}); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -106,6 +110,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		Code:    req.Code,
 		IPHash:  h.clientIPHash(r),
 		UAHash:  h.clientUAHash(r),
+		Device:  h.clientDevice(r),
 		TraceID: traceID,
 	})
 	if err != nil {
@@ -134,6 +139,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		Code:    req.Code,
 		IPHash:  h.clientIPHash(r),
 		UAHash:  h.clientUAHash(r),
+		Device:  h.clientDevice(r),
 		TraceID: traceID,
 	})
 	if err != nil {
@@ -163,10 +169,11 @@ func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.sms.Rebind(r.Context(), app.SMSRebindInput{
-		Actor:  actor,
-		Phone:  req.Phone,
-		Code:   req.Code,
-		IPHash: h.clientIPHash(r),
+		Actor:   actor,
+		Phone:   req.Phone,
+		Code:    req.Code,
+		OldCode: req.OldCode,
+		IPHash:  h.clientIPHash(r),
 	}); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -177,6 +184,8 @@ func (h *Handler) RebindPhone(w http.ResponseWriter, r *http.Request) {
 // DeleteAccount DELETE /c/v1/auth/account
 //
 // 用户自助注销（软删）；手机号主体仍占用唯一键，不允许立即被他人重新注册。
+// 短信启用时请求体需携带当前手机号验证码（{"code":"123456"}）作为再认证；
+// 短信未启用或 OAuth-only 账号无手机号时退化为仅 Bearer。
 func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := cActorFrom(r)
@@ -184,13 +193,25 @@ func (h *Handler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
-	if h.auth == nil {
-		httpx.FromError(w, apperr.Unavailable("account deletion is not configured"), traceID)
-		return
-	}
-	if err := h.auth.DeleteConsumerAccount(r.Context(), actor); err != nil {
+	var req smsDeleteRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
+	}
+	if h.sms != nil {
+		if err := h.sms.DeleteAccount(r.Context(), actor, req.Code); err != nil {
+			httpx.FromError(w, err, traceID)
+			return
+		}
+	} else {
+		if h.auth == nil {
+			httpx.FromError(w, apperr.Unavailable("account deletion is not configured"), traceID)
+			return
+		}
+		if err := h.auth.DeleteConsumerAccount(r.Context(), actor); err != nil {
+			httpx.FromError(w, err, traceID)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -221,7 +242,7 @@ func (h *Handler) OAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.Unavailable("oauth login is not enabled"), traceID)
 		return
 	}
-	result, err := h.oauth.AuthorizeWithClient(r.Context(), r.PathValue("provider"), h.clientIPHash(r))
+	result, err := h.oauth.AuthorizeWithClient(r.Context(), r.PathValue("provider"), h.clientIPHash(r), traceID)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -253,6 +274,7 @@ func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		State:    req.State,
 		IPHash:   h.clientIPHash(r),
 		UAHash:   h.clientUAHash(r),
+		Device:   h.clientDevice(r),
 		TraceID:  traceID,
 	})
 	if err != nil {
@@ -274,9 +296,17 @@ type smsLoginRequest struct {
 }
 
 // smsRebindRequest 是手机号换绑请求。
+//
+// old_code 用于证明持有当前手机号；新号验证码只证明持有新号。
 type smsRebindRequest struct {
-	Phone string `json:"phone"`
-	Code  string `json:"code"`
+	Phone   string `json:"phone"`
+	Code    string `json:"code"`
+	OldCode string `json:"old_code,omitempty"`
+}
+
+// smsDeleteRequest 是注销账号请求；短信启用时必须携带当前手机号验证码。
+type smsDeleteRequest struct {
+	Code string `json:"code,omitempty"`
 }
 
 // oauthCallbackRequest 是 OAuth 回调请求。
@@ -319,6 +349,22 @@ func decodeJSON(r *http.Request, dst any) error {
 	return nil
 }
 
+// decodeOptionalJSON 解码可选请求体；空 body 视为未提供。
+func decodeOptionalJSON(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return nil
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return apperr.BadRequest("invalid request body")
+	}
+	return nil
+}
+
 // clientIPHash 返回客户端 IP 摘要；配置 hash_key 时使用带密钥 HMAC。
 func (h *Handler) clientIPHash(r *http.Request) string {
 	return app.ClientRef(h.hasher, app.HashDomainClientIP, h.clientIP(r))
@@ -327,6 +373,11 @@ func (h *Handler) clientIPHash(r *http.Request) string {
 // clientUAHash 返回 User-Agent 摘要；与 IP 使用不同域。
 func (h *Handler) clientUAHash(r *http.Request) string {
 	return app.ClientRef(h.hasher, app.HashDomainClientUA, r.UserAgent())
+}
+
+// clientDevice 从原始 UA / IP 派生可展示设备画像；原文不落库。
+func (h *Handler) clientDevice(r *http.Request) domain.DeviceInfo {
+	return domain.ParseDeviceInfo(r.UserAgent(), h.clientIP(r))
 }
 
 // clientIP 使用可信代理解析器获取客户端 IP；nil 解析器只使用 RemoteAddr。

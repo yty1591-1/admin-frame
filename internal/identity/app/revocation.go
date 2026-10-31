@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -100,6 +101,18 @@ type RevocationStore interface {
 	IsTokenRevoked(ctx context.Context, jti string) (bool, error)
 }
 
+// RevocationCacheObserver 接收 L1 / Redis / DB 回源的观测事件（IDN-GAP-P1-02）。
+//
+// 与失败观测分离，避免要求所有既有实现同时实现缓存指标；未注入时为 no-op。
+type RevocationCacheObserver interface {
+	// OnRevocationCacheHit 记录一次本地快照命中；kind=account|session。
+	OnRevocationCacheHit(ctx context.Context, kind string)
+	// OnRevocationRedisCall 记录一次 Redis 调用；op 为 account_load / session_load / token_load 等。
+	OnRevocationRedisCall(ctx context.Context, op string)
+	// OnRevocationDBRefetch 记录一次数据库回源；kind=account|session。
+	OnRevocationDBRefetch(ctx context.Context, kind string)
+}
+
 // RevocationObserver 接收撤销快照写入 / 删除失败的观测事件。
 //
 // 失败不影响已提交的业务结果：快照超过 TTL 后必然回源数据库。
@@ -131,6 +144,15 @@ func WithRevocationObserver(observer RevocationObserver) RevocationCheckerOption
 	}
 }
 
+// WithRevocationCacheObserver 注入 L1 / Redis / DB 回源观测。
+func WithRevocationCacheObserver(observer RevocationCacheObserver) RevocationCheckerOption {
+	return func(c *RevocationChecker) {
+		if observer != nil {
+			c.cacheObserver = observer
+		}
+	}
+}
+
 // WithRevocationSessions 注入会话仓储，启用 Access Token 的 sid 会话状态校验（IDN-P1-02）。
 //
 // 未注入时跳过会话校验，仅保留账号级撤销；生产装配必须注入。
@@ -142,19 +164,34 @@ func WithRevocationSessions(sessions domain.SessionRepository) RevocationChecker
 	}
 }
 
+// 撤销存储熔断参数：连续失败后短时跳过 Redis，直接回源数据库。
+//
+// Redis 只是加速层，数据库是唯一事实源；熔断用于避免 Redis 故障时每个请求
+// 都等待 3s 超时，把一次依赖故障放大为请求雪崩。
+const (
+	revocationStoreBreakerThreshold = 3
+	revocationStoreBreakerCooldown  = 10 * time.Second
+)
+
 // RevocationChecker 实现 internal/security.RevocationChecker（docs/identity-authn.md §6.2）。
 //
 // 校验顺序：账号状态 → token_version → 会话状态（sid）→ jti 黑名单。
-// 任一环节依赖不可用时按 failure_mode 返回 ErrUnavailable（fail_closed）或放行（fail_open）。
+// 账号 / 会话快照读取失败时回退数据库；jti 黑名单无数据库事实源，仍按
+// failure_mode 失败关闭。任一环节最终不可用时返回 50300（fail_closed）或放行（fail_open）。
 type RevocationChecker struct {
-	accounts    domain.AccountRepository
-	sessions    domain.SessionRepository
-	store       RevocationStore
-	failureMode string
-	stateTTL    time.Duration
-	observer    RevocationObserver
-	clock       Clock
-	refetch     singleflight.Group
+	accounts      domain.AccountRepository
+	sessions      domain.SessionRepository
+	store         RevocationStore
+	failureMode   string
+	stateTTL      time.Duration
+	observer      RevocationObserver
+	cacheObserver RevocationCacheObserver
+	clock         Clock
+	refetch       singleflight.Group
+
+	breakerMu      sync.Mutex
+	storeFailures  int
+	storeOpenUntil time.Time
 }
 
 // NewRevocationChecker 构造撤销检查器；accounts / store 必填。
@@ -199,10 +236,7 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 	}
 	state, _, err := c.loadState(ctx, accountID)
 	if err != nil {
-		// 账号不存在是确定性拒绝，不是存储故障，不计入依赖失败指标。
-		if !errors.Is(err, apperr.ErrNotFound) {
-			c.notifyStoreFailure(ctx, "account_load", err)
-		}
+		// loadState 已在缓存读取失败时上报指标并回退 DB；此处错误只代表 DB 回源失败。
 		return c.failure(err)
 	}
 	if state.Status == domain.AccountStatusDisabled {
@@ -220,9 +254,11 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 	if claims.ID != "" {
 		revoked, err := c.store.IsTokenRevoked(ctx, claims.ID)
 		if err != nil {
+			c.recordStoreFailure()
 			c.notifyStoreFailure(ctx, "token_load", err)
 			return c.failure(err)
 		}
+		c.recordStoreSuccess()
 		if revoked {
 			return invalidToken()
 		}
@@ -231,11 +267,20 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 }
 
 // loadState 读取账号快照：命中且未超过陈旧度直接复用，否则回源数据库并回填。
+//
+// Redis 读失败时直接回源 DB（DB 是事实源），并触发熔断计数；连续失败后
+// 在冷却窗口内跳过 Redis，避免每个请求重复等待超时。
 func (c *RevocationChecker) loadState(ctx context.Context, accountID string) (AccountState, bool, error) {
+	if c.storeSkipped() {
+		return c.refetchState(ctx, accountID)
+	}
 	state, hit, err := c.store.LoadAccountState(ctx, accountID)
 	if err != nil {
-		return AccountState{}, false, err
+		c.recordStoreFailure()
+		c.notifyStoreFailure(ctx, "account_load", err)
+		return c.refetchState(ctx, accountID)
 	}
+	c.recordStoreSuccess()
 	if hit && c.isFresh(state) {
 		return state, true, nil
 	}
@@ -266,15 +311,18 @@ func (c *RevocationChecker) freshAt(fetchedAt time.Time) bool {
 func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) (AccountState, bool, error) {
 	value, err, _ := c.refetch.Do(accountID, func() (any, error) {
 		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
-		if loaded, hit, loadErr := c.store.LoadAccountState(ctx, accountID); loadErr != nil {
-			return nil, loadErr
-		} else if hit && c.isFresh(loaded) {
-			return loaded, nil
+		// 熔断期内跳过 Redis；读取失败时直接忽略并回源 DB（DB 才是事实源）。
+		if !c.storeSkipped() {
+			if loaded, hit, loadErr := c.store.LoadAccountState(ctx, accountID); loadErr == nil && hit && c.isFresh(loaded) {
+				c.recordStoreSuccess()
+				return loaded, nil
+			}
 		}
 		account, dbErr := c.accounts.FindByID(ctx, accountID)
 		if dbErr != nil {
 			return nil, dbErr
 		}
+		c.notifyDBRefetch(ctx, "account")
 		state := AccountState{
 			Version:   account.TokenVersion,
 			Status:    account.Status,
@@ -312,11 +360,19 @@ func (c *RevocationChecker) checkSession(ctx context.Context, sessionID string) 
 }
 
 // loadSessionState 读取会话快照：命中且未超过陈旧度直接复用，否则回源数据库并回填。
+//
+// 与账号快照一致：Redis 读失败回退 DB；连续失败后短时跳过 Redis。
 func (c *RevocationChecker) loadSessionState(ctx context.Context, sessionID string) (SessionState, error) {
+	if c.storeSkipped() {
+		return c.refetchSessionState(ctx, sessionID)
+	}
 	state, hit, err := c.store.LoadSessionState(ctx, sessionID)
 	if err != nil {
-		return SessionState{}, err
+		c.recordStoreFailure()
+		c.notifyStoreFailure(ctx, "session_load", err)
+		return c.refetchSessionState(ctx, sessionID)
 	}
+	c.recordStoreSuccess()
 	if hit && c.freshAt(state.FetchedAt) {
 		return state, nil
 	}
@@ -329,15 +385,18 @@ func (c *RevocationChecker) loadSessionState(ctx context.Context, sessionID stri
 func (c *RevocationChecker) refetchSessionState(ctx context.Context, sessionID string) (SessionState, error) {
 	value, err, _ := c.refetch.Do("sid:"+sessionID, func() (any, error) {
 		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
-		if loaded, hit, loadErr := c.store.LoadSessionState(ctx, sessionID); loadErr != nil {
-			return nil, loadErr
-		} else if hit && c.freshAt(loaded.FetchedAt) {
-			return loaded, nil
+		// 熔断期内跳过 Redis；读取失败时直接忽略并回源 DB（DB 才是事实源）。
+		if !c.storeSkipped() {
+			if loaded, hit, loadErr := c.store.LoadSessionState(ctx, sessionID); loadErr == nil && hit && c.freshAt(loaded.FetchedAt) {
+				c.recordStoreSuccess()
+				return loaded, nil
+			}
 		}
 		session, dbErr := c.sessions.FindByID(ctx, sessionID)
 		if dbErr != nil {
 			return nil, dbErr
 		}
+		c.notifyDBRefetch(ctx, "session")
 		state := SessionState{
 			Status:    session.Status,
 			RevokedAt: timeOrZero(session.RevokedAt),
@@ -359,6 +418,40 @@ func (c *RevocationChecker) refetchSessionState(ctx context.Context, sessionID s
 	return state, nil
 }
 
+// storeSkipped 报告撤销存储是否处于熔断冷却期。
+func (c *RevocationChecker) storeSkipped() bool {
+	c.breakerMu.Lock()
+	defer c.breakerMu.Unlock()
+	if c.storeOpenUntil.IsZero() {
+		return false
+	}
+	if c.clock.Now().Before(c.storeOpenUntil) {
+		return true
+	}
+	// 冷却结束：重新尝试 Redis，失败则再次进入冷却。
+	c.storeOpenUntil = time.Time{}
+	c.storeFailures = 0
+	return false
+}
+
+// recordStoreFailure 记录一次撤销存储失败；连续失败达到阈值后打开冷却窗口。
+func (c *RevocationChecker) recordStoreFailure() {
+	c.breakerMu.Lock()
+	defer c.breakerMu.Unlock()
+	c.storeFailures++
+	if c.storeFailures >= revocationStoreBreakerThreshold {
+		c.storeOpenUntil = c.clock.Now().Add(revocationStoreBreakerCooldown)
+	}
+}
+
+// recordStoreSuccess 重置撤销存储失败计数。
+func (c *RevocationChecker) recordStoreSuccess() {
+	c.breakerMu.Lock()
+	defer c.breakerMu.Unlock()
+	c.storeFailures = 0
+	c.storeOpenUntil = time.Time{}
+}
+
 // notifyWriteFailure 上报快照写入失败；观测器缺失时静默，由 TTL 兜底。
 func (c *RevocationChecker) notifyWriteFailure(ctx context.Context, op string, err error) {
 	if c.observer == nil {
@@ -373,6 +466,14 @@ func (c *RevocationChecker) notifyStoreFailure(ctx context.Context, op string, e
 		return
 	}
 	c.observer.OnRevocationStoreFailure(ctx, op, err)
+}
+
+// notifyDBRefetch 上报一次数据库回源；仅在 Redis 未命中 / 陈旧时触发。
+func (c *RevocationChecker) notifyDBRefetch(ctx context.Context, kind string) {
+	if c.cacheObserver == nil {
+		return
+	}
+	c.cacheObserver.OnRevocationDBRefetch(ctx, kind)
 }
 
 // failure 按故障策略返回：fail_closed 输出 50300，fail_open 放行。

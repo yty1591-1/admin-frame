@@ -222,10 +222,15 @@ func (f *authFixture) seedAccount(t *testing.T, id, subject, plainPassword strin
 // login 执行一次成功登录并返回结果。
 func (f *authFixture) login(t *testing.T, subject, plainPassword string) app.LoginResult {
 	t.Helper()
+	merchant := ""
+	if f.channel == domain.ChannelBiz {
+		merchant = "m-1"
+	}
 	result, err := f.svc.Login(context.Background(), app.LoginInput{
-		Subject:  subject,
-		Password: plainPassword,
-		TraceID:  "trace-login",
+		Subject:    subject,
+		MerchantID: merchant,
+		Password:   plainPassword,
+		TraceID:    "trace-login",
 	})
 	if err != nil {
 		t.Fatalf("login: %v", err)
@@ -287,7 +292,9 @@ func TestAuthServiceLogin(t *testing.T) {
 				t.Fatalf("save credential: %v", err)
 			}
 
-			result, err := f.svc.Login(ctx, app.LoginInput{Subject: "  Alice@Example.com  ", Password: "Correct#Passw0rd"})
+			result, err := f.svc.Login(ctx, app.LoginInput{
+				Subject: "  Alice@Example.com  ", MerchantID: merchant, Password: "Correct#Passw0rd",
+			})
 			if err != nil {
 				t.Fatalf("login: %v", err)
 			}
@@ -793,6 +800,11 @@ func (m *recordingMetrics) ObserveLogin(_ context.Context, channel domain.Channe
 	m.add("login", channel.String(), result, reason)
 }
 
+// ObserveLoginTxDuration 实现 app.Metrics。
+func (m *recordingMetrics) ObserveLoginTxDuration(_ context.Context, channel domain.Channel, _ time.Duration) {
+	m.add("login_tx", channel.String())
+}
+
 // ObserveLockout 实现 app.Metrics。
 func (m *recordingMetrics) ObserveLockout(_ context.Context, channel domain.Channel) {
 	m.add("lockout", channel.String())
@@ -1122,8 +1134,16 @@ func TestRevocationChecker(t *testing.T) {
 		requireAppCode(t, freshChecker.Check(ctx, active), apperr.CodeUnauthorized)
 	})
 
-	t.Run("fail_closed_returns_50300", func(t *testing.T) {
-		checker, err := app.NewRevocationChecker(persistence.NewMemoryAccountRepository(), brokenRevocationStore{}, app.RevocationFailClosed, time.Hour)
+	t.Run("fail_closed_returns_50300_when_jti_blacklist_unavailable", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		checker, err := app.NewRevocationChecker(accounts, brokenRevocationStore{}, app.RevocationFailClosed, time.Hour)
 		if err != nil {
 			t.Fatalf("new checker: %v", err)
 		}
@@ -1134,8 +1154,35 @@ func TestRevocationChecker(t *testing.T) {
 		}
 	})
 
+	t.Run("account_snapshot_falls_back_to_db_when_store_down", func(t *testing.T) {
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		checker, err := app.NewRevocationChecker(accounts, brokenRevocationStore{}, app.RevocationFailClosed, time.Hour)
+		if err != nil {
+			t.Fatalf("new checker: %v", err)
+		}
+		// 不带 jti：只校验账号快照，Redis 不可用时必须回退 DB 并放行。
+		if err := checker.Check(ctx, jwt.Claims{Subject: "acct-1", Extra: map[string]any{"ver": int64(1)}}); err != nil {
+			t.Fatalf("account snapshot must fall back to db: %v", err)
+		}
+	})
+
 	t.Run("fail_open_allows_but_missing_account_is_denied", func(t *testing.T) {
-		checker, err := app.NewRevocationChecker(persistence.NewMemoryAccountRepository(), brokenRevocationStore{}, app.RevocationFailOpen, time.Hour)
+		accounts := persistence.NewMemoryAccountRepository()
+		account, err := domain.NewAccount(domain.NewAccountParams{ID: "acct-1", Channel: domain.ChannelAdmin, Subject: "alice", Now: now})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := accounts.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account: %v", err)
+		}
+		checker, err := app.NewRevocationChecker(accounts, brokenRevocationStore{}, app.RevocationFailOpen, time.Hour)
 		if err != nil {
 			t.Fatalf("new checker: %v", err)
 		}
@@ -1471,8 +1518,12 @@ func TestSessionCleanupExpiresAndDeletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup second run: %v", err)
 	}
-	if second.DeletedSessions != 1 || second.DeletedFamilies != 1 {
-		t.Fatalf("delete stats = %+v, want 1 session and 1 family", second)
+	// 默认路径为归档 + 在线删除；第二轮的过期行应计入 Archived*，在线查询不再可见。
+	if second.ArchivedSessions != 1 || second.ArchivedFamilies != 1 {
+		t.Fatalf("archive stats = %+v, want 1 session and 1 family", second)
+	}
+	if second.DeletedSessions != 0 || second.DeletedFamilies != 0 {
+		t.Fatalf("archive path must not report deleted stats: %+v", second)
 	}
 	if _, err := sessions.FindFamily(ctx, "fam-1"); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("expired family must be deleted, got %v", err)

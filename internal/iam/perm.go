@@ -40,8 +40,16 @@ const (
 	PermSodWrite PermissionCode = "iam:sod:write"
 	// PermIdentityAccountRead 查看身份账号列表 / 详情与目标账号会话（A 端专属）。
 	PermIdentityAccountRead PermissionCode = "identity:account:read"
-	// PermIdentityAccountWrite 管理身份账号生命周期（停用 / 启用 / 锁定 / 解锁 / 重置密码 / 重置 MFA / 软删恢复）。
+	// PermIdentityAccountWrite 管理身份账号生命周期（停用 / 启用 / 锁定 / 解锁 / 软删恢复）。
 	PermIdentityAccountWrite PermissionCode = "identity:account:write"
+	// PermIdentityAccountCredential 重置目标账号密码 / MFA（凭据处置，A 端专属）。
+	//
+	// 与生命周期写、删除、会话撤销分离，落实职责分离（SEC-02 / P1-14）。
+	PermIdentityAccountCredential PermissionCode = "identity:account:credential"
+	// PermIdentityAccountDelete 软删目标账号（不可逆操作的入口）。
+	PermIdentityAccountDelete PermissionCode = "identity:account:delete"
+	// PermIdentityAccountSession 撤销目标账号的会话（单设备或全部）。
+	PermIdentityAccountSession PermissionCode = "identity:account:session"
 	// PermChangeRead 查看高风险变更审批单。
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。

@@ -71,6 +71,39 @@ func codeOf(err error) int {
 	return 0
 }
 
+// TestMemoryAccountRepositoryTenantIsolation 验证 B 端同名主体可按商户隔离。
+func TestMemoryAccountRepositoryTenantIsolation(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryAccountRepository()
+	for _, item := range []struct{ id, merchant string }{
+		{"m1-account", "m-1"},
+		{"m2-account", "m-2"},
+	} {
+		account, err := domain.NewAccount(domain.NewAccountParams{
+			ID: item.id, Channel: domain.ChannelBiz, Subject: "staff@example.com",
+			MerchantID: item.merchant, Now: repoBaseTime,
+		})
+		if err != nil {
+			t.Fatalf("new account: %v", err)
+		}
+		if err := repo.Save(ctx, account, 0); err != nil {
+			t.Fatalf("save account %s: %v", item.id, err)
+		}
+	}
+	for _, item := range []struct{ id, merchant string }{
+		{"m1-account", "m-1"},
+		{"m2-account", "m-2"},
+	} {
+		found, err := repo.FindBySubject(ctx, domain.ChannelBiz, item.merchant, "staff@example.com")
+		if err != nil {
+			t.Fatalf("find by subject: %v", err)
+		}
+		if found.ID != item.id {
+			t.Fatalf("merchant %s -> account %s, want %s", item.merchant, found.ID, item.id)
+		}
+	}
+}
+
 func TestMemoryAccountRepositorySave(t *testing.T) {
 	ctx := context.Background()
 	repo := NewMemoryAccountRepository()
@@ -90,7 +123,7 @@ func TestMemoryAccountRepositorySave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID() error = %v", err)
 	}
-	bySubject, err := repo.FindBySubject(ctx, domain.ChannelAdmin, " ALICE ")
+	bySubject, err := repo.FindBySubject(ctx, domain.ChannelAdmin, "", " ALICE ")
 	if err != nil {
 		t.Fatalf("FindBySubject() error = %v", err)
 	}
@@ -187,7 +220,7 @@ func TestMemoryAccountRepositoryDeletedSubjectStillReserved(t *testing.T) {
 		t.Fatalf("Save(delete) error = %v", err)
 	}
 
-	found, err := repo.FindBySubject(ctx, domain.ChannelAdmin, "alice")
+	found, err := repo.FindBySubject(ctx, domain.ChannelAdmin, "", "alice")
 	if err != nil {
 		t.Fatalf("FindBySubject() error = %v", err)
 	}
