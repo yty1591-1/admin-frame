@@ -26,6 +26,13 @@
 2. **认证层必须重写适配**：不是"改个字段名"，而是登录三态（令牌 / MFA 挑战 / 强制绑定）+ 双令牌一次性轮换，需要引入状态机和新的 token 存储语义。
 3. **业务能力严重超配**：后端已具备角色授权、审批流转、破玻璃、会话治理、数据范围等生产能力，前端目前只覆盖"角色列表 + 一个增删改查表单"，属于典型的**后端能力过剩、前端消费不足**。
 
+> **2026-10-31 状态更新（本文其余章节为 2026-10-30 的实测快照，保留作审计记录）**
+>
+> - **Nitro Mock 已移除**：`frontend/apps/backend-mock` 删除，`internal/vite-config` 的 `viteNitroMockPlugin`、`VITE_NITRO_MOCK`、`nitropack` 依赖与 `turbo` 任务一并下线。前端不再有 mock 数据源，所有接口必须走真实后端。
+> - **B 端已切真实契约**：`apps/web-biz` 的 `VITE_GLOB_API_URL` 改为 `/biz/v1`，dev 代理指向独立服务 `biz-api`（`configs/biz.yaml` → `:8082`，**不是 A 端的 `:8081`**）；`auth.ts` / `store/auth.ts` / `request.ts` / `user.ts` 已按 §3 的 FEINT-01～06 完成改造（`subject` 入参、`TokenPair` 双令牌、一次性轮换、`/iam/me/permissions`、`GET /me`）。
+> - **FEREV-04 / FEREV-06（见架构审查文档）随之关闭**：B 端 `accessMode: backend` 现在由真实 `GET /biz/v1/iam/me/menus` 支撑。
+> - 仍存在的前置条件：内存库（`db.driver: memory`）不含任何账号种子，本地要登录成功必须先有 B 端账号（MySQL 模式跑迁移，或经 A 端接口开通）；否则登录稳定返回 `40100 invalid credentials` —— 这属于后端数据准备，不是前端缺陷。
+
 ---
 
 ## 1. Findings 索引
@@ -287,6 +294,7 @@ async function doRefreshToken() {
 |---|---|---|
 | `subject_id` | `Account.ID` | 与令牌 `sub` 一致 |
 | `subject` | `Account.Subject` | 规范化登录主体（trim + 小写），前端作 `username` |
+| `display_name` | `Account.DisplayName` | 昵称，可空串；为空时前端回退 `subject` 展示。A/B 两端均支持 `PATCH /{channel}/v1/me` 修改，长度 ≤ 64 rune |
 | `channel` | `Account.Channel` | `admin` / `biz` |
 | `merchant_id` | `Account.MerchantID` | B 端非空，A 端恒为空串（禁止用空串表示全部商户） |
 | `status` | `Account.Status` | `pending` / `active` / `locked` / `disabled` |
@@ -301,7 +309,14 @@ async function doRefreshToken() {
 
 **不放进 `/me` 的字段**：`roles` / `permissions` / `data_scopes` 仍走 `/iam/me/permissions`。原因：`internal/identity/transport/rest` 当前只依赖身份用例（`handler.go:27-45`），把 IAM 快照注进来会让身份域反向依赖权限域。前端两次并行请求即可，`authStore` 已是 `Promise.all` 结构（`src/store/auth.ts:43-46`）。
 
-**首版缺的展示字段**：`identity_account` 只有 `subject`，没有 `display_name` / `email` / `avatar_url`（`migrations/000001_create_identity_tables.up.sql:11-31`）。所以 `realName`、`avatar` 暂时回退 `subject` 与空串。要真正的昵称 / 头像需另开迁移 `000007_alter_identity_account_profile` 增列，属独立变更，不阻塞阶段 1。
+**展示字段的补齐进度**：迁移 `000007_alter_identity_account_profile` 已落地 `display_name`（`VARCHAR(64) NOT NULL DEFAULT ''`），`/me` 已返回该字段，并新增 `PATCH /{channel}/v1/me` 允许本人修改昵称（`MeUpdateRequest.display_name`，成功返回更新后的 `MeView`）。`email` 与 `avatar_url` 仍无数据模型，前端继续用「空串 + 首字母兜底」而非外链默认头像。
+
+**`PATCH /{channel}/v1/me` 约束**（A 接口 6.3.0 / B 接口 5.2.0）：
+
+- 与 `GET /me` 同级：仅认证，不要求权限点；端别由路由决定，请求体不接受 `channel` / `merchant_id` / `subject`。
+- 只接受 `display_name` 一个字段；`strings.TrimSpace` 后写入，空串表示清除昵称；> 64 rune 或含控制/不可见字符返回 `400` / `40000`。
+- 不撤销会话、不递增 `token_version`（昵称不是安全属性）；审计写 `auth.profile.updated`，`attrs.changed_fields="display_name"`，**不记录昵称原文**。
+- 响应为更新后的完整 `MeView`，前端无需二次 `GET`。
 
 后端落地清单（复用现有分层，不新建域）：
 
@@ -320,6 +335,7 @@ async function doRefreshToken() {
 export interface MeView {
   subject_id: string;
   subject: string;
+  display_name: string;
   channel: 'admin' | 'biz';
   merchant_id: string;
   status: 'active' | 'disabled' | 'locked' | 'pending';
@@ -331,12 +347,19 @@ export interface MeView {
   token_version: number;
 }
 
+// 昵称唯一可写字段；返回更新后的 MeView，前端据此同步 userStore
+export function updateMyProfileApi(data: {
+  display_name: string;
+}): Promise<MeView> {
+  return requestClient.request<MeView>('/me', { method: 'PATCH', data });
+}
+
 export async function getUserInfoApi(): Promise<UserInfo> {
   const me = await requestClient.get<MeView>('/admin/v1/me');
   return {
     userId: me.subject_id,
     username: me.subject,
-    realName: me.subject, // 首版无 display_name
+    realName: me.display_name || me.subject,
     avatar: '',
     roles: [], // 由 getAccessCodesApi 返回的 roles 合并，见下
     desc: '',
@@ -527,7 +550,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 三种联调方式（按成本从低到高）：
 
-1. **保持 Nitro Mock**（当前默认，`VITE_NITRO_MOCK=true`）：只验证 UI，不验证契约 —— 已导致本文多处"看起来能用"的假象。
+1. ~~**保持 Nitro Mock**（`VITE_NITRO_MOCK=true`）：只验证 UI，不验证契约~~ —— **已于 2026-10-31 移除**：`apps/backend-mock` 删除、`VITE_NITRO_MOCK` 下线，该形态不再可用，前端必须对接真实后端。
 2. **demo token 直连**：`auth.mode=demo` 下通过 `useAccessStore().setAccessToken('admin.u-1')` 写入演示令牌，可验证 IAM 只读接口，但**无法验证登录/刷新**。
 3. **本地全量**：`identity.enabled=true` + `auth.mode=jwt` + `iam.mode=off`（内存库即可），这是唯一能覆盖登录三态、刷新轮换、MFA 的形态，建议作为前端联调基线。
 
@@ -553,7 +576,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 | ID | 缺口 | 现状 | 建议契约 |
 |---|---|---|---|
-| GAP-01 | 用户资料 | **已完成**：`GET /admin/v1/me`（A）/ `GET /biz/v1/me`（B） | `GET /{channel}/v1/me` → `{subject_id, subject, channel, merchant_id, status, mfa_enabled, has_password, phone_bound, password_updated_at, must_change_password, token_version}`；仅认证、不含 roles/permissions；`display_name`/`avatar_url` 需迁移 `000007` 另开。详见 §3 FEINT-05 |
+| GAP-01 | 用户资料 | **已完成**：`GET /admin/v1/me`（A）/ `GET /biz/v1/me`（B）；`display_name` 与 `PATCH` 已于 2026-10-30 补齐（A 6.3.0 / B 5.2.0） | `GET /{channel}/v1/me` → `{subject_id, subject, display_name, channel, merchant_id, status, mfa_enabled, has_password, phone_bound, password_updated_at, must_change_password, token_version}`；仅认证、不含 roles/permissions。`PATCH /{channel}/v1/me` 仅接受 `display_name`。`avatar_url` 仍无数据模型，前端走首字母兜底。详见 §3 FEINT-05 |
 | GAP-09 | 菜单资源 | 无菜单表、无菜单端点 | **已决策方案 B**：新增 `iam_menu` + `GET /{channel}/v1/menus`，前端切 `accessMode: backend`。详见 §6「GAP-09 菜单：方案 B 设计」 |
 | GAP-10 | 审计查询 | 权限点 `audit:read` 已存在，无端点 | `GET /admin/v1/audit/events?action&subject&from&to` |
 | GAP-11 | 配置中心 | 权限点 `config:read/write` 已存在，无端点 | `GET/PUT /admin/v1/configs/{key}`，写入走审批 |
@@ -689,7 +712,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 ### 阶段 4：后端补端点（与阶段 3 并行）
 
-- GAP-01 已前移至阶段 1（阻塞登录闭环）；本阶段只做**增强**：迁移 `000007` 增加 `display_name` / `avatar_url`，`/me` 追加 `display_name` / `avatar_url` 字段。
+- GAP-01 已前移至阶段 1（阻塞登录闭环）；资料增强部分**已完成**：迁移 `000007` 增加 `display_name`，`/me` 返回 `display_name` 并新增 `PATCH /{channel}/v1/me`。`avatar_url` 无数据模型，本期不做（个人中心不上传入口）。
 - GAP-09 按 §6「GAP-09 菜单：方案 B 设计」落地（独立阶段，见下）。
 - GAP-10～12 按业务优先级。
 
@@ -741,7 +764,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 |---|---|---|
 | `userId` | `subject_id` | 与令牌 `sub` 一致 |
 | `username` | `subject` | 规范化登录主体（trim + 小写） |
-| `realName` | `subject`（回退） | 无 `display_name` 列，见 FEINT-05 |
+| `realName` | `display_name`（空串回退 `subject`） | 昵称可经 `PATCH /me` 修改，见 FEINT-05 |
 | `avatar` | —（空串） | 需迁移 `000007` 才有 `avatar_url` |
 | `roles` | 取自 `/iam/me/permissions` 的 `roles` | 不由 `/me` 返回 |
 | `desc` | —（空串） | 后端无简介字段 |

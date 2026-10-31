@@ -53,6 +53,8 @@ foreach ($r in $roots) {
 | `scripts` | 12 | 961 | 1.1% |
 | **合计** | **1,108** | **85,713** | 100% |
 
+> 基线为 2026-10-30 的实测值。`apps/backend-mock`（42 文件）与 `docs`（VitePress，82 文件）已于 2026-10-31 从本仓库移除，当前实际规模约少 120 个文件 / 6,700 行；本节保留原始测量以便对照历史结论。
+
 包级分布：
 
 | 包 | 文件数 | 备注 |
@@ -96,9 +98,9 @@ foreach ($r in $roots) {
 | FEREV-01 | P0 | 视觉 | 登录页仍是 Vben 模板文案 | `packages/locales/src/langs/zh-CN/authentication.json:3-4` |
 | FEREV-02 | P1 | 视觉 | logo / 默认头像走公网 CDN | `packages/@core/preferences/src/config.ts:19,70`、`@core/base/shared/src/constants/vben.ts:15` |
 | FEREV-03 | P1 | 视觉 | 安全设置页硬编码假数据 | `views/_core/profile/security-setting.vue:20` |
-| FEREV-04 | P1 | 架构 | 两端认证实现分叉，B 端未接后端 | `apps/web-biz/src/api/core/auth.ts`、`store/auth.ts:36` |
+| FEREV-04 | P1 | 架构 | 两端认证实现分叉，B 端未接后端（**2026-10-31 已修复**） | `apps/web-biz/src/api/core/auth.ts`、`store/auth.ts` |
 | FEREV-05 | P1 | 架构 | `packages/business/*` 声明为空，共享业务层缺位 | `pnpm-workspace.yaml` |
-| FEREV-06 | P1 | 架构 | B 端 `accessMode: backend` 但 mock 无菜单端点 | `apps/web-biz/src/preferences.ts:27`、`backend-mock/api` |
+| FEREV-06 | P1 | 架构 | B 端 `accessMode: backend` 但 mock 无菜单端点（**2026-10-31 已修复**：mock 移除，直连 `/biz/v1`） | `apps/web-biz/src/preferences.ts`、`apps/web-biz/vite.config.ts` |
 | FEREV-07 | P1 | 交互 | 操作列 5 个同权 link 按钮平铺 | `system/role/index.vue:97,537-585` |
 | FEREV-08 | P1 | 交互 | 停用原因仅 placeholder 提示，无条件必填 | `system/role/index.vue:196-201` |
 | FEREV-09 | P1 | 交互 | 删除审计原因硬编码 `'页面删除'` | `system/role/index.vue:458`、`iam/sod/index.vue:206`、`iam/template/index.vue:365` |
@@ -115,6 +117,7 @@ foreach ($r in $roots) {
 | FEREV-20 | P2 | 视觉 | 页面节奏扁平，缺少区段层级 | `Page` 组件 + 各页模板 |
 | FEREV-21 | P3 | 视觉 | 圆角语言不统一（24px vs 6–8px） | 登录页右上角胶囊 vs 表单 |
 | FEREV-22 | P3 | 架构 | `system/role/index.vue` 621 行待拆 | 见 §1 |
+| FEREV-23 | P1 | 交互 | 个人中心信息架构失真、编辑项无法持久化、无响应式 | `web-admin|web-biz/src/views/_core/profile/*` |
 
 ---
 
@@ -133,7 +136,8 @@ foreach ($r in $roots) {
 
 #### FEREV-04 两端认证实现分叉
 
-- **现状**：`web-admin` 已按真实契约重写（`subject` 入参、四态响应、双令牌、一次性轮换）；`web-biz` 仍是 Nitro mock 版本（`accessToken` 单令牌、`/auth/codes`、`/user/info`）。
+- **状态：2026-10-31 已修复。** `web-biz` 已切换到真实契约（`subject` 入参、`TokenPair` 双令牌、一次性轮换、`/iam/me/permissions`、`GET /me`），Nitro mock 同步移除；两端请求层现在都直连 admin-frame，差异只剩通道前缀（`/admin/v1` vs `/biz/v1`）与 B 端没有的 MFA / 强制改密页。下列为修复前的实测快照。
+- **现状（修复前）**：`web-admin` 已按真实契约重写（`subject` 入参、四态响应、双令牌、一次性轮换）；`web-biz` 仍是 Nitro mock 版本（`accessToken` 单令牌、`/auth/codes`、`/user/info`）。
 - **两侧页面清单差异**（B 端 `src` 实测 34 文件）：
 
   | 类别 | web-admin | web-biz |
@@ -156,7 +160,8 @@ foreach ($r in $roots) {
 
 #### FEREV-06 B 端 `accessMode: backend` 与 mock 能力不匹配
 
-- **现状**：`web-biz/src/preferences.ts:27` 与 A 端一致设为 `backend`，但 `apps/backend-mock/api` 下只有 `menu/all.ts`，没有 `/iam/me/menus`。
+- **状态：2026-10-31 已修复。** `apps/backend-mock` 整体删除，B 端 `VITE_GLOB_API_URL=/biz/v1` 经 dev 代理直连 `biz-api`（`:8082`），菜单由真实 `GET /biz/v1/iam/me/menus` 下发，「配置写 backend、数据源却是 mock」的中间态已消除。下列为修复前的实测快照。
+- **现状（修复前）**：`web-biz/src/preferences.ts` 与 A 端一致设为 `backend`，但 `apps/backend-mock/api` 下只有 `menu/all.ts`，没有 `/iam/me/menus`。
 - **实测现象**：`POST /api/auth/login`、`GET /api/user/info`、`GET /api/auth/codes` 均成功，随后 `GET /api/iam/me/menus` 返回 mock 首页 HTML，路由生成失败，页面停留在 `/auth/login`。
 - **建议**：二选一——(a) mock 补 `/iam/me/menus` 并返回与权限码一致的菜单树；(b) B 端临时改 `accessMode: frontend`，待后端就绪再切回。**不要保留"配置写 backend、数据源却是 mock"的中间态**。
 - **验收**：`pnpm dev:biz` 后能以任意 mock 账号进入首页，侧边栏菜单非空。
@@ -199,6 +204,23 @@ foreach ($r in $roots) {
 
 - **建议**：按 `query-fields.ts` / `columns.ts` / `use-role-crud.ts` / `index.vue` 拆分；`openEdit` / `openGrant` / `openConstraints` 三个 open 函数迁到组合式文件。
 - **验收**：`index.vue` ≤ 250 行，模板只保留结构与事件绑定。
+
+#### FEREV-23 个人中心信息架构失真、编辑项无法持久化、无响应式（P1）
+
+- **现状（重构前）**：
+  - 四个页签「基本设置 / 安全设置 / 修改密码 / 新消息提醒」，其中「修改密码」本应是账号安全页内的一个动作，白占一级导航。
+  - `web-admin|web-biz/src/views/_core/profile/base-setting.vue` 提供「姓名 / 用户名 / 角色（`mode: 'tags'` 可编辑）/ 个人简介」四个可写字段，但 `identity_account` 当时只有 `subject`：角色由 IAM 授权流程决定，简介无任何落库字段，保存必然丢失。
+  - `notification-setting.vue:8-28`（两端）三个开关写死 `value: true`，无偏好表、无接口，是纯假交互。
+  - 外壳 `profile.vue` 固定 `w-1/6` + `ml-4 w-5/6` + `p-8`，改密表单再套 `class="w-1/3"`；390px 视口下内容列被压到约 280px，出现横向溢出与按钮换行。
+  - 后端：`GET /{channel}/v1/auth/sessions` 早已存在，前端从未消费；资料页也没有任何可写字段的契约。
+- **影响**：用户能编辑的东西保存不了，能看的设备列表看不到；移动端个人中心不可用。假开关与假简介会直接损害后台可信度。
+- **建议 / 已落地**：
+  - 页签收敛为「个人资料 / 账号安全 / 登录设备」，改密改为安全页内弹窗；删除通知页与简介字段；角色改只读标签。
+  - 新增 `identity_account.display_name`（迁移 `000007`）与 `PATCH /{channel}/v1/me`（A 接口 6.3.0 / B 接口 5.2.0），昵称成为唯一可自助编辑字段；改名不递增 `token_version`，审计只记字段名。
+  - 外壳改 `flex-col lg:flex-row`：桌面纵向页签，移动端同一 `v-model` 的横向滚动页签；内容卡 `p-4 sm:p-6 lg:p-8`；只读区改 `VbenDescriptions`（`xs:1 / sm:2 / lg:3`）。
+  - 新增共享 `ProfileSessionList`：桌面行式 / 移动卡片式，含当前设备标记、空态、错误态、骨架与「加载更多」；撤销当前设备或全部设备后统一登出。
+  - B 端在 FEREV-04 完成前保持降级：昵称只读、密码与 MFA 标注不可用、设备页整页「接口未接通」，不出现可点击但无效果的按钮。
+- **验收**：1920 / 1440 / 1280 / 1024 / 768 / 390 六档视口无横向滚动、无文字截断；昵称保存后刷新仍在（落库而非本地状态）；设备列表可撤销非当前设备，撤销全部后回登录页。
 
 ---
 
@@ -346,8 +368,8 @@ foreach ($r in $roots) {
 
 ### 阶段二：修通 B 端（预计 1–2 人日）
 
-- [ ] **FEREV-06** mock 补 `/iam/me/menus`，或 B 端临时切 `accessMode: frontend`
-- [ ] **FEREV-04** `web-biz` 认证对齐真实契约（四态 + 双令牌）
+- [x] **FEREV-06** mock 补 `/iam/me/menus`，或 B 端临时切 `accessMode: frontend` —— 采用第三条路：删除 mock，B 端直连真实 `/biz/v1`
+- [x] **FEREV-04** `web-biz` 认证对齐真实契约（双令牌 + 一次性轮换；B 端无 MFA / 强制改密，故不做四态）
 - [ ] 补齐 B 端缺失页面的路由登记
 
 > 依赖阶段一的成果无，但依赖契约（见 `docs/FRONTEND_INTEGRATION_REVIEW.md`）。两项应同批完成，避免中间态长期存留。
@@ -368,6 +390,7 @@ foreach ($r in $roots) {
 - [ ] **FEREV-16** 详情预加载补 loading
 - [ ] **FEREV-17** 密码表单接入 `cooldown`
 - [ ] **FEREV-18** 骨架屏 + 空态引导
+- [x] **FEREV-23** 个人中心重构（三页签 + `display_name` 契约 + 响应式外壳 + 登录设备列表；B 端按 FEREV-04 降级）
 
 ### 阶段五：架构与视觉纵深（按需）
 
@@ -404,5 +427,6 @@ foreach ($r in $roots) {
 | 2026-10-30 | 同步 favicon.ico | 两端 `public/favicon.ico` 重制，沿用 logo 的几何参数与四段渐变，内嵌 16/32/48/64 四档 PNG（Vista+ 规范，`planes=1`、`bpp=32`）。校验：`ICONDIR` 计数与目录偏移自洽，圆角外像素 alpha=0，中线扫描左右弧与圆点位置左右对称于 x=24 且与 `logo.svg` 网格坐标一致；dev server 返回 5684 字节、`image/x-icon`。未改动 `index.html`（仍指向 `/favicon.ico`） |
 | 2026-10-30 | 补 SVG 图标 | 两端新增 `public/favicon.svg`（与 `brand/logo.svg` 同一套几何与渐变，逐字节一致），`index.html` 改为 `<link rel="icon" type="image/svg+xml" href="/favicon.svg">` 在前、`type="image/x-icon"` 的 `.ico` 在后，旧浏览器自动回退。校验：两个 dev server 均返回 `200 image/svg+xml`；浏览器实渲染中线扫描为 `15..18 / 28..35 / 45..48`（64px）、`8..9 / 14..17 / 22..23`（32px），与 ICO 内嵌 PNG 扫描结果完全相同；四角 `alpha=0`。**维护不变式**：`favicon.svg`、`favicon.ico`、`brand/logo.svg` 共用同一几何，改其一须同步另两处 |
 | 2026-10-30 | 图标一致性收敛 | 逐像素比对浏览器渲染的 `favicon.svg` 与 `favicon.ico` 内嵌 PNG：`32×32` 平均通道差 `2.59`、`16×16` 为 `5.17`；差异全部落在圆角与描边边缘（Skia 与 GDI+ 抗锯齿 gamma 不同），中线白色笔画区间**完全一致**，无结构性偏移。`oxfmt --check` 通过；两端 dev server 的 `/favicon.svg` 与 `/favicon.ico` 均 `200` 且 MIME 正确 |
+| 2026-10-30 | 完成 FEREV-23 | 个人中心收敛为三页签并补齐 `display_name` 契约（`000007` + `PATCH /{channel}/v1/me`，A 6.3.0 / B 5.2.0）；共享 `Profile` 改为响应式双栏 + 双页签实例，新增 `ProfileSessionList`；A 端接入 `/auth/sessions`，B 端按 FEREV-04 降级（昵称只读、设备页不可用）；删除两端假通知页与无落库字段 |
 
 > 后续每完成一项，请在 §6 勾选，并在本节追加一行记录（日期 + 完成项 ID + 遗留问题）。
