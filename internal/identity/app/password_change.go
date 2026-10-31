@@ -15,8 +15,8 @@ import (
 
 // 临时口令参数（IDN-P0-02）。
 const (
-	// temporaryPasswordLength 临时口令长度；需包含四类字符中的至少三类。
-	temporaryPasswordLength = 20
+	// defaultTemporaryPasswordLength 临时口令默认长度；需包含四类字符中的至少三类。
+	defaultTemporaryPasswordLength = 20
 	// reasonPasswordResetCompletion 强制改密完成时的审计原因。
 	reasonPasswordResetCompletion = "password_reset_completion"
 )
@@ -234,8 +234,11 @@ func (s *AuthService) completePasswordChangeInTx(
 }
 
 // generateTemporaryPassword 生成满足复杂度要求的临时口令。
-func generateTemporaryPassword() (string, error) {
-	runes := make([]byte, 0, temporaryPasswordLength)
+func generateTemporaryPassword(length int) (string, error) {
+	if length <= 0 {
+		length = defaultTemporaryPasswordLength
+	}
+	runes := make([]byte, 0, length)
 	for _, class := range temporaryPasswordClasses {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(class))))
 		if err != nil {
@@ -243,7 +246,7 @@ func generateTemporaryPassword() (string, error) {
 		}
 		runes = append(runes, class[idx.Int64()])
 	}
-	for len(runes) < temporaryPasswordLength {
+	for len(runes) < length {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(temporaryPasswordAlphabet))))
 		if err != nil {
 			return "", apperr.Internal("generate temporary password failed", err)

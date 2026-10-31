@@ -30,8 +30,8 @@ type MFAKeyRotator interface {
 	NeedsRotation(blob []byte) bool
 }
 
-// recoveryCodeCount 是绑定 MFA 时生成的一次性恢复码数量。
-const recoveryCodeCount = 10
+// defaultRecoveryCodeCount 是绑定 MFA 时默认生成的一次性恢复码数量（MNT-05）。
+const defaultRecoveryCodeCount = 10
 
 // MFASetupResult 是绑定初始化结果；密钥与恢复码只返回一次。
 type MFASetupResult struct {
@@ -126,7 +126,7 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 	if err != nil {
 		return MFASetupResult{}, err
 	}
-	codes, hashes, err := generateRecoveryCodes(s.hasher, account.ID)
+	codes, hashes, err := generateRecoveryCodes(s.hasher, account.ID, s.mfaRecoveryCodes)
 	if err != nil {
 		return MFASetupResult{}, err
 	}
@@ -156,7 +156,7 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 	encoded := totp.EncodeSecret(secret)
 	return MFASetupResult{
 		Secret:        encoded,
-		OTPAuthURI:    totp.ProvisioningURI(s.mfaIssuer, account.Subject, encoded),
+		OTPAuthURI:    totp.ProvisioningURIWith(s.mfaIssuer, account.Subject, encoded, s.mfaTOTP),
 		RecoveryCodes: codes,
 	}, nil
 }
@@ -678,7 +678,7 @@ func (s *AuthService) verifyEnrollmentCode(
 	if err != nil {
 		return mfaCodeInvalid, 0, apperr.Internal("decrypt mfa secret failed", err)
 	}
-	step, ok := totp.ValidateStep(secret, code, now)
+	step, ok := totp.ValidateStepWith(secret, code, now, s.mfaTOTP)
 	if ok {
 		expected := enrollment.Version
 		if !enrollment.TryConsumeStep(step, now) {
@@ -807,10 +807,13 @@ func (s *AuthService) saveRevocationState(ctx context.Context, account *domain.A
 const recoveryCodeBytes = 10
 
 // generateRecoveryCodes 生成一次性恢复码（按 4 位分组展示）与其带账号盐的哈希。
-func generateRecoveryCodes(hasher *crypto.Hasher, accountID string) (codes, hashes []string, err error) {
-	codes = make([]string, 0, recoveryCodeCount)
-	hashes = make([]string, 0, recoveryCodeCount)
-	for i := 0; i < recoveryCodeCount; i++ {
+func generateRecoveryCodes(hasher *crypto.Hasher, accountID string, count int) (codes, hashes []string, err error) {
+	if count <= 0 {
+		count = defaultRecoveryCodeCount
+	}
+	codes = make([]string, 0, count)
+	hashes = make([]string, 0, count)
+	for i := 0; i < count; i++ {
 		buf := make([]byte, recoveryCodeBytes)
 		if _, err := rand.Read(buf); err != nil {
 			return nil, nil, apperr.Internal("generate recovery code failed", err)

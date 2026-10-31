@@ -295,6 +295,40 @@ func TestValidateMFAIssuerRequired(t *testing.T) {
 	}
 }
 
+// TestValidateMFATOTPAndTemporaryPassword 验证 TOTP / 恢复码 / 临时口令边界（MNT-05）。
+func TestValidateMFATOTPAndTemporaryPassword(t *testing.T) {
+	valid := mfaBaseConfig()
+	valid.Identity.MFA.TOTPDigits = 8
+	valid.Identity.MFA.TOTPStep = 60 * time.Second
+	valid.Identity.MFA.TOTPWindow = 2
+	valid.Identity.MFA.RecoveryCodeCount = 20
+	valid.Identity.Password.TemporaryLength = 24
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*platform.Config)
+		want   string
+	}{
+		{"digits", func(c *platform.Config) { c.Identity.MFA.TOTPDigits = 7 }, "totp_digits must be 6 or 8"},
+		{"step", func(c *platform.Config) { c.Identity.MFA.TOTPStep = 10 * time.Second }, "totp_step must be in [15s, 120s]"},
+		{"window", func(c *platform.Config) { c.Identity.MFA.TOTPWindow = 3 }, "totp_window must be in [0, 2]"},
+		{"recovery", func(c *platform.Config) { c.Identity.MFA.RecoveryCodeCount = 4 }, "recovery_code_count must be in [5, 20]"},
+		{"temporary", func(c *platform.Config) { c.Identity.Password.TemporaryLength = 12 }, "temporary_length must be in [16, 32]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := mfaBaseConfig()
+			tc.mutate(cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestValidateRevocationStateTTL 验证撤销快照陈旧度必须落在 [1s, 60s]。
 func TestValidateRevocationStateTTL(t *testing.T) {
 	tooLong := mfaProdConfig()

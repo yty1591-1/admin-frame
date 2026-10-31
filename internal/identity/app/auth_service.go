@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
+	"github.com/admin-frame/admin-frame/pkg/totp"
 )
 
 // DefaultSessionIdleTimeout 是默认空闲会话上限（docs/identity-authn.md §10）。
@@ -82,6 +83,12 @@ type AuthServiceConfig struct {
 	MFATickets MFATicketStore
 	// MFAIssuer 写入 otpauth URI；空值使用 DefaultMFAIssuer。
 	MFAIssuer string
+	// MFATOTP TOTP 位数 / 步长 / 窗口；零值使用 6 位 / 30s / ±1（MNT-05）。
+	MFATOTP totp.Policy
+	// MFARecoveryCodeCount 绑定 MFA 时的恢复码数量；≤0 使用默认 10。
+	MFARecoveryCodeCount int
+	// TemporaryPasswordLength 管理员重置口令的临时密码长度；≤0 使用默认 20。
+	TemporaryPasswordLength int
 	// MFAAdminRequired 表示 A 端强制绑定 MFA。
 	MFAAdminRequired bool
 	// IdleTimeout 会话空闲上限；≤0 时使用 72h。
@@ -246,6 +253,9 @@ type AuthService struct {
 	mfaTickets      MFATicketStore
 	mfaIssuer       string
 	mfaRequired     bool
+	mfaTOTP         totp.Policy
+	mfaRecoveryCodes int
+	temporaryPasswordLength int
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -303,6 +313,18 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if mfaIssuer == "" {
 		mfaIssuer = DefaultMFAIssuer
 	}
+	mfaTOTP := cfg.MFATOTP.Normalize()
+	if err := mfaTOTP.Validate(); err != nil {
+		return nil, apperr.Internal("invalid mfa totp policy", err)
+	}
+	recoveryCodes := cfg.MFARecoveryCodeCount
+	if recoveryCodes <= 0 {
+		recoveryCodes = defaultRecoveryCodeCount
+	}
+	tempPasswordLength := cfg.TemporaryPasswordLength
+	if tempPasswordLength <= 0 {
+		tempPasswordLength = defaultTemporaryPasswordLength
+	}
 	uow := cfg.UoW
 	if uow == nil {
 		uow = NoopUnitOfWork{}
@@ -352,6 +374,9 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaTickets:      cfg.MFATickets,
 		mfaIssuer:       mfaIssuer,
 		mfaRequired:     cfg.MFAAdminRequired,
+		mfaTOTP:         mfaTOTP,
+		mfaRecoveryCodes: recoveryCodes,
+		temporaryPasswordLength: tempPasswordLength,
 	}
 	return svc, nil
 }

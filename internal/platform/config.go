@@ -263,6 +263,14 @@ type IdentityMFAConfig struct {
 	Keys []IdentityMFAKeyConfig `yaml:"keys"`
 	// ActiveKeyID 指定当前加密密钥；Keys 非空时必填。
 	ActiveKeyID string `yaml:"active_key_id"`
+	// TOTPDigits 动态码位数；0 表示默认 6，仅支持 6 / 8（MNT-05）。
+	TOTPDigits int `yaml:"totp_digits"`
+	// TOTPStep 时间步长；0 表示默认 30s，范围 [15s, 120s]。
+	TOTPStep time.Duration `yaml:"totp_step"`
+	// TOTPWindow 允许的窗口偏移；0 表示默认 1，范围 [0, 2]。
+	TOTPWindow int `yaml:"totp_window"`
+	// RecoveryCodeCount 恢复码数量；0 表示默认 10，范围 [5, 20]。
+	RecoveryCodeCount int `yaml:"recovery_code_count"`
 }
 
 // IdentityMFAKeyConfig 是密钥环中的一项。
@@ -440,6 +448,8 @@ type IdentityPasswordConfig struct {
 	HistoryCount int `yaml:"history_count"`
 	// HistoryWindow 密码复用限制窗口；0 表示默认 365 天。
 	HistoryWindow time.Duration `yaml:"history_window"`
+	// TemporaryLength 管理员重置口令的临时密码长度；0 表示默认 20，范围 [16, 32]（MNT-05）。
+	TemporaryLength int `yaml:"temporary_length"`
 }
 
 // IdentityLockoutConfig 是登录失败锁定参数。
@@ -1886,6 +1896,7 @@ func (c *Config) validateIdentity() []error {
 		errs = append(errs, errors.New("async.enabled must be true when identity.enabled=true in prod/staging"))
 	}
 	errs = append(errs, c.validateIdentityPassword()...)
+	errs = append(errs, c.validateIdentityMFA()...)
 	if c.Identity.Retention.SessionDays < 7 {
 		errs = append(errs, errors.New("identity.retention.session_days must be >= 7"))
 	}
@@ -2107,6 +2118,30 @@ func (c *Config) validateIdentityPassword() []error {
 	}
 	if c.Identity.Password.HistoryWindow < 0 || c.Identity.Password.HistoryWindow > 5*365*24*time.Hour {
 		errs = append(errs, errors.New("identity.password.history_window must be in [0, 5y]"))
+	}
+	if c.Identity.Password.TemporaryLength != 0 {
+		if c.Identity.Password.TemporaryLength < 16 || c.Identity.Password.TemporaryLength > 32 {
+			errs = append(errs, errors.New("identity.password.temporary_length must be in [16, 32]"))
+		}
+	}
+	return errs
+}
+
+// validateIdentityMFA 校验 TOTP 与恢复码参数（MNT-05）。
+func (c *Config) validateIdentityMFA() []error {
+	mfaCfg := c.Identity.MFA
+	var errs []error
+	if mfaCfg.TOTPDigits != 0 && mfaCfg.TOTPDigits != 6 && mfaCfg.TOTPDigits != 8 {
+		errs = append(errs, errors.New("identity.mfa.totp_digits must be 6 or 8"))
+	}
+	if mfaCfg.TOTPStep != 0 && (mfaCfg.TOTPStep < 15*time.Second || mfaCfg.TOTPStep > 120*time.Second) {
+		errs = append(errs, errors.New("identity.mfa.totp_step must be in [15s, 120s]"))
+	}
+	if mfaCfg.TOTPWindow < 0 || mfaCfg.TOTPWindow > 2 {
+		errs = append(errs, errors.New("identity.mfa.totp_window must be in [0, 2]"))
+	}
+	if mfaCfg.RecoveryCodeCount != 0 && (mfaCfg.RecoveryCodeCount < 5 || mfaCfg.RecoveryCodeCount > 20) {
+		errs = append(errs, errors.New("identity.mfa.recovery_code_count must be in [5, 20]"))
 	}
 	return errs
 }

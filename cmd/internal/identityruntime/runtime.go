@@ -29,6 +29,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/password"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
+	"github.com/admin-frame/admin-frame/pkg/totp"
 )
 
 // loginLimiterIdleTTL 是登录限流分桶的空闲回收阈值，避免唯一键无限增长。
@@ -311,7 +312,14 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		MFACipher:          mfaCipher,
 		MFATickets:         tickets,
 		MFAIssuer:          cfg.Identity.MFA.Issuer,
-		MFAAdminRequired:   mfaAdminRequired,
+		MFATOTP: totp.Policy{
+			Digits: cfg.Identity.MFA.TOTPDigits,
+			Period: cfg.Identity.MFA.TOTPStep,
+			Window: cfg.Identity.MFA.TOTPWindow,
+		},
+		MFARecoveryCodeCount:   cfg.Identity.MFA.RecoveryCodeCount,
+		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
+		MFAAdminRequired:       mfaAdminRequired,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity auth service: %w", err)

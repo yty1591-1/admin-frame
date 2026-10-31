@@ -629,7 +629,7 @@ func (s *AccountService) ResetPassword(ctx context.Context, in AccountOperationI
 	if _, err := s.auth.targetAccount(ctx, in.TargetAccountID); err != nil {
 		return "", err
 	}
-	temporary, err := generateTemporaryPassword()
+	temporary, err := generateTemporaryPassword(s.auth.temporaryPasswordLength)
 	if err != nil {
 		return "", err
 	}

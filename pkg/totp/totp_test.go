@@ -33,13 +33,36 @@ func TestValidateRFCVectors(t *testing.T) {
 	}
 }
 
+// TestValidateStepWithPolicy 验证可配置位数 / 步长 / 窗口（MNT-05）。
+func TestValidateStepWithPolicy(t *testing.T) {
+	now := time.Unix(1111111111, 0).UTC()
+	policy := Policy{Digits: 8, Period: 60 * time.Second, Window: 1}
+	counter := uint64(now.Unix() / 60) //nolint:gosec // G115: 测试时间戳固定为正
+	code := hotp(rfcSecret, counter, policy.Digits)
+	if len(code) != 8 {
+		t.Fatalf("code length = %d, want 8", len(code))
+	}
+	step, ok := ValidateStepWith(rfcSecret, code, now, policy)
+	if !ok || step != int64(counter) {
+		t.Fatalf("ValidateStepWith() = (%d, %v), want (%d, true)", step, ok, counter)
+	}
+	// 8 位策略下 6 位动态码必须被拒绝。
+	if _, ok := ValidateStepWith(rfcSecret, code[:6], now, policy); ok {
+		t.Fatal("6-digit code must be rejected by 8-digit policy")
+	}
+	uri := ProvisioningURIWith("Issuer", "alice", "JBSWY3DPEHPK3PXP", policy)
+	if !strings.Contains(uri, "digits=8") || !strings.Contains(uri, "period=60") {
+		t.Fatalf("provisioning uri = %q, want digits=8 period=60", uri)
+	}
+}
+
 func TestValidateWindow(t *testing.T) {
 	now := time.Unix(1111111111, 0).UTC()
 	counter := uint64(now.Unix() / 30) //nolint:gosec // G115: 测试时间戳固定为正，不存在溢出
-	current := hotp(rfcSecret, counter)
-	previous := hotp(rfcSecret, counter-1)
-	next := hotp(rfcSecret, counter+1)
-	outside := hotp(rfcSecret, counter+2)
+	current := hotp(rfcSecret, counter, Digits)
+	previous := hotp(rfcSecret, counter-1, Digits)
+	next := hotp(rfcSecret, counter+1, Digits)
+	outside := hotp(rfcSecret, counter+2, Digits)
 
 	if !Validate(rfcSecret, current, now) {
 		t.Fatal("current window code should be valid")
