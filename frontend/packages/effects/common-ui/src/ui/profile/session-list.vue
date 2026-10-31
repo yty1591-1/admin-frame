@@ -122,9 +122,16 @@ function formatTime(value?: null | string) {
           <div class="min-w-0 flex-1 space-y-2">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-sm font-medium">
-                {{ $t('profile.deviceUnknown') }}
+                {{ item.deviceLabel || $t('profile.deviceUnknown') }}
               </span>
-              <!-- 接口不下发 UA，用会话短 ID 区分多台设备，避免多行完全同名。 -->
+              <!-- 脱敏 IP 帮助用户分辨同型号设备；历史会话没有画像时省略。 -->
+              <span
+                v-if="item.ipMasked"
+                class="text-muted-foreground font-mono text-xs"
+              >
+                IP {{ item.ipMasked }}
+              </span>
+              <!-- 会话短 ID 兜底区分多台设备，避免无法识别时多行完全同名。 -->
               <span class="text-muted-foreground font-mono text-xs">
                 #{{ item.id.slice(0, 8) }}
               </span>

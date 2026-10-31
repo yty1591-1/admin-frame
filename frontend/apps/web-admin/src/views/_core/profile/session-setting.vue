@@ -41,6 +41,11 @@ const items = computed<SessionItem[]>(() =>
     expiresAt: session.expires_at,
     absoluteExpiresAt: session.absolute_expires_at,
     revokedAt: session.revoked_at ?? null,
+    deviceLabel: session.device_label ?? '',
+    deviceType: session.device_type ?? '',
+    os: session.os ?? '',
+    browser: session.browser ?? '',
+    ipMasked: session.ip_masked ?? '',
   })),
 );
 

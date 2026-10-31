@@ -296,21 +296,29 @@ export async function getAccessCodesApi(): Promise<string[]> {
   return permissions.permissions;
 }
 
-/** 设备会话（api/openapi/components.yaml#AuthSession）；不含任何令牌。 */
+/** 设备会话（api/openapi/components.yaml#AuthSession）；不含任何令牌或 IP / UA 原文。 */
 export interface AuthSessionDTO {
   absolute_expires_at: string;
+  /** 浏览器枚举；无法识别时省略。 */
+  browser?: 'chrome' | 'edge' | 'firefox' | 'opera' | 'safari' | 'wechat';
   created_at: string;
   /** 是否为当前请求使用的设备。 */
   current: boolean;
+  /** 可直接展示的设备名（如 Chrome · Windows）；无法识别时省略。 */
+  device_label?: string;
+  /** 设备形态；无法识别时省略。 */
+  device_type?: 'desktop' | 'mobile' | 'tablet';
   expires_at: string;
   /** 设备（family）ID，撤销时作为路径参数。 */
   id: string;
   idle_expires_at?: string;
-  ip_hash?: string;
+  /** 脱敏 IP；IPv4 保留前两段，IPv6 保留前四组。 */
+  ip_masked?: string;
   last_used_at: string;
+  /** 操作系统枚举；无法识别时省略。 */
+  os?: 'android' | 'chromeos' | 'ios' | 'linux' | 'macos' | 'windows';
   revoked_at?: string;
   status: 'active' | 'expired' | 'revoked' | 'rotated';
-  ua_hash?: string;
 }
 
 /** 设备会话分页结果。 */

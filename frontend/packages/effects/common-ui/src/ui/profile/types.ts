@@ -68,7 +68,8 @@ export interface SecuritySchemaItem {
 /**
  * 登录设备会话项。
  *
- * 后端只返回 IP / UA 的不可逆摘要，共享组件不展示摘要，统一显示「未知设备」；
+ * 后端只下发由 UA / IP 派生的设备画像与脱敏 IP，不返回原文；
+ * 历史会话没有画像时 `deviceLabel` 为空，组件回退「未知设备」。
  * 时间字段传 ISO 字符串，由组件按本地时区格式化。
  */
 export interface SessionItem {
@@ -83,6 +84,14 @@ export interface SessionItem {
   /** 设备绝对到期时间；刷新不会延长。 */
   absoluteExpiresAt?: string;
   revokedAt?: null | string;
+  /** 可直接展示的设备名（如 Chrome · Windows）；为空表示无法识别。 */
+  deviceLabel?: string;
+  /** 设备形态枚举；仅供展示扩展，不参与判定。 */
+  deviceType?: string;
+  os?: string;
+  browser?: string;
+  /** 脱敏客户端 IP；为空表示无法解析。 */
+  ipMasked?: string;
 }
 
 /**
