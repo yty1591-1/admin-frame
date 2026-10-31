@@ -108,7 +108,8 @@ c-v1-auth-phone-rebind:
     tags: [auth]
     summary: 换绑手机号
     description: |
-      需已登录 C 端账号。先用 `sms/send` 向新手机号发送验证码，再调用本端点；
+      需已登录 C 端账号。先用 `sms/send` 分别向当前手机号与新手机号发送验证码；
+      请求必须同时携带 `old_code` 与 `code`，证明对旧号和新号的控制。
       成功后更新账号主体与手机号凭据、递增 token_version 并撤销全部会话，
       用户需用新手机号重新登录。新手机号已被占用返回 40900。
     operationId: cAuthRebindPhone
@@ -119,7 +120,7 @@ c-v1-auth-phone-rebind:
       content:
         application/json:
           schema:
-            $ref: "../../components.yaml#/components/schemas/SMSLoginRequest"
+            $ref: "../../components.yaml#/components/schemas/SMSRebindRequest"
     responses:
       "204":
         description: no content
@@ -143,9 +144,16 @@ c-v1-auth-account:
     description: |
       用户自助注销（软删）：递增 token_version、撤销全部会话并写 `auth.account.deleted`；
       手机号主体仍占用唯一键，不允许立即被他人重新注册。
+      短信启用时必须携带当前手机号验证码 `code` 作为再认证；OAuth-only 账号可省略。
     operationId: cAuthDeleteAccount
     security:
       - bearerAuth: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SMSDeleteRequest"
     responses:
       "204":
         description: no content

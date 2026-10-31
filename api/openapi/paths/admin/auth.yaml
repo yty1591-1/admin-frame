@@ -120,7 +120,7 @@ admin-v1-auth-sessions:
   get:
     tags: [auth]
     summary: 列出本账号设备会话
-    description: 按设备（family）分页返回本账号会话；不下发任何令牌，IP / UA 仅返回摘要。
+    description: 按设备（family）分页返回本账号会话；不下发任何令牌，只返回设备画像与脱敏 IP，不返回 IP / UA 原文或摘要。
     operationId: adminAuthListSessions
     security:
       - bearerAuth: []
@@ -352,7 +352,7 @@ admin-v1-auth-accounts-by-id:
     tags: [auth]
     summary: 软删账号
     description: |
-      需要权限点 `identity:account:write`。递增 token_version 并撤销全部会话；
+      需要权限点 `identity:account:delete`。递增 token_version 并撤销全部会话；
       subject 仍占用唯一键，可通过 restore 恢复。
     operationId: adminAuthDeleteAccount
     security:
@@ -432,7 +432,7 @@ admin-v1-auth-accounts-by-id-password-reset:
     tags: [auth]
     summary: 重置账号密码
     description: |
-      需要权限点 `identity:account:write`。生成一次性临时口令并置强制改密标记；
+      需要权限点 `identity:account:credential`。生成一次性临时口令并置强制改密标记；
       用户下次登录只返回 `PasswordChangeRequired`，改密后才签发令牌。
       响应中的临时口令只出现一次，必须经安全通道交付给用户。
     operationId: adminAuthResetAccountPassword
@@ -571,7 +571,7 @@ admin-v1-auth-accounts-by-id-sessions-by-sid:
     tags: [auth]
     summary: 撤销目标账号指定设备
     description: |
-      需要权限点 `identity:account:write`。按设备（family）撤销全部令牌代，并写会话撤销快照，
+      需要权限点 `identity:account:session`。按设备（family）撤销全部令牌代，并写会话撤销快照，
       使该设备已签发的 Access Token 在 ≤60s 内失效。
     operationId: adminAuthRevokeAccountSession
     security:
@@ -610,7 +610,7 @@ admin-v1-auth-accounts-by-id-sessions-revoke-all:
     tags: [auth]
     summary: 撤销目标账号全部会话
     description: |
-      需要权限点 `identity:account:write`。递增 token_version 并撤销全部会话，
+      需要权限点 `identity:account:session`。递增 token_version 并撤销全部会话，
       旧 Access Token 在 ≤60s 内失效。
     operationId: adminAuthRevokeAccountSessions
     security:
@@ -772,7 +772,7 @@ admin-v1-auth-accounts-by-id-mfa-reset:
     tags: [auth]
     summary: 重置账号 MFA
     description: |
-      需要权限点 `identity:account:write`。用户丢失 TOTP 设备与恢复码时的兜底：
+      需要权限点 `identity:account:credential`。用户丢失 TOTP 设备与恢复码时的兜底：
       删除绑定、递增 `token_version`、撤销全部会话并写 `auth.mfa.reset`。
       未绑定 MFA 返回 40400；本端点不校验动态码，必须经审批流程后调用。
     operationId: adminAuthResetAccountMFA

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Consumer API (C)
-  version: 3.2.0
+  version: 4.0.0
   description: |
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -9,6 +9,8 @@ info:
     3.0.0：移除历史订单契约（破坏性）；当前仅保留平台 probe 端点。
     3.1.0：新增 C 端认证（短信验证码 / OAuth 授权码 / 刷新 / 登出）。
     3.2.0：新增短信验证码注册（开户即登录）、手机号换绑与账号注销端点。
+    4.0.0：手机号换绑新增必填 `old_code`，必须同时证明持有旧号与新号（破坏性）；
+    账号注销新增可选当前手机号验证码再认证。
 servers:
   - url: http://localhost:8083
     description: 本地直连（make run-c）

@@ -107,8 +107,8 @@ components:
       required: [subject, password]
       additionalProperties: false
       description: |
-        A/B 端密码登录请求。`channel` / `roles` / `merchant_id` 一律由服务端推导，
-        客户端传入会被拒绝（40000）。
+        A/B 端密码登录请求。`channel` / `roles` 由服务端推导；
+        B 端必须携带 `merchant_id`（租户上下文），A 端传入返回 40000。
       properties:
         subject:
           type: string
@@ -120,6 +120,11 @@ components:
           minLength: 1
           format: password
           description: 明文密码；仅通过 TLS 传输，服务端不落库、不写日志
+        merchant_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: B 端商户 ID；与 subject 一起构成租户内唯一登录主体
     RefreshRequest:
       type: object
       required: [refresh_token]
@@ -174,6 +179,40 @@ components:
           type: string
           pattern: '^\+[1-9]\d{2,14}$'
           example: "+8613800138000"
+        code:
+          type: string
+          pattern: '^\d{6}$'
+          example: "123456"
+    SMSRebindRequest:
+      type: object
+      required: [phone, code, old_code]
+      additionalProperties: false
+      description: |
+        换绑手机号请求。`code` 证明持有新号，`old_code` 证明持有当前手机号；
+        仅凭 Bearer 无法换绑。两个验证码都必须通过 sms/send 预先生成。
+      properties:
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{2,14}$'
+          example: "+8613800138002"
+        code:
+          type: string
+          pattern: '^\d{6}$'
+          description: 新手机号验证码
+          example: "123456"
+        old_code:
+          type: string
+          pattern: '^\d{6}$'
+          description: 当前手机号验证码
+          example: "654321"
+    SMSDeleteRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      description: |
+        注销账号请求。短信启用时 `code` 为当前手机号验证码，用于再认证；
+        OAuth-only 账号无手机号时可省略。
+      properties:
         code:
           type: string
           pattern: '^\d{6}$'
@@ -322,12 +361,20 @@ components:
     AccountActionRequest:
       type: object
       additionalProperties: false
-      description: 管理员账号操作的可选原因；写入审计 reason，禁止包含 PII。
+      description: |
+        管理员账号操作的可选原因与特权操作二次认证。
+        密码重置 / MFA 重置 / 删除 / 全量撤销在 `identity.mfa.admin_required=true` 时必须携带
+        `mfa_code`（TOTP 或恢复码），缺失返回 40000。
       properties:
         reason:
           type: string
           maxLength: 64
           description: 操作原因（如 left_company / lost_device）；空值时使用服务端默认原因
+        mfa_code:
+          type: string
+          minLength: 6
+          maxLength: 32
+          description: 特权操作二次认证码；TOTP 6 位或一次性恢复码
     AccountLockRequest:
       type: object
       additionalProperties: false
@@ -342,6 +389,11 @@ components:
           minimum: 1
           maximum: 10080
           description: 锁定时长（分钟），范围 [1, 10080]（7 天）
+        mfa_code:
+          type: string
+          minLength: 6
+          maxLength: 32
+          description: 特权操作二次认证码；当前锁定不强制，保留统一扩展
     AccountSummary:
       type: object
       required: [id, subject, channel, status, token_version, created_at, updated_at]
@@ -417,7 +469,9 @@ components:
       required: [id, current, status, created_at, last_used_at, expires_at, absolute_expires_at]
       description: |
         设备会话视图；`id` 为设备（family）ID，同一设备刷新只轮换内部令牌代。
-        不包含任何令牌；`ip_hash` / `ua_hash` 仅为不可逆摘要。
+        不包含任何令牌；接口只返回可展示的设备画像与脱敏 IP，不返回 IP / UA 原文或摘要。
+        设备画像由服务端从登录请求的 User-Agent 与客户端 IP 派生，仅供展示，
+        不得作为鉴权或风控依据；历史会话无法识别时相关字段省略。
       properties:
         id:
           type: string
@@ -449,12 +503,26 @@ components:
           type: string
           format: date-time
           description: 撤销时间；未撤销时省略
-        ip_hash:
+        device_label:
           type: string
-          description: 客户端 IP 摘要；不可逆，不返回原文
-        ua_hash:
+          description: 可直接展示的设备名（如 `Chrome · Windows`）；无法识别时省略
+          example: Chrome · Windows
+        device_type:
           type: string
-          description: User-Agent 摘要；不可逆，不返回原文
+          description: 设备形态；无法识别时省略
+          enum: [desktop, mobile, tablet]
+        os:
+          type: string
+          description: 操作系统；无法识别时省略
+          enum: [windows, macos, ios, android, linux, chromeos]
+        browser:
+          type: string
+          description: 浏览器；无法识别时省略
+          enum: [chrome, edge, safari, firefox, wechat, opera]
+        ip_masked:
+          type: string
+          description: 脱敏客户端 IP；IPv4 保留前两段（`1.2.x.x`），IPv6 保留前四组
+          example: 1.2.x.x
     AuthSessionListData:
       type: object
       required: [items]
