@@ -272,16 +272,39 @@ func (r *MemorySessionRepository) ListFamiliesByAccount(
 	return out, nil
 }
 
-// ListByFamily 返回 family 下全部会话，按创建时间倒序、ID 升序。
-func (r *MemorySessionRepository) ListByFamily(_ context.Context, familyID string) ([]*domain.Session, error) {
+// maxActiveSessionsPerFamily 是单次撤销读取会话的硬上限。
+//
+// 正常设备在 access_ttl 内只有 1–2 个 active/rotated 会话；上限用于防御异常客户端
+// 高频刷新导致的单链膨胀（IDN-GAP-PERF-03）。
+const maxActiveSessionsPerFamily = 256
+
+// ListActiveByFamily 返回 family 下 activeSince 之后仍可能持有 Access Token 的会话。
+func (r *MemorySessionRepository) ListActiveByFamily(
+	_ context.Context,
+	familyID string,
+	activeSince time.Time,
+) ([]*domain.Session, error) {
+	if familyID == "" {
+		return nil, apperr.BadRequest("family id is required")
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]*domain.Session, 0, 4)
+	lowerBound := activeSince.UTC()
 	for _, session := range r.byID {
 		if session.FamilyID != familyID {
 			continue
 		}
+		if session.Status != domain.SessionStatusActive && session.Status != domain.SessionStatusRotated {
+			continue
+		}
+		if session.LastUsedAt.Before(lowerBound) {
+			continue
+		}
 		out = append(out, cloneSession(session))
+		if len(out) >= maxActiveSessionsPerFamily {
+			break
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {

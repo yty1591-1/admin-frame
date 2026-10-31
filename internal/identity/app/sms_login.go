@@ -386,6 +386,7 @@ func (s *AuthService) RegisterConsumerByPhone(ctx context.Context, in ConsumerRe
 	}); err != nil {
 		return LoginResult{}, err
 	}
+	s.markActivatedSession(ctx, result.SessionID, result.activatedSession)
 	return result, nil
 }
 

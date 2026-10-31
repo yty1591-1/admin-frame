@@ -366,15 +366,23 @@ func (r *SQLSessionRepository) ListFamiliesByAccount(
 	return out, nil
 }
 
-// ListByFamily 返回 family 下全部会话，按创建时间倒序、ID 升序。
-func (r *SQLSessionRepository) ListByFamily(ctx context.Context, familyID string) ([]*domain.Session, error) {
+// ListActiveByFamily 只加载 activeSince 之后仍可能持有 Access Token 的 active / rotated 会话。
+//
+// 按 last_used_at 过滤后，正常设备在 access_ttl 内仅 1–2 行；
+// LIMIT 用于防御异常高频刷新导致的单链膨胀。
+func (r *SQLSessionRepository) ListActiveByFamily(
+	ctx context.Context,
+	familyID string,
+	activeSince time.Time,
+) ([]*domain.Session, error) {
 	id, err := parseID(familyID)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := r.exec(ctx).QueryContext(ctx,
-		`SELECT `+sessionSelectColumns+` FROM identity_session WHERE family_id = ?
-		 ORDER BY created_at DESC, id ASC`, id)
+		`SELECT `+sessionSelectColumns+` FROM identity_session
+		 WHERE family_id = ? AND status IN ('active', 'rotated') AND last_used_at >= ?
+		 ORDER BY created_at DESC, id ASC LIMIT ?`, id, activeSince.UTC(), maxActiveSessionsPerFamily)
 	if err != nil {
 		return nil, err
 	}

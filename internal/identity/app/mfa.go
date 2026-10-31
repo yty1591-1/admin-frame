@@ -87,6 +87,8 @@ type MFAVerifyResult struct {
 	SessionID        string
 	AccountID        string
 	BindingConfirmed bool
+	// activatedSession 成功签发令牌时的撤销快照，仅供提交后写缓存，不对外暴露。
+	activatedSession *SessionState
 }
 
 // SetupMFA 生成 TOTP 密钥与恢复码，保存未确认绑定并返回一次性录入信息。
@@ -227,6 +229,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, in MFAVerifyInput) (MFAVeri
 	if err != nil {
 		return MFAVerifyResult{}, err
 	}
+	s.markActivatedSession(ctx, result.SessionID, result.activatedSession)
 	return result, nil
 }
 
@@ -491,9 +494,10 @@ func (s *AuthService) completeMFALogin(ctx context.Context, in MFAVerifyInput) (
 		return MFAVerifyResult{}, err
 	}
 	return MFAVerifyResult{
-		TokenPair: result.TokenPair,
-		SessionID: result.SessionID,
-		AccountID: account.ID,
+		TokenPair:        result.TokenPair,
+		SessionID:        result.SessionID,
+		AccountID:        account.ID,
+		activatedSession: result.activatedSession,
 	}, nil
 }
 
@@ -573,9 +577,10 @@ func (s *AuthService) completeMFASetup(ctx context.Context, in MFAVerifyInput) (
 		return MFAVerifyResult{}, err
 	}
 	return MFAVerifyResult{
-		TokenPair: login.TokenPair,
-		SessionID: login.SessionID,
-		AccountID: account.ID,
+		TokenPair:        login.TokenPair,
+		SessionID:        login.SessionID,
+		AccountID:        account.ID,
+		activatedSession: login.activatedSession,
 	}, nil
 }
 

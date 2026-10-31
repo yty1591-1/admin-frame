@@ -112,6 +112,8 @@ type LoginResult struct {
 	PasswordChangeRequired bool
 	// PasswordChangeTicket 是强制改密票据；仅在 PasswordChangeRequired 时返回。
 	PasswordChangeTicket string
+	// activatedSession 是成功创建会话时的撤销快照，仅供提交后写缓存，不对外暴露。
+	activatedSession *SessionState
 }
 
 // RefreshInput 是刷新令牌入参。
@@ -382,6 +384,8 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (LoginResult, er
 	if err != nil {
 		return LoginResult{}, err
 	}
+	// 会话快照必须在事务提交后写入：回滚的事务不得留下 active 缓存（IDN-GAP-PERF-02）。
+	s.markActivatedSession(ctx, result.SessionID, result.activatedSession)
 	return result, nil
 }
 
@@ -544,7 +548,7 @@ func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProb
 		credentialHash: credential.Hash,
 	}
 	if needsRehash {
-		encoded, algorithm, hashErr := s.password.Hash(in.Password)
+		encoded, algorithm, hashErr := s.password.HashContext(ctx, in.Password)
 		if hashErr != nil {
 			return nil, hashErr
 		}
@@ -753,6 +757,7 @@ func (s *AuthService) CompleteVerifiedLogin(ctx context.Context, in VerifiedLogi
 	}); err != nil {
 		return LoginResult{}, err
 	}
+	s.markActivatedSession(ctx, result.SessionID, result.activatedSession)
 	return result, nil
 }
 
@@ -836,6 +841,8 @@ type refreshOutcome struct {
 	sessionID string
 	// revocations 重放等场景下被整链撤销的会话，提交后写 `authn:sid`。
 	revocations []sessionStateWrite
+	// activatedSession 成功刷新后新会话的撤销快照，提交后写 `authn:sid`。
+	activatedSession *SessionState
 	// replay 表示本次刷新命中了已轮换令牌（重放），供提交后上报指标。
 	replay bool
 }
@@ -853,6 +860,8 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (TokenPair, 
 	if err == nil || isRejected(err) {
 		// 事务已提交（重放拒绝同样提交）：补齐整链会话撤销快照，使 Access Token ≤60s 失效。
 		s.markSessionsRevoked(ctx, outcome.revocations)
+		// 新会话快照同样在提交后写入，避免 Redis 写超时占用数据库事务（IDN-GAP-PERF-02）。
+		s.markActivatedSession(ctx, outcome.sessionID, outcome.activatedSession)
 	}
 	if s.metrics != nil {
 		if outcome.replay {
@@ -969,7 +978,7 @@ func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refresh
 		return refreshOutcome{}, apperr.Internal("rotate session failed", saveErr)
 	}
 
-	pair, sessionID, err := s.issueNewSession(ctx, account, session.FamilyID, now, in.Device)
+	pair, sessionID, activated, err := s.issueNewSession(ctx, account, session.FamilyID, now, in.Device)
 	if err != nil {
 		return refreshOutcome{}, err
 	}
@@ -977,7 +986,7 @@ func (s *AuthService) refreshInTx(ctx context.Context, in RefreshInput) (refresh
 		audit.OutcomeSuccess, "", in.TraceID, map[string]string{"family_id": shortHash(session.FamilyID)}); err != nil {
 		return refreshOutcome{}, err
 	}
-	return refreshOutcome{pair: pair, sessionID: sessionID}, nil
+	return refreshOutcome{pair: pair, sessionID: sessionID, activatedSession: activated}, nil
 }
 
 // Logout 撤销当前会话并把当前 jti 加入黑名单；重复登出幂等。
@@ -1392,8 +1401,15 @@ func (s *AuthService) createSession(
 	if err := s.sessions.Save(ctx, session, 0); err != nil {
 		return LoginResult{}, apperr.Internal("save session failed", err)
 	}
-	s.markSessionActive(ctx, session)
-	return LoginResult{TokenPair: pair, SessionID: sessionID, AccountID: account.ID}, nil
+	return LoginResult{
+		TokenPair: pair,
+		SessionID: sessionID,
+		AccountID: account.ID,
+		activatedSession: &SessionState{
+			Status:    session.Status,
+			ExpiresAt: session.ExpiresAt,
+		},
+	}, nil
 }
 
 // evictFamilies 在创建新设备前淘汰最久未使用的设备，保证单账号活跃设备数受限。
@@ -1437,13 +1453,13 @@ func (s *AuthService) issueNewSession(
 	familyID string,
 	now time.Time,
 	device domain.DeviceInfo,
-) (TokenPair, string, error) {
+) (TokenPair, string, *SessionState, error) {
 	family, err := s.sessions.FindFamily(ctx, familyID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
-			return TokenPair{}, "", invalidToken()
+			return TokenPair{}, "", nil, invalidToken()
 		}
-		return TokenPair{}, "", apperr.Internal("load session family failed", err)
+		return TokenPair{}, "", nil, apperr.Internal("load session family failed", err)
 	}
 	if !family.IsActive(now) {
 		// 设备已过期 / 撤销 / 达到绝对上限：终止本条链，避免刷新绕过设备状态。
@@ -1457,7 +1473,7 @@ func (s *AuthService) issueNewSession(
 				"family_ref", shortHash(familyID), "reason", reason.String(), "error", revokeErr)
 			s.observeSessionRevoke(ctx, reason, MetricResultFailure)
 		}
-		return TokenPair{}, "", invalidToken()
+		return TokenPair{}, "", nil, invalidToken()
 	}
 	// 历史会话可能缺少设备画像：用当次请求逐字段补全，随本次 Touch 一起落库。
 	family.Device.MergeMissing(device)
@@ -1468,23 +1484,23 @@ func (s *AuthService) issueNewSession(
 	}
 	expectedFamily := family.Version
 	if touchErr := family.Touch(now, nextExpiry); touchErr != nil {
-		return TokenPair{}, "", invalidToken()
+		return TokenPair{}, "", nil, invalidToken()
 	}
 	if saveErr := s.sessions.SaveFamily(ctx, family, expectedFamily); saveErr != nil {
 		if errors.Is(saveErr, apperr.ErrConflict) {
 			// 并发刷新只允许一条链推进，其余按重放处理。
-			return TokenPair{}, "", invalidToken()
+			return TokenPair{}, "", nil, invalidToken()
 		}
-		return TokenPair{}, "", apperr.Internal("save session family failed", saveErr)
+		return TokenPair{}, "", nil, apperr.Internal("save session family failed", saveErr)
 	}
 
 	sessionID, err := s.ids.NextString()
 	if err != nil {
-		return TokenPair{}, "", apperr.Internal("generate session id failed", err)
+		return TokenPair{}, "", nil, apperr.Internal("generate session id failed", err)
 	}
 	pair, err := s.tokens.Issue(account, sessionID)
 	if err != nil {
-		return TokenPair{}, "", err
+		return TokenPair{}, "", nil, err
 	}
 	// 刷新响应同样返回设备绝对到期时间。
 	pair.AbsoluteExpiresAt = family.AbsoluteExpiresAt
@@ -1499,13 +1515,15 @@ func (s *AuthService) issueNewSession(
 		Now:           now,
 	})
 	if err != nil {
-		return TokenPair{}, "", apperr.Internal("build session failed", err)
+		return TokenPair{}, "", nil, apperr.Internal("build session failed", err)
 	}
 	if err := s.sessions.Save(ctx, session, 0); err != nil {
-		return TokenPair{}, "", apperr.Internal("save session failed", err)
+		return TokenPair{}, "", nil, apperr.Internal("save session failed", err)
 	}
-	s.markSessionActive(ctx, session)
-	return pair, sessionID, nil
+	return pair, sessionID, &SessionState{
+		Status:    session.Status,
+		ExpiresAt: session.ExpiresAt,
+	}, nil
 }
 
 // idleExpiry 计算空闲上限；不得超过当前令牌代或设备绝对到期时间。
@@ -1542,15 +1560,12 @@ type sessionStateWrite struct {
 	ExpiresAt time.Time
 }
 
-// markSessionActive 在会话创建成功后写入 active 快照，预热鉴权缓存（失败只告警）。
-func (s *AuthService) markSessionActive(ctx context.Context, session *domain.Session) {
-	if session == nil {
+// markActivatedSession 在事务提交后写入 active 快照，预热鉴权缓存（失败只告警）。
+func (s *AuthService) markActivatedSession(ctx context.Context, sessionID string, state *SessionState) {
+	if state == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	s.markSessionState(ctx, session.ID, SessionState{
-		Status:    session.Status,
-		ExpiresAt: session.ExpiresAt,
-	})
+	s.markSessionState(ctx, sessionID, *state)
 }
 
 // markSessionsRevoked 逐条写入会话撤销快照；同一会话只写一次。
@@ -1634,18 +1649,21 @@ func (s *AuthService) revokeFamilyChain(
 	reason domain.RevokeReason,
 	now time.Time,
 ) ([]sessionStateWrite, error) {
+	// 只取 access_ttl 内仍可能持有有效 Access Token 的会话，避免随会话链增长无界加载。
+	// 额外留 1 分钟时钟偏差余量；实现层仍有硬上限（IDN-GAP-PERF-03）。
+	activeSince := now.Add(-s.tokens.AccessTTL() - time.Minute)
+	sessions, listErr := s.sessions.ListActiveByFamily(ctx, familyID, activeSince)
 	if _, err := s.sessions.RevokeFamily(ctx, familyID, reason, now); err != nil {
 		s.logError("identity revoke session family failed",
 			"family_ref", shortHash(familyID), "reason", reason.String(), "error", err)
 		s.observeSessionRevoke(ctx, reason, MetricResultFailure)
 		return nil, err
 	}
-	sessions, err := s.sessions.ListByFamily(ctx, familyID)
-	if err != nil {
-		s.logError("identity list revoked sessions failed",
-			"family_ref", shortHash(familyID), "reason", reason.String(), "error", err)
-		s.observeSessionRevoke(ctx, reason, MetricResultFailure)
-		return nil, err
+	if listErr != nil {
+		// 撤销已成功；缺少快照只会让旧 Access Token 最长多存活一个 state_ttl（≤60s）。
+		// 不能因读取失败回滚已完成的安全撤销。
+		s.logError("identity list active sessions failed",
+			"family_ref", shortHash(familyID), "reason", reason.String(), "error", listErr)
 	}
 	s.observeSessionRevoke(ctx, reason, MetricResultSuccess)
 	writes := make([]sessionStateWrite, 0, len(sessions))

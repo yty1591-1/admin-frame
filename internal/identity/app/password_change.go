@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -46,10 +47,26 @@ type CompletePasswordChangeInput struct {
 	TraceID string
 }
 
+// passwordChangeCompletionProbe 是强制改密在事务外完成的票据与密码计算。
+type passwordChangeCompletionProbe struct {
+	// accountID 票据中的账号主键。
+	accountID string
+	// ticketID 票据 jti，用于一次性消费与限流键。
+	ticketID string
+	// expiresAt 票据到期时间。
+	expiresAt time.Time
+	// credentialHash 事务外读到的哈希，用于事务内检测并发改密。
+	credentialHash string
+	// encoded / algorithm 事务外计算的新哈希，事务内直接落库。
+	encoded   string
+	algorithm string
+}
+
 // CompletePasswordChange 使用一次性票据完成管理员重置后的强制改密。
 //
 // 校验票据（scope=password_change、5 分钟、一次性）后更新密码、清除标记、
 // 撤销全部会话，并复用 MFA 闸门决定直接签发令牌还是继续两步校验。
+// Argon2 校验与哈希在事务外完成，事务内只做一次性消费与写入（IDN-GAP-PERF-01）。
 func (s *AuthService) CompletePasswordChange(ctx context.Context, in CompletePasswordChangeInput) (LoginResult, error) {
 	if s.channel != domain.ChannelAdmin {
 		return LoginResult{}, apperr.BadRequest("password change ticket is only supported on admin channel")
@@ -57,9 +74,13 @@ func (s *AuthService) CompletePasswordChange(ctx context.Context, in CompletePas
 	if s.mfaTickets == nil {
 		return LoginResult{}, apperr.Unavailable("password change ticket store is not configured")
 	}
+	probe, err := s.probePasswordChangeCompletion(ctx, in)
+	if err != nil {
+		return LoginResult{}, err
+	}
 	var result LoginResult
 	if err := s.runTx(ctx, func(txCtx context.Context) error {
-		res, err := s.completePasswordChangeInTx(txCtx, in)
+		res, err := s.completePasswordChangeInTx(txCtx, in, probe)
 		if err != nil {
 			return err
 		}
@@ -68,20 +89,74 @@ func (s *AuthService) CompletePasswordChange(ctx context.Context, in CompletePas
 	}); err != nil {
 		return LoginResult{}, err
 	}
+	s.markActivatedSession(ctx, result.SessionID, result.activatedSession)
 	return result, nil
 }
 
-// completePasswordChangeInTx 是 CompletePasswordChange 的事务内实现。
-func (s *AuthService) completePasswordChangeInTx(ctx context.Context, in CompletePasswordChangeInput) (LoginResult, error) {
-	now := s.clock.Now().UTC()
+// probePasswordChangeCompletion 在事务外校验票据、账号状态与新密码强度。
+func (s *AuthService) probePasswordChangeCompletion(ctx context.Context, in CompletePasswordChangeInput) (*passwordChangeCompletionProbe, error) {
 	claims, err := s.tokens.ParsePasswordChangeTicket(in.Ticket)
 	if err != nil {
-		return LoginResult{}, err
+		return nil, err
 	}
-	if claims.ExpiresAt.IsZero() || !claims.ExpiresAt.After(now) {
-		return LoginResult{}, invalidToken()
+	now := s.clock.Now().UTC()
+	if claims.Subject == "" || claims.ID == "" || claims.ExpiresAt.IsZero() || !claims.ExpiresAt.After(now) {
+		return nil, invalidToken()
 	}
 	account, err := s.accounts.FindByID(ctx, claims.Subject)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, invalidToken()
+		}
+		return nil, apperr.Internal("load account failed", err)
+	}
+	if account.Channel != s.channel {
+		return nil, invalidToken()
+	}
+	if err := s.guard.Authorize(account, now); err != nil {
+		return nil, err
+	}
+	if err := s.guard.CheckRateLimit(passwordChangeRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
+		return nil, err
+	}
+	credential, err := s.credentials.FindByAccount(ctx, account.ID, domain.CredentialTypePassword)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return nil, invalidCredentials()
+		}
+		return nil, apperr.Internal("load credential failed", err)
+	}
+	if _, verifyErr := s.password.VerifyContext(ctx, credential.Hash, in.NewPassword); verifyErr == nil {
+		return nil, apperr.BadRequest("new password must differ from the temporary password")
+	} else if !errors.Is(verifyErr, apperr.ErrUnauthorized) {
+		// 哈希损坏 / 并发槽位超时属于服务端问题，必须失败关闭；仅“不匹配”可继续。
+		return nil, verifyErr
+	}
+	encoded, algorithm, err := s.password.HashContext(ctx, in.NewPassword)
+	if err != nil {
+		return nil, err
+	}
+	return &passwordChangeCompletionProbe{
+		accountID:      account.ID,
+		ticketID:       claims.ID,
+		expiresAt:      claims.ExpiresAt,
+		credentialHash: credential.Hash,
+		encoded:        encoded,
+		algorithm:      algorithm,
+	}, nil
+}
+
+// completePasswordChangeInTx 是 CompletePasswordChange 的事务内实现。
+func (s *AuthService) completePasswordChangeInTx(
+	ctx context.Context,
+	in CompletePasswordChangeInput,
+	probe *passwordChangeCompletionProbe,
+) (LoginResult, error) {
+	now := s.clock.Now().UTC()
+	if probe == nil || probe.expiresAt.IsZero() || !probe.expiresAt.After(now) {
+		return LoginResult{}, invalidToken()
+	}
+	account, err := s.accounts.FindByID(ctx, probe.accountID)
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {
 			return LoginResult{}, invalidToken()
@@ -94,12 +169,9 @@ func (s *AuthService) completePasswordChangeInTx(ctx context.Context, in Complet
 	if err := s.guard.Authorize(account, now); err != nil {
 		return LoginResult{}, err
 	}
-	if err := s.guard.CheckRateLimit(passwordChangeRateKey(s.channel, claims.ID, in.IPHash)); err != nil {
-		return LoginResult{}, err
-	}
 
-	ttl := claims.ExpiresAt.Sub(now)
-	consumed, err := s.mfaTickets.Consume(ctx, passwordTicketStoreKey(claims.ID), ttl)
+	ttl := probe.expiresAt.Sub(now)
+	consumed, err := s.mfaTickets.Consume(ctx, passwordTicketStoreKey(probe.ticketID), ttl)
 	if err != nil {
 		return LoginResult{}, apperr.New(apperr.CodeServiceUnavailable,
 			"password change ticket store unavailable", errors.Join(apperr.ErrUnavailable, err))
@@ -119,14 +191,11 @@ func (s *AuthService) completePasswordChangeInTx(ctx context.Context, in Complet
 		}
 		return LoginResult{}, apperr.Internal("load credential failed", err)
 	}
-	if _, verifyErr := s.password.Verify(credential.Hash, in.NewPassword); verifyErr == nil {
-		return LoginResult{}, apperr.BadRequest("new password must differ from the temporary password")
+	if credential.Hash != probe.credentialHash {
+		// probe 与事务之间密码被并发修改：拒绝本次改密，避免覆盖新凭据。
+		return LoginResult{}, apperr.Conflict("password credential was modified concurrently, please retry")
 	}
-	encoded, algorithm, err := s.password.Hash(in.NewPassword)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if err := credential.ReplaceHash(encoded, algorithm, now); err != nil {
+	if err := credential.ReplaceHash(probe.encoded, probe.algorithm, now); err != nil {
 		return LoginResult{}, err
 	}
 	if err := s.credentials.Save(ctx, credential); err != nil {

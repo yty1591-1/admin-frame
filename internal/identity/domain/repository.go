@@ -87,8 +87,11 @@ type SessionRepository interface {
 	//
 	// afterLastUsed / afterID 为空表示第一页；limit <= 0 使用调用方默认值。
 	ListFamiliesByAccount(ctx context.Context, accountID string, afterLastUsed time.Time, afterID string, limit int) ([]*SessionFamily, error)
-	// ListByFamily 返回 family 下全部会话，按创建时间倒序。
-	ListByFamily(ctx context.Context, familyID string) ([]*Session, error)
+	// ListActiveByFamily 返回 family 下仍可能持有有效 Access Token 的会话（active / rotated）。
+	//
+	// activeSince 由调用方按 access_ttl 计算；实现必须按 last_used_at 过滤并设置硬上限，
+	// 禁止加载整条会话链历史（IDN-GAP-PERF-03）。
+	ListActiveByFamily(ctx context.Context, familyID string, activeSince time.Time) ([]*Session, error)
 	// ExpireStale 把到期的会话与设备标记为 expired，单次最多 limit 条。
 	ExpireStale(ctx context.Context, now time.Time, limit int) (SessionExpireResult, error)
 	// DeleteExpiredBefore 删除 before 之前的 rotated / revoked / expired 会话与设备，单次最多 limit 条。
