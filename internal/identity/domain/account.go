@@ -53,6 +53,14 @@ func NormalizeSubject(subject string) string {
 	return strings.ToLower(strings.TrimSpace(subject))
 }
 
+// NormalizeMerchantID 规范化商户 ID：去首尾空白并转小写（BIZ-06）。
+//
+// 库排序规则 utf8mb4_0900_ai_ci 大小写不敏感；若领域层不统一，`M-1` 与 `m-1`
+// 会被唯一键判为重复，但应用侧按不同租户处理，造成绑定 / 查询不一致。
+func NormalizeMerchantID(merchantID string) string {
+	return strings.ToLower(strings.TrimSpace(merchantID))
+}
+
 // AccountStatus 账号生命周期状态。
 type AccountStatus string
 
@@ -152,7 +160,8 @@ func NewAccount(p NewAccountParams) (*Account, error) {
 	if len(subject) > MaxSubjectLen {
 		return nil, errInvalid(ErrInvalidAccount, "account subject exceeds %d bytes", MaxSubjectLen)
 	}
-	if err := validateMerchant(p.Channel, p.MerchantID); err != nil {
+	merchantID := NormalizeMerchantID(p.MerchantID)
+	if err := validateMerchant(p.Channel, merchantID); err != nil {
 		return nil, err
 	}
 	now := utcNow(p.Now)
@@ -163,7 +172,7 @@ func NewAccount(p NewAccountParams) (*Account, error) {
 		Status:       AccountStatusPending,
 		TokenVersion: 1,
 		Version:      1,
-		MerchantID:   p.MerchantID,
+		MerchantID:   merchantID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil

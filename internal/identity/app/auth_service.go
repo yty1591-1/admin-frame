@@ -526,7 +526,7 @@ func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProb
 	if len(subject) > maxLoginSubjectBytes || len(in.Password) > maxLoginPasswordBytes {
 		return nil, invalidCredentials()
 	}
-	merchantID := strings.TrimSpace(in.MerchantID)
+	merchantID := domain.NormalizeMerchantID(in.MerchantID)
 	if s.channel == domain.ChannelBiz && merchantID == "" {
 		return nil, invalidCredentials()
 	}

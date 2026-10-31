@@ -35,6 +35,22 @@ func TestChannelValidate(t *testing.T) {
 	}
 }
 
+// TestNormalizeMerchantID 验证商户 ID 与唯一键口径一致（BIZ-06）。
+func TestNormalizeMerchantID(t *testing.T) {
+	if got := NormalizeMerchantID("  M-1 "); got != "m-1" {
+		t.Fatalf("NormalizeMerchantID() = %q, want m-1", got)
+	}
+	account, err := NewAccount(NewAccountParams{
+		ID: "1001", Channel: ChannelBiz, Subject: "alice", MerchantID: " ACCT-9 ",
+	})
+	if err != nil {
+		t.Fatalf("NewAccount() error = %v", err)
+	}
+	if account.MerchantID != "acct-9" {
+		t.Fatalf("merchant id = %q, want acct-9", account.MerchantID)
+	}
+}
+
 func TestNormalizeSubject(t *testing.T) {
 	tests := []struct {
 		name  string
