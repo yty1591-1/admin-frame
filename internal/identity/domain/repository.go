@@ -153,6 +153,10 @@ type OAuthIdentityRepository interface {
 	FindByProviderSubject(ctx context.Context, provider, subject string) (*OAuthIdentity, error)
 	// Save 创建映射；唯一键冲突返回 apperr.Conflict。
 	Save(ctx context.Context, identity *OAuthIdentity) error
+	// ListByAccount 返回账号已绑定的外部身份，按 provider 升序（BIZ-02）。
+	ListByAccount(ctx context.Context, accountID string) ([]*OAuthIdentity, error)
+	// Delete 解绑账号的指定 provider；不存在返回 apperr.NotFound（BIZ-02）。
+	Delete(ctx context.Context, accountID, provider string) error
 }
 
 // LoginAttemptRepository 是登录尝试记录的持久化端口。

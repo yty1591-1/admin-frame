@@ -42,6 +42,14 @@ type OAuthProvider interface {
 type OAuthState struct {
 	Provider string
 	Verifier string
+	// AccountID 非空表示绑定流程：回调只能落到该账号（BIZ-02）。
+	AccountID string
+}
+
+// OAuthBindingView 是账号已绑定的外部身份视图；不含外部主体原文。
+type OAuthBindingView struct {
+	Provider string
+	BoundAt  time.Time
 }
 
 // OAuthStateStore 是 state 的一次性消费存储。
@@ -298,31 +306,9 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		return LoginResult{}, oauthInvalid()
 	}
 
-	var info OAuthIdentityInfo
-	exchange := func() error {
-		var exchangeErr error
-		info, exchangeErr = provider.Exchange(ctx, code, saved.Verifier)
-		return exchangeErr
-	}
-	if breaker := s.breakers[name]; breaker != nil {
-		if breakerErr := breaker.Do(exchange); breakerErr != nil {
-			if errors.Is(breakerErr, circuitbreaker.ErrOpen) {
-				return LoginResult{}, apperr.Unavailable("oauth provider temporarily unavailable")
-			}
-			err = breakerErr
-		}
-	} else {
-		err = exchange()
-	}
+	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier)
 	if err != nil {
-		switch {
-		case errors.Is(err, apperr.ErrUnauthorized):
-			return LoginResult{}, oauthInvalid()
-		case errors.Is(err, apperr.ErrUnavailable):
-			return LoginResult{}, apperr.Unavailable("oauth provider unavailable")
-		default:
-			return LoginResult{}, apperr.Internal("exchange oauth code failed", err)
-		}
+		return LoginResult{}, err
 	}
 	subject := strings.TrimSpace(info.Subject)
 	if subject == "" {
@@ -340,6 +326,217 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		Device:    in.Device,
 		TraceID:   in.TraceID,
 	})
+}
+
+// exchangeCode 经 provider 级熔断换取外部主体；4xx / invalid_grant 统一 40100。
+func (s *OAuthService) exchangeCode(
+	ctx context.Context,
+	name string,
+	provider OAuthProvider,
+	code, verifier string,
+) (OAuthIdentityInfo, error) {
+	var info OAuthIdentityInfo
+	exchange := func() error {
+		var exchangeErr error
+		info, exchangeErr = provider.Exchange(ctx, code, verifier)
+		return exchangeErr
+	}
+	var err error
+	if breaker := s.breakers[name]; breaker != nil {
+		if breakerErr := breaker.Do(exchange); breakerErr != nil {
+			if errors.Is(breakerErr, circuitbreaker.ErrOpen) {
+				return OAuthIdentityInfo{}, apperr.Unavailable("oauth provider temporarily unavailable")
+			}
+			err = breakerErr
+		}
+	} else {
+		err = exchange()
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, apperr.ErrUnauthorized):
+			return OAuthIdentityInfo{}, oauthInvalid()
+		case errors.Is(err, apperr.ErrUnavailable):
+			return OAuthIdentityInfo{}, apperr.Unavailable("oauth provider unavailable")
+		default:
+			return OAuthIdentityInfo{}, apperr.Internal("exchange oauth code failed", err)
+		}
+	}
+	return info, nil
+}
+
+// ListBindings 返回当前账号已绑定的外部身份（BIZ-02）。
+func (s *OAuthService) ListBindings(ctx context.Context, actor SessionActor) ([]OAuthBindingView, error) {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return nil, invalidToken()
+	}
+	identities, err := s.identities.ListByAccount(ctx, actor.AccountID)
+	if err != nil {
+		return nil, apperr.Internal("list oauth bindings failed", err)
+	}
+	out := make([]OAuthBindingView, 0, len(identities))
+	for _, identity := range identities {
+		out = append(out, OAuthBindingView{Provider: identity.Provider, BoundAt: identity.CreatedAt})
+	}
+	return out, nil
+}
+
+// Unbind 解绑当前账号的指定 provider；最后一个可用凭据不允许解绑（BIZ-02）。
+func (s *OAuthService) Unbind(ctx context.Context, actor SessionActor, provider string) error {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return invalidToken()
+	}
+	name := strings.TrimSpace(provider)
+	if name == "" {
+		return apperr.BadRequest("provider is required")
+	}
+	bindings, err := s.identities.ListByAccount(ctx, actor.AccountID)
+	if err != nil {
+		return apperr.Internal("list oauth bindings failed", err)
+	}
+	target := ""
+	for _, binding := range bindings {
+		if binding.Provider == name {
+			target = binding.ID
+		}
+	}
+	if target == "" {
+		return apperr.NotFound("oauth binding not found")
+	}
+	credentials, credErr := s.auth.credentials.ListByAccount(ctx, actor.AccountID)
+	if credErr != nil {
+		return apperr.Internal("list credentials failed", credErr)
+	}
+	hasPassword := false
+	for _, credential := range credentials {
+		if credential.Type == domain.CredentialTypePassword {
+			hasPassword = true
+		}
+	}
+	if !hasPassword && len(bindings) <= 1 {
+		return apperr.Conflict("cannot unbind the last credential")
+	}
+	if err := s.identities.Delete(ctx, actor.AccountID, name); err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return apperr.NotFound("oauth binding not found")
+		}
+		return apperr.Internal("delete oauth binding failed", err)
+	}
+	return s.auth.emitAudit(ctx, audit.ActionAuthOAuthCallback, actor.AccountID, actor.MerchantID,
+		"oauth_provider", name, audit.OutcomeSuccess, "oauth_unbound", actor.TraceID, nil)
+}
+
+// AuthorizeBinding 为已登录账号发起 OAuth 绑定授权（BIZ-02）。
+func (s *OAuthService) AuthorizeBinding(
+	ctx context.Context,
+	actor SessionActor,
+	provider, ipHash, traceID string,
+) (AuthorizeResult, error) {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return AuthorizeResult{}, invalidToken()
+	}
+	if err := s.checkRateLimit("authorize", ipHash); err != nil {
+		return AuthorizeResult{}, err
+	}
+	name := strings.TrimSpace(provider)
+	providerImpl, ok := s.providers[name]
+	if !ok {
+		return AuthorizeResult{}, apperr.NotFound("oauth provider is not configured")
+	}
+	state, err := randomURLSafe(oauthSecretBytes)
+	if err != nil {
+		return AuthorizeResult{}, apperr.Unavailable("oauth state generation failed")
+	}
+	verifier, err := randomURLSafe(oauthSecretBytes)
+	if err != nil {
+		return AuthorizeResult{}, apperr.Unavailable("oauth state generation failed")
+	}
+	if err := s.states.Save(ctx, state, OAuthState{
+		Provider: name, Verifier: verifier, AccountID: actor.AccountID,
+	}, s.stateTTL); err != nil {
+		return AuthorizeResult{}, apperr.Unavailable("oauth state store unavailable")
+	}
+	url, err := providerImpl.AuthorizationURL(state, verifier)
+	if err != nil {
+		return AuthorizeResult{}, apperr.Internal("build oauth authorize url failed", err)
+	}
+	return AuthorizeResult{AuthorizeURL: url, State: state}, nil
+}
+
+// CompleteBinding 完成绑定回调：state 必须由同一账号发起，外部主体不得已绑定他人（BIZ-02）。
+func (s *OAuthService) CompleteBinding(
+	ctx context.Context,
+	actor SessionActor,
+	in OAuthCallbackInput,
+) error {
+	if strings.TrimSpace(actor.AccountID) == "" {
+		return invalidToken()
+	}
+	if err := s.checkRateLimit("callback", in.IPHash); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(in.Provider)
+	code := strings.TrimSpace(in.Code)
+	state := strings.TrimSpace(in.State)
+	if code == "" || state == "" {
+		return oauthInvalid()
+	}
+	if len(code) > maxOAuthCodeBytes || len(state) > maxOAuthStateBytes {
+		return oauthInvalid()
+	}
+	provider, ok := s.providers[name]
+	if !ok {
+		return oauthInvalid()
+	}
+	saved, err := s.states.Consume(ctx, state)
+	if err != nil {
+		if errors.Is(err, apperr.ErrNotFound) {
+			return oauthInvalid()
+		}
+		return apperr.Unavailable("oauth state store unavailable")
+	}
+	if saved.Provider != name || saved.Verifier == "" || saved.AccountID != actor.AccountID {
+		return oauthInvalid()
+	}
+	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier)
+	if err != nil {
+		return err
+	}
+	subject := strings.TrimSpace(info.Subject)
+	if subject == "" {
+		return oauthInvalid()
+	}
+	existing, err := s.identities.FindByProviderSubject(ctx, name, subject)
+	if err != nil && !errors.Is(err, apperr.ErrNotFound) {
+		return apperr.Unavailable("oauth identity store unavailable")
+	}
+	if err == nil {
+		if existing.AccountID == actor.AccountID {
+			return apperr.Conflict("oauth identity is already bound to this account")
+		}
+		return apperr.Conflict("oauth identity is already bound to another account")
+	}
+	identityID, err := s.ids.NextString()
+	if err != nil {
+		return apperr.Internal("generate oauth identity id failed", err)
+	}
+	identity, err := domain.NewOAuthIdentity(domain.NewOAuthIdentityParams{
+		ID:              identityID,
+		AccountID:       actor.AccountID,
+		Provider:        name,
+		ProviderSubject: subject,
+	})
+	if err != nil {
+		return apperr.Internal("build oauth identity failed", err)
+	}
+	if err := s.identities.Save(ctx, identity); err != nil {
+		if errors.Is(err, apperr.ErrConflict) {
+			return apperr.Conflict("oauth identity is already bound")
+		}
+		return apperr.Unavailable("oauth identity store unavailable")
+	}
+	return s.auth.emitAudit(ctx, audit.ActionAuthOAuthCallback, actor.AccountID, actor.MerchantID,
+		"oauth_provider", name, audit.OutcomeSuccess, "oauth_bound", in.TraceID, nil)
 }
 
 // resolveAccount 返回外部身份对应账号；未映射时按 auto_provision 决定是否建号。

@@ -33,6 +33,16 @@ func (r *conflictOnceIdentityRepo) Save(ctx context.Context, identity *domain.OA
 	return r.inner.Save(ctx, identity)
 }
 
+// ListByAccount 委托内层仓储。
+func (r *conflictOnceIdentityRepo) ListByAccount(ctx context.Context, accountID string) ([]*domain.OAuthIdentity, error) {
+	return r.inner.ListByAccount(ctx, accountID)
+}
+
+// Delete 委托内层仓储。
+func (r *conflictOnceIdentityRepo) Delete(ctx context.Context, accountID, provider string) error {
+	return r.inner.Delete(ctx, accountID, provider)
+}
+
 // TestOAuthProvisionConflictReusesExistingAccount 验证映射冲突时复用既有账号且不产生孤儿（REL-07）。
 func TestOAuthProvisionConflictReusesExistingAccount(t *testing.T) {
 	ctx := context.Background()

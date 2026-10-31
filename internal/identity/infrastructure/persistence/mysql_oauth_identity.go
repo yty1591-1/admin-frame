@@ -108,6 +108,57 @@ func (r *SQLOAuthIdentityRepository) Save(ctx context.Context, identity *domain.
 	return conflictOnDuplicate(err, "oauth identity already exists for this provider subject")
 }
 
+// ListByAccount 返回账号已绑定的外部身份，按 provider 升序（BIZ-02）。
+func (r *SQLOAuthIdentityRepository) ListByAccount(ctx context.Context, accountID string) ([]*domain.OAuthIdentity, error) {
+	id, err := parseID(accountID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.exec(ctx).QueryContext(ctx,
+		`SELECT `+oauthIdentitySelectColumns+` FROM identity_oauth_identity
+		 WHERE account_id = ? ORDER BY provider, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.OAuthIdentity, 0, 4)
+	for rows.Next() {
+		identity, scanErr := scanOAuthIdentity(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		if decodeErr := r.decodeProviderSubject(identity); decodeErr != nil {
+			return nil, decodeErr
+		}
+		out = append(out, identity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Delete 解绑账号的指定 provider；不存在返回 NotFound（BIZ-02）。
+func (r *SQLOAuthIdentityRepository) Delete(ctx context.Context, accountID, provider string) error {
+	id, err := parseID(accountID)
+	if err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx,
+		`DELETE FROM identity_oauth_identity WHERE account_id = ? AND provider = ?`, id, provider)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return apperr.NotFound("oauth identity not found")
+	}
+	return nil
+}
+
 // protectProviderSubject 计算外部身份主体索引与密文；未配置保护器时失败关闭。
 func (r *SQLOAuthIdentityRepository) protectProviderSubject(identity *domain.OAuthIdentity) (string, []byte, error) {
 	if r.protector == nil {

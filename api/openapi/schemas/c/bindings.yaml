@@ -1,0 +1,25 @@
+components:
+  schemas:
+    OAuthBinding:
+      type: object
+      required: [provider, bound_at]
+      additionalProperties: false
+      properties:
+        provider:
+          type: string
+          description: 提供方标识
+        bound_at:
+          type: string
+          format: date-time
+          description: 绑定时间（UTC）
+    AuthorizeResult:
+      type: object
+      required: [authorize_url, state]
+      additionalProperties: false
+      properties:
+        authorize_url:
+          type: string
+          description: 第三方授权地址（含 state 与 PKCE challenge）
+        state:
+          type: string
+          description: 一次性 state

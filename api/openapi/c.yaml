@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Consumer API (C)
-  version: 4.1.0
+  version: 4.2.0
   description: |
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -12,6 +12,7 @@ info:
     4.0.0：手机号换绑新增必填 `old_code`，必须同时证明持有旧号与新号（破坏性）；
     账号注销新增可选当前手机号验证码再认证。
     4.1.0：新增 `GET/PATCH /c/v1/me`（C 端个人中心资料，纯增量）。
+    4.2.0：新增外部身份绑定 / 解绑端点（`/c/v1/me/bindings`、`/c/v1/auth/bindings/{provider}/*`）。
 servers:
   - url: http://localhost:8083
     description: 本地直连（make run-c）
@@ -55,6 +56,14 @@ paths:
     $ref: './paths/c/auth.yaml#/c-v1-auth-logout'
   /c/v1/me:
     $ref: './paths/c/me.yaml#/c-v1-me'
+  /c/v1/me/bindings:
+    $ref: './paths/c/bindings.yaml#/c-v1-me-bindings'
+  /c/v1/me/bindings/{provider}:
+    $ref: './paths/c/bindings.yaml#/c-v1-me-bindings-by-provider'
+  /c/v1/auth/bindings/{provider}/authorize:
+    $ref: './paths/c/bindings.yaml#/c-v1-auth-bindings-by-provider-authorize'
+  /c/v1/auth/bindings/{provider}/callback:
+    $ref: './paths/c/bindings.yaml#/c-v1-auth-bindings-by-provider-callback'
 components:
   securitySchemes:
     bearerAuth:

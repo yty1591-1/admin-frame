@@ -32,6 +32,11 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 	// BIZ-01：C 端个人中心；仅需认证，不回显手机号等 PII，写入审计。
 	mux.Handle("GET /c/v1/me", secure(authMW(http.HandlerFunc(h.rest.Me))))
 	mux.Handle("PATCH /c/v1/me", secure(authMW(http.HandlerFunc(h.rest.UpdateMe))))
+	// BIZ-02：身份绑定 / 解绑；绑定回调必须由发起时同一账号完成。
+	mux.Handle("GET /c/v1/me/bindings", secure(authMW(http.HandlerFunc(h.ListBindings))))
+	mux.Handle("DELETE /c/v1/me/bindings/{provider}", secure(authMW(http.HandlerFunc(h.Unbind))))
+	mux.Handle("POST /c/v1/auth/bindings/{provider}/authorize", secure(authMW(http.HandlerFunc(h.OAuthBindAuthorize))))
+	mux.Handle("POST /c/v1/auth/bindings/{provider}/callback", secure(authMW(http.HandlerFunc(h.OAuthBindCallback))))
 	for _, provider := range h.providers {
 		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/authorize", secure(http.HandlerFunc(h.OAuthAuthorize)))
 		mux.Handle("POST /c/v1/auth/oauth/"+provider+"/callback", secure(http.HandlerFunc(h.OAuthCallback)))

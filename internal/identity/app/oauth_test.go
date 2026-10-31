@@ -122,6 +122,45 @@ type denyLimiter struct{ retryAfter time.Duration }
 // Allow 返回拒绝与建议等待时长。
 func (l denyLimiter) Allow(string) (bool, time.Duration) { return false, l.retryAfter }
 
+// TestOAuthBindingLifecycle 验证绑定、列表与解绑闭环（BIZ-02）。
+func TestOAuthBindingLifecycle(t *testing.T) {
+	ctx := context.Background()
+	f := newOAuthFixture(t, false, &fakeProvider{name: "test", subject: "sub-bind"})
+	f.seedAccount(t, "acct-bind", "bind-user", "Bind#Passw0rd")
+	actor := app.SessionActor{AccountID: "acct-bind", TraceID: "trace-bind"}
+
+	auth, err := f.svc.AuthorizeBinding(ctx, actor, "test", "", "trace-bind")
+	if err != nil {
+		t.Fatalf("authorize binding: %v", err)
+	}
+	if err := f.svc.CompleteBinding(ctx, actor, app.OAuthCallbackInput{
+		Provider: "test", Code: "code-1", State: auth.State, TraceID: "trace-bind-cb",
+	}); err != nil {
+		t.Fatalf("complete binding: %v", err)
+	}
+	bindings, err := f.svc.ListBindings(ctx, actor)
+	if err != nil || len(bindings) != 1 || bindings[0].Provider != "test" {
+		t.Fatalf("bindings = %+v, err=%v", bindings, err)
+	}
+	if err := f.svc.Unbind(ctx, actor, "test"); err != nil {
+		t.Fatalf("unbind: %v", err)
+	}
+	bindings, err = f.svc.ListBindings(ctx, actor)
+	if err != nil || len(bindings) != 0 {
+		t.Fatalf("bindings after unbind = %+v, err=%v", bindings, err)
+	}
+}
+
+// TestOAuthUnbindRejectsLastCredential 验证 OAuth-only 账号不允许解绑最后一个凭据（BIZ-02）。
+func TestOAuthUnbindRejectsLastCredential(t *testing.T) {
+	f := newOAuthFixture(t, false, &fakeProvider{name: "test", subject: "sub-1"})
+	account := f.seedMappedAccount(t, "test", "sub-1")
+	err := f.svc.Unbind(context.Background(), app.SessionActor{AccountID: account.ID}, "test")
+	if !errors.Is(err, apperr.ErrConflict) {
+		t.Fatalf("unbind last credential error = %v, want conflict", err)
+	}
+}
+
 // TestOAuthProviderBreakerOpensAfterFailures 验证 provider 连续失败后熔断（PERF-06）。
 func TestOAuthProviderBreakerOpensAfterFailures(t *testing.T) {
 	ctx := context.Background()

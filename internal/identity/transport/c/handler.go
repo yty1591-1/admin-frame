@@ -282,6 +282,115 @@ func (h *Handler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 }
 
+// ListBindings GET /c/v1/me/bindings
+//
+// 返回当前账号已绑定的外部身份；不返回 provider_subject 原文。
+func (h *Handler) ListBindings(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.oauth == nil {
+		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
+		return
+	}
+	bindings, err := h.oauth.ListBindings(r.Context(), actor)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	out := make([]oauthBindingDTO, 0, len(bindings))
+	for _, binding := range bindings {
+		out = append(out, oauthBindingDTO{Provider: binding.Provider, BoundAt: binding.BoundAt.UTC()})
+	}
+	httpx.OK(w, out, traceID)
+}
+
+// Unbind DELETE /c/v1/me/bindings/{provider}
+//
+// 解绑指定外部身份；账号没有密码且仅剩一个绑定时返回 40900，避免账号失联。
+func (h *Handler) Unbind(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.oauth == nil {
+		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
+		return
+	}
+	if err := h.oauth.Unbind(r.Context(), actor, r.PathValue("provider")); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// OAuthBindAuthorize POST /c/v1/auth/bindings/{provider}/authorize
+//
+// 已登录账号发起绑定；state 绑定当前账号，回调必须由同一账号完成。
+func (h *Handler) OAuthBindAuthorize(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.oauth == nil {
+		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
+		return
+	}
+	result, err := h.oauth.AuthorizeBinding(r.Context(), actor, r.PathValue("provider"), h.clientIPHash(r), traceID)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, oauthAuthorizeResponse{AuthorizeURL: result.AuthorizeURL, State: result.State}, traceID)
+}
+
+// OAuthBindCallback POST /c/v1/auth/bindings/{provider}/callback
+//
+// 完成绑定；已绑定本账号或他人账号时返回 40900，其他失败统一 40100 / 50300。
+func (h *Handler) OAuthBindCallback(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := cActorFrom(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var req oauthCallbackRequest
+	if err := rest.DecodeJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.oauth == nil {
+		httpx.FromError(w, apperr.Unavailable("oauth binding is not enabled"), traceID)
+		return
+	}
+	if err := h.oauth.CompleteBinding(r.Context(), actor, app.OAuthCallbackInput{
+		Provider: r.PathValue("provider"),
+		Code:     req.Code,
+		State:    req.State,
+		IPHash:   h.clientIPHash(r),
+		UAHash:   h.clientUAHash(r),
+		Device:   h.clientDevice(r),
+		TraceID:  traceID,
+	}); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// oauthBindingDTO 是已绑定外部身份的展示结构。
+type oauthBindingDTO struct {
+	Provider string    `json:"provider"`
+	BoundAt  time.Time `json:"bound_at"`
+}
+
 // smsSendRequest 是发送验证码请求。
 type smsSendRequest struct {
 	Phone string `json:"phone"`

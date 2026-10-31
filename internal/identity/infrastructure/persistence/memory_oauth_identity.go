@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -39,6 +40,37 @@ func (r *MemoryOAuthIdentityRepository) FindByProviderSubject(_ context.Context,
 	}
 	cp := *r.byID[id]
 	return &cp, nil
+}
+
+// ListByAccount 返回账号已绑定的外部身份，按 provider 升序。
+func (r *MemoryOAuthIdentityRepository) ListByAccount(_ context.Context, accountID string) ([]*domain.OAuthIdentity, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*domain.OAuthIdentity, 0, len(r.byID))
+	for _, identity := range r.byID {
+		if identity.AccountID != accountID {
+			continue
+		}
+		cp := *identity
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
+	return out, nil
+}
+
+// Delete 解绑账号的指定 provider；不存在返回 NotFound。
+func (r *MemoryOAuthIdentityRepository) Delete(_ context.Context, accountID, provider string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, identity := range r.byID {
+		if identity.AccountID != accountID || identity.Provider != provider {
+			continue
+		}
+		delete(r.byID, id)
+		delete(r.bySubject, oauthIdentityKey{provider: identity.Provider, subject: identity.ProviderSubject})
+		return nil
+	}
+	return apperr.NotFound("oauth identity not found")
 }
 
 // Save 创建映射；主键或唯一键冲突返回 Conflict。

@@ -1,0 +1,118 @@
+c-v1-me-bindings:
+  get:
+    tags: [auth]
+    summary: 列出已绑定的外部身份
+    description: 仅需认证；不返回 provider_subject 原文。
+    operationId: cListBindings
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: "../../schemas/c/bindings.yaml#/components/schemas/OAuthBinding"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+c-v1-me-bindings-by-provider:
+  delete:
+    tags: [auth]
+    summary: 解绑外部身份
+    description: |
+      仅需认证。账号没有密码且仅剩一个绑定时返回 40900，避免账号失联。
+    operationId: cUnbind
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, maxLength: 32 }
+    responses:
+      "204":
+        description: 已解绑
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+c-v1-auth-bindings-by-provider-authorize:
+  post:
+    tags: [auth]
+    summary: 发起外部身份绑定
+    description: 仅需认证；state 绑定当前账号，回调必须由同一账号完成。
+    operationId: cBindingAuthorize
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, maxLength: 32 }
+    responses:
+      "200":
+        description: 授权地址
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/c/bindings.yaml#/components/schemas/AuthorizeResult"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+c-v1-auth-bindings-by-provider-callback:
+  post:
+    tags: [auth]
+    summary: 完成外部身份绑定
+    description: |
+      仅需认证；state 必须由同一账号发起。已绑定本账号或他人账号返回 40900。
+    operationId: cBindingCallback
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, maxLength: 32 }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, state]
+            additionalProperties: false
+            properties:
+              code: { type: string, maxLength: 2048 }
+              state: { type: string, maxLength: 1024 }
+    responses:
+      "204":
+        description: 绑定成功
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
