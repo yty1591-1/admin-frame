@@ -37,6 +37,12 @@ const (
 	MaxAccountStateTTL = 60 * time.Second
 )
 
+// refetchWorkTimeout 是 singleflight 回源工作的独立上限（REL-03）。
+//
+// 回源使用与调用方解耦的 context：首个请求取消不应让同 key 的等待者一起失败；
+// 同时给回源本身一个硬上限，避免无界占用连接。
+const refetchWorkTimeout = 5 * time.Second
+
 // AccountState 是撤销检查所需的账号最小快照。
 //
 // Status 与 Version 必须来自同一次读取：分两次读取会得到「旧状态 + 新版本」的
@@ -321,17 +327,21 @@ func (c *RevocationChecker) freshAt(fetchedAt time.Time) bool {
 // 回填失败不改变本次判定：刚读到的数据库快照就是事实源，只是下次校验会再次回源。
 func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) (AccountState, bool, error) {
 	value, err, _ := c.refetch.Do(accountID, func() (any, error) {
+		// 回源与调用方 context 解耦：首个请求取消 / 超时不得让同 key 的等待者一起失败。
+		// 工作 context 只继承值并附加独立超时；调用方在拿到结果后自行判断是否已取消。
+		workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refetchWorkTimeout)
+		defer cancel()
 		// 获得执行权后二次检查，避免慢回源期间的其它请求刚写入新快照仍被覆盖。
 		// 熔断期内跳过 Redis 读写：读取失败时直接回源 DB（DB 才是事实源），
 		// 回填也跳过，避免 Redis 故障时每个请求仍等待写超时（REL-01）。
 		skipStore := c.storeSkipped()
 		if !skipStore {
-			if loaded, hit, loadErr := c.store.LoadAccountState(ctx, accountID); loadErr == nil && hit && c.isFresh(loaded) {
+			if loaded, hit, loadErr := c.store.LoadAccountState(workCtx, accountID); loadErr == nil && hit && c.isFresh(loaded) {
 				c.recordStoreSuccess()
 				return loaded, nil
 			}
 		}
-		account, dbErr := c.accounts.FindByID(ctx, accountID)
+		account, dbErr := c.accounts.FindByID(workCtx, accountID)
 		if dbErr != nil {
 			return nil, dbErr
 		}
@@ -342,7 +352,7 @@ func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) 
 			FetchedAt: c.clock.Now(),
 		}
 		if !skipStore {
-			if saveErr := c.store.SaveAccountState(ctx, accountID, state, c.stateTTL); saveErr != nil {
+			if saveErr := c.store.SaveAccountState(workCtx, accountID, state, c.stateTTL); saveErr != nil {
 				c.notifyWriteFailure(ctx, "set", saveErr)
 			}
 		}
@@ -350,6 +360,10 @@ func (c *RevocationChecker) refetchState(ctx context.Context, accountID string) 
 	})
 	if err != nil {
 		return AccountState{}, false, err
+	}
+	// 调用方自身已取消：不再继续使用共享结果，由上层按请求生命周期处理。
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return AccountState{}, false, ctxErr
 	}
 	state, ok := value.(AccountState)
 	if !ok {
