@@ -181,6 +181,24 @@ func TestMFAEnabledOnBizChannel(t *testing.T) {
 	}
 }
 
+// TestMFAFactorWhitelist 验证显式 totp 白名单不影响绑定，返回因子为 totp（BIZ-03）。
+func TestMFAFactorWhitelist(t *testing.T) {
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAChannels = map[domain.Channel]bool{domain.ChannelAdmin: true}
+		cfg.MFAFactors = []app.MFAFactor{app.MFAFactorTOTP}
+	})
+	f.seedAccount(t, "acct-factor", "factor-user", "Factor#Passw0rd")
+	setup, err := f.svc.SetupMFA(context.Background(), app.MFASetupInput{
+		Actor: app.SessionActor{AccountID: "acct-factor", TraceID: "trace-factor"},
+	})
+	if err != nil {
+		t.Fatalf("setup mfa with explicit totp: %v", err)
+	}
+	if setup.Factor != app.MFAFactorTOTP {
+		t.Fatalf("factor=%q want totp", setup.Factor)
+	}
+}
+
 // TestMFARejectsInvalidRequests 覆盖 MFA 用例的互斥与鉴权错误分支。
 func TestMFARejectsInvalidRequests(t *testing.T) {
 	ctx := context.Background()

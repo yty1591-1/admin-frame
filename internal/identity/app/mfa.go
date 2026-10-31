@@ -112,6 +112,10 @@ func (s *AuthService) SetupMFA(ctx context.Context, in MFASetupInput) (MFASetupR
 	if !s.mfaEnabled() {
 		return MFASetupResult{}, apperr.BadRequest("mfa is not enabled for this channel")
 	}
+	// BIZ-03：白名单未包含 totp 时拒绝绑定，避免声明与实现不一致。
+	if !s.mfaFactorEnabled(MFAFactorTOTP) {
+		return MFASetupResult{}, apperr.BadRequest("mfa factor is not enabled")
+	}
 	if s.mfa == nil || s.mfaCipher == nil {
 		return MFASetupResult{}, apperr.Unavailable("mfa is not configured")
 	}

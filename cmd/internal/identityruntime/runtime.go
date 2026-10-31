@@ -329,6 +329,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		PasswordPolicyFor:       passwordPolicyResolver(cfg),
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
 		MFAChannels:             mfaChannels,
+		MFAFactors:              identityMFAFactors(cfg),
 		MFARequired:             mfaRequired,
 	})
 	if err != nil {
@@ -694,6 +695,22 @@ func identityMFAChannels(cfg *platform.Config) map[domain.Channel]bool {
 		channels[domain.ChannelAdmin] = true
 	}
 	return channels
+}
+
+// identityMFAFactors 解析允许启用的因子白名单；空配置默认仅 totp（BIZ-03）。
+//
+// 配置校验期已拒绝未实现因子，这里再做一次映射，保证运行期只会看到已实现能力。
+func identityMFAFactors(cfg *platform.Config) []app.MFAFactor {
+	factors := make([]app.MFAFactor, 0, len(cfg.Identity.MFA.Factors))
+	for _, name := range cfg.Identity.MFA.Factors {
+		if strings.EqualFold(strings.TrimSpace(name), string(app.MFAFactorTOTP)) {
+			factors = append(factors, app.MFAFactorTOTP)
+		}
+	}
+	if len(factors) == 0 {
+		factors = append(factors, app.MFAFactorTOTP)
+	}
+	return factors
 }
 
 // passwordPolicyResolver 返回商户级密码策略解析器（BIZ-04）。

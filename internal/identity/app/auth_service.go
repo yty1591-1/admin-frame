@@ -94,6 +94,9 @@ type AuthServiceConfig struct {
 	TemporaryPasswordLength int
 	// MFAChannels 是允许使用 MFA 的端别；nil 时仅 admin（BIZ-03）。
 	MFAChannels map[domain.Channel]bool
+	// MFAFactors 是允许启用的因子白名单；nil 时仅 totp（BIZ-03）。
+	// 未实现的因子在此拒绝，保证配置与运行期能力一致。
+	MFAFactors []MFAFactor
 	// MFARequired 表示当前端别强制绑定 MFA（BIZ 端由配置显式开启）。
 	MFARequired bool
 	// MFAAdminRequired 表示 A 端强制绑定 MFA（兼容既有配置）。
@@ -120,6 +123,26 @@ type AuthServiceConfig struct {
 
 // mfaEnabled 报告当前端别是否允许 MFA（BIZ-03）。
 func (s *AuthService) mfaEnabled() bool { return s.mfaChannels[s.channel] }
+
+// mfaFactorEnabled 报告指定因子是否在装配期白名单内（BIZ-03）。
+func (s *AuthService) mfaFactorEnabled(factor MFAFactor) bool { return s.mfaFactors[factor] }
+
+// mfaFactorsFrom 解析因子白名单；nil 或空表示仅 totp，未知因子直接拒绝。
+func mfaFactorsFrom(factors []MFAFactor) (map[MFAFactor]bool, error) {
+	enabled := make(map[MFAFactor]bool, len(factors))
+	for _, factor := range factors {
+		switch factor {
+		case MFAFactorTOTP:
+			enabled[factor] = true
+		default:
+			return nil, apperr.Internal("unsupported mfa factor: "+string(factor), nil)
+		}
+	}
+	if len(enabled) == 0 {
+		enabled[MFAFactorTOTP] = true
+	}
+	return enabled, nil
+}
 
 // passwordPolicyForAccount 返回账号生效的密码策略（BIZ-04）；无覆盖时使用全局策略。
 func (s *AuthService) passwordPolicyForAccount(merchantID string) PasswordPolicy {
@@ -167,6 +190,7 @@ type AuthService struct {
 	mfaTickets      MFATicketStore
 	mfaIssuer       string
 	mfaChannels     map[domain.Channel]bool
+	mfaFactors      map[MFAFactor]bool
 	mfaRequired     bool
 	mfaTOTP         totp.Policy
 	mfaRecoveryCodes int
@@ -224,6 +248,10 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	mfaChannels := cfg.MFAChannels
 	if len(mfaChannels) == 0 {
 		mfaChannels = map[domain.Channel]bool{domain.ChannelAdmin: true}
+	}
+	mfaFactors, err := mfaFactorsFrom(cfg.MFAFactors)
+	if err != nil {
+		return nil, err
 	}
 	mfaRequired := cfg.MFARequired || (cfg.Channel == domain.ChannelAdmin && cfg.MFAAdminRequired)
 	if mfaChannels[cfg.Channel] && mfaRequired {
@@ -300,6 +328,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaTickets:      cfg.MFATickets,
 		mfaIssuer:       mfaIssuer,
 		mfaChannels:     mfaChannels,
+		mfaFactors:      mfaFactors,
 		mfaRequired:     mfaRequired,
 		mfaTOTP:         mfaTOTP,
 		mfaRecoveryCodes: recoveryCodes,

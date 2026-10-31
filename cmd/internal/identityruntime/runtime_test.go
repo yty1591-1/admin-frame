@@ -120,6 +120,20 @@ func TestRunCleanupOnceSkipsWhenLockHeld(t *testing.T) {
 	}
 }
 
+// TestIdentityMFAFactors 验证因子白名单默认 totp 与大小写归一（BIZ-03）。
+func TestIdentityMFAFactors(t *testing.T) {
+	defaults := identityMFAFactors(&platform.Config{})
+	if len(defaults) != 1 || defaults[0] != app.MFAFactorTOTP {
+		t.Fatalf("defaults = %v, want [totp]", defaults)
+	}
+	cfg := &platform.Config{}
+	cfg.Identity.MFA.Factors = []string{" TOTP "}
+	explicit := identityMFAFactors(cfg)
+	if len(explicit) != 1 || explicit[0] != app.MFAFactorTOTP {
+		t.Fatalf("explicit = %v, want [totp]", explicit)
+	}
+}
+
 // TestPasswordPolicyFromConfig 验证配置策略映射与零值默认行为（IDN-P2-01）。
 func TestPasswordPolicyFromConfig(t *testing.T) {
 	empty := passwordPolicyFromConfig(&platform.Config{})

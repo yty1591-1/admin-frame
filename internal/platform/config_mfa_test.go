@@ -329,6 +329,35 @@ func TestValidateMFATOTPAndTemporaryPassword(t *testing.T) {
 	}
 }
 
+// TestValidateMFAFactors 验证因子白名单只接受已实现的 totp（BIZ-03）。
+func TestValidateMFAFactors(t *testing.T) {
+	explicit := mfaBaseConfig()
+	explicit.Identity.MFA.Factors = []string{" TOTP "}
+	if err := explicit.Validate(); err != nil {
+		t.Fatalf("explicit totp rejected: %v", err)
+	}
+
+	// 空配置按默认 totp 处理，不影响既有部署。
+	implicit := mfaBaseConfig()
+	if err := implicit.Validate(); err != nil {
+		t.Fatalf("empty factors rejected: %v", err)
+	}
+
+	unknown := mfaBaseConfig()
+	unknown.Identity.MFA.Factors = []string{"webauthn"}
+	if err := unknown.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "unsupported identity.mfa.factors entry: webauthn") {
+		t.Fatalf("err=%v want unsupported factor rejection", err)
+	}
+
+	duplicate := mfaBaseConfig()
+	duplicate.Identity.MFA.Factors = []string{"totp", "TOTP"}
+	if err := duplicate.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "identity.mfa.factors has duplicate entry: totp") {
+		t.Fatalf("err=%v want duplicate factor rejection", err)
+	}
+}
+
 // TestValidateTenantPasswordOverrides 验证租户策略只能收紧（BIZ-04）。
 func TestValidateTenantPasswordOverrides(t *testing.T) {
 	add := func(cfg *platform.Config, override platform.IdentityPasswordTenantOverride) {

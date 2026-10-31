@@ -263,6 +263,10 @@ type IdentityMFAConfig struct {
 	Channels []string `yaml:"channels"`
 	// BizRequired 表示 B 端强制绑定 MFA；需同时把 biz 加入 Channels。
 	BizRequired bool `yaml:"biz_required"`
+	// Factors 是允许启用的多因素因子白名单；空表示仅 totp（BIZ-03）。
+	// 当前只实现 totp；新增 WebAuthn / 推送时必须先在本字段与运行期同步支持，
+	// 未实现的因子在启动期直接失败，避免「配置声明但运行不生效」的假安全。
+	Factors []string `yaml:"factors"`
 	// Issuer 写入 otpauth URI，默认 AdminFrame。
 	Issuer string `yaml:"issuer"`
 	// SecretKey 是 TOTP 密钥的 AES-256 主密钥，仅允许通过环境变量注入（SEC-01）。
@@ -2231,6 +2235,22 @@ func (c *Config) validateIdentityPassword() []error {
 func (c *Config) validateIdentityMFA() []error {
 	mfaCfg := c.Identity.MFA
 	var errs []error
+	// BIZ-03：因子白名单只接受已实现的 totp；空配置按默认 totp 处理。
+	factors := make(map[string]struct{}, len(mfaCfg.Factors))
+	for _, factor := range mfaCfg.Factors {
+		name := strings.ToLower(strings.TrimSpace(factor))
+		if name != "totp" {
+			errs = append(errs, fmt.Errorf("unsupported identity.mfa.factors entry: %s", factor))
+			continue
+		}
+		if _, dup := factors[name]; dup {
+			errs = append(errs, fmt.Errorf("identity.mfa.factors has duplicate entry: %s", name))
+		}
+		factors[name] = struct{}{}
+	}
+	if len(factors) == 0 {
+		factors["totp"] = struct{}{}
+	}
 	if mfaCfg.TOTPDigits != 0 && mfaCfg.TOTPDigits != 6 && mfaCfg.TOTPDigits != 8 {
 		errs = append(errs, errors.New("identity.mfa.totp_digits must be 6 or 8"))
 	}
