@@ -358,6 +358,7 @@ admin-v1-auth-accounts-by-id:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -396,6 +397,7 @@ admin-v1-auth-accounts-by-id-lock:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -439,6 +441,7 @@ admin-v1-auth-accounts-by-id-password-reset:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -486,6 +489,7 @@ admin-v1-auth-accounts-by-id-restore:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -577,6 +581,7 @@ admin-v1-auth-accounts-by-id-sessions-by-sid:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -616,6 +621,7 @@ admin-v1-auth-accounts-by-id-sessions-revoke-all:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -654,6 +660,7 @@ admin-v1-auth-accounts-by-id-disable:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -694,6 +701,7 @@ admin-v1-auth-accounts-by-id-enable:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -736,6 +744,7 @@ admin-v1-auth-accounts-by-id-unlock:
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true
@@ -774,11 +783,13 @@ admin-v1-auth-accounts-by-id-mfa-reset:
     description: |
       需要权限点 `identity:account:credential`。用户丢失 TOTP 设备与恢复码时的兜底：
       删除绑定、递增 `token_version`、撤销全部会话并写 `auth.mfa.reset`。
-      未绑定 MFA 返回 40400；本端点不校验动态码，必须经审批流程后调用。
+      未绑定 MFA 返回 40400；调用必须携带 `mfa_code`（`admin_required=true` 时），
+      并经审批流程后执行。
     operationId: adminAuthResetAccountMFA
     security:
       - bearerAuth: []
     parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
       - name: id
         in: path
         required: true

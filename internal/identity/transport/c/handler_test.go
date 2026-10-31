@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -44,6 +45,24 @@ func errorCode(t *testing.T, recorder *httptest.ResponseRecorder) int {
 func TestNewHandlerRequiresRest(t *testing.T) {
 	if _, err := NewHandler(HandlerConfig{}); err == nil {
 		t.Fatal("rest handler must be required")
+	}
+}
+
+// TestTokenResponseFromIncludesAbsoluteExpiresAt 验证 C 端令牌响应与 A/B 端对齐，
+// 返回设备绝对到期时间（IDN-GAP-MNT-01）。
+func TestTokenResponseFromIncludesAbsoluteExpiresAt(t *testing.T) {
+	absolute := time.Date(2026, 11, 30, 12, 0, 0, 0, time.UTC)
+	got := tokenResponseFrom(app.TokenPair{
+		AccessToken:       "access",
+		RefreshToken:      "refresh",
+		ExpiresIn:         60,
+		AbsoluteExpiresAt: absolute,
+	})
+	if got.AbsoluteExpiresAt == nil || !got.AbsoluteExpiresAt.Equal(absolute) {
+		t.Fatalf("absolute_expires_at = %v, want %v", got.AbsoluteExpiresAt, absolute)
+	}
+	if zero := tokenResponseFrom(app.TokenPair{ExpiresIn: 60}); zero.AbsoluteExpiresAt != nil {
+		t.Fatalf("zero absolute expiry must be omitted, got %v", zero.AbsoluteExpiresAt)
 	}
 }
 

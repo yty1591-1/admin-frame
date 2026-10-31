@@ -135,8 +135,14 @@ func TestAccountMutationsRequireIdempotencyKey(t *testing.T) {
 		path   string
 	}{
 		{"disable", http.MethodPost, "/admin/v1/auth/accounts/1/disable"},
+		{"enable", http.MethodPost, "/admin/v1/auth/accounts/1/enable"},
+		{"lock", http.MethodPost, "/admin/v1/auth/accounts/1/lock"},
+		{"unlock", http.MethodPost, "/admin/v1/auth/accounts/1/unlock"},
+		{"restore", http.MethodPost, "/admin/v1/auth/accounts/1/restore"},
+		{"mfa_reset", http.MethodPost, "/admin/v1/auth/accounts/1/mfa/reset"},
 		{"password_reset", http.MethodPost, "/admin/v1/auth/accounts/1/password/reset"},
 		{"delete", http.MethodDelete, "/admin/v1/auth/accounts/1"},
+		{"revoke_session", http.MethodDelete, "/admin/v1/auth/accounts/1/sessions/2"},
 		{"revoke_all", http.MethodPost, "/admin/v1/auth/accounts/1/sessions/revoke-all"},
 	}
 	for _, tc := range cases {

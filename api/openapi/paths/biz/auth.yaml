@@ -3,8 +3,8 @@ biz-v1-auth-login:
     tags: [auth]
     summary: 密码登录
     description: |
-      账号不存在、密码错误、账号停用与锁定统一返回 40100；`merchant_id` 由账号绑定推导，
-      令牌不得跨商户。
+      账号不存在、密码错误、账号停用与锁定统一返回 40100；`merchant_id` 必填，
+      必须与账号绑定租户一致，令牌不得跨商户。
     operationId: bizAuthLogin
     security: []
     requestBody:
@@ -12,7 +12,7 @@ biz-v1-auth-login:
       content:
         application/json:
           schema:
-            $ref: "../../components.yaml#/components/schemas/LoginRequest"
+            $ref: "../../components.yaml#/components/schemas/BizLoginRequest"
     responses:
       "200":
         description: ok

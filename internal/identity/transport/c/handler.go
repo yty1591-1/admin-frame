@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -323,19 +324,26 @@ type oauthAuthorizeResponse struct {
 
 // tokenResponse 与 A / B 端字段完全一致。
 type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
+	AccessToken       string     `json:"access_token"`
+	RefreshToken      string     `json:"refresh_token"`
+	TokenType         string     `json:"token_type"`
+	ExpiresIn         int64      `json:"expires_in"`
+	AbsoluteExpiresAt *time.Time `json:"absolute_expires_at,omitempty"`
 }
 
 // tokenResponseFrom 把令牌对转换为响应 DTO。
 func tokenResponseFrom(pair app.TokenPair) tokenResponse {
+	var absolute *time.Time
+	if !pair.AbsoluteExpiresAt.IsZero() {
+		value := pair.AbsoluteExpiresAt
+		absolute = &value
+	}
 	return tokenResponse{
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    pair.ExpiresIn,
+		AccessToken:       pair.AccessToken,
+		RefreshToken:      pair.RefreshToken,
+		TokenType:         "Bearer",
+		ExpiresIn:         pair.ExpiresIn,
+		AbsoluteExpiresAt: absolute,
 	}
 }
 

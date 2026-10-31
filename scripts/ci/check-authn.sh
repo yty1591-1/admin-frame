@@ -53,6 +53,29 @@ for channel in admin biz c; do
   done
 done
 
+echo "==> ENT-01: account mutation contract declares Idempotency-Key"
+ACCOUNT_SPEC="api/openapi/paths/admin/auth.yaml"
+if [[ ! -f "${ACCOUNT_SPEC}" ]]; then
+  echo "ERROR: missing ${ACCOUNT_SPEC}" >&2
+  FAIL=1
+else
+  idempotent_refs="$(grep -c 'components/parameters/IdempotencyKey' "${ACCOUNT_SPEC}" || true)"
+  # 账号处置共 10 条 path：disable/enable/lock/unlock/restore/mfa-reset/
+  # password-reset/delete/单会话撤销/全量撤销。
+  if [[ "${idempotent_refs}" -ne 10 ]]; then
+    echo "ERROR: expected 10 Idempotency-Key refs in ${ACCOUNT_SPEC}, got ${idempotent_refs}" >&2
+    FAIL=1
+  else
+    echo "    OK: 10 account mutation paths declare Idempotency-Key"
+  fi
+fi
+if ! grep -Fq 'schemas/BizLoginRequest' api/openapi/paths/biz/auth.yaml; then
+  echo "ERROR: biz login must reference BizLoginRequest (merchant_id required)" >&2
+  FAIL=1
+else
+  echo "    OK: biz login uses required merchant_id contract"
+fi
+
 echo "==> ENT-01: revocation path wired"
 if ! grep -Rq 'RevocationChecker' internal/security; then
   echo "ERROR: internal/security does not reference RevocationChecker" >&2

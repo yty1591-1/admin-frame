@@ -29,7 +29,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: C 端写操作幂等键；同一键重复提交须返回同一结果
+      description: 写操作幂等键（A 端账号处置与 C 端写操作）；同一键重复提交须返回同一结果
       schema:
         type: string
         minLength: 1
@@ -109,6 +109,29 @@ components:
       description: |
         A/B 端密码登录请求。`channel` / `roles` 由服务端推导；
         B 端必须携带 `merchant_id`（租户上下文），A 端传入返回 40000。
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          description: 登录主体（账号或邮箱）
+          example: alice@example.com
+        password:
+          type: string
+          minLength: 1
+          format: password
+          description: 明文密码；仅通过 TLS 传输，服务端不落库、不写日志
+        merchant_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: B 端商户 ID；与 subject 一起构成租户内唯一登录主体
+    BizLoginRequest:
+      type: object
+      required: [subject, password, merchant_id]
+      additionalProperties: false
+      description: |
+        B 端密码登录请求。`merchant_id` 必填且必须与账号绑定租户一致；
+        账号不存在、密码错误、账号停用与锁定统一返回 40100，令牌不得跨商户。
       properties:
         subject:
           type: string
@@ -363,8 +386,9 @@ components:
       additionalProperties: false
       description: |
         管理员账号操作的可选原因与特权操作二次认证。
-        密码重置 / MFA 重置 / 删除 / 全量撤销在 `identity.mfa.admin_required=true` 时必须携带
-        `mfa_code`（TOTP 或恢复码），缺失返回 40000。
+        启用 / 解锁 / 锁定 / 恢复 / 密码重置 / MFA 重置 / 删除 / 全量撤销 /
+        单会话撤销在 `identity.mfa.admin_required=true` 时必须携带 `mfa_code`
+        （TOTP 或恢复码），缺失返回 40000。
       properties:
         reason:
           type: string
@@ -378,7 +402,9 @@ components:
     AccountLockRequest:
       type: object
       additionalProperties: false
-      description: 管理员主动锁定；duration_minutes 省略时使用默认锁定策略。
+      description: |
+        管理员主动锁定；duration_minutes 省略时使用默认锁定策略。
+        `identity.mfa.admin_required=true` 时必须携带 `mfa_code`，缺失返回 40000。
       properties:
         reason:
           type: string
@@ -393,7 +419,7 @@ components:
           type: string
           minLength: 6
           maxLength: 32
-          description: 特权操作二次认证码；当前锁定不强制，保留统一扩展
+          description: 特权操作二次认证码；TOTP 6 位或一次性恢复码
     AccountSummary:
       type: object
       required: [id, subject, channel, status, token_version, created_at, updated_at]
