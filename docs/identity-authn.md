@@ -336,7 +336,7 @@ sequenceDiagram
 
 - 单账号活跃会话数受 `identity.session.max_per_account` 限制；超限时按最久未使用淘汰并记审计。
 - 设备受绝对生命上限 `identity.session.absolute_ttl` 约束；登录 / 刷新响应与会话列表返回 `absolute_expires_at`，刷新不会延长该值。
-- 会话列表只返回 `session_id`、创建时间、最后使用时间、绝对到期时间、IP / UA 摘要、状态，不返回令牌。
+- 会话列表只返回 `session_id`、创建时间、最后使用时间、绝对到期时间、设备画像（系统 / 浏览器 / 设备形态 / 脱敏 IP）、状态，不返回令牌，也不返回 IP / UA 原文或摘要。
 - 管理员撤销会话只需 `session_id`，不接触令牌原文。
 
 ---
@@ -856,12 +856,12 @@ identity:
 | A | `POST /admin/v1/auth/accounts/{id}/enable` | Bearer + `identity:account:write` | 恢复停用账号（不恢复旧会话） |
 | A | `POST /admin/v1/auth/accounts/{id}/lock` | Bearer + `identity:account:write` | 主动锁定（可设时长）并撤销全部会话 |
 | A | `POST /admin/v1/auth/accounts/{id}/unlock` | Bearer + `identity:account:write` | 管理员解锁 |
-| A | `POST /admin/v1/auth/accounts/{id}/mfa/reset` | Bearer + `identity:account:write` | 重置 MFA（丢失设备兜底） |
-| A | `POST /admin/v1/auth/accounts/{id}/password/reset` | Bearer + `identity:account:write` | 重置密码，返回一次性临时口令并强制改密 |
-| A | `DELETE /admin/v1/auth/accounts/{id}` | Bearer + `identity:account:write` | 软删账号 |
+| A | `POST /admin/v1/auth/accounts/{id}/mfa/reset` | Bearer + `identity:account:credential` | 重置 MFA（丢失设备兜底） |
+| A | `POST /admin/v1/auth/accounts/{id}/password/reset` | Bearer + `identity:account:credential` | 重置密码，返回一次性临时口令并强制改密 |
+| A | `DELETE /admin/v1/auth/accounts/{id}` | Bearer + `identity:account:delete` | 软删账号 |
 | A | `POST /admin/v1/auth/accounts/{id}/restore` | Bearer + `identity:account:write` | 恢复软删账号 |
-| A | `DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}` | Bearer + `identity:account:write` | 撤销目标账号指定会话 |
-| A | `POST /admin/v1/auth/accounts/{id}/sessions/revoke-all` | Bearer + `identity:account:write` | 撤销目标账号全部会话 |
+| A | `DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}` | Bearer + `identity:account:session` | 撤销目标账号指定会话 |
+| A | `POST /admin/v1/auth/accounts/{id}/sessions/revoke-all` | Bearer + `identity:account:session` | 撤销目标账号全部会话 |
 | C | `POST /c/v1/auth/sms/send` | 无 | 发送验证码 |
 | C | `POST /c/v1/auth/sms/register` | 无 | 验证码注册开户并登录（方案 A） |
 | C | `POST /c/v1/auth/phone/rebind` | Bearer | 换绑手机号并撤销全部会话 |

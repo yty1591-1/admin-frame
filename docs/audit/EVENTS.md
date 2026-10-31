@@ -25,8 +25,13 @@
 | `auth.mfa.failed` | A | MFA 动态码 / 恢复码校验失败 | 认证 | 180d | active |
 | `auth.mfa.disabled` | A | MFA 解绑（同时撤销全部会话） | 认证 | 180d | active |
 | `auth.mfa.reset` | A | 管理员重置 MFA 绑定（用户丢失 TOTP 与恢复码的兜底） | 认证 | 180d | active |
+| `auth.mfa.setup` | A | MFA 绑定发起（已下发新密钥但尚未完成首次动态码校验） | 认证 | 180d | active |
 | `auth.mfa.recovery_used` | A | 使用一次性恢复码完成 MFA（含剩余数量） | 认证 | 180d | active |
 | `auth.mfa.ticket_replay` | A | 强制绑定票据重放被拒绝（不计入失败次数） | 认证 | 180d | active |
+| `auth.sms.send` | C | 短信验证码发送成功 / 失败；`resource_id` 为手机号摘要，不含明文 | 认证 | 180d | active |
+| `auth.oauth.authorize` | C | OAuth 授权发起（state 已签发）；只记 provider，不含外部主体 | 认证 | 180d | active |
+| `auth.oauth.callback` | C | OAuth 回调结果；只记 provider 与粗粒度原因，不含授权码 / 令牌 | 认证 | 180d | active |
+| `auth.rate_limited` | A/B/C | 登录 / 短信触发限流；`resource_id` 为账号或手机号摘要 | 认证 | 180d | active |
 | `auth.session.evicted` | A/B/C | 超出单账号设备上限，最久未使用的设备被淘汰（同时撤销该设备） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
 | `rbac.binding_change` | A/B | 主体角色绑定 / 解绑 | 权限 | 180d | active |
