@@ -181,6 +181,55 @@ func TestMFAEnabledOnBizChannel(t *testing.T) {
 	}
 }
 
+// TestMFARejectsInvalidRequests 覆盖 MFA 用例的互斥与鉴权错误分支。
+func TestMFARejectsInvalidRequests(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-mfa-invalid", "invalid-user", "Invalid#Passw0rd")
+	cases := []struct {
+		name string
+		in   app.MFAVerifyInput
+		code int
+	}{
+		{"both_tickets", app.MFAVerifyInput{Ticket: "a", SetupTicket: "b"}, apperr.CodeBadRequest},
+		{"no_input", app.MFAVerifyInput{}, apperr.CodeUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := f.svc.VerifyMFA(ctx, tc.in)
+			requireAppCode(t, err, tc.code)
+		})
+	}
+	_, setupErr := f.svc.SetupMFA(ctx, app.MFASetupInput{
+		SetupTicket: "garbage", TraceID: "trace-setup-invalid",
+	})
+	requireAppCode(t, setupErr, apperr.CodeUnauthorized)
+	requireAppCode(t, f.svc.DisableMFA(ctx, app.SessionActor{AccountID: "acct-mfa-invalid"}, "123456"),
+		apperr.CodeUnauthorized)
+	// 未启用 MFA 的端别必须拒绝绑定。
+	biz := newAuthFixture(t, domain.ChannelBiz)
+	biz.seedAccount(t, "acct-biz-no-mfa", "biz-no-mfa", "Biz#Passw0rd")
+	if _, err := biz.svc.SetupMFA(ctx, app.MFASetupInput{
+		Actor: app.SessionActor{AccountID: "acct-biz-no-mfa"},
+	}); err == nil {
+		t.Fatal("biz without mfa channel must reject setup")
+	}
+}
+
+// TestMFABoundAccountRejectsRebindAndInvalidDisable 覆盖已绑定账号的冲突分支。
+func TestMFABoundAccountRejectsRebindAndInvalidDisable(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-bound", "bound-user", "Bound#Passw0rd")
+	bindMFA(t, f, "acct-bound")
+	_, err := f.svc.SetupMFA(ctx, app.MFASetupInput{
+		Actor: app.SessionActor{AccountID: "acct-bound"},
+	})
+	requireAppCode(t, err, apperr.CodeConflict)
+	requireAppCode(t, f.svc.DisableMFA(ctx, app.SessionActor{AccountID: "acct-bound"}, ""), apperr.CodeUnauthorized)
+	requireAppCode(t, f.svc.DisableMFA(ctx, app.SessionActor{AccountID: "acct-bound"}, "000000"), apperr.CodeUnauthorized)
+}
+
 func TestMFATwoStepLogin(t *testing.T) {
 	ctx := context.Background()
 	f := newAuthFixture(t, domain.ChannelAdmin)

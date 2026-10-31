@@ -268,6 +268,43 @@ func requireAppCode(t *testing.T, err error, want int) {
 	}
 }
 
+// TestLoginRejectsInvalidInputs 覆盖登录输入长度与端别约束（SEC-03 / BIZ-06）。
+func TestLoginRejectsInvalidInputs(t *testing.T) {
+	ctx := context.Background()
+	adminFixture := newAuthFixture(t, domain.ChannelAdmin)
+	adminFixture.seedAccount(t, "acct-input", "alice", "Correct#Passw0rd")
+	cases := []struct {
+		name  string
+		input app.LoginInput
+	}{
+		{"empty_subject", app.LoginInput{Subject: " ", Password: "x"}},
+		{"empty_password", app.LoginInput{Subject: "alice", Password: " "}},
+		{"overlong_subject", app.LoginInput{Subject: strings.Repeat("x", 256), Password: "Correct#Passw0rd"}},
+		{"overlong_password", app.LoginInput{Subject: "alice", Password: strings.Repeat("x", 5000)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adminFixture.svc.Login(ctx, tc.input)
+			if !errors.Is(err, apperr.ErrUnauthorized) {
+				t.Fatalf("login error = %v, want unauthorized", err)
+			}
+		})
+	}
+	// C 端不支持密码登录。
+	cFixture := newAuthFixture(t, domain.ChannelC)
+	if _, err := cFixture.svc.Login(ctx, app.LoginInput{Subject: "alice", Password: "x"}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("c channel password login error = %v", err)
+	}
+	// B 端缺少 merchant_id 必须与凭据错误不可区分。
+	bizFixture := newAuthFixture(t, domain.ChannelBiz)
+	bizFixture.seedAccount(t, "acct-biz", "biz-user", "Biz#Passw0rd")
+	if _, err := bizFixture.svc.Login(ctx, app.LoginInput{
+		Subject: "biz-user", Password: "Biz#Passw0rd",
+	}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("biz login without merchant error = %v", err)
+	}
+}
+
 func TestAuthServiceLogin(t *testing.T) {
 	ctx := context.Background()
 	for _, channel := range []domain.Channel{domain.ChannelAdmin, domain.ChannelBiz} {
@@ -475,6 +512,46 @@ func TestAuthServiceRefreshRotatesAndRevokesReplay(t *testing.T) {
 		if session.Status != domain.SessionStatusRevoked || session.RevokedReason != domain.RevokeReasonReplay {
 			t.Fatalf("session %s should be revoked by replay: %+v", id, session)
 		}
+	}
+}
+
+// TestRefreshRejectsUnknownAndAbsoluteExpiry 覆盖刷新未知令牌与设备绝对到期分支。
+func TestRefreshRejectsUnknownAndAbsoluteExpiry(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.SessionAbsoluteTTL = 10 * time.Minute
+	})
+	f.seedAccount(t, "acct-abs", "abs-user", "Abs#Passw0rd")
+	login := f.login(t, "abs-user", "Abs#Passw0rd")
+	tampered := login.RefreshToken[:len(login.RefreshToken)-1] + "x"
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: tampered}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("unknown refresh token error = %v, want unauthorized", err)
+	}
+}
+
+// TestRefreshRejectsRevokedAndExpired 覆盖刷新令牌已撤销 / 过期分支。
+func TestRefreshRejectsRevokedAndExpired(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-refresh-edge", "alice", "Correct#Passw0rd")
+	login := f.login(t, "alice", "Correct#Passw0rd")
+	actor := app.SessionActor{
+		AccountID: login.AccountID,
+		SessionID: login.SessionID,
+		TraceID:   "trace-refresh-edge",
+	}
+	if err := f.svc.Logout(ctx, actor); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("refresh revoked token error = %v, want unauthorized", err)
+	}
+	// 超过刷新有效期后必须拒绝。
+	f.clock.Advance(200 * time.Hour)
+	login = f.login(t, "alice", "Correct#Passw0rd")
+	f.clock.Advance(200 * time.Hour)
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{RefreshToken: login.RefreshToken}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("refresh expired token error = %v, want unauthorized", err)
 	}
 }
 

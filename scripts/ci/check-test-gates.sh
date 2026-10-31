@@ -22,6 +22,10 @@ fi
 COVER_MIN="${TEST_DOMAIN_COVER_MIN:-70}"
 PLATFORM_COVER_MIN="${TEST_PLATFORM_COVER_MIN:-70}"
 SECURITY_COVER_MIN="${TEST_SECURITY_COVER_MIN:-80}"
+# MNT-03：身份域高风险编排与路由层覆盖率门禁。
+IDENTITY_APP_COVER_MIN="${TEST_IDENTITY_APP_COVER_MIN:-75}"
+IDENTITY_ROUTER_COVER_MIN="${TEST_IDENTITY_ROUTER_COVER_MIN:-70}"
+IDENTITY_HANDLER_COVER_MIN="${TEST_IDENTITY_HANDLER_COVER_MIN:-15}"
 REQUIRED_TESTS=(TestBizRoleTenantIsolation TestBizChangeRequestTenantIsolation)
 # 仅扫描 Go 源码目录：仓库根下有 frontend/node_modules（数万文件），
 # 整树递归 grep 在 WSL 的 /mnt/d（9p）上单次可达数十分钟。
@@ -124,6 +128,40 @@ else
     echo "    OK: internal/security ${pct}%"
   fi
 fi
+
+# MNT-03：身份域门禁。app 编排与 admin/biz 路由层要求 70%+；
+# rest / c 的 handler E2E 覆盖率仍在补齐，先按当前基线设下限，避免门禁失效。
+check_identity_cover() {
+  local pkg="$1" min="$2" label="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if ! go test -count=1 -coverprofile="${tmp}" "${pkg}" >/dev/null; then
+    echo "ERROR: go test failed for ${pkg} (${label})" >&2
+    rm -f "${tmp}"
+    FAIL=1
+    return
+  fi
+  local pct
+  pct="$(go tool cover -func="${tmp}" | awk '/^total:/{gsub(/%/,"",$3); print $3; exit}')"
+  rm -f "${tmp}"
+  if [[ -z "${pct}" ]] || ! awk -v p="${pct}" -v m="${min}" 'BEGIN{exit !(p+0 >= m+0)}'; then
+    echo "ERROR: ${pkg} coverage ${pct}% < ${min}% (${label})" >&2
+    FAIL=1
+  else
+    echo "    OK: ${pkg} ${pct}%"
+  fi
+}
+
+echo "==> TEST-06: identity app coverage >= ${IDENTITY_APP_COVER_MIN}%"
+check_identity_cover "./internal/identity/app" "${IDENTITY_APP_COVER_MIN}" "TEST-06"
+
+echo "==> TEST-06b: identity router coverage >= ${IDENTITY_ROUTER_COVER_MIN}%"
+check_identity_cover "./internal/identity/transport/admin" "${IDENTITY_ROUTER_COVER_MIN}" "TEST-06b"
+check_identity_cover "./internal/identity/transport/biz" "${IDENTITY_ROUTER_COVER_MIN}" "TEST-06b"
+
+echo "==> TEST-06c: identity rest/c handler coverage >= ${IDENTITY_HANDLER_COVER_MIN}%"
+check_identity_cover "./internal/identity/transport/rest" "${IDENTITY_HANDLER_COVER_MIN}" "TEST-06c"
+check_identity_cover "./internal/identity/transport/c" "${IDENTITY_HANDLER_COVER_MIN}" "TEST-06c"
 
 echo "==> TEST-03: required isolation / ownership tests must exist"
 for name in "${REQUIRED_TESTS[@]}"; do

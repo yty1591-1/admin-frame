@@ -304,6 +304,65 @@ func TestSMSDefaultRegionNormalization(t *testing.T) {
 	}
 }
 
+// TestConsumerOpsRejectMissingActor 覆盖 C 端账号操作的鉴权与目标校验。
+func TestConsumerOpsRejectMissingActor(t *testing.T) {
+	ctx := context.Background()
+	f := newSMSFixture(t, nil)
+	requireAppCode(t, f.svc.DeleteAccount(ctx, app.SessionActor{}, "123456"), apperr.CodeUnauthorized)
+	requireAppCode(t, f.svc.DeleteAccount(ctx, app.SessionActor{AccountID: "missing"}, "123456"), apperr.CodeUnauthorized)
+	// 未知账号的换绑同样失败关闭。
+	requireAppCode(t, f.svc.Rebind(ctx, app.SMSRebindInput{
+		Actor: app.SessionActor{AccountID: "missing"}, Phone: "+8613800138000", Code: "123456", OldCode: "123456",
+	}), apperr.CodeUnauthorized)
+}
+
+// TestSMSDeleteAccountReauth 验证 C 端注销的再认证分支（BIZ-02 / BIZ-05）。
+func TestSMSDeleteAccountReauth(t *testing.T) {
+	ctx := context.Background()
+	f := newSMSFixture(t, nil)
+	const phone = "+8613800138000"
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	registered, err := f.svc.Register(ctx, app.SMSLoginInput{
+		Phone: phone, Code: f.sender.code, TraceID: "trace-delete-reg",
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	actor := app.SessionActor{AccountID: registered.AccountID, TraceID: "trace-delete"}
+	// 无验证码 / 格式错误 → 40000；错误验证码 → 40100。
+	requireAppCode(t, f.svc.DeleteAccount(ctx, actor, ""), apperr.CodeBadRequest)
+	requireAppCode(t, f.svc.DeleteAccount(ctx, actor, "000000"), apperr.CodeUnauthorized)
+	// 正确验证码 → 软删成功。
+	f.clock.Advance(61 * time.Second)
+	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: phone}); err != nil {
+		t.Fatalf("re-send: %v", err)
+	}
+	if err := f.svc.DeleteAccount(ctx, actor, f.sender.code); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	// OAuth-only 账号（主体不是 phone: 前缀）不能走手机号再认证。
+	f2 := newSMSFixture(t, nil)
+	oauthAccount := mustSeedOAuthAccount(t, f2)
+	requireAppCode(t, f2.svc.DeleteAccount(ctx, app.SessionActor{AccountID: oauthAccount.ID}, "123456"), apperr.CodeConflict)
+}
+
+// mustSeedOAuthAccount 写入一个无手机号的 C 端账号。
+func mustSeedOAuthAccount(t *testing.T, f *smsFixture) *domain.Account {
+	t.Helper()
+	account, err := domain.NewAccount(domain.NewAccountParams{
+		ID: "acct-oauth-only", Channel: domain.ChannelC, Subject: "oauth:sub-1", Now: f.clock.Now(),
+	})
+	if err != nil {
+		t.Fatalf("new oauth account: %v", err)
+	}
+	if err := f.accounts.Save(context.Background(), account, 0); err != nil {
+		t.Fatalf("save oauth account: %v", err)
+	}
+	return account
+}
+
 func TestSMSLoginSendValidation(t *testing.T) {
 	cases := []struct {
 		name  string

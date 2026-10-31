@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +136,195 @@ func TestAccountServicePasswordHistoryRejectsReuse(t *testing.T) {
 	}
 	if len(credential.PasswordHistory) != 2 {
 		t.Fatalf("password history = %d, want 2", len(credential.PasswordHistory))
+	}
+}
+
+// TestPasswordPolicyInvalidOverrideFallsBack 验证非法租户策略回退全局。
+func TestPasswordPolicyInvalidOverrideFallsBack(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.PasswordPolicyFor = func(string) app.PasswordPolicy {
+			return app.PasswordPolicy{MinLength: 1, MaxLength: 1, RequireComplexity: true}
+		}
+	})
+	f.seedAccount(t, "acct-fallback", "fallback-user", "Fallback#Passw0rd")
+	login := f.login(t, "fallback-user", "Fallback#Passw0rd")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	if err := svc.ChangePassword(ctx, app.ChangePasswordInput{
+		Actor:       app.SessionActor{AccountID: login.AccountID, SessionID: login.SessionID},
+		OldPassword: "Fallback#Passw0rd",
+		NewPassword: "Fallback#Passw0rd2",
+	}); err != nil {
+		t.Fatalf("change password with fallback policy: %v", err)
+	}
+}
+
+// TestRefreshBackfillsDevice 覆盖刷新时补齐历史设备画像分支。
+func TestRefreshBackfillsDevice(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-device", "device-user", "Device#Passw0rd")
+	login := f.login(t, "device-user", "Device#Passw0rd")
+	if _, err := f.svc.Refresh(ctx, app.RefreshInput{
+		RefreshToken: login.RefreshToken,
+		Device: domain.DeviceInfo{
+			Type: "desktop", OS: "windows", Browser: "chrome", IPMasked: "10.0.x.x",
+		},
+	}); err != nil {
+		t.Fatalf("refresh with device: %v", err)
+	}
+}
+
+// TestLoginEvictsOldestDevice 覆盖单账号设备上限与最旧设备淘汰（PERF-04 应用层）。
+func TestLoginEvictsOldestDevice(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MaxPerAccount = 2
+	})
+	f.seedAccount(t, "acct-evict", "evict-user", "Evict#Passw0rd")
+	for i := 0; i < 3; i++ {
+		f.login(t, "evict-user", "Evict#Passw0rd")
+		f.clock.Advance(time.Minute)
+	}
+	page, err := f.svc.ListSessions(ctx, app.SessionListInput{
+		SessionActor: app.SessionActor{AccountID: "acct-evict", TraceID: "trace-evict"},
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("active devices = %d, want 2", len(page.Items))
+	}
+}
+
+// TestLoginAfterLockExpiry 覆盖锁定期满后自动解锁（SEC-05）。
+func TestLoginAfterLockExpiry(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-expire", "expire-user", "Expire#Passw0rd")
+	for i := 0; i < app.DefaultLockoutMaxFailures; i++ {
+		_, _ = f.svc.Login(ctx, app.LoginInput{Subject: "expire-user", Password: "wrong"})
+	}
+	if _, err := f.svc.Login(ctx, app.LoginInput{
+		Subject: "expire-user", Password: "Expire#Passw0rd",
+	}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("locked login error = %v, want unauthorized", err)
+	}
+	f.clock.Advance(app.DefaultLockoutDuration + time.Minute)
+	if _, err := f.svc.Login(ctx, app.LoginInput{
+		Subject: "expire-user", Password: "Expire#Passw0rd",
+	}); err != nil {
+		t.Fatalf("login after lock expiry: %v", err)
+	}
+}
+
+// TestCompletePasswordChangeFlow 覆盖管理员重置后的强制改密闭环。
+func TestCompletePasswordChangeFlow(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-force", "force-user", "Force#Passw0rd")
+	login := f.login(t, "force-user", "Force#Passw0rd")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	actor := app.SessionActor{AccountID: login.AccountID, TraceID: "trace-force"}
+	temporary, err := svc.ResetPassword(ctx, app.AccountOperationInput{
+		Actor: actor, TargetAccountID: login.AccountID,
+	})
+	if err != nil {
+		t.Fatalf("reset password: %v", err)
+	}
+	challenge := f.login(t, "force-user", temporary)
+	if !challenge.PasswordChangeRequired || challenge.PasswordChangeTicket == "" {
+		t.Fatalf("expected password change challenge, got %+v", challenge)
+	}
+	if _, err := f.svc.CompletePasswordChange(ctx, app.CompletePasswordChangeInput{
+		Ticket: challenge.PasswordChangeTicket, NewPassword: "Forced#Passw0rd2", TraceID: "trace-force-done",
+	}); err != nil {
+		t.Fatalf("complete password change: %v", err)
+	}
+	// 票据一次性：重复使用必须失败。
+	if _, err := f.svc.CompletePasswordChange(ctx, app.CompletePasswordChangeInput{
+		Ticket: challenge.PasswordChangeTicket, NewPassword: "Forced#Passw0rd2",
+	}); err == nil {
+		t.Fatal("password change ticket must be single-use")
+	}
+	// 空票据与损坏票据统一 40100。
+	requireAppCode(t, func() error {
+		_, err := f.svc.CompletePasswordChange(ctx, app.CompletePasswordChangeInput{Ticket: "", NewPassword: "Forced#Passw0rd2"})
+		return err
+	}(), apperr.CodeUnauthorized)
+	requireAppCode(t, func() error {
+		_, err := f.svc.CompletePasswordChange(ctx, app.CompletePasswordChangeInput{
+			Ticket: challenge.PasswordChangeTicket + "x", NewPassword: "Forced#Passw0rd2",
+		})
+		return err
+	}(), apperr.CodeUnauthorized)
+}
+
+// TestAccountServiceRejectsInvalidOperations 覆盖管理员账号操作的参数 / 状态错误分支。
+func TestAccountServiceRejectsInvalidOperations(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin)
+	f.seedAccount(t, "acct-target", "target", "Target#Passw0rd")
+	f.login(t, "target", "Target#Passw0rd")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	validActor := app.SessionActor{AccountID: "acct-target", TraceID: "trace-ops"}
+	noActor := app.SessionActor{AccountID: "", TraceID: "trace-ops"}
+	unknown := app.AccountOperationInput{Actor: validActor, TargetAccountID: "missing"}
+
+	// 目标不存在 / 重复状态 / 非法锁定时长。
+	requireAppCode(t, svc.Disable(ctx, unknown), apperr.CodeNotFound)
+	// 列表参数非法与分页边界。
+	_, _, listErr := svc.List(ctx, app.AccountListInput{Actor: noActor})
+	requireAppCode(t, listErr, apperr.CodeUnauthorized)
+	_, _, listErr = svc.List(ctx, app.AccountListInput{Actor: validActor, Status: "unknown", Limit: 1})
+	requireAppCode(t, listErr, apperr.CodeBadRequest)
+	_, _, listErr = svc.List(ctx, app.AccountListInput{
+		Actor: validActor, SubjectExact: strings.Repeat("x", 256),
+	})
+	requireAppCode(t, listErr, apperr.CodeBadRequest)
+	// 详情 / 会话参数非法。
+	_, detailErr := svc.Get(ctx, validActor, "")
+	requireAppCode(t, detailErr, apperr.CodeBadRequest)
+	_, pageErr := svc.ListTargetSessions(ctx, validActor, "", "", 0)
+	requireAppCode(t, pageErr, apperr.CodeBadRequest)
+}
+
+// TestAccountServiceTenantPasswordPolicy 验证 B 端改密按商户策略收紧（BIZ-04）。
+func TestAccountServiceTenantPasswordPolicy(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelBiz, func(cfg *app.AuthServiceConfig) {
+		cfg.PasswordPolicyFor = func(merchantID string) app.PasswordPolicy {
+			if merchantID == "m-1" {
+				return app.PasswordPolicy{MinLength: 16, MaxLength: 64, RequireComplexity: true}
+			}
+			return app.PasswordPolicy{}
+		}
+	})
+	f.seedAccount(t, "acct-tenant", "tenant-user", "Tenant#Passw0rd")
+	login := f.login(t, "tenant-user", "Tenant#Passw0rd")
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	actor := app.SessionActor{AccountID: login.AccountID, SessionID: login.SessionID, TraceID: "trace-tenant"}
+	// 14 字符满足全局策略，但低于租户 16 位下限。
+	requireAppCode(t, svc.ChangePassword(ctx, app.ChangePasswordInput{
+		Actor: actor, OldPassword: "Tenant#Passw0rd", NewPassword: "Aa1#shortpassw",
+	}), apperr.CodeBadRequest)
+	if err := svc.ChangePassword(ctx, app.ChangePasswordInput{
+		Actor: actor, OldPassword: "Tenant#Passw0rd", NewPassword: "Aa1#longerpassw0rd",
+	}); err != nil {
+		t.Fatalf("change password with tenant policy: %v", err)
 	}
 }
 

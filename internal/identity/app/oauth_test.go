@@ -161,6 +161,68 @@ func TestOAuthUnbindRejectsLastCredential(t *testing.T) {
 	}
 }
 
+// TestOAuthBindingRejectsCrossAccountState 验证绑定 state 不能跨账号使用（BIZ-02）。
+func TestOAuthBindingRejectsCrossAccountState(t *testing.T) {
+	ctx := context.Background()
+	f := newOAuthFixture(t, false, &fakeProvider{name: "test", subject: "sub-bind"})
+	f.seedAccount(t, "acct-a", "user-a", "UserA#Passw0rd")
+	f.seedAccount(t, "acct-b", "user-b", "UserB#Passw0rd")
+	auth, err := f.svc.AuthorizeBinding(ctx, app.SessionActor{AccountID: "acct-a"}, "test", "", "trace-a")
+	if err != nil {
+		t.Fatalf("authorize binding: %v", err)
+	}
+	if err := f.svc.CompleteBinding(ctx, app.SessionActor{AccountID: "acct-b"}, app.OAuthCallbackInput{
+		Provider: "test", Code: "code-1", State: auth.State,
+	}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("cross-account binding error = %v, want unauthorized", err)
+	}
+}
+
+// TestOAuthBindingRejectsDuplicate 验证同一账号重复绑定同一主体返回冲突（BIZ-02）。
+func TestOAuthBindingRejectsDuplicate(t *testing.T) {
+	ctx := context.Background()
+	f := newOAuthFixture(t, false, &fakeProvider{name: "test", subject: "sub-dup"})
+	f.seedAccount(t, "acct-dup", "dup-user", "Dup#Passw0rd")
+	actor := app.SessionActor{AccountID: "acct-dup"}
+	first, err := f.svc.AuthorizeBinding(ctx, actor, "test", "", "trace-1")
+	if err != nil {
+		t.Fatalf("authorize first: %v", err)
+	}
+	if err := f.svc.CompleteBinding(ctx, actor, app.OAuthCallbackInput{
+		Provider: "test", Code: "code-1", State: first.State,
+	}); err != nil {
+		t.Fatalf("first binding: %v", err)
+	}
+	second, err := f.svc.AuthorizeBinding(ctx, actor, "test", "", "trace-2")
+	if err != nil {
+		t.Fatalf("authorize second: %v", err)
+	}
+	if err := f.svc.CompleteBinding(ctx, actor, app.OAuthCallbackInput{
+		Provider: "test", Code: "code-2", State: second.State,
+	}); !errors.Is(err, apperr.ErrConflict) {
+		t.Fatalf("duplicate binding error = %v, want conflict", err)
+	}
+}
+
+// TestOAuthBindingRejectsInvalidRequests 覆盖绑定 / 解绑的参数与鉴权错误分支。
+func TestOAuthBindingRejectsInvalidRequests(t *testing.T) {
+	ctx := context.Background()
+	f := newOAuthFixture(t, false, &fakeProvider{name: "test", subject: "sub-1"})
+	unbound := app.SessionActor{AccountID: "missing-account"}
+	if _, err := f.svc.ListBindings(ctx, app.SessionActor{}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("list bindings without actor = %v", err)
+	}
+	if err := f.svc.Unbind(ctx, unbound, "test"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("unbind unknown binding = %v", err)
+	}
+	if err := f.svc.Unbind(ctx, app.SessionActor{AccountID: "acct-x"}, " "); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("unbind empty provider = %v", err)
+	}
+	if _, err := f.svc.AuthorizeBinding(ctx, unbound, "missing", "", "trace"); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("authorize unknown provider = %v", err)
+	}
+}
+
 // TestOAuthProviderBreakerOpensAfterFailures 验证 provider 连续失败后熔断（PERF-06）。
 func TestOAuthProviderBreakerOpensAfterFailures(t *testing.T) {
 	ctx := context.Background()
