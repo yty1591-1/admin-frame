@@ -67,7 +67,7 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 // newChecker 构造使用真实 MySQL 账号仓储与 Redis 撤销存储的检查器。
 func newChecker(t *testing.T, sqlDB *sql.DB, client *redis.Client) (*app.RevocationChecker, *identitycache.RedisRevocationStore) {
 	t.Helper()
-	accounts := persistence.NewSQLAccountRepository(sqlDB)
+	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	store := identitycache.NewRedisRevocationStore(client.Cache())
 	checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, 0)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestSessionRevocationAfterDirectDatabaseChange(t *testing.T) {
 	ctx := context.Background()
 	clock := &testClock{now: time.Now().UTC()}
 
-	accounts := persistence.NewSQLAccountRepository(sqlDB)
+	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	sessions := persistence.NewSQLSessionRepository(sqlDB)
 	store := identitycache.NewRedisRevocationStore(client.Cache())
 	checker, err := app.NewRevocationChecker(accounts, store, app.RevocationFailClosed, time.Second,
@@ -184,7 +184,7 @@ func TestRevocationAfterAccountDisabled(t *testing.T) {
 	sqlDB := testDB(t)
 	client := testkit.Redis(t)
 	checker, _ := newChecker(t, sqlDB, client)
-	repo := persistence.NewSQLAccountRepository(sqlDB)
+	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -212,7 +212,7 @@ func TestRevocationAfterLogoutAll(t *testing.T) {
 	sqlDB := testDB(t)
 	client := testkit.Redis(t)
 	checker, _ := newChecker(t, sqlDB, client)
-	repo := persistence.NewSQLAccountRepository(sqlDB)
+	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -243,7 +243,7 @@ func TestRevocationJTIBlacklist(t *testing.T) {
 	sqlDB := testDB(t)
 	client := testkit.Redis(t)
 	checker, store := newChecker(t, sqlDB, client)
-	repo := persistence.NewSQLAccountRepository(sqlDB)
+	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -271,7 +271,7 @@ func TestRevocationFailClosed(t *testing.T) {
 	sqlDB := testDB(t)
 	client := testkit.Redis(t)
 	checker, _ := newChecker(t, sqlDB, client)
-	repo := persistence.NewSQLAccountRepository(sqlDB)
+	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	ctx := context.Background()
 	now := time.Now().UTC()
 

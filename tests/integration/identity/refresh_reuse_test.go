@@ -50,7 +50,7 @@ type sqlAuthFixture struct {
 func newSQLAuthFixture(t *testing.T, sqlDB *sql.DB, channel domain.Channel) *sqlAuthFixture {
 	t.Helper()
 	ids := &seqIDs{}
-	accounts := persistence.NewSQLAccountRepository(sqlDB)
+	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 	credentials := persistence.NewSQLCredentialRepository(sqlDB)
 	sessions := persistence.NewSQLSessionRepository(sqlDB)
 	attempts := persistence.NewSQLLoginAttemptRepository(sqlDB)

@@ -13,6 +13,9 @@ import (
 // 避免跨租户索引碰撞；与 docs/identity-p1-remaining-implementation-plan.md §4.2 一致。
 const subjectIndexDomain = "account-subject"
 
+// oauthSubjectIndexDomain 是外部身份主体确定性索引的域分隔前缀。
+const oauthSubjectIndexDomain = "oauth-provider-subject"
+
 // SubjectProtector 是登录主体的确定性索引与可逆加密端口（IDN-GAP-P1-06）。
 //
 // 约定：
@@ -26,6 +29,12 @@ type SubjectProtector interface {
 	Encrypt(accountID, subject string) ([]byte, error)
 	// Decrypt 按密文头选择密钥解密；支持密钥轮换双读。
 	Decrypt(accountID string, ciphertext []byte) (string, error)
+	// ProviderIndex 计算外部身份 (provider, subject) 的确定性索引。
+	ProviderIndex(provider, subject string) string
+	// EncryptProviderSubject 加密 provider_subject，AAD 绑定映射主键。
+	EncryptProviderSubject(identityID, subject string) ([]byte, error)
+	// DecryptProviderSubject 解密 provider_subject。
+	DecryptProviderSubject(identityID string, ciphertext []byte) (string, error)
 }
 
 // subjectCrypto 组合 HMAC 摘要器与 AES-256-GCM 密钥环。
@@ -81,4 +90,42 @@ func (p *subjectCrypto) Decrypt(accountID string, ciphertext []byte) (string, er
 // subjectAAD 生成绑定账号的附加认证数据。
 func subjectAAD(accountID string) []byte {
 	return []byte("identity:account:" + accountID)
+}
+
+// ProviderIndex 计算外部身份主体的确定性索引；未注入保护器时返回空串。
+func (p *subjectCrypto) ProviderIndex(provider, subject string) string {
+	if p == nil {
+		return ""
+	}
+	domainPart := fmt.Sprintf("%s|%s", oauthSubjectIndexDomain, provider)
+	return p.hasher.Digest(domainPart, subject)
+}
+
+// EncryptProviderSubject 加密外部身份主体，AAD 绑定映射主键。
+func (p *subjectCrypto) EncryptProviderSubject(identityID, subject string) ([]byte, error) {
+	if p == nil {
+		return nil, nil
+	}
+	ciphertext, err := p.ring.Seal([]byte(subject), oauthSubjectAAD(identityID))
+	if err != nil {
+		return nil, fmt.Errorf("identity oauth subject encrypt: %w", err)
+	}
+	return ciphertext, nil
+}
+
+// DecryptProviderSubject 解密外部身份主体；密文为空返回空串。
+func (p *subjectCrypto) DecryptProviderSubject(identityID string, ciphertext []byte) (string, error) {
+	if p == nil || len(ciphertext) == 0 {
+		return "", nil
+	}
+	plaintext, err := p.ring.Open(ciphertext, oauthSubjectAAD(identityID))
+	if err != nil {
+		return "", fmt.Errorf("identity oauth subject decrypt: %w", err)
+	}
+	return string(plaintext), nil
+}
+
+// oauthSubjectAAD 生成绑定外部身份映射的附加认证数据。
+func oauthSubjectAAD(identityID string) []byte {
+	return []byte("identity:oauth:" + identityID)
 }

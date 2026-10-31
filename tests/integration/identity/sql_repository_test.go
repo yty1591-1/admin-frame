@@ -27,13 +27,25 @@ func newIntegrationProtector(t *testing.T) persistence.SubjectProtector {
 	return persistence.NewSubjectProtector(hasher, ring)
 }
 
-// TestSQLAccountSubjectProtection 验证 S1/S2 双写双读与 S3 回填。
+// TestSQLAccountSubjectProtection 验证 S5：明文列已删除，读写只走索引与密文。
 func TestSQLAccountSubjectProtection(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := testkit.MySQL(t).SQL()
 	protector := newIntegrationProtector(t)
 	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector))
 	plainRepo := persistence.NewSQLAccountRepository(sqlDB)
+
+	// S5 迁移后账号表不得再有明文 subject 列。
+	var subjectColumns int
+	if err := sqlDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_schema = DATABASE() AND table_name = 'identity_account' AND column_name = 'subject'`,
+	).Scan(&subjectColumns); err != nil {
+		t.Fatalf("count subject columns: %v", err)
+	}
+	if subjectColumns != 0 {
+		t.Fatalf("identity_account.subject plaintext column still exists")
+	}
 
 	now := time.Now().UTC()
 	account, err := domain.NewAccount(domain.NewAccountParams{
@@ -49,7 +61,7 @@ func TestSQLAccountSubjectProtection(t *testing.T) {
 		t.Fatalf("save protected account: %v", err)
 	}
 
-	// 双写：库内 index / ciphertext 非空，且密文不含明文。
+	// 库内 index / ciphertext 非空，且密文不含明文。
 	var index []byte
 	var ciphertext []byte
 	if err := sqlDB.QueryRowContext(ctx,
@@ -64,7 +76,7 @@ func TestSQLAccountSubjectProtection(t *testing.T) {
 		t.Fatalf("ciphertext must not contain plaintext subject")
 	}
 
-	// 双读：大小写 / 空白归一化后按 index 命中，并解密回填明文。
+	// 大小写 / 空白归一化后按索引命中，并解密回填明文。
 	found, err := repo.FindBySubject(ctx, domain.ChannelAdmin, "", " sql-subject@example.com ")
 	if err != nil {
 		t.Fatalf("find by subject via index: %v", err)
@@ -73,7 +85,7 @@ func TestSQLAccountSubjectProtection(t *testing.T) {
 		t.Fatalf("decoded subject = %q", found.Subject)
 	}
 
-	// 换绑：同步更新 index / ciphertext，旧主体不再命中。
+	// 换绑：同步更新索引 / 密文，旧主体不再命中。
 	if err := found.RebindSubject("sql-new@example.com", now.Add(time.Minute)); err != nil {
 		t.Fatalf("rebind subject: %v", err)
 	}
@@ -87,28 +99,100 @@ func TestSQLAccountSubjectProtection(t *testing.T) {
 		t.Fatalf("new subject must resolve: %v", err)
 	}
 
-	// S3 回填：创建一条未双写的存量行，回填后可按 index 查找。
-	legacy, err := domain.NewAccount(domain.NewAccountParams{
-		ID:      "900000000000000102",
+	// 关键词子串搜索在解密后完成，仍可命中新主体。
+	items, total, err := repo.List(ctx, domain.AccountListFilter{
 		Channel: domain.ChannelAdmin,
-		Subject: "sql-legacy@example.com",
+		Keyword: "sql-new",
+		Limit:   accountListLimitForTest,
+	})
+	if err != nil {
+		t.Fatalf("list by keyword: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].Subject != "sql-new@example.com" {
+		t.Fatalf("keyword list = %+v total=%d", items, total)
+	}
+
+	// 未注入保护器的仓储必须失败关闭，禁止退回明文路径。
+	if err := plainRepo.Save(ctx, account, 0); err == nil {
+		t.Fatal("save without protector must fail closed")
+	}
+}
+
+// accountListLimitForTest 是集成测试列表分页上限。
+const accountListLimitForTest = 20
+
+// TestSQLOAuthSubjectProtection 验证 S5：外部身份主体只存索引与密文。
+func TestSQLOAuthSubjectProtection(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := testkit.MySQL(t).SQL()
+	protector := newIntegrationProtector(t)
+	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector))
+	oauthRepo := persistence.NewSQLOAuthIdentityRepository(sqlDB, persistence.WithOAuthSubjectProtector(protector))
+	plainOAuthRepo := persistence.NewSQLOAuthIdentityRepository(sqlDB)
+
+	var subjectColumns int
+	if err := sqlDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_schema = DATABASE() AND table_name = 'identity_oauth_identity'
+		   AND column_name = 'provider_subject'`,
+	).Scan(&subjectColumns); err != nil {
+		t.Fatalf("count provider_subject columns: %v", err)
+	}
+	if subjectColumns != 0 {
+		t.Fatalf("identity_oauth_identity.provider_subject plaintext column still exists")
+	}
+
+	now := time.Now().UTC()
+	account, err := domain.NewAccount(domain.NewAccountParams{
+		ID:      "900000000000000301",
+		Channel: domain.ChannelC,
+		Subject: "oauth-owner@example.com",
 		Now:     now,
 	})
 	if err != nil {
-		t.Fatalf("new legacy account: %v", err)
+		t.Fatalf("new account: %v", err)
 	}
-	if err := plainRepo.Save(ctx, legacy, 0); err != nil {
-		t.Fatalf("save legacy account: %v", err)
+	if err := accounts.Save(ctx, account, 0); err != nil {
+		t.Fatalf("save account: %v", err)
 	}
-	updated, err := repo.BackfillSubjectProtection(ctx, 100)
+	identity, err := domain.NewOAuthIdentity(domain.NewOAuthIdentityParams{
+		ID:              "900000000000000302",
+		AccountID:       account.ID,
+		Provider:        "github",
+		ProviderSubject: "oauth-subject-1",
+		Now:             now,
+	})
 	if err != nil {
-		t.Fatalf("backfill: %v", err)
+		t.Fatalf("new oauth identity: %v", err)
 	}
-	if updated == 0 {
-		t.Fatalf("backfill should update at least the legacy row")
+	if err := oauthRepo.Save(ctx, identity); err != nil {
+		t.Fatalf("save oauth identity: %v", err)
 	}
-	if _, err := repo.FindBySubject(ctx, domain.ChannelAdmin, "", "sql-legacy@example.com"); err != nil {
-		t.Fatalf("legacy subject must resolve after backfill: %v", err)
+
+	var index []byte
+	var ciphertext []byte
+	if err := sqlDB.QueryRowContext(ctx,
+		`SELECT provider_subject_index, provider_subject_ciphertext
+		 FROM identity_oauth_identity WHERE id = ?`, identity.ID).Scan(&index, &ciphertext); err != nil {
+		t.Fatalf("read oauth protection columns: %v", err)
+	}
+	if len(index) == 0 || len(ciphertext) == 0 {
+		t.Fatalf("oauth protection columns must be non-empty")
+	}
+	if bytes.Contains(ciphertext, []byte("oauth-subject-1")) {
+		t.Fatalf("oauth ciphertext must not contain plaintext subject")
+	}
+
+	found, err := oauthRepo.FindByProviderSubject(ctx, "github", "oauth-subject-1")
+	if err != nil {
+		t.Fatalf("find oauth identity by subject: %v", err)
+	}
+	if found.ProviderSubject != "oauth-subject-1" || found.AccountID != account.ID {
+		t.Fatalf("found oauth identity = %+v", found)
+	}
+
+	if err := plainOAuthRepo.Save(ctx, identity); err == nil {
+		t.Fatal("save without protector must fail closed")
 	}
 }
 
@@ -117,7 +201,7 @@ func TestSQLSessionArchiveSameTransaction(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := testkit.MySQL(t).SQL()
 	sessions := persistence.NewSQLSessionRepository(sqlDB)
-	accounts := persistence.NewSQLAccountRepository(sqlDB)
+	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 
 	now := time.Now().UTC()
 	account, err := domain.NewAccount(domain.NewAccountParams{

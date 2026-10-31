@@ -25,6 +25,10 @@ type OAuthIdentity struct {
 	Provider string
 	// ProviderSubject 提供方侧主体标识（userinfo 的 sub）。
 	ProviderSubject string
+	// ProviderSubjectIndex 提供方主体的确定性索引；S5 起作为唯一键。
+	ProviderSubjectIndex string
+	// ProviderSubjectCiphertext 提供方主体密文；AAD 绑定映射主键。
+	ProviderSubjectCiphertext []byte
 	// CreatedAt / UpdatedAt UTC。
 	CreatedAt time.Time
 	UpdatedAt time.Time

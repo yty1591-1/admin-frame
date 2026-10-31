@@ -496,7 +496,8 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 		sessions:        persistence.NewSQLSessionRepository(sqlDB),
 		attempts:        persistence.NewSQLLoginAttemptRepository(sqlDB),
 		mfa:             persistence.NewSQLMFAEnrollmentRepository(sqlDB),
-		oauthIdentities: persistence.NewSQLOAuthIdentityRepository(sqlDB),
+		oauthIdentities: persistence.NewSQLOAuthIdentityRepository(sqlDB,
+			persistence.WithOAuthSubjectProtector(protector)),
 	}, nil
 }
 

@@ -61,6 +61,32 @@ func TestSubjectEncryptRoundTripAndAAD(t *testing.T) {
 	}
 }
 
+// TestProviderSubjectProtection 验证外部身份主体索引确定性与密文 AAD 绑定。
+func TestProviderSubjectProtection(t *testing.T) {
+	protector := newTestProtector(t)
+	first := protector.ProviderIndex("github", "sub-1")
+	if first == "" || first != protector.ProviderIndex("github", "sub-1") {
+		t.Fatalf("provider index must be deterministic, got %q", first)
+	}
+	if first == protector.ProviderIndex("oidc-corp", "sub-1") {
+		t.Fatalf("provider index must differ across providers, got %q", first)
+	}
+	ciphertext, err := protector.EncryptProviderSubject("3001", "sub-1")
+	if err != nil {
+		t.Fatalf("encrypt provider subject: %v", err)
+	}
+	if bytes.Contains(ciphertext, []byte("sub-1")) {
+		t.Fatalf("provider ciphertext must not contain plaintext")
+	}
+	plaintext, err := protector.DecryptProviderSubject("3001", ciphertext)
+	if err != nil || plaintext != "sub-1" {
+		t.Fatalf("decrypt provider subject = %q, err=%v", plaintext, err)
+	}
+	if _, err := protector.DecryptProviderSubject("3002", ciphertext); err == nil {
+		t.Fatalf("decrypt with wrong identity id must fail (AAD binding)")
+	}
+}
+
 // TestSubjectDecryptAfterKeyRotation 验证旧密钥密文在主密钥轮换后仍可读。
 func TestSubjectDecryptAfterKeyRotation(t *testing.T) {
 	oldRing, err := crypto.NewKeyRing(map[string][]byte{"k1": bytes.Repeat([]byte{0x02}, 32)}, "k1", nil)

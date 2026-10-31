@@ -1,8 +1,9 @@
 // Package main 提供身份域 PII 回填工具（IDN-GAP-P1-06 S3）。
 //
-// 用途：为存量 identity_account 回填 subject_index 与 subject_ciphertext。
-// 幂等：只处理缺失保护列的行，中断后可重复执行；不修改明文 subject，可安全回滚。
-// 前置：已执行 migrations/000011，且应用已配置 identity.hash_key 与 identity.subject.keys。
+// 用途：为存量 identity_account 与 identity_oauth_identity 回填确定性索引与密文。
+// 幂等：只处理缺失保护列的行，中断后可重复执行；不修改明文列，可安全回滚。
+// 前置：已执行 migrations/000011，且尚未执行 000015（明文列仍存在）。
+// 适用：升级到 S5（删除明文列）之前必须完成本回填。
 package main
 
 import (
@@ -85,6 +86,8 @@ func run(configPath string, batch, maxBatches int, timeout time.Duration) error 
 		return err
 	}
 	repository := persistence.NewSQLAccountRepository(sqlDB.SQL(), persistence.WithSubjectProtector(protector))
+	oauthRepository := persistence.NewSQLOAuthIdentityRepository(sqlDB.SQL(),
+		persistence.WithOAuthSubjectProtector(protector))
 
 	total := 0
 	for round := 0; maxBatches <= 0 || round < maxBatches; round++ {
@@ -93,7 +96,7 @@ func run(configPath string, batch, maxBatches int, timeout time.Duration) error 
 			return backfillErr
 		}
 		total += updated
-		fmt.Printf("batch %d: updated %d rows (total %d)\n", round+1, updated, total)
+		fmt.Printf("account batch %d: updated %d rows (total %d)\n", round+1, updated, total)
 		if updated < batch {
 			break
 		}
@@ -101,7 +104,23 @@ func run(configPath string, batch, maxBatches int, timeout time.Duration) error 
 			return ctx.Err()
 		}
 	}
-	fmt.Printf("backfill-subject completed: %d rows\n", total)
+
+	oauthTotal := 0
+	for round := 0; maxBatches <= 0 || round < maxBatches; round++ {
+		updated, backfillErr := oauthRepository.BackfillProviderProtection(ctx, batch)
+		if backfillErr != nil {
+			return backfillErr
+		}
+		oauthTotal += updated
+		fmt.Printf("oauth batch %d: updated %d rows (total %d)\n", round+1, updated, oauthTotal)
+		if updated < batch {
+			break
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	fmt.Printf("backfill-subject completed: accounts=%d oauth=%d\n", total, oauthTotal)
 	return nil
 }
 
