@@ -9,7 +9,11 @@
 >
 > 基线说明：本报告不重复 `docs/identity-p0-p1-fix-log.md` 已关闭的问题，只评估**当前代码状态**下仍未达标或需正式风险接受的能力。
 >
-> 状态更新（2026-10-31）：§8.1 批次（REL-01、REL-02、OPS-02、PERF-01、PERF-02、PERF-03）已完成修复，详见 [identity-p1-batch-8-1-completion-report.md](./identity-p1-batch-8-1-completion-report.md)。本报告其余 P1/P2 结论保持不变。
+> 状态更新（2026-10-31）：§8.1 批次（REL-01、REL-02、OPS-02、PERF-01、PERF-02、PERF-03）已完成修复，详见 [identity-p1-batch-8-1-completion-report.md](./identity-p1-batch-8-1-completion-report.md)。
+> 状态更新（2026-11-01）：§8.2（SEC-01/02/05/07）与 §8.3（P2 24 项）已闭环，§8.4 四项已专项修复，详见
+> [identity-p1-batch-8-2-completion-report.md](./identity-p1-batch-8-2-completion-report.md)、
+> [identity-p2-batch-8-3-remaining-completion-report.md](./identity-p2-batch-8-3-remaining-completion-report.md)、
+> [identity-batch-8-4-completion-report.md](./identity-batch-8-4-completion-report.md)。本报告其余 P1/P2 结论保持不变。
 
 ---
 
@@ -211,6 +215,13 @@
 | 审计仅日志存储 | 日志平台具备 WORM/不可篡改、保留期与检索能力，且通过合规评审 | 上线前 |
 | PII 明文过渡期 | 数据库访问最小化、备份加密、审计只读访问；S4/S5 有明确排期 | 每季度 |
 | OAuth-only 账号仅 Bearer 注销 | 产品接受；后续接入 IdP 再认证 | 下个版本 |
+
+> 8.4 状态（2026-11-01）：四项均不再以「风险接受」收口，已按专项修复闭环。
+> - Redis 故障 jti 全量 503：新增 `identity.revocation.token_grace` 本地宽限，故障期有界放行（R-8.4-01）。
+> - 审计仅日志存储：8.2 SEC-07 已落独立审计表 + SQL 出口，本批次复核通过（R-8.4-02）。
+> - PII 明文过渡期：8.2 SEC-01 已完成 S4/S5，明文列已删除，本批次复核通过（R-8.4-03）。
+> - OAuth-only 仅 Bearer 注销：新增 `identity.consumer.delete_reauth_window`，要求最近登录（R-8.4-04）。
+> 详见 [identity-batch-8-4-completion-report.md](./identity-batch-8-4-completion-report.md)。
 
 ---
 
