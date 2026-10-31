@@ -196,8 +196,9 @@ go vet ./internal/identity/... ./cmd/internal/identityruntime/... ./cmd/worker/.
 
 ### 测试
 
-- `internal/identity/app/reliability_test.go`
+- `internal/identity/app/rel01_test.go`
 - `internal/identity/app/perf01_test.go`
+- `internal/identity/app/perf02_test.go`
 - `internal/identity/app/session_cleanup_test.go`
 - `internal/identity/infrastructure/persistence/session_active_list_test.go`
 - `internal/identity/observability/metrics_test.go`
