@@ -37,7 +37,7 @@
 | 里程碑 | M1 代码与单测；M2 迁移演练 + 集成测试；M3 回归与发布候选。 |
 | 修复方案 | 按已确认的 S5 方案：全量回填 `subject_index` / `subject_ciphertext`；唯一键切 `subject_index`；删除明文列；`provider_subject` 新增 index/ciphertext 并完成回填、切唯一键；移除仓储层明文回退分支；展示/审计所需 `Subject` 由仓储解密回填。迁移分「双写回填 → 只读密文 → 删明文」三段发布，保证滚动升级与可回滚。 |
 | 验证标准 | 迁移正向执行后表中无可读主体列；回填覆盖率 100%（迁移内置校验）；仓储无明文回退分支（单测断言）；账号创建/登录/OAuth 绑定/列表/详情/审计全链路集成测试通过；回滚脚本可恢复上一版本结构。 |
-| 状态 | 待修复 |
+| 状态 | 已修复（M1/M2，待 M3 回归） |
 
 ### SEC-02 特权操作 step-up 覆盖不一致
 
@@ -51,7 +51,7 @@
 | 里程碑 | M1 代码与单测；M2 权限矩阵集成测试；M3 回归。 |
 | 修复方案 | 在 Enable / Unlock / Lock / Restore / RevokeTargetSession 的事务内、执行特权动作前调用 `requireAdminStepUp`；Lock handler 传递 `mfa_code`；单会话撤销支持可选 JSON body 携带 `mfa_code`；同步更新 OpenAPI 与注释。 |
 | 验证标准 | `mfa.admin_required=true` 时五个端点缺少 `mfa_code` 均返回 40000；提供有效动态码时成功；`admin_required=false` 时不改变现有行为；非 A 端不受影响；新增单测覆盖每个端点。 |
-| 状态 | 待修复 |
+| 状态 | 已修复（M1/M2，待 M3 回归） |
 
 ### SEC-05 / MNT-01 契约与实现漂移
 
@@ -65,7 +65,7 @@
 | 里程碑 | M1 契约与实现修改；M2 OpenAPI 校验 + 契约测试；M3 回归。 |
 | 修复方案 | 所有账号处置 path 引用 `IdempotencyKey` 且 `required: true`，修正描述；B 端登录 `merchant_id` 改为必填并修正描述与实现一致；C 端 TokenPair 补 `absolute_expires_at`；补充契约/路由一致性测试。 |
 | 验证标准 | OpenAPI 校验通过；每个强制幂等头的 path 均已声明；B 端登录契约必填与实现一致；A/B/C 令牌响应字段一致；新增测试断言幂等头引用、merchant_id 必填、C 端到期字段。 |
-| 状态 | 待修复 |
+| 状态 | 已修复（M1/M2，待 M3 回归） |
 
 ### SEC-07 审计缺少独立持久化存储
 
@@ -79,7 +79,7 @@
 | 里程碑 | M1 迁移 + Emitter + consumer；M2 集成测试（含 Outbox 投递）；M3 回归与保留期确认。 |
 | 修复方案 | 新增 identity 独立审计表迁移（含 actor/target/trace 索引与保留期策略说明）；实现 SQL Emitter 与 `identity.audit` Outbox consumer 落库；runtime 注册落库出口，保留日志出口作为旁路；不得改动 IAM 审计边界。 |
 | 验证标准 | Outbox 投递后审计表可查到记录；按 actor/target/trace 可检索；写入失败可重试且不丢事件；保留期 ≥180 天有配置/运维说明；IAM 审计不受影响；新增单测与集成测试（`TEST_MYSQL_DSN` 条件跳过）。 |
-| 状态 | 待修复 |
+| 状态 | 已修复（M1/M2，待 M3 回归） |
 
 ## 4. 执行顺序与依赖
 
@@ -100,3 +100,5 @@
 | 日期 | 内容 |
 |---|---|
 | 批次启动 | 登记四项 P1，确定执行顺序与责任角色 |
+| M1/M2 | SEC-02、SEC-05/MNT-01、SEC-01、SEC-07 代码与单测/集成测试完成；契约门禁与 OpenAPI 校验通过 |
+| M3 | 待测试团队按第 3 节验证标准执行回归，完成后归档汇总报告 |
