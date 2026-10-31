@@ -87,6 +87,9 @@ type AuthServiceConfig struct {
 	MFATOTP totp.Policy
 	// MFARecoveryCodeCount 绑定 MFA 时的恢复码数量；≤0 使用默认 10。
 	MFARecoveryCodeCount int
+	// MFAStepUpReuseGrace 登录后立即 step-up 时允许复用已消费时间步的宽限窗口（BIZ-08）；
+	// 0 使用默认 2m，负值显式关闭。
+	MFAStepUpReuseGrace time.Duration
 	// TemporaryPasswordLength 管理员重置口令的临时密码长度；≤0 使用默认 20。
 	TemporaryPasswordLength int
 	// MFAAdminRequired 表示 A 端强制绑定 MFA。
@@ -255,6 +258,7 @@ type AuthService struct {
 	mfaRequired     bool
 	mfaTOTP         totp.Policy
 	mfaRecoveryCodes int
+	stepUpReuseGrace time.Duration
 	temporaryPasswordLength int
 }
 
@@ -325,6 +329,10 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if tempPasswordLength <= 0 {
 		tempPasswordLength = defaultTemporaryPasswordLength
 	}
+	stepUpReuseGrace := cfg.MFAStepUpReuseGrace
+	if stepUpReuseGrace == 0 {
+		stepUpReuseGrace = defaultStepUpReuseGrace
+	}
 	uow := cfg.UoW
 	if uow == nil {
 		uow = NoopUnitOfWork{}
@@ -376,6 +384,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		mfaRequired:     cfg.MFAAdminRequired,
 		mfaTOTP:         mfaTOTP,
 		mfaRecoveryCodes: recoveryCodes,
+		stepUpReuseGrace: stepUpReuseGrace,
 		temporaryPasswordLength: tempPasswordLength,
 	}
 	return svc, nil

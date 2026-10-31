@@ -274,6 +274,9 @@ type IdentityMFAConfig struct {
 	TOTPWindow int `yaml:"totp_window"`
 	// RecoveryCodeCount 恢复码数量；0 表示默认 10，范围 [5, 20]。
 	RecoveryCodeCount int `yaml:"recovery_code_count"`
+	// StepUpReuseGrace 登录后立即 step-up 复用已消费时间步的宽限；0 表示默认 2m，
+	// 负值显式关闭，上限 10m（BIZ-08）。
+	StepUpReuseGrace time.Duration `yaml:"step_up_reuse_grace"`
 }
 
 // IdentityMFAKeyConfig 是密钥环中的一项。
@@ -2145,6 +2148,9 @@ func (c *Config) validateIdentityMFA() []error {
 	}
 	if mfaCfg.RecoveryCodeCount != 0 && (mfaCfg.RecoveryCodeCount < 5 || mfaCfg.RecoveryCodeCount > 20) {
 		errs = append(errs, errors.New("identity.mfa.recovery_code_count must be in [5, 20]"))
+	}
+	if mfaCfg.StepUpReuseGrace < -1 || mfaCfg.StepUpReuseGrace > 10*time.Minute {
+		errs = append(errs, errors.New("identity.mfa.step_up_reuse_grace must be in [-1, 10m]"))
 	}
 	return errs
 }

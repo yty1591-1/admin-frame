@@ -318,6 +318,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 			Window: cfg.Identity.MFA.TOTPWindow,
 		},
 		MFARecoveryCodeCount:   cfg.Identity.MFA.RecoveryCodeCount,
+		MFAStepUpReuseGrace:     cfg.Identity.MFA.StepUpReuseGrace,
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
 		MFAAdminRequired:       mfaAdminRequired,
 	})

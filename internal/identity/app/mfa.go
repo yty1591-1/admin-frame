@@ -33,6 +33,9 @@ type MFAKeyRotator interface {
 // defaultRecoveryCodeCount 是绑定 MFA 时默认生成的一次性恢复码数量（MNT-05）。
 const defaultRecoveryCodeCount = 10
 
+// defaultStepUpReuseGrace 是登录后立即 step-up 的默认复用宽限（BIZ-08）。
+const defaultStepUpReuseGrace = 2 * time.Minute
+
 // MFASetupResult 是绑定初始化结果；密钥与恢复码只返回一次。
 type MFASetupResult struct {
 	// Secret Base32 编码的 TOTP 密钥，供客户端录入。
@@ -378,10 +381,34 @@ func (s *AuthService) requireAdminStepUpCode(ctx context.Context, actor SessionA
 	if err != nil {
 		return err
 	}
-	if outcome != mfaCodeTOTP && outcome != mfaCodeRecovery {
-		return s.mfaFailure(ctx, account, "", "", actor.TraceID)
+	if outcome == mfaCodeTOTP || outcome == mfaCodeRecovery {
+		return nil
 	}
-	return nil
+	// BIZ-08：登录刚消费了当前时间步时，管理员立即执行特权操作不应被强制等待下一个
+	// 时间步；仅当命中的正是最近消费步且在宽限窗口内才放行，且不再推进步数。
+	if outcome == mfaCodeReplay && s.stepUpReuseAllowed(enrollment, normalized, now) {
+		return nil
+	}
+	return s.mfaFailure(ctx, account, "", "", actor.TraceID)
+}
+
+// stepUpReuseAllowed 判断 step-up 是否可以复用刚被登录消费的时间步（BIZ-08）。
+//
+// 条件：宽限窗口 > 0；动态码仍命中 enrollment.LastUsedStep；距最近一次消费
+// （UpdatedAt）不超过宽限。超出任一条件仍按重放拒绝。
+func (s *AuthService) stepUpReuseAllowed(enrollment *domain.MFAEnrollment, code string, now time.Time) bool {
+	if s.stepUpReuseGrace <= 0 || enrollment == nil || s.mfaCipher == nil {
+		return false
+	}
+	if now.Sub(enrollment.UpdatedAt) > s.stepUpReuseGrace {
+		return false
+	}
+	secret, err := s.mfaCipher.Open(enrollment.SecretCiphertext, mfaAAD(enrollment.AccountID))
+	if err != nil {
+		return false
+	}
+	step, ok := totp.ValidateStepWith(secret, code, now, s.mfaTOTP)
+	return ok && step == enrollment.LastUsedStep
 }
 
 // mfaGate 是密码校验通过后的 MFA 闸门结论。

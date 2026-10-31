@@ -138,6 +138,54 @@ func TestAccountServicePasswordHistoryRejectsReuse(t *testing.T) {
 	}
 }
 
+// TestAccountServiceStepUpReusesLoginStep 验证登录后立即 step-up 可复用刚消费的时间步（BIZ-08）。
+func TestAccountServiceStepUpReusesLoginStep(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAAdminRequired = true
+	})
+	f.seedAccount(t, "acct-op", "operator", "Operator#Pass12")
+	f.seedAccount(t, "acct-target", "target", "Target#Pass12")
+	secret, _ := bindMFA(t, f, "acct-op")
+	bindMFA(t, f, "acct-target")
+
+	// 登录会消费当前时间步；立即用同一个动态码执行特权操作必须成功（不强制等 30s）。
+	challenge := f.login(t, "operator", "Operator#Pass12")
+	if !challenge.MFARequired {
+		t.Fatalf("expected MFA challenge, got %+v", challenge)
+	}
+	code := totpCodeAt(t, secret, f.clock.Now())
+	if _, err := f.svc.VerifyMFA(ctx, app.MFAVerifyInput{
+		Ticket: challenge.MFATicket, Code: code, TraceID: "trace-login-step",
+	}); err != nil {
+		t.Fatalf("verify login step: %v", err)
+	}
+
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	if err := svc.Lock(ctx, app.LockAccountInput{
+		AccountOperationInput: app.AccountOperationInput{
+			Actor: app.SessionActor{AccountID: "acct-op", TraceID: "trace-stepup-reuse"},
+			TargetAccountID: "acct-target",
+			MFACode:         code,
+		},
+		Duration: time.Minute,
+	}); err != nil {
+		t.Fatalf("step-up with reused login step: %v", err)
+	}
+	// 超出默认宽限（2m）后同一时间步必须按重放拒绝。
+	f.clock.Advance(2*time.Minute + totp.Period)
+	if err := svc.Unlock(ctx, app.AccountOperationInput{
+		Actor:           app.SessionActor{AccountID: "acct-op", TraceID: "trace-stepup-expired"},
+		TargetAccountID: "acct-target",
+		MFACode:         code,
+	}); err == nil {
+		t.Fatal("expired step-up reuse must be rejected")
+	}
+}
+
 // TestAccountServiceStepUpCoversLifecycleAndSessions 验证启用、锁定、解锁、恢复与
 // 单会话撤销均受 step-up 保护（IDN-GAP-SEC-02）：缺少 mfa_code 返回 40000。
 func TestAccountServiceStepUpCoversLifecycleAndSessions(t *testing.T) {
