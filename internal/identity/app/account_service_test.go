@@ -10,6 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/totp"
 )
 
 // TestAccountServiceChangePassword 验证自助改密：旧密码校验、会话全撤销与审计。
@@ -95,6 +96,77 @@ func TestAccountServicePrivilegedStepUpMFA(t *testing.T) {
 	withCode.MFACode = totpCodeAt(t, secret, f.clock.Now())
 	if _, err := svc.ResetPassword(ctx, withCode); err != nil {
 		t.Fatalf("reset password with step-up mfa: %v", err)
+	}
+}
+
+// TestAccountServiceStepUpCoversLifecycleAndSessions 验证启用、锁定、解锁、恢复与
+// 单会话撤销均受 step-up 保护（IDN-GAP-SEC-02）：缺少 mfa_code 返回 40000。
+func TestAccountServiceStepUpCoversLifecycleAndSessions(t *testing.T) {
+	ctx := context.Background()
+	f := newAuthFixture(t, domain.ChannelAdmin, func(cfg *app.AuthServiceConfig) {
+		cfg.MFAAdminRequired = true
+	})
+	f.seedAccount(t, "acct-operator", "operator", "Operator#Pass12")
+	f.seedAccount(t, "acct-target", "target", "Target#Pass12")
+	secret, _ := bindMFA(t, f, "acct-operator")
+	bindMFA(t, f, "acct-target")
+	login := loginWithMFA(t, f, "target", "Target#Pass12")
+
+	svc, err := app.NewAccountService(f.svc)
+	if err != nil {
+		t.Fatalf("new account service: %v", err)
+	}
+	actor := app.SessionActor{AccountID: "acct-operator", TraceID: "trace-stepup-lifecycle"}
+	// 每次成功 step-up 会消费当前时间步，生成后立即推进时钟避免重放。
+	nextCode := func() string {
+		code := totpCodeAt(t, secret, f.clock.Now())
+		f.clock.Advance(totp.Period)
+		return code
+	}
+	base := app.AccountOperationInput{Actor: actor, TargetAccountID: login.AccountID}
+	withCode := func() app.AccountOperationInput {
+		in := base
+		in.MFACode = nextCode()
+		return in
+	}
+
+	if err := svc.Disable(ctx, base); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	requireAppCode(t, svc.Enable(ctx, base), apperr.CodeBadRequest)
+	if err := svc.Enable(ctx, withCode()); err != nil {
+		t.Fatalf("enable with step-up: %v", err)
+	}
+
+	requireAppCode(t, svc.Lock(ctx, app.LockAccountInput{AccountOperationInput: base}), apperr.CodeBadRequest)
+	if err := svc.Lock(ctx, app.LockAccountInput{AccountOperationInput: withCode()}); err != nil {
+		t.Fatalf("lock with step-up: %v", err)
+	}
+	requireAppCode(t, svc.Unlock(ctx, base), apperr.CodeBadRequest)
+	if err := svc.Unlock(ctx, withCode()); err != nil {
+		t.Fatalf("unlock with step-up: %v", err)
+	}
+
+	if err := svc.Delete(ctx, withCode()); err != nil {
+		t.Fatalf("delete with step-up: %v", err)
+	}
+	requireAppCode(t, svc.Restore(ctx, base), apperr.CodeBadRequest)
+	if err := svc.Restore(ctx, withCode()); err != nil {
+		t.Fatalf("restore with step-up: %v", err)
+	}
+
+	loginWithMFA(t, f, "target", "Target#Pass12")
+	page, err := svc.ListTargetSessions(ctx, actor, login.AccountID, "", 0)
+	if err != nil {
+		t.Fatalf("list target sessions: %v", err)
+	}
+	if len(page.Items) == 0 {
+		t.Fatal("expected a live target session")
+	}
+	familyID := page.Items[0].ID
+	requireAppCode(t, svc.RevokeTargetSession(ctx, base, familyID), apperr.CodeBadRequest)
+	if err := svc.RevokeTargetSession(ctx, withCode(), familyID); err != nil {
+		t.Fatalf("revoke target session with step-up: %v", err)
 	}
 }
 

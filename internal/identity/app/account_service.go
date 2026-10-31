@@ -286,6 +286,9 @@ func (s *AccountService) changeStatus(
 		if err != nil {
 			return err
 		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
+			return err
+		}
 		expected := loaded.Version
 		if err := apply(loaded, now); err != nil {
 			if errors.Is(err, errNoTransition) {
@@ -533,6 +536,9 @@ func (s *AccountService) Lock(ctx context.Context, in LockAccountInput) error {
 		if err != nil {
 			return err
 		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
+			return err
+		}
 		if loaded.Status == domain.AccountStatusDisabled {
 			return apperr.Conflict("account is disabled")
 		}
@@ -683,6 +689,9 @@ func (s *AccountService) Restore(ctx context.Context, in AccountOperationInput) 
 		if err != nil {
 			return err
 		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
+			return err
+		}
 		if loaded.DeletedAt == nil {
 			account = loaded
 			return nil
@@ -735,6 +744,9 @@ func (s *AccountService) RevokeTargetSession(ctx context.Context, in AccountOper
 	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
 		account, err := s.auth.targetAccount(txCtx, in.TargetAccountID)
 		if err != nil {
+			return err
+		}
+		if err := s.auth.requireAdminStepUp(txCtx, in.Actor, in.MFACode); err != nil {
 			return err
 		}
 		family, err := s.auth.sessions.FindFamily(txCtx, familyID)

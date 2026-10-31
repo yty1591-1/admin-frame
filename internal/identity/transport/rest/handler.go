@@ -447,6 +447,7 @@ func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
 			Actor:           actor,
 			TargetAccountID: r.PathValue("id"),
 			Reason:          req.Reason,
+			MFACode:         req.MFACode,
 		},
 		Duration: time.Duration(req.DurationMinutes) * time.Minute,
 	}); err != nil {
@@ -530,8 +531,9 @@ func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
 
 // RevokeAccountSession DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}
 //
-// 需要 identity:account:write。撤销会话与刷新能力，并写会话撤销快照，
+// 需要 identity:account:session。撤销会话与刷新能力，并写会话撤销快照，
 // 使该设备已签发的 Access Token 在 ≤60s 内失效。他人会话与不存在统一 404。
+// 请求体可选，携带 mfa_code 用于特权操作二次认证。
 func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
@@ -539,9 +541,16 @@ func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	var req accountActionRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
 	if err := h.accounts.RevokeTargetSession(r.Context(), app.AccountOperationInput{
 		Actor:           actor,
 		TargetAccountID: r.PathValue("id"),
+		Reason:          req.Reason,
+		MFACode:         req.MFACode,
 	}, r.PathValue("sid")); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -762,15 +771,16 @@ type changePasswordRequest struct {
 
 // accountActionRequest 管理员账号操作请求；reason 可选，写入审计。
 //
-// mfa_code 用于特权操作二次认证（密码重置 / MFA 重置 / 删除 / 全量撤销）；
-// admin_required=true 时缺失会返回 40000，错误码会按 MFA 失败计入锁定。
+// mfa_code 用于特权操作二次认证（启用 / 解锁 / 恢复 / 密码重置 / MFA 重置 /
+// 删除 / 会话撤销）；admin_required=true 时缺失会返回 40000，错误码会按 MFA
+// 失败计入锁定。
 type accountActionRequest struct {
 	Reason  string `json:"reason,omitempty"`
 	MFACode string `json:"mfa_code,omitempty"`
 }
 
 // accountLockRequest 管理员锁定请求；duration_minutes 可选，默认锁定策略。
-// mfa_code 为特权操作二次认证；当前锁定不强制，保留字段以便统一扩展。
+// mfa_code 为特权操作二次认证，admin_required=true 时必填。
 type accountLockRequest struct {
 	Reason          string `json:"reason,omitempty"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
