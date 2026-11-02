@@ -7,15 +7,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
 EXAMPLES=(
-  configs/admin.yaml.example
-  configs/biz.yaml.example
-  configs/c.yaml.example
-  configs/worker.yaml.example
+  configs/prod/admin.yaml.example
+  configs/prod/biz.yaml.example
+  configs/prod/c.yaml.example
+  configs/prod/worker.yaml.example
+)
+MODULES=(
+  configs/prod/modules/http.yaml.example
+  configs/prod/modules/log.yaml.example
+  configs/prod/modules/platform.yaml.example
+  configs/prod/modules/auth.yaml.example
+  configs/prod/modules/infra.yaml.example
+  configs/prod/modules/iam.yaml.example
+  configs/prod/modules/identity.yaml.example
 )
 FAIL=0
 
 echo "==> CFG-01: required config examples"
-for f in "${EXAMPLES[@]}"; do
+for f in "${EXAMPLES[@]}" "${MODULES[@]}"; do
   if [[ ! -f "${f}" ]]; then
     echo "ERROR: missing ${f} (CFG-01)" >&2
     FAIL=1
@@ -39,12 +48,14 @@ else
 fi
 
 echo "==> CFG-06: examples must not embed real DSN secrets"
-for f in "${EXAMPLES[@]}"; do
+for f in "${EXAMPLES[@]}" "${MODULES[@]}"; do
   [[ -f "${f}" ]] || continue
   while IFS= read -r line; do
     [[ "${line}" =~ ^[[:space:]]*# ]] && continue
     if [[ "${line}" =~ ^[[:space:]]*dsn:[[:space:]]*(.*)$ ]]; then
       val="${BASH_REMATCH[1]}"
+      # 剥离 YAML 行内注释（" #" 及其后内容），再去除可能的引号
+      val="${val%% #*}"
       val="${val%\"}"
       val="${val#\"}"
       val="${val%\'}"

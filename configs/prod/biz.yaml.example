@@ -1,7 +1,17 @@
 # B 端（biz-api）生产环境配置示例（CONFIG_STANDARDS CFG-01/03/05/06）。
-# 复制为 configs/prod-biz.yaml 使用；密钥全部由环境变量注入，随机示例值见 configs/prod/env.example。
-# 与 A 端的差异：channel/audience、CORS Origin、node_id、商户级 IAM 限制；
-# IAM enforce 需要商户级角色与绑定数据，首次上线同样建议先 shadow 再切 enforce。
+# 公共段按领域拆分在 modules/，本文件只声明 B 端差异（channel/audience/CORS/node_id/限流分桶）。
+# 使用方式：复制为 configs/prod-biz.yaml，并把 include 路径改为 prod/modules/...；
+# 密钥全部由环境变量注入，随机示例值见 configs/prod/env.example。
+# IAM enforce 需要商户级角色与绑定数据，首次上线建议先 shadow 再切 enforce。
+
+include:
+  - modules/http.yaml.example
+  - modules/log.yaml.example
+  - modules/platform.yaml.example
+  - modules/auth.yaml.example
+  - modules/infra.yaml.example
+  - modules/iam.yaml.example
+  - modules/identity.yaml.example
 
 env: prod
 service: biz-api
@@ -9,134 +19,32 @@ channel: biz
 addr: ":8082"
 shutdown_timeout: 20s
 
-http:
-  read_header_timeout: 5s
-  read_timeout: 15s
-  write_timeout: 30s
-  idle_timeout: 60s
-  timeout: 15s
-  body_limit_bytes: 16777216
-  max_header_bytes: 1048576
-  trusted_proxies:
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-
-log:
-  level: info
-  format: json
-
 auth:
-  mode: jwt
-  expected_channel: biz          # 必须与 channel 一致；B 端令牌不得被 A/C 端接受
+  expected_channel: biz # 必须与 channel 一致；B 端令牌不得被 A/C 端接受
   jwt:
-    alg: HS256                   # 生产推荐 RS256 密钥环，见 admin.yaml.example 注释
-    issuer: https://iam.prod.example.com
     audience: [biz]
-    leeway: 30s
-    secret: ""                   # ADMIN_FRAME_AUTH_JWT_SECRET
 
 id:
-  node_id: 1                     # 每个副本唯一；多副本生产建议 node_id_source=statefulset
-  node_id_source: env
-
-idempotency:
-  enabled: true
-  driver: redis
-  header: Idempotency-Key
-  ttl: 24h
-  required: false
-  max_body_bytes: 1048576
+  node_id: 1 # 每个副本唯一；多副本生产建议 node_id_source=statefulset
 
 rate_limit:
-  enabled: true
-  driver: redis
-  key: channel_tenant_user       # B 端按 商户+用户 分桶，避免跨商户争抢配额
-  failure_mode: fail_closed
+  key: channel_tenant_user # B 端按 商户+用户 分桶，避免跨商户争抢配额
   rps: 100
   burst: 200
-  idle_ttl: 10m
 
-async:
-  enabled: true
-  driver: db
-  broker:
-    url: ""
-    stream: async
-    subject_prefix: async
-    ack_wait: 30s
-    max_deliver: 10
-  outbox:
-    publish_in_api: false        # 由 worker 独占投递
-    poll_interval: 1s
-    batch_size: 100
-    lease: 30s
-    max_attempts: 10
-    concurrency: 2
-  consumer:
-    concurrency: 4
-    visibility_timeout: 60s
-    retry_backoff: exponential
-
-iam:
-  mode: enforce
-  load_timeout: 300ms
-  cache:
-    driver: redis
-    l1_ttl: 3s
-    l2_ttl: 5m
-    negative_ttl: 30s
-    key_prefix: iam
-    l1_max_entries: 10000
-  limits:
-    max_roles_per_subject: 20
-    max_permissions_per_role: 200
-    max_bindings_per_subject: 50
-    max_custom_roles_per_merchant: 50   # biz 必填且 > 0
-  security:
-    allow_wildcard: false
-    require_reason: true
-  breakglass:
-    enabled: false               # 仅 admin 支持破玻璃
-    allowed_subjects: []
-  approval:
-    enabled: true                # B 端角色/绑定变更走商户内审批
-  constraints:
-    mode: enforce
-
-# B 端身份域默认关闭；如需开启，按 docs/identity-authn.md 补齐 hash_key 与 Redis 撤销配置。
-# 生产启用时 db 必须持久化、async 必须开启。
+# prod baseline 关闭；开启时按 modules/identity 注入 hash_key，并保持 mfa=false。
 identity:
   enabled: false
-
-redis:
-  addr: ""                        # ADMIN_FRAME_REDIS_ADDR
-  username: ""
-  password: ""                    # ADMIN_FRAME_REDIS_PASSWORD
-  db: 0
-  key_prefix: "admin-frame:prod:"
-
-db:
-  driver: mysql
-  dsn: ""                         # ADMIN_FRAME_DB_DSN
+  mfa:
+    admin_required: false # 仅 A 端支持 MFA；B 端配置 true 会被启动校验拒绝
 
 storage:
-  driver: s3
   key_prefix: "prod/biz/"
-  s3:
-    endpoint: https://s3.ap-southeast-1.amazonaws.com
-    region: ap-southeast-1
-    bucket: admin-frame-prod
-    force_path_style: false
-
-tracing:
-  enabled: true
-  exporter: otlp
-  endpoint: otel-collector.observability.svc:4318
-  insecure: true
-  sample_ratio: 0.1
 
 cors:
   allow_origins:
     - https://biz.example.com
-  allow_credentials: true
-  max_age: 10m
+  allow_headers: [Accept, Authorization, Content-Type, X-Request-ID, Idempotency-Key] # 空则用中间件默认（不含幂等键）
+  expose_headers: [X-Request-ID] # 浏览器可读的响应头
+  allow_credentials: true # 与 "*" 互斥
+  max_age: 10m # 预检缓存；<= 0 不写该响应头

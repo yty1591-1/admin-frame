@@ -1,0 +1,4 @@
+# 日志基线：生产统一 JSON，禁止长期开启 debug。
+log:
+  level: info # debug | info | warn | error
+  format: json # json | text；prod/staging 禁止 text（避免 logger.Must panic）

@@ -1,0 +1,17 @@
+# 认证基线：生产强制 JWT；expected_channel 与 audience 由各端服务文件声明。
+auth:
+  mode: jwt # prod 强制 jwt，demo 会被启动校验拒绝
+  jwt:
+    alg: HS256 # HS256（默认）| RS256；切换算法需同时清理另一套密钥字段
+    issuer: https://iam.prod.example.com # 必填；校验令牌 iss
+    leeway: 30s # 校验时钟偏移容忍，>= 0
+    # HS256：secret 为当前密钥（>= 32 字节），secrets 为轮换期仍可校验的旧密钥。
+    # 二者都只走环境变量：ADMIN_FRAME_AUTH_JWT_SECRET / ADMIN_FRAME_AUTH_JWT_SECRETS。
+    secret: "" # 禁止写入文件或仓库
+    secrets: [] # 每项 >= 32 字节
+    # RS256 与 HS256 互斥：alg=RS256 时 secret / secrets 必须为空。
+    # 单公钥用 public_key_file；密钥环用 keys + active_kid（配置后旧字段失效）。
+    active_kid: "" # keys 非空时为当前签发 kid
+    keys: [] # 每项 kid + public_key_file；keys[].private_key_file 仅签发进程使用
+    public_key_file: "" # RS256 单公钥文件（PEM）
+    public_keys_file: "" # RS256 轮换期额外公钥文件（可含多个 PEM 块）

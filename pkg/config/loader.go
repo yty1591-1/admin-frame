@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -14,7 +15,14 @@ import (
 	pkgerrors "github.com/admin-frame/admin-frame/pkg/errors"
 )
 
-const maxErrorDetail = 512
+const (
+	// maxErrorDetail 限制错误摘要长度。
+	maxErrorDetail = 512
+	// maxIncludeDepth 限制 include 嵌套层数，避免异常配置拖垮启动。
+	maxIncludeDepth = 8
+	// includeKey 是文件顶层声明依赖模块的保留字段。
+	includeKey = "include"
+)
 
 // backtickLiteral 匹配 YAML 类型错误里以反引号包裹的取值。
 //
@@ -28,6 +36,9 @@ var backtickLiteral = regexp.MustCompile("`[^`\n]*`")
 type Options[T any] struct {
 	// Files 是 YAML 文件路径，按顺序依次解码到同一结构体；
 	// 后面的文件覆盖前面已出现的字段，未出现的字段保持不变。
+	//
+	// 单个文件可通过顶层 `include:` 声明依赖文件，被包含文件先于当前文件加载，
+	// 路径相对声明它的文件解析，同样遵循“后者覆盖前者”。
 	Files []string
 	// EnvPrefix 是环境变量前缀（如 "ADMIN_FRAME"）；为空表示禁用环境变量覆盖。
 	//
@@ -51,6 +62,7 @@ type Options[T any] struct {
 	// Decode 覆盖默认的严格 YAML 解码；可用于 JSON 或加密配置。
 	//
 	// 实现必须把数据解码进 dst 已存在的字段语义（便于多文件覆盖）。
+	// 覆盖后不再解析 `include:`，需要分层时请保留默认 YAML 解码。
 	Decode func(data []byte, dst *T) error
 	// AllowUnknownFields 关闭未知字段拒绝；默认 false（严格模式）。
 	AllowUnknownFields bool
@@ -61,6 +73,8 @@ type Options[T any] struct {
 // 构造后只读，可并发调用 Load；每次调用返回独立副本。
 type Loader[T any] struct {
 	opts Options[T]
+	// expandIncludes 仅在默认 YAML 解码时开启；自定义 Decode 由调用方自行处理分层。
+	expandIncludes bool
 }
 
 // Validatable 是配置自校验约定；Options.Validate 为 nil 时自动调用。
@@ -100,18 +114,20 @@ func NewLoader[T any](opts Options[T]) (loader *Loader[T], err error) {
 	if opts.LookupEnv == nil {
 		opts.LookupEnv = os.LookupEnv
 	}
+	expand := false
 	if opts.Decode == nil {
 		allowUnknown := opts.AllowUnknownFields
 		opts.Decode = func(data []byte, dst *T) error {
 			return decodeYAML(data, dst, allowUnknown)
 		}
+		expand = true
 	}
-	return &Loader[T]{opts: opts}, nil
+	return &Loader[T]{opts: opts, expandIncludes: expand}, nil
 }
 
 // Load 按优先级加载并校验配置，返回独立副本。
 //
-// 执行顺序：Defaults → Files（按声明顺序）→ 环境变量 → Normalize → Validate。
+// 执行顺序：Defaults → Files（按声明顺序，展开 include）→ 环境变量 → Normalize → Validate。
 // 失败返回包装 ErrInvalidConfig 的错误，并按原因附加 ErrMissingFile、
 // ErrFileUnreadable、ErrMalformedFile、ErrUnknownField 或 ErrEnvOverride；
 // 语义码为 InvalidArgument（文件不存在为 NotFound）。错误文本不含配置值。
@@ -158,17 +174,111 @@ func (l *Loader[T]) validate(value *T) error {
 
 // loadFile 读取并解码单个文件；空文件视为无覆盖。
 func (l *Loader[T]) loadFile(path string, dst *T) error {
+	return l.loadFileChain(path, dst, nil)
+}
+
+// loadFileChain 先按声明顺序展开 include，再解码当前文件（当前文件优先级最高）。
+//
+// chain 保存当前包含链的绝对路径，用于检测循环与限制嵌套深度。
+func (l *Loader[T]) loadFileChain(path string, dst *T, chain []string) error {
+	if !l.expandIncludes {
+		data, err := os.ReadFile(path) // #nosec G304 -- 路径来自运维配置，非请求输入。
+		if err != nil {
+			return readError(path, err)
+		}
+		if len(bytes.TrimSpace(data)) == 0 {
+			return nil
+		}
+		if err := l.opts.Decode(data, dst); err != nil {
+			return decodeErrorOf(path, err)
+		}
+		return nil
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return readError(path, err)
+	}
+	for _, ancestor := range chain {
+		if ancestor == abs {
+			return decodeError(ErrMalformedFile, path, "include cycle detected")
+		}
+	}
+	if len(chain) >= maxIncludeDepth {
+		return decodeError(ErrMalformedFile, path,
+			fmt.Sprintf("include depth exceeds %d", maxIncludeDepth))
+	}
+
 	data, err := os.ReadFile(path) // #nosec G304 -- 路径来自运维配置，非请求输入。
 	if err != nil {
 		return readError(path, err)
 	}
-	if len(bytes.TrimSpace(data)) == 0 {
+	includes, body, err := splitInclude(data, path)
+	if err != nil {
+		return err
+	}
+	for _, included := range includes {
+		includedPath := included
+		if !filepath.IsAbs(includedPath) {
+			includedPath = filepath.Join(filepath.Dir(path), includedPath)
+		}
+		if err := l.loadFileChain(includedPath, dst, append(chain, abs)); err != nil {
+			return err
+		}
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
 	}
-	if err := l.opts.Decode(data, dst); err != nil {
+	if err := l.opts.Decode(body, dst); err != nil {
 		return decodeErrorOf(path, err)
 	}
 	return nil
+}
+
+// splitInclude 提取顶层 include 列表并返回去掉该字段后的文档。
+//
+// 无 include 时原样返回 data，避免不必要的重编码；有 include 时用 map 承载剩余
+// 字段后重新编码，最终严格解码仍会拒绝未知字段。
+func splitInclude(data []byte, path string) ([]string, []byte, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var raw map[string]any
+	if err := decoder.Decode(&raw); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, nil
+		}
+		return nil, nil, decodeErrorOf(path, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, nil, decodeError(ErrMalformedFile, path, "multiple YAML documents are not supported")
+	}
+	value, ok := raw[includeKey]
+	if !ok {
+		return nil, data, nil
+	}
+	delete(raw, includeKey)
+
+	items, ok := value.([]any)
+	if !ok {
+		return nil, nil, decodeError(ErrMalformedFile, path, "include must be a list of file paths")
+	}
+	includes := make([]string, 0, len(items))
+	for i, item := range items {
+		text, ok := item.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return nil, nil, decodeError(ErrMalformedFile, path,
+				fmt.Sprintf("include entry %d must be a non-empty string", i))
+		}
+		includes = append(includes, strings.TrimSpace(text))
+	}
+	if len(raw) == 0 {
+		return includes, nil, nil
+	}
+	body, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, nil, decodeError(ErrMalformedFile, path, "cannot re-encode config without include")
+	}
+	return includes, body, nil
 }
 
 // files 返回文件列表副本，供 Watcher 创建时固定监视目标。

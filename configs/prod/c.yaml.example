@@ -1,7 +1,18 @@
 # C 端（c-api）生产环境配置示例（CONFIG_STANDARDS CFG-01/03/05/06）。
-# 复制为 configs/prod-c.yaml 使用；密钥全部由环境变量注入，随机示例值见 configs/prod/env.example。
-# 与 A/B 端的差异：C 端不挂载 IAM（iam.mode 必须 off）、用户量级更大，限流与副本按端扩容；
-# 身份域若要开启，生产必须具备短信或 OAuth 提供方，且禁止 memory 驱动，详见文件末尾注释。
+# 公共段按领域拆分在 modules/，本文件只声明 C 端差异（channel/audience/CORS/node_id/
+# 上传上限、消费并发、IAM 关闭）。
+# 使用方式：复制为 configs/prod-c.yaml，并把 include 路径改为 prod/modules/...；
+# 密钥全部由环境变量注入，随机示例值见 configs/prod/env.example。
+# 身份域开启后生产必须具备短信或 OAuth 提供方，且禁止 memory 驱动，详见 modules/identity。
+
+include:
+  - modules/http.yaml.example
+  - modules/log.yaml.example
+  - modules/platform.yaml.example
+  - modules/auth.yaml.example
+  - modules/infra.yaml.example
+  - modules/iam.yaml.example
+  - modules/identity.yaml.example
 
 env: prod
 service: c-api
@@ -9,141 +20,76 @@ channel: c
 addr: ":8083"
 shutdown_timeout: 20s
 
-http:
-  read_header_timeout: 5s
-  read_timeout: 15s
-  write_timeout: 30s
-  idle_timeout: 60s
-  timeout: 15s
-  body_limit_bytes: 33554432      # C 端上传场景较多，设为 32 MiB
-  max_header_bytes: 1048576
-  trusted_proxies:
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-
-log:
-  level: info
-  format: json
-
 auth:
-  mode: jwt
-  expected_channel: c            # 必须与 channel 一致，防止 A/B 令牌串用
+  expected_channel: c # 必须与 channel 一致，防止 A/B 令牌串用
   jwt:
-    alg: HS256                   # 生产推荐 RS256 密钥环，见 admin.yaml.example 注释
-    issuer: https://iam.prod.example.com
     audience: [c]
-    leeway: 30s
-    secret: ""                   # ADMIN_FRAME_AUTH_JWT_SECRET
 
 id:
-  node_id: 2                     # C 端多副本必须逐副本唯一；建议 statefulset 推导
-  node_id_source: env
+  node_id: 2 # C 端多副本必须逐副本唯一；建议 statefulset 推导
 
-idempotency:
-  enabled: true
-  driver: redis
-  header: Idempotency-Key
-  ttl: 24h
-  required: false
-  max_body_bytes: 1048576
-
-rate_limit:
-  enabled: true
-  driver: redis
-  key: channel_user              # 按用户分桶，避免 NAT/代理后按 IP 误伤
-  failure_mode: fail_closed
-  rps: 200
-  burst: 400
-  idle_ttl: 10m
+http:
+  body_limit_bytes: 33554432 # C 端上传场景较多，设为 32 MiB
 
 async:
-  enabled: true
-  driver: db
-  broker:
-    url: ""
-    stream: async
-    subject_prefix: async
-    ack_wait: 30s
-    max_deliver: 10
-  outbox:
-    publish_in_api: false
-    poll_interval: 1s
-    batch_size: 100
-    lease: 30s
-    max_attempts: 10
-    concurrency: 2
   consumer:
-    concurrency: 8               # C 端通知/异步任务量更大，消费并发上调
-    visibility_timeout: 60s
-    retry_backoff: exponential
+    concurrency: 8 # C 端通知/异步任务量更大，消费并发上调
 
 # C 端不挂载 IAM：mode 必须 off（启动校验会拒绝其他取值）。
-# 保留完整结构是为了与其他端共享配置模板；缓存驱动可用 memory，不影响启动校验。
 iam:
   mode: off
-  load_timeout: 300ms
   cache:
     driver: memory
-    l1_ttl: 3s
-    l2_ttl: 5m
-    negative_ttl: 30s
-    key_prefix: iam
-    l1_max_entries: 10000
-  limits:
-    max_roles_per_subject: 20
-    max_permissions_per_role: 200
-    max_bindings_per_subject: 50
-    max_custom_roles_per_merchant: 50
-  security:
-    allow_wildcard: false
-    require_reason: true
-  breakglass:
-    enabled: false
   approval:
     enabled: false
   constraints:
     mode: off
 
-# C 端身份域：默认关闭（仅验签）。生产开启的前置条件：
-#   1) auth.mode=jwt，且使用 RS256 密钥环（登录令牌由本服务签发，需要私钥文件）；
-#   2) identity.hash_key（32B）与 mfa.secret_key 已由 Secret 注入；
-#   3) redis.addr 可用，revocation.driver=redis、failure_mode=fail_closed；
-#   4) 短信（推荐 aliyun，禁止 memory）或 OAuth 提供方（https 回调）至少配置一项；
-#      启用短信时必须设置 identity.sms.daily_budget > 0（SEC-09）。
-#   5) db 持久化、async.enabled=true（审计 Outbox）。
+# prod baseline 关闭；开启时按 modules/identity 注入 hash_key / subject.keys，
+# 并至少配置 sms 或一个 oauth provider（prod 校验强制）。
 identity:
   enabled: false
-
-redis:
-  addr: ""                        # ADMIN_FRAME_REDIS_ADDR
-  username: ""
-  password: ""                    # ADMIN_FRAME_REDIS_PASSWORD
-  db: 0
-  key_prefix: "admin-frame:prod:"
-
-db:
-  driver: mysql
-  dsn: ""                         # ADMIN_FRAME_DB_DSN
+  mfa:
+    admin_required: false # 仅 A 端支持 MFA
+  # 短信验证码登录：仅 C 端支持；开启时 driver 不得为 memory，daily_budget 必须 > 0。
+  sms:
+    enabled: false # 开启时改 true
+    driver: aliyun # memory 仅本地/测试；prod 禁止
+    template_id: "" # 厂商模板编码；enabled=true 时必填
+    sign_name: "" # 已审核通过的短信签名；国际短信可为空
+    locale: zh-CN # 语言/地区提示
+    default_region: "" # 如 CN；配置后允许本地号码自动补国家码
+    quota_timezone: Asia/Shanghai # 日配额/预算时区；空表示 UTC
+    code_ttl: 5m # (0, 15m]
+    max_attempts: 5 # [1, 10]
+    resend_interval: 60s # (0, code_ttl]
+    daily_per_phone: 10 # >= 1
+    hourly_per_ip: 30 # >= 1
+    daily_budget: 10000 # 全局日预算；prod/staging 必须 > 0
+    breaker_failures: 5 # 连续失败阈值；0 使用默认 5
+    breaker_timeout: 60s # 熔断时长，[1s, 10m]
+  # 第三方授权登录：providers 非空时仅 C 端允许，且密钥通过 client_secret_env 指向的环境变量注入。
+  oauth:
+    auto_provision: false # 未映射身份不自动建号（失败关闭）
+    timeout: 5s # 单次回源超时，[1s, 30s]
+    breaker_failures: 5 # >= 0
+    breaker_timeout: 60s # [1s, 10m]
+    rate_limit:
+      rps: 1 # 0 使用默认 1
+      burst: 5 # 0 使用默认 5
+      ip_rps: 0 # 0 表示不启用 IP 维度
+      ip_burst: 0 # 0 表示不启用 IP 维度
+      failure_mode: fail_closed # prod/staging 强制 fail_closed
+    providers: [] # 每项 name/client_id/client_secret_env/auth_url/token_url/userinfo_url/redirect_uri/scopes/subject_field
 
 storage:
-  driver: s3
   key_prefix: "prod/c/"
-  s3:
-    endpoint: https://s3.ap-southeast-1.amazonaws.com
-    region: ap-southeast-1
-    bucket: admin-frame-prod
-    force_path_style: false
-
-tracing:
-  enabled: true
-  exporter: otlp
-  endpoint: otel-collector.observability.svc:4318
-  insecure: true
-  sample_ratio: 0.1
 
 cors:
   allow_origins:
     - https://www.example.com
     - https://m.example.com
-  allow_credentials: true
-  max_age: 10m
+  allow_headers: [Accept, Authorization, Content-Type, X-Request-ID, Idempotency-Key] # 空则用中间件默认（不含幂等键）
+  expose_headers: [X-Request-ID] # 浏览器可读的响应头
+  allow_credentials: true # 与 "*" 互斥
+  max_age: 10m # 预检缓存；<= 0 不写该响应头

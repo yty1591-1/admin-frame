@@ -1,199 +1,46 @@
 # A 端（admin-api）生产环境配置示例（CONFIG_STANDARDS CFG-01/03/05/06）。
-# 使用方式：复制为 configs/prod-admin.yaml 后按环境替换非密钥值；密钥全部由环境变量注入。
-# 完整变量清单与随机示例值见 configs/prod/env.example；真实生产必须由 KMS/Vault/Secret 生成，
-# 禁止把本文件的示例值用于生产。
-# 本示例对齐 deploy/helm/admin-frame/values-prod.yaml 的基线（env=prod、JWT、IAM enforce、
-# 异步 Outbox、identity 默认关闭）；容器内 addr 由 Chart 注入为 :8080，本地多进程演练用 :8081。
+# 公共段按领域拆分在 modules/，本文件只声明 A 端差异（service/channel/addr/audience/node_id/CORS）。
+# 使用方式：复制为 configs/prod-admin.yaml，并把 include 路径改为 prod/modules/...；
+# 密钥全部由环境变量注入，完整变量清单见 configs/prod/env.example。
+# 本示例对齐 deploy/helm/admin-frame/values-prod.yaml 的基线；identity 默认关闭，
+# 开启前置条件见 modules/identity.yaml.example。
+
+include:
+  - modules/http.yaml.example
+  - modules/log.yaml.example
+  - modules/platform.yaml.example
+  - modules/auth.yaml.example
+  - modules/infra.yaml.example
+  - modules/iam.yaml.example
+  - modules/identity.yaml.example
 
 env: prod
 service: admin-api
 channel: admin
-addr: ":8081"
+addr: ":8081" # 容器内由 Chart 注入 :8080；本地多进程演练用 :8081
 shutdown_timeout: 20s
 
-http:
-  read_header_timeout: 5s
-  read_timeout: 15s
-  write_timeout: 30s
-  idle_timeout: 60s
-  timeout: 15s                    # prod 必须 > 0；单请求软超时
-  body_limit_bytes: 16777216      # 16 MiB；按业务上传需求调整
-  max_header_bytes: 1048576
-  trusted_proxies:                # 仅信任入口代理网段；为空则不解析 X-Forwarded-For
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-
-log:
-  level: info                     # prod 禁止 debug 长期开启；排障时临时调整
-  format: json                    # prod 禁止 text
-
 auth:
-  mode: jwt                       # prod 强制 jwt，demo 会被启动校验拒绝
-  expected_channel: admin         # 必须与 channel 完全一致，防止跨端令牌串用
+  expected_channel: admin # 必须与 channel 完全一致，防止跨端令牌串用
   jwt:
-    # 生产推荐 RS256 密钥环；本示例为便于单密钥注入使用 HS256（≥32 字节）。
-    # 切换 RS256 时删除 secret，改为：
-    #   alg: RS256
-    #   active_kid: prod-2026-10
-    #   keys:
-    #     - kid: prod-2026-10
-    #       public_key_file: /etc/admin-frame/jwt/prod-2026-10.pub.pem
-    alg: HS256
-    issuer: https://iam.prod.example.com
     audience: [admin]
-    leeway: 30s
-    secret: ""                    # ADMIN_FRAME_AUTH_JWT_SECRET；禁止写入文件或仓库
 
-# 雪花 ID：同一集群内所有进程 node_id 必须唯一，重复会产生相同主键。
-# 多副本生产用 statefulset 由 HOSTNAME 推导，避免手工分配冲突。
+# 雪花 ID：同一集群内所有进程 node_id 必须唯一；多副本用 statefulset 由 HOSTNAME 推导。
 id:
-  node_id: 0                      # [0,1023]；prod 非 worker 必填
-  node_id_source: env             # env|config|statefulset
+  node_id: 0 # [0,1023]；prod 非 worker 必填
 
-# 写请求幂等：prod/staging 启用时必须 driver=redis（启动校验强制）。
-idempotency:
-  enabled: true
-  driver: redis
-  header: Idempotency-Key
-  ttl: 24h
-  required: false                 # true 时缺幂等键的写请求会被直接拒绝，按客户端能力决定
-  max_body_bytes: 1048576
-
-# 请求限流：prod/staging 启用时必须 redis；fail_closed 在 Redis 故障时拒绝新请求。
-rate_limit:
-  enabled: true
-  driver: redis
-  key: channel_user               # channel|channel_user|channel_tenant_user|client
-  failure_mode: fail_closed
-  rps: 200
-  burst: 400
-  idle_ttl: 10m
-
-# 异步基础设施：事务性 Outbox；IAM enforce 时 API 侧不得自行投递，由 worker 独占 relay。
-async:
-  enabled: true
-  driver: db                      # 本轮生产使用 db；nats 需 tls:// 或 wss://
-  broker:
-    url: ""
-    stream: async
-    subject_prefix: async
-    ack_wait: 30s
-    max_deliver: 10
-  outbox:
-    publish_in_api: false         # prod + IAM enforce 必须 false
-    poll_interval: 1s
-    batch_size: 100
-    lease: 30s
-    max_attempts: 10
-    concurrency: 2
-  consumer:
-    concurrency: 4
-    visibility_timeout: 60s
-    retry_backoff: exponential
-
-# IAM：prod 目标为 enforce；首次上线若尚无生效绑定，会拒绝所有业务请求。
-# 操作顺序：先以 shadow 观察并导入/审批首个管理员绑定，再切 enforce 并重新发布。
-iam:
-  mode: enforce
-  load_timeout: 300ms             # 回源 DB 上限，必须 ≤ 1s
-  cache:
-    driver: redis                 # enforce + prod 必须 redis
-    l1_ttl: 3s
-    l2_ttl: 5m
-    negative_ttl: 30s
-    key_prefix: iam
-    l1_max_entries: 10000
-  limits:
-    max_roles_per_subject: 20
-    max_permissions_per_role: 200
-    max_bindings_per_subject: 50
-    max_custom_roles_per_merchant: 50
-  security:
-    allow_wildcard: false         # prod 强制 false；通配符只允许经破玻璃临时展开
-    require_reason: true
-  breakglass:
-    enabled: false                # 启用要求 mode=enforce 且配置 allowed_subjects
-    allowed_subjects: []
-  approval:
-    enabled: true                 # 高风险角色/绑定变更强制走审批单
-  constraints:
-    mode: enforce                 # RBAC2 互斥组 / 前置角色 / 基数约束在生产拦截
-
-# 身份域认证端点：当前仓库 prod baseline 关闭，保持「只验签」。
-# 启用前置：auth.mode=jwt、JWT 密钥环、redis 可用、db 持久化、async.enabled=true，
-# 且 identity.hash_key / mfa.secret_key 已通过 Secret 注入；A 端 mfa.admin_required 必须 true。
-# 启用后登录令牌由本服务签发，需要 auth.jwt.keys 中的私钥文件（仅 RS256 密钥环）。
+# prod baseline 关闭，保持「只验签」；开启时删除本覆盖并注入 hash_key / mfa.secret_key。
 identity:
   enabled: false
-  # access_ttl: 15m
-  # refresh_ttl: 168h
-  # session:
-  #   idle_timeout: 72h
-  #   absolute_ttl: 720h
-  #   max_per_account: 10
-  # retention:
-  #   session_days: 30
-  #   login_attempt_days: 180
-  #   cleanup_interval: 1h
-  # revocation:
-  #   driver: redis
-  #   failure_mode: fail_closed
-  #   state_ttl: 30s
-  # password:
-  #   min_length: 12
-  #   max_length: 128
-  #   require_complexity: true
-  #   max_concurrent: 0
-  #   wait_timeout: 2s
-  # mfa:
-  #   admin_required: true
-  #   issuer: AdminFrame
-  #   secret_key: ""                # ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY（32B）
-  # lockout:
-  #   max_failures: 5
-  #   window: 15m
-  #   duration: 15m
-  # login_rate_limit:
-  #   rps: 1
-  #   burst: 5
-  #   failure_mode: fail_closed
-  # hash_key: ""                   # ADMIN_FRAME_IDENTITY_HASH_KEY（32B）
-  # hash_key_id: v1
-  # previous_hash_keys: []
 
-# Redis：IAM 缓存、限流、幂等、身份撤销共用；生产使用集群/哨兵地址。
-redis:
-  addr: ""                        # ADMIN_FRAME_REDIS_ADDR，如 redis.prod.internal:6379
-  username: ""
-  password: ""                    # ADMIN_FRAME_REDIS_PASSWORD
-  db: 0
-  key_prefix: "admin-frame:prod:"
-
-db:
-  driver: mysql
-  dsn: ""                         # ADMIN_FRAME_DB_DSN；必须 parseTime=true&loc=UTC
-
-# 对象存储：prod 禁止 memory/local，密钥只走环境变量。
 storage:
-  driver: s3
   key_prefix: "prod/admin/"
-  s3:
-    endpoint: https://s3.ap-southeast-1.amazonaws.com
-    region: ap-southeast-1
-    bucket: admin-frame-prod
-    force_path_style: false
-    # access_key / secret_key → ADMIN_FRAME_STORAGE_S3_ACCESS_KEY / SECRET_KEY
-
-tracing:
-  enabled: true
-  exporter: otlp                  # prod 禁止 stdout；OTLP 由 Collector 统一采样
-  endpoint: otel-collector.observability.svc:4318
-  insecure: true                  # 集群内网明文；跨网段必须 false + TLS
-  sample_ratio: 0.1               # 生产建议 0.05~0.2，尾部采样交给 Collector
 
 # CORS：生产必须显式 Origin，禁止 "*"；与 allow_credentials 互斥。
 cors:
   allow_origins:
     - https://admin.example.com
-  allow_credentials: true
-  max_age: 10m
+  allow_headers: [Accept, Authorization, Content-Type, X-Request-ID, Idempotency-Key] # 空则用中间件默认（不含幂等键）
+  expose_headers: [X-Request-ID] # 浏览器可读的响应头
+  allow_credentials: true # 与 "*" 互斥
+  max_age: 10m # 预检缓存；<= 0 不写该响应头

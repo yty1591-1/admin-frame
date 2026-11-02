@@ -1,0 +1,65 @@
+# 基础设施基线：Redis、MySQL、对象存储、链路追踪。
+# 连接地址与密钥全部由环境变量注入；storage.key_prefix 由各端服务文件覆盖。
+redis:
+  addr: "" # ADMIN_FRAME_REDIS_ADDR
+  username: "" # ACL 用户名；无 ACL 时留空
+  password: "" # ADMIN_FRAME_REDIS_PASSWORD
+  db: 0 # 逻辑库编号
+  key_prefix: "admin-frame:prod:" # 与其他系统/环境共用实例时的键隔离
+
+db:
+  driver: mysql # memory | mysql | postgres；prod 禁止 memory
+  dsn: "" # ADMIN_FRAME_DB_DSN；必须 parseTime=true&loc=UTC
+
+# 对象存储：prod 禁止 memory/local，密钥只走环境变量。
+storage:
+  driver: s3 # memory | local | s3 | minio | oss | cos | obs
+  key_prefix: "prod/" # 环境前缀；各端在服务文件覆盖为 prod/<端>/
+  max_object_bytes: 0 # 单对象上限（字节）；0 使用驱动默认
+  presign_put_ttl: 15m # 预签名上传有效期；0 由驱动决定
+  presign_get_ttl: 1h # 预签名下载有效期；0 由驱动决定
+  s3:
+    endpoint: https://s3.ap-southeast-1.amazonaws.com
+    region: ap-southeast-1
+    bucket: admin-frame-prod
+    force_path_style: false # MinIO / S3 兼容网关通常为 true
+    disable_ssl: false # 仅开发；prod 禁止明文
+    access_key: "" # ADMIN_FRAME_STORAGE_S3_ACCESS_KEY
+    secret_key: "" # ADMIN_FRAME_STORAGE_S3_SECRET_KEY
+    session_token: "" # 临时凭证；使用长期 AK/SK 时留空
+  local: # 仅 driver=local 时使用；prod 禁止 local
+    root: "" # ADMIN_FRAME_STORAGE_LOCAL_ROOT
+    max_object_bytes: 0 # 0 使用驱动默认
+  # 以下厂商默认回落 S3 兼容参数；切换 driver 时再填写，密钥同样走环境变量。
+  oss:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    native: false # true 走厂商原生 SDK（未实现时启动失败）
+  cos:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    native: false # true 走厂商原生 SDK（未实现时启动失败）
+  obs:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    native: false # true 走厂商原生 SDK（未实现时启动失败）
+  lifecycle:
+    apply_on_start: false # true 会改写桶策略，生产慎用
+    rules: [] # 每项 id / prefix / expire_days / abort_incomplete_multipart_days
+  buckets: {} # 命名附加桶；键不可为 default，桶内禁止再声明 buckets
+
+tracing:
+  enabled: true # false 使用 noop；NULL 默认 true
+  exporter: otlp # none | otlp | stdout | noop；prod 禁止 stdout
+  endpoint: otel-collector.observability.svc:4318 # exporter=otlp 时必填
+  insecure: true # 集群内网明文；跨网段必须 false + TLS
+  sample_ratio: 0.1 # [0, 1]；生产建议 0.05~0.2，尾部采样交给 Collector

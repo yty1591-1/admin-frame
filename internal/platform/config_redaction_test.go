@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -224,11 +223,20 @@ func TestStorageConfigMapping(t *testing.T) {
 	}
 }
 
-// TestLoadConfigExampleFiles 逐一加载仓库内示例配置，保证示例与结构体同步。
+// TestLoadConfigExampleFiles 逐一加载仓库内示例配置，保证模块 include 与结构体同步。
 //
-// 用 yaml 解析而非 LoadConfig，避免示例中的 prod 占位值触发环境校验。
+// 示例为 prod 基线，密钥通过环境变量注入，使其与真实启动走同一条严格解码与校验路径。
 func TestLoadConfigExampleFiles(t *testing.T) {
-	files, err := filepath.Glob("../../configs/*.yaml.example")
+	t.Setenv("ADMIN_FRAME_AUTH_JWT_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "user:pass@tcp(localhost:3306)/db?parseTime=true&loc=UTC")
+	t.Setenv("ADMIN_FRAME_REDIS_ADDR", "localhost:6379")
+	t.Setenv("ADMIN_FRAME_IDENTITY_HASH_KEY", strings.Repeat("a", 64))
+	t.Setenv("ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY", strings.Repeat("b", 32))
+	t.Setenv("ADMIN_FRAME_STORAGE_S3_ACCESS_KEY", "access")
+	t.Setenv("ADMIN_FRAME_STORAGE_S3_SECRET_KEY", "secret")
+	t.Setenv("ADMIN_FRAME_IDENTITY_SMS_DAILY_BUDGET", "100")
+
+	files, err := filepath.Glob("../../configs/prod/*.yaml.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,14 +245,6 @@ func TestLoadConfigExampleFiles(t *testing.T) {
 	}
 	for _, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) {
-			data, err := os.ReadFile(file) // #nosec G304 -- 路径来自仓库内示例配置的 Glob 结果。
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(bytes.TrimSpace(data)) == 0 {
-				t.Fatal("empty example")
-			}
-			// 示例中的 env 均为 local，可直接走 LoadConfig 的严格解码与校验。
 			if _, err := platform.LoadConfig(file); err != nil {
 				t.Fatalf("load %s: %v", file, err)
 			}

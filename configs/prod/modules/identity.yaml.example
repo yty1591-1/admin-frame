@@ -1,0 +1,78 @@
+# 身份域基线：登录 / 刷新 / 登出 + 撤销检查。
+# 前置：auth.mode=jwt、redis 可用、db 持久化、async.enabled=true（审计走 Outbox）。
+# 密钥注入：hash_key / mfa.secret_key 走环境变量（ADMIN_FRAME_IDENTITY_HASH_KEY /
+# _MFA_SECRET_KEY）；subject.keys 是列表，无法用环境变量注入，必须由 Secret 挂载的
+# 配置文件或 Helm values 写入。启用登录端点时必须配置 subject.keys，否则仓储无法
+# 查找 / 写入主体，A 端启动引导会失败关闭。
+# 首个管理员由 A 端 admin-api 启动引导幂等创建；首次登录强制改密，再完成 MFA 绑定。
+# 各端差异：A 端 mfa.admin_required=true；B/C 端覆盖为 false；worker 不加载本模块。
+# sms / oauth 仅 C 端支持，声明在 c 服务文件。
+identity:
+  enabled: true
+  access_ttl: 15m # [5m, 1h]
+  refresh_ttl: 168h # 必须大于 access_ttl
+  session:
+    idle_timeout: 72h # (0, refresh_ttl]
+    absolute_ttl: 720h # 设备绝对生命上限，必须大于 refresh_ttl
+    max_per_account: 10 # 单账号活跃会话上限，>= 1
+    refresh_grace: 10s # 并发刷新宽限；0 关闭，上限 60s
+  retention:
+    session_days: 30 # 生产 >= 7
+    login_attempt_days: 180 # 生产 >= 180
+    archive_days: 365 # 归档保留期，>= session_days；负数显式关闭归档
+    cleanup_interval: 1h # >= 1m
+  revocation:
+    driver: redis # 生产唯一实现
+    failure_mode: fail_closed # 生产强制 fail_closed
+    state_ttl: 30s # [1s, 60s]
+    local_cache_ttl: 1s # 进程内 L1；负数关闭，上限 5s
+    local_cache_capacity: 4096 # L1 最大条目，上限 100000
+    token_grace: 30s # jti 宽限；负数关闭，上限 60s
+  password:
+    min_length: 12 # >= 8；0 使用默认 12
+    max_length: 128 # >= min_length，上限 128
+    require_complexity: true # 至少三类字符；NULL 使用默认 true
+    max_concurrent: 0 # 0 = 2×CPU 的 Argon2 并发上限
+    wait_timeout: 2s # [100ms, 30s]
+    history_count: 5 # 禁止复用近期密码，[0, 20]
+    history_window: 8760h # 历史窗口，上限 5 年；0 使用默认 365 天
+    temporary_length: 20 # 管理员重置临时密码长度，[16, 32]
+    tenant_overrides: [] # 商户级覆盖（merchant_id/min_length/max_length/require_complexity）
+  mfa:
+    admin_required: true # 生产强制 true（仅 A 端支持 MFA）
+    channels: [admin] # 允许启用 MFA 的端别：admin / biz
+    biz_required: false # true 时须同时把 biz 加入 channels
+    factors: [totp] # 当前仅实现 totp
+    issuer: AdminFrame # 写入 otpauth URI 的签发方
+    secret_key: "" # ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY（32B）
+    keys: [] # 密钥环（id + 32B key）；非空时 active_key_id 必填并启用轮换
+    active_key_id: "" # keys 非空时为当前加密密钥 id
+    totp_digits: 6 # 仅支持 6 / 8
+    totp_step: 30s # [15s, 120s]
+    totp_window: 1 # [0, 2]
+    recovery_code_count: 10 # [5, 20]
+    step_up_reuse_grace: 2m # 登录后 step-up 复用宽限；负值关闭，上限 10m
+  lockout:
+    max_failures: 5 # >= 1
+    window: 15m # 失败统计窗口，> 0
+    duration: 15m # 锁定时长，> 0
+  login_rate_limit:
+    rps: 1 # 账号维度，> 0
+    burst: 5 # >= 1
+    ip_rps: 20 # IP 维度；0 使用默认 20
+    ip_burst: 40 # 0 使用默认 40
+    failure_mode: fail_closed # prod/staging 强制 fail_closed
+  refresh_rate_limit:
+    rps: 10 # refresh / logout 端点；0 使用默认 10
+    burst: 20 # 0 使用默认 20
+    ip_rps: 0 # 0 表示不启用 IP 维度
+    ip_burst: 0 # 0 表示不启用 IP 维度
+    failure_mode: fail_closed # prod/staging 强制 fail_closed
+  consumer:
+    delete_reauth_window: 10m # 自助注销再认证窗口，[1m, 30m]
+  subject:
+    active_key_id: "" # keys 非空时为当前加密密钥 id
+    keys: [] # PII AES-256 密钥环（id + 32B key）；登录端点启用时必填
+  hash_key: "" # ADMIN_FRAME_IDENTITY_HASH_KEY（32B）
+  hash_key_id: v1 # 摘要 key id；仅字母 / 数字 / 下划线 / 短横线
+  previous_hash_keys: [] # 轮换期历史摘要密钥（id + 32B key），仅双读

@@ -144,6 +144,117 @@ func TestLoadRejectsMultipleDocuments(t *testing.T) {
 	}
 }
 
+func TestLoadIncludeLayering(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "base.yaml",
+		"addr: \":8081\"\n"+
+			"log:\n"+
+			"  level: warn\n"+
+			"  format: json\n"+
+			"auth:\n"+
+			"  mode: jwt\n")
+	path := writeFile(t, dir, "app.yaml",
+		"include:\n"+
+			"  - base.yaml\n"+
+			"addr: \":8082\"\n"+
+			"auth:\n"+
+			"  mode: demo\n")
+	cfg := loadConfig(t, newLoader(t, testOptions(path)))
+	if cfg.Addr != ":8082" {
+		t.Fatalf("addr=%q want current file override", cfg.Addr)
+	}
+	if cfg.Log.Level != "warn" || cfg.Log.Format != "json" {
+		t.Fatalf("included fields lost: %+v", cfg.Log)
+	}
+	if cfg.Auth == nil || cfg.Auth.Mode != "demo" {
+		t.Fatalf("auth=%+v want current file override", cfg.Auth)
+	}
+}
+
+func TestLoadIncludeOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "base.yaml", "addr: \":8081\"\n")
+	path := writeFile(t, dir, "app.yaml", "include:\n  - base.yaml\n")
+	cfg := loadConfig(t, newLoader(t, testOptions(path)))
+	if cfg.Addr != ":8081" {
+		t.Fatalf("addr=%q want included value", cfg.Addr)
+	}
+}
+
+func TestLoadIncludeEnvStillWins(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "base.yaml", "addr: \":8081\"\n")
+	path := writeFile(t, dir, "app.yaml", "include:\n  - base.yaml\n")
+	opts := testOptions(path)
+	opts.LookupEnv = envLookup(map[string]string{"APP_ADDR": ":9090"})
+	cfg := loadConfig(t, newLoader(t, opts))
+	if cfg.Addr != ":9090" {
+		t.Fatalf("addr=%q want env override after include", cfg.Addr)
+	}
+}
+
+func TestLoadIncludeStrictUnknownField(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "base.yaml", "unknown_key: 1\n")
+	path := writeFile(t, dir, "app.yaml", "include:\n  - base.yaml\n")
+	_, err := newLoader(t, testOptions(path)).Load()
+	if !errors.Is(err, config.ErrUnknownField) {
+		t.Fatalf("err=%v want ErrUnknownField", err)
+	}
+}
+
+func TestLoadIncludeMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "app.yaml", "include:\n  - modules/absent.yaml\n")
+	_, err := newLoader(t, testOptions(path)).Load()
+	if !errors.Is(err, config.ErrMissingFile) {
+		t.Fatalf("err=%v want ErrMissingFile", err)
+	}
+}
+
+func TestLoadIncludeCycle(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.yaml", "include:\n  - b.yaml\n")
+	writeFile(t, dir, "b.yaml", "include:\n  - a.yaml\n")
+	_, err := newLoader(t, testOptions(filepath.Join(dir, "a.yaml"))).Load()
+	if !errors.Is(err, config.ErrMalformedFile) {
+		t.Fatalf("err=%v want ErrMalformedFile", err)
+	}
+	if !strings.Contains(err.Error(), "include cycle") {
+		t.Fatalf("err=%v want cycle detail", err)
+	}
+}
+
+func TestLoadIncludeDepthLimit(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 9; i++ {
+		content := "addr: \":8081\"\n"
+		if i < 8 {
+			content = "include:\n  - f" + string(rune('0'+i+1)) + ".yaml\n"
+		}
+		writeFile(t, dir, "f"+string(rune('0'+i))+".yaml", content)
+	}
+	_, err := newLoader(t, testOptions(filepath.Join(dir, "f0.yaml"))).Load()
+	if !errors.Is(err, config.ErrMalformedFile) {
+		t.Fatalf("err=%v want ErrMalformedFile", err)
+	}
+	if !strings.Contains(err.Error(), "include depth") {
+		t.Fatalf("err=%v want depth detail", err)
+	}
+}
+
+func TestLoadIncludeMalformedList(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "app.yaml", "include: base.yaml\n")
+	_, err := newLoader(t, testOptions(path)).Load()
+	if !errors.Is(err, config.ErrMalformedFile) {
+		t.Fatalf("err=%v want ErrMalformedFile", err)
+	}
+	if !strings.Contains(err.Error(), "include must be a list") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestLoadValidationFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "app.yaml", "addr: \"\"\n")

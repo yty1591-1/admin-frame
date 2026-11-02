@@ -22,7 +22,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| CFG-01 | 各业务进程必须有 `configs/<name>.yaml.example`（admin / biz / c / worker） | `check-config.sh` |
+| CFG-01 | 各业务进程必须有 `configs/prod/<name>.yaml.example`（admin / biz / c / worker） | `check-config.sh` |
 | CFG-02 | Git 只跟踪 `*.yaml.example`；本地 `configs/*.yaml` 由 `.gitignore` 忽略，禁止提交真实密钥配置 | `check-config.sh` + `.gitignore` |
 | CFG-03 | `LoadConfig` 内部按 CFG-04 顺序加载并由 `Loader` 自动调用 `Validate()`；失败则进程非零退出 | 代码 + 单测 |
 | CFG-04 | 配置优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须插在环境变量与文件之间，并更新本表） | `pkg/config.Loader`（`BindEnv`）+ 单测 |
@@ -35,19 +35,34 @@
 
 ## 3. 文件与命名
 
+配置按「领域模块 + 服务差异」分层声明，服务文件通过顶层 `include:` 组合模块，避免同一段
+`http / auth / redis / db / storage / tracing / iam / identity` 在四个进程间各抄一份。
+
 | 文件 | 用途 |
 |------|------|
-| `configs/admin.yaml.example` | A 端样例 |
-| `configs/biz.yaml.example` | B 端样例 |
-| `configs/c.yaml.example` | C 端样例 |
-| `configs/worker.yaml.example` | worker 样例 |
-| `configs/*.yaml`（本地） | 开发者从 example 复制；**不入库** |
+| `configs/prod/modules/http.yaml.example` | HTTP 运行时基线 |
+| `configs/prod/modules/log.yaml.example` | 日志基线 |
+| `configs/prod/modules/platform.yaml.example` | 雪花 ID、幂等、限流、异步 Outbox |
+| `configs/prod/modules/auth.yaml.example` | JWT 认证基线 |
+| `configs/prod/modules/infra.yaml.example` | Redis / MySQL / 对象存储 / 链路追踪 |
+| `configs/prod/modules/iam.yaml.example` | IAM 基线（enforce） |
+| `configs/prod/modules/identity.yaml.example` | 身份域基线 |
+| `configs/prod/{admin,biz,c,worker}.yaml.example` | 各端差异（service / channel / addr / audience / node_id / CORS 等） |
+| `configs/prod-*.yaml`（本地） | 从对应 example 复制；**不入库**，include 路径改为 `prod/modules/...` |
+
+组合规则：
+
+- `include:` 只能是顶层字段，值为非空路径列表；相对路径按声明文件所在目录解析，绝对路径允许
+- 被包含文件按声明顺序先加载，当前文件最后加载；后出现的字段覆盖先出现的字段，未出现的字段保留
+- 嵌套层数上限 8，出现循环引用或缺失文件直接启动失败；自定义 `Decode` 不解析 include
+- YAML 锚点只在单个文件内有效，跨文件复用请用模块文件而不是锚点
+- 环境变量优先级仍高于所有文件（CFG-04）
 
 本地：
 
 ```bash
-cp configs/admin.yaml.example configs/admin.yaml
-# 按需修改；勿提交
+cp configs/prod/admin.yaml.example configs/prod-admin.yaml
+# 把 include 的 modules/... 改为 prod/modules/...，按需修改；勿提交
 ```
 
 ---
@@ -55,8 +70,8 @@ cp configs/admin.yaml.example configs/admin.yaml
 ## 4. 环境变量覆盖
 
 前缀：`ADMIN_FRAME_`，由 `internal/platform.NewConfigLoader` 交给
-[`pkg/config`](./pkg-roadmap.md) 的 `Loader` 完成：默认值 → 文件 → 环境变量 →
-`normalize` → `Validate`。变量名由 yaml 标签自动推导（`log.level` →
+[`pkg/config`](./pkg-roadmap.md) 的 `Loader` 完成：默认值 → 文件（含 `include` 展开）→
+环境变量 → `normalize` → `Validate`。变量名由 yaml 标签自动推导（`log.level` →
 `ADMIN_FRAME_LOG_LEVEL`），新增字段无需改环境变量代码。
 
 行为约定：
@@ -67,6 +82,10 @@ cp configs/admin.yaml.example configs/admin.yaml
 - 空值（未设置或仅空白）视为未覆盖，无法用环境变量把字段置为空串
 - 只识别由 yaml 标签推导出的规范变量名（如 `ADMIN_FRAME_STORAGE_S3_ACCESS_KEY`），
   不保留历史别名；改名须同步部署清单
+- 仅标量字段与字符串列表（`[]string`，按逗号分隔）会自动推导环境变量；
+  结构体列表与映射字段（`identity.subject.keys`、`identity.mfa.keys`、`identity.oauth.providers`、
+  `identity.previous_hash_keys`、`auth.jwt.keys`、`storage.buckets`）不生成环境变量，
+  必须写入挂载的 Secret 文件或由部署侧（Helm values）生成
 - `auth.mode` 是唯一的鉴权模式开关；已移除 `auth.demo_mode` 旧字段与
   `ADMIN_FRAME_AUTH_DEMO_MODE` 环境变量，不再兼容。残留旧字段会因严格解析
   （未知字段）在启动期失败，须改为 `auth.mode: demo | jwt`
