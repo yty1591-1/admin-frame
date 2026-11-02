@@ -26,4 +26,12 @@ regexes = [
   '''^defaultArgon2KeyLen$''',
   # pkg/jwt/manager_test.go 手工构造的 alg=none 测试向量。
   '''^eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0\.[A-Za-z0-9_-]*\.?$''',
+  # configs/prod/env.example 的随机演练值：文件头已声明「视同泄露、禁止用于生产」。
+  # gitleaks 扫描 git 历史，替换工作区字面量不能消除既有提交中的命中。
+  '''^fd51b4775c2cc81269accb4e1c511c7f4393d159927c95c8$''',
+  '''^ca24256120caa7c42ccaa14f43aa56c8a3d72b4b3cd2ac88b51ed2492101d753$''',
+  '''^AFPRODMNFN5QQZBGXY$''',
+  '''^878d6f395e595e146fd395418bfe4d9cdf0a596cda8ecb88f85b4d95de402c77$''',
+  '''^7a1ec0f4290851c052cee9fb3b972bc5a8c14297c65e4301bb320b3e6f426454$''',
+  '''^a0c1663bfcdb9f923a4d7171709b6b0d36ab2298053a36f4c26cf7a3b5c17c8a$''',
 ]

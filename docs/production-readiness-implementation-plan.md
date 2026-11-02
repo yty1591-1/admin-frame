@@ -613,12 +613,16 @@ deploy/helm/admin-frame/
 **目标**：把 `ALERTS.md` 中的告警从文档变为可执行规则，并建立 SLO / 错误预算与看板。
 
 **实施状态**：`规则/看板已入库（2026-10-24）`。T1～T4、T7 完成：`api/iam/async/db/slo/release`
-规则组、四张 Grafana 看板、OTel Collector 与采样策略；T5 提供 Alertmanager 基线（接收端待接入）；
-T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy` job 安装 promtool）。
+规则组、四张 Grafana 看板、OTel Collector 与采样策略；T5 提供 Alertmanager 基线（接收端待接入）。
+门禁：`make check-alerts`（CI `deploy` job 安装 promtool）。
 
-T6 前置已补齐（2026-11-02）：`DBPoolExhaustion` 的分母此前固定为 `pkg/db` 默认值 25，无法按环境调整；
-现 `db.max_open_conns / max_idle_conns / conn_max_lifetime` 可配置（0 = 沿用默认），
-`values-kind.yaml` 取 6/3 使池耗尽可在个位数并发下稳定复现。
+T6 已完成（2026-11-02，kind 真集群 + 单体 Prometheus v3.1.0，规则与仓库同源）：
+三类注入全部实触发 —— `API5xxRateHigh`（5xx 比率 0.99）、`DBPoolExhaustion`（in_use/max=6/6）、
+`AsyncOutboxBacklog`（pending=1200），且故障撤销后告警均自动退回 inactive。
+演练记录与复现脚本：[alert-drill-ent06.md](./alert-drill-ent06.md)、
+`scripts/observability/alert-drill.sh`（`5xx` / `db-pool` / `outbox` 三个子命令）。
+本轮同时修掉两个 P1：DB 池打满时 `/metrics` 采集阻塞导致**告警自噬**（`db_pool_*` 指标消失、
+`DBPoolExhaustion` 永远不响），以及 `db.max_open_conns` 配置项缺失（池大小无法按环境调整）。
 
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 

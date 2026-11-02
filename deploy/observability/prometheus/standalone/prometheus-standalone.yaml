@@ -1,0 +1,111 @@
+# 单体 Prometheus（不依赖 Prometheus Operator）。
+#
+# 用途：在 kind / 未安装 Operator 的集群里验证 deploy/observability/prometheus/rules
+# 下的规则能否被真实指标触发（ENT-06 T6 故障注入）。
+# 生产仍走 Operator + ServiceMonitor（deploy/helm/admin-frame/templates/servicemonitor.yaml）；
+# 本清单只覆盖「规则能不能响」，不承担生产抓取拓扑。
+#
+# 安装：bash scripts/observability/install-kind-prometheus.sh
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-standalone
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-standalone
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-standalone
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-standalone
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-standalone
+    namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-standalone
+  namespace: monitoring
+  labels:
+    app: prometheus-standalone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-standalone
+  template:
+    metadata:
+      labels:
+        app: prometheus-standalone
+    spec:
+      serviceAccountName: prometheus-standalone
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.1.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/config/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=6h
+            - --web.enable-lifecycle
+          ports:
+            - name: web
+              containerPort: 9090
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/config
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-standalone-config
+        - name: rules
+          configMap:
+            name: prometheus-standalone-rules
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-standalone
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus-standalone
+  ports:
+    - name: web
+      port: 9090
+      targetPort: web

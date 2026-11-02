@@ -7,11 +7,18 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
 // asyncStatsTimeout 是 GaugeFunc 单次查询积压统计的超时，避免采集线程被慢 SQL 拖住。
-const asyncStatsTimeout = 3 * time.Second
+const asyncStatsTimeout = 2 * time.Second
+
+// asyncStatsCacheTTL 是三个 async Gauge 共用快照的有效期。
+//
+// 取值要覆盖 Prometheus 默认抓取间隔（15s）的一部分：同一抓取周期内三个 Gauge
+// 只触发一次查询，DB 慢时 /metrics 响应不会叠加成 N 倍超时。
+const asyncStatsCacheTTL = 2 * time.Second
 
 // AsyncMetrics 是平台级异步基础设施指标集（ENT-03）。
 //
@@ -99,6 +106,11 @@ func (m *AsyncMetrics) OnBrokerConsume(_ context.Context, result string) {
 //
 // 三个 GaugeFunc 各自查询统计；查询失败时 pending/dlq 暴露 0、lag 暴露 0，
 // 投递失败仍可通过 async_outbox_delivery_total{result=dead|poison} 告警。
+//
+// 三个 Gauge 共用一份带 TTL 的快照（metrics.SnapshotCache）：DB 变慢时每个抓取
+// 周期只付一次查询超时，而不是三次；否则 /metrics 响应会慢到超过 Prometheus 的
+// scrape_timeout，导致该进程**全部**指标丢失，连 db_pool_* 也一起消失
+// （ENT-06 T6 实测：DB 池耗尽时 DBPoolExhaustion 反而无法触发）。
 func (m *AsyncMetrics) RegisterGauges(stats func(context.Context) (outbox.Stats, error)) error {
 	if m == nil || m.registerer == nil {
 		return fmt.Errorf("async metrics: metrics is not initialized")
@@ -106,6 +118,7 @@ func (m *AsyncMetrics) RegisterGauges(stats func(context.Context) (outbox.Stats,
 	if stats == nil {
 		return fmt.Errorf("async metrics: stats function is required")
 	}
+	cache := metrics.NewSnapshotCache[outbox.Stats](asyncStatsCacheTTL, stats)
 	counters := []struct {
 		name string
 		help string
@@ -139,10 +152,9 @@ func (m *AsyncMetrics) RegisterGauges(stats func(context.Context) (outbox.Stats,
 		}, func() float64 {
 			ctx, cancel := context.WithTimeout(context.Background(), asyncStatsTimeout)
 			defer cancel()
-			snapshot, err := stats(ctx)
-			if err != nil {
-				return 0
-			}
+			// fresh 与 err 只用于可观测性：采集失败时沿用上一次成功快照，
+			// 避免把「暂时采不到」显示成「积压为 0」。
+			snapshot, _, _ := cache.Get(ctx)
 			return counter.pick(snapshot, time.Now())
 		})
 		if err := m.registerer.Register(gauge); err != nil {

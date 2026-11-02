@@ -32,7 +32,7 @@ func TestDBConfigFromCarriesPoolParams(t *testing.T) {
 
 // TestDBConfigFromMapsPostgresDriver 覆盖 postgres → pgx 的驱动名转换。
 func TestDBConfigFromMapsPostgresDriver(t *testing.T) {
-	got, err := dbConfigFrom(DBConfig{Driver: "postgres", DSN: "postgres://u:p@localhost:5432/db"})
+	got, err := dbConfigFrom(DBConfig{Driver: "postgres", DSN: "postgres://u:p@localhost:5432/db"}) // #nosec G101 -- 测试用假 DSN，非真实凭据
 	if err != nil {
 		t.Fatal(err)
 	}

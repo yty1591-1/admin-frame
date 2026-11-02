@@ -338,8 +338,10 @@
 
 **验收标准**
 
-- [ ] `AC-ENT-06-1`：每条 `ALERTS.md` 告警都有规则文件与 runbook 链接。
-- [ ] `AC-ENT-06-2`：staging 注入故障（5xx / DB 池耗尽 / Outbox 积压）可触发对应告警。
+- [x] `AC-ENT-06-1`：每条 `ALERTS.md` 告警都有规则文件与 runbook 链接（`make check-alerts` 通过）。
+- [x] `AC-ENT-06-2`：staging 注入故障（5xx / DB 池耗尽 / Outbox 积压）可触发对应告警
+      （2026-11-02 kind 真集群实测：`API5xxRateHigh` / `DBPoolExhaustion` / `AsyncOutboxBacklog` 均实触发；
+      记录见 [alert-drill-ent06.md](./alert-drill-ent06.md)）。
 - [ ] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标。
 - [ ] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖。
 

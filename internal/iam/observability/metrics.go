@@ -18,7 +18,14 @@ import (
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/metrics"
 )
+
+// outboxStatsCacheTTL 是 IAM Outbox 两个 Gauge 共用快照的有效期。
+//
+// 取值与平台 async Gauge 对齐：同一抓取周期内只查一次库，DB 慢时 /metrics 不会
+// 因 Gauge 个数而叠加超时。
+const outboxStatsCacheTTL = 2 * time.Second
 
 // Metrics 是 IAM 鉴权指标集，实现缓存 / 加载 / 决策 / shadow 观测接口。
 type Metrics struct {
@@ -148,8 +155,11 @@ func (m *Metrics) OnOutboxDelivered(_ context.Context, result string) {
 
 // RegisterOutboxGauges 注册 iam_outbox_pending 与 iam_outbox_lag_seconds。
 //
-// 两个 GaugeFunc 共用一次统计调用：查询失败按「不可观测」暴露 0，但投递失败
+// 两个 GaugeFunc 共用一次带 TTL 的统计调用：查询失败按「不可观测」暴露 0，但投递失败
 // 会通过 iam_outbox_delivery_total{result=dead|poison} 与日志暴露，不依赖本指标。
+//
+// 共享快照同时避免「每个 Gauge 各查一次」把 /metrics 响应拖到超过 scrape_timeout：
+// DB 慢时该进程的全部指标会一起丢失（ENT-06 T6 实测）。
 func (m *Metrics) RegisterOutboxGauges(stats func() (int, float64, error)) error {
 	if m == nil || m.registerer == nil {
 		return fmt.Errorf("iam observability: metrics is not initialized")
@@ -157,25 +167,40 @@ func (m *Metrics) RegisterOutboxGauges(stats func() (int, float64, error)) error
 	if stats == nil {
 		return fmt.Errorf("iam observability: outbox stats function is required")
 	}
+	type outboxSnapshot struct {
+		pending int
+		lag     float64
+	}
+	cache := metrics.NewSnapshotCache[outboxSnapshot](outboxStatsCacheTTL, func(context.Context) (outboxSnapshot, error) {
+		count, lag, err := stats()
+		if err != nil {
+			return outboxSnapshot{}, err
+		}
+		return outboxSnapshot{pending: count, lag: lag}, nil
+	})
+	snapshot := func() outboxSnapshot {
+		value, _, _ := cache.Get(context.Background())
+		return value
+	}
 	pending := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "iam_outbox_pending",
 		Help: "IAM Outbox 未投递事件数（含重试等待与死信）；持续 >0 说明投递受阻。",
 	}, func() float64 {
-		count, _, err := stats()
-		if err != nil || count < 0 {
+		value := snapshot()
+		if value.pending < 0 {
 			return 0
 		}
-		return float64(count)
+		return float64(value.pending)
 	})
 	lag := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "iam_outbox_lag_seconds",
 		Help: "IAM Outbox 最老未投递事件的积压秒数；持续增长触发 P2 告警。",
 	}, func() float64 {
-		_, seconds, err := stats()
-		if err != nil || seconds < 0 {
+		value := snapshot()
+		if value.lag < 0 {
 			return 0
 		}
-		return seconds
+		return value.lag
 	})
 	for name, collector := range map[string]prometheus.Collector{
 		"pending": pending,

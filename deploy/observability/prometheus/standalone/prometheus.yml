@@ -1,0 +1,42 @@
+# 单体 Prometheus 配置（无 Operator 场景）。
+#
+# 抓取方式：pod role 发现 + 容器端口重写，不依赖 Pod 注解，
+# 因此不需要改 Chart 的 podAnnotations，生产的 ServiceMonitor 路径不受影响。
+#
+# 规则来自 ConfigMap prometheus-standalone-rules（由脚本从
+# deploy/observability/prometheus/rules/*.yaml 生成），保证「验证用的规则」与
+# 「入库的规则」是同一份文件。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: kind
+    env: staging
+rule_files:
+  - /etc/prometheus/rules/*.yaml
+scrape_configs:
+  - job_name: admin-frame
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - admin-frame
+    relabel_configs:
+      # 只抓带 http 容器端口的应用 Pod（Chart 的容器名 = workload 名）。
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        action: keep
+        regex: "admin|biz|c|worker"
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: "http"
+      - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_container_port_number]
+        action: replace
+        regex: "([^;]+);(\\d+)"
+        replacement: "$1:$2"
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: workload
