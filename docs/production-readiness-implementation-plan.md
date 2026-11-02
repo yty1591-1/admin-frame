@@ -616,6 +616,10 @@ deploy/helm/admin-frame/
 规则组、四张 Grafana 看板、OTel Collector 与采样策略；T5 提供 Alertmanager 基线（接收端待接入）；
 T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy` job 安装 promtool）。
 
+T6 前置已补齐（2026-11-02）：`DBPoolExhaustion` 的分母此前固定为 `pkg/db` 默认值 25，无法按环境调整；
+现 `db.max_open_conns / max_idle_conns / conn_max_lifetime` 可配置（0 = 沿用默认），
+`values-kind.yaml` 取 6/3 使池耗尽可在个位数并发下稳定复现。
+
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 
 **任务分解**

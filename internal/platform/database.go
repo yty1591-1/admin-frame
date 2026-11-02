@@ -27,18 +27,36 @@ func sqlDriverName(driver string) (string, error) {
 	}
 }
 
+// dbConfigFrom 把配置映射为 pkg/db 的连接参数（纯函数，便于单测覆盖字段搬运）。
+//
+// 池参数原样传递：0 交由 pkg/db.applyDefaults 填充，避免在两处维护默认值。
+func dbConfigFrom(cfg DBConfig) (db.Config, error) {
+	driver, err := sqlDriverName(cfg.Driver)
+	if err != nil {
+		return db.Config{}, err
+	}
+	return db.Config{
+		Driver:          driver,
+		DSN:             cfg.DSN,
+		MaxOpenConns:    cfg.MaxOpenConns,
+		MaxIdleConns:    cfg.MaxIdleConns,
+		ConnMaxLifetime: cfg.ConnMaxLifetime,
+	}, nil
+}
+
 // OpenDatabase 按配置打开进程数据库；driver=memory 返回 nil（业务使用内存实现）。
 //
-// 连接池默认值由 pkg/db 提供；调用方须在使用完毕后 Close。
+// 连接池参数取自 db.max_open_conns / max_idle_conns / conn_max_lifetime，未配置时由
+// pkg/db 填充默认值；调用方须在使用完毕后 Close。
 func OpenDatabase(ctx context.Context, cfg DBConfig) (*db.DB, error) {
 	if cfg.Driver == "" || cfg.Driver == "memory" {
 		return nil, nil
 	}
-	driver, err := sqlDriverName(cfg.Driver)
+	dbCfg, err := dbConfigFrom(cfg)
 	if err != nil {
 		return nil, err
 	}
-	database, err := db.Open(ctx, db.Config{Driver: driver, DSN: cfg.DSN})
+	database, err := db.Open(ctx, dbCfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: %w", err)
 	}

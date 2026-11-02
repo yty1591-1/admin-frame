@@ -1050,10 +1050,24 @@ func (a AuthConfig) effectiveMode(env string) string {
 	return AuthModeDemo
 }
 
-// DBConfig 数据源驱动与连接串。
+// DBConfig 数据源驱动、连接串与连接池参数。
 type DBConfig struct {
 	Driver string `yaml:"driver"` // memory | mysql | postgres
 	DSN    string `yaml:"dsn"`
+
+	// MaxOpenConns 单进程连接池上限；0 沿用 pkg/db 默认值（25）。
+	//
+	// 该值即 db_pool_max_open_connections 指标与 DBPoolExhaustion 告警的分母，
+	// 容量规划按「副本数 × max_open_conns ≤ MySQL max_connections × 0.8」反推；
+	// 调小后告警更容易命中，故障注入演练用它缩短触发时间。
+	MaxOpenConns int `yaml:"max_open_conns"`
+	// MaxIdleConns 空闲连接数；0 沿用默认值（5），显式设置时不得超过 MaxOpenConns。
+	MaxIdleConns int `yaml:"max_idle_conns"`
+	// ConnMaxLifetime 连接最长存活时间；0 沿用默认值（30m）。
+	//
+	// 必须小于 MySQL wait_timeout，否则拿到的是已被服务端回收的连接（database/sql 会重试，
+	// 但会累积 1 次无效往返）。
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
 // LogValue 实现 slog.LogValuer：DSN 只保留 scheme，避免凭据进日志（SEC-05）。
@@ -1061,6 +1075,9 @@ func (c DBConfig) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("driver", c.Driver),
 		slog.String("dsn", redactDSN(c.DSN)),
+		slog.Int("max_open_conns", c.MaxOpenConns),
+		slog.Int("max_idle_conns", c.MaxIdleConns),
+		slog.Duration("conn_max_lifetime", c.ConnMaxLifetime),
 	)
 }
 
@@ -1839,7 +1856,7 @@ func (c *Config) validateAuth() []error {
 	return errs
 }
 
-// validateDB 校验驱动枚举与 DSN 必填。
+// validateDB 校验驱动枚举、DSN 必填与连接池参数。
 func (c *Config) validateDB() []error {
 	var errs []error
 	switch c.DB.Driver {
@@ -1850,6 +1867,23 @@ func (c *Config) validateDB() []error {
 	}
 	if c.DB.Driver != "memory" && c.DB.DSN == "" {
 		errs = append(errs, fmt.Errorf("db.dsn is required when driver is %s", c.DB.Driver))
+	}
+	// 连接池参数：负值无效（database/sql 会把 0 当作「不限」，负值无意义）；
+	// 显式给出的 idle 超过 open 时，多余的 idle 会被 database/sql 静默丢弃，属于配制错误。
+	if c.DB.MaxOpenConns < 0 {
+		errs = append(errs, errors.New("db.max_open_conns must not be negative"))
+	}
+	if c.DB.MaxIdleConns < 0 {
+		errs = append(errs, errors.New("db.max_idle_conns must not be negative"))
+	}
+	if c.DB.ConnMaxLifetime < 0 {
+		errs = append(errs, errors.New("db.conn_max_lifetime must not be negative"))
+	}
+	if c.DB.MaxOpenConns > 0 && c.DB.MaxIdleConns > c.DB.MaxOpenConns {
+		errs = append(errs, fmt.Errorf(
+			"db.max_idle_conns (%d) must not exceed db.max_open_conns (%d)",
+			c.DB.MaxIdleConns, c.DB.MaxOpenConns,
+		))
 	}
 	return errs
 }

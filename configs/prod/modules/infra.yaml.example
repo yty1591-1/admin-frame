@@ -10,6 +10,9 @@ redis:
 db:
   driver: mysql # memory | mysql | postgres；prod 禁止 memory
   dsn: "" # ADMIN_FRAME_DB_DSN；必须 parseTime=true&loc=UTC
+  max_open_conns: 20 # 单进程池上限；0 用默认 25。容量按「副本数 × 本值 ≤ MySQL max_connections × 0.8」
+  max_idle_conns: 5 # 空闲连接；0 用默认 5，不得大于 max_open_conns
+  conn_max_lifetime: 30m # 必须小于 MySQL wait_timeout（默认 8h）；0 用默认 30m
 
 # 对象存储：prod 禁止 memory/local，密钥只走环境变量。
 storage:

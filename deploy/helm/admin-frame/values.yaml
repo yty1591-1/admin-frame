@@ -57,6 +57,11 @@ config:
   db:
     driver: memory
     dsn: ""
+    # 连接池：0 表示沿用 pkg/db 默认值（open=25 / idle=5 / lifetime=30m）。
+    # max_open_conns 同时是 db_pool_max_open_connections 指标与 DBPoolExhaustion 告警的分母。
+    max_open_conns: 0
+    max_idle_conns: 0
+    conn_max_lifetime: 0s
   redis:
     addr: ""
     username: ""

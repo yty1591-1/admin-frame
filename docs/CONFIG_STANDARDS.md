@@ -148,6 +148,9 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 | `ADMIN_FRAME_CORS_ALLOW_ORIGINS` | `cors.allow_origins`（逗号分隔；生产禁止 `*` + credentials） |
 | `ADMIN_FRAME_DB_DRIVER` | `db.driver` |
 | `ADMIN_FRAME_DB_DSN` | `db.dsn` |
+| `ADMIN_FRAME_DB_MAX_OPEN_CONNS` | `db.max_open_conns`（0 = 默认 25） |
+| `ADMIN_FRAME_DB_MAX_IDLE_CONNS` | `db.max_idle_conns`（0 = 默认 5，且 ≤ `max_open_conns`） |
+| `ADMIN_FRAME_DB_CONN_MAX_LIFETIME` | `db.conn_max_lifetime`（Go duration，0 = 默认 30m） |
 | `ADMIN_FRAME_STORAGE_DRIVER` | `storage.driver`（memory/local/s3/minio/oss/cos/obs） |
 | `ADMIN_FRAME_STORAGE_KEY_PREFIX` | `storage.key_prefix` |
 | `ADMIN_FRAME_STORAGE_LOCAL_ROOT` | `storage.local.root` |
@@ -180,6 +183,7 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 - `auth.mode` ∈ {demo, jwt}；`env=prod/staging` 且未显式声明 mode 时回退 `jwt`（缺 JWT 配置即失败，绝不静默回退 demo）
 - `auth.mode=jwt` ⇒ `auth.jwt.issuer` 非空、`audience` 含当前 channel、算法密钥满足长度/文件要求
 - `db.driver` ∈ {memory, mysql, postgres}；非 memory 时 `db.dsn` 必填
+- `db.max_open_conns` / `max_idle_conns` / `conn_max_lifetime` ≥ 0；0 表示沿用 `pkg/db` 默认值（25 / 5 / 30m）；显式给出时 `max_idle_conns ≤ max_open_conns`（超出部分会被 `database/sql` 静默截断）；`max_open_conns` 是 `db_pool_max_open_connections` 指标与 `DBPoolExhaustion` 告警的分母，容量按「副本数 × 本值 ≤ MySQL `max_connections` × 0.8」反推；`conn_max_lifetime` 必须小于 MySQL `wait_timeout`
 - `storage.driver` ∈ {memory, local, s3, minio, oss, cos, obs}；`local` 时 `storage.local.root` 必填；`env=prod` 禁止 `memory`；命名桶内禁止嵌套 `buckets`
 - `log.level` ∈ {debug, info, warn, error}；`log.format` ∈ {json, text}；`env=prod` 禁止 `text`（避免 `logger.Must` panic）
 - `http.read_header_timeout` / `max_header_bytes` / `timeout` / `body_limit_bytes` ≥ 0；`env=prod` 时 `http.timeout > 0`

@@ -31,6 +31,11 @@ config:
   db:
     driver: mysql
     dsn: "" # 由 Secret admin-frame-db 注入
+    # 本地集群刻意把池压小：ENT-06 T6 的 DBPoolExhaustion 注入需要 in_use/max > 0.9
+    # 持续 5m，池越小越容易在个位数并发下命中，且不会打坏 kind 节点。
+    max_open_conns: 6
+    max_idle_conns: 3
+    conn_max_lifetime: 10m
   redis:
     addr: redis.admin-frame.svc.cluster.local:6379
     key_prefix: "admin-frame/kind/"
