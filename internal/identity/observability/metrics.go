@@ -18,28 +18,28 @@ import (
 
 // Metrics 是身份域指标集，实现 app.Metrics 与 app.RevocationObserver。
 type Metrics struct {
-	loginTotal           *prometheus.CounterVec
-	loginDuration        *prometheus.HistogramVec
-	loginTxDuration      *prometheus.HistogramVec
-	lockoutTotal         *prometheus.CounterVec
-	mfaVerifyTotal       *prometheus.CounterVec
-	mfaRecoveryUsed      prometheus.Counter
-	refreshTotal         *prometheus.CounterVec
-	refreshDuration      *prometheus.HistogramVec
-	mfaVerifyDuration    *prometheus.HistogramVec
-	stepUpDuration       *prometheus.HistogramVec
+	loginTotal            *prometheus.CounterVec
+	loginDuration         *prometheus.HistogramVec
+	loginTxDuration       *prometheus.HistogramVec
+	lockoutTotal          *prometheus.CounterVec
+	mfaVerifyTotal        *prometheus.CounterVec
+	mfaRecoveryUsed       prometheus.Counter
+	refreshTotal          *prometheus.CounterVec
+	refreshDuration       *prometheus.HistogramVec
+	mfaVerifyDuration     *prometheus.HistogramVec
+	stepUpDuration        *prometheus.HistogramVec
 	oauthCallbackDuration *prometheus.HistogramVec
-	tokenReuseTotal      prometheus.Counter
-	sessionRevokeTotal   *prometheus.CounterVec
-	smsSendTotal         *prometheus.CounterVec
-	smsProviderAlert     *prometheus.CounterVec
-	oauthCallbackTotal   *prometheus.CounterVec
-	revocationStoreError *prometheus.CounterVec
-	stateWriteErrors     *prometheus.CounterVec
-	l1Hits               *prometheus.CounterVec
-	redisCalls           *prometheus.CounterVec
-	dbRefetches          *prometheus.CounterVec
-	registerer           prometheus.Registerer
+	tokenReuseTotal       prometheus.Counter
+	sessionRevokeTotal    *prometheus.CounterVec
+	smsSendTotal          *prometheus.CounterVec
+	smsProviderAlert      *prometheus.CounterVec
+	oauthCallbackTotal    *prometheus.CounterVec
+	revocationStoreError  *prometheus.CounterVec
+	stateWriteErrors      *prometheus.CounterVec
+	l1Hits                *prometheus.CounterVec
+	redisCalls            *prometheus.CounterVec
+	dbRefetches           *prometheus.CounterVec
+	registerer            prometheus.Registerer
 	// loginCount / startedAt 用于 identity_login_qps（PERF-08 的 HPA 辅助信号）。
 	loginCount atomic.Uint64
 	startedAt  time.Time

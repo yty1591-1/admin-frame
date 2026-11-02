@@ -136,14 +136,14 @@ func WithHasher(hasher *crypto.Hasher) LoginGuardOption {
 //
 // 审计事件在阶段 5 与业务写入同事务落 Outbox；本阶段只保证状态迁移与计数正确。
 type LoginGuard struct {
-	accounts domain.AccountRepository
-	attempts domain.LoginAttemptRepository
-	ids      IDGenerator
-	policy   LockoutPolicy
-	limiter  LoginLimiter
+	accounts  domain.AccountRepository
+	attempts  domain.LoginAttemptRepository
+	ids       IDGenerator
+	policy    LockoutPolicy
+	limiter   LoginLimiter
 	ipLimiter LoginLimiter
-	counter  LoginFailureCounter
-	hasher   *crypto.Hasher
+	counter   LoginFailureCounter
+	hasher    *crypto.Hasher
 }
 
 // NewLoginGuard 构造登录守卫；仓储、ID 生成器与策略均必填。

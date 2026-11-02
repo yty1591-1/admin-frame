@@ -173,37 +173,37 @@ type AuthService struct {
 	revocation   RevocationStore
 	invalidation *RevocationInvalidator
 	// sessionStateTTL 会话撤销快照最大陈旧度；与账号快照共享 ≤60s 上限。
-	sessionStateTTL time.Duration
-	observer        RevocationObserver
-	metrics         Metrics
-	hasher          *crypto.Hasher
-	logger          *slog.Logger
-	audit           audit.Emitter
-	ids             IDGenerator
-	channel         domain.Channel
-	uow             UnitOfWork
-	idleTimeout     time.Duration
-	absoluteTTL     time.Duration
-	maxPerAccount   int
-	refreshGrace    time.Duration
-	passwordHistoryCount  int
-	passwordHistoryWindow time.Duration
-	service         string
-	actorType       string
-	clock           Clock
-	mfa             domain.MFAEnrollmentRepository
-	mfaCipher       MFASecretCipher
-	mfaTickets      MFATicketStore
-	mfaIssuer       string
-	mfaChannels     map[domain.Channel]bool
-	mfaFactors      map[MFAFactor]bool
-	mfaRequired     bool
-	mfaTOTP         totp.Policy
-	mfaRecoveryCodes int
-	stepUpReuseGrace time.Duration
+	sessionStateTTL         time.Duration
+	observer                RevocationObserver
+	metrics                 Metrics
+	hasher                  *crypto.Hasher
+	logger                  *slog.Logger
+	audit                   audit.Emitter
+	ids                     IDGenerator
+	channel                 domain.Channel
+	uow                     UnitOfWork
+	idleTimeout             time.Duration
+	absoluteTTL             time.Duration
+	maxPerAccount           int
+	refreshGrace            time.Duration
+	passwordHistoryCount    int
+	passwordHistoryWindow   time.Duration
+	service                 string
+	actorType               string
+	clock                   Clock
+	mfa                     domain.MFAEnrollmentRepository
+	mfaCipher               MFASecretCipher
+	mfaTickets              MFATicketStore
+	mfaIssuer               string
+	mfaChannels             map[domain.Channel]bool
+	mfaFactors              map[MFAFactor]bool
+	mfaRequired             bool
+	mfaTOTP                 totp.Policy
+	mfaRecoveryCodes        int
+	stepUpReuseGrace        time.Duration
 	temporaryPasswordLength int
-	deleteReauthWindow time.Duration
-	passwordPolicyFor func(merchantID string) PasswordPolicy
+	deleteReauthWindow      time.Duration
+	passwordPolicyFor       func(merchantID string) PasswordPolicy
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。
@@ -308,45 +308,45 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		}
 	}
 	svc := &AuthService{
-		accounts:        cfg.Accounts,
-		credentials:     cfg.Credentials,
-		sessions:        cfg.Sessions,
-		guard:           cfg.Guard,
-		password:        cfg.Password,
-		tokens:          cfg.Tokens,
-		revocation:      cfg.Revocation,
-		invalidation:    invalidation,
-		sessionStateTTL: clampAccountStateTTL(cfg.RevocationStateTTL),
-		observer:        cfg.RevocationObserver,
-		metrics:         cfg.Metrics,
-		hasher:          cfg.Hasher,
-		logger:          cfg.Logger,
-		audit:           cfg.Audit,
-		ids:             cfg.IDs,
-		channel:         cfg.Channel,
-		uow:             uow,
-		idleTimeout:     idle,
-		absoluteTTL:     absoluteTTL,
-		maxPerAccount:   maxPerAccount,
-		refreshGrace:    cfg.RefreshGrace,
-		passwordHistoryCount:  passwordHistoryCount,
-		passwordHistoryWindow: passwordHistoryWindow,
-		service:         cfg.Service,
-		actorType:       actorType,
-		clock:           clock,
-		mfa:             cfg.MFA,
-		mfaCipher:       cfg.MFACipher,
-		mfaTickets:      cfg.MFATickets,
-		mfaIssuer:       mfaIssuer,
-		mfaChannels:     mfaChannels,
-		mfaFactors:      mfaFactors,
-		mfaRequired:     mfaRequired,
-		mfaTOTP:         mfaTOTP,
-		mfaRecoveryCodes: recoveryCodes,
-		stepUpReuseGrace: stepUpReuseGrace,
+		accounts:                cfg.Accounts,
+		credentials:             cfg.Credentials,
+		sessions:                cfg.Sessions,
+		guard:                   cfg.Guard,
+		password:                cfg.Password,
+		tokens:                  cfg.Tokens,
+		revocation:              cfg.Revocation,
+		invalidation:            invalidation,
+		sessionStateTTL:         clampAccountStateTTL(cfg.RevocationStateTTL),
+		observer:                cfg.RevocationObserver,
+		metrics:                 cfg.Metrics,
+		hasher:                  cfg.Hasher,
+		logger:                  cfg.Logger,
+		audit:                   cfg.Audit,
+		ids:                     cfg.IDs,
+		channel:                 cfg.Channel,
+		uow:                     uow,
+		idleTimeout:             idle,
+		absoluteTTL:             absoluteTTL,
+		maxPerAccount:           maxPerAccount,
+		refreshGrace:            cfg.RefreshGrace,
+		passwordHistoryCount:    passwordHistoryCount,
+		passwordHistoryWindow:   passwordHistoryWindow,
+		service:                 cfg.Service,
+		actorType:               actorType,
+		clock:                   clock,
+		mfa:                     cfg.MFA,
+		mfaCipher:               cfg.MFACipher,
+		mfaTickets:              cfg.MFATickets,
+		mfaIssuer:               mfaIssuer,
+		mfaChannels:             mfaChannels,
+		mfaFactors:              mfaFactors,
+		mfaRequired:             mfaRequired,
+		mfaTOTP:                 mfaTOTP,
+		mfaRecoveryCodes:        recoveryCodes,
+		stepUpReuseGrace:        stepUpReuseGrace,
 		temporaryPasswordLength: tempPasswordLength,
-		deleteReauthWindow: deleteReauthWindow,
-		passwordPolicyFor: cfg.PasswordPolicyFor,
+		deleteReauthWindow:      deleteReauthWindow,
+		passwordPolicyFor:       cfg.PasswordPolicyFor,
 	}
 	return svc, nil
 }
@@ -1853,5 +1853,3 @@ func (s *AuthService) recordPasswordChange(credential *domain.Credential, now ti
 	credential.RecordPasswordChange(credential.Hash, credential.Algorithm, now,
 		s.passwordHistoryCount, s.passwordHistoryWindow)
 }
-
-

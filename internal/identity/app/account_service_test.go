@@ -357,7 +357,7 @@ func TestAccountServiceStepUpReusesLoginStep(t *testing.T) {
 	}
 	if err := svc.Lock(ctx, app.LockAccountInput{
 		AccountOperationInput: app.AccountOperationInput{
-			Actor: app.SessionActor{AccountID: "acct-op", TraceID: "trace-stepup-reuse"},
+			Actor:           app.SessionActor{AccountID: "acct-op", TraceID: "trace-stepup-reuse"},
 			TargetAccountID: "acct-target",
 			MFACode:         code,
 		},

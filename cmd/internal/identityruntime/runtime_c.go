@@ -260,17 +260,17 @@ func buildOAuthService(
 	}
 
 	service, err := app.NewOAuthService(app.OAuthServiceConfig{
-		Providers:     providers,
-		States:        states,
-		Identities:    identities,
-		Accounts:      accounts,
-		IDs:           deps.IDs,
-		Auth:          authSvc,
-		Hasher:        hasher,
-		AutoProvision: cfg.Identity.OAuth.AutoProvision,
-		StateTTL:      app.DefaultOAuthStateTTL,
-		Metrics:       metrics,
-		Limiter:       limiter,
+		Providers:       providers,
+		States:          states,
+		Identities:      identities,
+		Accounts:        accounts,
+		IDs:             deps.IDs,
+		Auth:            authSvc,
+		Hasher:          hasher,
+		AutoProvision:   cfg.Identity.OAuth.AutoProvision,
+		StateTTL:        app.DefaultOAuthStateTTL,
+		Metrics:         metrics,
+		Limiter:         limiter,
 		BreakerFailures: cfg.Identity.OAuth.BreakerFailures,
 		BreakerTimeout:  cfg.Identity.OAuth.BreakerTimeout,
 	})
