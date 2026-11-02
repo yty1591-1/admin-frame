@@ -725,7 +725,7 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 
 | ID | 任务包 | 关键产出 | 依赖 | 验收摘要 |
 |---|---|---|---|---|
-| `ENT-09` | 租户模型与生命周期 | `internal/tenant`；`tenant` / `tenant_quota` / `tenant_member` 表；状态机 `pending → active → suspended → terminated`；与身份、IAM、缓存、令牌联动 | ENT-01、ENT-12 | 停用 ≤ 60s 拒绝访问；退出按策略处置；全链路审计 |
+| `ENT-09` | 租户模型与生命周期 | `internal/tenant`；`tenant` / `tenant_quota` / `tenant_member` 表；状态机 `pending → active → suspended → terminated`；与身份、IAM、缓存、令牌联动 | ENT-01、ENT-04 | 停用 ≤ 60s 拒绝访问；退出按策略处置；全链路审计 |
 | `ENT-10` | 通知 / Webhook 投递编排 | `internal/notification`：模板、偏好、去重、限流、重试、DLQ、状态查询；复用 `pkg/sms|email|push|webhook` | ENT-03 | 至少一次且幂等；失败可重试 / 补偿；投递指标可见 |
 | `ENT-11` | 特性开关与灰度 | `internal/featureflag`：规则、百分比灰度（按 subject 哈希）、审计、到期清理 | ENT-01 | 秒级开关；关闭即回退；无长期遗留 flag |
 | `ENT-12` | 数据范围契约 | `Principal` 增加 scope；`internal/shared/authz` 提供 `EnforceMerchant` / `ScopeWhere`；仓储强制过滤 | ENT-01、ENT-09 | 跨租户读写被拒绝；越权自动化用例通过 |
@@ -735,6 +735,10 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | `ENT-16` | 测试基础设施 | `pkg/testkit`（MySQL / Redis / MinIO）；`tests/integration`；`tests/e2e`；契约测试；负载基线 | — | CI 跑真实依赖集成；三端 E2E 主链路；压测基线登记 |
 | `ENT-17` | 发布自动化与迁移门禁 | `.github/workflows/release.yml`：staging → prod 审批；迁移前置；金丝雀指标；自动 / 一键回滚 | ENT-02、ENT-05、ENT-16 | 发布可重复；迁移失败阻断；异常自动回滚 |
 | `ENT-18` | 值班与事故管理 | on-call 排班、P1/P2 分级矩阵、升级路径、Postmortem 模板、Game Day | ENT-06 | 一次演练完成；P1 5 分钟内触达；复盘行动项跟踪 |
+
+> 依赖修正（2026-11-02）：`ENT-09` 原写依赖 `ENT-01、ENT-12`，与 `ENT-12` 依赖 `ENT-09` 互为前置，形成无法启动的环。
+> 按 §5.1 约束 1「租户是唯一隔离边界」，租户表必须先落地，数据范围强制才有所依附，故 `ENT-09` 改为依赖 `ENT-01、ENT-04`
+> （验收项「全链路审计」需要可查询的审计出口）。执行顺序固定为 `ENT-09 → ENT-12`。
 
 ### 5.1 P1 关键设计约束
 
@@ -945,10 +949,10 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | ENT-01 | P0 | Wave 1 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
-| ENT-04 | P0 | Wave 1 | 进行中（2026-11-02 核对：T1/T2/T3 以 `identity_audit_event` 表 + `internal/shared/audit/sqlstore.go` 落库，含哈希链；**T4 查询 API / T5 导出 / T6 保留归档任务 / T7 `audit.store` 开关未做**） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
+| ENT-04 | P0 | Wave 1 | 进行中（2026-11-02：T1～T4、T6、T7 完成——表重命名为 `audit_event`（迁移 `000006`）、`internal/audit` 域提供查询 / 导出 / 分批清理、`audit.*` 配置与 `make check-audit` 通过；**T5 仅同步流式 CSV 导出，异步导出任务未做**） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | Wave 2 | 进行中（制品已入库 2026-10-24；**仅剩 staging `kubectl --dry-run=server` 与滚动 / 回滚演练**） | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
 | ENT-06 | P0 | Wave 2 | 进行中（规则 / 看板 / `alertmanager.yaml` 已入库；**仅剩 staging 故障注入 + 接收端接入**） | 告警规则 / 看板 / SLO 代码化并演练 |
-| ENT-07 | P0 | Wave 2 | 待做（代码侧仅 `pkg/jwt` 密钥环 + `kid` 就绪；**`internal/platform/secrets` Provider、Vault / KMS 适配、凭据轮换、两个轮换 runbook 均未做**） | 密钥托管 + 不停机轮换演练 |
+| ENT-07 | P0 | Wave 2 | 进行中（2026-11-02：T1/T2 完成——`internal/platform/secrets` 提供 `Provider` / `Resolver` / `Chain` 与 env、file 两种实现，含目录穿越防护与启动期 fail-fast；T5 复用既有 `pkg/jwt` 密钥环 + `kid`，轮换与泄露手册见 `docs/runbooks/key-rotation.md` / `key-compromise.md`；**T3 Vault / KMS 适配与 T4 配置接入未做**） | 密钥托管 + 不停机轮换演练 |
 | ENT-08 | P0 | Wave 2 | 进行中（脚本 / CronJob / runbook 已入库；**仅剩 staging 全量 + PITR 恢复演练**，RPO/RTO 待业务确认） | 备份 + PITR 恢复演练 + RPO/RTO |
 | ENT-09 | P1 | Wave 3 | 待做（无 `internal/tenant`，无 `tenant*` 表） | 租户生命周期与 IAM / 令牌联动 |
 | ENT-10 | P1 | Wave 3 | 待做（`pkg/{sms,email,push,webhook}` 驱动已就绪，编排层 `internal/notification` 未建） | 通知 / Webhook 投递编排与状态 |
@@ -976,6 +980,8 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | 2026-10-22 | ENT-02 多实例运行语义落地 | 完成 | NodeID 配置化 + Deps.IDs、Redis 幂等存储、Redis 令牌桶、`publish_in_api` / worker 发布器、multiinstance 集成用例与 `check-idempotency` 门禁；T4 逐 operation 标注单独跟进 |
 | 2026-10-22 | ENT-03 通用异步基础设施落地 | 完成 | `pkg/outbox`（Store/Relay/Router/Deduper/DLQ）、`AsyncRuntime`、`async.*` 配置、IAM 完整迁移（已并入 `000005` 基线）、`check-outbox` 门禁与 `async-dlq` runbook；集成用例覆盖 AC-ENT-03-1～5 |
 | 2026-11-02 | 全量状态核对（代码 vs 状态表） | 完成 | 逐条比对仓库实现，修正 8 条滞后状态：`ENT-04` 待做→进行中（`identity_audit_event` + `shared/audit/sqlstore.go` 已落，T4～T7 仍缺）、`ENT-12` / `ENT-14` / `ENT-16` 待做→进行中（`shared/authz`、`pkg/ratelimit`、`pkg/testkit` + 集成用例已落）、`ENT-05/06/08` 补齐「仅剩 staging 演练」口径、`ENT-07/18` 标注已就绪的代码切片。核对命令：`ls internal/ pkg/ tests/`、`grep -rn "audit_events\|tenant" migrations/`、`find . -name release.yml` |
+| 2026-11-02 | ENT-04 审计查询 / 导出 / 保留落地 | 部分完成 | 新增 `internal/audit`（domain/app/infrastructure/transport）与 `cmd/internal/auditruntime`；`GET /admin/v1/audit/events`（时间窗必填、31 天上限、`audit:read`）、`GET /admin/v1/audit/events/export`（CSV 流式、`max_rows` 超限拒绝、导出记 `data.export`）；worker 侧 `audit.retention` 分批清理 + `dry_run` / `legal_hold` 与 `audit.retention_purge` 元审计；迁移 `000006` 把 `identity_audit_event` 重命名为 `audit_event` 并新增 action / channel 索引。验证：`go build ./...`、`go test ./internal/audit/... ./internal/platform/...`、`golangci-lint run ./internal/audit/...`（0 issues）、`make check-audit / check-layering / check-transport / check-config / check-migrations` 通过。未含：异步导出任务（复用 ENT-10 编排）、哈希链（T3 可选项目前仍关闭） |
+| 2026-11-02 | ENT-07 密钥 Provider 基础层 | 部分完成 | 新增 `internal/platform/secrets`：`Provider`（Get / GetBytes / Close）、`Resolver.Require`（启动期批量取密钥，缺失即失败且错误只含密钥名）、`Chain`（显式顺序组合，非 NotFound 不降级）、`EnvProvider`（名单映射 `<PREFIX>NAME`）、`FileProvider`（子目录布局、去尾随换行、拒绝目录穿越 / 绝对路径 / 盘符）；补 `docs/runbooks/key-rotation.md`、`key-compromise.md`（此前在计划中被引用但文件不存在，RB-02/RB-03 现已通过）。验证：`go test ./internal/platform/secrets/...`、`golangci-lint run ./internal/platform/secrets/...`（0 issues）、`make check-runbooks / check-doclinks` 通过。未含：T3 Vault / KMS 适配（需新增依赖，按 DEP 走评审）、T4 配置接入（`db.dsn` / JWT / 摘要密钥统一走 Provider） |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---
