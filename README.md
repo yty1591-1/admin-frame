@@ -62,6 +62,7 @@ curl -s http://127.0.0.1:8083/readyz
 
 ## 工程规范
 
+- **文档地图**：[docs/README.md](docs/README.md)（文档分层、门禁对照、新增与归档判据）
 - 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **注释硬约束**：[docs/COMMENT_STANDARDS.md](docs/COMMENT_STANDARDS.md)（C-01～C-10）
 - **代码风格硬约束**：[docs/CODE_STYLE.md](docs/CODE_STYLE.md)（S-01～S-12）

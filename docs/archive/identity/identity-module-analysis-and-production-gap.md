@@ -6,7 +6,7 @@
 > - 结构性改造实施计划与验收标准：[identity-p1-remaining-implementation-plan.md](./identity-p1-remaining-implementation-plan.md)
 > - 剩余 P1 执行记录：[identity-p1-remaining-completion-report.md](./identity-p1-remaining-completion-report.md)
 > - P1-1 执行报告：[identity-p1-1-argon2-execution-report.md](./identity-p1-1-argon2-execution-report.md)
-> - SLO 与容量基线：[identity-slo.md](./identity-slo.md)
+> - SLO 与容量基线：[identity-slo.md](../.././identity-slo.md)
 
 ---
 

@@ -4,7 +4,7 @@
 > **审查方式**：静态代码审查（未执行压测与故障注入）。
 > **审查日期**：2026-10-29。
 > **基线**：当前 `main` 工作区；行号可能在后续提交中漂移，定位以文件与函数名为准。
-> **关联文档**：[identity-authn.md](./identity-authn.md)、[production-readiness-gaps.md](./production-readiness-gaps.md)、[AUDIT_STANDARDS.md](./AUDIT_STANDARDS.md)、[CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md)。
+> **关联文档**：[identity-authn.md](../.././identity-authn.md)、[production-readiness-gaps.md](../.././production-readiness-gaps.md)、[AUDIT_STANDARDS.md](../.././AUDIT_STANDARDS.md)、[CONFIG_STANDARDS.md](../.././CONFIG_STANDARDS.md)。
 
 ## 一、结论摘要
 
@@ -45,11 +45,11 @@
 
 **现状（证据）**
 
-- `RevocationChecker.loadState` 命中 Redis 后直接返回，不再回源数据库：[revocation.go](../internal/identity/app/revocation.go#L145-L162)。
-- 账号快照缓存 TTL 下限为 1 小时：[revocation.go](../internal/identity/app/revocation.go#L23-L24)；默认取 `access_ttl + 1m`，实际通常为 1h。
-- `LogoutAll` 与 `DisableMFA` 都在数据库事务提交后才写快照：[auth_service.go](../internal/identity/app/auth_service.go#L671-L676)、[mfa.go](../internal/identity/app/mfa.go#L592-L601)。写失败会返回 500，但数据库已提交；进程在提交与写缓存之间崩溃同样留下窗口。
-- `RevocationChecker` 比较的是 `claims.ver < state.Version`；缓存仍是旧版本时，旧令牌的 `ver` 与缓存版本相等，直接放行：[revocation.go](../internal/identity/app/revocation.go#L116-L142)。
-- 文档承诺账号禁用/改密 ≤60s 生效：[identity-authn.md](./identity-authn.md#L363-L367)。
+- `RevocationChecker.loadState` 命中 Redis 后直接返回，不再回源数据库：[revocation.go](../../../internal/identity/app/revocation.go#L145-L162)。
+- 账号快照缓存 TTL 下限为 1 小时：[revocation.go](../../../internal/identity/app/revocation.go#L23-L24)；默认取 `access_ttl + 1m`，实际通常为 1h。
+- `LogoutAll` 与 `DisableMFA` 都在数据库事务提交后才写快照：[auth_service.go](../../../internal/identity/app/auth_service.go#L671-L676)、[mfa.go](../../../internal/identity/app/mfa.go#L592-L601)。写失败会返回 500，但数据库已提交；进程在提交与写缓存之间崩溃同样留下窗口。
+- `RevocationChecker` 比较的是 `claims.ver < state.Version`；缓存仍是旧版本时，旧令牌的 `ver` 与缓存版本相等，直接放行：[revocation.go](../../../internal/identity/app/revocation.go#L116-L142)。
+- 文档承诺账号禁用/改密 ≤60s 生效：[identity-authn.md](../.././identity-authn.md#L363-L367)。
 
 **影响**
 
@@ -80,10 +80,10 @@
 
 **现状（证据）**
 
-- A/B 端首个管理员由迁移 [`000005_seed_bootstrap_admin`](../migrations/000005_seed_bootstrap_admin.up.sql) 开通；C 端只能走短信 / OAuth 自助开户，没有密码凭据。
-- 应用层没有改密、重置密码、禁用、启用、解锁、重置 MFA 的用例或 HTTP 端点。`Account.Disable`、`ChangePassword`、`Unlock` 只被领域测试调用：[account.go](../internal/identity/domain/account.go#L253-L313)。
-- C 端短信登录按 `phone:<hash>` 查找已存在账号，找不到直接失败：[sms_login.go](../internal/identity/app/sms_login.go#L227-L243)；仓库内没有任何创建 `phone` 凭据或绑定手机号的路径（`CredentialTypePhone` 只在领域与测试中出现）。
-- OAuth 只有在 `auto_provision=true` 时才自动建号：[oauth.go](../internal/identity/app/oauth.go#L228-L280)；默认 `auto_provision=false`。
+- A/B 端首个管理员由迁移 [`000005_seed_bootstrap_admin`](../../../migrations/000005_seed_bootstrap_admin.up.sql) 开通；C 端只能走短信 / OAuth 自助开户，没有密码凭据。
+- 应用层没有改密、重置密码、禁用、启用、解锁、重置 MFA 的用例或 HTTP 端点。`Account.Disable`、`ChangePassword`、`Unlock` 只被领域测试调用：[account.go](../../../internal/identity/domain/account.go#L253-L313)。
+- C 端短信登录按 `phone:<hash>` 查找已存在账号，找不到直接失败：[sms_login.go](../../../internal/identity/app/sms_login.go#L227-L243)；仓库内没有任何创建 `phone` 凭据或绑定手机号的路径（`CredentialTypePhone` 只在领域与测试中出现）。
+- OAuth 只有在 `auto_provision=true` 时才自动建号：[oauth.go](../../../internal/identity/app/oauth.go#L228-L280)；默认 `auto_provision=false`。
 - `auth.account.disabled` 审计 action 已定义，但全仓没有发出点。
 
 **影响**
@@ -122,10 +122,10 @@
 
 **现状（证据）**
 
-- `RecordFailure` 只在 `account.Status == active` 时执行 `Lock`：[login_guard.go](../internal/identity/app/login_guard.go#L199-L207)。`pending` 账号永远不会锁定，而 seed 创建出来的账号正是 `pending`。
-- 锁定期满后，`Authorize` 因 `LockedUntil` 已过而放行：[login_guard.go](../internal/identity/app/login_guard.go#L151-L162)；但 `RecordFailure` 看到状态仍是 `locked`，直接返回，不再计数或重新锁定。`TryUnlockExpired` 只在 `RecordSuccess` 中调用：[login_guard.go](../internal/identity/app/login_guard.go#L210-L248)。
-- 失败计数是“先 `Append`，再 `CountFailuresSince`，最后 `Save`”：并发请求在默认 REPEATABLE READ 隔离级别下互相看不到未提交记录，阈值可能漏判；临界点 `Save` 返回版本冲突后，被上层包装成 500：[auth_service.go](../internal/identity/app/auth_service.go#L303-L315)。
-- `emitAccountLockedIfNeeded` 只看最终状态，对已经锁定的账号每次失败都会重复发 `auth.account.locked`：[auth_service.go](../internal/identity/app/auth_service.go#L944-L950)。
+- `RecordFailure` 只在 `account.Status == active` 时执行 `Lock`：[login_guard.go](../../../internal/identity/app/login_guard.go#L199-L207)。`pending` 账号永远不会锁定，而 seed 创建出来的账号正是 `pending`。
+- 锁定期满后，`Authorize` 因 `LockedUntil` 已过而放行：[login_guard.go](../../../internal/identity/app/login_guard.go#L151-L162)；但 `RecordFailure` 看到状态仍是 `locked`，直接返回，不再计数或重新锁定。`TryUnlockExpired` 只在 `RecordSuccess` 中调用：[login_guard.go](../../../internal/identity/app/login_guard.go#L210-L248)。
+- 失败计数是“先 `Append`，再 `CountFailuresSince`，最后 `Save`”：并发请求在默认 REPEATABLE READ 隔离级别下互相看不到未提交记录，阈值可能漏判；临界点 `Save` 返回版本冲突后，被上层包装成 500：[auth_service.go](../../../internal/identity/app/auth_service.go#L303-L315)。
+- `emitAccountLockedIfNeeded` 只看最终状态，对已经锁定的账号每次失败都会重复发 `auth.account.locked`：[auth_service.go](../../../internal/identity/app/auth_service.go#L944-L950)。
 
 **影响**
 
@@ -159,10 +159,10 @@
 
 **现状（证据）**
 
-- prod/staging 对 `channel != c` 强制 `identity.mfa.admin_required=true`：[config.go](../internal/platform/config.go#L1496-L1509)。
-- `mfaChallenge` 只要 `s.channel != admin` 就直接返回 `mfaGateNotRequired`：[mfa.go](../internal/identity/app/mfa.go#L289-L301)。
-- `SetupMFA` / `VerifyMFA` 对非 admin 直接返回 40000：[mfa.go](../internal/identity/app/mfa.go#L79-L82)、[mfa.go](../internal/identity/app/mfa.go#L191-L197)。
-- B 端路由没有注册任何 MFA 端点：[router.go](../internal/identity/transport/biz/router.go#L16-L28)。
+- prod/staging 对 `channel != c` 强制 `identity.mfa.admin_required=true`：[config.go](../../../internal/platform/config.go#L1496-L1509)。
+- `mfaChallenge` 只要 `s.channel != admin` 就直接返回 `mfaGateNotRequired`：[mfa.go](../../../internal/identity/app/mfa.go#L289-L301)。
+- `SetupMFA` / `VerifyMFA` 对非 admin 直接返回 40000：[mfa.go](../../../internal/identity/app/mfa.go#L79-L82)、[mfa.go](../../../internal/identity/app/mfa.go#L191-L197)。
+- B 端路由没有注册任何 MFA 端点：[router.go](../../../internal/identity/transport/biz/router.go#L16-L28)。
 - `configs/biz.yaml.example` 没有 `mfa` 段，开启 identity 后按生产校验会因缺少 `admin_required/secret_key` 启动失败。
 
 **影响**
@@ -200,11 +200,11 @@
 
 **现状（证据）**
 
-- 每次刷新都创建新的 `identity_session` 行：[auth_service.go](../internal/identity/app/auth_service.go#L826-L857)；旧行只标记 `rotated`，不删除。
-- `ListByAccount` 返回账号全部会话，按创建时间倒序，无分页、无 family 聚合：[mysql_session.go](../internal/identity/infrastructure/persistence/mysql_session.go#L184-L210)。
-- `Session` 与 `sessionDTO` 没有 IP/UA 字段：[session.go](../internal/identity/domain/session.go#L81-L108)、[handler.go](../internal/identity/transport/rest/handler.go#L361-L371)；文档却要求会话列表返回 IP/UA 摘要：[identity-authn.md](./identity-authn.md#L326-L328)。
-- `identity.session.max_per_account` 只出现在配置与校验中：[config.go](../internal/platform/config.go#L195-L196)、[config.go](../internal/platform/config.go#L920-L921)、[config.go](../internal/platform/config.go#L1462-L1464)，运行时无任何引用。
-- 迁移注释预留了“过期清理任务扫描”索引：[000001_create_identity_tables.up.sql](../migrations/000001_create_identity_tables.up.sql#L69-L70)、[000001_create_identity_tables.up.sql](../migrations/000001_create_identity_tables.up.sql#L99-L102)，但 worker 只运行 async relay：[main.go](../cmd/worker/main.go#L66-L92)，仓库内没有清理任务。
+- 每次刷新都创建新的 `identity_session` 行：[auth_service.go](../../../internal/identity/app/auth_service.go#L826-L857)；旧行只标记 `rotated`，不删除。
+- `ListByAccount` 返回账号全部会话，按创建时间倒序，无分页、无 family 聚合：[mysql_session.go](../../../internal/identity/infrastructure/persistence/mysql_session.go#L184-L210)。
+- `Session` 与 `sessionDTO` 没有 IP/UA 字段：[session.go](../../../internal/identity/domain/session.go#L81-L108)、[handler.go](../../../internal/identity/transport/rest/handler.go#L361-L371)；文档却要求会话列表返回 IP/UA 摘要：[identity-authn.md](../.././identity-authn.md#L326-L328)。
+- `identity.session.max_per_account` 只出现在配置与校验中：[config.go](../../../internal/platform/config.go#L195-L196)、[config.go](../../../internal/platform/config.go#L920-L921)、[config.go](../../../internal/platform/config.go#L1462-L1464)，运行时无任何引用。
+- 迁移注释预留了“过期清理任务扫描”索引：[000001_create_identity_tables.up.sql](../../../migrations/000001_create_identity_tables.up.sql#L69-L70)、[000001_create_identity_tables.up.sql](../../../migrations/000001_create_identity_tables.up.sql#L99-L102)，但 worker 只运行 async relay：[main.go](../../../cmd/worker/main.go#L66-L92)，仓库内没有清理任务。
 
 **影响**
 
@@ -244,9 +244,9 @@
 
 **现状（证据）**
 
-- `RevokeSession` 仅在目标会话就是当前会话时把当前 jti 拉黑：`revokeToken = sessionID == actor.SessionID`：[auth_service.go](../internal/identity/app/auth_service.go#L781)。
+- `RevokeSession` 仅在目标会话就是当前会话时把当前 jti 拉黑：`revokeToken = sessionID == actor.SessionID`：[auth_service.go](../../../internal/identity/app/auth_service.go#L781)。
 - 其他会话的 Access Token 不会被拉黑，也没有 `token_version` 递增（会话级撤销不改变账号版本）。
-- `RevocationChecker` 只校验账号状态、`ver` 与 jti，不读取 `sid` 对应的会话状态：[revocation.go](../internal/identity/app/revocation.go#L116-L142)。
+- `RevocationChecker` 只校验账号状态、`ver` 与 jti，不读取 `sid` 对应的会话状态：[revocation.go](../../../internal/identity/app/revocation.go#L116-L142)。
 - 刷新令牌重放触发的 `RevokeFamily` 也只改数据库会话状态，不使已签发的 Access Token 立即失效。
 
 **影响**
@@ -277,7 +277,7 @@
 
 **现状（证据）**
 
-- `revokeFamily` 使用 `_, _ = s.sessions.RevokeFamily(...)`，错误被丢弃：[auth_service.go](../internal/identity/app/auth_service.go#L872-L878)。随后仍然写 `auth.token.reused` 审计并提交事务。
+- `revokeFamily` 使用 `_, _ = s.sessions.RevokeFamily(...)`，错误被丢弃：[auth_service.go](../../../internal/identity/app/auth_service.go#L872-L878)。随后仍然写 `auth.token.reused` 审计并提交事务。
 - app 层没有 logger/metrics 依赖；全包没有结构化日志或指标埋点。
 - Redis 撤销存储、短信、OAuth、MFA 的失败只向上返回错误，没有独立可观测信号。
 
@@ -320,10 +320,10 @@
 
 **现状（证据）**
 
-- `rest/clientIP` 与 `c/clientIP` 无条件取 `X-Forwarded-For` 第一段；没有可信代理解析：[handler.go](../internal/identity/transport/rest/handler.go#L429-L438)、[handler.go](../internal/identity/transport/c/handler.go#L193-L201)。
+- `rest/clientIP` 与 `c/clientIP` 无条件取 `X-Forwarded-For` 第一段；没有可信代理解析：[handler.go](../../../internal/identity/transport/rest/handler.go#L429-L438)、[handler.go](../../../internal/identity/transport/c/handler.go#L193-L201)。
 - 无 XFF 时直接返回带端口的 `RemoteAddr` 作为 IP 摘要输入；同一 IP 每个新 TCP 连接端口不同，限流 key 随之变化。
-- 登录限流器使用进程内 `ratelimit.NewKeyed`：[runtime.go](../cmd/internal/identityruntime/runtime.go#L285-L299)，没有 Redis 驱动；多副本按副本数放大，重启清零。
-- 平台级 `rate_limit` 默认关闭，且同样信任 XFF 首段：[pipeline.go](../internal/platform/pipeline.go#L220-L231)。
+- 登录限流器使用进程内 `ratelimit.NewKeyed`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L285-L299)，没有 Redis 驱动；多副本按副本数放大，重启清零。
+- 平台级 `rate_limit` 默认关闭，且同样信任 XFF 首段：[pipeline.go](../../../internal/platform/pipeline.go#L220-L231)。
 
 **影响**
 
@@ -360,11 +360,11 @@
 
 **现状（证据）**
 
-- TOTP 校验只比较当前与前后的一个时间步，没有记录已使用的时间步：[totp.go](../pkg/totp/totp.go#L48-L74)；`identity_mfa` 表也没有 `last_used_step` 列：[000001_create_identity_tables.up.sql](../migrations/000001_create_identity_tables.up.sql#L76-L87)。
-- 恢复码由 5 字节随机生成（40 bit），使用无盐 SHA-256 存储：[mfa.go](../internal/identity/app/mfa.go#L603-L624)。
-- `identity_mfa.Save` 是无版本控制的 `INSERT ... ON DUPLICATE KEY UPDATE`：[mysql_mfa.go](../internal/identity/infrastructure/persistence/mysql_mfa.go#L50-L76)。恢复码消费是“读整表 → 删除一项 → 整体写回”，并发下可能把已消费的码写回；`DisableMFA` 的 `Delete` 与 `VerifyMFA` 的 `Save` 并发也可能让绑定“复活”。
-- 强制绑定票据在 `setup` 阶段不消费，只在 `verify` 消费；`verify` 遇到已消费票据会走 `mfaFailure` 计入失败并可锁定账号：[mfa.go](../internal/identity/app/mfa.go#L432-L440)、[mfa.go](../internal/identity/app/mfa.go#L359-L367)。文档 D5 期望“重放返回 40100 且无副作用”。
-- MFA 密钥由单一 `identity.mfa.secret_key` 派生，密文只有版本字节，没有 key id：[aead.go](../pkg/crypto/aead.go#L42-L57)。密钥轮换后旧密文无法解密，且没有管理员重置 MFA 的入口（IDN-P0-02）。
+- TOTP 校验只比较当前与前后的一个时间步，没有记录已使用的时间步：[totp.go](../../../pkg/totp/totp.go#L48-L74)；`identity_mfa` 表也没有 `last_used_step` 列：[000001_create_identity_tables.up.sql](../../../migrations/000001_create_identity_tables.up.sql#L76-L87)。
+- 恢复码由 5 字节随机生成（40 bit），使用无盐 SHA-256 存储：[mfa.go](../../../internal/identity/app/mfa.go#L603-L624)。
+- `identity_mfa.Save` 是无版本控制的 `INSERT ... ON DUPLICATE KEY UPDATE`：[mysql_mfa.go](../../../internal/identity/infrastructure/persistence/mysql_mfa.go#L50-L76)。恢复码消费是“读整表 → 删除一项 → 整体写回”，并发下可能把已消费的码写回；`DisableMFA` 的 `Delete` 与 `VerifyMFA` 的 `Save` 并发也可能让绑定“复活”。
+- 强制绑定票据在 `setup` 阶段不消费，只在 `verify` 消费；`verify` 遇到已消费票据会走 `mfaFailure` 计入失败并可锁定账号：[mfa.go](../../../internal/identity/app/mfa.go#L432-L440)、[mfa.go](../../../internal/identity/app/mfa.go#L359-L367)。文档 D5 期望“重放返回 40100 且无副作用”。
+- MFA 密钥由单一 `identity.mfa.secret_key` 派生，密文只有版本字节，没有 key id：[aead.go](../../../pkg/crypto/aead.go#L42-L57)。密钥轮换后旧密文无法解密，且没有管理员重置 MFA 的入口（IDN-P0-02）。
 
 **影响**
 
@@ -413,9 +413,9 @@
 
 **现状（证据）**
 
-- `HashAccountRef`、`HashClientRef` 使用无盐 SHA-256：[login_guard.go](../internal/identity/app/login_guard.go#L266-L272)、[auth_service.go](../internal/identity/app/auth_service.go#L952-L960)。
-- 手机号主体 `phoneSubject` 直接拼接无盐 SHA-256：[sms_login.go](../internal/identity/app/sms_login.go#L256-L264)。
-- 短信验证码存储为 `SHA-256("sms:"+phoneHash+code)`：[sms_login.go](../internal/identity/app/sms_login.go#L261-L265)，6 位码空间仅 1e6。
+- `HashAccountRef`、`HashClientRef` 使用无盐 SHA-256：[login_guard.go](../../../internal/identity/app/login_guard.go#L266-L272)、[auth_service.go](../../../internal/identity/app/auth_service.go#L952-L960)。
+- 手机号主体 `phoneSubject` 直接拼接无盐 SHA-256：[sms_login.go](../../../internal/identity/app/sms_login.go#L256-L264)。
+- 短信验证码存储为 `SHA-256("sms:"+phoneHash+code)`：[sms_login.go](../../../internal/identity/app/sms_login.go#L261-L265)，6 位码空间仅 1e6。
 
 **影响**
 
@@ -451,8 +451,8 @@
 
 **现状（证据）**
 
-- `issueNewSession` 每次刷新都设置 `ExpiresAt = now + refresh_ttl`、`IdleExpiresAt = now + idle_timeout`：[auth_service.go](../internal/identity/app/auth_service.go#L826-L857)。
-- `domain.Session.ExpiresAt` 注释为“绝对过期时间”：[session.go](../internal/identity/domain/session.go#L96-L99)，但实际每次刷新都被重算。
+- `issueNewSession` 每次刷新都设置 `ExpiresAt = now + refresh_ttl`、`IdleExpiresAt = now + idle_timeout`：[auth_service.go](../../../internal/identity/app/auth_service.go#L826-L857)。
+- `domain.Session.ExpiresAt` 注释为“绝对过期时间”：[session.go](../../../internal/identity/domain/session.go#L96-L99)，但实际每次刷新都被重算。
 
 **影响**
 
@@ -483,9 +483,9 @@
 
 **现状（证据）**
 
-- `validateIdentity` 不要求持久化数据库；`db.driver=memory` 在生产仅被 IAM 审批/async 条件间接限制：[config.go](../internal/platform/config.go#L1441-L1516)、[config.go](../internal/platform/config.go#L1186-L1198)。
-- `identityruntime.buildRepositories` 在 `deps.Database == nil` 时返回内存仓储：[runtime.go](../cmd/internal/identityruntime/runtime.go#L220-L239)。
-- `IdentityConfig` 没有 `password` 字段：[config.go](../internal/platform/config.go#L76-L97)，运行时固定使用 `app.DefaultPasswordPolicy()`：[runtime.go](../cmd/internal/identityruntime/runtime.go#L79-L86)；但文档示例包含 `identity.password`：[identity-authn.md](./identity-authn.md#L640-L643)。
+- `validateIdentity` 不要求持久化数据库；`db.driver=memory` 在生产仅被 IAM 审批/async 条件间接限制：[config.go](../../../internal/platform/config.go#L1441-L1516)、[config.go](../../../internal/platform/config.go#L1186-L1198)。
+- `identityruntime.buildRepositories` 在 `deps.Database == nil` 时返回内存仓储：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L220-L239)。
+- `IdentityConfig` 没有 `password` 字段：[config.go](../../../internal/platform/config.go#L76-L97)，运行时固定使用 `app.DefaultPasswordPolicy()`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L79-L86)；但文档示例包含 `identity.password`：[identity-authn.md](../.././identity-authn.md#L640-L643)。
 - `identity.session.max_per_account` 被校验但未使用（见 IDN-P1-01）。
 - `configs/admin.yaml.example`、`configs/biz.yaml.example` 没有 `mfa` 段，生产开启 identity 需要人工补全。
 
@@ -519,10 +519,10 @@
 
 **现状（证据）**
 
-- `completeMFALogin`、`completeMFASetup`、`confirmMFABinding` 在 `guard.Authorize` 失败（locked/disabled）时直接返回，不写审计：[mfa.go](../internal/identity/app/mfa.go#L352-L354)、[mfa.go](../internal/identity/app/mfa.go#L425-L427)、[mfa.go](../internal/identity/app/mfa.go#L493-L495)。
-- OAuth 自动建号没有 `auth.account.created` 审计：[oauth.go](../internal/identity/app/oauth.go#L236-L280)。
+- `completeMFALogin`、`completeMFASetup`、`confirmMFABinding` 在 `guard.Authorize` 失败（locked/disabled）时直接返回，不写审计：[mfa.go](../../../internal/identity/app/mfa.go#L352-L354)、[mfa.go](../../../internal/identity/app/mfa.go#L425-L427)、[mfa.go](../../../internal/identity/app/mfa.go#L493-L495)。
+- OAuth 自动建号没有 `auth.account.created` 审计：[oauth.go](../../../internal/identity/app/oauth.go#L236-L280)。
 - `emitAccountLockedIfNeeded` 对已锁定账号的每次失败重复发 `auth.account.locked`（见 IDN-P0-03）。
-- `identity.audit` 的消费端固定为 `SlogEmitter`：[runtime.go](../cmd/internal/identityruntime/runtime.go#L196-L206)；`SlogEmitter` 只写结构化日志：[emitter.go](../internal/shared/audit/emitter.go#L14-L20)。
+- `identity.audit` 的消费端固定为 `SlogEmitter`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L196-L206)；`SlogEmitter` 只写结构化日志：[emitter.go](../../../internal/shared/audit/emitter.go#L14-L20)。
 - `auth.account.disabled`、`auth.mfa.recovery_used` 等 action 未实际发出。
 
 **影响**
@@ -560,8 +560,8 @@
 
 **现状（证据）**
 
-- `pkg/httpx.WriteJSON` 只设置 `Content-Type`：[envelope.go](../pkg/httpx/envelope.go#L32-L42)，没有 `Cache-Control`、`Pragma`、`Expires`。
-- 登录/刷新响应包含 Access/Refresh Token；MFA setup 响应包含 TOTP 密钥与恢复码：[handler.go](../internal/identity/transport/rest/handler.go#L74-L75)、[handler.go](../internal/identity/transport/rest/handler.go#L132-L136)。
+- `pkg/httpx.WriteJSON` 只设置 `Content-Type`：[envelope.go](../../../pkg/httpx/envelope.go#L32-L42)，没有 `Cache-Control`、`Pragma`、`Expires`。
+- 登录/刷新响应包含 Access/Refresh Token；MFA setup 响应包含 TOTP 密钥与恢复码：[handler.go](../../../internal/identity/transport/rest/handler.go#L74-L75)、[handler.go](../../../internal/identity/transport/rest/handler.go#L132-L136)。
 - 平台未统一注入安全响应头（仓库内搜索无 `Cache-Control: no-store` / `X-Content-Type-Options`）。
 
 **影响**
@@ -593,8 +593,8 @@
 
 **现状（证据）**
 
-- 账号不存在时在密码哈希之前直接返回：[auth_service.go](../internal/identity/app/auth_service.go#L290-L300)。
-- 账号存在且密码错误时要执行 Argon2id（默认约 19 MiB、t=2）：[argon2.go](../pkg/password/argon2.go#L24-L33)、[auth_service.go](../internal/identity/app/auth_service.go#L336-L349)。
+- 账号不存在时在密码哈希之前直接返回：[auth_service.go](../../../internal/identity/app/auth_service.go#L290-L300)。
+- 账号存在且密码错误时要执行 Argon2id（默认约 19 MiB、t=2）：[argon2.go](../../../pkg/password/argon2.go#L24-L33)、[auth_service.go](../../../internal/identity/app/auth_service.go#L336-L349)。
 - 响应码与文案一致，但耗时差异明显；locked/disabled 也在密码校验前返回。
 
 **影响**
@@ -623,9 +623,9 @@
 
 **现状（证据）**
 
-- `OAuthService.Authorize` 没有速率限制，每次请求写一个 Redis state key（TTL 10m）：[oauth.go](../internal/identity/app/oauth.go#L137-L159)。
-- `OAuthService.Callback` 对随机 state 会写 `oauth:state:used:<state>` 标记，同样可被刷：[oauth_state.go](../internal/identity/infrastructure/cache/oauth_state.go#L117-L145)。
-- 登录密码校验使用 Argon2id，内存约 19 MiB/请求，没有全局并发信号量：[runtime.go](../cmd/internal/identityruntime/runtime.go#L79-L86)。
+- `OAuthService.Authorize` 没有速率限制，每次请求写一个 Redis state key（TTL 10m）：[oauth.go](../../../internal/identity/app/oauth.go#L137-L159)。
+- `OAuthService.Callback` 对随机 state 会写 `oauth:state:used:<state>` 标记，同样可被刷：[oauth_state.go](../../../internal/identity/infrastructure/cache/oauth_state.go#L117-L145)。
+- 登录密码校验使用 Argon2id，内存约 19 MiB/请求，没有全局并发信号量：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L79-L86)。
 - SMS 发送只有单手机号日限与单 IP 小时限，没有全局日预算/供应商熔断。
 
 **影响**

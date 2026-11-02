@@ -119,7 +119,7 @@
 
 **R-02（P1，压测与 SLO）**
 
-- 新增 [tests/load/identity_login.js](../tests/load/identity_login.js)：密码登录（正确 70% / 错误密码 20% / 不存在账号 10%）、
+- 新增 [tests/load/identity_login.js](../../../tests/load/identity_login.js)：密码登录（正确 70% / 错误密码 20% / 不存在账号 10%）、
   刷新（有效 90% + 已轮换令牌重放 10%）、MFA（TOTP 成功 / 错误各 50%）；阈值直接对齐 `docs/identity-slo.md` §1。
 - 文件头固化为 staging 执行清单：预置账号、临时放宽限流、每档 10 分钟采样、5xx / 重放 / 连接池 / Redis RTT 检查。
 - 本机无 k6 与 staging 环境，采样属发布前环境验收动作，不构成代码遗留。
@@ -138,7 +138,7 @@
 
 **R-05（P2，多商户 C 端决策）**
 
-- 新增 [docs/adr/0005-c-channel-multi-merchant-boundary.md](./adr/0005-c-channel-multi-merchant-boundary.md)：
+- 新增 [docs/adr/0005-c-channel-multi-merchant-boundary.md](../.././adr/0005-c-channel-multi-merchant-boundary.md)：
   V1 保持 C 端全局单租户；列明三个演进触发条件，并绑定 §19.2 的契约 → 数据 → 仓储 → 治理 → 回滚顺序。
 
 ## 5. 闭环确认

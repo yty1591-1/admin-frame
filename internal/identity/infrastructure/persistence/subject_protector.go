@@ -10,7 +10,7 @@ import (
 // subjectIndexDomain 是确定性索引的 HMAC 域分隔前缀。
 //
 // 域内再拼接端别与商户，保证同一主体在不同租户下得到不同索引，
-// 避免跨租户索引碰撞；与 docs/identity-p1-remaining-implementation-plan.md §4.2 一致。
+// 避免跨租户索引碰撞；与 docs/archive/identity/identity-p1-remaining-implementation-plan.md §4.2 一致。
 const subjectIndexDomain = "account-subject"
 
 // oauthSubjectIndexDomain 是外部身份主体确定性索引的域分隔前缀。

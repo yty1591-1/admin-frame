@@ -77,10 +77,12 @@
 
 | 文档 | 角色 |
 |------|------|
+| `README.md` | 文档地图：分层、门禁对照、新增与归档判据 |
 | `ARCHITECTURE.md` | 总规范 + 关联硬约束链接 |
 | 各 `*_STANDARDS.md` | 合入硬约束正文 |
 | `deps/*` | 许可证 / replace / NOTICE |
 | `docs/codegen/` / `docs/perf/` / `docs/audit/` / `docs/runbooks/` / `docs/release/` | 专文附属清单 |
+| `docs/archive/` | 已闭环过程文档（批次台账 / 完成报告 / 修复日志 / 一次性评审），**只读、无约束力** |
 | `standards-roadmap.md`（本文） | 优先级与状态总表 |
 
 ---

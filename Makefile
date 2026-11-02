@@ -13,7 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup gitee-job ci mock migrate-up vuln docker docker-admin docker-push
+        check-authn check-deploy check-alerts check-backup check-doclinks gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -205,6 +205,10 @@ check-alerts:
 # ENT-08：备份脚本、CronJob、RPO/RTO 与演练 runbook。
 check-backup:
 	bash scripts/ci/check-backup.sh
+
+# DOC-01：docs/ 与 README.md 相对链接有效性；移动/归档文档后执行。
+check-doclinks:
+	bash scripts/ci/check-doclinks.sh
 
 # mockery（GEN-04）；需已安装 mockery，配置见 .mockery.yaml。
 MOCKERY ?= mockery

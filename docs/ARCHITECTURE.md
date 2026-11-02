@@ -189,9 +189,13 @@ myproject/
 │   ├── integration/
 │   └── e2e/                          # 建议按端分子目录：admin/ biz/ c/
 ├── docs/
+│   ├── README.md                     # 文档地图：分层、门禁、归档判据
 │   ├── ARCHITECTURE.md
+│   ├── *_STANDARDS.md                # 硬约束专文（门禁依赖）
 │   ├── adr/
-│   └── runbooks/
+│   ├── runbooks/
+│   ├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单
+│   └── archive/                      # 已闭环过程文档（只读，无约束力）
 ├── Dockerfile                        # 多 target：admin-api / biz-api / c-api / worker
 ├── Makefile
 ├── .golangci.yml

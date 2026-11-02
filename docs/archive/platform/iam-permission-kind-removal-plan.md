@@ -1,7 +1,7 @@
 # IAM 权限模型精简与菜单资源改造清单
 
-> 状态：**待确认**（确认后按本清单执行）
-> 日期：2026-10-27
+> 状态：**已实施 · 已归档**（2026-11-02 归档核对：`migrations/000002` 已建 `iam_menu` 且 `iam_permission` 仅保留 `code/name/channel/resource(生成列)/data_bearing/sort/status` 等列；`internal/iam/catalog.Entry` 已无 `Kind`/`ParentCode`/`Path`/`Action`。下方清单勾选框未回填，属台账滞后，以代码为准）
+> 日期：2026-10-27；归档：2026-11-02
 > 决策来源：
 > 1. 前端改用 `v-access:code` 的并集 / 交集判定按钮显隐，权限粒度统一收敛为「接口权限码」；
 > 2. 权限目录收敛为平铺表，菜单 / 路由资源独立建表，权限表不再兼任任何树职责；

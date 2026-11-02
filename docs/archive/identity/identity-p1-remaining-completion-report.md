@@ -23,17 +23,17 @@
 
 ### 2.1 实现
 
-- 新增 [cached_revocation.go](../internal/identity/infrastructure/cache/cached_revocation.go)：`cachedRevocationStore` 装饰 `RevocationStore`。
+- 新增 [cached_revocation.go](../../../internal/identity/infrastructure/cache/cached_revocation.go)：`cachedRevocationStore` 装饰 `RevocationStore`。
   - 账号 / 会话快照：进程内 L1，TTL 默认 1s，容量默认 4096，LRU 淘汰；
   - 写路径：`SaveAccountState` / `SaveSessionState` 成功后同步写 L1，`Delete*` 先清 L1 再删 Redis；
   - jti：`IsTokenRevoked` / `RevokeToken` 全部透传，**禁止缓存「未撤销」结果**。
-- [revocation.go](../internal/identity/app/revocation.go)：新增 `RevocationCacheObserver`，在真正回源 DB 时上报 `OnRevocationDBRefetch`；新增 `WithRevocationCacheObserver`。
-- [metrics.go](../internal/identity/observability/metrics.go)：新增
+- [revocation.go](../../../internal/identity/app/revocation.go)：新增 `RevocationCacheObserver`，在真正回源 DB 时上报 `OnRevocationDBRefetch`；新增 `WithRevocationCacheObserver`。
+- [metrics.go](../../../internal/identity/observability/metrics.go)：新增
   - `identity_revocation_l1_hit_total{kind}`；
   - `identity_revocation_redis_calls_total{op}`；
   - `identity_revocation_db_refetch_total{kind}`。
-- [config.go](../internal/platform/config.go)：新增 `identity.revocation.local_cache_ttl`（0→1s，负数关闭）与 `local_cache_capacity`（0→4096，上限 100000），并加入生产校验。
-- [runtime.go](../cmd/internal/identityruntime/runtime.go)：Redis 存储统一包一层 L1，Checker 与 Invalidator 共享同一实例，保证本副本撤销立即可见。
+- [config.go](../../../internal/platform/config.go)：新增 `identity.revocation.local_cache_ttl`（0→1s，负数关闭）与 `local_cache_capacity`（0→4096，上限 100000），并加入生产校验。
+- [runtime.go](../../../cmd/internal/identityruntime/runtime.go)：Redis 存储统一包一层 L1，Checker 与 Invalidator 共享同一实例，保证本副本撤销立即可见。
 
 ### 2.2 验证
 
@@ -57,19 +57,19 @@ go test ./internal/identity/infrastructure/cache/...   PASS
 
 ### 3.1 实现
 
-- [000010_identity_session_archive.up.sql](../migrations/000010_identity_session_archive.up.sql)：新增
+- `migrations/000010_identity_session_archive.up.sql`（已被后续基线合并删除）：新增
   - `identity_session_archive`、`identity_session_family_archive`；
   - `archived_at` 索引（归档保留期清理）与 `account_id` 索引（历史追溯）；
   - 归档表不建外键，避免账号软删与归档长期保留冲突。
-- [repository.go](../internal/identity/domain/repository.go)：`SessionRepository` 新增 `ArchiveExpiredBefore`、`DeleteArchivedBefore`。
-- [mysql_session.go](../internal/identity/infrastructure/persistence/mysql_session.go)：归档在**单事务**内完成：
+- [repository.go](../../../internal/identity/domain/repository.go)：`SessionRepository` 新增 `ArchiveExpiredBefore`、`DeleteArchivedBefore`。
+- [mysql_session.go](../../../internal/identity/infrastructure/persistence/mysql_session.go)：归档在**单事务**内完成：
   1. 按 `updated_at` 选取本批主键；
   2. `INSERT ... SELECT` 写入归档表；
   3. 按主键删除在线行；
   4. 任一步失败整体回滚。
-- [memory_session.go](../internal/identity/infrastructure/persistence/memory_session.go)：内存实现模拟同一语义，供单测与本地运行。
-- [session_cleanup.go](../internal/identity/app/session_cleanup.go)：默认「归档 + 删除」，并按 `ArchiveRetention` 清理归档；`ArchiveRetention <= 0` 回退到只删不归档。
-- [config.go](../internal/platform/config.go)：新增 `identity.retention.archive_days`（0→365，负数关闭归档），校验 `archive_days >= session_days`。
+- [memory_session.go](../../../internal/identity/infrastructure/persistence/memory_session.go)：内存实现模拟同一语义，供单测与本地运行。
+- [session_cleanup.go](../../../internal/identity/app/session_cleanup.go)：默认「归档 + 删除」，并按 `ArchiveRetention` 清理归档；`ArchiveRetention <= 0` 回退到只删不归档。
+- [config.go](../../../internal/platform/config.go)：新增 `identity.retention.archive_days`（0→365，负数关闭归档），校验 `archive_days >= session_days`。
 
 ### 3.2 验证
 
@@ -100,19 +100,19 @@ go test ./internal/identity/infrastructure/persistence/... PASS
 
 ### 4.2 实现
 
-- [000011_identity_account_subject_protection.up.sql](../migrations/000011_identity_account_subject_protection.up.sql)：仅新增可空列与索引，不触碰既有唯一键与明文，可滚动升级。
-- [subject_protector.go](../internal/identity/infrastructure/persistence/subject_protector.go)：
+- `migrations/000011_identity_account_subject_protection.up.sql`（已被后续基线合并删除）：仅新增可空列与索引，不触碰既有唯一键与明文，可滚动升级。
+- [subject_protector.go](../../../internal/identity/infrastructure/persistence/subject_protector.go)：
   - `Index` = `HMAC-SHA256(identity.hash_key, "account-subject|channel|merchant|normalizedSubject")`；
   - `Encrypt` = AES-256-GCM，AAD = `identity:account:<account_id>`；
   - `Decrypt` 按密文头选择密钥，支持轮换双读。
-- [mysql_account.go](../internal/identity/infrastructure/persistence/mysql_account.go)：
+- [mysql_account.go](../../../internal/identity/infrastructure/persistence/mysql_account.go)：
   - `insert` / `RebindSubject` 双写 index 与 ciphertext；
   - `FindBySubject` 先查 `subject_index`，未命中回退明文；
   - `FindByID` / `List` 读取后用密文回填明文；
   - `BackfillSubjectProtection` 按批回填缺失行，可重复执行。
-- [account.go](../internal/identity/domain/account.go)：新增 `SubjectIndex` / `SubjectCiphertext` 字段（仅持久化层维护）。
-- [config.go](../internal/platform/config.go)：新增 `identity.subject.keys` / `active_key_id` / `legacy_key`，并校验 active key 存在。
-- [cmd/identity-maintenance/main.go](../cmd/identity-maintenance/main.go)：回填命令，复用 `identity.hash_key` 与 `identity.subject.keys`。
+- [account.go](../../../internal/identity/domain/account.go)：新增 `SubjectIndex` / `SubjectCiphertext` 字段（仅持久化层维护）。
+- [config.go](../../../internal/platform/config.go)：新增 `identity.subject.keys` / `active_key_id` / `legacy_key`，并校验 active key 存在。
+- `cmd/identity-maintenance/main.go`（文件已被后续基线合并删除）：回填命令，复用 `identity.hash_key` 与 `identity.subject.keys`。
 
 ### 4.3 验证
 
@@ -139,21 +139,21 @@ go test ./internal/identity/infrastructure/persistence/... PASS
 
 ### 5.1 实现
 
-- [perm.go](../internal/iam/perm.go)：新增
+- [perm.go](../../../internal/iam/perm.go)：新增
   - `identity:account:credential`；
   - `identity:account:delete`；
   - `identity:account:session`。
-- [catalog.go](../internal/iam/catalog/catalog.go)：新增 3 条目录条目（Sort 265/270/275），`identity:account:write` 收敛为生命周期动作。
-- [000012_seed_identity_account_permissions.up.sql](../migrations/000012_seed_identity_account_permissions.up.sql)：
+- [catalog.go](../../../internal/iam/catalog/catalog.go)：新增 3 条目录条目（Sort 265/270/275），`identity:account:write` 收敛为生命周期动作。
+- `migrations/000012_seed_identity_account_permissions.up.sql`（已被后续基线合并删除）：
   - 先插入权限点；
   - 再把新权限授予**所有已持有** `identity:account:write` 的角色，做到「先授权后切路由」。
-- [router.go](../internal/identity/transport/admin/router.go)：路由矩阵
+- [router.go](../../../internal/identity/transport/admin/router.go)：路由矩阵
   - 查询 → `read`；
   - disable / enable / lock / unlock / restore → `write`；
   - password/reset、mfa/reset → `credential`；
   - DELETE account → `delete`；
   - 单会话撤销 / revoke-all → `session`。
-- 文档同步：[PERMISSIONS.md](../docs/iam/PERMISSIONS.md)、[identity-authn.md](./identity-authn.md)、OpenAPI `paths/admin/auth.yaml`。
+- 文档同步：[PERMISSIONS.md](../../../docs/iam/PERMISSIONS.md)、[identity-authn.md](../.././identity-authn.md)、OpenAPI `paths/admin/auth.yaml`。
 
 ### 5.2 验证
 
