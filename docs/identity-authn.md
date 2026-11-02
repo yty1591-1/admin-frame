@@ -556,22 +556,26 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 +        - 携带 `mfa_setup_ticket`（且无 `Authorization`）：强制绑定流程，成功后返回 `TokenPair`。
 ```
 
-**首个管理员 bootstrap（D4=① 迁移 `000005_seed_bootstrap_admin`）**
+**首个管理员 bootstrap（D4=① 迁移 `000005_seed_bootstrap_admin` + A 端启动引导）**
 
-- 迁移在同一事务内创建：`identity_account`（`must_change_password=1`）、`identity_credential`（Argon2id）、
-  `iam_role(system_admin)`、逐项权限授权、`all` 数据范围、`iam_role_binding`，以及 `auth.account.created` 审计事件。
-- 只在账号不存在时创建；已有环境（历史上用 CLI 开通）只补角色与绑定，不覆盖密码、不改变已确认状态。
+- `000005_seed_bootstrap_admin` 只创建 `iam_role(system_admin)`、逐项权限授权、`all` 数据范围与存量订正；
+  首个管理员（`identity_account`、`identity_credential`、`iam_role_binding`、`auth.account.created` 审计）
+  由 A 端 `admin-api` 启动时 `identityruntime` 调用 `bootstrap.EnsureAdmin` 在同一事务内幂等创建。
+- 迁移脚本不含明文登录主体：账号主体由启动引导用应用密钥计算 HMAC 索引并 AES-256-GCM 加密写入，
+  因此迁移可以一次跑完，不需要中途停下等待回填，也不需要独立 CLI。
+- 只在账号不存在时创建；已有环境只校验凭据与绑定，不覆盖密码、不改变已确认状态。
 - 初始口令是仓库内公开的演练值，因此**依赖强制改密**在首次登录时替换；首次登录顺序为
   「强制改密 → MFA 强制绑定 → 获得管理令牌」，运维全程不接触 TOTP 密钥。
-- 登录名通过迁移脚本内的 `@subject` 修改（默认 `admin@example.com`）；角色固定 `system_admin`，
+- 登录名固定为系统默认 `admin@example.com`；角色固定 `system_admin`，
   逐项授予生效的 A 端权限并排除 `iam:breakglass:approve`，不写 `*`。
-- 回滚迁移 `000005_seed_bootstrap_admin.down.sql` 只删除迁移自身写入的固定主键账号与角色数据，
-  已有会话时删除会因外键 `RESTRICT` 失败，属预期保护。
+- 引导仅限 A 端且数据库持久化时执行：B/C 端进程与内存库跳过，避免创建跨端账号。
+- 回滚 `000005_seed_bootstrap_admin.down.sql` 只删除 `system_admin` 角色及其授权 / 数据范围 / 绑定；
+  账号与凭据由启动引导创建，不随迁移回滚删除。
 
 **验收（已并入 §15）**
 
 - `AC-ENT-01-6`：未绑定账号在 `admin_required=true` 下可凭登录返回的 `mfa_setup_ticket` 完成绑定并直接获得令牌，全程无需人工改库。
-- `AC-ENT-01-7`：首个管理员由迁移 `000005_seed_bootstrap_admin` 幂等开通（账号已存在时只补授权），
+- `AC-ENT-01-7`：首个管理员由 A 端 `admin-api` 启动引导幂等开通（账号已存在时只校验授权），
   开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
@@ -811,7 +815,7 @@ identity:
 |---|---|---|---|
 | `auth.login` | 登录成功 | `actor_id`、`channel`、`merchant_id`、`trace_id` | 不记录令牌 |
 | `auth.login_failed` | 登录失败；MFA 校验遇到 locked / disabled | 同上 + `reason`（`bad_credential` / `locked` / `disabled` / `mfa_pending`） | 文案对外统一；MFA 分支只在拒绝前写一条 |
-| `auth.account.created` | 短信自助开户 / OAuth 自动建号 | `actor_type`（OAuth 为 `system`）、`attrs.provider`（仅 provider 名） | 与账号写入同事务；不记录外部主体原文 |
+| `auth.account.created` | A 端启动引导 / 短信自助开户 / OAuth 自动建号 | `actor_type`（启动引导与 OAuth 为 `system`）、`attrs.provider`（仅 provider 名）、`attrs.subject_index`（不写明文主体） | 与账号写入同事务；不记录外部主体原文 |
 | `auth.logout` | 登出 / 会话撤销 | `actor_id`、`session_id` 摘要 | 幂等 |
 | `auth.token.refresh` | 刷新成功 | `actor_id`、`family_id` 摘要 | 不记录令牌 |
 | `auth.token.reused` | 刷新令牌重放 | 同上 + `reason=reuse_detected` | 触发整链撤销 |

@@ -188,64 +188,6 @@ func (r *SQLOAuthIdentityRepository) decodeProviderSubject(identity *domain.OAut
 	return nil
 }
 
-// BackfillProviderProtection 为存量外部身份映射回填 index 与 ciphertext。
-//
-// 仅用于 S5 迁移前的升级窗口（000011 之后、000015 之前）；000015 删除明文列后不可用。
-// 按主键顺序批量扫描缺失保护列的行，可重复执行（幂等）。返回本次实际更新的行数。
-func (r *SQLOAuthIdentityRepository) BackfillProviderProtection(ctx context.Context, limit int) (int, error) {
-	if r.protector == nil {
-		return 0, apperr.Unavailable("oauth subject protector is not configured")
-	}
-	if r.sql == nil {
-		return 0, apperr.Unavailable("identity oauth repository is not configured")
-	}
-	if limit <= 0 {
-		limit = 500
-	}
-	rows, err := r.sql.QueryContext(ctx, `SELECT id, provider, provider_subject
-		FROM identity_oauth_identity
-		WHERE provider_subject_index IS NULL OR provider_subject_ciphertext IS NULL
-		ORDER BY id LIMIT ?`, limit)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	type pending struct {
-		id       string
-		provider string
-		subject  string
-	}
-	items := make([]pending, 0, limit)
-	for rows.Next() {
-		var item pending
-		if scanErr := rows.Scan(&item.id, &item.provider, &item.subject); scanErr != nil {
-			return 0, scanErr
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	updated := 0
-	for _, item := range items {
-		index := r.protector.ProviderIndex(item.provider, item.subject)
-		ciphertext, encErr := r.protector.EncryptProviderSubject(item.id, item.subject)
-		if encErr != nil {
-			return updated, encErr
-		}
-		if _, execErr := r.sql.ExecContext(ctx, `UPDATE identity_oauth_identity
-			SET provider_subject_index = ?, provider_subject_ciphertext = ?
-			WHERE id = ? AND (provider_subject_index IS NULL OR provider_subject_ciphertext IS NULL)`,
-			index, ciphertext, item.id); execErr != nil {
-			return updated, execErr
-		}
-		updated++
-	}
-	return updated, nil
-}
-
 // scanOAuthIdentity 扫描一行映射。
 func scanOAuthIdentity(row scanRow) (*domain.OAuthIdentity, error) {
 	var (

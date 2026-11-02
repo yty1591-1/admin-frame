@@ -1,6 +1,7 @@
 package testkit
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -13,6 +14,9 @@ import (
 	// 注册 MySQL database/sql 驱动（S-06：空白导入仅用于驱动注册）。
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/admin-frame/admin-frame/internal/identity/bootstrap"
+	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/migrate"
 )
@@ -26,6 +30,11 @@ func MySQL(t *testing.T) *db.DB {
 	dsn := requireEnv(t, EnvMySQLDSN)
 	if !strings.Contains(dsn, "parseTime=true") {
 		t.Fatalf("%s must enable parseTime=true (and loc=UTC) so DATETIME(3) scans into time.Time", EnvMySQLDSN)
+	}
+	// 迁移依赖连接 collation 与表级 DDL 一致，忽略 DSN 中可能遗留的旧模板值。
+	dsn, err := db.ForceMySQLCollation("mysql", dsn, db.MySQLDefaultCollation)
+	if err != nil {
+		t.Fatalf("normalize %s: %v", EnvMySQLDSN, err)
 	}
 
 	ctx := context.Background()
@@ -44,7 +53,11 @@ func MySQL(t *testing.T) *db.DB {
 	return database
 }
 
-// Migrate 对给定连接执行仓库 migrations/ 下的全部迁移。
+// Migrate 对给定连接执行仓库 migrations/ 下的全部迁移，并创建测试用管理员。
+//
+// 迁移已是最终加密态，可一次跑完、无需中途回填；管理员由 bootstrap.EnsureAdmin
+// 用固定测试密钥写入，密钥与 identity 集成测试一致（hash v1=0x11、AES k1=0x22），
+// 保证测试后续写入的账号与引导账号可用同一保护器互读。
 func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 	if sqlDB == nil {
 		return errors.New("testkit: nil *sql.DB")
@@ -70,6 +83,20 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 	defer cancel()
 	if _, err := runner.Up(migrateCtx); err != nil {
 		return fmt.Errorf("testkit: apply migrations: %w", err)
+	}
+
+	hasher, err := crypto.NewHasher("v1", map[string][]byte{"v1": bytes.Repeat([]byte{0x11}, 32)})
+	if err != nil {
+		return fmt.Errorf("testkit: build test hasher: %w", err)
+	}
+	ring, err := crypto.NewKeyRing(map[string][]byte{"k1": bytes.Repeat([]byte{0x22}, 32)}, "k1", nil)
+	if err != nil {
+		return fmt.Errorf("testkit: build test key ring: %w", err)
+	}
+	defer ring.Close()
+	if _, err := bootstrap.EnsureAdmin(migrateCtx, sqlDB,
+		persistence.NewSubjectProtector(hasher, ring), bootstrap.Options{}); err != nil {
+		return fmt.Errorf("testkit: bootstrap admin: %w", err)
 	}
 	return nil
 }

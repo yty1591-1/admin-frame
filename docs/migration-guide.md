@@ -264,7 +264,7 @@ migrate [flags]
 | `-driver` | 空 | 覆盖驱动；`postgres` \| `pgx` \| `mysql` \| `mariadb` 等 |
 | `-dsn` | 空 | 覆盖 DSN；优先使用 `ADMIN_FRAME_DB_DSN`，避免进入 shell 历史 |
 | `-steps` | `1` | `down`：回滚最近 N 条 |
-| `-to` | `-1` | `down`：回滚到该版本（保留 ≤ `-to`）；`>=0` 时覆盖 `-steps` |
+| `-to` | `-1` | `up`：只应用到该版本（含），用于需要外部回填的分段升级；`down`：回滚到该版本（保留 ≤ `-to`），`>=0` 时覆盖 `-steps` |
 | `-table` | `schema_migrations` | 历史表名（必须是简单标识符） |
 | `-schema` | 空 | 历史表所在 schema（PostgreSQL）；空表示连接默认 schema |
 | `-dry-run` | `false` | 只计划、不执行迁移 SQL、不取锁；**仍会创建并读取历史表** |
@@ -582,6 +582,23 @@ LIMIT 5000;
 ```
 
 生产建议由受控脚本或任务分批执行；迁移中只保留可重复执行的小批量语句。
+
+当回填必须由应用工具执行（例如 PII 加密依赖应用密钥，无法写成 SQL）时，优先把「结构」与「数据」分开：
+迁移一次把最终结构建好，不在中间版本留下明文列或可空中转列；迁移全部执行完成后由 A 端服务在启动期写入加密数据。
+
+```bash
+# 1) 迁移一次跑完（最终结构即加密态）
+./bin/migrate -action up
+# 2) 启动 admin-api：身份模块自动幂等创建系统默认平台管理员
+#    已存在则只校验凭据与绑定，不覆盖、不重复审计
+./bin/admin-api -config configs/admin.yaml
+```
+
+身份域即按此实现：`migrations/000001_create_identity_tables` 直接建最终加密结构，
+`migrations/000005_seed_bootstrap_admin` 只建角色与授权；首个管理员由 A 端 `identityruntime`
+启动期调用 `bootstrap.EnsureAdmin` 幂等创建（含账号、密码凭据、角色绑定与审计），不再依赖独立 CLI。
+只有结构本身也必须分阶段（例如大表新增非空列）时才使用 `-to` 分段，并预先确认中断后的
+`dirty` 处置方式。
 
 ### 6.5 大表与在线 DDL
 

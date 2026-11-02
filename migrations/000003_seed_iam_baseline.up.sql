@@ -1,6 +1,7 @@
--- IAM 域基线种子：权限目录、破玻璃角色与菜单 / 路由资源。
--- 本文件由追加式种子按领域合并而成（原 000003 / 000007 / 000009 / 000008）：
--- RBAC2、身份域账号管理权限点与已启用的管理页面状态已直接并入基线。
+-- IAM 域完整基线种子：权限目录、破玻璃角色与菜单 / 路由资源。
+-- 本文件按业务域合并整理（原 000003 / 000006 / 000012）：
+-- 身份域账号管理拆分权限点（credential / delete / session）与个人中心菜单已直接并入基线，
+-- 000012 的“先授权后切路由”回填逻辑保留在文件末尾，对全新库为空操作、对存量库补齐授权。
 -- 与 internal/iam/catalog、internal/iam/perm.go、docs/iam/PERMISSIONS.md 保持一致。
 -- 幂等：重复执行只更新元数据，不删除既有授权；新增权限点只能追加，禁止改写既有 code 语义。
 -- 每条权限点独占一行，行首为 "('"，供 internal/iam/catalog 的单元测试做一致性解析。
@@ -19,9 +20,11 @@
 --
 -- 菜单种子按 IAM 域能力设计，分两类：
 --   * active：已实现页面，前端可访问（A 端角色管理 / 菜单管理 / 权限目录 / 授权绑定 /
---     角色模板 / 变更审批 / 破玻璃 / 模拟鉴权 / 互斥角色组，B 端成员列表）；
+--     角色模板 / 变更审批 / 破玻璃 / 模拟鉴权 / 互斥角色组 / 个人中心，B 端成员列表）；
 --   * disabled：尚未实现页面的占位节点（审计 / 配置，以及 B 端角色与授权），
 --     disabled 节点不会下发到 `/v1/menus`，因此不会产生 404；启用前必须先创建对应 .vue。
+--   * 个人中心（system.profile）挂在 system 目录下、hide_in_menu=1：路由可达但不进侧边栏，
+--     permission_code=NULL 表示登录即可见（自助页面不额外要求权限点）。
 -- 幂等：重复执行按 (channel, code) 更新展示字段。固定主键放在保留段（19xxxxxxxxxxxxxxxxxx），
 -- 避免与雪花 ID 冲突。permission_code 只能引用已存在的权限码，不得新造。
 
@@ -54,7 +57,10 @@ VALUES
     ('iam:sod:read', '查看互斥组', 'both', 0, 240, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
     ('iam:sod:write', '管理互斥组', 'both', 0, 250, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
     ('identity:account:read', '查看身份账号', 'admin', 0, 255, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
-    ('identity:account:write', '管理身份账号', 'admin', 0, 260, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
+    ('identity:account:write', '管理身份账号', 'admin', 0, 260, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('identity:account:credential', '重置身份凭据', 'admin', 0, 265, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('identity:account:delete', '删除身份账号', 'admin', 0, 270, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    ('identity:account:session', '撤销身份会话', 'admin', 0, 275, 'active', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
 AS new
 ON DUPLICATE KEY UPDATE
     name         = new.name,
@@ -98,6 +104,10 @@ VALUES
         '/system/config/index.vue', '',
         '系统配置', 'page.system.config', 'lucide:sliders-horizontal', 'config:read', 40, 0, 0, '',
         'disabled', 'seed', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
+    (1910000000000000900, 'admin', 'system.profile', 'system', 'menu', 'Profile', '/profile',
+        '/_core/profile/index.vue', '',
+        '个人中心', 'page.profile.title', 'lucide:user', NULL, 90, 1, 0, '',
+        'active', 'seed', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)),
     -- A 端：权限管理（除占位外均已启用）
     (1910000000000000110, 'admin', 'iam', NULL, 'catalog', 'Iam', '/iam', '', '/iam/permission',
         '权限管理', 'page.iam.title', 'lucide:shield', NULL, 20, 0, 0, '',
@@ -172,3 +182,19 @@ ON DUPLICATE KEY UPDATE
     status          = new.status,
     updated_by      = new.updated_by,
     updated_at      = UTC_TIMESTAMP(3);
+
+-- 先授权：把身份域拆分权限授予所有已持有 identity:account:write 的角色（原 000012）。
+-- 全新库此时尚无业务角色，语句为空操作；存量库保证路由切换后行为不变。
+INSERT INTO iam_role_permission (role_id, permission_code, granted_by, created_at)
+SELECT rp.role_id, new_perm.code, 'migration-identity-account-split', UTC_TIMESTAMP(3)
+FROM iam_role_permission rp
+JOIN iam_permission old_perm ON old_perm.code = 'identity:account:write'
+JOIN iam_permission new_perm
+    ON new_perm.code IN (
+        'identity:account:credential',
+        'identity:account:delete',
+        'identity:account:session'
+    )
+WHERE rp.permission_code = old_perm.code
+  AND new_perm.status = 'active'
+ON DUPLICATE KEY UPDATE granted_by = 'migration-identity-account-split';

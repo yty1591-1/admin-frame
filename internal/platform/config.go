@@ -112,8 +112,8 @@ type IdentityConfig struct {
 	Consumer IdentityConsumerConfig `yaml:"consumer"`
 	// Subject 账号登录主体的 PII 加密 / 索引参数（IDN-GAP-P1-06）。
 	//
-	// 未配置时不启用双写与加密索引，登录仍按明文 subject 查询；
-	// 配置后进入 S1/S2 阶段：明文保留，同时写 subject_index / subject_ciphertext。
+	// 必填：最终 schema 不含明文主体列，subject_index 与 subject_ciphertext 均依赖本配置；
+	// 未配置时仓储无法查找或写入账号（失败关闭）。
 	Subject IdentitySubjectConfig `yaml:"subject"`
 }
 
@@ -135,8 +135,6 @@ type IdentitySubjectConfig struct {
 	Keys []IdentityMFAKeyConfig `yaml:"keys"`
 	// ActiveKeyID 当前加密密钥；Keys 非空时必填。
 	ActiveKeyID string `yaml:"active_key_id"`
-	// LegacyKey 旧格式单密钥，仅用于解密历史密文；可为空。
-	LegacyKey string `yaml:"legacy_key"`
 }
 
 // DecodeKeys 解码主体加密密钥环；未配置时返回 nil。
@@ -166,14 +164,6 @@ func (s IdentitySubjectConfig) DecodeKeys() (map[string][]byte, error) {
 		keys[id] = key
 	}
 	return keys, nil
-}
-
-// DecodeLegacyKey 解码旧格式单密钥；未配置返回 nil。
-func (s IdentitySubjectConfig) DecodeLegacyKey() ([]byte, error) {
-	if strings.TrimSpace(s.LegacyKey) == "" {
-		return nil, nil
-	}
-	return decodeKey(s.LegacyKey, "identity.subject.legacy_key")
 }
 
 // IdentitySMSConfig 是 C 端短信验证码参数（docs/identity-authn.md §8.1 / §10）。
@@ -2180,9 +2170,6 @@ func (c *Config) validateIdentity() []error {
 			if _, ok := keys[active]; !ok {
 				errs = append(errs, fmt.Errorf("identity.subject.active_key_id %q is not in identity.subject.keys", active))
 			}
-		}
-		if _, legacyErr := c.Identity.Subject.DecodeLegacyKey(); legacyErr != nil {
-			errs = append(errs, legacyErr)
 		}
 	}
 	errs = append(errs, c.validateIdentitySMS()...)

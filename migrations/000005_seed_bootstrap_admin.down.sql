@@ -1,28 +1,18 @@
--- 回滚首个管理员 bootstrap。
+-- 回滚身份域种子：删除 system_admin 角色及其授权、数据范围、绑定。
 --
--- 仅移除迁移自身创建的数据：
---   * 角色 / 授权 / 数据范围 / 绑定 按 system_admin 角色收敛删除；
---   * 账号与凭据只在主键仍是迁移写入的保留 ID 时删除，避免误删已有管理员；
---   * 审计事件按固定 event_id 删除。
--- 若账号已产生会话，删除会因外键 RESTRICT 失败，属预期保护。
+-- 账号与凭据由 A 端启动引导创建，不随本迁移回滚：
+-- 回滚后管理员账号仍存在但不再拥有任何权限；如需回收账号，应走账号管理流程，
+-- 避免在此误删已有账号或依赖固定主键。
+-- 注意：绑定按角色收敛删除，启动引导为系统管理员创建的绑定也会一并移除。
+-- 文件末尾的两段存量订正（无效脱敏 IP 清理、商户 ID 小写化）不可逆：原始值未保留，
+-- 应用层已按新口径读写，因此 down 不做数据恢复（详见原 000014 / 000020 的回滚说明）。
 
-SET @subject = 'admin@example.com';
-SET @bootstrap_account_id = 1900000000000000002;
-SET @bootstrap_event_id = '1900000000000000300';
 SET @role_id := (SELECT id FROM iam_role
                  WHERE channel = 'admin' AND merchant_id = '' AND code = 'system_admin' LIMIT 1);
 
--- 绑定可能指向「账号已存在时复用」的原账号，因此按角色收敛删除，而非固定账号 ID。
 DELETE FROM iam_role_binding WHERE role_id = @role_id;
-
 DELETE FROM iam_role_permission WHERE role_id = @role_id;
 DELETE FROM iam_role_data_scope WHERE role_id = @role_id;
 
 DELETE FROM iam_role
 WHERE id = @role_id AND channel = 'admin' AND merchant_id = '' AND code = 'system_admin';
-
-DELETE FROM async_outbox WHERE id = @bootstrap_event_id;
-
-DELETE FROM identity_credential WHERE account_id = @bootstrap_account_id;
-DELETE FROM identity_account
-WHERE id = @bootstrap_account_id AND channel = 'admin' AND subject = @subject;

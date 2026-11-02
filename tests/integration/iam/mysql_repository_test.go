@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +16,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/pkg/migrate"
+	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // envDSN 是 MySQL 集成测试的连接串开关。
@@ -55,7 +54,13 @@ func testDB(t *testing.T) *sql.DB {
 }
 
 // openAndMigrate 打开连接并应用 migrations/ 下的全部脚本。
-func openAndMigrate(dsn string) (*sql.DB, error) {
+//
+// 迁移脚本已是最终加密态，testkit.Migrate 一次性执行全部脚本并创建引导管理员。
+func openAndMigrate(rawDSN string) (*sql.DB, error) {
+	dsn, err := db.ForceMySQLCollation("mysql", rawDSN, db.MySQLDefaultCollation)
+	if err != nil {
+		return nil, err
+	}
 	sqlDB, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, err
@@ -71,39 +76,11 @@ func openAndMigrate(dsn string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	root, err := repositoryRoot()
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, err
-	}
-	migrations, err := migrate.LoadDir(filepath.Join(root, "migrations"), migrate.LoadOptions{})
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, err
-	}
-	runner, err := migrate.New(sqlDB, migrate.Config{
-		Migrations: migrations,
-		Dialect:    migrate.DialectMySQL,
-		Table:      "schema_migrations",
-	})
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, err
-	}
-	if _, err := runner.Up(ctx); err != nil {
+	if err := testkit.Migrate(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
 	}
 	return sqlDB, nil
-}
-
-// repositoryRoot 从测试文件位置回溯到仓库根目录。
-func repositoryRoot() (string, error) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", errors.New("cannot resolve test file path")
-	}
-	return filepath.Abs(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
 // reset 清空业务表（保留种子权限）。

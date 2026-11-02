@@ -6,7 +6,7 @@
 |--------|----|------|----------|----------|--------|
 | `auth.login` | A/B/C | 登录成功 | 认证 | 180d | active |
 | `auth.login_failed` | A/B/C | 登录失败（含防爆破关联）；MFA 校验遇到 locked / disabled 同样记此事件 | 认证 | 180d | active |
-| `auth.account.created` | A/B/C | 迁移 `000005_seed_bootstrap_admin` 开通首个管理员（`actor_type=operator`，`service=migration`）/ C 端短信自助开户 / OAuth 自动建号（`actor_type=system`，仅记录 provider） | 认证 | 180d | active |
+| `auth.account.created` | A/B/C | A 端 `admin-api` 启动引导创建系统默认平台管理员（`actor_type=system`，`service=admin-api`）/ C 端短信自助开户 / OAuth 自动建号（`actor_type=system`，仅记录 provider） | 认证 | 180d | active |
 | `auth.account.locked` | A/B/C | 登录失败达阈值触发账号锁定 | 认证 | 180d | active |
 | `auth.account.disabled` | A | 管理员停用账号（同时撤销全部会话） | 认证 | 180d | active |
 | `auth.account.enabled` | A | 管理员恢复停用账号 | 认证 | 180d | active |

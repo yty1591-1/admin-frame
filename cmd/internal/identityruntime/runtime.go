@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
+	identitybootstrap "github.com/admin-frame/admin-frame/internal/identity/bootstrap"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
@@ -43,6 +44,9 @@ const loginIPLimiterKeyPrefix = "identity:login:ip:"
 
 // oauthLimiterKeyPrefix 是 OAuth authorize / callback 限流键前缀（IDN-P2-05）。
 const oauthLimiterKeyPrefix = "identity:oauth:"
+
+// platformAdminBootstrapTimeout 是启动期管理员引导的硬上限，避免数据库异常拖住启动。
+const platformAdminBootstrapTimeout = 10 * time.Second
 
 // refreshLimiterKeyPrefix 是 refresh / logout 端点限流键前缀（SEC-04）。
 const refreshLimiterKeyPrefix = "identity:refresh:"
@@ -89,13 +93,18 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	if deps.Logger != nil && subjectProtector != nil {
 		deps.Logger.Info("identity subject protection enabled",
-			"stage", "S1/S2",
-			"note", "明文列保留，写入 index/ciphertext；S4/S5 需单独发布",
+			"schema", "final",
+			"note", "仅写 subject_index / subject_ciphertext，无明文主体列",
 		)
 	}
 
 	repos, err := buildRepositories(deps, subjectProtector)
 	if err != nil {
+		return nil, err
+	}
+	// A 端启动期幂等创建系统默认平台管理员：迁移脚本不含明文主体，
+	// 这里在数据库可用且主体保护器就绪后补齐账号、凭据、绑定与首次审计。
+	if err := ensurePlatformAdmin(deps, channel, subjectProtector); err != nil {
 		return nil, err
 	}
 	revocation, err := buildRevocationStore(deps)
@@ -293,39 +302,39 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
-		Accounts:           repos.accounts,
-		Credentials:        repos.credentials,
-		Sessions:           repos.sessions,
-		Guard:              guard,
-		Password:           passwordSvc,
-		Tokens:             tokens,
-		Revocation:         revocation,
-		RevocationStateTTL: cfg.Identity.Revocation.StateTTL,
-		RevocationObserver: revocationObserver,
-		Metrics:            identityMetrics,
-		Hasher:             piiHasher,
-		Logger:             deps.Logger,
-		Audit:              auditEmitter,
-		IDs:                deps.IDs,
-		Channel:            channel,
-		UoW:                uow,
-		IdleTimeout:        cfg.Identity.Session.IdleTimeout,
-		SessionAbsoluteTTL: cfg.Identity.Session.AbsoluteTTL,
-		MaxPerAccount:      cfg.Identity.Session.MaxPerAccount,
-		RefreshGrace:       cfg.Identity.Session.RefreshGrace,
+		Accounts:              repos.accounts,
+		Credentials:           repos.credentials,
+		Sessions:              repos.sessions,
+		Guard:                 guard,
+		Password:              passwordSvc,
+		Tokens:                tokens,
+		Revocation:            revocation,
+		RevocationStateTTL:    cfg.Identity.Revocation.StateTTL,
+		RevocationObserver:    revocationObserver,
+		Metrics:               identityMetrics,
+		Hasher:                piiHasher,
+		Logger:                deps.Logger,
+		Audit:                 auditEmitter,
+		IDs:                   deps.IDs,
+		Channel:               channel,
+		UoW:                   uow,
+		IdleTimeout:           cfg.Identity.Session.IdleTimeout,
+		SessionAbsoluteTTL:    cfg.Identity.Session.AbsoluteTTL,
+		MaxPerAccount:         cfg.Identity.Session.MaxPerAccount,
+		RefreshGrace:          cfg.Identity.Session.RefreshGrace,
 		PasswordHistoryCount:  cfg.Identity.Password.HistoryCount,
 		PasswordHistoryWindow: cfg.Identity.Password.HistoryWindow,
-		Service:            cfg.Service,
-		MFA:                repos.mfa,
-		MFACipher:          mfaCipher,
-		MFATickets:         tickets,
-		MFAIssuer:          cfg.Identity.MFA.Issuer,
+		Service:               cfg.Service,
+		MFA:                   repos.mfa,
+		MFACipher:             mfaCipher,
+		MFATickets:            tickets,
+		MFAIssuer:             cfg.Identity.MFA.Issuer,
 		MFATOTP: totp.Policy{
 			Digits: cfg.Identity.MFA.TOTPDigits,
 			Period: cfg.Identity.MFA.TOTPStep,
 			Window: cfg.Identity.MFA.TOTPWindow,
 		},
-		MFARecoveryCodeCount:   cfg.Identity.MFA.RecoveryCodeCount,
+		MFARecoveryCodeCount:    cfg.Identity.MFA.RecoveryCodeCount,
 		MFAStepUpReuseGrace:     cfg.Identity.MFA.StepUpReuseGrace,
 		PasswordPolicyFor:       passwordPolicyResolver(cfg),
 		TemporaryPasswordLength: cfg.Identity.Password.TemporaryLength,
@@ -657,11 +666,11 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 	}
 	sqlDB := deps.Database.SQL()
 	return repositories{
-		accounts:        persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector)),
-		credentials:     persistence.NewSQLCredentialRepository(sqlDB),
-		sessions:        persistence.NewSQLSessionRepository(sqlDB),
-		attempts:        persistence.NewSQLLoginAttemptRepository(sqlDB),
-		mfa:             persistence.NewSQLMFAEnrollmentRepository(sqlDB),
+		accounts:    persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector)),
+		credentials: persistence.NewSQLCredentialRepository(sqlDB),
+		sessions:    persistence.NewSQLSessionRepository(sqlDB),
+		attempts:    persistence.NewSQLLoginAttemptRepository(sqlDB),
+		mfa:         persistence.NewSQLMFAEnrollmentRepository(sqlDB),
 		oauthIdentities: persistence.NewSQLOAuthIdentityRepository(sqlDB,
 			persistence.WithOAuthSubjectProtector(protector)),
 	}, nil
@@ -750,6 +759,34 @@ func passwordPolicyResolver(cfg *platform.Config) func(merchantID string) app.Pa
 	}
 }
 
+// ensurePlatformAdmin 在 A 端且使用持久化数据库时幂等创建系统默认平台管理员。
+//
+// B/C 端部署不创建 A 端账号；内存库随进程重启丢失，不做引导。
+// 数据库已迁移但缺少 subject.keys（protector 为空）时失败关闭，避免静默跳过管理员创建。
+func ensurePlatformAdmin(deps *platform.Deps, channel domain.Channel, protector persistence.SubjectProtector) error {
+	if channel != domain.ChannelAdmin || deps.Database == nil {
+		return nil
+	}
+	if protector == nil {
+		return apperr.Internal("identity subject protection is required to bootstrap platform admin", nil)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), platformAdminBootstrapTimeout)
+	defer cancel()
+	result, err := identitybootstrap.EnsureAdmin(ctx, deps.Database.SQL(), protector, identitybootstrap.Options{
+		Service: deps.Config.Service,
+	})
+	if err != nil {
+		return fmt.Errorf("identity platform admin bootstrap: %w", err)
+	}
+	if deps.Logger != nil {
+		deps.Logger.Info("identity platform admin ready",
+			"account_id", result.AccountID,
+			"created", result.Created,
+		)
+	}
+	return nil
+}
+
 // buildHasher 解析 PII 摘要密钥；未配置时返回 nil（仅本地/tests 回退无盐算法）。
 func buildHasher(cfg *platform.Config) (*crypto.Hasher, error) {
 	active, keys, err := cfg.Identity.DecodeHashKeys()
@@ -781,12 +818,8 @@ func buildSubjectProtector(cfg *platform.Config, hasher *crypto.Hasher) (persist
 	if hasher == nil {
 		return nil, apperr.Internal("identity.hash_key is required when identity.subject.keys is set", nil)
 	}
-	legacy, err := cfg.Identity.Subject.DecodeLegacyKey()
-	if err != nil {
-		return nil, fmt.Errorf("identity subject legacy key: %w", err)
-	}
 	active := cfg.Identity.Subject.ActiveKeyID
-	ring, err := crypto.NewKeyRing(keys, active, legacy)
+	ring, err := crypto.NewKeyRing(keys, active, nil)
 	if err != nil {
 		return nil, fmt.Errorf("identity subject key ring: %w", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -380,67 +379,6 @@ func (r *SQLAccountRepository) decodeSubject(account *domain.Account) error {
 	}
 	account.Subject = plaintext
 	return nil
-}
-
-// BackfillSubjectProtection 为存量账号回填 subject_index 与 subject_ciphertext。
-//
-// 仅用于 S5 迁移前的升级窗口（000011 已执行、000015 尚未执行）：此时明文列仍存在，
-// 可按主键顺序批量扫描缺失保护列的行并逐行计算；可重复执行（幂等）。
-// 000015 删除明文列后本方法不可再用。返回本次实际更新的行数。
-func (r *SQLAccountRepository) BackfillSubjectProtection(ctx context.Context, limit int) (int, error) {
-	if r.protector == nil {
-		return 0, apperr.BadRequest("subject protector is not configured")
-	}
-	if r.sql == nil {
-		return 0, apperr.Unavailable("identity account repository is not configured")
-	}
-	if limit <= 0 {
-		limit = 500
-	}
-	rows, err := r.sql.QueryContext(ctx, `SELECT id, channel, merchant_id, subject
-		FROM identity_account
-		WHERE subject_index IS NULL OR subject_ciphertext IS NULL
-		ORDER BY id LIMIT ?`, limit)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	type pending struct {
-		id         int64
-		channel    domain.Channel
-		merchantID string
-		subject    string
-	}
-	items := make([]pending, 0, limit)
-	for rows.Next() {
-		var item pending
-		if scanErr := rows.Scan(&item.id, &item.channel, &item.merchantID, &item.subject); scanErr != nil {
-			return 0, scanErr
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	updated := 0
-	for _, item := range items {
-		accountID := strconv.FormatInt(item.id, 10)
-		index := r.protector.Index(item.channel, item.merchantID, item.subject)
-		ciphertext, encErr := r.protector.Encrypt(accountID, item.subject)
-		if encErr != nil {
-			return updated, encErr
-		}
-		if _, execErr := r.sql.ExecContext(ctx, `UPDATE identity_account
-			SET subject_index = ?, subject_ciphertext = ?
-			WHERE id = ? AND (subject_index IS NULL OR subject_ciphertext IS NULL)`,
-			nullString(index), nullBytes(ciphertext), item.id); execErr != nil {
-			return updated, execErr
-		}
-		updated++
-	}
-	return updated, nil
 }
 
 // scanAccount 扫描一行账号；可空列允许 NULL。

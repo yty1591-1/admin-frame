@@ -3,6 +3,7 @@
 -- 此时必须先走正常撤权流程，禁止在迁移里静默删除授权关系（会绕过审计）。
 -- 破玻璃角色若存在历史绑定，同样由外键阻止删除（保留审计线索，需人工评估）。
 
+DELETE FROM iam_menu WHERE channel = 'admin' AND code = 'system.profile';
 DELETE FROM iam_menu WHERE channel = 'admin' AND code IN (
     'system.role', 'system.menu', 'system.audit', 'system.config'
 );
@@ -52,5 +53,8 @@ WHERE code IN (
     'iam:sod:read',
     'iam:sod:write',
     'identity:account:read',
-    'identity:account:write'
+    'identity:account:write',
+    'identity:account:credential',
+    'identity:account:delete',
+    'identity:account:session'
 );
