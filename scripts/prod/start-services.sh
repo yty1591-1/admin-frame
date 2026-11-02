@@ -145,6 +145,12 @@ load_env() {
     key="${line%%=*}"
     value="${line#*=}"
     key="${key//[[:space:]]/}"
+    # 允许成对引号包裹值（常见 dotenv 写法）。这里不执行 source，不剥离的话
+    # 引号会成为 DSN / 口令的一部分，例如 DSN 用户名会变成 '"root'。
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+      value="${value#?}"
+      value="${value%?}"
+    fi
     if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
       warn "跳过无法识别的环境变量行：${line:0:40}"
       continue
