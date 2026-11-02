@@ -2,6 +2,7 @@ package rest
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func (l *denyingLimiter) Allow(string) (bool, time.Duration) {
 func TestCheckEndpointLimitRejectsRefreshAndLogout(t *testing.T) {
 	limiter := &denyingLimiter{retry: 2 * time.Second}
 	h := &Handler{channel: domain.ChannelAdmin, limiter: limiter}
-	request := httptest.NewRequest("POST", "/admin/v1/auth/refresh", nil)
+	request := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/refresh", http.NoBody)
 
 	retryAfter, err := h.checkEndpointLimit(request, "refresh", "refresh-token-value")
 	var appErr *apperr.AppError

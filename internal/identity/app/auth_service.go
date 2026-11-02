@@ -127,41 +127,6 @@ type AuthServiceConfig struct {
 	Clock     Clock
 }
 
-// mfaEnabled 报告当前端别是否允许 MFA（BIZ-03）。
-func (s *AuthService) mfaEnabled() bool { return s.mfaChannels[s.channel] }
-
-// mfaFactorEnabled 报告指定因子是否在装配期白名单内（BIZ-03）。
-func (s *AuthService) mfaFactorEnabled(factor MFAFactor) bool { return s.mfaFactors[factor] }
-
-// mfaFactorsFrom 解析因子白名单；nil 或空表示仅 totp，未知因子直接拒绝。
-func mfaFactorsFrom(factors []MFAFactor) (map[MFAFactor]bool, error) {
-	enabled := make(map[MFAFactor]bool, len(factors))
-	for _, factor := range factors {
-		switch factor {
-		case MFAFactorTOTP:
-			enabled[factor] = true
-		default:
-			return nil, apperr.Internal("unsupported mfa factor: "+string(factor), nil)
-		}
-	}
-	if len(enabled) == 0 {
-		enabled[MFAFactorTOTP] = true
-	}
-	return enabled, nil
-}
-
-// passwordPolicyForAccount 返回账号生效的密码策略（BIZ-04）；无覆盖时使用全局策略。
-func (s *AuthService) passwordPolicyForAccount(merchantID string) PasswordPolicy {
-	if s.passwordPolicyFor != nil {
-		if policy := s.passwordPolicyFor(merchantID); policy != (PasswordPolicy{}) {
-			if err := policy.Validate(); err == nil {
-				return policy
-			}
-		}
-	}
-	return s.password.Policy()
-}
-
 // AuthService 编排登录、刷新、登出与会话撤销（docs/identity-authn.md §5）。
 type AuthService struct {
 	accounts     domain.AccountRepository
@@ -204,6 +169,41 @@ type AuthService struct {
 	temporaryPasswordLength int
 	deleteReauthWindow      time.Duration
 	passwordPolicyFor       func(merchantID string) PasswordPolicy
+}
+
+// mfaEnabled 报告当前端别是否允许 MFA（BIZ-03）。
+func (s *AuthService) mfaEnabled() bool { return s.mfaChannels[s.channel] }
+
+// mfaFactorEnabled 报告指定因子是否在装配期白名单内（BIZ-03）。
+func (s *AuthService) mfaFactorEnabled(factor MFAFactor) bool { return s.mfaFactors[factor] }
+
+// mfaFactorsFrom 解析因子白名单；nil 或空表示仅 totp，未知因子直接拒绝。
+func mfaFactorsFrom(factors []MFAFactor) (map[MFAFactor]bool, error) {
+	enabled := make(map[MFAFactor]bool, len(factors))
+	for _, factor := range factors {
+		switch factor {
+		case MFAFactorTOTP:
+			enabled[factor] = true
+		default:
+			return nil, apperr.Internal("unsupported mfa factor: "+string(factor), nil)
+		}
+	}
+	if len(enabled) == 0 {
+		enabled[MFAFactorTOTP] = true
+	}
+	return enabled, nil
+}
+
+// passwordPolicyForAccount 返回账号生效的密码策略（BIZ-04）；无覆盖时使用全局策略。
+func (s *AuthService) passwordPolicyForAccount(merchantID string) PasswordPolicy {
+	if s.passwordPolicyFor != nil {
+		if policy := s.passwordPolicyFor(merchantID); policy != (PasswordPolicy{}) {
+			if err := policy.Validate(); err == nil {
+				return policy
+			}
+		}
+	}
+	return s.password.Policy()
 }
 
 // NewAuthService 构造认证用例服务；核心依赖缺失时返回错误。

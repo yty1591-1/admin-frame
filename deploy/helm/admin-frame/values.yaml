@@ -74,7 +74,11 @@ config:
   async:
     enabled: false
   iam:
-    mode: off
+    # 必须带引号：YAML 1.1 会把裸 off 解析成布尔 false，渲染后变成
+    # `iam.mode: false`，容器启动即报 `unsupported iam.mode: false` 并 CrashLoop。
+    # helm lint / kubectl --dry-run=server 都发现不了（属运行时配置校验），
+    # 只有真部署才暴露。make check-deploy 有断言防回归。
+    mode: "off"
   identity:
     enabled: false
 
@@ -279,6 +283,14 @@ migrate:
 
 serviceMonitor:
   enabled: false
+  # 集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）时的行为。
+  # false（默认）：渲染失败并提示先安装 Operator —— 避免 `helm install` 抛
+  #               难懂的 `no matches for kind "ServiceMonitor"`。
+  # true：跳过 ServiceMonitor 渲染（该环境不抓取指标时才这样设；指标会缺失）。
+  # 离线渲染（helm template）不会自带 CRD，用
+  #   --api-versions monitoring.coreos.com/v1/ServiceMonitor
+  # 声明模拟的 API 集合，而不是把这个开关设成 true。
+  allowMissingCRD: false
   interval: 30s
   scrapeTimeout: 10s
   labels: {}

@@ -28,7 +28,7 @@ func TestOAuthRoutesResolveProviderFromPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			request := httptest.NewRequest(http.MethodPost, tc.path, http.NoBody)
 			fixture.mux.ServeHTTP(recorder, request)
 
 			var envelope pkghttpx.Envelope

@@ -109,7 +109,7 @@ func TestAccountRoutesRequireSplitPermissions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			seen = nil
 			recorder := httptest.NewRecorder()
-			mux.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+			mux.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, http.NoBody))
 			if len(seen) != 1 || seen[0] != tc.want {
 				t.Fatalf("permission codes = %v, want [%s]", seen, tc.want)
 			}
@@ -148,7 +148,7 @@ func TestAccountMutationsRequireIdempotencyKey(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			mux.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+			mux.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, http.NoBody))
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 when Idempotency-Key missing", recorder.Code)
 			}
@@ -173,7 +173,7 @@ func TestAccountRoutesFailClosedWithoutPermissionMiddleware(t *testing.T) {
 	admin.Register(mux, handler, passthrough, nil)
 
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/auth/accounts", nil))
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/auth/accounts", http.NoBody))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 when permission middleware missing", recorder.Code)
 	}

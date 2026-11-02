@@ -70,7 +70,18 @@ func run(configPath, replayDLQ string) error {
 	if err != nil {
 		return fmt.Errorf("metrics: %w", err)
 	}
-	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met}
+	// 进程级 ID 生成器：审计保留服务用它写 audit.retention_purge 元审计事件，
+	// 缺失时 NewRetentionService 直接拒绝构造，worker 启动即失败。
+	// platform.Run（API 进程）在装配期创建它；worker 不走 Run，必须自己创建，
+	// 否则 deps.IDs 为 nil（2026-11-02 kind 部署实测：worker CrashLoop 于
+	// "audit retention service requires an id generator"）。
+	ids, nodeID, err := platform.NewIDGenerator(cfg.ID)
+	if err != nil {
+		return fmt.Errorf("id generator: %w", err)
+	}
+
+	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met, IDs: ids}
+	logger.Info("id generator ready", "node_id", nodeID)
 	if replayDLQ != "" {
 		return replayDeadLetters(ctx, deps, replayDLQ, logger)
 	}

@@ -84,7 +84,7 @@ workloads:
       enabled: true
     configOverrides:
       iam:
-        mode: off
+        mode: "off"
     ingress:
       enabled: true
       className: nginx
@@ -96,7 +96,7 @@ workloads:
       enabled: true
     configOverrides:
       iam:
-        mode: off
+        mode: "off"
 
 migrate:
   enabled: true

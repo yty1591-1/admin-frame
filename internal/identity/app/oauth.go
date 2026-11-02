@@ -148,7 +148,7 @@ func NewOAuthService(cfg OAuthServiceConfig) (*OAuthService, error) {
 			Name:    "oauth:" + name,
 			Timeout: breakerTimeout,
 			ReadyToTrip: func(counts circuitbreaker.Counts) bool {
-				return counts.ConsecutiveFailures >= uint32(failures)
+				return int64(counts.ConsecutiveFailures) >= int64(failures)
 			},
 			// 4xx / invalid_grant 是业务拒绝，不应打开 provider 熔断。
 			IsSuccessful: func(err error) bool {
@@ -430,7 +430,7 @@ func (s *OAuthService) Unbind(ctx context.Context, actor SessionActor, provider 
 func (s *OAuthService) AuthorizeBinding(
 	ctx context.Context,
 	actor SessionActor,
-	provider, ipHash, traceID string,
+	provider, ipHash, _ string,
 ) (AuthorizeResult, error) {
 	if strings.TrimSpace(actor.AccountID) == "" {
 		return AuthorizeResult{}, invalidToken()
@@ -634,7 +634,6 @@ func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject, 
 				}
 			}
 			account = existingAccount
-			created = false
 			return nil
 		}
 		if created {

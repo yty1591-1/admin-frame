@@ -160,7 +160,7 @@ func (r *SQLOAuthIdentityRepository) Delete(ctx context.Context, accountID, prov
 }
 
 // protectProviderSubject 计算外部身份主体索引与密文；未配置保护器时失败关闭。
-func (r *SQLOAuthIdentityRepository) protectProviderSubject(identity *domain.OAuthIdentity) (string, []byte, error) {
+func (r *SQLOAuthIdentityRepository) protectProviderSubject(identity *domain.OAuthIdentity) (providerIndex string, providerCiphertext []byte, err error) {
 	if r.protector == nil {
 		return "", nil, apperr.Unavailable("oauth subject protector is not configured")
 	}

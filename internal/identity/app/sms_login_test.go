@@ -160,7 +160,6 @@ func TestSMSRebindPhone(t *testing.T) {
 	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
 		t.Fatalf("send old for reauth: %v", err)
 	}
-	oldCode := f.sender.code
 	f.clock.Advance(61 * time.Second)
 	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
 		t.Fatalf("send new: %v", err)
@@ -175,7 +174,7 @@ func TestSMSRebindPhone(t *testing.T) {
 	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: oldPhone}); err != nil {
 		t.Fatalf("resend old for reauth: %v", err)
 	}
-	oldCode = f.sender.code
+	oldCode := f.sender.code
 	f.clock.Advance(61 * time.Second)
 	if err := f.svc.Send(ctx, app.SendSMSCodeInput{Phone: newPhone}); err != nil {
 		t.Fatalf("resend new: %v", err)

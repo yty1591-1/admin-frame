@@ -10,6 +10,7 @@ deploy/helm/admin-frame/
 ├── Chart.yaml
 ├── values.yaml            # 默认值（开发基线）
 ├── values-dev.yaml        # 内存依赖，本地预览
+├── values-kind.yaml       # kind 验证基线（可重复跑部署/冒烟/回滚）
 ├── values-staging.yaml    # 真实依赖，2 副本
 ├── values-prod.yaml       # 3 副本 + HPA + PDB + 网络策略
 └── templates/
@@ -20,9 +21,16 @@ deploy/helm/admin-frame/
     ├── service.yaml / service-headless.yaml
     ├── ingress.yaml / hpa.yaml / pdb.yaml
     ├── networkpolicy.yaml / servicemonitor.yaml
-    ├── serviceaccount.yaml
-    └── migrate-job.yaml   # post-install/post-upgrade Hook
+    ├── serviceaccount.yaml     # pre-hook（weight -20）
+    ├── migrate-config.yaml     # pre-hook（weight -10），迁移专用配置
+    ├── migrate-job.yaml        # pre-install/pre-upgrade Hook（weight 0）
+    └── NOTES.txt
 ```
+
+**Hook 顺序是发布正确性的前提**：`ServiceAccount(-20) → migrate-config(-10) →
+migrate Job(0) → 其余资源 → Deployment`。迁移必须先于 API 完成，否则新代码会在
+旧 schema 上运行；迁移失败时整次发布中断、API 不被替换。
+`make check-deploy` 用断言锁住这个顺序，不要改回 `post-*`。
 
 ## 2. 安装
 

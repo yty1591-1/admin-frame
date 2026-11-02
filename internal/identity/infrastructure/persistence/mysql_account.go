@@ -353,7 +353,7 @@ func (r *SQLAccountRepository) checkUpdateResult(ctx context.Context, result sql
 }
 
 // protectSubject 计算主体索引与密文；未配置保护器时失败关闭。
-func (r *SQLAccountRepository) protectSubject(account *domain.Account) (string, []byte, error) {
+func (r *SQLAccountRepository) protectSubject(account *domain.Account) (subjectIndex string, subjectCiphertext []byte, err error) {
 	if r.protector == nil {
 		return "", nil, apperr.Unavailable("subject protector is not configured")
 	}

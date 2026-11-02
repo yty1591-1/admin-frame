@@ -34,7 +34,7 @@ const (
 
 	// bootstrapPasswordHash 是默认演练口令 Admin#Bootstrap2026 的 Argon2id 编码值。
 	// 公开演练口令必须配合 must_change_password=1，首次登录先改密。
-	bootstrapPasswordHash = "$argon2id$v=19$m=19456,t=2,p=1$bGxqpo2HjthAlN+YLfpSkA$4FQGp1ifQnkGYCoMDYwN/pmejWVtI5K3Rh/8/uip//I"
+	bootstrapPasswordHash = "$argon2id$v=19$m=19456,t=2,p=1$bGxqpo2HjthAlN+YLfpSkA$4FQGp1ifQnkGYCoMDYwN/pmejWVtI5K3Rh/8/uip//I" // #nosec G101 -- 公开演练口令的哈希，非真实凭据。
 
 	auditTopic       = "identity.audit"
 	auditEventType   = "audit.event"

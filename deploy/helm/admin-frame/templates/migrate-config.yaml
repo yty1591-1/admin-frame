@@ -1,0 +1,31 @@
+{{- if .Values.migrate.enabled }}
+{{- /*
+迁移专用配置（pre-install / pre-upgrade hook，weight -10）。
+
+为什么需要单独一份：
+  迁移必须早于 API 启动（T7）。而主 ConfigMap 属于 release 资源，在
+  pre-install 阶段还不存在，Job 无法挂载。所以把同一份 admin 配置以 hook
+  形式再渲染一次，先于 Job（weight 0）创建。
+
+为什么不把主 ConfigMap 直接改成 hook：
+  hook 资源不受 release 管理，helm rollback 不会还原它 —— 会出现「回滚后
+  配置仍是新版本」的静默不一致。主 ConfigMap 必须留在 release manifest 里。
+
+为什么 delete-policy 不含 hook-succeeded：
+  迁移失败时要能翻日志；保留最新一次 Job 便于事后核查实际执行的 SQL。
+  下次发布由 before-hook-creation 清掉上一个，不会无限累积。
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-migrate-config
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  config.yaml: |
+    {{- include "admin-frame.appConfig" (dict "root" . "key" "admin") | nindent 4 }}
+{{- end }}

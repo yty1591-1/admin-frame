@@ -182,7 +182,7 @@ func (l *Loader[T]) loadFile(path string, dst *T) error {
 // chain 保存当前包含链的绝对路径，用于检测循环与限制嵌套深度。
 func (l *Loader[T]) loadFileChain(path string, dst *T, chain []string) error {
 	if !l.expandIncludes {
-		data, err := os.ReadFile(path) // #nosec G304 -- 路径来自运维配置，非请求输入。
+		data, err := os.ReadFile(path) // #nosec G304,G703 -- 路径来自运维配置，非请求输入。
 		if err != nil {
 			return readError(path, err)
 		}
@@ -209,7 +209,7 @@ func (l *Loader[T]) loadFileChain(path string, dst *T, chain []string) error {
 			fmt.Sprintf("include depth exceeds %d", maxIncludeDepth))
 	}
 
-	data, err := os.ReadFile(path) // #nosec G304 -- 路径来自运维配置，非请求输入。
+	data, err := os.ReadFile(path) // #nosec G304,G703 -- 路径来自运维配置，非请求输入。
 	if err != nil {
 		return readError(path, err)
 	}
@@ -239,7 +239,7 @@ func (l *Loader[T]) loadFileChain(path string, dst *T, chain []string) error {
 //
 // 无 include 时原样返回 data，避免不必要的重编码；有 include 时用 map 承载剩余
 // 字段后重新编码，最终严格解码仍会拒绝未知字段。
-func splitInclude(data []byte, path string) ([]string, []byte, error) {
+func splitInclude(data []byte, path string) (paths []string, encoded []byte, marshalErr error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var raw map[string]any
 	if err := decoder.Decode(&raw); err != nil {
@@ -274,11 +274,11 @@ func splitInclude(data []byte, path string) ([]string, []byte, error) {
 	if len(raw) == 0 {
 		return includes, nil, nil
 	}
-	body, err := yaml.Marshal(raw)
-	if err != nil {
+	encoded, marshalErr = yaml.Marshal(raw)
+	if marshalErr != nil {
 		return nil, nil, decodeError(ErrMalformedFile, path, "cannot re-encode config without include")
 	}
-	return includes, body, nil
+	return includes, encoded, nil
 }
 
 // files 返回文件列表副本，供 Watcher 创建时固定监视目标。

@@ -54,22 +54,6 @@ func nullTime(value *time.Time) any {
 	return value.UTC()
 }
 
-// nullString 把空串写为 NULL，避免 S1 可空列出现无意义的空串。
-func nullString(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-// nullBytes 把空字节切片写为 NULL，供可空密文列使用。
-func nullBytes(value []byte) any {
-	if len(value) == 0 {
-		return nil
-	}
-	return value
-}
-
 // nullableTime 把 sql.NullTime 转换为可空指针（UTC）。
 func nullableTime(value sql.NullTime) *time.Time {
 	if !value.Valid {

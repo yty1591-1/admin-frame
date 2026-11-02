@@ -43,7 +43,7 @@ func NewCachedRevocationStore(
 	observer app.RevocationCacheObserver,
 ) app.RevocationStore {
 	if inner == nil {
-		return inner
+		return nil
 	}
 	if ttl <= 0 || capacity <= 0 {
 		return inner
@@ -179,7 +179,7 @@ func newRevocationL1(ttl time.Duration, capacity int) *revocationL1 {
 	return &revocationL1{
 		ttl:      ttl,
 		capacity: capacity,
-		clock:    func() time.Time { return time.Now() },
+		clock:    time.Now,
 		items:    make(map[string]*list.Element, capacity),
 		order:    list.New(),
 	}

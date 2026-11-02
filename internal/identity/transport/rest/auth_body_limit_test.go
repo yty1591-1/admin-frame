@@ -14,7 +14,7 @@ func TestAuthBodyLimitRejectsOversizedBeforeHandler(t *testing.T) {
 		called = true
 	}))
 
-	oversized := httptest.NewRequest("POST", "/admin/v1/auth/login",
+	oversized := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login",
 		strings.NewReader(strings.Repeat("a", int(AuthBodyLimitBytes)+1)))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, oversized)
@@ -25,7 +25,7 @@ func TestAuthBodyLimitRejectsOversizedBeforeHandler(t *testing.T) {
 		t.Fatalf("status = %d, want 400", recorder.Code)
 	}
 
-	normal := httptest.NewRequest("POST", "/admin/v1/auth/login",
+	normal := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login",
 		strings.NewReader(`{"subject":"alice"}`))
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, normal)

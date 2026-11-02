@@ -43,7 +43,7 @@ func TestValidateStepWithPolicy(t *testing.T) {
 		t.Fatalf("code length = %d, want 8", len(code))
 	}
 	step, ok := ValidateStepWith(rfcSecret, code, now, policy)
-	if !ok || step != int64(counter) {
+	if !ok || step != int64(counter) { //nolint:gosec // G115: counter 来自固定测试时间戳，远小于 int64 上限
 		t.Fatalf("ValidateStepWith() = (%d, %v), want (%d, true)", step, ok, counter)
 	}
 	// 8 位策略下 6 位动态码必须被拒绝。

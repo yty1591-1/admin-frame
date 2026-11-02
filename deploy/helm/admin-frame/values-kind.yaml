@@ -1,0 +1,105 @@
+# 本地 kind 集群验证基线（ENT-05 AC-ENT-05-1 / AC-ENT-05-4 的可重复执行环境）。
+#
+# 用途：在没有 staging 集群时，用 kind 真跑一遍「渲染 → 部署 → 冒烟 → 回滚」。
+# 与 values-staging.yaml 的差异**只在集群外依赖**，编排语义保持一致：
+#   保留：迁移 Job、探针、PDB、安全上下文、只读根文件系统、ServiceMonitor
+#   替代：storage 用 memory（本地无 MinIO）、tracing 关闭（本地无 Collector）、
+#         ingress 关闭（本地无 ingress controller）、副本 1（单节点）
+#
+# 前置（一次性）：
+#   kind create cluster --name af-verify --image kindest/node:v1.34.3
+#   helm install prometheus-operator-crds prometheus-community/prometheus-operator-crds -n monitoring --create-namespace
+#   kubectl create ns admin-frame
+#   # MySQL / Redis / Secret 见 docs/deploy-kind-verify.md
+#
+# 镜像：镜像需先 `kind load docker-image` 或导入节点（本地构建 tag=verify）。
+image:
+  registry: docker.io
+  namespace: admin-frame
+  tag: verify
+  pullPolicy: IfNotPresent
+
+config:
+  env: staging
+  auth:
+    mode: jwt
+    jwt:
+      alg: RS256
+      issuer: admin-frame
+      audience: [admin, biz, c, worker]
+      public_key_file: /etc/admin-frame/jwt/public.pem
+  db:
+    driver: mysql
+    dsn: "" # 由 Secret admin-frame-db 注入
+  redis:
+    addr: redis.admin-frame.svc.cluster.local:6379
+    key_prefix: "admin-frame/kind/"
+  storage:
+    driver: memory
+    key_prefix: "kind/"
+  tracing:
+    enabled: true
+    exporter: none
+    endpoint: ""
+    insecure: true
+  async:
+    enabled: true
+    driver: db
+    outbox:
+      publish_in_api: false
+  iam:
+    mode: shadow
+    cache:
+      driver: redis
+
+jwtPublicKey:
+  enabled: true
+  secretName: admin-frame-jwt
+  key: public.pem
+
+env:
+  - name: ADMIN_FRAME_DB_DSN
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-db
+        key: dsn
+  - name: ADMIN_FRAME_REDIS_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-redis
+        key: password
+        optional: true
+
+workloads:
+  admin:
+    replicas: 1
+    ingress:
+      enabled: false
+  biz:
+    replicas: 1
+    ingress:
+      enabled: false
+  c:
+    replicas: 1
+    configOverrides:
+      iam:
+        mode: "off"
+    ingress:
+      enabled: false
+  worker:
+    replicas: 1
+    configOverrides:
+      iam:
+        mode: "off"
+
+migrate:
+  enabled: true
+  image:
+    repository: migrate
+    tag: verify
+
+serviceMonitor:
+  enabled: true
+
+networkPolicy:
+  enabled: false

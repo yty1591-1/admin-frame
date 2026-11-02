@@ -572,7 +572,7 @@ func selectArchiveIDs(
 	limit int,
 ) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT `+idColumn+` FROM `+table+` WHERE `+condition+` ORDER BY updated_at LIMIT ?`,
+		`SELECT `+idColumn+` FROM `+table+` WHERE `+condition+` ORDER BY updated_at LIMIT ?`, // #nosec G202 -- 表名/列名来自内部调用方常量，非外部输入
 		before.UTC(), limit)
 	if err != nil {
 		return nil, err
@@ -596,41 +596,43 @@ func selectArchiveIDs(
 // insertArchivedSessions 以主键集合把在线会话复制到归档表。
 func insertArchivedSessions(ctx context.Context, tx *sql.Tx, ids []int64, archivedAt time.Time) error {
 	placeholders, args := idPlaceholders(ids, archivedAt.UTC())
-	_, err := tx.ExecContext(ctx, `INSERT INTO identity_session_archive
+	query := `INSERT INTO identity_session_archive
 		(id, account_id, family_id, refresh_token_hash, status, token_version, version,
 		 expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason,
 		 created_at, updated_at, archived_at)
 		SELECT id, account_id, family_id, refresh_token_hash, status, token_version, version,
 		 expires_at, idle_expires_at, last_used_at, revoked_at, revoked_reason,
 		 created_at, updated_at, ?
-		FROM identity_session WHERE id IN (`+placeholders+`)`, args...)
+		FROM identity_session WHERE id IN (` + placeholders + `)` // #nosec G202 -- placeholders 由内部生成，非外部输入
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
 // insertArchivedFamilies 以主键集合把在线设备会话复制到归档表。
 func insertArchivedFamilies(ctx context.Context, tx *sql.Tx, ids []int64, archivedAt time.Time) error {
 	placeholders, args := idPlaceholders(ids, archivedAt.UTC())
-	_, err := tx.ExecContext(ctx, `INSERT INTO identity_session_family_archive
+	query := `INSERT INTO identity_session_family_archive
 		(family_id, account_id, status, version, created_at, last_used_at, expires_at,
 		 absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
 		 device_label, revoked_at, revoked_reason, updated_at, archived_at)
 		SELECT family_id, account_id, status, version, created_at, last_used_at, expires_at,
 		 absolute_expires_at, ip_hash, ua_hash, device_type, os_name, browser_name, ip_masked,
 		 device_label, revoked_at, revoked_reason, updated_at, ?
-		FROM identity_session_family WHERE family_id IN (`+placeholders+`)`, args...)
+		FROM identity_session_family WHERE family_id IN (` + placeholders + `)` // #nosec G202 -- placeholders 由内部生成，非外部输入
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
 // deleteByIDs 按主键集合删除在线行。
 func deleteByIDs(ctx context.Context, tx *sql.Tx, table, idColumn string, ids []int64) error {
 	placeholders, args := idPlaceholders(ids)
-	_, err := tx.ExecContext(ctx,
-		`DELETE FROM `+table+` WHERE `+idColumn+` IN (`+placeholders+`)`, args...)
+	query := `DELETE FROM ` + table + ` WHERE ` + idColumn + ` IN (` + placeholders + `)` // #nosec G202 -- 表名/列名来自内部常量，占位符由内部生成
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
 // idPlaceholders 构造 IN 列表占位符；extra 为插入 SELECT 的额外参数（放在最前）。
-func idPlaceholders(ids []int64, extra ...any) (string, []any) {
+func idPlaceholders(ids []int64, extra ...any) (sqlPlaceholders string, allArgs []any) {
 	args := make([]any, 0, len(extra)+len(ids))
 	args = append(args, extra...)
 	var builder strings.Builder

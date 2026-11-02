@@ -117,6 +117,7 @@ docs/
 ├── notification-channels.md   # 通知渠道（L2）
 ├── storage-s3-oss.md          # 对象存储（L2）
 ├── migration-guide.md         # 迁移使用指南（L2）
+├── deploy-kind-verify.md      # 用 kind 验证 Helm Chart：部署 / 冒烟 / 回滚（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-*.md  # 活跃计划（L3）
 ├── adr/                       # 架构决策记录（L1）

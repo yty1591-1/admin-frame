@@ -23,7 +23,7 @@ config:
   async:
     enabled: false
   iam:
-    mode: off
+    mode: "off"
 
 workloads:
   admin:

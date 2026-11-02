@@ -63,11 +63,12 @@ func (s SQLEmitter) Emit(ctx context.Context, event Event) error {
 		return apperr.Internal("encode audit attrs", err)
 	}
 	now := time.Now().UTC()
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO `+table+`
+	query := `INSERT INTO ` + table + `
 		(event_id, action, actor_id, actor_type, channel, merchant_id,
 		 resource_type, resource_id, outcome, occurred_at, trace_id, service, reason, attrs, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE event_id = event_id`,
+		ON DUPLICATE KEY UPDATE event_id = event_id` // #nosec G202 -- 表名来自配置/默认常量，非外部输入
+	_, err = s.DB.ExecContext(ctx, query,
 		event.EventID, event.Action, event.ActorID, nullString(event.ActorType),
 		event.Channel, event.MerchantID, event.ResourceType, event.ResourceID,
 		string(event.Outcome), event.OccurredAt.UTC(), event.TraceID, event.Service,

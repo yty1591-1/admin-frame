@@ -255,21 +255,6 @@ func (f *e2eFixture) seedAccount(t *testing.T, id, subject, plainPassword string
 	return account
 }
 
-// seedActiveAccount 写入已激活账号与密码凭据。
-func (f *e2eFixture) seedActiveAccount(t *testing.T, id, subject, plainPassword string) *domain.Account {
-	t.Helper()
-	ctx := context.Background()
-	account := f.seedAccount(t, id, subject, plainPassword)
-	expected := account.Version
-	if err := account.Activate(f.clock.Now()); err != nil {
-		t.Fatalf("activate account: %v", err)
-	}
-	if err := f.accounts.Save(ctx, account, expected); err != nil {
-		t.Fatalf("save activated account: %v", err)
-	}
-	return account
-}
-
 // reload 重新读取账号。
 func (f *e2eFixture) reload(t *testing.T, id string) *domain.Account {
 	t.Helper()

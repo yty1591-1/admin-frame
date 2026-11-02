@@ -38,7 +38,7 @@ type cleanupLockStub struct {
 	calls    int
 }
 
-func (l *cleanupLockStub) Acquire(context.Context) (func(context.Context), bool, error) {
+func (l *cleanupLockStub) Acquire(context.Context) (release func(context.Context), acquired bool, err error) {
 	l.calls++
 	return func(context.Context) {}, l.acquired, nil
 }

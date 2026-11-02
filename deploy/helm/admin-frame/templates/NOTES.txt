@@ -1,0 +1,21 @@
+{{- if and .Values.serviceMonitor.enabled (not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")) }}
+WARNING: serviceMonitor.enabled=true，但本集群没有 monitoring.coreos.com/v1
+         （Prometheus Operator CRD），且 allowMissingCRD=true，因此 **未创建
+         ServiceMonitor**。本 Release 的指标不会被抓取。
+         安装 Operator 后执行 helm upgrade 即可补上。
+{{- end }}
+admin-frame 已部署到命名空间 {{ .Release.Namespace }}（release: {{ .Release.Name }}）。
+
+检查就绪状态：
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "admin-frame.fullname" . }}-admin --timeout=120s
+
+冒烟（容器内执行，端口是 8080）：
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "admin-frame.fullname" . }}-admin -- \
+    wget -qO- http://127.0.0.1:8080/healthz
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "admin-frame.fullname" . }}-admin -- \
+    wget -qO- http://127.0.0.1:8080/readyz
+
+排查顺序：先看迁移 Job 是否成功（失败会阻断 API 启动），再看 Pod 事件：
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "admin-frame.fullname" . }}-migrate
+  kubectl -n {{ .Release.Namespace }} describe pod -l app.kubernetes.io/instance={{ .Release.Name }}

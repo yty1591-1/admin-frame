@@ -2,6 +2,7 @@ package rest
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func TestDecodeJSONStrict(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest("POST", "/admin/v1/auth/login", strings.NewReader(tc.body))
+			request := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", strings.NewReader(tc.body))
 			if tc.contentType != "" {
 				request.Header.Set("Content-Type", tc.contentType)
 			}
@@ -59,13 +60,13 @@ func TestDecodeJSONStrict(t *testing.T) {
 
 // TestDecodeOptionalJSONEmptyBody 验证可选请求体为空时视为未提供。
 func TestDecodeOptionalJSONEmptyBody(t *testing.T) {
-	request := httptest.NewRequest("POST", "/admin/v1/auth/logout", strings.NewReader(""))
+	request := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/logout", strings.NewReader(""))
 	var payload decodePayload
 	if err := DecodeOptionalJSON(request, &payload); err != nil {
 		t.Fatalf("empty optional body must be accepted: %v", err)
 	}
 	payload.Subject = ""
-	if err := DecodeOptionalJSON(httptest.NewRequest("POST", "/x", nil), &payload); err != nil {
+	if err := DecodeOptionalJSON(httptest.NewRequest(http.MethodPost, "/x", http.NoBody), &payload); err != nil {
 		t.Fatalf("nil body must be accepted: %v", err)
 	}
 }

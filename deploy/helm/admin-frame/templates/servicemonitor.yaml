@@ -1,4 +1,17 @@
 {{- if .Values.serviceMonitor.enabled }}
+{{- /*
+ServiceMonitor 依赖 Prometheus Operator 的 CRD（monitoring.coreos.com/v1）。
+
+为什么必须显式判断：客户端校验（helm lint / helm template / kubeconform）都假设
+API 集合完整，发现不了 CRD 缺失；只有真 API server 会拒绝，错误是
+`no matches for kind "ServiceMonitor"`——运维得自己推断出「去装 Operator」。
+这里提前判断，把「缺什么、怎么办」写进失败信息。
+
+放行方式（见 values.yaml 的 serviceMonitor.allowMissingCRD）：
+  - 离线渲染：helm template --api-versions monitoring.coreos.com/v1/ServiceMonitor
+  - 该环境不抓指标：allowMissingCRD=true（跳过渲染，NOTES 会提示）
+*/ -}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -22,4 +35,7 @@ spec:
       relabelings:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- else if not .Values.serviceMonitor.allowMissingCRD }}
+{{- fail "serviceMonitor.enabled=true 但当前集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）。部署前请先安装 Operator（kube-prometheus-stack，或只装 prometheus-operator-crds），或把 serviceMonitor.enabled 设为 false；确认该环境不抓取指标时才设 serviceMonitor.allowMissingCRD=true 跳过渲染。离线渲染时可用 --api-versions monitoring.coreos.com/v1/ServiceMonitor 声明模拟的 API 集合。" }}
+{{- end }}
 {{- end }}

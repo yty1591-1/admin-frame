@@ -1,6 +1,15 @@
 {{- if .Values.migrate.enabled }}
-# 迁移 Job：post-install/post-upgrade 执行（此时 ConfigMap 已创建）。
-# 发布须使用 `helm upgrade --install --atomic --wait`，Job 失败会回滚（AC-ENT-05-2/T7）。
+# 迁移 Job：pre-install / pre-upgrade 执行。
+#
+# 为什么必须是 pre-* 而不是 post-*：post-install hook 在 API Deployment 之后
+# 才执行，Pod 与 Job 同时启动，API 可能在表还没建好时就对外提供 503/500 或
+# 在旧 schema 上运行新代码。pre-* 保证「迁移失败 → 发布不继续」。
+#
+# 代价与配套：pre-install 阶段 release 资源尚未创建，主 ConfigMap 不存在，
+# 因此 Job 挂载的是同内容、以 hook 形式渲染的 <fullname>-migrate-config
+# （weight -10，见 migrate-config.yaml）。
+#
+# 发布须使用 `helm upgrade --install --atomic --wait`：Job 失败会回滚（T7）。
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -8,9 +17,11 @@ metadata:
   labels:
     {{- include "admin-frame.labels" (dict "root" . "component" "migrate") | nindent 4 }}
   annotations:
-    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "0"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    # 保留最近一次成功 / 失败的 Job 以便查迁移日志；
+    # 下一次发布由 before-hook-creation 清理，不会累积。
+    helm.sh/hook-delete-policy: before-hook-creation
 spec:
   backoffLimit: {{ .Values.migrate.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
@@ -61,7 +72,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "admin-frame.configMapName" (dict "root" . "key" "admin") }}
+            name: {{ include "admin-frame.fullname" . }}-migrate-config
         - name: tmp
           emptyDir: {}
         {{- if ((.Values.secretMounts | default dict).enabled) }}

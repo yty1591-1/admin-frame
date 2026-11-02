@@ -40,7 +40,7 @@ func NewMySQLCleanupLock(sqlDB *sql.DB, name string) (*MySQLCleanupLock, error) 
 }
 
 // Acquire 尝试获取锁；已被其他副本持有时返回 acquired=false。
-func (l *MySQLCleanupLock) Acquire(ctx context.Context) (func(context.Context), bool, error) {
+func (l *MySQLCleanupLock) Acquire(ctx context.Context) (releaseFn func(context.Context), acquired bool, err error) {
 	if l == nil || l.db == nil {
 		return nil, false, apperr.Unavailable("identity cleanup lock is not configured")
 	}
