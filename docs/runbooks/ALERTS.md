@@ -17,6 +17,24 @@
 | `iam.outbox.backlog` | P1 | 平台 Outbox 中 IAM 主题积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），通常为 `cmd/worker` 未运行或审计出口不可用，审计延迟且可能丢失 | [iam.md](./iam.md) |
 | `async.outbox.backlog` | P1 | 通用 Outbox 积压（pending > 1000 或 lag > 300s），审计/通知延迟 | [async-dlq.md](./async-dlq.md) |
 | `identity.sms.balance_low` | P1 | 短信供应商余额不足，C 端验证码发送失败（`identity_sms_provider_alerts_total{kind="insufficient_balance"}`） | [identity-sms-balance.md](./identity-sms-balance.md) |
+| `identity.token.reuse` | P1 | 检测到刷新令牌重放（`identity_token_reuse_total` 5 分钟内增长），整条设备链已撤销 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.lockout.spike` | P1 | 账号锁定次数异常升高（5 分钟内 > 5 次），疑似撞库或阈值过低 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.revocation.store_error` | P1 | 撤销存储读 / 回源失败，可能触发 fail_closed 全量 503 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.revocation.cache_write_error` | P2 | 撤销快照写入 Redis 失败，最长 60s 后靠回源生效 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.refresh.failure_rate` | P2 | 刷新令牌失败率超过 10%，影响会话续期 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.refresh.latency` | P2 | 刷新令牌 P95 超过 500ms | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.login.failure_rate` | P2 | 登录失败率超过 30%，疑似撞库或依赖故障 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.mfa.latency` | P2 | MFA 校验 P95 超过 500ms | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.mfa.recovery_used` | P2 | 有账号使用 MFA 恢复码，疑似丢失 TOTP 设备 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.step_up.latency` | P2 | 特权操作 step-up P95 超过 500ms | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.oauth.latency` | P2 | OAuth 回调 P95 超过 3s，IdP 变慢或网络抖动 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.session.revoke_failure` | P2 | 设备会话撤销失败（`identity_session_revoke_total{result="failure"}`），旧令牌可能继续可用 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.outbox.backlog` | P2 | identity.audit Outbox 存在积压（`identity_outbox_pending > 0`），审计事件未投递 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.outbox.lag` | P2 | identity.audit 最老事件积压超过 5 分钟（`identity_outbox_lag_seconds > 300`），影响合规时效 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.sms.breaker_open` | P2 | 短信供应商熔断打开（`identity_sms_breaker_open == 1`），验证码通道不可用 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.cleanup.failure` | P2 | 身份域清理任务执行失败，会话表会持续增长 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.cleanup.backlog` | P2 | 单轮清理达到批次上限未清空（`identity_cleanup_batch_limit_hit_total`） | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.cleanup.not_running` | P2 | 清理指标缺失（`absent(identity_cleanup_runs_total)`），worker 未暴露指标或清理未启动 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `async.dlq.depth` | P2 | 存在未重放的死信事件（`async_dlq_depth > 0`） | [async-dlq.md](./async-dlq.md) |
 | `async.outbox.dead` | P2 | Outbox 出现新的死信/毒消息 | [async-dlq.md](./async-dlq.md) |
 | `async.broker.publish_error` | P2 | NATS JetStream 发布失败率升高（`async.driver=nats`） | [async-dlq.md](./async-dlq.md) |
