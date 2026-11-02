@@ -5,7 +5,10 @@
 > 现状（2026-11-02 演练）：RTO 达标（全量恢复 3 s / 41 KB 数据）；RPO 由 binlog 归档保证——
 > `admin-frame-binlog-archive` CronJob 每 5 分钟归档一次（`deploy/backup/cronjob.yaml`）。
 > **生产启用前必须**：配置 `BINLOG_S3_URI`（按实例/集群隔离）、给数据库账号授予
-> `REPLICATION SLAVE`（MySQL 8.0.22+ 可用 `BINLOG MONITOR`）与 `RELOAD`。
+> `REPLICATION SLAVE`（MySQL 8.0.22+ 可用 `BINLOG MONITOR`）、`RELOAD` 与
+> `REPLICATION CLIENT`。后两项是**全备记录 binlog 位点**的前提：`RELOAD` 用于
+> `FLUSH TABLES` 取得与快照一致的位点，`REPLICATION CLIENT` 用于读 `SHOW MASTER STATUS`。
+> 缺任一项 `mysqldump --source-data` 会直接以非 0 退出（8.0.46 实测），备份 CronJob 随之失败。
 > 归档 Job 连续失败即 RPO 退化为 24 小时（全备周期），按 `backup.failed` 处理。
 
 ## 症状
@@ -28,7 +31,10 @@
    kubectl -n admin-frame get cronjob admin-frame-db-backup
    kubectl -n admin-frame logs job/$(kubectl -n admin-frame get jobs -l app.kubernetes.io/component=backup -o jsonpath='{.items[-1].metadata.name}')
    ```
-2. 检查 `DB_DSN` Secret 是否有效、数据库账号是否具备 `SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER`。
+2. 检查 `DB_DSN` Secret 是否有效、数据库账号是否具备
+   `SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER, RELOAD, REPLICATION CLIENT`。
+   后两项缺失时日志报 `did not record a binlog position` 并以非 0 退出——
+   这是**故意失败**：没有位点的备份无法前滚，不如让它可见地失败。
 3. 检查 PVC 容量（`df -h /var/backups/admin-frame`）与对象存储上传凭据。
 4. 手动执行 `backup.sh` 与 `verify.sh`，确认是环境问题还是脚本问题。
 5. 检查 binlog 保留：`SHOW VARIABLES LIKE 'binlog_expire_logs_seconds';`
@@ -87,35 +93,81 @@ CronJob `admin-frame-binlog-archive` 每 5 分钟执行一次，把**已封口**
 `mysqldump` / `mysql` / `mysqlpump`（`rpm -ql mysql-community-server-minimal` 可核对），
 **不含 `mysqlbinlog`**，在应用容器或 MySQL 容器内执行都会得到 `command not found`。
 本项目提供运维镜像 `deploy/backup/Dockerfile`（含 `mysqlbinlog` / `mysql` / `aws`），
-PITR 在该镜像内执行：
+PITR 在该镜像内执行。MySQL Shell 8.0.46 的 `util` **不含** `dumpBinlog` / `loadBinlog`
+（实测成员列表无此项），不能替代 `mysqlbinlog`。
 
-```bash
-docker run --rm -it --network <net> -e MYSQL_PWD="$DB_PASS" \
-  -v /var/backups:/var/backups <registry>/db-ops:1.0.0 bash
-# 容器内：
-#   mysqlbinlog --start-datetime="$T1" --stop-position="$STOP_POS" "$BINLOG" \
-#     | mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$DB_NAME"
-```
+#### 起点由备份自己带上（G2，2026-11-02 起）
 
-> MySQL Shell 8.0.46 的 `util` **不含** `dumpBinlog` / `loadBinlog`（实测成员列表无此项），
-> 不能替代 `mysqlbinlog`。
+`backup.sh` 调用 `mysqldump --source-data=2`，把一致性快照对应的 binlog 位点写进
+dump 头部注释，并另存 `<备份文件>.pos`（含 `BINLOG_FILE` / `BINLOG_POS` 等字段）。
+**不再需要在恢复前手工 `SHOW MASTER STATUS`。**
 
-步骤：
+解析不到位点时备份直接失败（`BACKUP_REQUIRE_POSITION=1`，默认）：没有位点的全备
+只能恢复到备份瞬间，事故后写入全部丢失，而这种备份在监控里「存在且可解压」，
+会被当成可用备份——失败比静默失效安全。
 
-1. 恢复最近全量到目标库，记录所用的时间点 T1。
-2. 取得 T1 对应的 binlog 文件与位点。全备脚本当前**未记录位点**（`mysqldump` 未加
-   `--source-data`，因为现有备份账号无 `RELOAD` 权限），因此必须在**恢复前**执行
-   `SHOW MASTER STATUS` 手工记录，或用 `mysqlbinlog --start-datetime=T1` 反查。
-3. 抽取并回放增量，`--stop-position` 停在误删语句之前：
+`.pos` 会随备份一起上传对象存储。**只上传备份而漏掉 `.pos`，异地恢复同样无法前滚**，
+门禁 `make check-backup` 有断言。
+
+#### 操作步骤
+
+1. 确认备份与位点文件齐全：
 
    ```bash
-   mysqlbinlog --start-datetime="$T1" --stop-position="$STOP_POS" "$BINLOG" \
-     | mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$DB_NAME"
+   ls -1 /var/backups/mysql-*.dump.gz /var/backups/mysql-*.dump.gz.pos
+   cat /var/backups/mysql-<TIMESTAMP>.dump.gz.pos   # BINLOG_FILE / BINLOG_POS
    ```
 
-4. 校验关键表行数与最后写入时间（`SELECT COUNT(*), MAX(created_at)`），通过后再切流量。
+2. 先 dry-run，核对回放范围（只恢复全量、打印 `mysqlbinlog` 参数、不回放）：
 
-> 回放会重放 `DROP` / `TRUNCATE` 等语句：`--stop-position` 必须精确落在目标语句之前，
+   ```bash
+   RESTORE_CONFIRM=yes PITR_DRY_RUN=1 PITR_STOP_POS=<STOP_POS> \
+   DB_DRIVER=mysql DB_DSN='<目标库 DSN>' \
+     /opt/backup/restore.sh /var/backups/mysql-<TIMESTAMP>.dump.gz
+   ```
+
+   日志中出现 `PITR range: mysql-bin.0000NN:<起点> -> mysql-bin.0000MM:<STOP_POS>`，
+   确认起点等于备份位点、终点是误操作之前。
+
+3. 取值并正式执行。`PITR_STOP_POS` 与 `PITR_STOP_DATETIME` **只能给一个**：
+
+   ```bash
+   # 按位点（精确到字节，首选）
+   RESTORE_CONFIRM=yes PITR_CONFIRM=yes \
+   PITR_STOP_FILE=mysql-bin.0000MM PITR_STOP_POS=<STOP_POS> \
+   DB_DRIVER=mysql DB_DSN='<目标库 DSN>' \
+     /opt/backup/restore.sh /var/backups/mysql-<TIMESTAMP>.dump.gz
+
+   # 按时刻（UTC，精度到秒；避开与误操作同一秒）
+   RESTORE_CONFIRM=yes PITR_CONFIRM=yes PITR_STOP_DATETIME='2026-11-02 12:30:39' \
+   DB_DRIVER=mysql DB_DSN='<目标库 DSN>' \
+     /opt/backup/restore.sh /var/backups/mysql-<TIMESTAMP>.dump.gz
+   ```
+
+   `PITR_STOP_FILE` 省略时默认取服务器上最后一个 binlog。起点文件与位点省略时
+   从 `<备份文件>.pos` 读取；可用 `PITR_START_FILE` / `PITR_START_POS` 显式覆盖。
+
+4. 校验关键表行数与最后写入时间（`SELECT COUNT(*), MAX(occurred_at)`），通过后再切流量。
+
+#### 为什么需要两个确认
+
+- `RESTORE_CONFIRM=yes`：确认恢复目标环境（恢复全量会覆盖目标库）。
+- `PITR_CONFIRM=yes`：确认**回放**。回放会把 binlog 里的 `DELETE` / `DROP` / `TRUNCATE`
+  一并重放，`stop` 位点算错等于造成第二次数据破坏。只恢复全量时不需要它。
+
+#### 参数预检在恢复之前
+
+`restore.sh` 在覆盖目标库**之前**完成全部 PITR 校验：参数互斥与格式、`.pos` 是否可用、
+`mysqlbinlog` 是否存在、`SHOW BINARY LOGS` 中起止文件是否存在且顺序合理。
+参数错误时不会先毁掉目标库再报错（门禁 `check-backup` 用行号断言锁住这个顺序）。
+
+#### 回放失败怎么办
+
+脚本会明确报 `database is now partially rolled forward` 并列出常见原因。**不要重跑
+同一命令**——已成功应用的语句会被重复执行。正确处置是丢弃目标库、从全量恢复重来，
+并检查 `.pos` 是否与这份备份匹配（常见错配是把 A 备份的 `.pos` 配给了 B 备份）。
+
+> 回放会重放 `DROP` / `TRUNCATE` 等语句：`PITR_STOP_POS` 必须精确落在目标语句之前，
 > 不要用「恢复 + 全量回放」代替，否则会把误删重新执行一遍。
 
 ### 对象存储
@@ -175,12 +227,43 @@ docker run --rm -it --network <net> -e MYSQL_PWD="$DB_PASS" \
   CronJob（5 分钟）与运维镜像 `deploy/backup/Dockerfile`（含 `mysqlbinlog` / `aws`）。验证见
   下方「演练记录 II」。生产剩余两项配置：填 `BINLOG_S3_URI`、给数据库账号授
   `REPLICATION SLAVE` + `RELOAD`。
-- **G2（PITR 起点）→ 未关闭**。全备仍未记录 binlog 位点：`mysqldump --source-data=2` 需要
-  `RELOAD` 权限并会短暂 `FLUSH TABLES WITH READ LOCK`。取舍：先按上文在恢复前手工执行
-  `SHOW MASTER STATUS`；若给账号补 `RELOAD`，再在 CronJob 开启并同步更新权限清单。
-- **PITR 按时间点截断 → 未验证**。工具（db-ops 镜像）与数据（归档 binlog）已具备，
-  「演练记录 II」验证的是全量回放重建；`--stop-datetime` / `--stop-position` 截断需在
-  staging 用真实故障时间点演练，本机无稳定时间点可控。
+- **G2（PITR 起点）→ 已关闭（2026-11-02）**。`backup.sh` 加 `--source-data=2`，位点写进 dump
+  头并另存 `<备份>.pos`；缺失时备份失败而非静默产出不可前滚的备份。权限实测结论：
+  需要 **`RELOAD` + `REPLICATION CLIENT`** 两项（原先只记录了 `RELOAD`，缺
+  `REPLICATION CLIENT` 时 `SHOW MASTER STATUS` 被拒）。验证见「演练记录 III」。
+- **PITR 按时间点截断 → 已验证（2026-11-02）**。`restore.sh` 实现 `PITR_STOP_POS`（字节精确）
+  与 `PITR_STOP_DATETIME`（秒级）两种截断，含跨 binlog 文件回放。两种方式均端到端跑通，
+  证明「备份后增量被找回、误删未被重放」。见「演练记录 III」。
+
+#### 演练记录 III：PITR 位点记录与截断回放（2026-11-02）
+
+环境：MySQL 8.0.46（`ROW` binlog，`max_binlog_size=1MB`）+ 运维镜像 `db-ops:1.0.0`，
+全部操作在运维镜像内执行（生产中 PITR 也必须在该镜像内，宿主机无 `mysqlbinlog`）。
+
+场景：T1 全备 → T2 写入增量（5 条绑定 + 3 条审计）→ T3 取断点 → T4 误删 baseline 10 条
+→ `DROP DATABASE` 模拟灾难 → 全量恢复 + 回放到 T3。
+
+| 检查项 | 期望 | 实测 |
+|---|---|---|
+| 全备记录位点 | `mysql-bin.000004:85923` 写入 `.pos` | 通过 |
+| 仅全量恢复后 | binding=10、增量=0 | 10 / 0 |
+| **回放后增量找回** | 5 条 `new-staff-*` + 3 条 `evt-incr-*` | 5 / 3 |
+| **误删未被重放** | baseline 10 条完好 | 10 |
+| 跨文件回放（000004 → 000005） | 两个文件都回放、终点精确 | 通过，14 s |
+| 按时刻截断（`--stop-datetime`） | 误删（断点后 2 s）未被回放 | 通过，增量 5 条找回 |
+| 表结构 | 27 表 | 27 |
+
+失败路径（均验证为「在覆盖目标库之前」拒绝，用 canary 行证明库未被改动）：
+
+| 输入 | 结果 |
+|---|---|
+| 参数互斥：同时给 `PITR_STOP_POS` 与 `PITR_STOP_DATETIME` | 拒绝，canary 行幸存 |
+| 缺 `.pos` 且未显式传起点 | 拒绝，canary 行幸存 |
+| `PITR_CONFIRM` 未设置 | 拒绝 |
+| 起始 binlog 不在服务器上 | 拒绝，提示检查 `binlog_expire_logs_seconds` 与归档前缀 |
+
+回放失败的处理（用错误起始位点制造 `Duplicate entry`）：脚本报
+`database is now partially rolled forward` 并列出常见原因，明确要求丢弃目标库重来。
 
 #### 演练记录 II：binlog 归档与灾难重建（2026-11-02）
 
