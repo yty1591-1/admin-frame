@@ -6,8 +6,9 @@
 coverage.out
 /coverage
 /cov-domain
-configs/*.yaml
-!configs/*.yaml.example
+# 本地配置（含 include 分层后的 configs/prod/modules），只允许 *.yaml.example 入库。
+configs/**/*.yaml
+!configs/**/*.yaml.example
 .env
 # 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
 /tmp*
