@@ -1,8 +1,8 @@
 # 数据库备份 CronJob（ENT-08 T3）
 #
 # 前置：
-#   1) 构建备份镜像（须包含 bash/gzip/sha256sum/mysqldump 或 pg_dump；可选 gpg、aws cli），
-#      并把 scripts/backup/*.sh 放到 /opt/backup/；
+#   1) 构建运维镜像：docker build -f deploy/backup/Dockerfile -t <registry>/db-ops:<ver> .
+#      镜像内含 bash/gzip/sha256sum/mysqldump/mysqlbinlog/aws cli，脚本随镜像分发；
 #   2) 创建 Secret admin-frame-db（key=dsn）与可选 admin-frame-backup（key=encrypt_key、S3 凭证）；
 #   3) 备份目录挂载 PVC 或直接上传对象存储（BACKUP_S3_URI）。
 #
@@ -43,7 +43,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: backup
-              image: ghcr.io/admin-frame/db-backup:1.0.0 # 由运维构建；不可用 latest
+              image: ghcr.io/admin-frame/db-ops:1.0.0 # 由 deploy/backup/Dockerfile 构建；不可用 latest
               imagePullPolicy: IfNotPresent
               command: ["/bin/bash", "-c"]
               args:
@@ -108,3 +108,107 @@ metadata:
     app.kubernetes.io/name: admin-frame
     app.kubernetes.io/component: backup
 automountServiceAccountToken: false
+---
+# binlog 归档 CronJob（ENT-08 G1）：保证「实例或 PVC 损坏」时仍能恢复到故障前。
+#
+# 为什么必须独立存在：全量备份每日一次，若 binlog 只留在实例本地，实例损坏会
+# 同时丢失 binlog，实际 RPO 退化为 24 小时。归档后可用「最近全量 + 归档 binlog」
+# 恢复到任意时间点，见 docs/runbooks/backup-restore.md。
+#
+# 数据库账号权限：REPLICATION SLAVE（读 binlog，MySQL 8.0.22+ 可用 BINLOG MONITOR）
+# 与 RELOAD（FLUSH BINARY LOGS）。
+#
+# BINLOG_S3_URI 必须按实例/集群隔离：实例重建后 binlog 编号从 000001 重新开始，
+# 前缀复用会覆盖历史归档并破坏可恢复性（脚本检测到同名不同大小会报错而非覆盖）。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: admin-frame-binlog-archive
+  labels:
+    app.kubernetes.io/name: admin-frame
+    app.kubernetes.io/component: backup
+spec:
+  # 5 分钟归档一次：RPO ≈ 一个周期（本次 flush 封口的文件本轮即归档）。
+  # 若要更严格，改为 */2 但会产生更多小 binlog 文件。
+  schedule: "*/5 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 240
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: admin-frame
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          serviceAccountName: admin-frame-backup
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: binlog-archive
+              image: ghcr.io/admin-frame/db-ops:1.0.0 # 由 deploy/backup/Dockerfile 构建
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "-c"]
+              args: ["/opt/backup/binlog-archive.sh"]
+              env:
+                - name: DB_DRIVER
+                  value: mysql
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: admin-frame-db
+                      key: dsn
+                - name: BINLOG_S3_URI
+                  # 必填：留空会导致 Job 失败（脚本 fail fast），避免「静默不归档」。
+                  value: "" # 如 s3://admin-frame-binlog/prod/cluster-a/
+                - name: BINLOG_FLUSH
+                  value: "1"
+                - name: BINLOG_WORK_DIR
+                  value: /var/backups/binlog
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: admin-frame-backup
+                      key: aws_access_key_id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: admin-frame-backup
+                      key: aws_secret_access_key
+                - name: AWS_DEFAULT_REGION
+                  value: us-east-1
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              volumeMounts:
+                - name: binlog-work
+                  mountPath: /var/backups/binlog
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: binlog-work
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: tmp
+              emptyDir: {}

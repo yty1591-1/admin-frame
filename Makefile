@@ -13,7 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci mock migrate-up vuln docker docker-admin docker-push
+        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci mock migrate-up vuln docker docker-admin docker-push ops-image
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -249,6 +249,13 @@ docker:
 
 docker-admin:
 	docker build --target admin-api --build-arg CMD=admin-api --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t admin-frame/admin-api:local .
+
+# 数据库运维镜像（ENT-08）：全量备份 / binlog 归档 / PITR 专用，含 mysqlbinlog。
+# 与应用镜像分离：应用运行时不应携带数据库客户端与对象存储凭据工具。
+# 上下文必须是仓库根（脚本随镜像分发）。
+OPS_IMAGE ?= admin-frame-db-ops:local
+ops-image:
+	docker build -f deploy/backup/Dockerfile -t $(OPS_IMAGE) .
 
 # 本地复现 image 流水线（只推 single-arch；多架构与扫描见 CI job image）。
 # RELS-01/§9：:local 标签禁止推送，必须显式给 VERSION=<semver|sha>。

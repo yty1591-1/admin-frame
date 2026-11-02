@@ -20,6 +20,10 @@ set -euo pipefail
 log() { printf '%s [restore] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dsn.sh
+source "${SCRIPT_DIR}/dsn.sh"
+
 BACKUP_FILE="${1:-}"
 [[ -n "${BACKUP_FILE}" ]] || die "usage: restore.sh <backup-file>"
 [[ -f "${BACKUP_FILE}" ]] || die "backup file not found: ${BACKUP_FILE}"
@@ -32,7 +36,9 @@ DB_DSN="${DB_DSN:-}"
 
 WORK="${BACKUP_FILE}"
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TMP_DIR}"' EXIT
+# 清理失败不得改变退出码：恢复已经成功时，/tmp 权限或只读挂载导致的 rm 失败
+# 不应把一次成功恢复报成失败（会误导值班判断，甚至触发不必要的回滚）。
+trap 'rm -rf "${TMP_DIR}" 2>/dev/null || true' EXIT
 
 if [[ "${BACKUP_FILE}" == *.gpg ]]; then
   [[ -n "${BACKUP_ENCRYPT_KEY:-}" && -f "${BACKUP_ENCRYPT_KEY}" ]] || die "BACKUP_ENCRYPT_KEY file required for encrypted backups"
@@ -49,8 +55,14 @@ gzip -t "${WORK}"
 case "${DB_DRIVER}" in
   mysql)
     command -v mysql >/dev/null 2>&1 || die "mysql client not found"
-    log "restoring into mysql; ensure API traffic is drained and a safety backup exists"
-    gzip -dc "${WORK}" | mysql --default-character-set=utf8mb4 "${DB_DSN}"
+    # DSN 不是 mysql CLI 的位置参数（位置参数是数据库名），必须拆成连接参数，
+    # 否则会退化成尝试本地 socket 连接并报 ERROR 2002。
+    parse_mysql_dsn "${DB_DSN}" ||
+      die "cannot parse mysql DSN; expect mysql://user:pass@host:port/db or user:pass@tcp(host:port)/db"
+    conn=()
+    mysql_conn_args conn
+    log "restoring into mysql/${DB_NAME}; ensure API traffic is drained and a safety backup exists"
+    gzip -dc "${WORK}" | mysql "${conn[@]}" "${DB_NAME}"
     ;;
   postgres)
     command -v pg_restore >/dev/null 2>&1 || die "pg_restore not found"

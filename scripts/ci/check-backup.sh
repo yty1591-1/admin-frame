@@ -47,6 +47,34 @@ if ! grep -q 'gzip -t' scripts/backup/restore.sh || ! grep -q 'gzip -t' scripts/
   FAIL=1
 fi
 
+# 2026-11-02 演练发现：三个脚本原先只认 mysql:// URL，或把 DSN 直接当数据库名
+# 传给 mysql CLI（退化为本地 socket 连接，ERROR 2002），导致备份/恢复在真实
+# DSN 格式下不可用。此处锁定「共用 DSN 解析」这一实现，防止回归。
+if [[ ! -f scripts/backup/dsn.sh ]]; then
+  echo "ERROR: scripts/backup/dsn.sh missing (mysql DSN parsing shared by backup/restore/verify)" >&2
+  FAIL=1
+else
+  if ! grep -q '@tcp(' scripts/backup/dsn.sh; then
+    echo "ERROR: dsn.sh must parse the project Go-style DSN (user:pass@tcp(host:port)/db)" >&2
+    FAIL=1
+  fi
+  for f in backup restore verify; do
+    if ! grep -q 'source "${SCRIPT_DIR}/dsn.sh"' "scripts/backup/${f}.sh"; then
+      echo "ERROR: scripts/backup/${f}.sh must source dsn.sh for DSN parsing" >&2
+      FAIL=1
+    fi
+    if grep -qE 'mysql --default-character-set=utf8mb4 "\$\{DB_DSN\}"' "scripts/backup/${f}.sh"; then
+      echo "ERROR: scripts/backup/${f}.sh passes DSN as a database name to mysql" >&2
+      FAIL=1
+    fi
+  done
+fi
+# 加密失败必须清除明文与残片：否则「加密备份」失败会在备份目录留下完整明文全量。
+if ! grep -q 'partial artifacts removed' scripts/backup/backup.sh; then
+  echo "ERROR: backup.sh must remove plaintext/partial ciphertext when gpg fails" >&2
+  FAIL=1
+fi
+
 echo "==> ENT-08: cronjob hardening"
 CJ="deploy/backup/cronjob.yaml"
 for key in 'concurrencyPolicy: Forbid' 'serviceAccountName:' 'automountServiceAccountToken: false' 'BACKUP_RETENTION_DAYS' 'backoffLimit' 'activeDeadlineSeconds'; do
@@ -57,6 +85,40 @@ for key in 'concurrencyPolicy: Forbid' 'serviceAccountName:' 'automountServiceAc
 done
 if grep -qE 'image: .*:latest' "${CJ}"; then
   echo "ERROR: backup image must not use latest (RELS-01)" >&2
+  FAIL=1
+fi
+
+echo "==> ENT-08: binlog archive (G1)"
+# 没有 binlog 归档时 RPO 退化为全备周期（24h），必须由制品保证而不是文档口头承诺。
+if [[ ! -f scripts/backup/binlog-archive.sh ]]; then
+  echo "ERROR: scripts/backup/binlog-archive.sh missing (binlog archive is required for RPO target)" >&2
+  FAIL=1
+else
+  # 活跃 binlog 仍会增长：归档后再被同名跳过会造成静默数据缺失，必须显式跳过。
+  if ! grep -q 'skip active binlog' scripts/backup/binlog-archive.sh; then
+    echo "ERROR: binlog-archive.sh must skip the active (unsealed) binlog file" >&2
+    FAIL=1
+  fi
+  if ! grep -q 'BINLOG_S3_URI' scripts/backup/binlog-archive.sh; then
+    echo "ERROR: binlog-archive.sh must require BINLOG_S3_URI" >&2
+    FAIL=1
+  fi
+fi
+if ! grep -q 'name: admin-frame-binlog-archive' "${CJ}"; then
+  echo "ERROR: ${CJ} must define the admin-frame-binlog-archive CronJob" >&2
+  FAIL=1
+fi
+if ! grep -q 'BINLOG_S3_URI' "${CJ}"; then
+  echo "ERROR: ${CJ} binlog archive job must set BINLOG_S3_URI" >&2
+  FAIL=1
+fi
+# PITR 与归档都需要 mysqlbinlog；官方精简镜像不含该工具，必须由运维镜像提供。
+OPS_IMAGE="deploy/backup/Dockerfile"
+if [[ ! -f "${OPS_IMAGE}" ]]; then
+  echo "ERROR: ${OPS_IMAGE} missing (db-ops image must ship mysqlbinlog for PITR/archive)" >&2
+  FAIL=1
+elif ! grep -q 'mysqlbinlog' "${OPS_IMAGE}"; then
+  echo "ERROR: ${OPS_IMAGE} must install mysqlbinlog" >&2
   FAIL=1
 fi
 

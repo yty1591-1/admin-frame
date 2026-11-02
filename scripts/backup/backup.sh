@@ -22,6 +22,10 @@ set -euo pipefail
 log() { printf '%s [backup] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dsn.sh
+source "${SCRIPT_DIR}/dsn.sh"
+
 DB_DRIVER="${DB_DRIVER:-}"
 DB_DSN="${DB_DSN:-}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/admin-frame}"
@@ -47,27 +51,14 @@ OUT="${BASE}.dump"
 case "${DB_DRIVER}" in
   mysql)
     command -v mysqldump >/dev/null 2>&1 || die "mysqldump not found"
-    # 支持 mysql://user:pass@host:3306/db 形式的 DSN（口令走 MYSQL_PWD，不进命令行）。
-    if [[ "${DB_DSN}" =~ ^mysql:// ]]; then
-      rest="${DB_DSN#mysql://}"
-      userinfo="${rest%%@*}"
-      hostpart="${rest#*@}"
-      DB_USER="${userinfo%%:*}"
-      export MYSQL_PWD="${userinfo#*:}"
-      hostport="${hostpart%%/*}"
-      DB_NAME="${hostpart#*/}"
-      DB_NAME="${DB_NAME%%\?*}"
-      DB_HOST="${hostport%%:*}"
-      DB_PORT="${hostport#*:}"
-      [[ "${DB_PORT}" == "${DB_HOST}" ]] && DB_PORT=3306
-    fi
-    : "${DB_NAME:?set DB_NAME or use mysql:// URL}"
-    : "${DB_HOST:?set DB_HOST or use mysql:// URL}"
-    : "${DB_USER:?set DB_USER or use mysql:// URL}"
+    # 同时支持 mysql:// URL 与项目 Go 格式 DSN（user:pass@tcp(host:port)/db），
+    # 后者是 ADMIN_FRAME_DB_DSN 的实际格式；口令经 MYSQL_PWD 传递，不进命令行。
+    parse_mysql_dsn "${DB_DSN}" ||
+      die "cannot parse mysql DSN; expect mysql://user:pass@host:port/db or user:pass@tcp(host:port)/db"
     log "dumping mysql (single-transaction) -> ${OUT}.gz"
     mysqldump --single-transaction --quick --routines --triggers --events \
       --set-gtid-purged=OFF --no-tablespaces --default-character-set=utf8mb4 \
-      --host="${DB_HOST}" --port="${DB_PORT:-3306}" --user="${DB_USER}" \
+      --host="${DB_HOST}" --port="${DB_PORT}" --user="${DB_USER}" \
       --result-file="${OUT}" "${DB_NAME}"
     ;;
   postgres)
@@ -83,8 +74,15 @@ rm -f "${OUT}"
 
 if [[ -n "${BACKUP_ENCRYPT_KEY}" ]]; then
   [[ -f "${BACKUP_ENCRYPT_KEY}" ]] || die "BACKUP_ENCRYPT_KEY file not found"
-  gpg --batch --yes --symmetric --cipher-algo AES256 \
-    --passphrase-file "${BACKUP_ENCRYPT_KEY}" "${OUT}.gz"
+  # 加密失败必须删除明文：否则「加密备份」失败后会在备份目录留下完整未加密
+  # 全量数据，一旦被归档或同步出去即为数据泄露（SEC-05 / AUD-07）。
+  if ! gpg --batch --yes --symmetric --cipher-algo AES256 \
+    --passphrase-file "${BACKUP_ENCRYPT_KEY}" "${OUT}.gz"; then
+    # gpg 中断会留下不完整密文，与成功产物同名，必须一并删除，
+    # 否则「备份文件存在」的监控会把它当成可用备份。
+    rm -f "${OUT}.gz" "${OUT}.gz.gpg"
+    die "gpg encryption failed; partial artifacts removed to avoid leaking plaintext or a broken ciphertext"
+  fi
   rm -f "${OUT}.gz"
   FINAL="${OUT}.gz.gpg"
 else

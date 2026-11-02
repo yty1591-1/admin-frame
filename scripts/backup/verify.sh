@@ -12,6 +12,10 @@ set -euo pipefail
 log() { printf '%s [verify] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dsn.sh
+source "${SCRIPT_DIR}/dsn.sh"
+
 FILE="${1:-}"
 MODE="${2:-}"
 [[ -n "${FILE}" ]] || die "usage: verify.sh <backup-file> [--load]"
@@ -38,11 +42,16 @@ gzip -t "${WORK}"
 if [[ "${MODE}" == "--load" ]]; then
   DB_DRIVER="${DB_DRIVER:?DB_DRIVER required for --load}"
   DB_DSN="${DB_DSN:?DB_DSN required for --load}"
-  command -v mysql >/dev/null 2>&1 || true
+  command -v mysql >/dev/null 2>&1 || die "mysql client not found for --load"
   case "${DB_DRIVER}" in
     mysql)
-      log "loading into scratch mysql (must be disposable)"
-      gzip -dc "${WORK}" | mysql --default-character-set=utf8mb4 "${DB_DSN}"
+      # 同 restore.sh：DSN 必须拆成 --host/--port/--user + 数据库名。
+      parse_mysql_dsn "${DB_DSN}" ||
+        die "cannot parse mysql DSN; expect mysql://user:pass@host:port/db or user:pass@tcp(host:port)/db"
+      conn=()
+      mysql_conn_args conn
+      log "loading into scratch mysql/${DB_NAME} (must be disposable)"
+      gzip -dc "${WORK}" | mysql "${conn[@]}" "${DB_NAME}"
       ;;
     postgres)
       log "loading into scratch postgres (must be disposable)"
