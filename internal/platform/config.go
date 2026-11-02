@@ -562,8 +562,8 @@ type IdentityLoginRateLimitConfig struct {
 	RPS   float64 `yaml:"rps"`
 	Burst int     `yaml:"burst"`
 	// IPRPS / IPBurst 是 IP 级独立配额；0 表示默认 20 rps / burst 40（PERF-05）。
-	IPRPS  float64 `yaml:"ip_rps"`
-	IPBurst int    `yaml:"ip_burst"`
+	IPRPS   float64 `yaml:"ip_rps"`
+	IPBurst int     `yaml:"ip_burst"`
 	// FailureMode Redis 故障策略：fail_closed（默认）| fail_open；prod/staging 强制 fail_closed。
 	FailureMode string `yaml:"failure_mode"`
 }
