@@ -49,9 +49,13 @@
 
 ### JWT（HS256 单密钥）
 
-1. 新密钥写入 `ADMIN_FRAME_AUTH_JWT_SECRET`，旧密钥移入 `ADMIN_FRAME_AUTH_JWT_SECRETS`（仍可校验）。
+1. 新密钥写入当前密钥位：托管源启用后写 Secret 的 `auth_jwt_secret` 文件（键名与文件名一致），
+   未启用时写 `ADMIN_FRAME_AUTH_JWT_SECRET`；旧密钥移入 `auth_jwt_secrets` / `ADMIN_FRAME_AUTH_JWT_SECRETS`（仍可校验）。
 2. 滚动重启全部端，确认新签发的令牌校验通过、旧令牌仍可用。
-3. 一个 `refresh_ttl` 周期后清空 `secrets` 列表并发布。
+3. 一个 `refresh_ttl` 周期后清空旧密钥列表并发布。
+
+> 托管源（`secrets.providers` 含 `file`）命中时会**覆盖**环境变量，两处都改不会冲突，
+> 但同时保留两份明文会扩大泄露面：迁移完成后只保留文件，见上节「迁移到托管源」。
 
 ### 摘要密钥（`identity.hash_key`）
 
@@ -60,6 +64,29 @@
 3. 滚动重启后验证：登录、按手机号/邮箱查找账号、主体索引回填均正常；
 4. 至少一个「账号不活跃窗口」后再移除旧摘要密钥（`previous_hash_keys` 清空），
    期间**禁止**只保留新密钥，否则历史主体无法索引。
+
+### 迁移到托管源（env → 文件挂载，ENT-07）
+
+存量部署由 `ADMIN_FRAME_*` 环境变量注入全部密钥。迁到文件挂载按以下顺序，**每步单独发布**：
+
+1. 确认 `values-prod.yaml` 的 `secretMounts.enabled=true`，且 `mountPath` 与配置
+   `secrets.file.dir` 完全一致（基线 `/var/run/secrets/admin-frame`）；
+2. 配置侧设为 `secrets.providers: [file]` + `allow_env_fallback: true` 后发布。
+   此阶段文件命中即覆盖环境变量，未命中的仍由环境变量兜底，业务无感；
+3. 核对文件确实被读取、而非回落到 env：
+
+   ```bash
+   kubectl exec <pod> -- ls -l /var/run/secrets/admin-frame   # 应有 db_dsn / auth_jwt_secret 等
+   ```
+
+   启动日志中 `secrets` 段只输出 `providers` / `file_dir`，**不得出现任何取值**（SEC-05）；
+4. 逐项移除 `values-prod.yaml` 中 `env:` 下的 `ADMIN_FRAME_DB_DSN`、`ADMIN_FRAME_REDIS_PASSWORD`、
+   `ADMIN_FRAME_STORAGE_S3_*`、`ADMIN_FRAME_IDENTITY_*`，每项观察一个发布周期；
+5. 全部移除后把 `allow_env_fallback` 置 `false` 并发布。此后密钥缺失直接阻断启动
+   ——**这一步才算迁移完成**，保留 fallback 等于没有强制。
+
+回滚：任一步启动失败，把 `allow_env_fallback` 置回 `true`、恢复被删的 env 项，单独发布。
+不要删除 Secret 文件（迁移后它是唯一真相），也不要先删 Secret 再回滚配置。
 
 ### 数据库 / Redis 凭据
 

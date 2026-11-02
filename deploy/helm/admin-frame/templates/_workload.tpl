@@ -114,6 +114,11 @@ spec:
               mountPath: /etc/admin-frame/jwt
               readOnly: true
             {{- end }}
+            {{- if (($root.Values.secretMounts | default dict).enabled) }}
+            - name: app-secrets
+              mountPath: {{ $root.Values.secretMounts.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -127,6 +132,22 @@ spec:
             items:
               - key: {{ $root.Values.jwtPublicKey.key }}
                 path: public.pem
+        {{- end }}
+        {{- if (($root.Values.secretMounts | default dict).enabled) }}
+        # ENT-07：多个 Secret 投影到同一目录，文件名即密钥逻辑名（db_dsn 等）。
+        - name: app-secrets
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- range $root.Values.secretMounts.sources }}
+              - secret:
+                  name: {{ .secretName }}
+                  {{- if .optional }}
+                  optional: true
+                  {{- end }}
+                  items:
+                    {{- toYaml .items | nindent 20 }}
+              {{- end }}
         {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1

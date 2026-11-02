@@ -57,6 +57,38 @@ jwtPublicKey:
   secretName: admin-frame-jwt
   key: public.pem
 
+# 密钥文件挂载（ENT-07）：把分散的 Secret 投影到同一目录，供
+# internal/platform/secrets 的 FileProvider 读取（配置侧 secrets.providers: [file]）。
+# 为什么不只用 env：环境变量会进入 /proc/<pid>/environ、子进程环境与崩溃转储，
+# 文件挂载（defaultMode 0400）可由内核按 Pod 身份限制读取。
+# 下方 env 段仅为迁移期兜底（配置侧 secrets.allow_env_fallback: true）；
+# 确认全部密钥可由文件提供后，删除对应 env 项并把 allow_env_fallback 置 false。
+secretMounts:
+  enabled: true
+  mountPath: /var/run/secrets/admin-frame
+  sources:
+    - secretName: admin-frame-db
+      items:
+        - key: dsn
+          path: db_dsn
+    - secretName: admin-frame-redis
+      items:
+        - key: password
+          path: redis_password
+    - secretName: admin-frame-storage
+      items:
+        - key: access_key
+          path: storage_s3_access_key
+        - key: secret_key
+          path: storage_s3_secret_key
+    - secretName: admin-frame-identity
+      optional: true
+      items:
+        - key: hash_key
+          path: identity_hash_key
+        - key: mfa_secret_key
+          path: identity_mfa_secret_key
+
 env:
   - name: ADMIN_FRAME_DB_DSN
     valueFrom:

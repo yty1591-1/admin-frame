@@ -57,6 +57,13 @@ type Config struct {
 	IAM             IAMConfig         `yaml:"iam"`
 	Identity        IdentityConfig    `yaml:"identity"`
 	Audit           AuditConfig       `yaml:"audit"`
+	Secrets         SecretsConfig     `yaml:"secrets"`
+
+	// secretErr 暂存 normalize 阶段的密钥解析错误。
+	//
+	// Loader 的 Normalize 钩子无法返回错误，因此把结果记录在此，由 Validate
+	// 汇总进启动错误。不导出、不参与 yaml / 环境变量绑定。
+	secretErr error
 }
 
 // 审计存储出口（audit.store）。
@@ -1237,7 +1244,8 @@ func LoadConfig(path string) (*Config, error) {
 
 // dbOnlyConfig 是 LoadDBConfig 的解码目标，只声明 db 段。
 type dbOnlyConfig struct {
-	DB DBConfig `yaml:"db"`
+	DB      DBConfig      `yaml:"db"`
+	Secrets SecretsConfig `yaml:"secrets"`
 }
 
 // LoadDBConfig 仅加载配置文件的 db 段，并应用 ADMIN_FRAME_DB_* 环境变量覆盖。
@@ -1260,6 +1268,14 @@ func LoadDBConfig(path string) (DBConfig, error) {
 	cfg, err := loader.Load()
 	if err != nil {
 		return DBConfig{}, err
+	}
+	// 与主配置同源：secrets.providers 命中时覆盖 DSN，未配置时保持环境变量注入。
+	// 迁移工具（cmd/migrate）同样不能绕过托管源，否则会出现「服务端走 Vault、
+	// 迁移仍读环境变量」的分裂。
+	if value, resolveErr := cfg.Secrets.resolveOne(SecretDBDSN); resolveErr != nil {
+		return DBConfig{}, resolveErr
+	} else if value != "" {
+		cfg.DB.DSN = value
 	}
 	return cfg.DB, nil
 }
@@ -1628,6 +1644,8 @@ func (c *Config) normalize() {
 	c.Auth.Mode = c.Auth.effectiveMode(c.Env)
 	c.IAM.Mode = normalizeIAMMode(c.IAM.Mode)
 	c.IAM.Constraints.Mode = normalizeIAMConstraintMode(c.IAM.Constraints.Mode)
+	// 密钥解析放在最后：它覆盖的是其它字段的取值，必须在派生逻辑稳定之后执行。
+	c.resolveSecrets()
 }
 
 // normalizeIAMConstraintMode 归一化 RBAC2 约束模式；空串视为 shadow（影子期默认）。
@@ -1654,6 +1672,10 @@ func normalizeIAMMode(mode string) string {
 // 错误文本只包含字段路径，不回显取值。
 func (c *Config) Validate() error {
 	var errs []error
+	// 密钥解析失败是根因，先于字段校验汇报，避免下游出现「DSN 为空」这类派生错误。
+	if c.secretErr != nil {
+		errs = append(errs, c.secretErr)
+	}
 	if c.Service == "" {
 		errs = append(errs, errors.New("service is required"))
 	}
@@ -1687,6 +1709,7 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateIAM()...)
 	errs = append(errs, c.validateIdentity()...)
 	errs = append(errs, c.validateAudit()...)
+	errs = append(errs, c.validateSecrets()...)
 	return errors.Join(errs...)
 }
 

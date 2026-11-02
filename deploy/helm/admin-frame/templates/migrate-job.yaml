@@ -52,10 +52,31 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if ((.Values.secretMounts | default dict).enabled) }}
+            # 迁移同样走托管源：否则出现「服务端读文件、迁移仍读环境变量」的分裂。
+            - name: app-secrets
+              mountPath: {{ .Values.secretMounts.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ include "admin-frame.configMapName" (dict "root" . "key" "admin") }}
         - name: tmp
           emptyDir: {}
+        {{- if ((.Values.secretMounts | default dict).enabled) }}
+        - name: app-secrets
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- range .Values.secretMounts.sources }}
+              - secret:
+                  name: {{ .secretName }}
+                  {{- if .optional }}
+                  optional: true
+                  {{- end }}
+                  items:
+                    {{- toYaml .items | nindent 20 }}
+              {{- end }}
+        {{- end }}
 {{- end }}

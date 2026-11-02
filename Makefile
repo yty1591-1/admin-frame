@@ -13,7 +13,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks gitee-job ci mock migrate-up vuln docker docker-admin docker-push
+        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci mock migrate-up vuln docker docker-admin docker-push
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -210,6 +210,10 @@ check-backup:
 check-doclinks:
 	bash scripts/ci/check-doclinks.sh
 
+# ENT-07 T4：密钥托管门禁（生产禁止 env-only、Provider 必须接入启动路径）。
+check-secret-provider:
+	bash scripts/ci/check-secret-provider.sh
+
 # mockery（GEN-04）；需已安装 mockery，配置见 .mockery.yaml。
 MOCKERY ?= mockery
 mock:
@@ -222,7 +226,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
