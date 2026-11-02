@@ -109,6 +109,20 @@ func (r *Runner) Config() Config {
 // 顺序：获取咨询锁 → 确保历史表 → 校验历史（dirty / 漂移 / 缺失）→ 校验乱序 → 逐条执行。
 // 任一步失败立即停止，已成功提交的迁移保留在历史表中，可修复后重跑（幂等）。
 func (r *Runner) Up(ctx context.Context) (Result, error) {
+	return r.upTo(ctx, -1)
+}
+
+// UpTo 应用所有待执行迁移中版本不高于 target 的部分；target < 0 等价于 Up。
+//
+// 用于 expand / contract 需要外部回填的链路（例如 000006 → 回填 → 000007）：
+// 先 UpTo 到 expand 版本，执行回填工具，再 Up 应用剩余收紧迁移；
+// 否则一次性 Up 会在收紧迁移处因未回填行失败。
+func (r *Runner) UpTo(ctx context.Context, target int64) (Result, error) {
+	return r.upTo(ctx, target)
+}
+
+// upTo 是 Up / UpTo 的公共实现；target < 0 表示不限制版本。
+func (r *Runner) upTo(ctx context.Context, target int64) (Result, error) {
 	res := Result{Direction: DirectionUp, DryRun: r.cfg.DryRun}
 	err := r.withLock(ctx, func(ctx context.Context) error {
 		records, _, err := r.prepare(ctx)
@@ -120,6 +134,10 @@ func (r *Runner) Up(ctx context.Context) (Result, error) {
 			return err
 		}
 		for _, m := range pending {
+			// 版本上限：跳过高版本，留给外部回填完成后的下一次 Up。
+			if target >= 0 && m.Version > target {
+				continue
+			}
 			stmts, err := r.scriptStatements(m.Up)
 			if err != nil {
 				return fmt.Errorf("migrate: split up sql %06d_%s: %w", m.Version, m.Description, err)

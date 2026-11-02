@@ -106,6 +106,40 @@ func TestUpStatusAndIdempotency(t *testing.T) {
 	}
 }
 
+// TestUpToStopsAtTargetVersion 验证 UpTo 只应用不高于目标的迁移，供 expand/回填/contract 分段执行。
+func TestUpToStopsAtTargetVersion(t *testing.T) {
+	ctx := context.Background()
+	db, state := newFakeDB(t)
+	migs := loadFiles(t, baseMigrationFiles(), migrate.LoadOptions{})
+	r := newTestRunner(t, db, migs)
+
+	res, err := r.UpTo(ctx, 1)
+	if err != nil {
+		t.Fatalf("up to 1: %v", err)
+	}
+	if len(res.Steps) != 1 || res.Steps[0].Version != 1 {
+		t.Fatalf("steps=%+v", res.Steps)
+	}
+	status, err := r.Status(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status.Current != 1 || len(status.Pending) != 1 {
+		t.Fatalf("status after up-to=%+v", status)
+	}
+	if got := state.migrationStatements(); len(got) != 2 {
+		t.Fatalf("executed %d statements: %q", len(got), got)
+	}
+
+	res, err = r.Up(ctx)
+	if err != nil {
+		t.Fatalf("up remaining: %v", err)
+	}
+	if len(res.Steps) != 1 || res.Steps[0].Version != 2 {
+		t.Fatalf("remaining steps=%+v", res.Steps)
+	}
+}
+
 func TestUpDryRun(t *testing.T) {
 	ctx := context.Background()
 	db, state := newFakeDB(t)

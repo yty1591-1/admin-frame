@@ -31,7 +31,7 @@ func main() {
 	driver := flag.String("driver", "", "database driver: postgres|pgx|mysql (overrides config/env)")
 	dsn := flag.String("dsn", "", "database DSN (overrides config/env; prefer ADMIN_FRAME_DB_DSN)")
 	steps := flag.Int("steps", 1, "down: number of migrations to roll back")
-	to := flag.Int64("to", -1, "down: target version to keep (>=0 overrides -steps)")
+	to := flag.Int64("to", -1, "up: stop after this version (inclusive); down: target version to keep (>=0 overrides -steps)")
 	table := flag.String("table", "schema_migrations", "migration history table")
 	schema := flag.String("schema", "", "schema of the history table (PostgreSQL)")
 	dryRun := flag.Bool("dry-run", false, "print planned migrations without executing them")
@@ -133,6 +133,13 @@ func run(ctx context.Context, opts options) error {
 	case migrate.DialectMySQL:
 		// mariadb 等别名统一走已注册的 mysql 驱动。
 		openDriver = "mysql"
+		// 迁移脚本依赖连接 collation 与表级 DDL（utf8mb4_0900_ai_ci）一致，
+		// 显式配置成其他值会令种子迁移的用户变量比较报 1267，这里强制对齐。
+		dsn, err := db.ForceMySQLCollation(openDriver, dbCfg.DSN, db.MySQLDefaultCollation)
+		if err != nil {
+			return fmt.Errorf("migrate: normalize mysql dsn: %w", err)
+		}
+		dbCfg.DSN = dsn
 	default:
 		return fmt.Errorf("db driver %q is not supported by this binary (registered: postgres, mysql)", dbCfg.Driver)
 	}
@@ -174,7 +181,15 @@ func run(ctx context.Context, opts options) error {
 
 	switch opts.Action {
 	case "up":
-		res, err := runner.Up(ctx)
+		var (
+			res migrate.Result
+			err error
+		)
+		if opts.To >= 0 {
+			res, err = runner.UpTo(ctx, opts.To)
+		} else {
+			res, err = runner.Up(ctx)
+		}
 		if err != nil {
 			return err
 		}

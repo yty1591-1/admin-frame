@@ -32,6 +32,72 @@ func TestOpenValidate(t *testing.T) {
 	}
 }
 
+// TestNormalizeDSN 验证 MySQL 连接 collation 对齐表级 DDL，且不覆盖显式配置。
+func TestNormalizeDSN(t *testing.T) {
+	cases := []struct {
+		name         string
+		driver       string
+		dsn          string
+		wantContains string
+		wantCharset  bool
+	}{
+		{"mysql_default", "mysql", "user:p@tcp(127.0.0.1:3306)/d?parseTime=true", "collation=utf8mb4_0900_ai_ci", true},
+		{"mysql_explicit", "mysql", "user:p@tcp(127.0.0.1:3306)/d?collation=utf8mb4_bin", "collation=utf8mb4_bin", false},
+		{"mariadb_alias", "mariadb", "user:p@tcp(127.0.0.1:3306)/d", "collation=utf8mb4_0900_ai_ci", true},
+		{"other_driver", "pgx", "postgres://u:p@localhost/db", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := db.NormalizeDSN(tc.driver, tc.dsn)
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if tc.wantContains == "" {
+				if got != tc.dsn {
+					t.Fatalf("dsn changed: %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.wantContains) {
+				t.Fatalf("dsn = %q, want contains %q", got, tc.wantContains)
+			}
+			// 默认路径必须带 charset：驱动只有在 charset 存在时才下发 SET NAMES ... COLLATE ...。
+			if tc.wantCharset && !strings.Contains(got, "charset=utf8mb4") {
+				t.Fatalf("dsn = %q, want charset=utf8mb4", got)
+			}
+		})
+	}
+	if _, err := db.NormalizeDSN("mysql", "not-a-dsn"); err == nil {
+		t.Fatal("invalid mysql dsn should fail")
+	}
+}
+
+// TestForceMySQLCollation 验证迁移入口会覆盖 DSN 中遗留的旧 collation。
+func TestForceMySQLCollation(t *testing.T) {
+	dsn := "user:p@tcp(127.0.0.1:3306)/d?parseTime=true&collation=utf8mb4_general_ci"
+	got, err := db.ForceMySQLCollation("mysql", dsn, db.MySQLDefaultCollation)
+	if err != nil {
+		t.Fatalf("force: %v", err)
+	}
+	if !strings.Contains(got, "collation=utf8mb4_0900_ai_ci") || strings.Contains(got, "utf8mb4_general_ci") {
+		t.Fatalf("dsn = %q", got)
+	}
+	// 只覆盖 collation 不够：缺少 charset 时驱动不会下发 SET NAMES，1267 仍会复现。
+	if !strings.Contains(got, "charset=utf8mb4") {
+		t.Fatalf("dsn = %q, want charset=utf8mb4", got)
+	}
+	if strings.Count(got, "charset=") != 1 {
+		t.Fatalf("dsn = %q, charset param must appear once", got)
+	}
+	if withCharset, err := db.ForceMySQLCollation("mysql", got, db.MySQLDefaultCollation); err != nil ||
+		strings.Count(withCharset, "charset=") != 1 {
+		t.Fatalf("idempotent force = %q, %v", withCharset, err)
+	}
+	if passthrough, err := db.ForceMySQLCollation("pgx", dsn, db.MySQLDefaultCollation); err != nil || passthrough != dsn {
+		t.Fatalf("pgx passthrough = %q, %v", passthrough, err)
+	}
+}
+
 func TestOpenPingClose(t *testing.T) {
 	ctx := context.Background()
 	d, err := db.Open(ctx, db.Config{
