@@ -2,9 +2,9 @@
 
 > **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2
 > **定位**：把 `ENT-01`～`ENT-25` 的差距评估转化为**可执行、可验收、可回滚**的任务包；只规划平台级能力，不新增业务域功能
-> **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./platform-remediation-plan.md) 同级
+> **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md) 同级
 > **适用范围**：`internal/`、`pkg/`、`cmd/`、`migrations/`、`deploy/`、`tests/`、`scripts/ci/`、`.github/`、`docs/`
-> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)
+> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)
 > **执行方式**：每条 `ENT` 独立 MR；验收标准全绿 + `make ci` + 本条新增门禁通过 + 文档回写完成，方可标记关闭
 > **最后更新**：2026-10-22
 > **变更方式**：调整波次、范围或验收标准须同步更新「十二、状态跟踪」与「执行记录」，经架构 Owner Review；P0 关闭须附验收命令与输出
@@ -945,27 +945,27 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | ENT-01 | P0 | Wave 1 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
-| ENT-04 | P0 | Wave 1 | 待做 | 审计可查询 / 导出 / 保留 ≥ 180 天 |
-| ENT-05 | P0 | Wave 2 | 进行中（制品已入库 2026-10-24；待 staging 演练） | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
-| ENT-06 | P0 | Wave 2 | 进行中（规则/看板已入库 2026-10-24；待故障注入） | 告警规则 / 看板 / SLO 代码化并演练 |
-| ENT-07 | P0 | Wave 2 | 待做 | 密钥托管 + 不停机轮换演练 |
-| ENT-08 | P0 | Wave 2 | 进行中（脚本/CronJob 已入库 2026-10-24；待恢复演练） | 备份 + PITR 恢复演练 + RPO/RTO |
-| ENT-09 | P1 | Wave 3 | 待做 | 租户生命周期与 IAM / 令牌联动 |
-| ENT-10 | P1 | Wave 3 | 待做 | 通知 / Webhook 投递编排与状态 |
-| ENT-11 | P1 | Wave 3 | 待做 | 特性开关与灰度可运营 |
-| ENT-12 | P1 | Wave 3 | 待做 | 数据范围在业务查询 / 写入强制 |
-| ENT-13 | P1 | Wave 3 | 待做 | 依赖韧性接线 + 回调幂等模板 |
-| ENT-14 | P1 | Wave 3 | 待做 | 分布式限流与租户配额 |
-| ENT-15 | P1 | Wave 3 | 待做 | 数据分类 / 保留 / 导出 / 删除 |
-| ENT-16 | P1 | Wave 0 / 3 | 待做（Wave 0 启动前置切片） | 集成矩阵 + E2E + 契约 + 压测 |
-| ENT-17 | P1 | Wave 4 | 待做 | CD + 迁移门禁 + 金丝雀 / 回滚 |
-| ENT-18 | P1 | Wave 4 | 待做 | on-call + 分级 + 复盘 + 演练 |
-| ENT-19 | P2 | Wave 4 | 待做 | SBOM / 签名 / DAST |
-| ENT-20 | P2 | Wave 4 | 待做 | WAF / 网关 / mTLS / 安全头 |
-| ENT-21 | P2 | Wave 4 | 待做 | CODEOWNERS + 分支保护 + 文档站点 |
-| ENT-22 | P2 | Wave 4 | 待做 | 容量模型 + 成本治理 |
-| ENT-23 | P2 | Wave 4 | 待做 | 读副本 / 多区域 / 切换演练 |
-| ENT-24 | P2 | Wave 4 | 待做 | CDC / 数仓 / 报表 |
+| ENT-04 | P0 | Wave 1 | 进行中（2026-11-02 核对：T1/T2/T3 以 `identity_audit_event` 表 + `internal/shared/audit/sqlstore.go` 落库，含哈希链；**T4 查询 API / T5 导出 / T6 保留归档任务 / T7 `audit.store` 开关未做**） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
+| ENT-05 | P0 | Wave 2 | 进行中（制品已入库 2026-10-24；**仅剩 staging `kubectl --dry-run=server` 与滚动 / 回滚演练**） | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
+| ENT-06 | P0 | Wave 2 | 进行中（规则 / 看板 / `alertmanager.yaml` 已入库；**仅剩 staging 故障注入 + 接收端接入**） | 告警规则 / 看板 / SLO 代码化并演练 |
+| ENT-07 | P0 | Wave 2 | 待做（代码侧仅 `pkg/jwt` 密钥环 + `kid` 就绪；**`internal/platform/secrets` Provider、Vault / KMS 适配、凭据轮换、两个轮换 runbook 均未做**） | 密钥托管 + 不停机轮换演练 |
+| ENT-08 | P0 | Wave 2 | 进行中（脚本 / CronJob / runbook 已入库；**仅剩 staging 全量 + PITR 恢复演练**，RPO/RTO 待业务确认） | 备份 + PITR 恢复演练 + RPO/RTO |
+| ENT-09 | P1 | Wave 3 | 待做（无 `internal/tenant`，无 `tenant*` 表） | 租户生命周期与 IAM / 令牌联动 |
+| ENT-10 | P1 | Wave 3 | 待做（`pkg/{sms,email,push,webhook}` 驱动已就绪，编排层 `internal/notification` 未建） | 通知 / Webhook 投递编排与状态 |
+| ENT-11 | P1 | Wave 3 | 待做（无 `internal/featureflag`） | 特性开关与灰度可运营 |
+| ENT-12 | P1 | Wave 3 | 进行中（`internal/shared/authz` 已提供 `Snapshot` / `Scope` / `ScopeFor`；**缺 `EnforceMerchant` / `ScopeWhere` 与仓储层强制过滤**） | 数据范围在业务查询 / 写入强制 |
+| ENT-13 | P1 | Wave 3 | 待做（`pkg/{retry,circuitbreaker,httpclient}` 可复用，依赖注册表与回调模板未建） | 依赖韧性接线 + 回调幂等模板 |
+| ENT-14 | P1 | Wave 3 | 进行中（`pkg/ratelimit` 已提供 `Keyed` + Redis 令牌桶 / 滑动窗口；**缺 `tenant_quota` 配额管理与配额审计**） | 分布式限流与租户配额 |
+| ENT-15 | P1 | Wave 3 | 待做（无 DSAR 导出 / 删除与保留策略任务；`pkg/mask` 已就绪） | 数据分类 / 保留 / 导出 / 删除 |
+| ENT-16 | P1 | Wave 0 / 3 | 进行中（`pkg/testkit`（MySQL / Redis / Storage / Repo）+ `tests/integration/{async,iam,identity,multiinstance,smoke}` + `tests/load` 已落；**缺 `tests/e2e`、OpenAPI 契约测试、压测基线登记**） | 集成矩阵 + E2E + 契约 + 压测 |
+| ENT-17 | P1 | Wave 4 | 待做（仅 `.github/workflows/{ci,image}.yml`，无 `release.yml`） | CD + 迁移门禁 + 金丝雀 / 回滚 |
+| ENT-18 | P1 | Wave 4 | 待做（runbook / `ALERTS.md` 已有；**缺 on-call 排班、P1/P2 分级矩阵、Postmortem 模板、Game Day**） | on-call + 分级 + 复盘 + 演练 |
+| ENT-19 | P2 | Wave 4 | 待做（无 SBOM / 签名 / DAST；触发条件：对外发布或客户安全评审） | SBOM / 签名 / DAST |
+| ENT-20 | P2 | Wave 4 | 待做（无 WAF / 网关 / mTLS 配置；触发条件：公网暴露或等保测评） | WAF / 网关 / mTLS / 安全头 |
+| ENT-21 | P2 | Wave 4 | 待做（无 `.github/CODEOWNERS`；分支保护待管理员勾选） | CODEOWNERS + 分支保护 + 文档站点 |
+| ENT-22 | P2 | Wave 4 | 待做（无容量模型 / 成本标签；触发条件：放量） | 容量模型 + 成本治理 |
+| ENT-23 | P2 | Wave 4 | 待做（单区域单库；触发条件：可用性目标提升） | 读副本 / 多区域 / 切换演练 |
+| ENT-24 | P2 | Wave 4 | 待做（无 CDC / ETL；触发条件：运营分析或对账） | CDC / 数仓 / 报表 |
 | ENT-25 | P2 | — | 暂缓 | 先立 ADR，再评估 ABAC / 组织树 |
 
 ### 执行记录
@@ -975,6 +975,7 @@ T6 的 staging 故障注入待执行。门禁：`make check-alerts`（CI `deploy
 | 2026-10-22 | 规划文档创建（v0.1） | 完成 | 基于差距评估 v0.2；拆分为 Wave 0～4 与 25 个任务包 |
 | 2026-10-22 | ENT-02 多实例运行语义落地 | 完成 | NodeID 配置化 + Deps.IDs、Redis 幂等存储、Redis 令牌桶、`publish_in_api` / worker 发布器、multiinstance 集成用例与 `check-idempotency` 门禁；T4 逐 operation 标注单独跟进 |
 | 2026-10-22 | ENT-03 通用异步基础设施落地 | 完成 | `pkg/outbox`（Store/Relay/Router/Deduper/DLQ）、`AsyncRuntime`、`async.*` 配置、IAM 完整迁移（已并入 `000005` 基线）、`check-outbox` 门禁与 `async-dlq` runbook；集成用例覆盖 AC-ENT-03-1～5 |
+| 2026-11-02 | 全量状态核对（代码 vs 状态表） | 完成 | 逐条比对仓库实现，修正 8 条滞后状态：`ENT-04` 待做→进行中（`identity_audit_event` + `shared/audit/sqlstore.go` 已落，T4～T7 仍缺）、`ENT-12` / `ENT-14` / `ENT-16` 待做→进行中（`shared/authz`、`pkg/ratelimit`、`pkg/testkit` + 集成用例已落）、`ENT-05/06/08` 补齐「仅剩 staging 演练」口径、`ENT-07/18` 标注已就绪的代码切片。核对命令：`ls internal/ pkg/ tests/`、`grep -rn "audit_events\|tenant" migrations/`、`find . -name release.yml` |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---
