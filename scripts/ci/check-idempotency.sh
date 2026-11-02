@@ -21,21 +21,29 @@ else
 fi
 
 echo "==> ENT-02: config samples must declare id and idempotency"
-for sample in configs/admin.yaml.example configs/biz.yaml.example configs/c.yaml.example configs/worker.yaml.example; do
+# 配置按端拆分后：端别差异在 configs/prod-<channel>.yaml，公共段（id / idempotency /
+# async）收敛到 configs/prod/modules/platform.yaml.example。先校验端样例存在，
+# 再校验公共段声明，避免继续引用已被重构掉的 configs/<channel>.yaml.example。
+for sample in configs/prod-admin.yaml configs/prod-biz.yaml configs/prod-c.yaml configs/prod-worker.yaml; do
   if [[ ! -f "${sample}" ]]; then
-    echo "ERROR: missing ${sample}" >&2
-    FAIL=1
-    continue
-  fi
-  if ! grep -qE '^id:' "${sample}" || ! grep -q 'node_id_source' "${sample}"; then
-    echo "ERROR: ${sample} must declare id.node_id_source (ENT-02)" >&2
-    FAIL=1
-  fi
-  if ! grep -qE '^idempotency:' "${sample}"; then
-    echo "ERROR: ${sample} must declare idempotency section (ENT-02)" >&2
+    echo "ERROR: missing ${sample} (ENT-02)" >&2
     FAIL=1
   fi
 done
+PLATFORM_SAMPLE="configs/prod/modules/platform.yaml.example"
+if [[ ! -f "${PLATFORM_SAMPLE}" ]]; then
+  echo "ERROR: missing ${PLATFORM_SAMPLE} (ENT-02)" >&2
+  FAIL=1
+else
+  if ! grep -qE '^id:' "${PLATFORM_SAMPLE}" || ! grep -q 'node_id_source' "${PLATFORM_SAMPLE}"; then
+    echo "ERROR: ${PLATFORM_SAMPLE} must declare id.node_id_source (ENT-02)" >&2
+    FAIL=1
+  fi
+  if ! grep -qE '^idempotency:' "${PLATFORM_SAMPLE}"; then
+    echo "ERROR: ${PLATFORM_SAMPLE} must declare idempotency section (ENT-02)" >&2
+    FAIL=1
+  fi
+fi
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "    OK: config samples declare id / idempotency"
 fi
