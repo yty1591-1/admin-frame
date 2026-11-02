@@ -13,7 +13,7 @@ import (
 func TestIdentityAuditSQLEmitter(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := testkit.MySQL(t).SQL()
-	if _, err := sqlDB.ExecContext(ctx, "DELETE FROM identity_audit_event"); err != nil {
+	if _, err := sqlDB.ExecContext(ctx, "DELETE FROM audit_event"); err != nil {
 		t.Fatalf("clear audit table: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestIdentityAuditSQLEmitter(t *testing.T) {
 
 	var count int
 	if err := sqlDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM identity_audit_event WHERE event_id = ?`, event.EventID).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM audit_event WHERE event_id = ?`, event.EventID).Scan(&count); err != nil {
 		t.Fatalf("count audit rows: %v", err)
 	}
 	if count != 1 {
@@ -57,7 +57,7 @@ func TestIdentityAuditSQLEmitter(t *testing.T) {
 		t.Helper()
 		var got int
 		if err := sqlDB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM identity_audit_event WHERE `+where+` = ?`, value).Scan(&got); err != nil {
+			`SELECT COUNT(*) FROM audit_event WHERE `+where+` = ?`, value).Scan(&got); err != nil {
 			t.Fatalf("query %s: %v", where, err)
 		}
 		if got != 1 {
@@ -71,7 +71,7 @@ func TestIdentityAuditSQLEmitter(t *testing.T) {
 	var outcome, action string
 	var attrs string
 	if err := sqlDB.QueryRowContext(ctx,
-		`SELECT outcome, action, attrs FROM identity_audit_event WHERE event_id = ?`,
+		`SELECT outcome, action, attrs FROM audit_event WHERE event_id = ?`,
 		event.EventID).Scan(&outcome, &action, &attrs); err != nil {
 		t.Fatalf("read audit row: %v", err)
 	}

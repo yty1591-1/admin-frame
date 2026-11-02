@@ -11,8 +11,11 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
-// DefaultAuditTable 是身份域审计事件的默认落库表名。
-const DefaultAuditTable = "identity_audit_event"
+// DefaultAuditTable 是审计事件的默认落库表名。
+//
+// 表由 migrations/000006 从 identity_audit_event 重命名为平台级 audit_event：
+// 身份、IAM 与后续业务域的事件共用同一张追加写表，查询与保留走 internal/audit 域。
+const DefaultAuditTable = "audit_event"
 
 // MultiEmitter 按顺序把同一事件写入多个出口（如审计库 + 结构化日志）。
 //

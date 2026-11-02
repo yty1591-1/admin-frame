@@ -39,7 +39,9 @@
 | `rbac.menu_change` | A | 菜单 / 路由资源创建、更新、停用 | 权限 | 180d | active |
 | `rbac.sod_change` | A/B | 互斥角色组（RBAC2）创建、更新、启停、删除 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
-| `data.export` | A/B | 数据导出（含 PII 须记范围摘要） | 导出 | 365d | planned |
+| `data.export` | A/B | 数据导出（含 PII 须记范围摘要）；`GET /admin/v1/audit/events/export` 导出审计时记录导出人、时间窗、条数与过滤条件名称 | 导出 | 365d | active |
+| `audit.query` | A | 审计事件查询；`GET /admin/v1/audit/events` 每次查询记录操作者、时间窗、命中条数与过滤条件名称 | 权限 | 180d | active |
+| `audit.retention_purge` | worker | 审计到期清理（元审计：记录 cutoff / 到期数 / 删除数 / 批次数，删除事实必须留痕） | 权限 | 180d | active |
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |
 | `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
 | `payment.refund` | B/C | 退款 | 资金 | 365d | planned |

@@ -43,3 +43,36 @@ async:
     concurrency: 4 # [1, 32]
     visibility_timeout: 60s # [5s, 30m]
     retry_backoff: exponential # exponential | fixed
+
+# 审计存储、查询与保留（ENT-04 / AUDIT_STANDARDS）。
+# store=db 才具备查询与导出能力；prod 启动校验拒绝 log（审计不可查即不合规）。
+audit:
+  store: db # auto | db | log；auto 按 db.driver 自动选择
+  retention_days: 180 # 不得低于 AUD-07 基线 180 天；支付类 365 天由组织策略覆盖
+  legal_hold: false # true 时保留任务只统计不删除（法务保留期）
+  query:
+    max_range_days: 31 # 单次查询最大跨度；无时间窗查询一律 40000
+    default_page_size: 20
+    max_page_size: 100 # 与 API-05 上限一致
+  export:
+    max_range_days: 31 # 单次导出最大跨度
+    max_rows: 50000 # 超限拒绝而不是静默截断
+  retention:
+    batch_size: 5000 # [100, 50000]
+    cleanup_interval: 24h # >= 1m；worker 独占执行
+    dry_run: false # 首次上线建议先 true 观察到期量
+
+# 密钥托管（ENT-07 T4 / SECURITY_STANDARDS §10.3）。
+# 生产密钥由 K8s Secret 以文件形式投影到 secrets.file.dir，文件名即密钥逻辑名
+# （db_dsn / auth_jwt_secret / identity_hash_key ...）。FileProvider 命中即覆盖
+# 配置文件与环境变量的值，使「密钥来自托管源」可被验证。
+# 禁止仅用环境变量：环境变量会进入 /proc/<pid>/environ、子进程环境与崩溃转储。
+secrets:
+  providers: [file] # env | file；按序尝试，首个命中生效
+  allow_env_fallback: true # 迁移期兜底：file 未命中的密钥回落到 ADMIN_FRAME_*
+  # ↓ 全部密钥确认可由文件提供后置 false —— 此后缺失密钥直接阻断启动。
+  # 切换步骤见 docs/runbooks/key-rotation.md「迁移到托管源」。
+  file:
+    dir: "/var/run/secrets/admin-frame" # 与 values-prod.yaml secretMounts.mountPath 一致
+  env:
+    prefix: ADMIN_FRAME # 变量名 <prefix>_<NAME 大写>，与 pkg/config.BindEnv 同源

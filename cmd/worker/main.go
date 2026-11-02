@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -92,6 +93,12 @@ func run(configPath, replayDLQ string) error {
 	if err != nil {
 		return fmt.Errorf("identity cleanup: %w", err)
 	}
+	// 审计到期清理与身份域清理同宿主：worker 是唯一允许执行保留期删除的进程，
+	// API 进程不注册该任务，避免多副本重复删除（ENT-04 T6）。
+	auditRetention, err := auditruntime.StartRetention(ctx, deps)
+	if err != nil {
+		return fmt.Errorf("audit retention: %w", err)
+	}
 
 	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
 	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
@@ -114,6 +121,9 @@ func run(configPath, replayDLQ string) error {
 	defer stopCancel()
 	if stopErr := cleanupHandle.Stop(stopCtx); stopErr != nil {
 		logger.Warn("identity cleanup did not finish before shutdown", "error", stopErr)
+	}
+	if stopErr := auditRetention.Stop(stopCtx); stopErr != nil {
+		logger.Warn("audit retention did not finish before shutdown", "error", stopErr)
 	}
 	logger.Info("worker shutting down")
 	return nil

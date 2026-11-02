@@ -749,6 +749,12 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 | **健康检查** | `/healthz` 存活；`/readyz` 就绪（探测 DB/MQ 等关键依赖） |
 | **审计** | 见 AUD 专文：事件目录、字段字典、追加写存储、保留期；经 `internal/shared/audit` 发出 |
 
+**审计读侧（ENT-04）**：
+
+- 写入链路不变：业务 → `audit.Emitter` → Outbox → 审计表 `audit_event`（追加写，应用只 INSERT）。
+- 读取与保留由 `internal/audit` 域负责：`GET /admin/v1/audit/events`（时间窗必填、`audit:read`）、`GET /admin/v1/audit/events/export`（CSV 流式、行数超限拒绝并记 `data.export`）。
+- 到期清理只在 `cmd/worker` 运行（`audit.retention.*`），分批删除并写 `audit.retention_purge` 元审计；`dry_run` / `legal_hold` 只统计不删除。
+
 **日志规范补充**：
 
 - 业务失败用 `Warn`/`Error` 分级；预期内的客户端错误（4xx）默认不打 Error，避免告警噪音。

@@ -56,6 +56,91 @@ type Config struct {
 	CORS            CORSConfig        `yaml:"cors"`
 	IAM             IAMConfig         `yaml:"iam"`
 	Identity        IdentityConfig    `yaml:"identity"`
+	Audit           AuditConfig       `yaml:"audit"`
+}
+
+// 审计存储出口（audit.store）。
+const (
+	// AuditStoreAuto 按数据库驱动自动选择：持久库写 db，内存库退化 log。
+	AuditStoreAuto = "auto"
+	// AuditStoreDB 审计事件落独立审计表（AUD-06 追加写）；生产唯一允许的取值。
+	AuditStoreDB = "db"
+	// AuditStoreLog 仅写结构化日志，供 local / dev / test 使用（AUDIT_STANDARDS §9 例外 1）。
+	AuditStoreLog = "log"
+)
+
+// 审计保留期基线（AUD-07）。
+const (
+	// AuditMinRetentionDays 认证 / 权限 / 配置类事件的最短保留天数。
+	AuditMinRetentionDays = 180
+	// AuditMaxRetentionDays 允许配置的保留天数上限，避免误写超长值导致任务永不清理。
+	AuditMaxRetentionDays = 3650
+)
+
+// AuditConfig 是审计存储、查询、导出与保留策略（docs/AUDIT_STANDARDS.md）。
+//
+// 默认 store=auto，按 db.driver 自动选择出口：持久库写审计表，内存库只写日志。
+// 生产（env=prod）必须落库，否则审计不可查询、不可导出，违反 ENT-04 关闭判据。
+type AuditConfig struct {
+	// Store 存储出口：auto / db / log。
+	Store string `yaml:"store"`
+	// RetentionDays 保留天数；不得低于 AUD-07 基线（180 天）。
+	RetentionDays int `yaml:"retention_days"`
+	// LegalHold 为 true 时保留任务只统计不删除，供法务保留期使用。
+	LegalHold bool `yaml:"legal_hold"`
+	// Query 查询接口限制。
+	Query AuditQueryConfig `yaml:"query"`
+	// Export 导出接口限制。
+	Export AuditExportConfig `yaml:"export"`
+	// Retention 到期清理任务参数。
+	Retention AuditRetentionConfig `yaml:"retention"`
+}
+
+// AuditQueryConfig 是审计查询的强制时间窗与分页上限。
+//
+// 无时间范围或超窗查询一律拒绝：审计表是追加写的宽表，全表扫描会拖垮业务库。
+type AuditQueryConfig struct {
+	// MaxRangeDays 单次查询允许的最大时间跨度（天）。
+	MaxRangeDays int `yaml:"max_range_days"`
+	// DefaultPageSize 未传 page_size 时的每页条数。
+	DefaultPageSize int `yaml:"default_page_size"`
+	// MaxPageSize 每页条数上限。
+	MaxPageSize int `yaml:"max_page_size"`
+}
+
+// AuditExportConfig 是审计导出的范围与行数上限。
+type AuditExportConfig struct {
+	// MaxRangeDays 单次导出的最大时间跨度（天）。
+	MaxRangeDays int `yaml:"max_range_days"`
+	// MaxRows 单次导出的最大行数；超出即拒绝，要求缩小时间范围。
+	MaxRows int `yaml:"max_rows"`
+}
+
+// AuditRetentionConfig 是到期清理任务参数。
+type AuditRetentionConfig struct {
+	// BatchSize 单批删除行数；分批删除避免长事务与锁等待。
+	BatchSize int `yaml:"batch_size"`
+	// CleanupInterval 清理任务执行间隔。
+	CleanupInterval time.Duration `yaml:"cleanup_interval"`
+	// DryRun 为 true 时只统计待清理行数，不执行删除。
+	DryRun bool `yaml:"dry_run"`
+}
+
+// EffectiveStore 返回按数据库驱动解析后的审计出口。
+//
+// 只在配置校验通过后调用；非法组合在校验期已拒绝，这里保证不会返回空值。
+func (c AuditConfig) EffectiveStore(dbDriver string) string {
+	switch strings.ToLower(strings.TrimSpace(c.Store)) {
+	case AuditStoreDB:
+		return AuditStoreDB
+	case AuditStoreLog:
+		return AuditStoreLog
+	default:
+		if strings.EqualFold(strings.TrimSpace(dbDriver), "memory") {
+			return AuditStoreLog
+		}
+		return AuditStoreDB
+	}
 }
 
 // 身份域撤销存储驱动（identity.revocation.driver）。
@@ -1259,6 +1344,38 @@ func (c *Config) applyDefaults() {
 	c.applyAsyncDefaults()
 	c.applyIAMDefaults()
 	c.applyIdentityDefaults()
+	c.applyAuditDefaults()
+}
+
+// applyAuditDefaults 填充审计默认值；缺省组合在 prod 仍会被校验拒绝。
+func (c *Config) applyAuditDefaults() {
+	if strings.TrimSpace(c.Audit.Store) == "" {
+		c.Audit.Store = AuditStoreAuto
+	}
+	if c.Audit.RetentionDays == 0 {
+		c.Audit.RetentionDays = AuditMinRetentionDays
+	}
+	if c.Audit.Query.MaxRangeDays == 0 {
+		c.Audit.Query.MaxRangeDays = 31
+	}
+	if c.Audit.Query.DefaultPageSize == 0 {
+		c.Audit.Query.DefaultPageSize = 20
+	}
+	if c.Audit.Query.MaxPageSize == 0 {
+		c.Audit.Query.MaxPageSize = 100
+	}
+	if c.Audit.Export.MaxRangeDays == 0 {
+		c.Audit.Export.MaxRangeDays = 31
+	}
+	if c.Audit.Export.MaxRows == 0 {
+		c.Audit.Export.MaxRows = 50000
+	}
+	if c.Audit.Retention.BatchSize == 0 {
+		c.Audit.Retention.BatchSize = 5000
+	}
+	if c.Audit.Retention.CleanupInterval == 0 {
+		c.Audit.Retention.CleanupInterval = 24 * time.Hour
+	}
 }
 
 // applyIdentityDefaults 填充身份域默认值；Enabled 保持 false（默认关闭）。
@@ -1569,7 +1686,65 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateRateLimit()...)
 	errs = append(errs, c.validateIAM()...)
 	errs = append(errs, c.validateIdentity()...)
+	errs = append(errs, c.validateAudit()...)
 	return errors.Join(errs...)
+}
+
+// validateAudit 校验审计存储、范围与保留策略（AUD-06 / AUD-07 / ENT-04）。
+//
+// 语义约定与其他配置段一致：零值 / 空串表示「未配置」，由 applyDefaults 填默认值，
+// 因此这里只校验显式设定的值；负数与越界一律拒绝。
+func (c *Config) validateAudit() []error {
+	var errs []error
+	store := strings.ToLower(strings.TrimSpace(c.Audit.Store))
+	effective := c.Audit.EffectiveStore(c.DB.Driver)
+	if store != "" {
+		switch store {
+		case AuditStoreAuto, AuditStoreDB, AuditStoreLog:
+		default:
+			errs = append(errs, fmt.Errorf("unsupported audit.store: %s", c.Audit.Store))
+		}
+	}
+	if effective == AuditStoreLog && isProdEnv(c.Env) {
+		errs = append(errs, errors.New("audit.store must resolve to db when env=prod (AUD-06)"))
+	}
+	if store == AuditStoreDB && strings.EqualFold(strings.TrimSpace(c.DB.Driver), "memory") {
+		errs = append(errs, errors.New("audit.store=db requires a persistent db.driver"))
+	}
+	if days := c.Audit.RetentionDays; days != 0 && (days < AuditMinRetentionDays || days > AuditMaxRetentionDays) {
+		errs = append(errs, fmt.Errorf(
+			"audit.retention_days must be in [%d, %d] (AUD-07)",
+			AuditMinRetentionDays, AuditMaxRetentionDays,
+		))
+	}
+	if v := c.Audit.Query.MaxRangeDays; v != 0 && (v < 1 || v > 366) {
+		errs = append(errs, errors.New("audit.query.max_range_days must be in [1, 366]"))
+	}
+	if v := c.Audit.Query.MaxPageSize; v != 0 && (v < 1 || v > 100) {
+		errs = append(errs, errors.New("audit.query.max_page_size must be in [1, 100]"))
+	}
+	if v := c.Audit.Query.DefaultPageSize; v != 0 {
+		upper := c.Audit.Query.MaxPageSize
+		if upper == 0 {
+			upper = 100
+		}
+		if v < 1 || v > upper {
+			errs = append(errs, errors.New("audit.query.default_page_size must be in [1, max_page_size]"))
+		}
+	}
+	if v := c.Audit.Export.MaxRangeDays; v != 0 && (v < 1 || v > 366) {
+		errs = append(errs, errors.New("audit.export.max_range_days must be in [1, 366]"))
+	}
+	if v := c.Audit.Export.MaxRows; v != 0 && (v < 1 || v > 1000000) {
+		errs = append(errs, errors.New("audit.export.max_rows must be in [1, 1000000]"))
+	}
+	if v := c.Audit.Retention.BatchSize; v != 0 && (v < 100 || v > 50000) {
+		errs = append(errs, errors.New("audit.retention.batch_size must be in [100, 50000]"))
+	}
+	if v := c.Audit.Retention.CleanupInterval; v != 0 && v < time.Minute {
+		errs = append(errs, errors.New("audit.retention.cleanup_interval must be >= 1m"))
+	}
+	return errs
 }
 
 // validateLog 校验日志级别与格式；prod 禁止 text（OBS-01）。

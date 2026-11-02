@@ -1,0 +1,155 @@
+admin-v1-audit-events:
+  get:
+    tags: [audit]
+    summary: 查询审计事件
+    description: |
+      需要 `audit:read`。时间窗 `from` / `to` 必填（RFC3339），跨度不得超过
+      `audit.query.max_range_days`（默认 31 天）；无时间窗查询返回 40000，
+      避免全表扫描拖垮业务库。按 `occurred_at` 倒序返回。
+    operationId: adminListAuditEvents
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: from
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: to
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin, biz, c, worker]
+      - in: query
+        name: outcome
+        schema:
+          type: string
+          enum: [success, failure, denied]
+      - in: query
+        name: merchant_id
+        schema:
+          type: string
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+      - in: query
+        name: resource_id
+        schema:
+          type: string
+      - in: query
+        name: trace_id
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/audit.yaml#/components/schemas/AuditEventListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-audit-events-export:
+  get:
+    tags: [audit]
+    summary: 导出审计事件（CSV）
+    description: |
+      需要 `audit:read`。时间窗必填，跨度不得超过 `audit.export.max_range_days`，
+      行数不得超过 `audit.export.max_rows`；超限返回 40000 而不是静默截断。
+      响应为 `text/csv` 流式下载，列顺序固定；导出行为本身记 `data.export` 审计事件
+      （导出人、范围、条数），供合规追溯。
+    operationId: adminExportAuditEvents
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: from
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: to
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin, biz, c, worker]
+      - in: query
+        name: outcome
+        schema:
+          type: string
+          enum: [success, failure, denied]
+      - in: query
+        name: merchant_id
+        schema:
+          type: string
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+      - in: query
+        name: resource_id
+        schema:
+          type: string
+      - in: query
+        name: trace_id
+        schema:
+          type: string
+    responses:
+      "200":
+        description: CSV 文件流
+        content:
+          text/csv:
+            schema:
+              type: string
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

@@ -111,6 +111,9 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionDataQueryScope:      true,
 		audit.ActionPaymentCapture:      true,
 		audit.ActionPaymentRefund:       true,
+		audit.ActionAuditQuery:          true,
+		audit.ActionAuditExport:         true,
+		audit.ActionAuditRetentionPurge: true,
 	}
 	for _, a := range actions {
 		if !want[a] {

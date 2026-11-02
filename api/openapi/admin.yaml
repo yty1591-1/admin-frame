@@ -129,6 +129,10 @@ paths:
     $ref: './paths/admin/iam-bindings.yaml#/admin-v1-iam-subjects-by-subject_type-by-subject_id-permissions'
   /admin/v1/iam/authorize:
     $ref: './paths/admin/iam-bindings.yaml#/admin-v1-iam-authorize'
+  /admin/v1/audit/events:
+    $ref: './paths/admin/audit.yaml#/admin-v1-audit-events'
+  /admin/v1/audit/events/export:
+    $ref: './paths/admin/audit.yaml#/admin-v1-audit-events-export'
   /admin/v1/iam/me/permissions:
     $ref: './paths/admin/iam-bindings.yaml#/admin-v1-iam-me-permissions'
   /admin/v1/iam/menus:

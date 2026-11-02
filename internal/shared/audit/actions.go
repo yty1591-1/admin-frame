@@ -43,6 +43,12 @@ const (
 	ActionDataQueryScope      = "data.query_scope"
 	ActionPaymentCapture      = "payment.capture"
 	ActionPaymentRefund       = "payment.refund"
+	// ActionAuditQuery 审计事件查询（ENT-04）；记录查询范围摘要，不记过滤结果原文。
+	ActionAuditQuery = "audit.query"
+	// ActionAuditExport 审计事件导出（ENT-04）；含导出范围、条数与操作者。
+	ActionAuditExport = "audit.export"
+	// ActionAuditRetentionPurge 审计到期清理（ENT-04）；清理动作本身必须留痕。
+	ActionAuditRetentionPurge = "audit.retention_purge"
 )
 
 // KnownActions 返回目录内全部已知 action（供门禁与单测）。
@@ -89,5 +95,8 @@ func KnownActions() []string {
 		ActionDataQueryScope,
 		ActionPaymentCapture,
 		ActionPaymentRefund,
+		ActionAuditQuery,
+		ActionAuditExport,
+		ActionAuditRetentionPurge,
 	}
 }

@@ -1,0 +1,65 @@
+components:
+  schemas:
+    # 审计事件（AUD-04 必填字段全集）。
+    AuditEvent:
+      type: object
+      required:
+        [event_id, action, actor_id, channel, resource_type, resource_id, outcome, occurred_at, trace_id, service]
+      properties:
+        event_id:
+          type: string
+          description: 事件 ID（雪花 ID），重复投递的幂等键。
+        action:
+          type: string
+          description: 稳定动作枚举，见 `docs/audit/EVENTS.md`。
+          example: auth.login
+        actor_id:
+          type: string
+          description: 操作者主体 ID。
+        actor_type:
+          type: string
+          description: 操作者类型：user / admin / system。
+        channel:
+          type: string
+          enum: [admin, biz, c, worker]
+        merchant_id:
+          type: string
+          description: B 端商户 ID；A / C 端为空。
+        resource_type:
+          type: string
+          description: 目标资源类型，如 account / session / iam_role。
+        resource_id:
+          type: string
+          description: 目标资源 ID。
+        outcome:
+          type: string
+          enum: [success, failure, denied]
+        occurred_at:
+          type: string
+          format: date-time
+          description: 事件发生时间（UTC）。
+        trace_id:
+          type: string
+          description: 请求追踪 ID；定时任务以事件 ID 兜底。
+        service:
+          type: string
+          description: 产生事件的服务名。
+        reason:
+          type: string
+          description: 操作原因；禁止包含 PII 与密钥（AUD-08）。
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
+          description: 附加结构化字段；禁止包含敏感原文。
+
+    AuditEventListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        total:
+          type: integer

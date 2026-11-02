@@ -3,7 +3,9 @@ package main
 import (
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -20,6 +22,13 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	}
 	if identityRT != nil && identityRT.Handler != nil {
 		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW, deps.RequirePermission)
+	}
+	auditRT, err := auditruntime.New(deps)
+	if err != nil {
+		return err
+	}
+	if auditRT != nil && auditRT.Handler != nil {
+		auditadmin.Register(mux, auditRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
 }
