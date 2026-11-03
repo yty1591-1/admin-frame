@@ -10,6 +10,7 @@ import (
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	tenantadmin "github.com/admin-frame/admin-frame/internal/tenant/transport/admin"
 )
 
@@ -32,7 +33,7 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	if auditRT != nil && auditRT.Handler != nil {
 		auditadmin.Register(mux, auditRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
-	tenantRT, err := tenantruntime.New(deps)
+	tenantRT, err := tenantruntime.New(deps, tenantSessionRevoker(identityRT))
 	if err != nil {
 		return err
 	}
@@ -40,4 +41,15 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 		tenantadmin.Register(mux, tenantRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
+}
+
+// tenantSessionRevoker 提取 identity 的租户会话撤销器；身份域未启用时返回 nil。
+//
+// nil 时租户停用只改状态不撤令牌——仅允许出现在 identity.enabled=false 的
+// 部署里；正常 A 端装配两者同时启用，撤销链路必须闭合（D-02=①）。
+func tenantSessionRevoker(identityRT *identityruntime.Runtime) app.SessionRevoker {
+	if identityRT == nil {
+		return nil
+	}
+	return identityRT.TenantRevoker
 }

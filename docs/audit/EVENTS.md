@@ -45,7 +45,7 @@
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |
 | `tenant.create` | A | 创建租户（`POST /admin/v1/tenants`）；记录名称与初始状态 `pending` | 租户 | 365d | active |
 | `tenant.activate` | A | 开通租户（`pending → active`）；租户自此进入服务期 | 租户 | 365d | active |
-| `tenant.suspend` | A | 停用租户（`active → suspended`）；`reason` 必填并原样入审计，失败尝试同样记录（`outcome=failure`） | 租户 | 365d | active |
+| `tenant.suspend` | A | 停用租户（`active → suspended`）；`reason` 必填并原样入审计，失败尝试同样记录（`outcome=failure`）。停用前先撤销该租户全部会话，`attrs.revoked_sessions` 记录撤销数（D-02=①） | 租户 | 365d | active |
 | `tenant.resume` | A | 恢复租户（`suspended → active`）；与首次开通分开记录，便于还原停用时长 | 租户 | 365d | active |
 | `tenant.terminate` | A | 终止租户（→ `terminated` 终态）；`reason` 必填，终止后不可恢复 | 租户 | 365d | active |
 | `tenant.member.add` | A | 添加租户成员（`POST /admin/v1/tenants/{id}/members`）；`attrs.subject_id` / `attrs.role`，已停用成员再次添加时 `attrs.reactivated=true` | 租户 | 365d | active |

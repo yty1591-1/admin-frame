@@ -295,7 +295,7 @@ make check-openapi
 | T-05 | owner 不变量加锁 | `MemberRepository.Mutate`：MySQL 事务 + 租户行 `FOR UPDATE`，计数走加锁读；memory 用独立互斥 | 并发双降级「一成一败」，owner=1 | ✅ 2026-11-03 |
 | T-06 | 修正失效器语义 | 采纳方案 1（TTL-only）：删除 `Options.Invalidator` 与 A 端未使用的 `Guard`；ADR/runbook/注释三处同步 | 三处表述一致，无死代码 | ✅ 2026-11-03 |
 | T-07 | 审计一致性（D-01=②） | `tenant.audit` topic + OutboxEmitter；状态写入与 outbox 同事务；worker 注册 handler | outbox 写失败则业务失败；重复投递不重复落审计 | 待做 |
-| T-21 | 停用撤销会话（D-02=①） | `TenantSessionRevoker` 端口由 identity 实现；suspend/terminate 后按商户撤销在册会话；撤销失败即停用失败 | 停用后旧令牌立即失效，不能换新 | 待做 |
+| T-21 | 停用撤销会话（D-02=①） | `SessionRevoker` 端口由 identity 实现；suspend/terminate **先**撤销在册会话再迁移状态；撤销失败即停用失败 | 停用后旧令牌立即失效，不能换新 | ✅ 2026-11-03 |
 | T-08 | 登录期租户校验 | 定义 `TenantStatusReader` 接口，platform 注入，避免 identity→tenant 直接依赖 | 停用租户登录失败且错误可读 | 待做 |
 | T-09 | 无商户令牌 fail-closed | B 端默认拒绝，配置项保留迁移期例外 | 缺 `merchant_id` 的 B 端令牌返回 401/403 | 待做 |
 | T-10 | 建号校验 `merchant_id` | 复用 T-08 的接口 | 不存在/已终止租户建号返回 400 | 待做 |
@@ -428,7 +428,29 @@ golangci-lint run ./internal/tenant/...
 `TestConcurrentOwnerDemotionOnMySQL`（真实 MySQL，连跑 5 次通过）。
 本机无 gcc，`-race` 未执行，记入待补项。
 
-**未包含**：T-07（Outbox，下一步）、T-21（会话撤销）、T-08～T-10。
+**T-21 停用撤销会话（D-02=①）**
+
+| 文件 | 改动 |
+|---|---|
+| `internal/tenant/app/revoker.go` | 新增 `SessionRevoker` 端口：`RevokeByTenant(ctx, tenantID) (int, error)`，租户域不 import 身份域 |
+| `internal/tenant/app/service.go` | `Transition` 改为「预检 → 撤销 → 事务」三段：停用 / 终止先撤销会话再迁移；撤销失败 → 整体失败、状态不变；撤销数写进审计 `attrs.revoked_sessions` |
+| `internal/identity/domain/session.go` | 新增 `RevokeReasonTenantDisabled`（`tenant_disabled`） |
+| `internal/identity/app/tenant_revoker.go` | 新增 `TenantSessionRevoker`：按商户分页枚举 B 端账号，活跃账号 `BumpTokenVersion` + `RevokeByAccount`（旧访问令牌立即失效），停用账号仅撤会话 |
+| `cmd/internal/identityruntime/runtime.go` | `Runtime.TenantRevoker` 暴露撤销器 |
+| `cmd/internal/tenantruntime/runtime.go` / `cmd/admin-api/register.go` | `tenantruntime.New(deps, revoker)` 接收撤销器；admin-api 从 identity 运行时提取并注入 |
+
+**一致性边界（诚实记录）**：identity 事务不与租户域共享，撤销按账号逐个提交。
+顺序选了「先撤销、后迁移」——撤销成功但迁移失败会出现「会话已撤、租户未停」，
+方向 fail-closed（用户重新登录即恢复）；反过来（先迁移后撤销）失败会留下
+「已停用、令牌还能换新」，正是 D-02 禁止的状态。已写入代码注释与本文。
+
+**验证**：identity 侧 `TestTenantSessionRevoker`（活跃账号升版 + 会话全撤、
+停用账号仅撤会话、其他商户不受影响、未知商户幂等返回 0）；租户侧 5 组
+（suspend/terminate 触发、撤销失败状态不变且 50000、activate 不触发、
+nil 撤销器可停用、审计含 revoked_sessions）。全仓测试与 lint 全绿。
+
+**未包含**：T-08～T-10（登录期校验 / 无商户令牌 fail-closed / 建号校验，共用
+`TenantStatusReader`）。
 
 ---
 

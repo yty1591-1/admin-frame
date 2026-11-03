@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,10 @@ type Options struct {
 	MaxPageSize int
 	// Service 服务名，写入审计事件。
 	Service string
+	// Revoker 会话撤销端口（D-02=① 立即撤销）；nil 表示本进程没有可用的
+	// 撤销能力（单测 / 内存模式），停用与终止将只改状态不撤令牌——
+	// 生产装配必须注入 identity 的实现，见 cmd/admin-api。
+	Revoker SessionRevoker
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。
@@ -244,29 +249,58 @@ func (s *Service) List(ctx context.Context, filter domain.Filter) (ListResult, e
 // 成功路径：读当前状态、CAS 写入、写审计在**同一事务**内完成，任一步失败整体回滚。
 // 失败路径：业务已回滚，拒绝事件在事务外 best-effort 记录（非法迁移本身有价值，
 // 但不允许它把 409 变成 500）。
+//
+// 停用 / 终止会先撤销该租户全部会话（D-02=①），再执行状态迁移：
+//   - 撤销失败 → 整体失败，状态不变（不允许「已停用、令牌还能换新」）；
+//   - 撤销成功但迁移失败 → 出现「会话已撤、租户未停」——方向是 fail-closed
+//     （用户重新登录即可恢复），好于反过来。identity 事务不与租户域共享，
+//     这是当前装配下的诚实取舍。
 func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Tenant, error) {
 	if strings.TrimSpace(in.ID) == "" {
 		return domain.Tenant{}, apperr.BadRequest("tenant id is required")
 	}
+	// 预检：非法迁移直接拒绝，避免为注定失败的请求撤销会话。
+	current, err := s.repo.Get(ctx, in.ID)
+	if err != nil {
+		return domain.Tenant{}, translate(err)
+	}
+	computed, err := current.Transition(in.Target, in.Reason, s.now())
+	if err != nil {
+		s.emitRejected(ctx, in, err)
+		return domain.Tenant{}, translate(err)
+	}
+
+	revoked := 0
+	if revocationRequired(computed.Status) && s.opts.Revoker != nil {
+		revoked, err = s.opts.Revoker.RevokeByTenant(ctx, in.ID)
+		if err != nil {
+			var appErr *apperr.AppError
+			if errors.As(err, &appErr) {
+				return domain.Tenant{}, err
+			}
+			return domain.Tenant{}, apperr.Internal("tenant session revocation failed", err)
+		}
+	}
+
 	var next domain.Tenant
-	err := s.repo.WithinTx(ctx, func(txCtx context.Context) error {
+	err = s.repo.WithinTx(ctx, func(txCtx context.Context) error {
 		// 事务内重新读：锁外读到的状态可能已被并发请求改掉。
-		current, getErr := s.repo.Get(txCtx, in.ID)
+		locked, getErr := s.repo.Get(txCtx, in.ID)
 		if getErr != nil {
 			return getErr
 		}
-		computed, transErr := current.Transition(in.Target, in.Reason, s.now())
+		migrated, transErr := locked.Transition(in.Target, in.Reason, s.now())
 		if transErr != nil {
 			return transErr
 		}
-		if updateErr := s.repo.UpdateStatus(txCtx, computed); updateErr != nil {
+		if updateErr := s.repo.UpdateStatus(txCtx, migrated); updateErr != nil {
 			return updateErr
 		}
-		if emitErr := s.emit(txCtx, in.Actor, actionFor(current.Status, in.Target), computed,
-			audit.OutcomeSuccess, in.Reason); emitErr != nil {
+		if emitErr := s.emitWithAttrs(txCtx, in.Actor, actionFor(locked.Status, in.Target), migrated,
+			audit.OutcomeSuccess, in.Reason, revocationAttrs(revoked)); emitErr != nil {
 			return emitErr
 		}
-		next = computed
+		next = migrated
 		return nil
 	})
 	if err != nil {
@@ -274,6 +308,21 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 		return domain.Tenant{}, translateIfNeeded(err)
 	}
 	return next, nil
+}
+
+// revocationRequired 报告目标状态是否要求先撤销会话：停用与终止都要，
+// 恢复（resume）与开通不需要——那里没有「必须失效的存量令牌」。
+func revocationRequired(target domain.Status) bool {
+	return target == domain.StatusSuspended || target == domain.StatusTerminated
+}
+
+// revocationAttrs 撤销数写进审计 attrs；未撤销（未配置 Revoker）时不写字段，
+// 避免审计里出现语义含糊的 0。
+func revocationAttrs(revoked int) map[string]string {
+	if revoked <= 0 {
+		return nil
+	}
+	return map[string]string{"revoked_sessions": strconv.Itoa(revoked)}
 }
 
 // emitRejected 记录被拒绝的迁移；事务已回滚，本事件必须独立落库。
@@ -313,10 +362,20 @@ func actionFor(from, to domain.Status) string {
 // emit 写租户主数据审计事件。
 func (s *Service) emit(ctx context.Context, actor Actor, action string, tenant domain.Tenant,
 	outcome audit.Outcome, reason string) error {
-	return s.audit.emit(ctx, actor, action, ResourceTypeTenant, tenant.ID, outcome, reason, map[string]string{
+	return s.emitWithAttrs(ctx, actor, action, tenant, outcome, reason, nil)
+}
+
+// emitWithAttrs 写租户主数据审计事件并附加额外属性。
+func (s *Service) emitWithAttrs(ctx context.Context, actor Actor, action string, tenant domain.Tenant,
+	outcome audit.Outcome, reason string, extra map[string]string) error {
+	attrs := map[string]string{
 		"status": string(tenant.Status),
 		"name":   tenant.Name,
-	})
+	}
+	for key, value := range extra {
+		attrs[key] = value
+	}
+	return s.audit.emit(ctx, actor, action, ResourceTypeTenant, tenant.ID, outcome, reason, attrs)
 }
 
 // defaultChannel 兜底端别，保证审计事件通过 Validate（channel 必填）。

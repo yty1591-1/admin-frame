@@ -59,6 +59,8 @@ type Runtime struct {
 	Handler *rest.Handler
 	// CHandler 供 C 端注册短信 / OAuth 登录路由；非 C 端或未启用时为 nil。
 	CHandler *identityc.Handler
+	// TenantRevoker 供租户域在停用 / 终止时撤销该商户全部会话（ENT-09 D-02）。
+	TenantRevoker *app.TenantSessionRevoker
 }
 
 // New 按配置装配身份域；identity.enabled=false 时返回空运行时（保持只验签）。
@@ -355,7 +357,12 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("identity handler: %w", err)
 	}
 
-	runtime := &Runtime{Checker: checker, Handler: handler}
+	tenantRevoker, revokerErr := app.NewTenantSessionRevoker(repos.accounts, repos.sessions, nil)
+	if revokerErr != nil {
+		return nil, fmt.Errorf("identity tenant session revoker: %w", revokerErr)
+	}
+
+	runtime := &Runtime{Checker: checker, Handler: handler, TenantRevoker: tenantRevoker}
 	if channel == domain.ChannelC {
 		cHandler, cErr := buildChannelC(deps, cfg, repos.accounts, repos.oauthIdentities, guard,
 			authSvc, piiHasher, identityMetrics, identityObserver, handler)

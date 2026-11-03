@@ -30,7 +30,7 @@ type Runtime struct {
 }
 
 // New 构造租户运行时（A 端管理能力）。
-func New(deps *platform.Deps) (*Runtime, error) {
+func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.IDs == nil {
 		return &Runtime{}, nil
 	}
@@ -45,6 +45,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		DefaultPageSize: defaultPageSize,
 		MaxPageSize:     maxPageSize,
 		Service:         deps.Config.Service,
+		Revoker:         revoker,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant service: %w", err)

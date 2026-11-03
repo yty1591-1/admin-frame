@@ -54,6 +54,8 @@ const (
 	RevokeReasonAdmin RevokeReason = "admin"
 	// RevokeReasonAccountDisabled 账号被停用。
 	RevokeReasonAccountDisabled RevokeReason = "account_disabled"
+	// RevokeReasonTenantDisabled 所属租户被停用 / 终止，整租户会话撤销（ENT-09 D-02）。
+	RevokeReasonTenantDisabled RevokeReason = "tenant_disabled"
 	// RevokeReasonPasswordChanged 密码已修改。
 	RevokeReasonPasswordChanged RevokeReason = "password_changed"
 	// RevokeReasonPhoneChanged C 端手机号换绑。
