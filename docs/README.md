@@ -74,7 +74,7 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
-| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-04/07/09`～`ENT-24` 仍待做或进行中 |
+| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-07`、`ENT-09`～`ENT-24` 仍待做或进行中 |
 
 > 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次）已全部闭环，位于 [`archive/`](./archive/)。
 
@@ -118,6 +118,7 @@ docs/
 ├── storage-s3-oss.md          # 对象存储（L2）
 ├── migration-guide.md         # 迁移使用指南（L2）
 ├── deploy-kind-verify.md      # 用 kind 验证 Helm Chart：部署 / 冒烟 / 回滚（L2）
+├── audit-export-verify.md     # 审计异步导出 / 到期归档实测记录（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-*.md  # 活跃计划（L3）
 ├── adr/                       # 架构决策记录（L1）

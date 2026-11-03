@@ -27,8 +27,8 @@
 | AUD-03 | 审计事件经 `internal/shared/audit` 发出（或等价封装）；禁止只打无 `audit=true` 的随意业务日志冒充审计 | 代码 + 抽检单测 |
 | AUD-04 | 每条事件必含：`event_id`、`action`、`actor_id`、`channel`、`resource_type`、`resource_id`、`outcome`、`occurred_at`、`trace_id`、`service` | `Event.Validate` + 单测 |
 | AUD-05 | 分端必审清单见 §4；A **强审计**、B **关键写审计**、C **关键点审计** | Review + EVENTS 目录 |
-| AUD-06 | 生产审计存储：**追加写**（append-only）或等价 WORM；禁止业务进程 UPDATE/DELETE 审计行作为常规能力 | Review + ADR（若引入表） |
-| AUD-07 | 保留期基线：安全/登录/权限类 ≥ **180 天**；资金/支付/导出类 ≥ **365 天**（更严合规以组织政策为准） | Review + EVENTS 列 |
+| AUD-06 | 生产审计存储：**追加写**（append-only）或等价 WORM；禁止业务进程 UPDATE/DELETE 审计行作为常规能力 | `check-audit.sh`（`audit_immutability_check.py`）+ Review |
+| AUD-07 | 保留期基线：安全/登录/权限类 ≥ **180 天**；资金/支付/导出类 ≥ **365 天**（更严合规以组织政策为准）；到期销毁须「先归档、后删除」 | `check-audit.sh` + 集成测试（`tests/integration/audit`）+ EVENTS 列 |
 | AUD-08 | 审计载荷禁止完整 Token、密码、DSN、支付完整卡号等密钥/高敏原文（对齐 SEC） | Review + 单测（脱敏样例） |
 | AUD-09 | 合并请求触及审计相关时须勾选自检 | PR 模板 |
 

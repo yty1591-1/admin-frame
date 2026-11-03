@@ -57,9 +57,16 @@ audit:
   export:
     max_range_days: 31 # 单次导出最大跨度
     max_rows: 50000 # 超限拒绝而不是静默截断
+    async: true # true 时提供 POST 异步导出 + 任务查询 / 下载；false 只留同步流式导出
+    ttl_days: 7 # 导出文件与任务记录保留天数；到期 worker 删除对象
+    retry_max: 3 # 单任务最大执行次数（含首次）
+    poll_interval: 10s # worker 轮询间隔
+    stale_timeout: 10m # running 超时未完成即视为 worker 失效，重新排队
+    bucket: "" # 导出文件落哪个命名桶；空表示默认桶
   retention:
     batch_size: 5000 # [100, 50000]
     cleanup_interval: 24h # >= 1m；worker 独占执行
+    archive_prefix: "audit/expired" # 到期先归档到对象存储再删除；空 = 不归档（不推荐）
     dry_run: false # 首次上线建议先 true 观察到期量
 
 # 密钥托管（ENT-07 T4 / SECURITY_STANDARDS §10.3）。

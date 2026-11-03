@@ -3,8 +3,7 @@ package app
 
 import (
 	"context"
-	"encoding/csv"
-	"fmt"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/admin-frame/admin-frame/internal/audit/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/pkg/contextx"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -143,28 +141,12 @@ func (s *QueryService) Export(ctx context.Context, filter domain.Filter, meta Ac
 		return ExportResult{}, apperr.Internal("audit export max rows is not configured", nil)
 	}
 
-	writer := csv.NewWriter(w)
-	if err := writer.Write(exportHeader); err != nil {
-		return ExportResult{}, apperr.Internal("write audit export header", err)
-	}
-	rows := 0
-	streamErr := s.reader.Stream(ctx, filter, func(event audit.Event) error {
-		if rows >= s.opts.ExportMaxRows {
-			return apperr.BadRequest(fmt.Sprintf(
-				"export exceeds maximum of %d rows in the selected range", s.opts.ExportMaxRows))
+	rows, err := writeCSV(ctx, s.reader, filter, s.opts.ExportMaxRows, w)
+	if err != nil {
+		if errors.Is(err, ErrExportTooLarge) {
+			return ExportResult{}, apperr.BadRequest(err.Error())
 		}
-		if err := writer.Write(exportRow(event)); err != nil {
-			return apperr.Internal("write audit export row", err)
-		}
-		rows++
-		return nil
-	})
-	if streamErr != nil {
-		return ExportResult{}, streamErr
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		return ExportResult{}, apperr.Internal("flush audit export", err)
+		return ExportResult{}, err
 	}
 
 	result := ExportResult{Rows: rows, From: filter.From, To: filter.To}
@@ -181,32 +163,6 @@ func (s *QueryService) Export(ctx context.Context, filter domain.Filter, meta Ac
 	return result, nil
 }
 
-// exportHeader 是导出 CSV 的列顺序，与 exportRow 一一对应。
-var exportHeader = []string{
-	"event_id", "occurred_at", "action", "outcome", "channel",
-	"actor_id", "actor_type", "merchant_id",
-	"resource_type", "resource_id", "trace_id", "service", "reason",
-}
-
-// exportRow 把事件转换为 CSV 行；attrs 不导出，避免二次扩散敏感字段。
-func exportRow(event audit.Event) []string {
-	return []string{
-		event.EventID,
-		event.OccurredAt.UTC().Format(time.RFC3339Nano),
-		event.Action,
-		string(event.Outcome),
-		event.Channel,
-		event.ActorID,
-		event.ActorType,
-		event.MerchantID,
-		event.ResourceType,
-		event.ResourceID,
-		event.TraceID,
-		event.Service,
-		event.Reason,
-	}
-}
-
 // emitAccess 记录对审计数据的访问（查询 / 导出）。
 func (s *QueryService) emitAccess(
 	ctx context.Context,
@@ -214,46 +170,7 @@ func (s *QueryService) emitAccess(
 	meta AccessMeta,
 	attrs map[string]string,
 ) error {
-	if s.emitter == nil {
-		return nil
-	}
-	eventID, err := s.ids.NextString()
-	if err != nil {
-		return err
-	}
-	// 非 HTTP 入口（或中间件缺失）时用请求 ID、再退化为事件 ID，
-	// 保证 AUD-04 的 trace_id 必填且单条事件仍可精确检索。
-	traceID := strings.TrimSpace(meta.TraceID)
-	if traceID == "" {
-		traceID = strings.TrimSpace(contextx.RequestID(ctx))
-	}
-	if traceID == "" {
-		traceID = eventID
-	}
-	actorID := strings.TrimSpace(meta.ActorID)
-	if actorID == "" {
-		actorID = "system"
-	}
-	channel := strings.TrimSpace(meta.Channel)
-	if channel == "" {
-		channel = "admin"
-	}
-	event := audit.Event{
-		EventID:      eventID,
-		Action:       action,
-		ActorID:      actorID,
-		ActorType:    meta.ActorType,
-		Channel:      channel,
-		MerchantID:   meta.MerchantID,
-		ResourceType: "audit_event",
-		ResourceID:   resourceID,
-		Outcome:      audit.OutcomeSuccess,
-		OccurredAt:   time.Now().UTC(),
-		TraceID:      traceID,
-		Service:      s.service,
-		Attrs:        attrs,
-	}
-	return s.emitter.Emit(ctx, event)
+	return emitAccessEvent(ctx, s.emitter, s.ids, s.service, action, resourceID, meta, audit.OutcomeSuccess, attrs)
 }
 
 // exportRangeID 用时间窗构造资源标识，避免资源 ID 里出现过滤原文。

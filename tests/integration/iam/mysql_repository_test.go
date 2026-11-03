@@ -83,9 +83,12 @@ func openAndMigrate(rawDSN string) (*sql.DB, error) {
 	return sqlDB, nil
 }
 
-// reset 清空业务表（保留种子权限）。
+// reset 清空业务表（保留种子权限与引导角色）。
 //
 // 顺序遵循外键 RESTRICT：先删引用方，再删角色。
+// `system_admin` 必须保留：identity 包的 bootstrap.EnsureAdmin 靠它挂管理员绑定，
+// 整包删除会让后续包（以及同包第二个用例）在 Migrate 阶段直接失败——
+// 这不是「测试隔离」而是把共享库改成不可用状态。
 func reset(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
 	for _, stmt := range []string{
@@ -100,7 +103,7 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 		"DELETE FROM iam_role_prerequisite",
 		"DELETE FROM iam_sod_group_role",
 		"DELETE FROM iam_sod_group",
-		"DELETE FROM iam_role",
+		"DELETE FROM iam_role WHERE code <> 'system_admin'",
 	} {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			t.Fatalf("reset %q: %v", stmt, err)
@@ -304,8 +307,13 @@ func TestSQLRoleRepositoryListAndSoftDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 1 || all[0].Code != "beta" {
-		t.Fatalf("list=%d", len(all))
+	// 列表里还有迁移种子的 system_admin，因此按 code 断言而不是按总数。
+	codes := make(map[string]bool, len(all))
+	for _, role := range all {
+		codes[role.Code] = true
+	}
+	if !codes["beta"] || codes["alpha"] {
+		t.Fatalf("list codes=%v, want beta 在列表且已软删的 alpha 被过滤", codes)
 	}
 
 	// 软删角色仍可按 code 查到（code 不可复用），但不再出现在列表。

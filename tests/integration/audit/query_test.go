@@ -110,7 +110,8 @@ func TestAuditReaderAndRetention(t *testing.T) {
 	if len(streamed) != 3 {
 		t.Fatalf("Stream() yielded %d rows, want 3", len(streamed))
 	}
-	if streamed[len(streamed)-1] != "evt-recent-2" {
+	// ASC 排序：最后一条是最新的 evt-rbac（-30m），不是 evt-recent-2（-1h）。
+	if streamed[0] != "evt-recent-1" || streamed[len(streamed)-1] != "evt-rbac" {
 		t.Fatalf("Stream() must be ordered by occurred_at ASC, got %v", streamed)
 	}
 

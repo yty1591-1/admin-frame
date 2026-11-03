@@ -25,3 +25,23 @@ type ListResponse struct {
 	Items []EventDTO `json:"items"`
 	Total int        `json:"total"`
 }
+
+// ExportJobDTO 是异步导出任务的状态响应。
+type ExportJobDTO struct {
+	// ExportID 任务 ID，同时是下载资源标识。
+	ExportID string `json:"export_id"`
+	// Status pending / running / succeeded / failed / expired。
+	Status string `json:"status"`
+	// Rows 成功导出的行数；未完成时为 0。
+	Rows int `json:"rows"`
+	// CreatedAt 创建时间（UTC）。
+	CreatedAt time.Time `json:"created_at"`
+	// ExpiresAt 文件保留截止时间（UTC）。
+	ExpiresAt time.Time `json:"expires_at"`
+	// FinishedAt 进入终态时间（UTC）；进行中不返回。
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// DownloadPath 可下载时的相对路径（需 audit:read）；否则为空。
+	DownloadPath string `json:"download_path,omitempty"`
+	// Error 终态失败原因（截断），成功时不返回。
+	Error string `json:"error,omitempty"`
+}

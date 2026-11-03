@@ -78,6 +78,21 @@ config:
     insecure: true
   async:
     enabled: false
+  audit:
+    # 审计异步导出（ENT-04 T5）：async=true 才提供 POST 导出与任务下载路由。
+    # 导出文件落对象存储，API 与 worker 必须指向同一个桶——`storage.driver=memory`
+    # 不跨进程共享，只能用于单进程联调（kind/prod 请用 local/s3/oss/cos/obs）。
+    export:
+      async: false
+      ttl_days: 7
+      retry_max: 3
+      poll_interval: 10s
+      stale_timeout: 10m
+      bucket: ""
+    # 到期归档：非空时「先写归档对象、再删行」，归档失败即中止清理。
+    # 留空则直接删除（AUD-07 不推荐的销毁路径，仅用于本地）。
+    retention:
+      archive_prefix: ""
   iam:
     # 必须带引号：YAML 1.1 会把裸 off 解析成布尔 false，渲染后变成
     # `iam.mode: false`，容器启动即报 `unsupported iam.mode: false` 并 CrashLoop。

@@ -260,11 +260,12 @@ func TestSQLSessionArchiveSameTransaction(t *testing.T) {
 	if archived.Sessions != 1 || archived.Families != 1 {
 		t.Fatalf("archive stats = %+v, want 1/1", archived)
 	}
-	if _, err := sessions.FindByID(ctx, session.ID); err != nil {
-		t.Fatalf("online session must be deleted: %v", err)
+	// 归档 = 写入归档表并从在线表移除；在线表里还能查到说明只写没删。
+	if _, err := sessions.FindByID(ctx, session.ID); err == nil {
+		t.Fatal("archived session must not stay in identity_session")
 	}
-	if _, err := sessions.FindFamily(ctx, family.ID); err != nil {
-		t.Fatalf("online family must be deleted: %v", err)
+	if _, err := sessions.FindFamily(ctx, family.ID); err == nil {
+		t.Fatal("archived family must not stay in identity_session_family")
 	}
 
 	var archivedSessions, archivedFamilies int

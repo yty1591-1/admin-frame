@@ -133,6 +133,10 @@ paths:
     $ref: './paths/admin/audit.yaml#/admin-v1-audit-events'
   /admin/v1/audit/events/export:
     $ref: './paths/admin/audit.yaml#/admin-v1-audit-events-export'
+  /admin/v1/audit/exports/{id}:
+    $ref: './paths/admin/audit.yaml#/admin-v1-audit-exports-by-id'
+  /admin/v1/audit/exports/{id}/download:
+    $ref: './paths/admin/audit.yaml#/admin-v1-audit-exports-by-id-download'
   /admin/v1/iam/me/permissions:
     $ref: './paths/admin/iam-bindings.yaml#/admin-v1-iam-me-permissions'
   /admin/v1/iam/menus:

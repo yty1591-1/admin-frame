@@ -252,6 +252,67 @@ func (s *SQLRetentionStore) DeleteBefore(ctx context.Context, cutoff time.Time, 
 	return int(affected), nil
 }
 
+// ListBefore 返回 occurred_at 早于 cutoff 的最早 limit 条事件（归档输入）。
+func (s *SQLRetentionStore) ListBefore(ctx context.Context, cutoff time.Time, limit int) ([]audit.Event, error) {
+	if s == nil || s.DB == nil {
+		return nil, fmt.Errorf("audit retention store is not configured")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("list limit must be positive")
+	}
+	//nolint:gosec // G201: 表名与列名为本文件常量，过滤值走 ? 占位符。
+	query := fmt.Sprintf(
+		`SELECT %s FROM %s WHERE occurred_at < ? ORDER BY occurred_at ASC, event_id ASC LIMIT ?`,
+		selectColumns, s.table())
+	rows, err := s.DB.QueryContext(ctx, query, cutoff.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list expired audit events: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	events := make([]audit.Event, 0, limit)
+	for rows.Next() {
+		event, scanErr := scanEvent(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expired audit events: %w", err)
+	}
+	return events, nil
+}
+
+// DeleteIDs 按事件 ID 删除，返回删除行数。
+//
+// 只在「本批已归档」之后调用，保证不会删掉尚未落归档的数据。
+func (s *SQLRetentionStore) DeleteIDs(ctx context.Context, ids []string) (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, fmt.Errorf("audit retention store is not configured")
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	//nolint:gosec // G201: 表名为本文件常量；IN 占位符按切片长度生成，值走参数。
+	query := fmt.Sprintf(`DELETE FROM %s WHERE event_id IN (%s)`, s.table(), placeholders)
+	result, err := s.DB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete archived audit events: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read deleted audit rows: %w", err)
+	}
+	return int(affected), nil
+}
+
 // table 返回实际操作表名。
 func (s *SQLRetentionStore) table() string {
 	if s == nil || strings.TrimSpace(s.Table) == "" {

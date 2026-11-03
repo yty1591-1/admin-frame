@@ -93,6 +93,22 @@ if [[ -f docs/AUDIT_STANDARDS.md ]]; then
   fi
 fi
 
+echo "==> AUD-06: append-only（业务代码不得改 / 删审计事件）"
+# 标准原文只写「Review」，这里落成可执行断言：保留期仓库之外不得有
+# DELETE FROM，涉及 audit_event 的文件不得有 UPDATE。
+if ! python3 scripts/ci/audit_immutability_check.py; then
+  echo "ERROR: audit immutability violated (AUD-06)" >&2
+  FAIL=1
+fi
+
+echo "==> AUD: async export contract (ENT-04 T5)"
+# 路由 ↔ OpenAPI ↔ 状态枚举三处漂移都会造成「契约写了、代码没有」，
+# 由 audit_export_check.py 做集合比对（不是简单 grep）。
+if ! python3 scripts/ci/audit_export_check.py; then
+  echo "ERROR: audit export contract drifted (ENT-04 T5)" >&2
+  FAIL=1
+fi
+
 echo "==> AUD: required unit tests"
 if ! command -v go >/dev/null 2>&1; then
   for d in "/c/Program Files/Go/bin" "/usr/local/go/bin" "${HOME}/go/bin"; do

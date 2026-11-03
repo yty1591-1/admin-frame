@@ -63,3 +63,37 @@ components:
             $ref: "#/components/schemas/AuditEvent"
         total:
           type: integer
+
+    # 异步导出任务状态（ENT-04 T5）。
+    AuditExportJob:
+      type: object
+      required: [export_id, status, rows, created_at, expires_at]
+      properties:
+        export_id:
+          type: string
+          description: 任务 ID，同时是下载资源标识。
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, expired]
+          description: 任务状态；succeeded 且未过期时才有下载路径。
+        rows:
+          type: integer
+          description: 成功导出的行数；未完成时为 0。
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: 文件保留截止时间；到期后文件删除、状态置 expired。
+        finished_at:
+          type: string
+          format: date-time
+          description: 进入终态的时间；进行中不返回。
+        download_path:
+          type: string
+          description: 可下载时的相对路径（仍需 `audit:read`）；否则为空。
+          example: /admin/v1/audit/exports/1234567890/download
+        error:
+          type: string
+          description: 终态失败原因（截断）；成功时不返回。

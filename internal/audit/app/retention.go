@@ -29,19 +29,21 @@ type RetentionOptions struct {
 // RetentionService 执行审计事件到期清理（ENT-04 T6 / AUD-07）。
 //
 // 只按 occurred_at 批量删除，不提供按主体 / 动作的定向删除能力；
+// 配置了归档器时严格「先归档、后删除」——归档失败即中止，绝不裸删。
 // 每次清理都写一条元审计事件，保证「删除事实」可追溯（AUDIT_STANDARDS §5）。
 type RetentionService struct {
-	store   domain.RetentionStore
-	emitter audit.Emitter
-	ids     id.Generator
-	logger  *slog.Logger
-	opts    RetentionOptions
-	service string
-	now     func() time.Time
+	store    domain.RetentionStore
+	archiver RetentionArchiver
+	emitter  audit.Emitter
+	ids      id.Generator
+	logger   *slog.Logger
+	opts     RetentionOptions
+	service  string
+	now      func() time.Time
 }
 
-// NewRetentionService 构造保留期清理服务；store 与 ids 必填。
-func NewRetentionService(store domain.RetentionStore, emitter audit.Emitter, ids id.Generator, logger *slog.Logger, opts RetentionOptions, service string) (*RetentionService, error) {
+// NewRetentionService 构造保留期清理服务；store 与 ids 必填，archiver 可为 nil（不归档）。
+func NewRetentionService(store domain.RetentionStore, archiver RetentionArchiver, emitter audit.Emitter, ids id.Generator, logger *slog.Logger, opts RetentionOptions, service string) (*RetentionService, error) {
 	if store == nil {
 		return nil, apperr.Internal("audit retention service requires a store", nil)
 	}
@@ -58,13 +60,14 @@ func NewRetentionService(store domain.RetentionStore, emitter audit.Emitter, ids
 		opts.MaxBatches = 20
 	}
 	return &RetentionService{
-		store:   store,
-		emitter: emitter,
-		ids:     ids,
-		logger:  logger,
-		opts:    opts,
-		service: service,
-		now:     func() time.Time { return time.Now().UTC() },
+		store:    store,
+		archiver: archiver,
+		emitter:  emitter,
+		ids:      ids,
+		logger:   logger,
+		opts:     opts,
+		service:  service,
+		now:      func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -74,6 +77,8 @@ type PurgeResult struct {
 	Cutoff time.Time
 	// Purgeable 到期行数（清理前统计）。
 	Purgeable int
+	// Archived 已写入归档对象的行数；未配置归档时为 0。
+	Archived int
 	// Deleted 实际删除行数。
 	Deleted int
 	// Batches 实际执行的删除批次数。
@@ -111,16 +116,35 @@ func (s *RetentionService) PurgeOnce(ctx context.Context) (PurgeResult, error) {
 	}
 
 	for batch := 0; batch < s.opts.MaxBatches; batch++ {
-		deleted, delErr := s.store.DeleteBefore(ctx, cutoff, s.opts.BatchSize)
+		// 先取行再删：归档需要「将要销毁的这批数据」本体，DeleteBefore 拿不到内容。
+		events, listErr := s.store.ListBefore(ctx, cutoff, s.opts.BatchSize)
+		if listErr != nil {
+			return result, apperr.Internal("list expired audit events", listErr)
+		}
+		if len(events) == 0 {
+			break
+		}
+		if s.archiver != nil {
+			key, archiveErr := s.archiver.Archive(ctx, events, cutoff)
+			if archiveErr != nil {
+				// 归档失败不删任何行：宁可留数据，也不能让「已销毁」没有副本。
+				return result, apperr.Internal("archive expired audit events", archiveErr)
+			}
+			result.Archived += len(events)
+			s.logInfo(ctx, "audit retention batch archived",
+				"rows", len(events), "key", key, "cutoff", cutoff.Format(time.RFC3339))
+		}
+		ids := make([]string, 0, len(events))
+		for _, event := range events {
+			ids = append(ids, event.EventID)
+		}
+		deleted, delErr := s.store.DeleteIDs(ctx, ids)
 		if delErr != nil {
 			return result, apperr.Internal("delete expired audit events", delErr)
 		}
-		if deleted == 0 {
-			break
-		}
 		result.Deleted += deleted
 		result.Batches++
-		if deleted < s.opts.BatchSize {
+		if len(events) < s.opts.BatchSize {
 			break
 		}
 	}
@@ -131,6 +155,7 @@ func (s *RetentionService) PurgeOnce(ctx context.Context) (PurgeResult, error) {
 	s.logInfo(ctx, "audit retention purge",
 		"cutoff", cutoff.Format(time.RFC3339),
 		"purgeable", result.Purgeable,
+		"archived", result.Archived,
 		"deleted", result.Deleted,
 		"batches", result.Batches)
 	return result, nil
@@ -161,6 +186,7 @@ func (s *RetentionService) emitPurge(ctx context.Context, result PurgeResult) er
 		Attrs: map[string]string{
 			"cutoff":    result.Cutoff.Format(time.RFC3339),
 			"purgeable": strconv.Itoa(result.Purgeable),
+			"archived":  strconv.Itoa(result.Archived),
 			"deleted":   strconv.Itoa(result.Deleted),
 			"batches":   strconv.Itoa(result.Batches),
 		},

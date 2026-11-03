@@ -104,8 +104,15 @@ type Reader interface {
 type RetentionStore interface {
 	// CountBefore 统计 occurred_at 早于 cutoff 的行数。
 	CountBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// ListBefore 返回 occurred_at 早于 cutoff 的最早 limit 条事件。
+	//
+	// 归档必须先读到「将要删除的这批行」再落对象存储，随后按 ID 删除；
+	// 直接 DeleteBefore 无法保证「先归档后销毁」，归档缺失时就成了静默销毁。
+	ListBefore(ctx context.Context, cutoff time.Time, limit int) ([]audit.Event, error)
 	// DeleteBefore 分批删除 occurred_at 早于 cutoff 的行，返回本次删除行数。
 	//
 	// limit <= 0 表示单批上限由实现决定；返回 0 表示已无到期数据。
 	DeleteBefore(ctx context.Context, cutoff time.Time, limit int) (int, error)
+	// DeleteIDs 按事件 ID 删除，返回删除行数；仅供保留期任务使用。
+	DeleteIDs(ctx context.Context, ids []string) (int, error)
 }

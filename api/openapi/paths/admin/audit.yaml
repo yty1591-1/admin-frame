@@ -153,3 +153,162 @@ admin-v1-audit-events-export:
         $ref: "../../components.yaml#/components/responses/Forbidden"
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [audit]
+    summary: 创建异步导出任务
+    description: |
+      需要 `audit:read`。参数与同步导出一致（时间窗必填、跨度与行数受
+      `audit.export.*` 约束），区别是立即返回 202 + 任务状态，CSV 由 worker
+      异步生成并落对象存储；客户端轮询 `GET /admin/v1/audit/exports/{id}`，
+      待 `status=succeeded` 后走 `download_path` 下载。
+
+      导出完成或失败都会记 `data.export` 审计事件（导出人、范围、行数）。
+      `audit.export.async=false` 时本接口返回 503（同步 GET 导出仍可用）。
+    operationId: adminCreateAuditExportJob
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: from
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: to
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: channel
+        schema:
+          type: string
+          enum: [admin, biz, c, worker]
+      - in: query
+        name: outcome
+        schema:
+          type: string
+          enum: [success, failure, denied]
+      - in: query
+        name: merchant_id
+        schema:
+          type: string
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+      - in: query
+        name: resource_id
+        schema:
+          type: string
+      - in: query
+        name: trace_id
+        schema:
+          type: string
+    responses:
+      "202":
+        description: 任务已受理
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/audit.yaml#/components/schemas/AuditExportJob"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-audit-exports-by-id:
+  get:
+    tags: [audit]
+    summary: 查询异步导出任务状态
+    description: |
+      需要 `audit:read`。仅发起人本人可查询：他人的导出任务一律返回 404，
+      避免持有审计读权限的账号枚举别人的导出范围（时间窗与过滤条件本身敏感）。
+    operationId: adminGetAuditExportJob
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/audit.yaml#/components/schemas/AuditExportJob"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+admin-v1-audit-exports-by-id-download:
+  get:
+    tags: [audit]
+    summary: 下载异步导出文件（CSV）
+    description: |
+      需要 `audit:read`。仅任务发起人可下载；任务未成功或已过保留期返回 40000。
+      响应为 `text/csv` 附件，列顺序与同步导出一致；下载行为记 `data.export`
+      审计（`mode=async-download`）。
+    operationId: adminDownloadAuditExport
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: CSV 文件流
+        content:
+          text/csv:
+            schema:
+              type: string
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

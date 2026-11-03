@@ -272,10 +272,19 @@
 
 **验收标准**
 
-- [ ] `AC-ENT-04-1`：角色 / 绑定 / 破玻璃 / 登录 / 导出事件可查询，过滤条件正确。
-- [ ] `AC-ENT-04-2`：保存期限与归档任务生效；到期数据可验证清理。
-- [ ] `AC-ENT-04-3`：审计存储不可更新 / 删除（除保留期任务），有测试或约束证明。
-- [ ] `AC-ENT-04-4`：审计写失败时，关键操作返回失败而非静默成功。
+- [x] `AC-ENT-04-1`：角色 / 绑定 / 破玻璃 / 登录 / 导出事件可查询，过滤条件正确
+      （`tests/integration/audit/query_test.go` 覆盖 action / actor / 时间窗过滤与分页总量；
+      `docs/audit-export-verify.md` 记录 `action=auth.login` 查询 total=7 与导出 CSV 行数一致）。
+- [x] `AC-ENT-04-2`：保存期限与归档任务生效；到期数据可验证清理
+      （`audit.retention.archive_prefix` 开启后每批「先归档到对象存储、再按 ID 删除」，
+      归档失败即中止且一行不删；`TestAuditRetentionArchivesThenDeletes` 验证 12 行分 3 批归档、
+      归档对象行数 = 删除行数、未到期数据保留；dry-run / legal_hold 只统计不删除）。
+- [x] `AC-ENT-04-3`：审计存储不可更新 / 删除（除保留期任务），有测试或约束证明
+      （`scripts/ci/audit_immutability_check.py` 并入 `check-audit`：保留期仓储之外不得出现
+      `DELETE FROM`，涉及 `audit_event` 的文件不得出现 `UPDATE`；删除只按 cutoff 或事件 ID 两种受控方式）。
+- [x] `AC-ENT-04-4`：审计写失败时，关键操作返回失败而非静默成功
+      （`TestAuditFailureFailsClosed` 角色创建在记录器不可用时返回 50000；
+      `TestMultiEmitterStopsOnFailure` 任一出口失败即中断；导出任务 emit 失败返回错误而非静默置成功）。
 
 **门禁**：`make check-audit` 扩展为「事件目录 ↔ 代码 ↔ 查询契约」一致性检查。
 

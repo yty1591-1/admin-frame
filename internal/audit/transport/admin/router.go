@@ -16,11 +16,21 @@ import (
 //
 // perm 由 cmd 注入（security.Authorizer.Require）；transport 只依赖 shared 契约，
 // 不 import internal/platform（LAYER-01）。
+//
+// 异步导出的三个路由始终注册：audit.export.async 未启用时由 Handler 返回 503，
+// 而不是 404 —— 契约里该路径存在，客户端应能区分「没开」与「路径写错」。
 func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) http.Handler, perm auth.PermissionMiddleware) {
+	read := perm(string(iam.PermAuditRead))
 	mux.Handle("GET /admin/v1/audit/events",
-		authMW(perm(string(iam.PermAuditRead))(http.HandlerFunc(h.List))))
+		authMW(read(http.HandlerFunc(h.List))))
 	mux.Handle("GET /admin/v1/audit/events/export",
-		authMW(perm(string(iam.PermAuditRead))(http.HandlerFunc(h.Export))))
+		authMW(read(http.HandlerFunc(h.Export))))
+	mux.Handle("POST /admin/v1/audit/events/export",
+		authMW(read(http.HandlerFunc(h.CreateExport))))
+	mux.Handle("GET /admin/v1/audit/exports/{id}",
+		authMW(read(http.HandlerFunc(h.GetExport))))
+	mux.Handle("GET /admin/v1/audit/exports/{id}/download",
+		authMW(read(http.HandlerFunc(h.DownloadExport))))
 }
 
 // NewRouter 注册审计路由并挂接鉴权与权限中间件（测试用）。

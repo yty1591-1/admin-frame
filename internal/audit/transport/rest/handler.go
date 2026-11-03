@@ -6,7 +6,9 @@ package rest
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +25,8 @@ import (
 type HandlerConfig struct {
 	// Query 审计查询与导出用例，必填。
 	Query *app.QueryService
+	// Jobs 异步导出用例；nil 表示 audit.export.async 未启用，相关路由返回 503。
+	Jobs *app.ExportJobService
 	// QueryLimits 与配置 audit.query 一致，用于分页参数解析。
 	QueryLimits pagination.Config
 	// MaxRange 查询允许的最大时间跨度（audit.query.max_range_days）。
@@ -38,6 +42,7 @@ type HandlerConfig struct {
 // Handler 处理审计查询与导出请求。
 type Handler struct {
 	query          *app.QueryService
+	jobs           *app.ExportJobService
 	pageCfg        pagination.Config
 	maxRange       time.Duration
 	exportMaxRange time.Duration
@@ -55,6 +60,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	}
 	return &Handler{
 		query:          cfg.Query,
+		jobs:           cfg.Jobs,
 		pageCfg:        cfg.QueryLimits,
 		maxRange:       cfg.MaxRange,
 		exportMaxRange: cfg.ExportMaxRange,
@@ -131,6 +137,83 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+}
+
+// CreateExport 处理 POST /admin/v1/audit/events/export，创建异步导出任务。
+//
+// 与同步 GET 共用过滤参数与上限校验；区别只在「立刻返回 CSV 流」还是
+// 「落任务行，由 worker 生成文件」。返回 202 + 任务状态，客户端轮询
+// /admin/v1/audit/exports/{id} 直到 status=succeeded 再下载。
+func (h *Handler) CreateExport(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	principal, err := h.principal(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.jobs == nil {
+		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		return
+	}
+	filter, err := parseFilter(r, 1, 0)
+	if err != nil {
+		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
+	job, err := h.jobs.Create(r.Context(), filter, h.accessMeta(principal, traceID))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, 0, "accepted", toExportJobDTO(job), traceID)
+}
+
+// GetExport 处理 GET /admin/v1/audit/exports/{id}，返回任务状态。
+func (h *Handler) GetExport(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	principal, err := h.principal(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.jobs == nil {
+		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		return
+	}
+	job, err := h.jobs.Get(r.Context(), r.PathValue("id"), h.accessMeta(principal, traceID))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, toExportJobDTO(job), traceID)
+}
+
+// DownloadExport 处理 GET /admin/v1/audit/exports/{id}/download，返回 CSV。
+//
+// 先取到完整字节再写响应头：任务未完成 / 已过期时仍能返回 JSON 错误，
+// 不会出现「已经写了 200 和 CSV 头，才在流中间报错」的半截文件。
+func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	principal, err := h.principal(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.jobs == nil {
+		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		return
+	}
+	job, body, err := h.jobs.Open(r.Context(), r.PathValue("id"), h.accessMeta(principal, traceID))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="audit-events-%s.csv"`, job.ID))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // accessMeta 把主体与链路信息转换为访问审计元数据。
@@ -214,4 +297,26 @@ func toEventDTO(event audit.Event) EventDTO {
 		Reason:       event.Reason,
 		Attrs:        event.Attrs,
 	}
+}
+
+// toExportJobDTO 把任务转换为响应；仅成功且未过期时给出下载路径。
+func toExportJobDTO(job domain.ExportJob) ExportJobDTO {
+	dto := ExportJobDTO{
+		ExportID:  job.ID,
+		Status:    string(job.Status),
+		Rows:      job.RowCount,
+		CreatedAt: job.CreatedAt.UTC(),
+		ExpiresAt: job.ExpiresAt.UTC(),
+	}
+	if !job.FinishedAt.IsZero() {
+		finished := job.FinishedAt.UTC()
+		dto.FinishedAt = &finished
+	}
+	if job.Status == domain.ExportFailed {
+		dto.Error = job.LastError
+	}
+	if job.Downloadable(time.Now().UTC()) {
+		dto.DownloadPath = "/admin/v1/audit/exports/" + job.ID + "/download"
+	}
+	return dto
 }

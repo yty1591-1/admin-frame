@@ -510,8 +510,8 @@ async:
 | T2 | 写入链路 | `auditlog.Recorder` 经 Outbox 落库；关键操作同事务 | 写失败即业务失败 |
 | T3 | 防篡改 | 应用账号无 `UPDATE/DELETE`；哈希链可选启用 | `AC-ENT-04-3` |
 | T4 | 查询接口 | `GET /admin/v1/audit/events`：时间、主体、动作、资源、结果、分页 | 权限 `audit:read`；过滤正确 |
-| T5 | 导出接口 | `POST /admin/v1/audit/events/export` 异步任务 + 下载；导出本身审计 | 导出范围与脱敏 |
-| T6 | 保留与归档 | worker 日任务：到期归档 / 清理；legal hold 优先 | `AC-ENT-04-2` |
+| T5 | 导出接口 | `POST /admin/v1/audit/events/export` 异步任务 + 下载；导出本身审计（同步 `GET …/export` 保留） | 导出范围与脱敏 |
+| T6 | 保留与归档 | worker 日任务：先写归档对象再按 ID 删除；legal hold / dry-run 优先 | `AC-ENT-04-2` |
 | T7 | 存储切换 | `audit.store=db`；`SlogEmitter` 保留为本地调试出口 | prod 禁止仅日志 |
 
 **配置规划**
@@ -530,7 +530,13 @@ audit:
 **验收与门禁**
 
 - `AC-ENT-04-1`～`AC-ENT-04-4` 全部通过；角色 / 绑定 / 破玻璃 / 登录 / 导出事件可查询。
-- `make check-audit` 扩展为「事件目录 ↔ 代码 ↔ 查询契约」一致性检查。
+  实测记录见 [`audit-export-verify.md`](./audit-export-verify.md)：HTTP 202→轮询→下载 7 行与库内 `COUNT(*)` 对账一致，
+  12 行到期数据分 3 批归档后删除、归档对象行数 = 删除行数。
+- `make check-audit` 扩展为「事件目录 ↔ 代码 ↔ 查询契约」一致性检查：
+  `audit_export_check.py`（路由 ↔ OpenAPI ↔ 状态枚举三向比对）与
+  `audit_immutability_check.py`（保留期仓储之外禁止 DELETE / 涉及 `audit_event` 的文件禁止 UPDATE）。
+- 集成用例：`tests/integration/audit` 四个用例（导出端到端、卡死任务回收、归档后删除、查询过滤）在
+  真实 MySQL + MinIO 上通过；全量集成套件 6 个包全绿。
 - 保留期任务有 dry-run 模式，避免误删；清理动作写审计。
 - 导出接口必须限流并记录导出人、范围、条数。
 
@@ -974,7 +980,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-01 | P0 | Wave 1 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
-| ENT-04 | P0 | Wave 1 | 进行中（2026-11-02：T1～T4、T6、T7 完成——表重命名为 `audit_event`（迁移 `000006`）、`internal/audit` 域提供查询 / 导出 / 分批清理、`audit.*` 配置与 `make check-audit` 通过；**T5 仅同步流式 CSV 导出，异步导出任务未做**） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
+| ENT-04 | P0 | Wave 1 | 完成（2026-11-03：T1～T7 全部交付，`AC-ENT-04-1`～`4` 达成；异步导出任务表 + worker 执行 + 下载，到期「先归档后删除」；`check-audit` 增路由↔OpenAPI↔状态枚举与追加写两项断言） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
 | ENT-05 | P0 | Wave 2 | 完成（2026-11-02）——T1～T8 全部落地并在 kind 真集群验证：三套 values `server-side dry-run` 通过（dev 13 / staging 24 / prod 32 资源）；真部署 4 端全部 Ready、`/readyz` 五类检查 ok；`helm rollback` 成功；迁移失败时发布被阻断且 API Pod 未被替换。过程中修掉 4 个既有缺陷：`iam.mode: off` 被 YAML 解析成布尔 false（c/worker CrashLoop）；迁移 Job 原为 post-install hook（与 API 并行启动）；ServiceMonitor 无 CRD 检查；worker 未注入 `deps.IDs`（审计保留服务构造失败）。新增 `values-kind.yaml` 与 `docs/deploy-kind-verify.md` 使验证可重复 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
 | ENT-06 | P0 | Wave 2 | 完成（2026-11-03）——AC-ENT-06-1～4 全部达成：规则 / 看板 / SLO 代码化，kind 真集群注入 5xx、DB 池耗尽、Outbox 积压三类故障均实触发且撤销后自动恢复；37 个看板面板查询错误 0 / 空数据 0；入口到 DB 的 trace 实测贯通（`GET /admin/v1/audit/events` → `sql.conn.query`）。过程中修掉 6 个缺陷：`/metrics` 采集阻塞导致的告警自噬、`db.max_open_conns` 缺失、IAM 快照缓存观测器未接线、shadow 模式不记录鉴权决策、Collector `retry:` 非法键与 telemetry 端口双绑、入口 span 名退化 `GET unknown`。**生产剩余为运维配置项**：Alertmanager 接收端接入 | 告警规则 / 看板 / SLO 代码化并演练 |
 | ENT-07 | P0 | Wave 2 | 进行中（2026-11-02：T1/T2/T4 完成——`internal/platform/secrets` 提供 `Provider` / `Resolver` / `Chain` 与 env、file 实现；`secrets.*` 配置段在启动期解析并覆盖配置与环境变量，`cmd/migrate` 同源；Helm `secretMounts` 把分散 Secret 投影为文件；新增 `make check-secret-provider` 门禁并并入 `make ci`。T5 手册见 `docs/runbooks/key-rotation.md` / `key-compromise.md`。**T3 Vault / KMS 适配未做（需走 DEP 依赖评审）；不停机轮换演练待 staging**） | 密钥托管 + 不停机轮换演练 |

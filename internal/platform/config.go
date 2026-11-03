@@ -121,6 +121,18 @@ type AuditExportConfig struct {
 	MaxRangeDays int `yaml:"max_range_days"`
 	// MaxRows 单次导出的最大行数；超出即拒绝，要求缩小时间范围。
 	MaxRows int `yaml:"max_rows"`
+	// Async 为 true 时提供 POST 异步导出与任务查询 / 下载；false 只保留同步流式导出。
+	Async bool `yaml:"async"`
+	// TTLDays 导出文件与任务记录的保留天数；到期由 worker 删除对象。
+	TTLDays int `yaml:"ttl_days"`
+	// RetryMax 单个任务的最大执行次数（含首次）；失败按此上限重排。
+	RetryMax int `yaml:"retry_max"`
+	// PollInterval worker 轮询待执行任务的间隔。
+	PollInterval time.Duration `yaml:"poll_interval"`
+	// StaleTimeout running 状态超过该时长未完成即视为 worker 失效，重新排队。
+	StaleTimeout time.Duration `yaml:"stale_timeout"`
+	// Bucket 导出文件落哪个对象存储桶（storage.buckets 的命名桶）；空表示默认桶。
+	Bucket string `yaml:"bucket"`
 }
 
 // AuditRetentionConfig 是到期清理任务参数。
@@ -131,6 +143,10 @@ type AuditRetentionConfig struct {
 	CleanupInterval time.Duration `yaml:"cleanup_interval"`
 	// DryRun 为 true 时只统计待清理行数，不执行删除。
 	DryRun bool `yaml:"dry_run"`
+	// ArchivePrefix 到期数据的归档前缀（如 audit/expired）；空表示不归档、直接删除。
+	//
+	// 非空时必须「先归档成功再删除」：对象存储不可用即中止清理，避免销毁无副本。
+	ArchivePrefix string `yaml:"archive_prefix"`
 }
 
 // EffectiveStore 返回按数据库驱动解析后的审计出口。
@@ -1403,6 +1419,18 @@ func (c *Config) applyAuditDefaults() {
 	if c.Audit.Export.MaxRows == 0 {
 		c.Audit.Export.MaxRows = 50000
 	}
+	if c.Audit.Export.TTLDays == 0 {
+		c.Audit.Export.TTLDays = 7
+	}
+	if c.Audit.Export.RetryMax == 0 {
+		c.Audit.Export.RetryMax = 3
+	}
+	if c.Audit.Export.PollInterval == 0 {
+		c.Audit.Export.PollInterval = 10 * time.Second
+	}
+	if c.Audit.Export.StaleTimeout == 0 {
+		c.Audit.Export.StaleTimeout = 10 * time.Minute
+	}
 	if c.Audit.Retention.BatchSize == 0 {
 		c.Audit.Retention.BatchSize = 5000
 	}
@@ -1778,8 +1806,29 @@ func (c *Config) validateAudit() []error {
 	if v := c.Audit.Export.MaxRows; v != 0 && (v < 1 || v > 1000000) {
 		errs = append(errs, errors.New("audit.export.max_rows must be in [1, 1000000]"))
 	}
+	if v := c.Audit.Export.TTLDays; v != 0 && (v < 1 || v > 365) {
+		errs = append(errs, errors.New("audit.export.ttl_days must be in [1, 365]"))
+	}
+	if v := c.Audit.Export.RetryMax; v != 0 && (v < 1 || v > 10) {
+		errs = append(errs, errors.New("audit.export.retry_max must be in [1, 10]"))
+	}
+	if v := c.Audit.Export.PollInterval; v != 0 && v < time.Second {
+		errs = append(errs, errors.New("audit.export.poll_interval must be >= 1s"))
+	}
+	if v := c.Audit.Export.StaleTimeout; v != 0 && v < time.Minute {
+		errs = append(errs, errors.New("audit.export.stale_timeout must be >= 1m"))
+	}
 	if v := c.Audit.Retention.BatchSize; v != 0 && (v < 100 || v > 50000) {
 		errs = append(errs, errors.New("audit.retention.batch_size must be in [100, 50000]"))
+	}
+	if prefix := strings.TrimSpace(c.Audit.Retention.ArchivePrefix); prefix != "" {
+		if strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") {
+			errs = append(errs, errors.New("audit.retention.archive_prefix must be a relative object key prefix without '..'"))
+		}
+		// memory 存储随进程消失：归档落到这里等于「删了却查不到」。
+		if c.Storage.Driver == "memory" {
+			errs = append(errs, errors.New("audit.retention.archive_prefix requires a persistent storage.driver (memory loses archives on restart)"))
+		}
 	}
 	if v := c.Audit.Retention.CleanupInterval; v != 0 && v < time.Minute {
 		errs = append(errs, errors.New("audit.retention.cleanup_interval must be >= 1m"))

@@ -19,6 +19,9 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 	pkgmetrics "github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
+	// worker 也要写对象存储（审计异步导出的 CSV），未导入驱动时
+	// storage.Open 会返回 unknown driver 并让进程直接退出（ENT-04 T5）。
+	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
 )
 
 // 由 -ldflags -X 注入（RELS-03）；本地默认 dev。
@@ -83,6 +86,17 @@ func run(configPath, replayDLQ string) error {
 	}
 
 	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met, IDs: ids}
+	// worker 也要对象存储：审计异步导出的文件由 worker 生成并上传（ENT-04 T5）。
+	stores, err := platform.OpenStorageSet(ctx, cfg.Storage)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
+	}
+	defer func() {
+		if closeErr := stores.Close(); closeErr != nil {
+			logger.Warn("storage close", "err", closeErr)
+		}
+	}()
+	deps.Storage = stores
 	logger.Info("id generator ready", "node_id", nodeID)
 	if replayDLQ != "" {
 		return replayDeadLetters(ctx, deps, replayDLQ, logger)
@@ -112,6 +126,11 @@ func run(configPath, replayDLQ string) error {
 	if err != nil {
 		return fmt.Errorf("audit retention: %w", err)
 	}
+	// 审计异步导出与保留期清理同宿主：文件最大、最耗时，不能放在 API 进程。
+	auditExports, err := auditruntime.StartExportRunner(ctx, deps)
+	if err != nil {
+		return fmt.Errorf("audit export runner: %w", err)
+	}
 
 	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
 	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
@@ -137,6 +156,9 @@ func run(configPath, replayDLQ string) error {
 	}
 	if stopErr := auditRetention.Stop(stopCtx); stopErr != nil {
 		logger.Warn("audit retention did not finish before shutdown", "error", stopErr)
+	}
+	if stopErr := auditExports.Stop(stopCtx); stopErr != nil {
+		logger.Warn("audit export runner did not finish before shutdown", "error", stopErr)
 	}
 	logger.Info("worker shutting down")
 	return nil

@@ -168,6 +168,15 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 | `ADMIN_FRAME_TRACING_ENDPOINT` | `tracing.endpoint` |
 | `ADMIN_FRAME_TRACING_INSECURE` | `tracing.insecure` |
 | `ADMIN_FRAME_TRACING_SAMPLE_RATIO` | `tracing.sample_ratio` |
+| `ADMIN_FRAME_AUDIT_EXPORT_ASYNC` | `audit.export.async`（true 才有 POST 异步导出与任务下载） |
+| `ADMIN_FRAME_AUDIT_EXPORT_MAX_RANGE_DAYS` | `audit.export.max_range_days` |
+| `ADMIN_FRAME_AUDIT_EXPORT_MAX_ROWS` | `audit.export.max_rows`（超限拒绝，不截断） |
+| `ADMIN_FRAME_AUDIT_EXPORT_TTL_DAYS` | `audit.export.ttl_days`（[1, 365]） |
+| `ADMIN_FRAME_AUDIT_EXPORT_RETRY_MAX` | `audit.export.retry_max`（[1, 10]，含首次执行） |
+| `ADMIN_FRAME_AUDIT_EXPORT_POLL_INTERVAL` | `audit.export.poll_interval`（worker 轮询，≥ 1s） |
+| `ADMIN_FRAME_AUDIT_EXPORT_STALE_TIMEOUT` | `audit.export.stale_timeout`（running 回收阈值，≥ 1m） |
+| `ADMIN_FRAME_AUDIT_EXPORT_BUCKET` | `audit.export.bucket`（命名桶名；空 = 默认桶） |
+| `ADMIN_FRAME_AUDIT_RETENTION_ARCHIVE_PREFIX` | `audit.retention.archive_prefix`（到期归档前缀；空 = 不归档） |
 
 生产密钥、DSN **优先**用环境变量注入，不写进文件或镜像层。
 
@@ -198,6 +207,8 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 - `env ∈ {prod, staging}` 且 `iam.mode=enforce` 且 `async.enabled=true` ⇒ `async.outbox.publish_in_api=false`（由 worker 独占投递，避免重复）
 - `env` 为空或 ∈ {local, dev, test, staging, prod}
 - `tracing.exporter` ∈ {none, otlp, stdout, noop}；`otlp` 时 `endpoint` 必填；`env=prod` 禁止 `stdout`
+- `audit.retention.archive_prefix` 非空 ⇒ `storage.driver ≠ memory`（内存存储随进程消失，归档等于没做）；保留期任务必须「先归档成功、再按 ID 删除」，归档失败即中止清理
+- `audit.export.max_range_days ∈ [1,366]`、`max_rows ∈ [1,1000000]`、`ttl_days ∈ [1,365]`、`retry_max ∈ [1,10]`、`poll_interval ≥ 1s`、`stale_timeout ≥ 1m`；`audit.export.async=true` 要求 `audit.store=db`（或 `auto` 且 `db.driver ≠ memory`）且对象存储可用，否则启动期直接失败（导出文件必须落库外，且 API 与 worker 必须看到同一个桶）
 
 鉴权装配另见 SEC-04：`auth.mode` 未显式配置时按环境回退，生产（prod/staging）必须有可用的 JWT 配置。
 
