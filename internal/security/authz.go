@@ -190,6 +190,10 @@ func (a *Authorizer) guard(needs []rbac.Permission, anyMatch bool) func(http.Han
 						IAMAllow:    iamAllow,
 					})
 				}
+				// shadow 期同样记录 IAM 侧判定（allow/deny）：切 enforce 前运维需要看到
+				// IAM 的判定分布，只有「差异数」不足以判断切换风险（ENT-06 T6 实测：
+				// 不记录时 iam_authz_decisions_total 恒为空，看板面板全空）。
+				a.decisions.OnDecision(ctx, string(principal.Channel), decisionResult(iamAllow))
 				if !staticAllow {
 					writeDenied(w, r)
 					return
@@ -263,6 +267,14 @@ func allows(checker *rbac.Checker, subject rbac.Subject, needs []rbac.Permission
 		return checker.AllowAny(subject, needs...)
 	}
 	return checker.Allow(subject, needs[0])
+}
+
+// decisionResult 把判定布尔值映射为决策标签（allow / deny）。
+func decisionResult(allow bool) string {
+	if allow {
+		return DecisionAllow
+	}
+	return DecisionDeny
 }
 
 // permissionLabel 返回用于错误信息 / 指标的权限点标签。

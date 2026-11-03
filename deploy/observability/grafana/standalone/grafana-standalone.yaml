@@ -1,0 +1,114 @@
+# 单体 Grafana（无 Prometheus Operator 场景）。
+#
+# 用途：在 kind 里验证 deploy/observability/grafana/dashboards 下的看板能被加载，
+# 且每个面板的查询在真实指标上能出数（ENT-06 AC-ENT-06-3）。
+# 生产仍用 Operator 生态的 Grafana + kube-prometheus-stack，本清单只覆盖验证路径。
+#
+# 安装：bash scripts/observability/install-kind-grafana.sh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-standalone-provisioning
+  namespace: monitoring
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-standalone.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: admin-frame
+        orgId: 1
+        folder: admin-frame
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-standalone
+  namespace: monitoring
+  labels:
+    app: grafana-standalone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-standalone
+  template:
+    metadata:
+      labels:
+        app: grafana-standalone
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.6.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+            - name: GF_FEATURE_TOGGLES_ENABLE
+              value: ""
+          ports:
+            - name: http
+              containerPort: 3000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: provisioning
+          configMap:
+            name: grafana-standalone-provisioning
+            # Grafana 按 provisioning 下的子目录扫描（datasources/、dashboards/），
+            # 直接把文件挂在根目录会被忽略（日志里报 "no such file or directory"）。
+            items:
+              - key: datasources.yaml
+                path: datasources/prometheus.yaml
+              - key: dashboards.yaml
+                path: dashboards/provider.yaml
+        - name: dashboards
+          configMap:
+            name: grafana-standalone-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-standalone
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana-standalone
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

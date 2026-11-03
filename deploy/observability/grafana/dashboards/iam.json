@@ -55,6 +55,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "快照加载错误（stage）",
+      "tags": ["expect-empty"],
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 9, "w": 8, "x": 0, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "lineWidth": 1 } }, "overrides": [] },

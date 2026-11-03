@@ -624,6 +624,17 @@ T6 已完成（2026-11-02，kind 真集群 + 单体 Prometheus v3.1.0，规则�
 本轮同时修掉两个 P1：DB 池打满时 `/metrics` 采集阻塞导致**告警自噬**（`db_pool_*` 指标消失、
 `DBPoolExhaustion` 永远不响），以及 `db.max_open_conns` 配置项缺失（池大小无法按环境调整）。
 
+看板侧已完成（2026-11-03，kind + 单体 Grafana 11.6.0）：37 个面板查询错误 0、空数据 0，
+Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observability/check-dashboards.py`
+（逐面板查真实 Prometheus）与静态门禁 `scripts/ci/dashboard_metrics_check.py`
+（看板指标名必须在代码/规则里有定义，已并入 `check-observability.sh`）。
+本轮修掉三个看板相关缺陷：IAM 快照缓存观测器未接线（缓存面板恒空）、shadow 模式不记录
+鉴权决策（决策面板恒空）、RED 看板 5xx 比率在无错误时是空面板。
+记录见 [observability-dashboard-verify.md](./observability-dashboard-verify.md)。
+
+`AC-ENT-06-4`（trace 追到 DB）尚未完成：`pkg/db` 直接 `sql.Open`，没有 SQL 层 span，
+需要先决策 otelsql 依赖（过 DEP 评审）或自研 driver 包装。
+
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 
 **任务分解**

@@ -342,8 +342,11 @@
 - [x] `AC-ENT-06-2`：staging 注入故障（5xx / DB 池耗尽 / Outbox 积压）可触发对应告警
       （2026-11-02 kind 真集群实测：`API5xxRateHigh` / `DBPoolExhaustion` / `AsyncOutboxBacklog` 均实触发；
       记录见 [alert-drill-ent06.md](./alert-drill-ent06.md)）。
-- [ ] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标。
-- [ ] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖。
+- [x] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标
+      （2026-11-03 kind 真集群实测：37 个面板查询错误 0、空数据 0；记录见
+      [observability-dashboard-verify.md](./observability-dashboard-verify.md)）。
+- [ ] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖
+      （缺口：`pkg/db` 无 SQL 层 span，需先决策 otelsql 依赖或自研 driver 包装）。
 
 **门禁**：新增 `make check-alerts`（ALERTS ↔ 规则 ↔ runbook 三方一致）。
 

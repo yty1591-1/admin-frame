@@ -80,10 +80,6 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 
-	snapshotCache, err := buildSnapshotCache(deps)
-	if err != nil {
-		return nil, err
-	}
 	registerHealth(deps)
 
 	// IAM 指标自带 channel 变量标签，必须使用不注入 channel 常量标签的注册器，
@@ -91,6 +87,12 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	iamMetrics, err := observability.NewMetrics(deps.Metrics.RegistererWithoutChannel())
 	if err != nil {
 		return nil, fmt.Errorf("iam metrics: %w", err)
+	}
+	// 快照缓存必须带上观测器：否则 iam_authz_cache_total 恒为空，
+	// 看板「快照缓存命中」面板永远没有数据（ENT-06 T6 实测）。
+	snapshotCache, err := buildSnapshotCache(deps, iamMetrics)
+	if err != nil {
+		return nil, err
 	}
 	if err := iamMetrics.RegisterBreakglassGauge(breakglassActiveCounter(roles, bindings)); err != nil {
 		return nil, fmt.Errorf("iam breakglass gauge: %w", err)
@@ -493,7 +495,9 @@ func registerHealth(deps *platform.Deps) {
 }
 
 // buildSnapshotCache 装配 L1（进程内）+ 可选 L2（Redis）。
-func buildSnapshotCache(deps *platform.Deps) (*iampcache.SnapshotCache, error) {
+//
+// observer 为 nil 时退化为 NopObserver（缓存指标不可观测）；生产必须传入指标观测器。
+func buildSnapshotCache(deps *platform.Deps, observer iampcache.Observer) (*iampcache.SnapshotCache, error) {
 	cfg := deps.Config.IAM.Cache
 	var l2 pkgcache.Store
 	if deps.Redis != nil {
@@ -508,6 +512,10 @@ func buildSnapshotCache(deps *platform.Deps) (*iampcache.SnapshotCache, error) {
 		L1TTL:       cfg.L1TTL,
 		L2TTL:       cfg.L2TTL,
 		NegativeTTL: cfg.NegativeTTL,
+		// 必须注入观测器：否则快照缓存退化为 NopObserver，
+		// iam_authz_cache_total 恒为空，看板「快照缓存命中」面板永远没有数据
+		// （ENT-06 T6 实测）。
+		Observer: observer,
 	}
 	if cfg.Driver == platform.IAMCacheDriverMemory {
 		layers.L2 = nil

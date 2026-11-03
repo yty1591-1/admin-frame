@@ -112,6 +112,13 @@ for ch in admin biz c; do
   echo "    OK: ${ch}.yaml probes"
 done
 
+echo "==> OBS-07: dashboard metric names must exist in code or rule files"
+if python3 scripts/ci/dashboard_metrics_check.py; then
+  echo "    OK: dashboard metrics defined"
+else
+  FAIL=1
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "observability check failed (OBSERVABILITY_STANDARDS)" >&2
   exit 1

@@ -66,6 +66,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Broker 发布 / 消费结果（driver=nats）",
+      "tags": ["expect-empty"],
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "lineWidth": 1 } }, "overrides": [] },
