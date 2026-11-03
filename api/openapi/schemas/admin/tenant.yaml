@@ -3,12 +3,19 @@ components:
     # 租户（ENT-09，隔离边界；B 端 merchant_id 取同一 id，见 ADR-0006）。
     Tenant:
       type: object
-      required: [id, name, status, version, created_at, updated_at]
+      required: [id, code, name, status, version, created_at, updated_at]
       properties:
         id:
           type: string
           description: 租户 ID；B 端各表的 `merchant_id` 即此值。
           example: "1970000000000000001"
+        code:
+          type: string
+          maxLength: 64
+          description: |
+            业务编码（T-11），全局唯一，仅允许小写字母、数字与 `.` `_` `-`。
+            未显式提供时以租户 ID 兜底；创建后不可变（外部对账引用）。
+          example: acme-co
         name:
           type: string
           maxLength: 128
@@ -27,10 +34,34 @@ components:
           type: string
           maxLength: 255
           description: 最近一次状态变更原因；停用与终止必填。
+        contact_name:
+          type: string
+          maxLength: 64
+          description: 联系人姓名（T-11）；可空。
+        contact_email:
+          type: string
+          maxLength: 128
+          description: 联系邮箱（T-11）；可空。
+        industry:
+          type: string
+          maxLength: 64
+          description: 所属行业（T-11）；可空。
+        timezone:
+          type: string
+          maxLength: 64
+          description: IANA 时区（T-11），如 `Asia/Shanghai`；可空。
+        locale:
+          type: string
+          maxLength: 16
+          description: 语言标签（T-11），如 `zh-CN`；可空。
+        external_id:
+          type: string
+          maxLength: 128
+          description: 外部系统 ID（T-11，CRM / 结算）；可空。
         version:
           type: integer
           format: int64
-          description: 乐观锁版本；每次成功迁移 +1，可用于检测并发变更。
+          description: 乐观锁版本；每次成功迁移或资料变更 +1，可用于检测并发变更。
         suspended_at:
           type: string
           format: date-time
@@ -58,6 +89,13 @@ components:
           type: string
           maxLength: 128
           description: 租户名称；首尾空白会被去除，空值返回 40000。
+        code:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z0-9._-]+$'
+          description: |
+            业务编码（T-11）；省略时以租户 ID 兜底。重复返回 40900，
+            创建后不可变。
         plan_code:
           type: string
           description: |
@@ -69,6 +107,47 @@ components:
           description: |
             首名 owner 的主体 ID（T-12）；可选——允许「先建租户、迁移成员、再开通」
             两步操作，但开通（activate）前必须存在至少一名在册 owner，否则返回 40900。
+
+    # 资料变更请求（T-11）。
+    TenantUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        全部字段可选，至少提供一个（缺失返回 40000）。字段缺省表示不变；
+        显式传空串表示清空该字段。`code` 不可变，不在本请求中。
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        contact_name:
+          type: string
+          maxLength: 64
+        contact_email:
+          type: string
+          maxLength: 128
+          description: 须包含 `@` 且不含空白，否则返回 40000。
+        industry:
+          type: string
+          maxLength: 64
+        timezone:
+          type: string
+          maxLength: 64
+          description: IANA 时区标签，如 `Asia/Shanghai`。
+        locale:
+          type: string
+          maxLength: 16
+          description: 语言标签，如 `zh-CN`。
+        external_id:
+          type: string
+          maxLength: 128
+      anyOf:
+        - required: [name]
+        - required: [contact_name]
+        - required: [contact_email]
+        - required: [industry]
+        - required: [timezone]
+        - required: [locale]
+        - required: [external_id]
 
     # 状态迁移请求（activate / resume 可省略请求体）。
     TenantTransitionRequest:
@@ -157,7 +236,7 @@ components:
 
     TenantMemberListData:
       type: object
-      required: [items, total]
+      required: [items, total, page, page_size]
       properties:
         items:
           type: array
@@ -165,6 +244,12 @@ components:
             $ref: "#/components/schemas/TenantMember"
         total:
           type: integer
+        page:
+          type: integer
+          description: 当前页码（1-based）。
+        page_size:
+          type: integer
+          description: 每页条数；超过上限时按上限收敛。
 
     # 租户配额（ENT-09 定义上限，ENT-14 执行）。
     TenantQuota:

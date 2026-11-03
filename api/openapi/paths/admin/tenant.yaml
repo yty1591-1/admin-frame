@@ -113,6 +113,53 @@ admin-v1-tenants-by-id:
         $ref: "../../components.yaml#/components/responses/NotFound"
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
+  patch:
+    tags: [tenant]
+    summary: 变更租户资料（改名与元数据）
+    description: |
+      需要 `tenant:write`。字段缺省表示不变，显式空串表示清空；至少提供一个字段。
+      变更写 `tenant.update` 审计（含变更字段列表）。`code` 不可变——
+      它是外部系统的对账引用，修订须走数据订正流程。
+      资料变更与状态迁移共用乐观锁版本：并发「改名 + 停用」后到者返回 40900。
+    operationId: adminUpdateTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantUpdateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
 
 admin-v1-tenants-by-id-activate:
   post:
@@ -290,7 +337,7 @@ admin-v1-tenants-by-id-members:
     summary: 列出租户成员
     description: |
       需要 `tenant:read`。默认只返回在册成员；`include_disabled=true` 时一并返回已停用成员。
-      按 owner → admin → member 排序，同角色按 `subject_id` 排序。
+      按 owner → admin → member 排序，同角色按 `subject_id` 排序；分页参数与租户列表同上限。
     operationId: adminListTenantMembers
     security:
       - bearerAuth: []
@@ -305,6 +352,8 @@ admin-v1-tenants-by-id-members:
         schema:
           type: boolean
         description: 为 true 时包含已停用成员。
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
     responses:
       "200":
         description: ok
@@ -331,6 +380,8 @@ admin-v1-tenants-by-id-members:
     description: |
       需要 `tenant:write`。已在册的成员重复添加返回 40900（不会静默改角色）；
       已停用成员再次添加视为复活，角色按入参更新并在审计中标记 `reactivated=true`。
+      席位上限（T-13）：在册成员数 +1 超过 `user` 配额时返回 40900，
+      错误信息携带当前在册数与上限——复活同样占用席位。
       终止态租户拒绝任何成员变更。
     operationId: adminAddTenantMember
     security:

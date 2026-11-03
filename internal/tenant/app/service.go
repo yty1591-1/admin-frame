@@ -21,6 +21,8 @@ import (
 const (
 	// ActionCreate 创建租户。
 	ActionCreate = "tenant.create"
+	// ActionUpdate 变更租户资料（改名 + 元数据，T-11）。
+	ActionUpdate = "tenant.update"
 	// ActionActivate 开通（pending → active）。
 	ActionActivate = "tenant.activate"
 	// ActionSuspend 停用（active → suspended）。
@@ -128,6 +130,9 @@ type Actor struct {
 type CreateInput struct {
 	// Name 租户名称。
 	Name string
+	// Code 业务编码（T-11）；空时以生成的租户 ID 兜底（与迁移 000013 的
+	// 存量回填策略一致）。创建后不可变，重复返回 409。
+	Code string
 	// PlanCode 套餐编码（T-24）；空使用默认套餐，未知编码返回 404。
 	PlanCode string
 	// OwnerSubjectID 首名 owner 的主体 ID（T-12）；可选——开通前必须补齐，
@@ -208,7 +213,15 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 // 建租户、物化套餐配额、落首名 owner、写审计全部同事务：任一步失败整体回滚，
 // 不存在「有租户没配额」「有租户没记录」的中间态。
 func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, error) {
-	// 套餐在事务外解析：目录读失败与未知编码都不应开始写事务。
+	// 编码与套餐都在事务外解析：输入校验与目录读失败都不应开始写事务。
+	// 未提供编码时使用 NewTenant 的默认值（code = id，与迁移 000013 同源）。
+	explicitCode := strings.TrimSpace(in.Code)
+	if explicitCode != "" {
+		if _, err := domain.NormalizeCode(explicitCode); err != nil {
+			return domain.Tenant{}, translate(err)
+		}
+	}
+
 	plan, err := s.resolvePlan(ctx, in.PlanCode)
 	if err != nil {
 		return domain.Tenant{}, err
@@ -224,6 +237,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 		if buildErr != nil {
 			return buildErr
 		}
+		if explicitCode != "" {
+			built.Code = explicitCode
+		}
 		built.PlanID = plan.ID
 		if createErr := s.repo.Create(txCtx, built); createErr != nil {
 			return createErr
@@ -235,7 +251,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 			return err
 		}
 		if emitErr := s.emitWithAttrs(txCtx, in.Actor, ActionCreate, built, audit.OutcomeSuccess, "",
-			map[string]string{"plan": plan.Code}); emitErr != nil {
+			map[string]string{"code": built.Code, "plan": plan.Code}); emitErr != nil {
 			return emitErr
 		}
 		tenant = built
@@ -245,6 +261,109 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 		return domain.Tenant{}, translateIfNeeded(err)
 	}
 	return tenant, nil
+}
+
+// UpdateProfileInput 是资料变更入参（T-11）。
+//
+// 用指针区分「未提供」与「显式清空」：只改名称的请求不能顺手把
+// 联系人信息抹掉；显式传空串才表示清空该字段。
+type UpdateProfileInput struct {
+	// ID 租户 ID。
+	ID string
+	// Name 名称；nil 不变。
+	Name *string
+	// ContactName 联系人姓名；nil 不变，空串清空。
+	ContactName *string
+	// ContactEmail 联系邮箱；nil 不变，空串清空。
+	ContactEmail *string
+	// Industry 行业；nil 不变，空串清空。
+	Industry *string
+	// Timezone 时区；nil 不变，空串清空。
+	Timezone *string
+	// Locale 语言标签；nil 不变，空串清空。
+	Locale *string
+	// ExternalID 外部系统 ID；nil 不变，空串清空。
+	ExternalID *string
+	// Actor 操作者。
+	Actor Actor
+}
+
+// UpdateProfile 变更租户资料（改名 + 元数据，T-11）。
+//
+// 读当前资料、合并入参、CAS 写入、写审计同事务；编码不可变——
+// 它是对账引用，修改编码应走数据订正流程而不是管理接口。
+func (s *Service) UpdateProfile(ctx context.Context, in UpdateProfileInput) (domain.Tenant, error) {
+	if strings.TrimSpace(in.ID) == "" {
+		return domain.Tenant{}, apperr.BadRequest("tenant id is required")
+	}
+
+	var next domain.Tenant
+	var changed []string
+	err := s.repo.WithinTx(ctx, func(txCtx context.Context) error {
+		current, err := mutableTenant(txCtx, s.repo, in.ID)
+		if err != nil {
+			return err
+		}
+		profile := domain.Profile{
+			Name:         current.Name,
+			ContactName:  current.ContactName,
+			ContactEmail: current.ContactEmail,
+			Industry:     current.Industry,
+			Timezone:     current.Timezone,
+			Locale:       current.Locale,
+			ExternalID:   current.ExternalID,
+		}
+		changed = changed[:0]
+		if in.Name != nil {
+			profile.Name = *in.Name
+			changed = append(changed, "name")
+		}
+		if in.ContactName != nil {
+			profile.ContactName = *in.ContactName
+			changed = append(changed, "contact_name")
+		}
+		if in.ContactEmail != nil {
+			profile.ContactEmail = *in.ContactEmail
+			changed = append(changed, "contact_email")
+		}
+		if in.Industry != nil {
+			profile.Industry = *in.Industry
+			changed = append(changed, "industry")
+		}
+		if in.Timezone != nil {
+			profile.Timezone = *in.Timezone
+			changed = append(changed, "timezone")
+		}
+		if in.Locale != nil {
+			profile.Locale = *in.Locale
+			changed = append(changed, "locale")
+		}
+		if in.ExternalID != nil {
+			profile.ExternalID = *in.ExternalID
+			changed = append(changed, "external_id")
+		}
+		if len(changed) == 0 {
+			return apperr.BadRequest("at least one field is required")
+		}
+
+		built, buildErr := current.WithProfile(profile, s.now())
+		if buildErr != nil {
+			return buildErr
+		}
+		if updateErr := s.repo.UpdateProfile(txCtx, built); updateErr != nil {
+			return updateErr
+		}
+		if emitErr := s.emitWithAttrs(txCtx, in.Actor, ActionUpdate, built, audit.OutcomeSuccess, "",
+			map[string]string{"fields": strings.Join(changed, ",")}); emitErr != nil {
+			return emitErr
+		}
+		next = built
+		return nil
+	})
+	if err != nil {
+		return domain.Tenant{}, translateIfNeeded(err)
+	}
+	return next, nil
 }
 
 // resolvePlan 解析开账套餐：显式编码优先，否则默认套餐。
@@ -290,10 +409,18 @@ func (s *Service) materializeQuotas(ctx context.Context, tenantID string, plan d
 }
 
 // seedOwner 落首名 owner；主体为空时跳过（允许两步开通）。
+//
+// 建租户与落 owner 在同一事务：owner 落库前同样过席位校验（T-13）——
+// 虽然刚物化的套餐配额几乎不可能在第一个成员上就超限，但校验与
+// 成员添加共用同一段逻辑，套餐配置错误（user limit=0）会在创建期
+// 暴露，而不是留一个开不出成员的租户。
 func (s *Service) seedOwner(ctx context.Context, tenantID, subjectID string, actor Actor) error {
 	trimmed := strings.TrimSpace(subjectID)
 	if trimmed == "" || s.members == nil {
 		return nil
+	}
+	if err := checkSeat(ctx, s.quotas, s.members, tenantID); err != nil {
+		return err
 	}
 	member, err := domain.NewMember(tenantID, trimmed, domain.MemberRoleOwner, s.now())
 	if err != nil {
@@ -553,8 +680,17 @@ func translate(err error) error {
 	case errors.Is(err, domain.ErrSubjectRequired),
 		errors.Is(err, domain.ErrSubjectTooLong),
 		errors.Is(err, domain.ErrResourceRequired),
-		errors.Is(err, domain.ErrResourceTooLong):
+		errors.Is(err, domain.ErrResourceTooLong),
+		errors.Is(err, domain.ErrCodeRequired),
+		errors.Is(err, domain.ErrCodeTooLong):
 		return apperr.BadRequest(err.Error())
+	case errors.Is(err, domain.ErrCodeExists):
+		// 409：编码是运营输入，重复是可恢复冲突，与「ID 撞车」分开提示。
+		return apperr.Conflict("tenant code already exists")
+	case errors.Is(err, domain.ErrSeatLimitExceeded):
+		// 保留原始错误链：调用方可 errors.Is 识别席位超限；
+		// 消息携带「active N, limit M」，409 响应体直接可用。
+		return apperr.New(apperr.CodeConflict, err.Error(), err)
 	case errors.Is(err, domain.ErrNameRequired),
 		errors.Is(err, domain.ErrNameTooLong),
 		errors.Is(err, domain.ErrReasonRequired),

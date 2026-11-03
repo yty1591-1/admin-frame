@@ -8,19 +8,27 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
+	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
 // ListMembers 处理 GET /admin/v1/tenants/{id}/members。
 //
 // 默认只返回在册成员；`include_disabled=true` 时一并返回已停用成员（离职回溯用）。
+// 分页（T-13）：`page` / `page_size` 与租户列表同一套上限配置，超限按上限收敛。
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	page, err := pagination.ParseWith(r, h.pageCfg)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
 	includeDisabled := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_disabled")), "true")
-	members, err := h.members.List(r.Context(), r.PathValue("id"), includeDisabled)
+	members, total, err := h.members.List(r.Context(), r.PathValue("id"), includeDisabled,
+		page.Limit(), page.Offset())
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -29,7 +37,12 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	for _, member := range members {
 		items = append(items, toMemberResponse(member))
 	}
-	httpx.OK(w, memberListResponse{Items: items, Total: len(items)}, traceID)
+	httpx.OK(w, memberListResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.PageSize,
+	}, traceID)
 }
 
 // AddMember 处理 POST /admin/v1/tenants/{id}/members。
@@ -187,8 +200,10 @@ type memberResponse struct {
 
 // memberListResponse 是成员列表响应体。
 type memberListResponse struct {
-	Items []memberResponse `json:"items"`
-	Total int              `json:"total"`
+	Items    []memberResponse `json:"items"`
+	Total    int              `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"page_size"`
 }
 
 // quotaResponse 是配额响应体。

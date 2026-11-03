@@ -205,7 +205,96 @@ func (memoryStub) Get(context.Context, string) (domain.Tenant, error) {
 func (memoryStub) List(context.Context, domain.Filter) ([]domain.Tenant, int, error) {
 	return nil, 0, nil
 }
-func (memoryStub) UpdateStatus(context.Context, domain.Tenant) error { return nil }
+func (memoryStub) UpdateStatus(context.Context, domain.Tenant) error  { return nil }
+func (memoryStub) UpdateProfile(context.Context, domain.Tenant) error { return nil }
 
 // WithinTx 在测试中直接执行 fn（无事务语义）。
 func (memoryStub) WithinTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
+
+// TestNormalizeCode 验证业务编码规范化与校验（T-11）。
+func TestNormalizeCode(t *testing.T) {
+	normalized, err := domain.NormalizeCode("  acme-cn  ")
+	if err != nil || normalized != "acme-cn" {
+		t.Fatalf("NormalizeCode = %q, %v", normalized, err)
+	}
+	for name, code := range map[string]string{
+		"空值":   "   ",
+		"超长":   strings.Repeat("a", domain.MaxCodeLength+1),
+		"大写":   "Acme",
+		"空格":   "bad code",
+		"特殊字符": "bad/code",
+	} {
+		if _, err := domain.NormalizeCode(code); err == nil {
+			t.Fatalf("%s 应返回错误", name)
+		}
+	}
+}
+
+// TestNewTenantDefaultsCodeToID 验证编码兜底策略：code = id（与迁移 000013 同源）。
+func TestNewTenantDefaultsCodeToID(t *testing.T) {
+	tenant, err := domain.NewTenant("19700001", "示例租户", fixedNow)
+	if err != nil {
+		t.Fatalf("NewTenant() error = %v", err)
+	}
+	if tenant.Code != "19700001" {
+		t.Fatalf("Code = %q, want 19700001", tenant.Code)
+	}
+}
+
+// TestWithProfile 验证资料变更：字段合并、版本递增、清空语义与格式校验。
+func TestWithProfile(t *testing.T) {
+	tenant, err := domain.NewTenant("t1", "acme", fixedNow)
+	if err != nil {
+		t.Fatalf("NewTenant() error = %v", err)
+	}
+
+	next, err := tenant.WithProfile(domain.Profile{
+		Name: "acme-cn", ContactName: " 张三 ", ContactEmail: "ops@acme.com",
+		Industry: "制造", Timezone: "Asia/Shanghai", Locale: "zh-CN", ExternalID: "crm-42",
+	}, fixedNow)
+	if err != nil {
+		t.Fatalf("WithProfile() error = %v", err)
+	}
+	if next.Version != tenant.Version+1 {
+		t.Fatalf("Version = %d, want %d", next.Version, tenant.Version+1)
+	}
+	if next.ContactName != "张三" {
+		t.Fatalf("联系人应去空白: %q", next.ContactName)
+	}
+
+	// 空串 = 清空；WithProfile 是全量语义，「不变」字段的合并由应用层负责，
+	// 这里显式带上要保留的值。
+	cleared, err := next.WithProfile(domain.Profile{
+		Name: "acme-cn", ContactName: "张三", ContactEmail: " ",
+		Industry: "制造", Timezone: "Asia/Shanghai", Locale: "zh-CN", ExternalID: "crm-42",
+	}, fixedNow)
+	if err != nil {
+		t.Fatalf("WithProfile(clear) error = %v", err)
+	}
+	if cleared.ContactEmail != "" {
+		t.Fatalf("空串应清空邮箱, got %q", cleared.ContactEmail)
+	}
+	if cleared.ContactName != "张三" || cleared.Industry != "制造" || cleared.ExternalID != "crm-42" {
+		t.Fatalf("其余字段应保留: %+v", cleared)
+	}
+
+	// 校验失败不产生半变更。
+	failures := []struct {
+		name    string
+		profile domain.Profile
+	}{
+		{"空名称", domain.Profile{Name: "   "}},
+		{"超长名称", domain.Profile{Name: strings.Repeat("名", domain.MaxNameLength+1)}},
+		{"无 @ 邮箱", domain.Profile{Name: "x", ContactEmail: "ops.acme.com"}},
+		{"带空格邮箱", domain.Profile{Name: "x", ContactEmail: "ops @acme.com"}},
+		{"超长邮箱", domain.Profile{Name: "x", ContactEmail: strings.Repeat("a", domain.MaxContactEmailLength) + "@x.com"}},
+		{"非法时区", domain.Profile{Name: "x", Timezone: "Asia/Shanghai;drop"}},
+		{"非法语言", domain.Profile{Name: "x", Locale: "zh CN"}},
+		{"超长外部ID", domain.Profile{Name: "x", ExternalID: strings.Repeat("e", domain.MaxExternalIDLength+1)}},
+	}
+	for _, tc := range failures {
+		if _, err := tenant.WithProfile(tc.profile, fixedNow); err == nil {
+			t.Fatalf("%s 应返回错误", tc.name)
+		}
+	}
+}

@@ -76,7 +76,7 @@ func TestAddMemberRollsBackWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	repo := persistence.NewMemoryRepository()
 	now := time.Now().UTC()
-	tenant := domain.Tenant{ID: "t-member-rollback", Name: "T", Status: domain.StatusActive,
+	tenant := domain.Tenant{ID: "t-member-rollback", Code: "t-member-rollback", Name: "T", Status: domain.StatusActive,
 		Version: 1, CreatedAt: now, UpdatedAt: now}
 	if err := repo.Create(ctx, tenant); err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -91,7 +91,7 @@ func TestAddMemberRollsBackWhenAuditFails(t *testing.T) {
 	}); err == nil {
 		t.Fatal("审计失败时 Add 应返回错误")
 	}
-	list, err := repo.ListMembers(ctx, tenant.ID, true)
+	list, _, err := repo.ListMembers(ctx, tenant.ID, true, 0, 0)
 	if err != nil {
 		t.Fatalf("ListMembers() error = %v", err)
 	}

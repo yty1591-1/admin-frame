@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -22,15 +23,23 @@ const (
 	ActionMemberEnable = "tenant.member.enable"
 )
 
+// ResourceUser 席位对应的配额资源键（T-13）。
+//
+// 席位即「在册成员数」：上限读 tenant_quota 的 user 资源，与套餐物化、
+// ENT-14 执行层使用同一个键。
+const ResourceUser = "user"
+
 // MemberService 编排租户成员用例。
 type MemberService struct {
 	tenants domain.Repository
 	members domain.MemberRepository
-	audit   auditContext
-	now     func() time.Time
+	// quotas 配额仓储（T-13 席位上限）；nil 表示不启用席位校验（单测 / 简化部署）。
+	quotas domain.QuotaRepository
+	audit  auditContext
+	now    func() time.Time
 }
 
-// NewMemberService 构造成员用例；三个依赖均必填。
+// NewMemberService 构造成员用例；三个依赖均必填（配额仓储可空，见 Options.Quotas）。
 func NewMemberService(tenants domain.Repository, members domain.MemberRepository, emitter audit.Emitter, opts Options) (*MemberService, error) {
 	if tenants == nil {
 		return nil, apperr.Internal("tenant member service requires a tenant repository", nil)
@@ -45,6 +54,7 @@ func NewMemberService(tenants domain.Repository, members domain.MemberRepository
 	return &MemberService{
 		tenants: tenants,
 		members: members,
+		quotas:  opts.Quotas,
 		audit:   auditContext{emitter: emitter, ids: nil, service: opts.Service, now: now},
 		now:     now,
 	}, nil
@@ -91,9 +101,14 @@ type SetMemberStatusInput struct {
 // Add 添加成员；已在册的成员重复添加返回冲突，不静默改角色。
 //
 // 成员写入与审计同事务：审计写不进去就不加成员，避免「成员已加、无记录」。
+//
+// 席位上限（T-13）：临界区内先校验 tenant_quota 的 user 上限——
+// 用 MemberRepository.Mutate（租户行锁）而不是普通事务，否则两个并发
+// 添加会各自读到相同的在册数而同时通过校验。复活停用成员同样占一个
+// 席位：在册数会 +1，语义上没有豁免的理由。
 func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Member, error) {
 	var member domain.Member
-	err := s.tenants.WithinTx(ctx, func(txCtx context.Context) error {
+	err := s.members.Mutate(ctx, in.TenantID, func(txCtx context.Context) error {
 		if _, err := mutableTenant(txCtx, s.tenants, in.TenantID); err != nil {
 			return err
 		}
@@ -112,6 +127,9 @@ func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Memb
 			return err
 		}
 
+		if err := s.ensureSeatAvailable(txCtx, in.TenantID); err != nil {
+			return err
+		}
 		built, buildErr := domain.NewMember(in.TenantID, in.SubjectID, in.Role, s.now())
 		if buildErr != nil {
 			return buildErr
@@ -125,32 +143,103 @@ func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Memb
 			return upsertErr
 		}
 		if emitErr := s.audit.emit(txCtx, in.Actor, ActionMemberAdd, ResourceTypeMember, built.TenantID,
-			audit.OutcomeSuccess, "", map[string]string{
-				"subject_id":  built.SubjectID,
-				"role":        string(built.Role),
-				"reactivated": boolString(reactivated),
-			}); emitErr != nil {
+			audit.OutcomeSuccess, "", s.addAttrs(txCtx, built, reactivated)); emitErr != nil {
 			return emitErr
 		}
 		member = built
 		return nil
 	})
 	if err != nil {
+		// 席位拒绝独立留痕（best-effort）：拒绝本身是运营信号——
+		// 连续被拒说明该提配额了；但不允许审计失败把 409 变成 500。
+		var seatErr *domain.SeatLimitError
+		if errors.As(err, &seatErr) {
+			_ = s.audit.emit(ctx, in.Actor, ActionMemberAdd, ResourceTypeMember, in.TenantID,
+				audit.OutcomeFailure, err.Error(), map[string]string{
+					"subject_id":     in.SubjectID,
+					"role":           string(in.Role),
+					"active_members": strconv.Itoa(seatErr.Active),
+					"seat_limit":     strconv.FormatInt(seatErr.Limit, 10),
+				})
+		}
 		return domain.Member{}, translateIfNeeded(err)
 	}
 	return member, nil
 }
 
-// List 列出租户成员。
-func (s *MemberService) List(ctx context.Context, tenantID string, includeDisabled bool) ([]domain.Member, error) {
-	if _, err := s.tenants.Get(ctx, tenantID); err != nil {
-		return nil, translate(err)
+// addAttrs 组装成员添加的审计属性；席位上下文读取失败不阻断添加
+// （审计属性是补充信息，席位本身已在写入前校验过）。
+func (s *MemberService) addAttrs(ctx context.Context, member domain.Member, reactivated bool) map[string]string {
+	attrs := map[string]string{
+		"subject_id":  member.SubjectID,
+		"role":        string(member.Role),
+		"reactivated": boolString(reactivated),
 	}
-	members, err := s.members.ListMembers(ctx, tenantID, includeDisabled)
+	if active, err := s.members.CountActive(ctx, member.TenantID); err == nil {
+		attrs["active_members"] = strconv.Itoa(active)
+	}
+	if limit := seatLimitOf(ctx, s.quotas, member.TenantID); limit != nil {
+		attrs["seat_limit"] = strconv.FormatInt(*limit, 10)
+	}
+	return attrs
+}
+
+// ensureSeatAvailable 校验席位：在册数 +1 后不得超过 user 配额（T-13）。
+//
+// 未配置 user 配额视为不限（与 ENT-14「缺行按默认兜底」的口径一致，
+// 但本切片不预置默认值——套餐物化保证新建租户都有该行）。
+// 必须在 Mutate 临界区内调用：并发添加依赖租户行锁串行化。
+func (s *MemberService) ensureSeatAvailable(ctx context.Context, tenantID string) error {
+	return checkSeat(ctx, s.quotas, s.members, tenantID)
+}
+
+// checkSeat 是席位校验的包级实现，成员添加与建租户落 owner 共用。
+func checkSeat(ctx context.Context, quotas domain.QuotaRepository, members domain.MemberRepository, tenantID string) error {
+	limit := seatLimitOf(ctx, quotas, tenantID)
+	if limit == nil {
+		return nil
+	}
+	active, err := members.CountActive(ctx, tenantID)
 	if err != nil {
-		return nil, translate(err)
+		return err
 	}
-	return members, nil
+	if int64(active)+1 > *limit {
+		return &domain.SeatLimitError{Active: active, Limit: *limit}
+	}
+	return nil
+}
+
+// seatLimitOf 读取席位上限；未配置或读取失败返回 nil（=不限）。
+func seatLimitOf(ctx context.Context, quotas domain.QuotaRepository, tenantID string) *int64 {
+	if quotas == nil {
+		return nil
+	}
+	listed, err := quotas.ListQuotas(ctx, tenantID)
+	if err != nil {
+		return nil
+	}
+	for _, quota := range listed {
+		if quota.Resource == ResourceUser {
+			if quota.Unlimited() {
+				return nil
+			}
+			value := quota.Limit
+			return &value
+		}
+	}
+	return nil
+}
+
+// List 分页列出租户成员（T-13）；limit<=0 由仓储按全量处理。
+func (s *MemberService) List(ctx context.Context, tenantID string, includeDisabled bool, limit, offset int) ([]domain.Member, int, error) {
+	if _, err := s.tenants.Get(ctx, tenantID); err != nil {
+		return nil, 0, translate(err)
+	}
+	members, total, err := s.members.ListMembers(ctx, tenantID, includeDisabled, limit, offset)
+	if err != nil {
+		return nil, 0, translate(err)
+	}
+	return members, total, nil
 }
 
 // UpdateMemberInput 是成员变更入参；Role 与 Status 至少给一个。
@@ -309,10 +398,16 @@ func boolString(value bool) string {
 	return "false"
 }
 
-// isInvalidEnum 判断是否为枚举类错误（角色 / 状态 / 资源键），统一按 400 处理。
+// isInvalidEnum 判断是否为枚举 / 格式类错误（角色 / 状态 / 资源键 / 编码 / 元数据），统一按 400 处理。
 func isInvalidEnum(err error) bool {
 	var invalidRole *domain.InvalidRoleError
 	var invalidStatus *domain.InvalidStatusError
 	var invalidResource *domain.InvalidResourceError
-	return errors.As(err, &invalidRole) || errors.As(err, &invalidStatus) || errors.As(err, &invalidResource)
+	var invalidCode *domain.InvalidCodeError
+	var fieldTooLong *domain.FieldTooLongError
+	var invalidEmail *domain.InvalidEmailError
+	var invalidField *domain.InvalidFieldError
+	return errors.As(err, &invalidRole) || errors.As(err, &invalidStatus) || errors.As(err, &invalidResource) ||
+		errors.As(err, &invalidCode) || errors.As(err, &fieldTooLong) ||
+		errors.As(err, &invalidEmail) || errors.As(err, &invalidField)
 }

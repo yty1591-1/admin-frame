@@ -84,6 +84,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, err := h.service.Create(r.Context(), app.CreateInput{
 		Name:           body.Name,
+		Code:           body.Code,
 		PlanCode:       body.PlanCode,
 		OwnerSubjectID: body.OwnerSubjectID,
 		Actor:          actor,
@@ -138,6 +139,40 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant, err := h.service.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	httpx.OK(w, toResponse(tenant), traceID)
+}
+
+// Update 处理 PATCH /admin/v1/tenants/{id}（T-11：改名与元数据）。
+//
+// 用指针区分「未提供」与「显式清空」：JSON 里缺字段 → nil（不变），
+// 显式 null 或空串 → 清空。编码不可变，请求体里不提供该字段。
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	traceID := httpx.TraceIDFromContext(r.Context())
+	actor, err := h.actor(r)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
+	}
+	var body updateTenantRequest
+	if err := decodeJSON(r, &body); err != nil {
+		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
+	tenant, err := h.service.UpdateProfile(r.Context(), app.UpdateProfileInput{
+		ID:           r.PathValue("id"),
+		Name:         body.Name,
+		ContactName:  body.ContactName,
+		ContactEmail: body.ContactEmail,
+		Industry:     body.Industry,
+		Timezone:     body.Timezone,
+		Locale:       body.Locale,
+		ExternalID:   body.ExternalID,
+		Actor:        actor,
+	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -252,10 +287,32 @@ func decodeBody(r *http.Request, dst any, required bool) error {
 type createRequest struct {
 	// Name 租户名称。
 	Name string `json:"name"`
+	// Code 业务编码（T-11）；空由服务端以租户 ID 兜底，重复返回 409。
+	Code string `json:"code"`
 	// PlanCode 套餐编码；空使用默认套餐（T-24）。
 	PlanCode string `json:"plan_code"`
 	// OwnerSubjectID 首名 owner 主体 ID；可选，开通前必须补齐（T-12）。
 	OwnerSubjectID string `json:"owner_subject_id"`
+}
+
+// updateTenantRequest 是资料变更请求体（T-11）。
+//
+// 全部指针：nil=不变，空串=清空；至少提供一个由应用层判定。
+type updateTenantRequest struct {
+	// Name 名称。
+	Name *string `json:"name,omitempty"`
+	// ContactName 联系人姓名。
+	ContactName *string `json:"contact_name,omitempty"`
+	// ContactEmail 联系邮箱。
+	ContactEmail *string `json:"contact_email,omitempty"`
+	// Industry 行业。
+	Industry *string `json:"industry,omitempty"`
+	// Timezone 时区（IANA）。
+	Timezone *string `json:"timezone,omitempty"`
+	// Locale 语言标签。
+	Locale *string `json:"locale,omitempty"`
+	// ExternalID 外部系统 ID。
+	ExternalID *string `json:"external_id,omitempty"`
 }
 
 // transitionRequest 是状态迁移请求体。
@@ -267,10 +324,17 @@ type transitionRequest struct {
 // tenantResponse 是租户响应体。
 type tenantResponse struct {
 	ID           string  `json:"id"`
+	Code         string  `json:"code"`
 	Name         string  `json:"name"`
 	Status       string  `json:"status"`
 	PlanID       string  `json:"plan_id,omitempty"`
 	StatusReason string  `json:"status_reason,omitempty"`
+	ContactName  string  `json:"contact_name,omitempty"`
+	ContactEmail string  `json:"contact_email,omitempty"`
+	Industry     string  `json:"industry,omitempty"`
+	Timezone     string  `json:"timezone,omitempty"`
+	Locale       string  `json:"locale,omitempty"`
+	ExternalID   string  `json:"external_id,omitempty"`
 	Version      int64   `json:"version"`
 	SuspendedAt  *string `json:"suspended_at"`
 	TerminatedAt *string `json:"terminated_at"`
@@ -290,10 +354,17 @@ type listResponse struct {
 func toResponse(tenant domain.Tenant) tenantResponse {
 	return tenantResponse{
 		ID:           tenant.ID,
+		Code:         tenant.Code,
 		Name:         tenant.Name,
 		Status:       string(tenant.Status),
 		PlanID:       tenant.PlanID,
 		StatusReason: tenant.StatusReason,
+		ContactName:  tenant.ContactName,
+		ContactEmail: tenant.ContactEmail,
+		Industry:     tenant.Industry,
+		Timezone:     tenant.Timezone,
+		Locale:       tenant.Locale,
+		ExternalID:   tenant.ExternalID,
 		Version:      tenant.Version,
 		SuspendedAt:  formatTimePtr(tenant.SuspendedAt),
 		TerminatedAt: formatTimePtr(tenant.TerminatedAt),

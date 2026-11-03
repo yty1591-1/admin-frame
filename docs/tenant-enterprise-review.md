@@ -314,10 +314,10 @@ TENANT_TEST_MYSQL_DSN='...' go test ./tests/integration/tenant/... -count=1 -v
 
 | ID | 任务 | 范围 | 验收 |
 |---|---|---|---|
-| T-11 | 租户元数据 | 迁移新增 `code`（唯一）、联系人、行业、时区/语言、外部 ID；`PATCH /tenants/{id}` 改名与改元数据 | `code` 全局唯一；改名走审计；OpenAPI 升 7.3.0 |
+| T-11 | 租户元数据 | 迁移新增 `code`（唯一）、联系人、行业、时区/语言、外部 ID；`PATCH /tenants/{id}` 改名与改元数据 | `code` 全局唯一；改名走审计；OpenAPI 升 7.3.0 | ✅ 2026-11-03 |
 | T-24 | 套餐模型（D-03=①） | `tenant_plan` 目录 + `tenant.plan_id`；`tenant_quota` 默认值由套餐派生；存量租户回填默认套餐 | 新建租户自动获得套餐默认配额；租户覆盖优先于套餐 | ✅ 2026-11-03 |
 | T-12 | 开通前置 | `activate` 要求 ≥1 active owner；`Create` 支持可选 `owner_subject_id`；默认配额取套餐 | 0 成员租户无法开通，错误可读 | ✅ 2026-11-03 |
-| T-13 | 成员分页与席位上限 | 列表分页；`Add` 前读套餐/租户的 `user` 上限 | 超席位返回 409，附当前值与上限 |
+| T-13 | 成员分页与席位上限 | 列表分页；`Add` 前读套餐/租户的 `user` 上限 | 超席位返回 409，附当前值与上限 | ✅ 2026-11-03 |
 | T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 |
 | T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 |
 | T-22 | 当前租户上下文（D-04=①） | B 端 claims 增 `current_tenant` + 切换端点；契约 major 版本 | 一人多租户可切换；切换写审计；旧令牌行为有明确定义 |
@@ -495,7 +495,38 @@ A 端不触发检查）+ 钩子 4 组语义。全仓测试与 lint 全绿。
 集成用例（种子套餐存在、创建物化、0 owner 拒绝开通），6 个集成用例全过；
 go test ./... 全绿，lint 0 issues，check-openapi（7.3.0 纯增量）/ check-migrations 通过。
 
-**B3 未完成**：T-11 元数据、T-13 席位、T-14 邀请流、T-15 If-Match、T-22（依赖 T-14）。
+**T-11 租户元数据 + T-13 席位上限与成员分页**
+
+| 改动 | 说明 |
+|---|---|
+| 迁移 `000013` | `tenant.code`（NOT NULL + `uk_tenant_code`，存量以 `id` 兜底回填）+ 联系人 / 邮箱 / 行业 / 时区 / 语言 / 外部 ID（全部可空，元数据缺失不阻塞主流程） |
+| `domain/tenant.go` | `NewTenant` 默认 `Code = ID`（与迁移兜底策略同源）；`WithProfile` 全量语义（合并「不变」在应用层）；版本与状态迁移共用计数器——并发「改名 + 停用」互为 CAS 冲突 |
+| `domain/errors.go` | `ErrCodeExists` / `SeatLimitError`（携带 active + limit，errors.Is 哨兵可用）/ 元数据字段错误（超长 / 邮箱 / 时区语言字符集） |
+| `domain/repository.go` | `Repository.UpdateProfile`（CAS）；`MemberRepository.ListMembers` 分页（limit<=0 全量）+ `CountActive`（事务内 FOR UPDATE） |
+| `app/service.go` | `Create` 支持 `code`（空=ID 兜底，重复 409，非法 400）；`UpdateProfile` 用例：指针区分「不变 / 清空」，审计 `tenant.update` 附 `fields` 变更列表；`code` 不可变 |
+| `app/member.go` | `Add` 改走 `MemberRepository.Mutate` 临界区（租户行锁），席位数与写入同临界区；复活同样占席；超限 409 附「active N, limit M」并以 `outcome=failure` 留痕；`List` 分页 |
+| `persistence` | MySQL：`tenantColumns` 扩列 + `UpdateProfile`（与 `UpdateStatus` 共用 finishCAS）；成员分页 COUNT + LIMIT。memory：快照回滚补齐到 `Mutate`（修复「审计失败不回滚成员」的内存假绿） |
+| 传输 | `PATCH /admin/v1/tenants/{id}`；成员列表加 `page` / `page_size`；响应体带 `code` 与元数据字段 |
+| 契约 | `admin.yaml` 7.4.0：`Tenant` 增 `code` + 元数据字段、`TenantUpdateRequest`、PATCH 操作、成员列表分页参数（纯增量） |
+
+**关键取舍**：① `code` 创建后不可变（对账引用），修订走数据订正；② 席位校验放
+`Mutate` 临界区而非「先读后写」，并发添加依赖租户行锁串行化（真实 MySQL 集成用例
+以 4 并发添加、配额=2 验证恰好 1 成功）；③ 未配置 `user` 配额视为不限（与 ENT-14
+「缺行兜底」口径一致），套餐物化保证新建租户都有该行。
+
+**坑**：① MySQL 仓储 `isDuplicateKey` 需区分 `uk_tenant_code` 与主键冲突，二者
+错误码不同（409 但提示不同）；② 集成用例共享库时 `seqIDs`（t1 起）会与残留行
+撞主键，新增用例改用带唯一前缀的 ID 生成器；③ 000010 回填 SQL 在 000013 之后
+重放需补 `code` 列（历史迁移文本，测试注入后验证幂等）。
+
+**验证**：应用层新增 7 个用例（席位超限 / 复活占席 / 不限量 / 显式编码 / 资料变更
+/ 分页），domain 3 个（NormalizeCode / 默认编码 / WithProfile），handler 2 个
+（PATCH 契约 / 席位 409）；真实 MySQL 集成 9 个用例全过（含元数据回读、NULL 清空、
+默认编码落库、席位并发）；全新库 + 同库复跑均通过且无残留。go test ./... 全绿，
+改动范围 lint 0 issues，check-openapi（7.4.0 纯增量）/ check-migrations / check-audit
+/ check-layering / check-doclinks / check-runbooks 全 PASS。
+
+**B3 未完成**：T-14 邀请流、T-15 If-Match、T-22（依赖 T-14）。
 
 ---
 

@@ -23,7 +23,8 @@ func (r *countingRepo) Create(context.Context, domain.Tenant) error { return nil
 func (r *countingRepo) List(context.Context, domain.Filter) ([]domain.Tenant, int, error) {
 	return nil, 0, nil
 }
-func (r *countingRepo) UpdateStatus(context.Context, domain.Tenant) error { return nil }
+func (r *countingRepo) UpdateStatus(context.Context, domain.Tenant) error  { return nil }
+func (r *countingRepo) UpdateProfile(context.Context, domain.Tenant) error { return nil }
 
 func (r *countingRepo) Get(_ context.Context, id string) (domain.Tenant, error) {
 	r.mu.Lock()

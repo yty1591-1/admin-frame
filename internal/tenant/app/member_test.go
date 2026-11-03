@@ -184,14 +184,14 @@ func TestMemberListHidesDisabledByDefault(t *testing.T) {
 		t.Fatalf("SetStatus() error = %v", err)
 	}
 
-	active, err := fixture.members.List(ctx, fixture.tenant.ID, false)
+	active, _, err := fixture.members.List(ctx, fixture.tenant.ID, false, 0, 0)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
 	if len(active) != 2 || active[0].SubjectID != "fixture-owner" || active[1].SubjectID != "u1" {
 		t.Fatalf("在册成员 = %+v", active)
 	}
-	all, err := fixture.members.List(ctx, fixture.tenant.ID, true)
+	all, _, err := fixture.members.List(ctx, fixture.tenant.ID, true, 0, 0)
 	if err != nil {
 		t.Fatalf("List(all) error = %v", err)
 	}
@@ -391,7 +391,7 @@ func TestReadsAllowedOnTerminatedTenant(t *testing.T) {
 		t.Fatalf("terminate error = %v", err)
 	}
 
-	if _, err := fixture.members.List(ctx, fixture.tenant.ID, false); err != nil {
+	if _, _, err := fixture.members.List(ctx, fixture.tenant.ID, false, 0, 0); err != nil {
 		t.Fatalf("终止态查询成员 error = %v", err)
 	}
 	quotas, err := fixture.quotas.List(ctx, fixture.tenant.ID)
@@ -464,7 +464,7 @@ func TestConcurrentOwnerDemotionKeepsOneOwner(t *testing.T) {
 	if succeeded != 1 {
 		t.Fatalf("成功降级 %d 次，want 1（两次都成功会清空 owner）", succeeded)
 	}
-	members, err := fixture.members.List(ctx, fixture.tenant.ID, false)
+	members, _, err := fixture.members.List(ctx, fixture.tenant.ID, false, 0, 0)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}

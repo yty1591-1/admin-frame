@@ -43,12 +43,13 @@
 | `audit.query` | A | 审计事件查询；`GET /admin/v1/audit/events` 每次查询记录操作者、时间窗、命中条数与过滤条件名称 | 权限 | 180d | active |
 | `audit.retention_purge` | worker | 审计到期清理（元审计：记录 cutoff / 到期数 / 归档数 / 删除数 / 批次数；配置 `archive_prefix` 时先落归档对象再删除） | 权限 | 180d | active |
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |
-| `tenant.create` | A | 创建租户（`POST /admin/v1/tenants`）；记录名称与初始状态 `pending` | 租户 | 365d | active |
+| `tenant.create` | A | 创建租户（`POST /admin/v1/tenants`）；记录名称、编码（`attrs.code`）与初始状态 `pending` | 租户 | 365d | active |
+| `tenant.update` | A | 变更租户资料（T-11，`PATCH /admin/v1/tenants/{id}`：改名 + 元数据）；`attrs.fields` 记录变更字段列表（逗号分隔）；编码不可变，不在本动作范围内 | 租户 | 365d | active |
 | `tenant.activate` | A | 开通租户（`pending → active`）；租户自此进入服务期 | 租户 | 365d | active |
 | `tenant.suspend` | A | 停用租户（`active → suspended`）；`reason` 必填并原样入审计，失败尝试同样记录（`outcome=failure`）。停用前先撤销该租户全部会话，`attrs.revoked_sessions` 记录撤销数（D-02=①） | 租户 | 365d | active |
 | `tenant.resume` | A | 恢复租户（`suspended → active`）；与首次开通分开记录，便于还原停用时长 | 租户 | 365d | active |
 | `tenant.terminate` | A | 终止租户（→ `terminated` 终态）；`reason` 必填，终止后不可恢复 | 租户 | 365d | active |
-| `tenant.member.add` | A | 添加租户成员（`POST /admin/v1/tenants/{id}/members`）；`attrs.subject_id` / `attrs.role`，已停用成员再次添加时 `attrs.reactivated=true` | 租户 | 365d | active |
+| `tenant.member.add` | A | 添加租户成员（`POST /admin/v1/tenants/{id}/members`）；`attrs.subject_id` / `attrs.role`，已停用成员再次添加时 `attrs.reactivated=true`；`attrs.active_members` / `attrs.seat_limit` 记录席位上下文（T-13），席位超限被拒时以 `outcome=failure` 留痕 | 租户 | 365d | active |
 | `tenant.member.role_change` | A | 变更成员角色；`attrs.from` / `attrs.to` / `attrs.subject_id`，降级最后一名 owner 会被拒绝（`outcome=failure` 同样留痕） | 租户 | 365d | active |
 | `tenant.member.disable` | A | 停用成员（保留成员关系，不物理删除）；`reason` 可选，建议填写离职或调岗原因 | 租户 | 365d | active |
 | `tenant.member.enable` | A | 重新启用成员 | 租户 | 365d | active |

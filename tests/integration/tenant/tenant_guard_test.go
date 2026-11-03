@@ -225,9 +225,19 @@ func TestBackfillMigrationRegistersExistingMerchants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
-	// 迁移文件只有一条 INSERT，可直接执行；执行两次验证幂等。
+	// 000010 是历史迁移：真实升级路径里它在 000013（新增 code 列）之前执行。
+	// 在已应用 000013 的库上重放必须补上 code 列——这里按 000013 的兜底规则
+	// （code = id）注入，验证回填语义（active / 占位名 / 幂等）在新 schema 下不变。
+	statement := strings.Replace(string(raw),
+		"INSERT INTO tenant (id, name,", "INSERT INTO tenant (id, code, name,", 1)
+	statement = strings.Replace(statement,
+		"SELECT m.merchant_id, m.merchant_id,", "SELECT m.merchant_id, m.merchant_id, m.merchant_id,", 1)
+	if !strings.Contains(statement, "code") {
+		t.Fatal("迁移文本结构变化，注入 code 列失败——请同步更新本用例")
+	}
+	// 执行两次验证幂等。
 	for i := 0; i < 2; i++ {
-		if _, err := sqlDB.ExecContext(ctx, string(raw)); err != nil {
+		if _, err := sqlDB.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("exec backfill (round %d): %v", i+1, err)
 		}
 	}
@@ -287,7 +297,7 @@ func TestMemberAndQuotaOnMySQL(t *testing.T) {
 		t.Fatalf("Add(staff) error = %v", err)
 	}
 
-	list, err := members.List(ctx, tenantID, false)
+	list, _, err := members.List(ctx, tenantID, false, 0, 0)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -308,14 +318,14 @@ func TestMemberAndQuotaOnMySQL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetStatus(disabled) error = %v", err)
 	}
-	active, err := members.List(ctx, tenantID, false)
+	active, _, err := members.List(ctx, tenantID, false, 0, 0)
 	if err != nil {
 		t.Fatalf("List(active) error = %v", err)
 	}
 	if len(active) != 1 {
 		t.Fatalf("在册成员 = %d, want 1", len(active))
 	}
-	all, err := members.List(ctx, tenantID, true)
+	all, _, err := members.List(ctx, tenantID, true, 0, 0)
 	if err != nil {
 		t.Fatalf("List(all) error = %v", err)
 	}

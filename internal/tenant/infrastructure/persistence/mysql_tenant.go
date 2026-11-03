@@ -29,7 +29,9 @@ func NewMySQLRepository(sqlDB *sql.DB) (*MySQLRepository, error) {
 }
 
 // tenantColumns 固定列顺序，避免 SELECT * 与扫描顺序漂移。
-const tenantColumns = "id, name, status, plan_id, status_reason, version, suspended_at, terminated_at, created_at, updated_at"
+const tenantColumns = "id, code, name, status, plan_id, status_reason, " +
+	"contact_name, contact_email, industry, timezone, locale, external_id, " +
+	"version, suspended_at, terminated_at, created_at, updated_at"
 
 // WithinTx 在事务内执行 fn，事务注入 ctx 后仓储与 OutboxEmitter 自动复用。
 func (r *MySQLRepository) WithinTx(ctx context.Context, fn func(context.Context) error) error {
@@ -39,17 +41,25 @@ func (r *MySQLRepository) WithinTx(ctx context.Context, fn func(context.Context)
 	return db.WithinUnitOfWork(ctx, r.db, nil, fn)
 }
 
-// Create 插入租户；主键冲突返回 ErrAlreadyExists 而不是驱动错误。
+// Create 插入租户；主键或 code 唯一键冲突返回对应领域错误。
 func (r *MySQLRepository) Create(ctx context.Context, tenant domain.Tenant) error {
 	if err := tenant.Validate(); err != nil {
 		return err
 	}
 	_, err := r.exec(ctx).ExecContext(ctx,
-		`INSERT INTO tenant (`+tenantColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		tenant.ID, tenant.Name, string(tenant.Status), nullString(tenant.PlanID), tenant.StatusReason, tenant.Version,
+		`INSERT INTO tenant (`+tenantColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tenant.ID, tenant.Code, tenant.Name, string(tenant.Status), nullString(tenant.PlanID), tenant.StatusReason,
+		nullString(tenant.ContactName), nullString(tenant.ContactEmail), nullString(tenant.Industry),
+		nullString(tenant.Timezone), nullString(tenant.Locale), nullString(tenant.ExternalID),
+		tenant.Version,
 		nullTime(tenant.SuspendedAt), nullTime(tenant.TerminatedAt), tenant.CreatedAt, tenant.UpdatedAt)
 	if err != nil {
 		if isDuplicateKey(err) {
+			// 两个唯一键冲突语义不同：ID 重复是系统事故（ID 生成器不应撞），
+			// code 重复是运营输入错误，给调用方可区分的错误码。
+			if strings.Contains(err.Error(), "uk_tenant_code") {
+				return fmt.Errorf("%w: %s", domain.ErrCodeExists, tenant.Code)
+			}
 			return fmt.Errorf("%w: %s", domain.ErrAlreadyExists, tenant.ID)
 		}
 		return fmt.Errorf("tenant: create %s: %w", tenant.ID, err)
@@ -128,12 +138,38 @@ func (r *MySQLRepository) UpdateStatus(ctx context.Context, tenant domain.Tenant
 		  WHERE id = ? AND version = ?`,
 		string(tenant.Status), tenant.StatusReason, nullTime(tenant.SuspendedAt), nullTime(tenant.TerminatedAt),
 		tenant.Version, tenant.UpdatedAt, tenant.ID, tenant.Version-1)
+	return r.finishCAS(ctx, tenant, "update status", result, err)
+}
+
+// UpdateProfile 以 CAS 写入资料变更（T-11）。
+//
+// 只写资料列，不碰状态列：两条 CAS 通道共用 version 计数器，
+// 但各自只更新自己负责的字段，避免一条路径把另一条的字段回写成旧值。
+func (r *MySQLRepository) UpdateProfile(ctx context.Context, tenant domain.Tenant) error {
+	if err := tenant.Validate(); err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx,
+		`UPDATE tenant
+		    SET name = ?, contact_name = ?, contact_email = ?, industry = ?,
+		        timezone = ?, locale = ?, external_id = ?,
+		        version = ?, updated_at = ?
+		  WHERE id = ? AND version = ?`,
+		tenant.Name, nullString(tenant.ContactName), nullString(tenant.ContactEmail), nullString(tenant.Industry),
+		nullString(tenant.Timezone), nullString(tenant.Locale), nullString(tenant.ExternalID),
+		tenant.Version, tenant.UpdatedAt, tenant.ID, tenant.Version-1)
+	return r.finishCAS(ctx, tenant, "update profile", result, err)
+}
+
+// finishCAS 统一处理 CAS 写入的 0 行分支：区分「不存在」与「版本被并发改动」。
+func (r *MySQLRepository) finishCAS(ctx context.Context, tenant domain.Tenant, op string,
+	result sql.Result, err error) error {
 	if err != nil {
-		return fmt.Errorf("tenant: update status %s: %w", tenant.ID, err)
+		return fmt.Errorf("tenant: %s %s: %w", op, tenant.ID, err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("tenant: update status %s: %w", tenant.ID, err)
+		return fmt.Errorf("tenant: %s %s: %w", op, tenant.ID, err)
 	}
 	if affected == 1 {
 		return nil
@@ -217,17 +253,30 @@ func scanTenant(scanner rowScanner) (domain.Tenant, error) {
 		tenant         domain.Tenant
 		status         string
 		nullablePlanID sql.NullString
+		contactName    sql.NullString
+		contactEmail   sql.NullString
+		industry       sql.NullString
+		timezone       sql.NullString
+		locale         sql.NullString
+		externalID     sql.NullString
 		suspendedAt    sql.NullTime
 		terminatedAt   sql.NullTime
 	)
 	if err := scanner.Scan(
-		&tenant.ID, &tenant.Name, &status, &nullablePlanID, &tenant.StatusReason, &tenant.Version,
-		&suspendedAt, &terminatedAt, &tenant.CreatedAt, &tenant.UpdatedAt,
+		&tenant.ID, &tenant.Code, &tenant.Name, &status, &nullablePlanID, &tenant.StatusReason,
+		&contactName, &contactEmail, &industry, &timezone, &locale, &externalID,
+		&tenant.Version, &suspendedAt, &terminatedAt, &tenant.CreatedAt, &tenant.UpdatedAt,
 	); err != nil {
 		return domain.Tenant{}, err
 	}
 	tenant.Status = domain.Status(status)
 	tenant.PlanID = nullablePlanID.String
+	tenant.ContactName = contactName.String
+	tenant.ContactEmail = contactEmail.String
+	tenant.Industry = industry.String
+	tenant.Timezone = timezone.String
+	tenant.Locale = locale.String
+	tenant.ExternalID = externalID.String
 	if suspendedAt.Valid {
 		moment := suspendedAt.Time
 		tenant.SuspendedAt = &moment
@@ -302,17 +351,36 @@ func (r *MySQLRepository) GetMember(ctx context.Context, tenantID, subjectID str
 	return member, nil
 }
 
-// ListMembers 列出租户成员，owner 在前、同角色按主体排序（分页与前端展示都稳定）。
-func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, includeDisabled bool) ([]domain.Member, error) {
-	query := `SELECT ` + memberColumns + ` FROM tenant_member WHERE tenant_id = ?`
+// ListMembers 分页列出租户成员（T-13），owner 在前、同角色按主体排序。
+//
+// limit<=0 表示全量（内部席位计数等路径复用）；返回满足条件的总数。
+func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, includeDisabled bool, limit, offset int) ([]domain.Member, int, error) {
+	trimmed := strings.TrimSpace(tenantID)
+	where := " WHERE tenant_id = ?"
 	if !includeDisabled {
-		query += ` AND status = 'active'`
+		where += ` AND status = 'active'`
 	}
-	query += ` ORDER BY FIELD(role, 'owner', 'admin', 'member'), subject_id`
 
-	rows, err := r.query(ctx).QueryContext(ctx, query, strings.TrimSpace(tenantID))
+	var total int
+	if err := r.query(ctx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tenant_member`+where, trimmed).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("tenant: count members %s: %w", tenantID, err)
+	}
+
+	query := `SELECT ` + memberColumns + ` FROM tenant_member` + where +
+		` ORDER BY FIELD(role, 'owner', 'admin', 'member'), subject_id`
+	args := []any{trimmed}
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	} else if offset > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, 1<<31-1, offset) // MySQL OFFSET 必须搭配 LIMIT；给 int 上限表示不限制。
+	}
+
+	rows, err := r.query(ctx).QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("tenant: list members %s: %w", tenantID, err)
+		return nil, 0, fmt.Errorf("tenant: list members %s: %w", tenantID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -320,14 +388,27 @@ func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, incl
 	for rows.Next() {
 		member, scanErr := scanMember(rows)
 		if scanErr != nil {
-			return nil, fmt.Errorf("tenant: scan member: %w", scanErr)
+			return nil, 0, fmt.Errorf("tenant: scan member: %w", scanErr)
 		}
 		out = append(out, member)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("tenant: iterate members: %w", err)
+		return nil, 0, fmt.Errorf("tenant: iterate members: %w", err)
 	}
-	return out, nil
+	return out, total, nil
+}
+
+// CountActive 统计在册成员总数；事务内追加 FOR UPDATE（语义同 CountActiveByRole）。
+func (r *MySQLRepository) CountActive(ctx context.Context, tenantID string) (int, error) {
+	query := `SELECT COUNT(*) FROM tenant_member WHERE tenant_id = ? AND status = 'active'`
+	if _, ok := db.TxFromContext(ctx); ok {
+		query += ` FOR UPDATE`
+	}
+	var count int
+	if err := r.query(ctx).QueryRowContext(ctx, query, strings.TrimSpace(tenantID)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("tenant: count active members %s: %w", tenantID, err)
+	}
+	return count, nil
 }
 
 // CountActiveByRole 统计某角色的在册成员数。

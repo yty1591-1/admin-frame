@@ -57,7 +57,7 @@ func newHandler(t *testing.T) *rest.Handler {
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
-	members, err := app.NewMemberService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	members, err := app.NewMemberService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api", Quotas: repo})
 	if err != nil {
 		t.Fatalf("NewMemberService() error = %v", err)
 	}
@@ -555,5 +555,96 @@ func seedTestPlan(t *testing.T, repo *persistence.MemoryRepository) {
 	}
 	if err := repo.UpsertPlan(plan); err != nil {
 		t.Fatalf("UpsertPlan() error = %v", err)
+	}
+}
+
+// TestPatchTenantProfile 验证 PATCH /tenants/{id} 的资料变更契约（T-11）。
+func TestPatchTenantProfile(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID,
+		`{"name":"Acme Renamed","contact_name":"张三","contact_email":"ops@acme.com"}`)
+	patch.SetPathValue("id", tenantID)
+	recorder := httptest.NewRecorder()
+	handler.Update(recorder, patch)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("patch status = %d（body=%s）", recorder.Code, recorder.Body.String())
+	}
+	var tenant tenantBody
+	if err := json.Unmarshal(decodeEnvelope(t, recorder).Data, &tenant); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if tenant.Name != "Acme Renamed" {
+		t.Fatalf("name = %q", tenant.Name)
+	}
+
+	// GET 可见变更。
+	get := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID, "")
+	get.SetPathValue("id", tenantID)
+	getRecorder := httptest.NewRecorder()
+	handler.Get(getRecorder, get)
+	var reloaded tenantBody
+	if err := json.Unmarshal(decodeEnvelope(t, getRecorder).Data, &reloaded); err != nil {
+		t.Fatalf("get 解析失败: %v", err)
+	}
+	if reloaded.Name != "Acme Renamed" || reloaded.Version != tenant.Version {
+		t.Fatalf("GET 与 PATCH 返回不一致: %+v vs %+v", reloaded, tenant)
+	}
+
+	// 空变更 → 400。
+	empty := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID, `{}`)
+	empty.SetPathValue("id", tenantID)
+	emptyRecorder := httptest.NewRecorder()
+	handler.Update(emptyRecorder, empty)
+	if emptyRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("空变更 status = %d, want 400", emptyRecorder.Code)
+	}
+
+	// 不存在的租户 → 404。
+	missing := adminRequest(http.MethodPatch, "/admin/v1/tenants/nope", `{"name":"X"}`)
+	missing.SetPathValue("id", "nope")
+	missingRecorder := httptest.NewRecorder()
+	handler.Update(missingRecorder, missing)
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("missing status = %d, want 404", missingRecorder.Code)
+	}
+}
+
+// TestSeatLimitReturns409WithDetail 验证席位超限的 HTTP 契约：409 + 当前值与上限（T-13）。
+func TestSeatLimitReturns409WithDetail(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	// 需要配额用例（handler 内部成员用例已注入配额仓储）。
+	put := adminRequest(http.MethodPut, "/admin/v1/tenants/"+tenantID+"/quotas/user", `{"limit":2}`)
+	put.SetPathValue("id", tenantID)
+	put.SetPathValue("resource", "user")
+	putRecorder := httptest.NewRecorder()
+	handler.SetQuota(putRecorder, put)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("set quota status = %d（body=%s）", putRecorder.Code, putRecorder.Body.String())
+	}
+
+	// createTenant 已种子 u-owner（1 席）；再加 1 席到上限，第 2 次添加应 409。
+	for _, subject := range []string{"u1", "u2"} {
+		add := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/members",
+			`{"subject_id":"`+subject+`","role":"member"}`)
+		add.SetPathValue("id", tenantID)
+		recorder := httptest.NewRecorder()
+		handler.AddMember(recorder, add)
+		if subject == "u1" {
+			if recorder.Code != http.StatusCreated {
+				t.Fatalf("add u1 status = %d（body=%s）", recorder.Code, recorder.Body.String())
+			}
+			continue
+		}
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("add u2 status = %d, want 409（body=%s）", recorder.Code, recorder.Body.String())
+		}
+		env := decodeEnvelope(t, recorder)
+		if !strings.Contains(env.Message, "active 2") || !strings.Contains(env.Message, "limit 2") {
+			t.Fatalf("409 应携带当前值与上限: %q", env.Message)
+		}
 	}
 }

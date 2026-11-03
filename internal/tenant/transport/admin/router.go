@@ -24,6 +24,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("GET /admin/v1/tenants", authMW(read(http.HandlerFunc(h.List))))
 	mux.Handle("POST /admin/v1/tenants", authMW(write(http.HandlerFunc(h.Create))))
 	mux.Handle("GET /admin/v1/tenants/{id}", authMW(read(http.HandlerFunc(h.Get))))
+	// 资料变更（T-11：改名与元数据）沿用 tenant:write——改名影响对账展示，
+	// 与状态迁移动作同级，不单独开权限点。
+	mux.Handle("PATCH /admin/v1/tenants/{id}", authMW(write(http.HandlerFunc(h.Update))))
 
 	mux.Handle("POST /admin/v1/tenants/{id}/activate", authMW(write(http.HandlerFunc(h.Activate))))
 	mux.Handle("POST /admin/v1/tenants/{id}/suspend", authMW(write(http.HandlerFunc(h.Suspend))))

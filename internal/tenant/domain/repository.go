@@ -55,6 +55,11 @@ type Repository interface {
 	// 约定：tenant.Version 是**迁移后**的新版本，仓储以其减一作为预期旧版本；
 	// 版本不匹配返回 ErrVersionConflict，保证并发「停用 + 启用」不会互相覆盖。
 	UpdateStatus(ctx context.Context, tenant Tenant) error
+	// UpdateProfile 以 CAS 方式写入资料变更（T-11：改名 + 元数据）。
+	//
+	// 与 UpdateStatus 共用同一个版本计数器：并发「改名 + 停用」互为冲突，
+	// 后写者拿到 409 重读重试，而不是悄悄覆盖对方的写入。
+	UpdateProfile(ctx context.Context, tenant Tenant) error
 }
 
 // MemberRepository 是租户成员持久化契约。
@@ -70,10 +75,18 @@ type MemberRepository interface {
 	UpsertMember(ctx context.Context, member Member) error
 	// GetMember 读取单条成员；不存在返回 ErrMemberNotFound。
 	GetMember(ctx context.Context, tenantID, subjectID string) (Member, error)
-	// ListMembers 列出租户成员；includeDisabled=false 时只返回在册成员。
-	ListMembers(ctx context.Context, tenantID string, includeDisabled bool) ([]Member, error)
+	// ListMembers 分页列出租户成员（T-13）。
+	//
+	// includeDisabled=false 时只返回在册成员；limit<=0 表示不分页（全量），
+	// 供席位计数等内部路径复用；返回值第二项是满足条件的总数。
+	ListMembers(ctx context.Context, tenantID string, includeDisabled bool, limit, offset int) ([]Member, int, error)
 	// CountActiveByRole 统计某角色在册成员数（用于「最后一名 owner」校验）。
 	CountActiveByRole(ctx context.Context, tenantID string, role MemberRole) (int, error)
+	// CountActive 统计在册成员总数（T-13 席位上限的当前值）。
+	//
+	// 事务内调用必须看到未提交写入之外的一致快照：SQL 实现追加 FOR UPDATE，
+	// 与「锁租户行」配合保证并发添加不会同时通过席位校验。
+	CountActive(ctx context.Context, tenantID string) (int, error)
 }
 
 // QuotaRepository 是租户配额持久化契约。

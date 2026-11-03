@@ -47,6 +47,14 @@ var (
 	ErrResourceRequired = errors.New("tenant: quota resource is required")
 	// ErrResourceTooLong 配额资源键超长。
 	ErrResourceTooLong = fmt.Errorf("tenant: quota resource must be at most %d characters", MaxResourceLength)
+	// ErrCodeRequired 租户业务编码必填（T-11）。
+	ErrCodeRequired = errors.New("tenant: code is required")
+	// ErrCodeTooLong 租户业务编码超长。
+	ErrCodeTooLong = fmt.Errorf("tenant: code must be at most %d characters", MaxCodeLength)
+	// ErrCodeExists 租户业务编码已被占用（uk_tenant_code）。
+	ErrCodeExists = errors.New("tenant: code already exists")
+	// ErrSeatLimitExceeded 席位已满（T-13）；统一 409，当前值与上限由错误详情携带。
+	ErrSeatLimitExceeded = errors.New("tenant: member seat limit exceeded")
 )
 
 // InvalidRoleError 表示未定义的成员角色。
@@ -97,4 +105,71 @@ type InvalidTransitionError struct {
 // Error 实现 error；错误信息同时给出两个状态，便于直接定位误操作。
 func (e *InvalidTransitionError) Error() string {
 	return fmt.Sprintf("tenant: cannot transition from %s to %s", e.From, e.To)
+}
+
+// InvalidCodeError 表示非法的租户业务编码（T-11）。
+type InvalidCodeError struct {
+	// Code 非法编码取值。
+	Code string
+}
+
+// Error 实现 error。
+func (e *InvalidCodeError) Error() string {
+	return fmt.Sprintf("tenant: invalid code %q (allowed: a-z 0-9 . _ -)", e.Code)
+}
+
+// FieldTooLongError 表示元数据字段超长（T-11）。
+type FieldTooLongError struct {
+	// Field 字段名（与 API 字段一致，便于前端定位）。
+	Field string
+	// Max 长度上限。
+	Max int
+}
+
+// Error 实现 error。
+func (e *FieldTooLongError) Error() string {
+	return fmt.Sprintf("tenant: %s must be at most %d characters", e.Field, e.Max)
+}
+
+// InvalidEmailError 表示联系邮箱格式非法（T-11）。
+type InvalidEmailError struct {
+	// Email 非法邮箱取值。
+	Email string
+}
+
+// Error 实现 error。
+func (e *InvalidEmailError) Error() string {
+	return fmt.Sprintf("tenant: invalid contact email %q", e.Email)
+}
+
+// InvalidFieldError 表示字段取值包含非法字符（T-11，时区 / 语言标签）。
+type InvalidFieldError struct {
+	// Field 字段名。
+	Field string
+	// Value 非法取值。
+	Value string
+}
+
+// Error 实现 error。
+func (e *InvalidFieldError) Error() string {
+	return fmt.Sprintf("tenant: invalid %s %q", e.Field, e.Value)
+}
+
+// SeatLimitError 表示席位已满（T-13）：409 响应需附当前值与上限，
+// 让运营能直接判断是「清停用成员」还是「提配额」。
+type SeatLimitError struct {
+	// Active 当前在册成员数。
+	Active int
+	// Limit 席位上限（tenant_quota 的 user 资源）。
+	Limit int64
+}
+
+// Error 实现 error。
+func (e *SeatLimitError) Error() string {
+	return fmt.Sprintf("%s: active %d, limit %d", ErrSeatLimitExceeded, e.Active, e.Limit)
+}
+
+// Unwrap 挂接哨兵，调用方可 errors.Is(err, domain.ErrSeatLimitExceeded)。
+func (e *SeatLimitError) Unwrap() error {
+	return ErrSeatLimitExceeded
 }

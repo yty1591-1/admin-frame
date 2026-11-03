@@ -106,16 +106,25 @@ func (r *MemoryRepository) restore(snapshot memorySnapshot) {
 // 内存实现没有事务，用独立互斥锁模拟「持锁执行」：临界区内调用本仓储的
 // 读写方法不会死锁（它们用 mu，本方法用 txMu）。代价是全局串行，
 // 但内存实现只服务本地开发与单测，可接受。
+//
+// 与 WithinTx 一样带快照回滚：Add 的「成员写入 + 审计」同事务语义
+// 在内存模式下也必须成立，否则用例假绿、到 MySQL 上才发现审计失败
+// 没有回滚成员。
 func (r *MemoryRepository) Mutate(ctx context.Context, _ string, fn func(context.Context) error) error {
 	if fn == nil {
 		return fmt.Errorf("tenant: member mutation requires a function")
 	}
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
-	return fn(ctx)
+	snapshot := r.snapshot()
+	if err := fn(ctx); err != nil {
+		r.restore(snapshot)
+		return err
+	}
+	return nil
 }
 
-// Create 新建租户；ID 重复返回 ErrAlreadyExists。
+// Create 新建租户；ID 或 code 重复返回对应领域错误。
 func (r *MemoryRepository) Create(_ context.Context, tenant domain.Tenant) error {
 	if err := tenant.Validate(); err != nil {
 		return err
@@ -124,6 +133,11 @@ func (r *MemoryRepository) Create(_ context.Context, tenant domain.Tenant) error
 	defer r.mu.Unlock()
 	if _, ok := r.items[tenant.ID]; ok {
 		return fmt.Errorf("%w: %s", domain.ErrAlreadyExists, tenant.ID)
+	}
+	for _, item := range r.items {
+		if item.Code == tenant.Code {
+			return fmt.Errorf("%w: %s", domain.ErrCodeExists, tenant.Code)
+		}
 	}
 	r.items[tenant.ID] = tenant
 	return nil
@@ -177,6 +191,16 @@ func (r *MemoryRepository) List(_ context.Context, filter domain.Filter) ([]doma
 
 // UpdateStatus 以版本 CAS 写入迁移结果。
 func (r *MemoryRepository) UpdateStatus(_ context.Context, tenant domain.Tenant) error {
+	return r.casUpdate(tenant)
+}
+
+// UpdateProfile 以版本 CAS 写入资料变更（T-11）。
+func (r *MemoryRepository) UpdateProfile(_ context.Context, tenant domain.Tenant) error {
+	return r.casUpdate(tenant)
+}
+
+// casUpdate 是两条 CAS 通道（状态 / 资料）的共同实现。
+func (r *MemoryRepository) casUpdate(tenant domain.Tenant) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current, ok := r.items[tenant.ID]
@@ -228,25 +252,35 @@ func (r *MemoryRepository) GetMember(_ context.Context, tenantID, subjectID stri
 	return member, nil
 }
 
-// ListMembers 列出租户成员；默认只返回在册成员，按角色与主体排序保证分页稳定。
-func (r *MemoryRepository) ListMembers(_ context.Context, tenantID string, includeDisabled bool) ([]domain.Member, error) {
+// ListMembers 分页列出租户成员；默认只返回在册成员，按角色与主体排序保证分页稳定。
+// limit<=0 表示全量；返回满足条件的总数。
+func (r *MemoryRepository) ListMembers(_ context.Context, tenantID string, includeDisabled bool, limit, offset int) ([]domain.Member, int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	bySubject := r.members[strings.TrimSpace(tenantID)]
-	out := make([]domain.Member, 0, len(bySubject))
+	matched := make([]domain.Member, 0, len(bySubject))
 	for _, member := range bySubject {
 		if !includeDisabled && !member.Active() {
 			continue
 		}
-		out = append(out, member)
+		matched = append(matched, member)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Role != out[j].Role {
-			return roleOrder(out[i].Role) < roleOrder(out[j].Role)
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].Role != matched[j].Role {
+			return roleOrder(matched[i].Role) < roleOrder(matched[j].Role)
 		}
-		return out[i].SubjectID < out[j].SubjectID
+		return matched[i].SubjectID < matched[j].SubjectID
 	})
-	return out, nil
+
+	total := len(matched)
+	if offset >= total {
+		return nil, total, nil
+	}
+	end := total
+	if limit > 0 && offset+limit < total {
+		end = offset + limit
+	}
+	return matched[offset:end], total, nil
 }
 
 // CountActiveByRole 统计某角色的在册成员数。
@@ -256,6 +290,19 @@ func (r *MemoryRepository) CountActiveByRole(_ context.Context, tenantID string,
 	count := 0
 	for _, member := range r.members[strings.TrimSpace(tenantID)] {
 		if member.Role == role && member.Active() {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CountActive 统计在册成员总数（T-13 席位上限的当前值）。
+func (r *MemoryRepository) CountActive(_ context.Context, tenantID string) (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	count := 0
+	for _, member := range r.members[strings.TrimSpace(tenantID)] {
+		if member.Active() {
 			count++
 		}
 	}
