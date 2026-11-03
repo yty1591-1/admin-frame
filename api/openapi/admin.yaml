@@ -36,6 +36,8 @@ info:
     7.6.0：条件更新（T-15）——迁移动作与资料变更支持 `If-Match` 头或
     body `expected_version`（二选一，不一致 40000），版本不符返回 40900
     （消息携带当前版本）；租户详情与成功写入响应带 `ETag` 头（纯增量）。
+    补录：7.5.0 邀请端点的 5 个路径已挂载到本文件 paths 段（7.5.0 时漏挂，
+    由 T-17 域门禁的路由 ↔ OpenAPI 双向对账发现）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -215,6 +217,14 @@ paths:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-quotas'
   /admin/v1/tenants/{id}/quotas/{resource}:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-quotas-by-resource'
+  /admin/v1/tenants/{id}/invitations:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations'
+  /admin/v1/tenants/{id}/invitations/accept:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations-accept'
+  /admin/v1/tenants/{id}/invitations/{invitation_id}/revoke:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations-by-invitation-id-revoke'
+  /admin/v1/tenants/{id}/invitations/{invitation_id}/resend:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations-by-invitation-id-resend'
 components:
   securitySchemes:
     bearerAuth:

@@ -186,6 +186,11 @@ check-idempotency:
 check-outbox:
 	bash scripts/ci/check-outbox.sh
 
+# ENT-09 T-17：租户域门禁——审计动作 ↔ EVENTS.md、路由 ↔ OpenAPI 双向对账、
+# 状态机迁移矩阵快照。
+check-tenant:
+	bash scripts/ci/check-tenant.sh
+
 # PERF-01/02：关键路径 Benchmark 登记与抽检。
 check-perf:
 	bash scripts/ci/check-perf.sh
@@ -226,7 +231,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

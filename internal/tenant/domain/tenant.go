@@ -89,6 +89,20 @@ func (s Status) CanTransitionTo(target Status) bool {
 	return false
 }
 
+// Transitions 返回迁移矩阵的快照（副本），供测试快照与文档生成消费。
+//
+// 返回副本而非内部 map：调用方改动结果不得影响状态机本身。
+// 矩阵变更必须同步更新 TestTransitionMatrixSnapshot 的快照并通过评审。
+func Transitions() map[Status][]Status {
+	out := make(map[Status][]Status, len(transitions))
+	for from, targets := range transitions {
+		copied := make([]Status, len(targets))
+		copy(copied, targets)
+		out[from] = copied
+	}
+	return out
+}
+
 // Tenant 是租户实体。
 type Tenant struct {
 	// ID 租户标识，同时是 B 端各表 merchant_id 的取值（ADR-0006）。

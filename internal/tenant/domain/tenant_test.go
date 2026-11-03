@@ -3,6 +3,7 @@ package domain_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -296,5 +297,34 @@ func TestWithProfile(t *testing.T) {
 		if _, err := tenant.WithProfile(tc.profile, fixedNow); err == nil {
 			t.Fatalf("%s 应返回错误", tc.name)
 		}
+	}
+}
+
+// TestTransitionMatrixSnapshot 把 transitions 白名单以硬编码快照锁定（T-17）。
+//
+// 迁移矩阵是「唯一真相」，被守卫、登录校验、开通前置共同消费——悄悄改它
+// 的语义影响面远超一个单测：本快照强制任何白名单变更必须显式修改此处，
+// 让 diff 可见、评审可议。变更流程：改 transitions → 跑本测试看 diff →
+// 确认业务语义后更新快照 → 在 ADR-0006 记录理由。
+func TestTransitionMatrixSnapshot(t *testing.T) {
+	// 按「from: to1,to2」排序序列化，保证快照稳定。
+	lines := make([]string, 0, 4)
+	for from, targets := range domain.Transitions() {
+		sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
+		parts := make([]string, 0, len(targets))
+		for _, to := range targets {
+			parts = append(parts, string(to))
+		}
+		lines = append(lines, string(from)+": "+strings.Join(parts, ","))
+	}
+	sort.Strings(lines)
+	got := strings.Join(lines, "\n")
+
+	// 2026-11 快照（T-17 定格）。suspended 不允许回到 pending；terminated 为终态。
+	const want = `active: suspended,terminated
+pending: active,terminated
+suspended: active,terminated`
+	if got != want {
+		t.Fatalf("迁移矩阵已变更，更新此快照前先评审语义：\n got:/n%s/nwant:/n%s", got, want)
 	}
 }
