@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 7.4.0
+  version: 7.5.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -30,6 +30,9 @@ info:
     7.4.0：租户元数据（T-11）——`Tenant` 响应增加 `code` 与联系人 / 行业 / 时区 / 语言 / 外部 ID，
     新增 `PATCH /admin/v1/tenants/{id}` 资料变更（写 `tenant.update` 审计）；成员席位上限（T-13）——
     添加成员超过 `user` 配额返回 40900（附当前在册数与上限），成员列表支持分页（纯增量）。
+    7.5.0：成员邀请流（T-14）——新增 `/admin/v1/tenants/{id}/invitations*` 五个端点
+    （创建 / 列表 / 接受 / 撤销 / 重发）；token 摘要化存储、明文一次性下发；
+    接受幂等、过期惰性回写、pending 唯一（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）

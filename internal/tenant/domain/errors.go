@@ -55,6 +55,20 @@ var (
 	ErrCodeExists = errors.New("tenant: code already exists")
 	// ErrSeatLimitExceeded 席位已满（T-13）；统一 409，当前值与上限由错误详情携带。
 	ErrSeatLimitExceeded = errors.New("tenant: member seat limit exceeded")
+	// ErrInvitationNotFound 邀请不存在。
+	ErrInvitationNotFound = errors.New("tenant: invitation not found")
+	// ErrInvitationNotPending 邀请不在待处理状态，token 不可用。
+	ErrInvitationNotPending = errors.New("tenant: invitation is not pending")
+	// ErrInvitationExpired 邀请已过期，token 不可用。
+	ErrInvitationExpired = errors.New("tenant: invitation is expired")
+	// ErrInvitationEmailRequired 被邀请邮箱必填。
+	ErrInvitationEmailRequired = errors.New("tenant: invitation email is required")
+	// ErrInvitationEmailTooLong 被邀请邮箱超长。
+	ErrInvitationEmailTooLong = fmt.Errorf("tenant: invitation email must be at most %d characters", MaxInvitationEmailLength)
+	// ErrInvitationPendingExists 同租户同邮箱已存在待处理邀请（引导走 resend）。
+	ErrInvitationPendingExists = errors.New("tenant: a pending invitation already exists for this email")
+	// ErrInvitationAlreadyAccepted 邀请已被其他主体接受。
+	ErrInvitationAlreadyAccepted = errors.New("tenant: invitation already accepted")
 )
 
 // InvalidRoleError 表示未定义的成员角色。

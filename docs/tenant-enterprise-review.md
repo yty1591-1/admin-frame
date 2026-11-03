@@ -318,7 +318,7 @@ TENANT_TEST_MYSQL_DSN='...' go test ./tests/integration/tenant/... -count=1 -v
 | T-24 | 套餐模型（D-03=①） | `tenant_plan` 目录 + `tenant.plan_id`；`tenant_quota` 默认值由套餐派生；存量租户回填默认套餐 | 新建租户自动获得套餐默认配额；租户覆盖优先于套餐 | ✅ 2026-11-03 |
 | T-12 | 开通前置 | `activate` 要求 ≥1 active owner；`Create` 支持可选 `owner_subject_id`；默认配额取套餐 | 0 成员租户无法开通，错误可读 | ✅ 2026-11-03 |
 | T-13 | 成员分页与席位上限 | 列表分页；`Add` 前读套餐/租户的 `user` 上限 | 超席位返回 409，附当前值与上限 | ✅ 2026-11-03 |
-| T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 |
+| T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 | ✅ 2026-11-03 |
 | T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 |
 | T-22 | 当前租户上下文（D-04=①） | B 端 claims 增 `current_tenant` + 切换端点；契约 major 版本 | 一人多租户可切换；切换写审计；旧令牌行为有明确定义 |
 | T-23 | 数据生命周期（D-05） | `docs/tenant-data-lifecycle.md`：保留期 / 导出窗口 / 硬删除边界；到期任务与证据链 | 到期流程可演练；导出可校验；硬删有审计与报告 |
@@ -526,7 +526,36 @@ go test ./... 全绿，lint 0 issues，check-openapi（7.3.0 纯增量）/ check
 改动范围 lint 0 issues，check-openapi（7.4.0 纯增量）/ check-migrations / check-audit
 / check-layering / check-doclinks / check-runbooks 全 PASS。
 
-**B3 未完成**：T-14 邀请流、T-15 If-Match、T-22（依赖 T-14）。
+**T-14 邀请流**
+
+| 改动 | 说明 |
+|---|---|
+| 迁移 `000014` | `tenant_invitation` 表：`token_hash`（SHA-256 摘要，明文不落库）、生成列 `pending_key`（VIRTUAL；`status='pending'` 时取 `tenant_id:email`，否则 NULL——唯一索引对 NULL 不去重，历史邀请不占约束）+ `uk_invitation_pending` |
+| `domain/invitation.go` | 实体与状态机（pending → accepted / revoked / expired，全部从 pending 出发）；`NewInviteToken`（crypto/rand 32 字节 → base64url，摘要化）；默认 TTL 7 天 |
+| `domain/repository.go` | `InvitationRepository`：Create（pending 唯一冲突 → `ErrInvitationPendingExists`）/ Get / FindByTokenHash / List / CompleteInvitation（`WHERE status='pending'` CAS）/ RefreshInvitation（仅 pending） |
+| `app/invitation.go` | `Create`（明文 token 唯一一次下发）/ `Accept`（无效 token 统一 400 防枚举；过期惰性回写 expired；同一主体重复接受幂等 200、换人抢受 409；席位校验与复活语义复用；接受 + 成员落库 + 双审计同事务）/ `Revoke` / `Resend`（旧 token 立即失效=轮换手段）/ `List` |
+| 装配 | `tenantruntime` 注入邀请用例；**顺带修复成员用例漏配 Quotas**——席位校验在生产装配曾静默不启用 |
+| 传输 | 5 个端点：GET/POST `/tenants/{id}/invitations`、POST `.../accept`、POST `.../{invitation_id}/revoke`、POST `.../{invitation_id}/resend`；权限沿用 tenant:read/write |
+| 契约 | `admin.yaml` 7.5.0：6 个邀请 schema + 5 个操作（纯增量） |
+
+**关键取舍**：① 过期惰性判定（接受时校验并回写 expired），不引入定时扫描任务；
+回写放事务外 best-effort——拒绝路径整体回滚会把它吞掉；② `accepted_by` 与
+`email` 解耦：email 只是投递目标，成员关系的键是受领时显式提供的 subject_id；
+③ 邮件投递依赖 ENT-10，就绪前「只落库不发送」是明确的阶段语义，resend 即
+token 轮换手段；④ 同租户同邮箱 pending 唯一靠数据库生成列兜底（应用层不预查，
+竞态由唯一索引拦截）。
+
+**坑**：MySQL 8.0.46 实测——**带 STORED 生成列的表执行 ALTER ADD FOREIGN KEY
+必报 1215**（与语句顺序、索引、COMMENT 均无关，VIRTUAL 无此限制）。生成列改
+VIRTUAL 后通过；已记录在迁移注释。
+
+**验证**：应用层 6 个新用例（全流程 / 幂等 / 过期 / 撤销重发 / pending 唯一 /
+席位联动），handler 1 个端到端用例（5 接口契约），MySQL 集成 2 个（摘要落库 +
+幂等 + pending 唯一 + 过期回写）；11 个集成用例全新库与复跑全过。go test ./...
+全绿；lint 0 issues；check-migrations / audit / doclinks / layering / openapi
+（7.5.0 纯增量）全 PASS。
+
+**B3 未完成**：T-15 If-Match、T-22（依赖 T-14，现已解锁）。
 
 ---
 

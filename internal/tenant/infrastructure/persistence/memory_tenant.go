@@ -21,20 +21,22 @@ type MemoryRepository struct {
 	mu sync.RWMutex
 	// txMu 串行化成员变更临界区（对应 MySQL 实现的租户行锁）。
 	// 独立于 mu：临界区内仍要调用读写方法，共用一把锁会自锁。
-	txMu    sync.Mutex
-	items   map[string]domain.Tenant
-	members map[string]map[string]domain.Member
-	quotas  map[string]map[string]domain.Quota
-	plans   map[string]domain.Plan
+	txMu        sync.Mutex
+	items       map[string]domain.Tenant
+	members     map[string]map[string]domain.Member
+	quotas      map[string]map[string]domain.Quota
+	plans       map[string]domain.Plan
+	invitations map[string]domain.Invitation
 }
 
 // NewMemoryRepository 构造内存仓储。
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{
-		items:   make(map[string]domain.Tenant),
-		members: make(map[string]map[string]domain.Member),
-		quotas:  make(map[string]map[string]domain.Quota),
-		plans:   make(map[string]domain.Plan),
+		items:       make(map[string]domain.Tenant),
+		members:     make(map[string]map[string]domain.Member),
+		quotas:      make(map[string]map[string]domain.Quota),
+		plans:       make(map[string]domain.Plan),
+		invitations: make(map[string]domain.Invitation),
 	}
 }
 
@@ -60,18 +62,20 @@ func (r *MemoryRepository) WithinTx(ctx context.Context, fn func(context.Context
 //
 // 只复制 map，不深拷贝实体：仓储的写入都是「整条替换」，不会原地改结构体。
 type memorySnapshot struct {
-	items   map[string]domain.Tenant
-	members map[string]map[string]domain.Member
-	quotas  map[string]map[string]domain.Quota
+	items       map[string]domain.Tenant
+	members     map[string]map[string]domain.Member
+	quotas      map[string]map[string]domain.Quota
+	invitations map[string]domain.Invitation
 }
 
 func (r *MemoryRepository) snapshot() memorySnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := memorySnapshot{
-		items:   make(map[string]domain.Tenant, len(r.items)),
-		members: make(map[string]map[string]domain.Member, len(r.members)),
-		quotas:  make(map[string]map[string]domain.Quota, len(r.quotas)),
+		items:       make(map[string]domain.Tenant, len(r.items)),
+		members:     make(map[string]map[string]domain.Member, len(r.members)),
+		quotas:      make(map[string]map[string]domain.Quota, len(r.quotas)),
+		invitations: make(map[string]domain.Invitation, len(r.invitations)),
 	}
 	for k, v := range r.items {
 		out.items[k] = v
@@ -90,6 +94,9 @@ func (r *MemoryRepository) snapshot() memorySnapshot {
 		}
 		out.quotas[tenantID] = copied
 	}
+	for k, v := range r.invitations {
+		out.invitations[k] = v
+	}
 	return out
 }
 
@@ -99,6 +106,7 @@ func (r *MemoryRepository) restore(snapshot memorySnapshot) {
 	r.items = snapshot.items
 	r.members = snapshot.members
 	r.quotas = snapshot.quotas
+	r.invitations = snapshot.invitations
 }
 
 // Mutate 串行化同一租户的成员变更。
@@ -385,4 +393,118 @@ func (r *MemoryRepository) FindByCode(_ context.Context, code string) (domain.Pl
 		return domain.Plan{}, domain.ErrPlanNotFound
 	}
 	return plan, nil
+}
+
+// CreateInvitation 插入邀请；同租户同邮箱存在 pending 邀请返回
+// ErrInvitationPendingExists（与 MySQL 生成列唯一索引同一语义）。
+func (r *MemoryRepository) CreateInvitation(_ context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.invitations[invitation.ID]; ok {
+		return fmt.Errorf("%w: %s", domain.ErrAlreadyExists, invitation.ID)
+	}
+	for _, item := range r.invitations {
+		if item.Status == domain.InvitationPending &&
+			item.TenantID == invitation.TenantID &&
+			strings.EqualFold(item.Email, invitation.Email) {
+			return fmt.Errorf("%w: %s", domain.ErrInvitationPendingExists, invitation.Email)
+		}
+	}
+	r.invitations[invitation.ID] = invitation
+	return nil
+}
+
+// GetInvitation 按 (tenant, invitation) 读取。
+func (r *MemoryRepository) GetInvitation(_ context.Context, tenantID, invitationID string) (domain.Invitation, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	invitation, ok := r.invitations[strings.TrimSpace(invitationID)]
+	if !ok || invitation.TenantID != strings.TrimSpace(tenantID) {
+		return domain.Invitation{}, domain.ErrInvitationNotFound
+	}
+	return invitation, nil
+}
+
+// FindByTokenHash 按摘要查找邀请。
+func (r *MemoryRepository) FindByTokenHash(_ context.Context, tokenHash string) (domain.Invitation, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, invitation := range r.invitations {
+		if invitation.TokenHash == strings.TrimSpace(tokenHash) {
+			return invitation, nil
+		}
+	}
+	return domain.Invitation{}, domain.ErrInvitationNotFound
+}
+
+// ListInvitations 分页列出邀请；与成员列表同一排序（时间倒序）保证分页稳定。
+func (r *MemoryRepository) ListInvitations(_ context.Context, tenantID, status string, limit, offset int) ([]domain.Invitation, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	matched := make([]domain.Invitation, 0, len(r.invitations))
+	for _, invitation := range r.invitations {
+		if invitation.TenantID != strings.TrimSpace(tenantID) {
+			continue
+		}
+		if status != "" && invitation.Status != domain.InvitationStatus(status) {
+			continue
+		}
+		matched = append(matched, invitation)
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID > matched[j].ID
+		}
+		return matched[i].CreatedAt.After(matched[j].CreatedAt)
+	})
+
+	total := len(matched)
+	if offset >= total {
+		return nil, total, nil
+	}
+	end := total
+	if limit > 0 && offset+limit < total {
+		end = offset + limit
+	}
+	return matched[offset:end], total, nil
+}
+
+// CompleteInvitation 以 pending CAS 写入终态；0 命中返回 ErrInvitationNotPending。
+func (r *MemoryRepository) CompleteInvitation(_ context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.invitations[invitation.ID]
+	if !ok || current.TenantID != invitation.TenantID {
+		return domain.ErrInvitationNotFound
+	}
+	if current.Status != domain.InvitationPending {
+		return fmt.Errorf("%w: %s", domain.ErrInvitationNotPending, invitation.ID)
+	}
+	r.invitations[invitation.ID] = invitation
+	return nil
+}
+
+// RefreshInvitation 覆盖摘要并顺延有效期；仅 pending 可刷新。
+func (r *MemoryRepository) RefreshInvitation(_ context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.invitations[invitation.ID]
+	if !ok || current.TenantID != invitation.TenantID {
+		return domain.ErrInvitationNotFound
+	}
+	if current.Status != domain.InvitationPending {
+		return fmt.Errorf("%w: %s", domain.ErrInvitationNotPending, invitation.ID)
+	}
+	// pending 唯一约束对自身不生效（同一行的 status 未变），直接覆盖。
+	r.invitations[invitation.ID] = invitation
+	return nil
 }

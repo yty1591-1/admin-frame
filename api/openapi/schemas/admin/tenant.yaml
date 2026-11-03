@@ -290,3 +290,121 @@ components:
             $ref: "#/components/schemas/TenantQuota"
         total:
           type: integer
+
+    # 租户成员邀请（ENT-09 T-14）。token 摘要化存储，明文仅创建/重发时下发一次。
+    TenantInvitation:
+      type: object
+      required: [id, tenant_id, email, role, status, invited_by, expires_at, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          description: 邀请 ID。
+        tenant_id:
+          type: string
+        email:
+          type: string
+          maxLength: 128
+          description: 被邀请人邮箱；邮件投递依赖 ENT-10，就绪前仅记录（线下转交 token）。
+        role:
+          type: string
+          enum: [owner, admin, member]
+          description: 受邀角色；接受时据此建立成员关系。
+        status:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+          description: |
+            生命周期：`pending` 待处理；`accepted` 已接受（重复接受幂等）；
+            `revoked` 已撤销；`expired` 已过期（接受时惰性判定回写）。
+        invited_by:
+          type: string
+          description: 发起邀请的操作者主体。
+        accepted_by:
+          type: string
+          description: 实际接受的主体（与 email 解耦）；仅 accepted 状态存在。
+        expires_at:
+          type: string
+          format: date-time
+          description: 过期时间；默认 7 天，重发时顺延。
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantInvitationCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          maxLength: 128
+          description: 须包含 `@` 且不含空白；同租户同邮箱仅一个 pending 邀请（重复返回 40900，走 resend）。
+        role:
+          type: string
+          enum: [owner, admin, member]
+
+    # 创建 / 重发响应：明文 token 仅此一次下发，服务端只存 SHA-256 摘要。
+    TenantInvitationWithToken:
+      allOf:
+        - $ref: "#/components/schemas/TenantInvitation"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: 一次性明文 token；ENT-10 就绪前由运营线下转交，泄露时用 resend 轮换。
+
+    TenantInvitationAcceptRequest:
+      type: object
+      additionalProperties: false
+      required: [token, subject_id]
+      properties:
+        token:
+          type: string
+          description: 创建 / 重发响应中下发的一次性明文 token；无效统一 400（防枚举）。
+        subject_id:
+          type: string
+          maxLength: 64
+          description: 实际接受邀请的主体 ID（成员关系的键，与 email 解耦）。
+
+    TenantInvitationAcceptData:
+      type: object
+      required: [member, invitation, idempotent]
+      properties:
+        member:
+          $ref: "#/components/schemas/TenantMember"
+        invitation:
+          $ref: "#/components/schemas/TenantInvitation"
+        idempotent:
+          type: boolean
+          description: 为 true 表示重复接受（同一主体此前已生效），成员关系不变。
+
+    TenantInvitationRevokeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 255
+          description: 撤销原因，写入审计。
+
+    TenantInvitationListData:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantInvitation"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer

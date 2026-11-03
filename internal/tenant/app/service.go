@@ -108,8 +108,11 @@ type Options struct {
 	Plans domain.PlanRepository
 	// Members 成员仓储（T-12）：开通前置校验与建租户时落首名 owner。
 	Members domain.MemberRepository
-	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额。
+	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额；T-13 席位与
+	// T-14 邀请接受也复用。
 	Quotas domain.QuotaRepository
+	// InvitationTTL 邀请有效期（T-14）；<=0 使用领域默认值（7 天）。
+	InvitationTTL time.Duration
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。
@@ -691,6 +694,21 @@ func translate(err error) error {
 		// 保留原始错误链：调用方可 errors.Is 识别席位超限；
 		// 消息携带「active N, limit M」，409 响应体直接可用。
 		return apperr.New(apperr.CodeConflict, err.Error(), err)
+	case errors.Is(err, domain.ErrInvitationNotFound):
+		return apperr.NotFound("invitation not found")
+	case errors.Is(err, domain.ErrInvitationPendingExists):
+		// 冲突类邀请错误统一保留因果链：调用方可 errors.Is 区分细分语义
+		// （幂等接受 / 换人抢受 / 重复 pending 都依赖哨兵判断）。
+		return apperr.New(apperr.CodeConflict, "a pending invitation already exists for this email, resend instead", err)
+	case errors.Is(err, domain.ErrInvitationAlreadyAccepted):
+		return apperr.New(apperr.CodeConflict, "invitation already accepted by another subject", err)
+	case errors.Is(err, domain.ErrInvitationExpired):
+		return apperr.New(apperr.CodeConflict, "invitation is expired", err)
+	case errors.Is(err, domain.ErrInvitationNotPending):
+		return apperr.New(apperr.CodeConflict, "invitation is not pending", err)
+	case errors.Is(err, domain.ErrInvitationEmailRequired),
+		errors.Is(err, domain.ErrInvitationEmailTooLong):
+		return apperr.BadRequest(err.Error())
 	case errors.Is(err, domain.ErrNameRequired),
 		errors.Is(err, domain.ErrNameTooLong),
 		errors.Is(err, domain.ErrReasonRequired),

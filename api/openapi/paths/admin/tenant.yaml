@@ -562,3 +562,241 @@ admin-v1-tenants-by-id-quotas-by-resource:
         $ref: "../../components.yaml#/components/responses/Conflict"
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-invitations:
+  get:
+    tags: [tenant]
+    summary: 列出租户邀请
+    description: |
+      需要 `tenant:read`。按创建时间倒序；`status` 过滤可选
+      （pending / accepted / revoked / expired）。
+    operationId: adminListTenantInvitations
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [tenant]
+    summary: 创建成员邀请
+    description: |
+      需要 `tenant:write`。同租户同邮箱仅允许一个 pending 邀请（重复返回 40900，走 resend）。
+      明文 token 仅在本次响应返回一次，服务端只存 SHA-256 摘要；
+      邮件投递依赖 ENT-10，就绪前由运营线下转交（「只落库不发送」的阶段语义）。
+      写 `tenant.invitation.create` 审计。
+    operationId: adminCreateTenantInvitation
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationCreateRequest"
+    responses:
+      "201":
+        description: created
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationWithToken"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-invitations-accept:
+  post:
+    tags: [tenant]
+    summary: 接受邀请（建立成员关系）
+    description: |
+      需要 `tenant:write`。凭据是 token 本身（按摘要查找，不暴露 invitation_id）。
+      语义：无效 token 统一 400（防枚举）；过期返回 40900 并惰性回写 expired；
+      同一主体重复接受幂等（200，`idempotent=true`）；换人抢受返回 40900。
+      接受建立成员关系，同样受席位上限约束（超限 40900，邀请保持 pending）。
+      写 `tenant.invitation.accept` 与 `tenant.member.add`（source=invitation）审计。
+    operationId: adminAcceptTenantInvitation
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationAcceptRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationAcceptData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-invitations-by-invitation-id-revoke:
+  post:
+    tags: [tenant]
+    summary: 撤销邀请
+    description: |
+      需要 `tenant:write`。仅 pending 可撤销（终态不可逆，重复撤销返回 40900）。
+      撤销后 token 立即失效。写 `tenant.invitation.revoke` 审计。
+    operationId: adminRevokeTenantInvitation
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: invitation_id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationRevokeRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitation"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-invitations-by-invitation-id-resend:
+  post:
+    tags: [tenant]
+    summary: 重发邀请（轮换 token 并顺延有效期）
+    description: |
+      需要 `tenant:write`。仅 pending 可重发；旧 token 立即失效（摘要被覆盖），
+      新 token 在本次响应返回，有效期重新起算（默认 7 天）。
+      转交链路怀疑泄露时，resend 即轮换手段。写 `tenant.invitation.resend` 审计。
+    operationId: adminResendTenantInvitation
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: invitation_id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantInvitationWithToken"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

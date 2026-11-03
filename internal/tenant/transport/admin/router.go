@@ -41,6 +41,14 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("PATCH /admin/v1/tenants/{id}/members/{subject_id}", authMW(write(http.HandlerFunc(h.UpdateMember))))
 	mux.Handle("GET /admin/v1/tenants/{id}/quotas", authMW(read(http.HandlerFunc(h.ListQuotas))))
 	mux.Handle("PUT /admin/v1/tenants/{id}/quotas/{resource}", authMW(write(http.HandlerFunc(h.SetQuota))))
+
+	// 邀请（T-14）：列表读、动作写，沿用同一组权限点。
+	// accept 需要明文 token（一次性凭证），置于 POST 动作而非资源创建。
+	mux.Handle("GET /admin/v1/tenants/{id}/invitations", authMW(read(http.HandlerFunc(h.ListInvitations))))
+	mux.Handle("POST /admin/v1/tenants/{id}/invitations", authMW(write(http.HandlerFunc(h.CreateInvitation))))
+	mux.Handle("POST /admin/v1/tenants/{id}/invitations/accept", authMW(write(http.HandlerFunc(h.AcceptInvitation))))
+	mux.Handle("POST /admin/v1/tenants/{id}/invitations/{invitation_id}/revoke", authMW(write(http.HandlerFunc(h.RevokeInvitation))))
+	mux.Handle("POST /admin/v1/tenants/{id}/invitations/{invitation_id}/resend", authMW(write(http.HandlerFunc(h.ResendInvitation))))
 }
 
 // NewRouter 注册租户路由并挂接鉴权与权限中间件（测试用）。

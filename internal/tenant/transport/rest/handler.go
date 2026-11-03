@@ -31,6 +31,8 @@ type HandlerConfig struct {
 	Members *app.MemberService
 	// Quotas 配额用例，必填。
 	Quotas *app.QuotaService
+	// Invitations 邀请用例，必填（T-14）。
+	Invitations *app.InvitationService
 	// PageLimits 与平台分页配置一致。
 	PageLimits pagination.Config
 	// Channel 端别，用于校验 Principal 与处理器一致（SEC-14）。
@@ -39,11 +41,12 @@ type HandlerConfig struct {
 
 // Handler 处理租户管理请求。
 type Handler struct {
-	service *app.Service
-	members *app.MemberService
-	quotas  *app.QuotaService
-	pageCfg pagination.Config
-	channel string
+	service     *app.Service
+	members     *app.MemberService
+	quotas      *app.QuotaService
+	invitations *app.InvitationService
+	pageCfg     pagination.Config
+	channel     string
 }
 
 // NewHandler 构造租户 Handler。
@@ -57,15 +60,19 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if cfg.Quotas == nil {
 		return nil, apperr.Internal("tenant handler requires a quota service", nil)
 	}
+	if cfg.Invitations == nil {
+		return nil, apperr.Internal("tenant handler requires an invitation service", nil)
+	}
 	if strings.TrimSpace(cfg.Channel) == "" {
 		return nil, apperr.Internal("tenant handler requires a channel", nil)
 	}
 	return &Handler{
-		service: cfg.Service,
-		members: cfg.Members,
-		quotas:  cfg.Quotas,
-		pageCfg: cfg.PageLimits,
-		channel: cfg.Channel,
+		service:     cfg.Service,
+		members:     cfg.Members,
+		quotas:      cfg.Quotas,
+		invitations: cfg.Invitations,
+		pageCfg:     cfg.PageLimits,
+		channel:     cfg.Channel,
 	}, nil
 }
 

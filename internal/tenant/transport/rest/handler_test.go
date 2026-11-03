@@ -65,12 +65,19 @@ func newHandler(t *testing.T) *rest.Handler {
 	if err != nil {
 		t.Fatalf("NewQuotaService() error = %v", err)
 	}
+	invitations, err := app.NewInvitationService(repo, repo, repo, &seqIDs{}, quietEmitter{}, app.Options{
+		Service: "admin-api", Quotas: repo,
+	})
+	if err != nil {
+		t.Fatalf("NewInvitationService() error = %v", err)
+	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
-		Service:    service,
-		Members:    members,
-		Quotas:     quotas,
-		PageLimits: pagination.Config{DefaultPageSize: 20, MaxPageSize: 100},
-		Channel:    "admin",
+		Service:     service,
+		Members:     members,
+		Quotas:      quotas,
+		Invitations: invitations,
+		PageLimits:  pagination.Config{DefaultPageSize: 20, MaxPageSize: 100},
+		Channel:     "admin",
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
@@ -646,5 +653,179 @@ func TestSeatLimitReturns409WithDetail(t *testing.T) {
 		if !strings.Contains(env.Message, "active 2") || !strings.Contains(env.Message, "limit 2") {
 			t.Fatalf("409 应携带当前值与上限: %q", env.Message)
 		}
+	}
+}
+
+// TestInvitationEndpoints 验证邀请 5 个接口的 HTTP 契约（T-14）。
+func TestInvitationEndpoints(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	// 创建：201 + 一次性明文 token。
+	create := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations",
+		`{"email":"new@acme.com","role":"member"}`)
+	create.SetPathValue("id", tenantID)
+	createRecorder := httptest.NewRecorder()
+	handler.CreateInvitation(createRecorder, create)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d（body=%s）", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created struct {
+		ID         string  `json:"id"`
+		Token      string  `json:"token"`
+		Status     string  `json:"status"`
+		TenantID   string  `json:"tenant_id"`
+		InviteID   string  `json:"invitation_id"`
+		AcceptedAt *string `json:"accepted_at"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, createRecorder).Data, &created); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if created.Token == "" || created.Status != "pending" {
+		t.Fatalf("created = %+v", created)
+	}
+
+	// 接受：200 + 成员关系。
+	accept := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/accept",
+		`{"token":"`+created.Token+`","subject_id":"u-new"}`)
+	accept.SetPathValue("id", tenantID)
+	acceptRecorder := httptest.NewRecorder()
+	handler.AcceptInvitation(acceptRecorder, accept)
+	if acceptRecorder.Code != http.StatusOK {
+		t.Fatalf("accept status = %d（body=%s）", acceptRecorder.Code, acceptRecorder.Body.String())
+	}
+	var accepted struct {
+		Member struct {
+			SubjectID string `json:"subject_id"`
+			Status    string `json:"status"`
+		} `json:"member"`
+		Invitation struct {
+			Status     string `json:"status"`
+			AcceptedBy string `json:"accepted_by"`
+		} `json:"invitation"`
+		Idempotent bool `json:"idempotent"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, acceptRecorder).Data, &accepted); err != nil {
+		t.Fatalf("accept 解析失败: %v", err)
+	}
+	if accepted.Member.SubjectID != "u-new" || accepted.Member.Status != "active" ||
+		accepted.Invitation.Status != "accepted" || accepted.Idempotent {
+		t.Fatalf("accepted = %+v", accepted)
+	}
+
+	// 重复接受：幂等 200。
+	reAccept := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/accept",
+		`{"token":"`+created.Token+`","subject_id":"u-new"}`)
+	reAccept.SetPathValue("id", tenantID)
+	reAcceptRecorder := httptest.NewRecorder()
+	handler.AcceptInvitation(reAcceptRecorder, reAccept)
+	if reAcceptRecorder.Code != http.StatusOK {
+		t.Fatalf("re-accept status = %d（body=%s）", reAcceptRecorder.Code, reAcceptRecorder.Body.String())
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, reAcceptRecorder).Data, &accepted); err != nil {
+		t.Fatalf("re-accept 解析失败: %v", err)
+	}
+	if !accepted.Idempotent {
+		t.Fatal("重复接受应标记 idempotent")
+	}
+
+	// 无效 token：400（不区分不存在与格式错误，防枚举）。
+	badToken := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/accept",
+		`{"token":"not-a-real-token","subject_id":"u-x"}`)
+	badToken.SetPathValue("id", tenantID)
+	badRecorder := httptest.NewRecorder()
+	handler.AcceptInvitation(badRecorder, badToken)
+	if badRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("bad token status = %d, want 400", badRecorder.Code)
+	}
+
+	// 列表：包含已接受记录。
+	list := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID+"/invitations", "")
+	list.SetPathValue("id", tenantID)
+	listRecorder := httptest.NewRecorder()
+	handler.ListInvitations(listRecorder, list)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d", listRecorder.Code)
+	}
+	var invitations struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &invitations); err != nil {
+		t.Fatalf("list 解析失败: %v", err)
+	}
+	if invitations.Total != 1 || invitations.Items[0].Status != "accepted" {
+		t.Fatalf("invitations = %+v", invitations)
+	}
+
+	// 已接受的邀请不可 resend：409（终态不可逆）。
+	resendAccepted := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/"+created.ID+"/resend", "")
+	resendAccepted.SetPathValue("id", tenantID)
+	resendAccepted.SetPathValue("invitation_id", created.ID)
+	resendAcceptedRecorder := httptest.NewRecorder()
+	handler.ResendInvitation(resendAcceptedRecorder, resendAccepted)
+	if resendAcceptedRecorder.Code != http.StatusConflict {
+		t.Fatalf("resend accepted status = %d, want 409", resendAcceptedRecorder.Code)
+	}
+
+	// 第二条邀请：重发（旧 token 失效）→ 撤销（新 token 也失效）。
+	create2 := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations",
+		`{"email":"bye@acme.com","role":"member"}`)
+	create2.SetPathValue("id", tenantID)
+	create2Recorder := httptest.NewRecorder()
+	handler.CreateInvitation(create2Recorder, create2)
+	var created2 struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, create2Recorder).Data, &created2); err != nil {
+		t.Fatalf("create2 解析失败: %v", err)
+	}
+
+	resend := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/"+created2.ID+"/resend", "")
+	resend.SetPathValue("id", tenantID)
+	resend.SetPathValue("invitation_id", created2.ID)
+	resendRecorder := httptest.NewRecorder()
+	handler.ResendInvitation(resendRecorder, resend)
+	if resendRecorder.Code != http.StatusOK {
+		t.Fatalf("resend status = %d（body=%s）", resendRecorder.Code, resendRecorder.Body.String())
+	}
+	var resent struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, resendRecorder).Data, &resent); err != nil {
+		t.Fatalf("resend 解析失败: %v", err)
+	}
+	if resent.Token == "" || resent.Token == created2.Token {
+		t.Fatalf("resent token = %q", resent.Token)
+	}
+	staleAccept := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/accept",
+		`{"token":"`+created2.Token+`","subject_id":"u-y"}`)
+	staleAccept.SetPathValue("id", tenantID)
+	staleAcceptRecorder := httptest.NewRecorder()
+	handler.AcceptInvitation(staleAcceptRecorder, staleAccept)
+	if staleAcceptRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("stale token accept status = %d, want 400", staleAcceptRecorder.Code)
+	}
+
+	revoke := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/"+created2.ID+"/revoke",
+		`{"reason":"候选人放弃"}`)
+	revoke.SetPathValue("id", tenantID)
+	revoke.SetPathValue("invitation_id", created2.ID)
+	revokeRecorder := httptest.NewRecorder()
+	handler.RevokeInvitation(revokeRecorder, revoke)
+	if revokeRecorder.Code != http.StatusOK {
+		t.Fatalf("revoke status = %d（body=%s）", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+	revAccept := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/invitations/accept",
+		`{"token":"`+resent.Token+`","subject_id":"u-y"}`)
+	revAccept.SetPathValue("id", tenantID)
+	revAcceptRecorder := httptest.NewRecorder()
+	handler.AcceptInvitation(revAcceptRecorder, revAccept)
+	if revAcceptRecorder.Code != http.StatusConflict {
+		t.Fatalf("revoked accept status = %d, want 409", revAcceptRecorder.Code)
 	}
 }

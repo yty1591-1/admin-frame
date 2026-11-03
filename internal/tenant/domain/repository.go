@@ -108,3 +108,23 @@ type PlanRepository interface {
 	// FindByCode 按编码加载套餐；不存在返回 ErrPlanNotFound。
 	FindByCode(ctx context.Context, code string) (Plan, error)
 }
+
+// InvitationRepository 是成员邀请的持久化契约（T-14）。
+type InvitationRepository interface {
+	// CreateInvitation 插入邀请；同租户同邮箱的 pending 唯一冲突返回
+	// ErrInvitationPendingExists（数据库生成列唯一索引兜底并发）。
+	CreateInvitation(ctx context.Context, invitation Invitation) error
+	// GetInvitation 按 (tenant, invitation) 读取；不存在返回 ErrInvitationNotFound。
+	GetInvitation(ctx context.Context, tenantID, invitationID string) (Invitation, error)
+	// FindByTokenHash 按摘要查找邀请（接受入口）；不存在返回 ErrInvitationNotFound。
+	FindByTokenHash(ctx context.Context, tokenHash string) (Invitation, error)
+	// ListInvitations 分页列出租户邀请；status 为空表示全部。
+	ListInvitations(ctx context.Context, tenantID, status string, limit, offset int) ([]Invitation, int, error)
+	// CompleteInvitation 以 `WHERE id AND status='pending'` 的 CAS 写入终态
+	// （accepted / revoked / expired）；0 行说明邀请已被并发处理，调用方
+	// 应重读并按幂等语义处理（T-14 验收：重复接受幂等）。
+	CompleteInvitation(ctx context.Context, invitation Invitation) error
+	// RefreshInvitation 重发：覆盖摘要、顺延过期时间，仅 pending 可刷新
+	// （0 行返回 ErrInvitationNotPending）。
+	RefreshInvitation(ctx context.Context, invitation Invitation) error
+}

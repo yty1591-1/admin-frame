@@ -535,3 +535,179 @@ func scanPlan(scanner rowScanner) (domain.Plan, error) {
 	plan.Quotas = quotas
 	return plan, nil
 }
+
+// invitationColumns 固定邀请列顺序。
+const invitationColumns = "id, tenant_id, email, role, token_hash, status, invited_by, " +
+	"accepted_by, expires_at, accepted_at, created_at, updated_at"
+
+// CreateInvitation 插入邀请；pending 唯一冲突（生成列 uk_invitation_pending）
+// 返回 ErrInvitationPendingExists，引导调用方走 resend。
+func (r *MySQLRepository) CreateInvitation(ctx context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	_, err := r.exec(ctx).ExecContext(ctx,
+		`INSERT INTO tenant_invitation (`+invitationColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		invitation.ID, invitation.TenantID, invitation.Email, string(invitation.Role),
+		invitation.TokenHash, string(invitation.Status), invitation.InvitedBy,
+		nullString(invitation.AcceptedBy), invitation.ExpiresAt, nullTime(invitation.AcceptedAt),
+		invitation.CreatedAt, invitation.UpdatedAt)
+	if err != nil {
+		if isDuplicateKey(err) {
+			if strings.Contains(err.Error(), "uk_invitation_pending") {
+				return fmt.Errorf("%w: %s", domain.ErrInvitationPendingExists, invitation.Email)
+			}
+			return fmt.Errorf("%w: %s", domain.ErrAlreadyExists, invitation.ID)
+		}
+		return fmt.Errorf("tenant: create invitation %s: %w", invitation.ID, err)
+	}
+	return nil
+}
+
+// GetInvitation 按 (tenant, invitation) 读取。
+func (r *MySQLRepository) GetInvitation(ctx context.Context, tenantID, invitationID string) (domain.Invitation, error) {
+	row := r.query(ctx).QueryRowContext(ctx,
+		`SELECT `+invitationColumns+` FROM tenant_invitation WHERE id = ? AND tenant_id = ?`,
+		strings.TrimSpace(invitationID), strings.TrimSpace(tenantID))
+	invitation, err := scanInvitation(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Invitation{}, domain.ErrInvitationNotFound
+		}
+		return domain.Invitation{}, fmt.Errorf("tenant: get invitation %s: %w", invitationID, err)
+	}
+	return invitation, nil
+}
+
+// FindByTokenHash 按摘要查找邀请（接受入口；摘要唯一索引点查）。
+func (r *MySQLRepository) FindByTokenHash(ctx context.Context, tokenHash string) (domain.Invitation, error) {
+	row := r.query(ctx).QueryRowContext(ctx,
+		`SELECT `+invitationColumns+` FROM tenant_invitation WHERE token_hash = ?`,
+		strings.TrimSpace(tokenHash))
+	invitation, err := scanInvitation(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Invitation{}, domain.ErrInvitationNotFound
+		}
+		return domain.Invitation{}, fmt.Errorf("tenant: find invitation by token: %w", err)
+	}
+	return invitation, nil
+}
+
+// ListInvitations 分页列出邀请，创建时间倒序（与租户列表排序口径一致）。
+func (r *MySQLRepository) ListInvitations(ctx context.Context, tenantID, status string, limit, offset int) ([]domain.Invitation, int, error) {
+	where := " WHERE tenant_id = ?"
+	args := []any{strings.TrimSpace(tenantID)}
+	if status != "" {
+		where += " AND status = ?"
+		args = append(args, status)
+	}
+
+	var total int
+	if err := r.query(ctx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tenant_invitation`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("tenant: count invitations %s: %w", tenantID, err)
+	}
+
+	query := `SELECT ` + invitationColumns + ` FROM tenant_invitation` + where +
+		` ORDER BY created_at DESC, id DESC`
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+	rows, err := r.query(ctx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("tenant: list invitations %s: %w", tenantID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]domain.Invitation, 0, 8)
+	for rows.Next() {
+		invitation, scanErr := scanInvitation(rows)
+		if scanErr != nil {
+			return nil, 0, fmt.Errorf("tenant: scan invitation: %w", scanErr)
+		}
+		out = append(out, invitation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("tenant: iterate invitations: %w", err)
+	}
+	return out, total, nil
+}
+
+// CompleteInvitation 以 `WHERE id AND status='pending'` 的 CAS 写入终态。
+//
+// 0 行说明邀请已被并发处理（或不存在）：返回 ErrInvitationNotPending，
+// 由应用层重读并按幂等 / 冲突分流（T-14：重复接受幂等）。
+func (r *MySQLRepository) CompleteInvitation(ctx context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx,
+		`UPDATE tenant_invitation
+		    SET status = ?, accepted_by = ?, accepted_at = ?, updated_at = ?
+		  WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+		string(invitation.Status), nullString(invitation.AcceptedBy), nullTime(invitation.AcceptedAt),
+		invitation.UpdatedAt, invitation.ID, invitation.TenantID)
+	if err != nil {
+		return fmt.Errorf("tenant: complete invitation %s: %w", invitation.ID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("tenant: complete invitation %s: %w", invitation.ID, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: %s", domain.ErrInvitationNotPending, invitation.ID)
+	}
+	return nil
+}
+
+// RefreshInvitation 重发：覆盖摘要、顺延过期；仅 pending 可刷新。
+func (r *MySQLRepository) RefreshInvitation(ctx context.Context, invitation domain.Invitation) error {
+	if err := invitation.Validate(); err != nil {
+		return err
+	}
+	result, err := r.exec(ctx).ExecContext(ctx,
+		`UPDATE tenant_invitation
+		    SET token_hash = ?, expires_at = ?, updated_at = ?
+		  WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+		invitation.TokenHash, invitation.ExpiresAt, invitation.UpdatedAt,
+		invitation.ID, invitation.TenantID)
+	if err != nil {
+		return fmt.Errorf("tenant: refresh invitation %s: %w", invitation.ID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("tenant: refresh invitation %s: %w", invitation.ID, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("%w: %s", domain.ErrInvitationNotPending, invitation.ID)
+	}
+	return nil
+}
+
+// scanInvitation 按 invitationColumns 顺序扫描一行。
+func scanInvitation(scanner rowScanner) (domain.Invitation, error) {
+	var (
+		invitation domain.Invitation
+		role       string
+		status     string
+		acceptedBy sql.NullString
+		acceptedAt sql.NullTime
+	)
+	if err := scanner.Scan(
+		&invitation.ID, &invitation.TenantID, &invitation.Email, &role, &invitation.TokenHash,
+		&status, &invitation.InvitedBy, &acceptedBy, &invitation.ExpiresAt,
+		&acceptedAt, &invitation.CreatedAt, &invitation.UpdatedAt,
+	); err != nil {
+		return domain.Invitation{}, err
+	}
+	invitation.Role = domain.MemberRole(role)
+	invitation.Status = domain.InvitationStatus(status)
+	invitation.AcceptedBy = acceptedBy.String
+	if acceptedAt.Valid {
+		moment := acceptedAt.Time
+		invitation.AcceptedAt = &moment
+	}
+	return invitation, nil
+}
