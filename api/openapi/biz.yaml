@@ -1,10 +1,13 @@
 openapi: 3.0.3
 info:
   title: Biz API (B)
-  version: 5.2.0
+  version: 6.0.0
   description: |
     商家/企业端。数据范围强制 Token 内 `merchant_id`。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
+    6.0.0：B 端令牌 claims 新增 `current_tenant` 声明（T-22，当前生效租户）——
+    旧令牌无该声明时以 `merchant_id` 兜底（行为明确定义，非破坏性）；
+    新增 `POST /biz/v1/auth/tenant-switch` 租户切换端点（同会话重签，写审计）。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
     3.0.0：移除历史订单契约（破坏性）。
     4.0.0：`Permission` 移除 `action` / `kind` / `parent_code` / `path`，`resource` 改为服务端生成（破坏性）；
@@ -45,6 +48,8 @@ paths:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-logout'
   /biz/v1/auth/logout-all:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-logout-all'
+  /biz/v1/auth/tenant-switch:
+    $ref: './paths/biz/auth.yaml#/biz-v1-auth-tenant-switch'
   /biz/v1/me:
     $ref: './paths/biz/me.yaml#/biz-v1-me'
   /biz/v1/iam/permissions:

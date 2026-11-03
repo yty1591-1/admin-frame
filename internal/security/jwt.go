@@ -488,14 +488,15 @@ func principalFromClaims(claims jwt.Claims, expected auth.Channel) (auth.Princip
 		return auth.Principal{}, apperr.ErrUnauthorized
 	}
 	return auth.Principal{
-		Channel:        expected,
-		SubjectID:      subject,
-		MerchantID:     claims.GetString("merchant_id"),
-		Roles:          claims.GetStringSlice("roles"),
-		SessionID:      claims.GetString("sid"),
-		TokenID:        claims.ID,
-		TokenVersion:   claimInt64(claims.Extra, "ver"),
-		TokenExpiresAt: claims.ExpiresAt,
+		Channel:         expected,
+		SubjectID:       subject,
+		MerchantID:      claims.GetString("merchant_id"),
+		Roles:           claims.GetStringSlice("roles"),
+		SessionID:       claims.GetString("sid"),
+		TokenID:         claims.ID,
+		TokenVersion:    claimInt64(claims.Extra, "ver"),
+		TokenExpiresAt:  claims.ExpiresAt,
+		CurrentTenantID: claims.GetString("current_tenant"),
 	}, nil
 }
 

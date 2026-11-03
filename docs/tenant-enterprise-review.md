@@ -319,8 +319,8 @@ TENANT_TEST_MYSQL_DSN='...' go test ./tests/integration/tenant/... -count=1 -v
 | T-12 | 开通前置 | `activate` 要求 ≥1 active owner；`Create` 支持可选 `owner_subject_id`；默认配额取套餐 | 0 成员租户无法开通，错误可读 | ✅ 2026-11-03 |
 | T-13 | 成员分页与席位上限 | 列表分页；`Add` 前读套餐/租户的 `user` 上限 | 超席位返回 409，附当前值与上限 | ✅ 2026-11-03 |
 | T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 | ✅ 2026-11-03 |
-| T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 |
-| T-22 | 当前租户上下文（D-04=①） | B 端 claims 增 `current_tenant` + 切换端点；契约 major 版本 | 一人多租户可切换；切换写审计；旧令牌行为有明确定义 |
+| T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 | ✅ 2026-11-03 |
+| T-22 | 当前租户上下文（D-04=①） | B 端 claims 增 `current_tenant` + 切换端点；契约 major 版本 | 一人多租户可切换；切换写审计；旧令牌行为有明确定义 | ✅ 2026-11-03 |
 | T-23 | 数据生命周期（D-05） | `docs/tenant-data-lifecycle.md`：保留期 / 导出窗口 / 硬删除边界；到期任务与证据链 | 到期流程可演练；导出可校验；硬删有审计与报告 |
 
 **批次验收命令**
@@ -555,7 +555,31 @@ VIRTUAL 后通过；已记录在迁移注释。
 全绿；lint 0 issues；check-migrations / audit / doclinks / layering / openapi
 （7.5.0 纯增量）全 PASS。
 
-**B3 未完成**：T-15 If-Match、T-22（依赖 T-14，现已解锁）。
+**T-15 条件更新 + T-22 当前租户上下文**
+
+| 改动 | 说明 |
+|---|---|
+| T-15 `app/service.go` | 迁移与资料变更接受 `ExpectedVersion`：预检（事务外，避免为注定失败的停用撤销会话）+ 事务内重读后二次校验；`domain.VersionMismatchError` 携带 expected/current，409 消息直接给出当前版本 |
+| T-15 传输 | `If-Match` 头（`"N"`/`N`，`*` 不支持）与 body `expected_version` 二选一（不一致 400）；详情与成功写入响应带 `ETag` 头 |
+| T-22 claims | B 端签发带 `current_tenant`（初始 = merchant_id，纯增量）；`Principal.CurrentTenant()` 定义回落链：current_tenant 优先、旧令牌回落 merchant_id——**旧令牌行为明确定义**：切换前令牌继续有效至自然过期 |
+| T-22 守卫 | `WithTenantGuard` 改读 `CurrentTenant()`——B 端请求按当前令牌的生效租户校验，多租户切换立即生效 |
+| T-22 切换 | `POST /biz/v1/auth/tenant-switch`（identity）：成员关系校验（`MembershipChecker` 端口，**nil 即拒绝** fail-closed）+ 租户服务期校验（复用 T-08 端口）+ 会话有效性校验 + 同会话重签 access（sid/ver 不变，不作废旧令牌）+ `auth.tenant_switch` 审计 |
+| T-22 装配 | `platform.TenantMembership` 接口（与 TenantGuard 同模式反转依赖）；租户域 `InjectMembership` 注入 Deps（幂等），identityruntime 经适配器消费——**注入必须先于 identity 构造**（main.go 的 once 里先行调用） |
+| 契约 | `admin.yaml` 7.6.0（T-15 纯增量）；`biz.yaml` **6.0.0 major**（claims 语义 + 切换端点，按任务表要求） |
+
+**关键取舍**：① 切换是授权上下文变更不是重新认证：不递增 token_version、
+不撤销会话、refresh token 不变；② 成员关系端口 nil 时切换拒绝（装配缺失
+不能静默变成免检通道）；③ 契约 major bump 但 claims 变化对旧客户端无感
+（字段纯增量 + 回落兜底），major 是对「行为语义锚定」的标记。
+
+**验证**：T-15 app +2 / handler 契约 +1（409 带当前版本、通配 400、不一致 400、
+ETag 闭环）；T-22 identity +3 组（成员切换成功与 claims 断言、六种失败关闭、
+登录签发带 current_tenant）。全仓 go test 绿；lint 0 issues；check-openapi
+（admin 7.6.0 / biz 6.0.0）/ audit / layering / doclinks 全 PASS；MySQL 集成
+11 用例复跑全过。
+
+**B3 全部完成**：T-11 / T-13 / T-14 / T-15 / T-22 / T-24 / T-12 ✅。
+B4（治理收口：T-16 指标、T-17 域门禁等）为下一批次。
 
 ---
 

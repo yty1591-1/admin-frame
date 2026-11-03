@@ -14,6 +14,7 @@
 | `auth.account.deleted` | A/C | 软删账号（管理员注销 / 用户自助注销） | 认证 | 180d | active |
 | `auth.account.restored` | A | 管理员恢复软删账号 | 认证 | 180d | active |
 | `auth.password.changed` | A | 用户自助改密 / 强制改密完成（递增 token_version 并撤销全部会话） | 认证 | 180d | active |
+| `auth.tenant_switch` | B | 切换当前生效租户（T-22，`POST /biz/v1/auth/tenant-switch`）；`attrs.previous_tenant` 记录切换前生效租户，`attrs.session_id` 为同会话重签凭证；仅成员租户可切换，全部失败关闭（成员关系 / 租户状态不可判定即拒绝） | 认证 | 180d | active |
 | `auth.password.reset` | A | 管理员重置密码（生成一次性临时口令并置强制改密标记） | 认证 | 180d | active |
 | `auth.profile.updated` | A/B | 用户自助修改资料（仅 `display_name`；只记字段名，不记昵称原文） | 认证 | 180d | active |
 | `auth.phone.rebound` | C | C 端手机号换绑（撤销全部会话） | 认证 | 180d | active |

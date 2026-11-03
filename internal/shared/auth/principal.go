@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,21 @@ type Principal struct {
 	TokenVersion int64
 	// TokenExpiresAt 令牌到期时间，用于计算 jti 黑名单 TTL。
 	TokenExpiresAt time.Time
+	// CurrentTenantID 当前生效租户（T-22，B 端多租户切换）。
+	// 旧令牌没有该声明（为空），此时以 MerchantID 兜底——见 CurrentTenant。
+	CurrentTenantID string
+}
+
+// CurrentTenant 返回请求的生效租户：current_tenant 声明优先，
+// 旧令牌（无该声明）回落到签发时绑定的 merchant_id。
+//
+// 这是 T-22 的「旧令牌行为明确定义」：切换前签发的令牌继续以
+// merchant_id 生效到自然过期，不会被切换动作作废。
+func (p Principal) CurrentTenant() string {
+	if strings.TrimSpace(p.CurrentTenantID) != "" {
+		return p.CurrentTenantID
+	}
+	return p.MerchantID
 }
 
 type ctxKey struct{}

@@ -87,6 +87,7 @@ func (fakeHasher) Algorithm() password.Algorithm { return password.AlgorithmArgo
 // authFixture 聚合认证用例所需的真实内存实现。
 type authFixture struct {
 	svc         *app.AuthService
+	tokens      *app.TokenService
 	accounts    *persistence.MemoryAccountRepository
 	credentials *persistence.MemoryCredentialRepository
 	sessions    *persistence.MemorySessionRepository
@@ -173,6 +174,7 @@ func newAuthFixture(t *testing.T, channel domain.Channel, opts ...withAuthConfig
 	}
 	return &authFixture{
 		svc:         svc,
+		tokens:      tokens,
 		accounts:    accounts,
 		credentials: credentials,
 		sessions:    sessions,

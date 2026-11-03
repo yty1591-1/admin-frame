@@ -31,6 +31,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /biz/v1/auth/refresh", secure(http.HandlerFunc(h.Refresh)))
 	mux.Handle("POST /biz/v1/auth/logout", secure(authMW(http.HandlerFunc(h.Logout))))
 	mux.Handle("POST /biz/v1/auth/logout-all", secure(authMW(http.HandlerFunc(h.LogoutAll))))
+	// T-22：切换当前生效租户；凭据是当前 Bearer 令牌（须带有效会话），
+	// 需要鉴权但不挂权限点——B 端成员关系即授权依据。
+	mux.Handle("POST /biz/v1/auth/tenant-switch", secure(authMW(http.HandlerFunc(h.SwitchTenant))))
 	// GET /biz/v1/me 返回当前商户员工资料；仅需认证，不额外要求权限点。
 	// 响应含账号状态等敏感字段，统一禁止缓存。
 	mux.Handle("GET /biz/v1/me", secure(authMW(http.HandlerFunc(h.Me))))

@@ -178,6 +178,35 @@ components:
           type: string
           format: date-time
           description: 设备绝对到期时间；刷新不会延长，达到后需重新登录
+
+    # 租户切换（ENT-09 T-22，B 端多租户）。
+    TenantSwitchRequest:
+      type: object
+      required: [tenant_id]
+      additionalProperties: false
+      properties:
+        tenant_id:
+          type: string
+          maxLength: 64
+          description: 目标租户；须为当前主体的在册成员租户，否则 40300。
+
+    TenantSwitchResult:
+      type: object
+      required: [access_token, token_type, expires_in, current_tenant]
+      properties:
+        access_token:
+          type: string
+          description: 同会话重签的访问令牌；`current_tenant` 已更新。
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          minimum: 1
+          description: 访问令牌有效期（秒）。
+        current_tenant:
+          type: string
+          description: 切换后的生效租户；旧令牌继续以 merchant_id 生效至自然过期。
     SMSSendRequest:
       type: object
       required: [phone]

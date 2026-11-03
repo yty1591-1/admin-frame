@@ -23,6 +23,14 @@ type TenantGuard interface {
 	Verify(ctx context.Context, merchantID string) (allow bool, err error)
 }
 
+// TenantMembership 判定主体是否为租户在册成员（ENT-09 T-22）。
+//
+// 由租户域实现并注入 Deps；identity 域的切换端点经此校验成员关系，
+// 与 TenantGuard 一样通过接口反转避免 platform → tenant 的包依赖。
+type TenantMembership interface {
+	IsMember(ctx context.Context, tenantID, subjectID string) (bool, error)
+}
+
 // WithTenantGuard 在鉴权之后、业务处理之前校验租户状态。
 //
 // requireMerchant 表示本端所有请求都必须携带商户（B 端）：merchant_id 为空的
@@ -43,9 +51,11 @@ func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard, requ
 				next.ServeHTTP(w, r)
 				return
 			}
-			// 平台级请求（A 端、C 端单租户）没有 merchant_id，无需守卫；
-			// B 端缺商户属于令牌缺陷，按 403 失败关闭而不是放行。
-			if principal.MerchantID == "" {
+			// 生效租户取 current_tenant 声明（T-22），旧令牌回落 merchant_id。
+			// 平台级请求（A 端、C 端单租户）没有租户上下文，无需守卫；
+			// B 端缺租户属于令牌缺陷，按 403 失败关闭而不是放行。
+			effectiveTenant := principal.CurrentTenant()
+			if effectiveTenant == "" {
 				if requireMerchant {
 					traceID := httpx.TraceIDFromContext(r.Context())
 					httpx.FromError(w, apperr.Forbidden("merchant context is required"), traceID)
@@ -55,7 +65,7 @@ func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard, requ
 				return
 			}
 
-			allow, err := guard.Verify(r.Context(), principal.MerchantID)
+			allow, err := guard.Verify(r.Context(), effectiveTenant)
 			traceID := httpx.TraceIDFromContext(r.Context())
 			switch {
 			case err != nil:

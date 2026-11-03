@@ -105,3 +105,46 @@ biz-v1-auth-logout-all:
         $ref: "../../components.yaml#/components/responses/InternalError"
       "503":
         $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+biz-v1-auth-tenant-switch:
+  post:
+    tags: [auth]
+    summary: 切换当前生效租户（T-22）
+    description: |
+      凭据是当前 Bearer 令牌（须携带有效会话）。目标租户必须是主体的在册成员
+      且处于服务期；成功后返回**同会话重签**的访问令牌（`current_tenant` 声明
+      已更新），refresh token 不变——切换租户不是重新认证。
+      旧令牌行为：切换前签发的令牌继续有效至自然过期，生效租户回落
+      `merchant_id`；B 端请求的守卫按 `current_tenant`（缺省回落）判定。
+      切换写 `auth.tenant_switch` 审计。
+    operationId: bizAuthTenantSwitch
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/TenantSwitchRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TenantSwitchResult"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

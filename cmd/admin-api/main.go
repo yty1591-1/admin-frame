@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/security"
 
@@ -51,7 +52,14 @@ func run(configPath string) error {
 		return iamRT, iamErr
 	}
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
-		identityOn.Do(func() { identityRT, identityErr = identityruntime.New(deps) })
+		identityOn.Do(func() {
+			// T-22：成员关系查询必须先于 identity 构造注入（切换端点依赖）。
+			if mErr := tenantruntime.InjectMembership(deps); mErr != nil {
+				identityErr = mErr
+				return
+			}
+			identityRT, identityErr = identityruntime.New(deps)
+		})
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{

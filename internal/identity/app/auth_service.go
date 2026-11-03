@@ -125,6 +125,8 @@ type AuthServiceConfig struct {
 	// ActorType 写入审计事件的 actor_type；空值时按端别推导。
 	ActorType string
 	Clock     Clock
+	// Membership 判定 B 端主体是否为某租户在册成员（ENT-09 T-22 切换端点）。
+	Membership MembershipChecker
 	// TenantCheck 判定 B 端商户是否可登录 / 可开通账号（ENT-09 T-08/T-10）。
 	//
 	// 由 cmd 注入租户域守卫（结构化接口，identity 不 import 租户域）；
@@ -143,25 +145,27 @@ type AuthService struct {
 	revocation   RevocationStore
 	invalidation *RevocationInvalidator
 	// sessionStateTTL 会话撤销快照最大陈旧度；与账号快照共享 ≤60s 上限。
-	sessionStateTTL         time.Duration
-	observer                RevocationObserver
-	metrics                 Metrics
-	hasher                  *crypto.Hasher
-	logger                  *slog.Logger
-	audit                   audit.Emitter
-	ids                     IDGenerator
-	channel                 domain.Channel
-	uow                     UnitOfWork
-	idleTimeout             time.Duration
-	absoluteTTL             time.Duration
-	maxPerAccount           int
-	refreshGrace            time.Duration
-	passwordHistoryCount    int
-	passwordHistoryWindow   time.Duration
-	service                 string
-	actorType               string
-	clock                   Clock
-	tenantCheck             TenantStatusChecker
+	sessionStateTTL       time.Duration
+	observer              RevocationObserver
+	metrics               Metrics
+	hasher                *crypto.Hasher
+	logger                *slog.Logger
+	audit                 audit.Emitter
+	ids                   IDGenerator
+	channel               domain.Channel
+	uow                   UnitOfWork
+	idleTimeout           time.Duration
+	absoluteTTL           time.Duration
+	maxPerAccount         int
+	refreshGrace          time.Duration
+	passwordHistoryCount  int
+	passwordHistoryWindow time.Duration
+	service               string
+	actorType             string
+	clock                 Clock
+	tenantCheck           TenantStatusChecker
+	// membership 判定主体是否为某租户的在册成员（T-22 切换端点）；nil 时切换拒绝。
+	membership              MembershipChecker
 	mfa                     domain.MFAEnrollmentRepository
 	mfaCipher               MFASecretCipher
 	mfaTickets              MFATicketStore
@@ -260,6 +264,8 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	}
 	// T-08/T-10：租户登录 / 开通校验端口；nil 时跳过（A/C 端、内存模式）。
 	tenantCheck := cfg.TenantCheck
+	// T-22：成员关系校验端口；nil 时切换端点拒绝（fail-closed）。
+	membership := cfg.Membership
 	mfaChannels := cfg.MFAChannels
 	if len(mfaChannels) == 0 {
 		mfaChannels = map[domain.Channel]bool{domain.ChannelAdmin: true}
@@ -343,6 +349,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		actorType:               actorType,
 		clock:                   clock,
 		tenantCheck:             tenantCheck,
+		membership:              membership,
 		mfa:                     cfg.MFA,
 		mfaCipher:               cfg.MFACipher,
 		mfaTickets:              cfg.MFATickets,

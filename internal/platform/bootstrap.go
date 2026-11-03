@@ -44,6 +44,9 @@ type Deps struct {
 	RequirePermission auth.PermissionMiddleware
 	// TenantGuard 是租户状态守卫（ENT-09）；nil 表示本端不做租户校验。
 	TenantGuard TenantGuard
+	// TenantMembership 判定主体是否为租户在册成员（ENT-09 T-22 切换端点）；
+	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
+	TenantMembership TenantMembership
 	// Health 用于 Register 阶段追加就绪检查（如仓储 ping）。
 	Health *health.Handler
 	// ClientIP 是可信代理解析器；nil 表示不信任任何代理头。

@@ -6,6 +6,8 @@
 package tenantruntime
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -40,6 +42,12 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 		return nil, err
 	}
 	repo := store.tenants
+
+	// T-22：成员关系查询注入 Deps（identity 的切换端点据此校验成员关系）。
+	// New 自身也会被 worker 等路径单独调用，这里幂等注入。
+	if err := InjectMembership(deps); err != nil {
+		return nil, err
+	}
 
 	service, err := app.NewService(repo, deps.IDs, emitter, app.Options{
 		DefaultPageSize: defaultPageSize,
@@ -171,4 +179,42 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 		audit.SQLEmitter{DB: deps.Database.SQL()},
 		audit.SlogEmitter{Log: deps.Logger},
 	}, nil
+}
+
+// membershipChecker 把租户成员仓储适配成 identity 需要的成员关系端口（T-22）。
+//
+// 语义：在册（active）成员 → true；不存在或已停用 → false；仓储故障 → error
+// （调用方必须失败关闭，「查不到」不等于「不是成员」）。
+type membershipChecker struct {
+	members domain.MemberRepository
+}
+
+// IsMember 实现 platform.TenantMembership。
+func (m membershipChecker) IsMember(ctx context.Context, tenantID, subjectID string) (bool, error) {
+	member, err := m.members.GetMember(ctx, tenantID, subjectID)
+	if err != nil {
+		if errors.Is(err, domain.ErrMemberNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return member.Active(), nil
+}
+
+// InjectMembership 把租户成员仓储适配成 platform.TenantMembership 并写入 Deps
+// （T-22）。必须先于 identityruntime.New 调用——identity 构造期读取该依赖；
+// 重复注入无害（同一 Deps 覆盖同值）。memory 与 SQL 模式都提供（本地可用）。
+func InjectMembership(deps *platform.Deps) error {
+	if deps == nil {
+		return fmt.Errorf("tenant membership injection requires deps")
+	}
+	if deps.TenantMembership != nil {
+		return nil // 已注入（幂等）。
+	}
+	store, _, err := buildDeps(deps)
+	if err != nil {
+		return fmt.Errorf("tenant membership injection: %w", err)
+	}
+	deps.TenantMembership = membershipChecker{members: store.members}
+	return nil
 }

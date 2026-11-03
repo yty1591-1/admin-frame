@@ -157,10 +157,50 @@ func (s *TokenService) Issue(account *domain.Account, sessionID string) (TokenPa
 	if strings.TrimSpace(sessionID) == "" {
 		return TokenPair{}, apperr.Internal("session id is required", nil)
 	}
+	refresh, err := GenerateRefreshToken(s.channel)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	hash, err := HashRefreshToken(refresh)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	access, err := s.signAccessToken(account, sessionID, "")
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return TokenPair{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		RefreshHash:  hash,
+		ExpiresIn:    int64(s.accessTTL / time.Second),
+	}, nil
+}
+
+// IssueAccessToken 为同会话重签访问令牌（T-22 租户切换）。
+//
+// currentTenant 写入 current_tenant 声明；会话（sid）与撤销版本不变——
+// 切换租户是授权上下文变更，不是重新认证，不产生新会话也不作废旧令牌：
+// 旧 access 自然过期，生效租户回落 merchant_id（见 auth.Principal.CurrentTenant）。
+func (s *TokenService) IssueAccessToken(account *domain.Account, sessionID, currentTenant string) (string, error) {
+	if account == nil {
+		return "", apperr.Internal("account is required", nil)
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return "", apperr.Internal("session id is required", nil)
+	}
+	if strings.TrimSpace(currentTenant) == "" {
+		return "", apperr.BadRequest("current tenant is required")
+	}
+	return s.signAccessToken(account, sessionID, currentTenant)
+}
+
+// signAccessToken 签发访问令牌；currentTenant 非空时覆盖默认生效租户。
+func (s *TokenService) signAccessToken(account *domain.Account, sessionID, currentTenant string) (string, error) {
 	now := s.clock.Now().UTC()
 	jti, err := s.ids.NextString()
 	if err != nil {
-		return TokenPair{}, apperr.Internal("generate token id failed", err)
+		return "", apperr.Internal("generate token id failed", err)
 	}
 	extra := map[string]any{
 		"ver":     account.TokenVersion,
@@ -168,7 +208,14 @@ func (s *TokenService) Issue(account *domain.Account, sessionID string) (TokenPa
 		"sid":     sessionID,
 	}
 	if s.channel == domain.ChannelBiz {
-		extra["merchant_id"] = account.MerchantID
+		merchant := account.MerchantID
+		if trimmed := strings.TrimSpace(currentTenant); trimmed != "" {
+			merchant = trimmed
+		}
+		// T-22：current_tenant 与 merchant_id 同值签发——merchant_id 保留
+		// 是旧令牌兼容口径（回落链），新声明是唯一权威来源。
+		extra["merchant_id"] = merchant
+		extra["current_tenant"] = merchant
 	}
 	claims := jwt.Claims{
 		Subject:   account.ID,
@@ -180,22 +227,9 @@ func (s *TokenService) Issue(account *domain.Account, sessionID string) (TokenPa
 	}
 	access, err := s.signer.Sign(claims)
 	if err != nil {
-		return TokenPair{}, apperr.Internal("sign access token failed", err)
+		return "", apperr.Internal("sign access token failed", err)
 	}
-	refresh, err := GenerateRefreshToken(s.channel)
-	if err != nil {
-		return TokenPair{}, err
-	}
-	hash, err := HashRefreshToken(refresh)
-	if err != nil {
-		return TokenPair{}, err
-	}
-	return TokenPair{
-		AccessToken:  access,
-		RefreshToken: refresh,
-		RefreshHash:  hash,
-		ExpiresIn:    int64(s.accessTTL / time.Second),
-	}, nil
+	return access, nil
 }
 
 // GenerateRefreshToken 生成指定端别的 32 字节随机刷新令牌。

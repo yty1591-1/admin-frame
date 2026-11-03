@@ -309,9 +309,15 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if deps.TenantGuard != nil {
 		tenantCheck = deps.TenantGuard
 	}
+	// T-22：成员关系查询（租户域适配注入 Deps）；nil 时切换端点拒绝（fail-closed）。
+	var membership app.MembershipChecker
+	if deps.TenantMembership != nil {
+		membership = membershipAdapter{deps.TenantMembership}
+	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
 		TenantCheck:           tenantCheck,
+		Membership:            membership,
 		Accounts:              repos.accounts,
 		Credentials:           repos.credentials,
 		Sessions:              repos.sessions,
@@ -989,4 +995,15 @@ func registerHealth(deps *platform.Deps) {
 	if deps.Database != nil {
 		deps.Health.Register("identity_db", deps.Database.Checker())
 	}
+}
+
+// membershipAdapter 把 platform.TenantMembership 适配成 identity 的
+// MembershipChecker 端口（T-22）；两接口方法签名一致，仅包边界转换。
+type membershipAdapter struct {
+	inner platform.TenantMembership
+}
+
+// IsMember 实现 identity 的 MembershipChecker 端口。
+func (a membershipAdapter) IsMember(ctx context.Context, tenantID, subjectID string) (bool, error) {
+	return a.inner.IsMember(ctx, tenantID, subjectID)
 }
