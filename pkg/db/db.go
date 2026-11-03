@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // MySQLDefaultCollation 与 migrations DDL 使用的表级 collation 保持一致。
@@ -96,7 +97,21 @@ type DB struct {
 // Open 打开驱动、应用连接池参数，并（默认）Ping 验证连通性。
 //
 // 调用方须 blank-import 对应驱动；失败时错误消息仅含脱敏 DSN。
+// 不采集 SQL span；需要链路追踪时用 OpenTraced。
 func Open(ctx context.Context, cfg Config) (*DB, error) {
+	return open(ctx, cfg, nil)
+}
+
+// OpenTraced 同 Open，并为 SQL 调用创建 CLIENT span（db.system / db.name / 语句）。
+//
+// tp 为 nil 时退化为 Open。span 的父节点取自调用方 context，
+// HTTP 入口 span → SQL span 由此串成一条链（AC-ENT-06-4）。
+func OpenTraced(ctx context.Context, cfg Config, tp trace.TracerProvider) (*DB, error) {
+	return open(ctx, cfg, tp)
+}
+
+// open 是 Open / OpenTraced 的共同实现。
+func open(ctx context.Context, cfg Config, tp trace.TracerProvider) (*DB, error) {
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -106,7 +121,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: parse %s DSN (%s): %w", cfg.Driver, RedactDSN(cfg.DSN), err)
 	}
-	sqlDB, err := sql.Open(cfg.Driver, dsn)
+	sqlDB, err := openSQL(cfg.Driver, dsn, tp)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s (%s): %w", cfg.Driver, RedactDSN(cfg.DSN), err)
 	}

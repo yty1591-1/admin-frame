@@ -50,7 +50,9 @@ exporters:
     endpoint: tempo.observability.svc.cluster.local:4317
     tls:
       insecure: true
-    retry:
+    # 键名必须是 retry_on_failure：exporter 侧的 `retry:` 在 Collector 0.104 起
+    # 已不被识别，写错会让 Collector 启动即崩（kind 实测：invalid keys: retry）。
+    retry_on_failure:
       enabled: true
       initial_interval: 1s
       max_interval: 10s
@@ -86,9 +88,7 @@ service:
     logs:
       level: info
     metrics:
-      readers:
-        - pull:
-            exporter:
-              prometheus:
-                host: 0.0.0.0
-                port: 8888
+      # 用 address 而非 readers[].pull.exporter.prometheus：
+      # 0.104 同时存在默认监听与 pull reader 时会绑两次，第二个 8888 直接
+      # address already in use 退出（kind 实测）。
+      address: 0.0.0.0:8888

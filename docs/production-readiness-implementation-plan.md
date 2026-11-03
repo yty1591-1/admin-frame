@@ -632,8 +632,14 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 鉴权决策（决策面板恒空）、RED 看板 5xx 比率在无错误时是空面板。
 记录见 [observability-dashboard-verify.md](./observability-dashboard-verify.md)。
 
-`AC-ENT-06-4`（trace 追到 DB）尚未完成：`pkg/db` 直接 `sql.Open`，没有 SQL 层 span，
-需要先决策 otelsql 依赖（过 DEP 评审）或自研 driver 包装。
+`AC-ENT-06-4`（trace 追到 DB）已完成（2026-11-03，kind + Jaeger 1.57 + Collector Contrib 0.104.0）：
+一次 `GET /admin/v1/audit/events` 的 trace 为 `GET /admin/v1/audit/events` → `sql.conn.query`
+（`db.system=mysql`，带 SQL 语句），父子链完整。交付 `pkg/db.OpenTraced`（otelsql 包装驱动，
+仅在传入 TracerProvider 时启用）、`tracing.RoutePatternMiddleware`（把 ServeMux 命中模式回填到
+入口 span 名与 `http.route`）、`scripts/observability/{install-kind-otel.sh,check-trace-chain.py}`。
+本轮同时修掉两个「配置写了但从没被执行」的缺陷：Collector 的 `retry:` 非法键、telemetry 端口双绑，
+两者都会让 Collector 起不来——即整条 trace 链路默认是断的。
+记录见 [trace-chain-verify.md](./trace-chain-verify.md)。
 
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 

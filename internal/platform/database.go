@@ -7,6 +7,7 @@ import (
 	// 注册 MySQL 与 PostgreSQL 的 database/sql 驱动（迁移与业务共用同一驱动集合）。
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/redis"
@@ -47,8 +48,10 @@ func dbConfigFrom(cfg DBConfig) (db.Config, error) {
 // OpenDatabase 按配置打开进程数据库；driver=memory 返回 nil（业务使用内存实现）。
 //
 // 连接池参数取自 db.max_open_conns / max_idle_conns / conn_max_lifetime，未配置时由
-// pkg/db 填充默认值；调用方须在使用完毕后 Close。
-func OpenDatabase(ctx context.Context, cfg DBConfig) (*db.DB, error) {
+// pkg/db 填充默认值；tp 非 nil 时为 SQL 调用创建 CLIENT span（调用方传本进程的
+// TracerProvider，worker 等未接入 tracing 的进程传 nil）。
+// 调用方须在使用完毕后 Close。
+func OpenDatabase(ctx context.Context, cfg DBConfig, tp trace.TracerProvider) (*db.DB, error) {
 	if cfg.Driver == "" || cfg.Driver == "memory" {
 		return nil, nil
 	}
@@ -56,7 +59,7 @@ func OpenDatabase(ctx context.Context, cfg DBConfig) (*db.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	database, err := db.Open(ctx, dbCfg)
+	database, err := db.OpenTraced(ctx, dbCfg, tp)
 	if err != nil {
 		return nil, fmt.Errorf("db: %w", err)
 	}

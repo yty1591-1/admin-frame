@@ -345,8 +345,12 @@
 - [x] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标
       （2026-11-03 kind 真集群实测：37 个面板查询错误 0、空数据 0；记录见
       [observability-dashboard-verify.md](./observability-dashboard-verify.md)）。
-- [ ] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖
-      （缺口：`pkg/db` 无 SQL 层 span，需先决策 otelsql 依赖或自研 driver 包装）。
+- [x] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖
+      （2026-11-03 kind 真集群实测：`GET /admin/v1/audit/events` → `sql.conn.query`
+      `db.system=mysql` 且带语句，父子链完整；做法为 `pkg/db.OpenTraced` 用 otelsql 包装驱动，
+      记录见 [trace-chain-verify.md](./trace-chain-verify.md)）。
+      外部 HTTP 依赖 span 由 `pkg/httpclient` 埋点提供，本轮请求未触发外部调用，
+      该分支在 staging 待补一次真实调用。
 
 **门禁**：新增 `make check-alerts`（ALERTS ↔ 规则 ↔ runbook 三方一致）。
 

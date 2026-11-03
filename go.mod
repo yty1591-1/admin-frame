@@ -3,6 +3,7 @@ module github.com/admin-frame/admin-frame
 go 1.26.10
 
 require (
+	github.com/XSAM/otelsql v0.42.0
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.6.1
 	github.com/aws/aws-sdk-go-v2 v1.47.3

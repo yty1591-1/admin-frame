@@ -122,6 +122,30 @@ func HTTPMiddleware(opts ...HTTPOption) func(http.Handler) http.Handler {
 	}
 }
 
+// RoutePatternMiddleware 在路由匹配完成后把命中模式写回当前 span（名称与 http.route）。
+//
+// 必须放在最内层（紧贴 ServeMux）：ServeMux 只会把 Pattern 写在「传给它的那份
+// *http.Request」上，外层中间件若复制过请求（middleware.Timeout 用 WithContext
+// 就会复制），就再也看不到 Pattern —— span 名会退化成 GET unknown，
+// 按路由检索、按路由聚合耗时全部失效（kind 实测：37 个入口 span 全是 GET unknown）。
+func RoutePatternMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+			route := routeFromRequest(r)
+			if route == "" {
+				return
+			}
+			span := trace.SpanFromContext(r.Context())
+			if !span.IsRecording() {
+				return
+			}
+			span.SetAttributes(attribute.String("http.route", route))
+			span.SetName(r.Method + " " + route)
+		})
+	}
+}
+
 func defaultSpanName(r *http.Request) string {
 	if r == nil {
 		return "HTTP"

@@ -29,6 +29,7 @@
 | OBS-05 | 业务响应信封携带 `trace_id`，并与访问日志一致（`X-Request-ID` / context） | API-03 + 实现 |
 | OBS-06 | 预期内 4xx 默认不打 Error 级，避免告警噪音；5xx / panic 打 Error | Review |
 | OBS-07 | A/B/C 关键操作写审计事件；字段与目录以 `AUDIT_STANDARDS` 为准 | `make check-audit` + Review |
+| OBS-09 | 一次请求的 trace 必须能从入口追到 DB / 外部依赖；入口 span 名为 `METHOD <route>`（路由匹配后回填，禁止 `GET unknown`），SQL span 为 `sql.*` 且带 `db.system` | `pkg/db.OpenTraced` + `tracing.RoutePatternMiddleware` + `scripts/observability/check-trace-chain.py` |
 | OBS-08 | 合并请求须勾选可观测自检 | PR 模板 |
 
 ---
@@ -138,6 +139,7 @@ make ci
 
 - [ ] Logger 绑定 `service`/`channel`/`env`；访问日志含 `trace_id`
 - [ ] 三端 API 具备 healthz/readyz/version
+- [ ] 一次请求的 trace 可从入口追到 DB / 外部依赖（OBS-09）
 - [ ] 新关键写路径有审计或明确豁免理由
 - [ ] 无敏感字段进入日志
 - [ ] `make check-observability` 通过
@@ -154,6 +156,7 @@ make ci
 | `internal/platform/endpoints.go` | MountHealth / MountVersion / MountMetrics |
 | `pkg/health` | 存活/就绪实现 |
 | `pkg/metrics` | Prometheus Registry、HTTP RED、build_info |
-| `pkg/tracing` | OTel Init / Shutdown、HTTPMiddleware、span 工具 |
+| `pkg/tracing` | OTel Init / Shutdown、HTTPMiddleware、RoutePatternMiddleware、span 工具 |
+| `pkg/db`（`OpenTraced`） | SQL CLIENT span（`db.system` / `db.name` / 语句），依赖 `github.com/XSAM/otelsql` |
 | `scripts/ci/check-observability.sh` | OBS-01/02/04 + metrics / tracing 挂载 |
 | 本文件 | 规范正文 |

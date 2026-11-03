@@ -142,7 +142,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}()
 
-	database, err := OpenDatabase(ctx, cfg.DB)
+	database, err := OpenDatabase(ctx, cfg.DB, tp.TracerProvider())
 	if err != nil {
 		return err
 	}

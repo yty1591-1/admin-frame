@@ -95,6 +95,9 @@ func NewPipeline(cfg PipelineConfig, deps PipelineDeps) (func(http.Handler) http
 	if idem != nil {
 		mws = append(mws, idem)
 	}
+	// 必须最内层（紧贴 mux）：ServeMux 只把匹配到的 Pattern 写在传给它的请求上，
+	// 外层 Timeout 等中间件复制过请求后就取不到了，span 名会退化成 GET unknown。
+	mws = append(mws, tracing.RoutePatternMiddleware())
 	return func(next http.Handler) http.Handler {
 		return middleware.Chain(next, mws...)
 	}, nil

@@ -52,7 +52,9 @@ func run(configPath, replayDLQ string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	database, err := platform.OpenDatabase(ctx, cfg.DB)
+	// worker 未初始化 tracing provider，故不采集 SQL span（传 nil）；
+	// API 进程在同一位置传本进程 TracerProvider，链路为「HTTP 入口 → SQL」。
+	database, err := platform.OpenDatabase(ctx, cfg.DB, nil)
 	if err != nil {
 		return err
 	}

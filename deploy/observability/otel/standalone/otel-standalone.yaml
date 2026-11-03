@@ -1,0 +1,157 @@
+# 单体 trace 后端（kind / 单机验证用）：Jaeger all-in-one + OTel Collector。
+#
+# 与生产差异：
+#   - Jaeger all-in-one 用内存存储，Pod 重启即丢 trace，仅用于演练；
+#   - Collector 配置来自 ConfigMap otel-collector-config，由
+#     scripts/observability/install-kind-otel.sh 从 deploy/observability/otel/collector.yaml
+#     生成（改导出端与采样率），保证「验证对象」与仓库配置同源。
+#
+# 抓取链路：应用 --OTLP/HTTP--> otel-collector:4318 --OTLP/gRPC--> jaeger-collector:4317
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/part-of: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jaeger
+        app.kubernetes.io/part-of: observability
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.57
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+            # 内存存储上限调小，避免演练把节点内存吃满。
+            - name: MEMORY_MAX_TRACES
+              value: "20000"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: query
+              containerPort: 16686
+          readinessProbe:
+            httpGet:
+              path: /
+              port: query
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/part-of: observability
+spec:
+  selector:
+    app.kubernetes.io/name: jaeger
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/part-of: observability
+spec:
+  selector:
+    app.kubernetes.io/name: jaeger
+  ports:
+    - name: query
+      port: 16686
+      targetPort: query
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/part-of: observability
+    spec:
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.104.0
+          args:
+            - --config=/etc/otel/collector.yaml
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: observability
+spec:
+  selector:
+    app.kubernetes.io/name: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
