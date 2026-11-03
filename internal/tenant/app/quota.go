@@ -39,7 +39,7 @@ func NewQuotaService(tenants domain.Repository, quotas domain.QuotaRepository, e
 	return &QuotaService{
 		tenants: tenants,
 		quotas:  quotas,
-		audit:   auditContext{emitter: emitter, service: opts.Service, now: now},
+		audit:   auditContext{emitter: emitter, service: opts.Service, now: now, observer: observerOrNoop(opts.Observer)},
 		now:     now,
 	}, nil
 }

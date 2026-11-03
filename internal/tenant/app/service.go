@@ -55,6 +55,8 @@ type auditContext struct {
 	ids     id.Generator
 	service string
 	now     func() time.Time
+	// observer 可观测端口（T-16）；emit 失败计数，nil 安全由构造保证。
+	observer Observer
 }
 
 // emit 写一条审计事件。
@@ -89,7 +91,12 @@ func (a auditContext) emit(ctx context.Context, actor Actor, action, resourceTyp
 		Reason:       truncate(reason, 255),
 		Attrs:        attrs,
 	}
-	return a.emitter.Emit(ctx, event)
+	if err := a.emitter.Emit(ctx, event); err != nil {
+		// Outbox 模式下这里失败即业务回滚（请求 500）：计数器非零即应告警。
+		a.observer.AuditEmitFailed()
+		return err
+	}
+	return nil
 }
 
 // Options 是用例参数。
@@ -106,6 +113,8 @@ type Options struct {
 	Revoker SessionRevoker
 	// Plans 套餐目录（T-24）；nil 时 Create 拒绝服务（无法解析默认配额）。
 	Plans domain.PlanRepository
+	// Observer 可观测端口（T-16）；nil 时使用 noop 实现。由所有租户用例共享。
+	Observer Observer
 	// Members 成员仓储（T-12）：开通前置校验与建租户时落首名 owner。
 	Members domain.MemberRepository
 	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额；T-13 席位与
@@ -204,10 +213,11 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 		opts.MaxPageSize = opts.DefaultPageSize
 	}
 	now := time.Now
+	opts.Observer = observerOrNoop(opts.Observer)
 	return &Service{
 		repo:    repo,
 		ids:     ids,
-		audit:   auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
+		audit:   auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: opts.Observer},
 		now:     now,
 		opts:    opts,
 		members: opts.Members,
@@ -561,6 +571,8 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 			return emitErr
 		}
 		next = migrated
+		// T-16：迁移成功即将提交，记 from → to（失败不计，见 Observer 契约）。
+		s.opts.Observer.Transition(string(locked.Status), string(in.Target))
 		return nil
 	})
 	if err != nil {

@@ -60,6 +60,9 @@ type Repository interface {
 	// 与 UpdateStatus 共用同一个版本计数器：并发「改名 + 停用」互为冲突，
 	// 后写者拿到 409 重读重试，而不是悄悄覆盖对方的写入。
 	UpdateProfile(ctx context.Context, tenant Tenant) error
+	// CountByStatus 按状态统计租户数（T-16 的 tenant_status Gauge 数据源）。
+	// 返回的 map 只包含有租户的状态；查询失败返回 error，由调用方决定降级方式。
+	CountByStatus(ctx context.Context) (map[Status]int, error)
 }
 
 // MemberRepository 是租户成员持久化契约。

@@ -335,3 +335,38 @@ func TestUpdateProfileExpectedVersionMismatch(t *testing.T) {
 		t.Fatalf("Version = %d, want %d", updated.Version, current+1)
 	}
 }
+
+// TestTransitionObserverSignal 验证状态迁移成功接入 Observer（T-16）。
+func TestTransitionObserverSignal(t *testing.T) {
+	fixture := newSeatFixture(t)
+	obs := &recordObserver{}
+	// 重挂 Observer：fixture 的 service 已构造，直接替换内部 opts 不可行——
+	// 用独立 service 实例（同 repo / emitter）验证信号。
+	opts := testPlanOptions(fixture.repo)
+	opts.Observer = obs
+	svc, err := app.NewService(fixture.repo, &seqIDs{}, &recordEmitter{}, opts)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	ctx := context.Background()
+	if _, err := svc.Transition(ctx, app.TransitionInput{
+		ID: fixture.tenant.ID, Target: domain.StatusSuspended, Reason: "观测验证", Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Transition(suspend) error = %v", err)
+	}
+	if _, err := svc.Transition(ctx, app.TransitionInput{
+		ID: fixture.tenant.ID, Target: domain.StatusActive, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Transition(resume) error = %v", err)
+	}
+	_, _, transitions, _ := obs.snapshot()
+	want := [][2]string{{"active", "suspended"}, {"suspended", "active"}}
+	if len(transitions) != len(want) {
+		t.Fatalf("transitions = %v, want %v", transitions, want)
+	}
+	for i, w := range want {
+		if transitions[i] != w {
+			t.Fatalf("transitions[%d] = %v, want %v", i, transitions[i], w)
+		}
+	}
+}

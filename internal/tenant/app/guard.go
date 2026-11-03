@@ -42,6 +42,8 @@ type GuardOptions struct {
 	NotFoundTTL time.Duration
 	// Clock 时钟注入（测试用）；nil 取 time.Now。
 	Clock func() time.Time
+	// Observer 可观测端口（T-16）；nil 时使用 noop 实现。
+	Observer Observer
 }
 
 // guardEntry 是单个商户的状态缓存项。
@@ -61,6 +63,7 @@ type guardEntry struct {
 //   - **错误不缓存**：数据库抖动不能变成 30s 的「已停用」误判。
 type Guard struct {
 	repo        domain.Repository
+	observer    Observer
 	ttl         time.Duration
 	notFoundTTL time.Duration
 	now         func() time.Time
@@ -88,6 +91,7 @@ func NewGuard(repo domain.Repository, opts GuardOptions) (*Guard, error) {
 	}
 	return &Guard{
 		repo:        repo,
+		observer:    observerOrNoop(opts.Observer),
 		ttl:         ttl,
 		notFoundTTL: notFoundTTL,
 		now:         clock,
@@ -105,21 +109,38 @@ func (g *Guard) Check(ctx context.Context, merchantID string) error {
 		return nil
 	}
 	if entry, ok := g.lookup(trimmed); ok {
+		g.observer.GuardCacheHit(true)
+		g.observe(entry)
 		return entry.toError(trimmed)
 	}
+	g.observer.GuardCacheHit(false)
 
 	tenant, err := g.repo.Get(ctx, trimmed)
 	switch {
 	case err == nil:
-		g.store(trimmed, guardEntry{status: tenant.Status, expires: g.now().Add(g.ttl)})
+		entry := guardEntry{status: tenant.Status, expires: g.now().Add(g.ttl)}
+		g.store(trimmed, entry)
+		g.observe(entry)
 		return serviceabilityError(trimmed, tenant.Status)
 	case errors.Is(err, domain.ErrNotFound):
-		g.store(trimmed, guardEntry{unknown: true, expires: g.now().Add(g.notFoundTTL)})
+		entry := guardEntry{unknown: true, expires: g.now().Add(g.notFoundTTL)}
+		g.store(trimmed, entry)
+		g.observer.GuardDecision("deny")
 		return fmt.Errorf("%w: %s", ErrTenantUnknown, trimmed)
 	default:
 		// 不缓存：数据库故障不应被记成「已停用」。
+		g.observer.GuardDecision("error")
 		return fmt.Errorf("tenant: guard lookup %s: %w", trimmed, err)
 	}
+}
+
+// observe 按缓存项的服务性记录判定结果（deny / allow）。
+func (g *Guard) observe(entry guardEntry) {
+	if entry.unknown || !entry.status.Serving() {
+		g.observer.GuardDecision("deny")
+		return
+	}
+	g.observer.GuardDecision("allow")
 }
 
 // Verify 实现 platform.TenantGuard：把判定结果收敛为「放行 / 拒绝 / 无法判定」。

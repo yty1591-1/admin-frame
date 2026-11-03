@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
+	tenantobservability "github.com/admin-frame/admin-frame/internal/tenant/observability"
 	tenantrest "github.com/admin-frame/admin-frame/internal/tenant/transport/rest"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -43,6 +44,23 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 	}
 	repo := store.tenants
 
+	// T-16：租户域指标。deps.Metrics 缺失（最小进程形态）时退化为 noop——
+	// 用例层已把 nil Observer 归一化，这里只为注册 Gauge 保留引用。
+	var tenantMetrics *tenantobservability.Metrics
+	if deps.Metrics != nil {
+		tenantMetrics, err = tenantobservability.NewMetrics(deps.Metrics.RegistererWithoutChannel())
+		if err != nil {
+			return nil, fmt.Errorf("tenant metrics: %w", err)
+		}
+		if err := tenantMetrics.RegisterStatusGauge(repo.CountByStatus); err != nil {
+			return nil, fmt.Errorf("tenant metrics: %w", err)
+		}
+	}
+	var observer app.Observer
+	if tenantMetrics != nil {
+		observer = tenantMetrics
+	}
+
 	// T-22：成员关系查询注入 Deps（identity 的切换端点据此校验成员关系）。
 	// New 自身也会被 worker 等路径单独调用，这里幂等注入。
 	if err := InjectMembership(deps); err != nil {
@@ -57,6 +75,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 		Plans:           store.plans,
 		Members:         store.members,
 		Quotas:          store.quotas,
+		Observer:        observer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant service: %w", err)
@@ -64,19 +83,20 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 
 	// 成员用例必须拿到配额仓储：T-13 席位上限依赖它（缺了就静默不校验）。
 	memberService, err := app.NewMemberService(store.tenants, store.members, emitter, app.Options{
-		Service: deps.Config.Service,
-		Quotas:  store.quotas,
+		Service:  deps.Config.Service,
+		Quotas:   store.quotas,
+		Observer: observer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant member service: %w", err)
 	}
-	quotaService, err := app.NewQuotaService(store.tenants, store.quotas, emitter, app.Options{Service: deps.Config.Service})
+	quotaService, err := app.NewQuotaService(store.tenants, store.quotas, emitter, app.Options{Service: deps.Config.Service, Observer: observer})
 	if err != nil {
 		return nil, fmt.Errorf("tenant quota service: %w", err)
 	}
 	// 邀请用例（T-14）：成员与配额仓储复用同一套实现；TTL 用领域默认值（7 天）。
 	invitationService, err := app.NewInvitationService(store.tenants, store.members, store.invitations,
-		deps.IDs, emitter, app.Options{Service: deps.Config.Service, Quotas: store.quotas})
+		deps.IDs, emitter, app.Options{Service: deps.Config.Service, Quotas: store.quotas, Observer: observer})
 	if err != nil {
 		return nil, fmt.Errorf("tenant invitation service: %w", err)
 	}
@@ -135,7 +155,17 @@ func NewGuard(deps *platform.Deps) (platform.TenantGuard, error) {
 	if err != nil {
 		return nil, err
 	}
-	guard, err := app.NewGuard(store.tenants, app.GuardOptions{})
+	// T-16：守卫判定 / 缓存命中指标；Metrics 缺失时 Observer 为 nil，
+	// app.NewGuard 内部归一化为 noop。
+	var observer app.Observer
+	if deps.Metrics != nil {
+		metrics, mErr := tenantobservability.NewMetrics(deps.Metrics.RegistererWithoutChannel())
+		if mErr != nil {
+			return nil, fmt.Errorf("tenant guard metrics: %w", mErr)
+		}
+		observer = metrics
+	}
+	guard, err := app.NewGuard(store.tenants, app.GuardOptions{Observer: observer})
 	if err != nil {
 		return nil, fmt.Errorf("tenant guard: %w", err)
 	}

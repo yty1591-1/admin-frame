@@ -55,7 +55,7 @@ func NewMemberService(tenants domain.Repository, members domain.MemberRepository
 		tenants: tenants,
 		members: members,
 		quotas:  opts.Quotas,
-		audit:   auditContext{emitter: emitter, ids: nil, service: opts.Service, now: now},
+		audit:   auditContext{emitter: emitter, ids: nil, service: opts.Service, now: now, observer: observerOrNoop(opts.Observer)},
 		now:     now,
 	}, nil
 }

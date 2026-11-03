@@ -23,8 +23,9 @@ func (r *countingRepo) Create(context.Context, domain.Tenant) error { return nil
 func (r *countingRepo) List(context.Context, domain.Filter) ([]domain.Tenant, int, error) {
 	return nil, 0, nil
 }
-func (r *countingRepo) UpdateStatus(context.Context, domain.Tenant) error  { return nil }
-func (r *countingRepo) UpdateProfile(context.Context, domain.Tenant) error { return nil }
+func (r *countingRepo) UpdateStatus(context.Context, domain.Tenant) error            { return nil }
+func (r *countingRepo) UpdateProfile(context.Context, domain.Tenant) error           { return nil }
+func (r *countingRepo) CountByStatus(context.Context) (map[domain.Status]int, error) { return nil, nil }
 
 func (r *countingRepo) Get(_ context.Context, id string) (domain.Tenant, error) {
 	r.mu.Lock()
@@ -258,4 +259,105 @@ func TestGuardVerifySeparatesDeniedFromUndetermined(t *testing.T) {
 // WithinTx 在测试中直接执行 fn（无事务语义）。
 func (r *countingRepo) WithinTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
+}
+
+// recordObserver 是 Observer 的记录实现，用于断言埋点接线（T-16）。
+type recordObserver struct {
+	mu          sync.Mutex
+	decisions   []string
+	cacheHits   []bool
+	transitions [][2]string
+	emitFailed  int
+}
+
+func (o *recordObserver) GuardDecision(result string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.decisions = append(o.decisions, result)
+}
+func (o *recordObserver) GuardCacheHit(hit bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.cacheHits = append(o.cacheHits, hit)
+}
+func (o *recordObserver) Transition(from, to string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.transitions = append(o.transitions, [2]string{from, to})
+}
+func (o *recordObserver) AuditEmitFailed() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.emitFailed++
+}
+func (o *recordObserver) snapshot() (decisions []string, hits []bool, transitions [][2]string, failed int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.decisions...), append([]bool(nil), o.cacheHits...),
+		append([][2]string(nil), o.transitions...), o.emitFailed
+}
+
+// TestGuardObserverWiring 验证守卫判定 / 缓存命中信号接入 Observer（T-16）。
+func TestGuardObserverWiring(t *testing.T) {
+	repo := &countingRepo{tenants: map[string]domain.Tenant{"m1": activeTenant(domain.StatusActive)}}
+	obs := &recordObserver{}
+	guard, err := app.NewGuard(repo, app.GuardOptions{
+		TTL: time.Minute, NotFoundTTL: time.Second, Clock: func() time.Time { return time.Unix(0, 0) },
+		Observer: obs,
+	})
+	if err != nil {
+		t.Fatalf("NewGuard() error = %v", err)
+	}
+
+	// 首次：回源 + allow。
+	if err := guard.Check(context.Background(), "m1"); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	// 第二次：缓存命中 + allow。
+	if err := guard.Check(context.Background(), "m1"); err != nil {
+		t.Fatalf("Check(cached) error = %v", err)
+	}
+	// 未登记：回源 + deny。
+	if err := guard.Check(context.Background(), "absent"); !errors.Is(err, app.ErrTenantUnknown) {
+		t.Fatalf("Check(absent) error = %v", err)
+	}
+	// 数据库故障：error。
+	repo.err = errors.New("db down")
+	repo.calls = 0
+	repo.tenants = map[string]domain.Tenant{} // absent 已缓存 deny，换个新商户强制回源
+	if err := guard.Check(context.Background(), "m2"); err == nil {
+		t.Fatal("Check(db down) 应报错")
+	}
+
+	decisions, hits, _, _ := obs.snapshot()
+	wantDecisions := []string{"allow", "allow", "deny", "error"}
+	if len(decisions) != len(wantDecisions) {
+		t.Fatalf("decisions = %v, want %v", decisions, wantDecisions)
+	}
+	for i, want := range wantDecisions {
+		if decisions[i] != want {
+			t.Fatalf("decisions[%d] = %s, want %s", i, decisions[i], want)
+		}
+	}
+	wantHits := []bool{false, true, false, false}
+	if len(hits) != len(wantHits) {
+		t.Fatalf("cacheHits = %v, want %v", hits, wantHits)
+	}
+	for i, want := range wantHits {
+		if hits[i] != want {
+			t.Fatalf("cacheHits[%d] = %t, want %t", i, hits[i], want)
+		}
+	}
+}
+
+// TestNilObserverIsNoop 验证 nil Observer 归一化：守卫零配置可用。
+func TestNilObserverIsNoop(t *testing.T) {
+	repo := &countingRepo{tenants: map[string]domain.Tenant{"m1": activeTenant(domain.StatusActive)}}
+	guard, err := app.NewGuard(repo, app.GuardOptions{})
+	if err != nil {
+		t.Fatalf("NewGuard() error = %v", err)
+	}
+	if err := guard.Check(context.Background(), "m1"); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
 }

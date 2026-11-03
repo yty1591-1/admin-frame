@@ -346,7 +346,8 @@ func (r *conflictRepo) Get(context.Context, string) (domain.Tenant, error) {
 func (r *conflictRepo) List(context.Context, domain.Filter) ([]domain.Tenant, int, error) {
 	return nil, 0, nil
 }
-func (r *conflictRepo) UpdateProfile(context.Context, domain.Tenant) error { return nil }
+func (r *conflictRepo) UpdateProfile(context.Context, domain.Tenant) error           { return nil }
+func (r *conflictRepo) CountByStatus(context.Context) (map[domain.Status]int, error) { return nil, nil }
 func (r *conflictRepo) UpdateStatus(context.Context, domain.Tenant) error {
 	return domain.ErrVersionConflict
 }

@@ -202,6 +202,17 @@ func (r *MemoryRepository) UpdateStatus(_ context.Context, tenant domain.Tenant)
 	return r.casUpdate(tenant)
 }
 
+// CountByStatus 按状态统计租户数。
+func (r *MemoryRepository) CountByStatus(_ context.Context) (map[domain.Status]int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	counts := make(map[domain.Status]int, 4)
+	for _, tenant := range r.items {
+		counts[tenant.Status]++
+	}
+	return counts, nil
+}
+
 // UpdateProfile 以版本 CAS 写入资料变更（T-11）。
 func (r *MemoryRepository) UpdateProfile(_ context.Context, tenant domain.Tenant) error {
 	return r.casUpdate(tenant)

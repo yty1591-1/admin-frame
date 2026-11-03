@@ -67,7 +67,7 @@ func NewInvitationService(tenants domain.Repository, members domain.MemberReposi
 		members:     members,
 		invitations: invitations,
 		quotas:      opts.Quotas,
-		audit:       auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
+		audit:       auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: observerOrNoop(opts.Observer)},
 		ids:         ids,
 		now:         now,
 		ttl:         ttl,

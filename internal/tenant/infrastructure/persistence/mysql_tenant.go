@@ -141,6 +141,30 @@ func (r *MySQLRepository) UpdateStatus(ctx context.Context, tenant domain.Tenant
 	return r.finishCAS(ctx, tenant, "update status", result, err)
 }
 
+// CountByStatus 按状态统计租户数（单次聚合查询）。
+func (r *MySQLRepository) CountByStatus(ctx context.Context) (map[domain.Status]int, error) {
+	rows, err := r.query(ctx).QueryContext(ctx,
+		`SELECT status, COUNT(*) FROM tenant GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("tenant: count by status: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[domain.Status]int, 4)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("tenant: scan status count: %w", err)
+		}
+		counts[domain.Status(status)] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tenant: iterate status counts: %w", err)
+	}
+	return counts, nil
+}
+
 // UpdateProfile 以 CAS 写入资料变更（T-11）。
 //
 // 只写资料列，不碰状态列：两条 CAS 通道共用 version 计数器，
