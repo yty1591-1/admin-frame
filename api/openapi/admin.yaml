@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 7.1.0
+  version: 7.2.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -23,6 +23,8 @@ info:
     设备画像由服务端从 User-Agent / IP 派生，仅用于展示。
     7.1.0：新增租户生命周期端点（`/admin/v1/tenants*`，ENT-09，纯增量）；租户状态机
     `pending → active → suspended → terminated`，停用与终止必须给原因。
+    7.2.0：新增租户成员与配额端点（`/admin/v1/tenants/{id}/members*`、`/quotas*`，ENT-09，纯增量）；
+    成员停用代替物理删除，最后一名 owner 不可降级；配额 `-1` 表示不限，执行由 ENT-14 承担。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -194,6 +196,14 @@ paths:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-resume'
   /admin/v1/tenants/{id}/terminate:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-terminate'
+  /admin/v1/tenants/{id}/members:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-members'
+  /admin/v1/tenants/{id}/members/{subject_id}:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-members-by-subject'
+  /admin/v1/tenants/{id}/quotas:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-quotas'
+  /admin/v1/tenants/{id}/quotas/{resource}:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-quotas-by-resource'
 components:
   securitySchemes:
     bearerAuth:

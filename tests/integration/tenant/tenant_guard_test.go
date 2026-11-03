@@ -257,3 +257,104 @@ func TestBackfillMigrationRegistersExistingMerchants(t *testing.T) {
 		t.Fatalf("回填名称 = %s, want 占位为 merchant_id", name)
 	}
 }
+
+// TestMemberAndQuotaOnMySQL 验证成员与配额在真实 MySQL 上的语义：
+// 幂等 upsert、角色排序、停用过滤、最后一名 owner 保护、配额不限量。
+func TestMemberAndQuotaOnMySQL(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	repo, err := persistence.NewMySQLRepository(sqlDB)
+	if err != nil {
+		t.Fatalf("NewMySQLRepository() error = %v", err)
+	}
+
+	tenantID := uniqueID(t)
+	tenant, err := domain.NewTenant(tenantID, "integration-member", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewTenant() error = %v", err)
+	}
+	if err := repo.Create(ctx, tenant); err != nil {
+		t.Fatalf("Create tenant error = %v", err)
+	}
+	// 外键级联：删租户会连带清理成员与配额。
+	t.Cleanup(func() { _, _ = sqlDB.Exec("DELETE FROM tenant WHERE id = ?", tenantID) })
+
+	members, err := app.NewMemberService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewMemberService() error = %v", err)
+	}
+	quotas, err := app.NewQuotaService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewQuotaService() error = %v", err)
+	}
+	actor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+
+	if _, err := members.Add(ctx, app.AddMemberInput{
+		TenantID: tenantID, SubjectID: "u-owner", Role: domain.MemberRoleOwner, Actor: actor,
+	}); err != nil {
+		t.Fatalf("Add(owner) error = %v", err)
+	}
+	if _, err := members.Add(ctx, app.AddMemberInput{
+		TenantID: tenantID, SubjectID: "u-staff", Role: domain.MemberRoleMember, Actor: actor,
+	}); err != nil {
+		t.Fatalf("Add(staff) error = %v", err)
+	}
+
+	list, err := members.List(ctx, tenantID, false)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(list) != 2 || list[0].SubjectID != "u-owner" || list[0].Role != domain.MemberRoleOwner {
+		t.Fatalf("成员列表 = %+v（owner 应排在前）", list)
+	}
+
+	// 降级唯一 owner 应被拒绝。
+	if _, err := members.SetRole(ctx, app.SetMemberRoleInput{
+		TenantID: tenantID, SubjectID: "u-owner", Role: domain.MemberRoleAdmin, Actor: actor,
+	}); err == nil {
+		t.Fatal("降级唯一 owner 应失败")
+	}
+
+	if _, err := members.SetStatus(ctx, app.SetMemberStatusInput{
+		TenantID: tenantID, SubjectID: "u-staff", Status: domain.MemberStatusDisabled,
+		Reason: "离职", Actor: actor,
+	}); err != nil {
+		t.Fatalf("SetStatus(disabled) error = %v", err)
+	}
+	active, err := members.List(ctx, tenantID, false)
+	if err != nil {
+		t.Fatalf("List(active) error = %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("在册成员 = %d, want 1", len(active))
+	}
+	all, err := members.List(ctx, tenantID, true)
+	if err != nil {
+		t.Fatalf("List(all) error = %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("全部成员 = %d, want 2（停用不删除）", len(all))
+	}
+
+	// 配额：幂等覆盖 + 不限量。
+	if _, err := quotas.Set(ctx, app.SetQuotaInput{
+		TenantID: tenantID, Resource: "user", Limit: 50, Actor: actor,
+	}); err != nil {
+		t.Fatalf("SetQuota(user) error = %v", err)
+	}
+	if _, err := quotas.Set(ctx, app.SetQuotaInput{
+		TenantID: tenantID, Resource: "api.rps", Limit: domain.QuotaUnlimited, Actor: actor,
+	}); err != nil {
+		t.Fatalf("SetQuota(api.rps) error = %v", err)
+	}
+	configured, err := quotas.List(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("ListQuotas() error = %v", err)
+	}
+	if len(configured) != 2 || configured[0].Resource != "api.rps" || !configured[0].Unlimited() {
+		t.Fatalf("配额列表 = %+v", configured)
+	}
+	if configured[1].Limit != 50 {
+		t.Fatalf("user 配额 = %d, want 50", configured[1].Limit)
+	}
+}

@@ -27,6 +27,10 @@ const maxBodyBytes = 4 << 10
 type HandlerConfig struct {
 	// Service 租户用例，必填。
 	Service *app.Service
+	// Members 成员用例，必填。
+	Members *app.MemberService
+	// Quotas 配额用例，必填。
+	Quotas *app.QuotaService
 	// PageLimits 与平台分页配置一致。
 	PageLimits pagination.Config
 	// Channel 端别，用于校验 Principal 与处理器一致（SEC-14）。
@@ -36,6 +40,8 @@ type HandlerConfig struct {
 // Handler 处理租户管理请求。
 type Handler struct {
 	service *app.Service
+	members *app.MemberService
+	quotas  *app.QuotaService
 	pageCfg pagination.Config
 	channel string
 }
@@ -45,10 +51,22 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	if cfg.Service == nil {
 		return nil, apperr.Internal("tenant handler requires a service", nil)
 	}
+	if cfg.Members == nil {
+		return nil, apperr.Internal("tenant handler requires a member service", nil)
+	}
+	if cfg.Quotas == nil {
+		return nil, apperr.Internal("tenant handler requires a quota service", nil)
+	}
 	if strings.TrimSpace(cfg.Channel) == "" {
 		return nil, apperr.Internal("tenant handler requires a channel", nil)
 	}
-	return &Handler{service: cfg.Service, pageCfg: cfg.PageLimits, channel: cfg.Channel}, nil
+	return &Handler{
+		service: cfg.Service,
+		members: cfg.Members,
+		quotas:  cfg.Quotas,
+		pageCfg: cfg.PageLimits,
+		channel: cfg.Channel,
+	}, nil
 }
 
 // Create 处理 POST /admin/v1/tenants。

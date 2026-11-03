@@ -190,3 +190,137 @@ func escapeLike(value string) string {
 func isDuplicateKey(err error) bool {
 	return strings.Contains(err.Error(), "Error 1062") || strings.Contains(err.Error(), "Duplicate entry")
 }
+
+// memberColumns 固定成员列顺序。
+const memberColumns = "tenant_id, subject_id, role, status, created_at, updated_at"
+
+// UpsertMember 幂等写入成员。
+//
+// 冲突时不更新 created_at：它是「何时进这个租户」的事实，改角色 / 停用再启用都不应重置。
+func (r *MySQLRepository) UpsertMember(ctx context.Context, member domain.Member) error {
+	if err := member.Validate(); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO tenant_member (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?) AS new
+		 ON DUPLICATE KEY UPDATE role = new.role, status = new.status, updated_at = new.updated_at`,
+		member.TenantID, member.SubjectID, string(member.Role), string(member.Status),
+		member.CreatedAt, member.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("tenant: upsert member %s/%s: %w", member.TenantID, member.SubjectID, err)
+	}
+	return nil
+}
+
+// GetMember 读取单个成员。
+func (r *MySQLRepository) GetMember(ctx context.Context, tenantID, subjectID string) (domain.Member, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+memberColumns+` FROM tenant_member WHERE tenant_id = ? AND subject_id = ?`,
+		strings.TrimSpace(tenantID), strings.TrimSpace(subjectID))
+	member, err := scanMember(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Member{}, domain.ErrMemberNotFound
+		}
+		return domain.Member{}, fmt.Errorf("tenant: get member %s/%s: %w", tenantID, subjectID, err)
+	}
+	return member, nil
+}
+
+// ListMembers 列出租户成员，owner 在前、同角色按主体排序（分页与前端展示都稳定）。
+func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, includeDisabled bool) ([]domain.Member, error) {
+	query := `SELECT ` + memberColumns + ` FROM tenant_member WHERE tenant_id = ?`
+	if !includeDisabled {
+		query += ` AND status = 'active'`
+	}
+	query += ` ORDER BY FIELD(role, 'owner', 'admin', 'member'), subject_id`
+
+	rows, err := r.db.QueryContext(ctx, query, strings.TrimSpace(tenantID))
+	if err != nil {
+		return nil, fmt.Errorf("tenant: list members %s: %w", tenantID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]domain.Member, 0, 8)
+	for rows.Next() {
+		member, scanErr := scanMember(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("tenant: scan member: %w", scanErr)
+		}
+		out = append(out, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tenant: iterate members: %w", err)
+	}
+	return out, nil
+}
+
+// CountActiveByRole 统计某角色的在册成员数。
+func (r *MySQLRepository) CountActiveByRole(ctx context.Context, tenantID string, role domain.MemberRole) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tenant_member WHERE tenant_id = ? AND role = ? AND status = 'active'`,
+		strings.TrimSpace(tenantID), string(role)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("tenant: count members %s/%s: %w", tenantID, role, err)
+	}
+	return count, nil
+}
+
+// UpsertQuota 幂等写入配额上限。
+func (r *MySQLRepository) UpsertQuota(ctx context.Context, quota domain.Quota) error {
+	if err := quota.Validate(); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO tenant_quota (tenant_id, resource, limit_value, updated_at) VALUES (?, ?, ?, ?) AS new
+		 ON DUPLICATE KEY UPDATE limit_value = new.limit_value, updated_at = new.updated_at`,
+		quota.TenantID, quota.Resource, quota.Limit, quota.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("tenant: upsert quota %s/%s: %w", quota.TenantID, quota.Resource, err)
+	}
+	return nil
+}
+
+// ListQuotas 列出租户配额。
+func (r *MySQLRepository) ListQuotas(ctx context.Context, tenantID string) ([]domain.Quota, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT tenant_id, resource, limit_value, updated_at FROM tenant_quota
+		  WHERE tenant_id = ? ORDER BY resource`, strings.TrimSpace(tenantID))
+	if err != nil {
+		return nil, fmt.Errorf("tenant: list quotas %s: %w", tenantID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]domain.Quota, 0, 8)
+	for rows.Next() {
+		var (
+			quota domain.Quota
+			value int64
+		)
+		if err := rows.Scan(&quota.TenantID, &quota.Resource, &value, &quota.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("tenant: scan quota: %w", err)
+		}
+		quota.Limit = value
+		out = append(out, quota)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tenant: iterate quotas: %w", err)
+	}
+	return out, nil
+}
+
+// scanMember 按 memberColumns 顺序扫描一行。
+func scanMember(scanner rowScanner) (domain.Member, error) {
+	var (
+		member domain.Member
+		role   string
+		status string
+	)
+	if err := scanner.Scan(&member.TenantID, &member.SubjectID, &role, &status,
+		&member.CreatedAt, &member.UpdatedAt); err != nil {
+		return domain.Member{}, err
+	}
+	member.Role = domain.MemberRole(role)
+	member.Status = domain.MemberStatus(status)
+	return member, nil
+}

@@ -47,12 +47,23 @@ func (quietEmitter) Emit(context.Context, audit.Event) error { return nil }
 // newHandler 构造挂载内存仓储的 Handler。
 func newHandler(t *testing.T) *rest.Handler {
 	t.Helper()
-	service, err := app.NewService(persistence.NewMemoryRepository(), &seqIDs{}, quietEmitter{}, app.Options{Service: "admin-api"})
+	repo := persistence.NewMemoryRepository()
+	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{Service: "admin-api"})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
+	members, err := app.NewMemberService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewMemberService() error = %v", err)
+	}
+	quotas, err := app.NewQuotaService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewQuotaService() error = %v", err)
+	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Service:    service,
+		Members:    members,
+		Quotas:     quotas,
 		PageLimits: pagination.Config{DefaultPageSize: 20, MaxPageSize: 100},
 		Channel:    "admin",
 	})
@@ -277,5 +288,130 @@ func TestTerminateIsTerminal(t *testing.T) {
 	handler.Resume(resumeRecorder, resume)
 	if resumeRecorder.Code != http.StatusConflict {
 		t.Fatalf("终态恢复 status = %d, want 409（body=%s）", resumeRecorder.Code, resumeRecorder.Body.String())
+	}
+}
+
+// createTenant 创建一个 active 租户并返回其 ID。
+func createTenant(t *testing.T, handler *rest.Handler) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	handler.Create(recorder, adminRequest(http.MethodPost, "/admin/v1/tenants", `{"name":"Acme"}`))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d（body=%s）", recorder.Code, recorder.Body.String())
+	}
+	var created tenantBody
+	if err := json.Unmarshal(decodeEnvelope(t, recorder).Data, &created); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	activate := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/activate", "")
+	activate.SetPathValue("id", created.ID)
+	activateRecorder := httptest.NewRecorder()
+	handler.Activate(activateRecorder, activate)
+	if activateRecorder.Code != http.StatusOK {
+		t.Fatalf("activate status = %d（body=%s）", activateRecorder.Code, activateRecorder.Body.String())
+	}
+	return created.ID
+}
+
+// TestMemberEndpoints 验证添加成员、列成员与改角色的 HTTP 契约。
+func TestMemberEndpoints(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	add := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/members",
+		`{"subject_id":"u1","role":"owner"}`)
+	add.SetPathValue("id", tenantID)
+	addRecorder := httptest.NewRecorder()
+	handler.AddMember(addRecorder, add)
+	if addRecorder.Code != http.StatusCreated {
+		t.Fatalf("add member status = %d（body=%s）", addRecorder.Code, addRecorder.Body.String())
+	}
+
+	list := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID+"/members", "")
+	list.SetPathValue("id", tenantID)
+	listRecorder := httptest.NewRecorder()
+	handler.ListMembers(listRecorder, list)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list member status = %d", listRecorder.Code)
+	}
+	var page struct {
+		Items []struct {
+			SubjectID string `json:"subject_id"`
+			Role      string `json:"role"`
+			Status    string `json:"status"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &page); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if page.Total != 1 || page.Items[0].SubjectID != "u1" || page.Items[0].Role != "owner" {
+		t.Fatalf("成员列表 = %+v", page)
+	}
+
+	// 唯一 owner 降级 → 409（领域规则经 HTTP 透出）。
+	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u1", `{"role":"member"}`)
+	patch.SetPathValue("id", tenantID)
+	patch.SetPathValue("subject_id", "u1")
+	patchRecorder := httptest.NewRecorder()
+	handler.UpdateMember(patchRecorder, patch)
+	if patchRecorder.Code != http.StatusConflict {
+		t.Fatalf("降级唯一 owner status = %d, want 409（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	}
+
+	// 缺少 role / status → 400。
+	empty := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u1", `{}`)
+	empty.SetPathValue("id", tenantID)
+	empty.SetPathValue("subject_id", "u1")
+	emptyRecorder := httptest.NewRecorder()
+	handler.UpdateMember(emptyRecorder, empty)
+	if emptyRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("空变更 status = %d, want 400", emptyRecorder.Code)
+	}
+}
+
+// TestQuotaEndpoints 验证配额设置与查询。
+func TestQuotaEndpoints(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	put := adminRequest(http.MethodPut, "/admin/v1/tenants/"+tenantID+"/quotas/user", `{"limit":50}`)
+	put.SetPathValue("id", tenantID)
+	put.SetPathValue("resource", "user")
+	putRecorder := httptest.NewRecorder()
+	handler.SetQuota(putRecorder, put)
+	if putRecorder.Code != http.StatusOK {
+		t.Fatalf("set quota status = %d（body=%s）", putRecorder.Code, putRecorder.Body.String())
+	}
+
+	get := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID+"/quotas", "")
+	get.SetPathValue("id", tenantID)
+	getRecorder := httptest.NewRecorder()
+	handler.ListQuotas(getRecorder, get)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("list quota status = %d", getRecorder.Code)
+	}
+	var page struct {
+		Items []struct {
+			Resource string `json:"resource"`
+			Limit    int64  `json:"limit"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, getRecorder).Data, &page); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if page.Total != 1 || page.Items[0].Resource != "user" || page.Items[0].Limit != 50 {
+		t.Fatalf("配额列表 = %+v", page)
+	}
+
+	// limit 缺失 → 400（用指针区分「未提供」与「设为 0」）。
+	missing := adminRequest(http.MethodPut, "/admin/v1/tenants/"+tenantID+"/quotas/user", `{}`)
+	missing.SetPathValue("id", tenantID)
+	missing.SetPathValue("resource", "user")
+	missingRecorder := httptest.NewRecorder()
+	handler.SetQuota(missingRecorder, missing)
+	if missingRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("缺 limit status = %d, want 400", missingRecorder.Code)
 	}
 }

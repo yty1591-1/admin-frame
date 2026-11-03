@@ -37,10 +37,11 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return &Runtime{}, nil
 	}
 
-	repo, emitter, err := buildDeps(deps)
+	store, emitter, err := buildDeps(deps)
 	if err != nil {
 		return nil, err
 	}
+	repo := store.tenants
 
 	// 守卫同时担任「状态缓存失效器」：本进程发生迁移后立刻清缓存，
 	// 同一副本不必等 TTL 过期才停止放行。
@@ -59,8 +60,19 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		return nil, fmt.Errorf("tenant service: %w", err)
 	}
 
+	memberService, err := app.NewMemberService(store.tenants, store.members, emitter, app.Options{Service: deps.Config.Service})
+	if err != nil {
+		return nil, fmt.Errorf("tenant member service: %w", err)
+	}
+	quotaService, err := app.NewQuotaService(store.tenants, store.quotas, emitter, app.Options{Service: deps.Config.Service})
+	if err != nil {
+		return nil, fmt.Errorf("tenant quota service: %w", err)
+	}
+
 	handler, err := tenantrest.NewHandler(tenantrest.HandlerConfig{
 		Service: service,
+		Members: memberService,
+		Quotas:  quotaService,
 		PageLimits: pagination.Config{
 			DefaultPageSize: defaultPageSize,
 			MaxPageSize:     maxPageSize,
@@ -82,32 +94,43 @@ func NewGuard(deps *platform.Deps) (platform.TenantGuard, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil, nil
 	}
-	repo, _, err := buildDeps(deps)
+	store, _, err := buildDeps(deps)
 	if err != nil {
 		return nil, err
 	}
-	guard, err := app.NewGuard(repo, app.GuardOptions{})
+	guard, err := app.NewGuard(store.tenants, app.GuardOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("tenant guard: %w", err)
 	}
 	return guard, nil
 }
 
+// store 把三组仓储接口打包，便于在同一装配点复用同一份实现。
+//
+// 内存与 SQL 实现都同时满足三者（methods 命名刻意加 Member/Quota 前缀，
+// 避免与租户的 Get/List 签名冲突）。
+type store struct {
+	tenants domain.Repository
+	members domain.MemberRepository
+	quotas  domain.QuotaRepository
+}
+
 // buildDeps 按数据库可用性选择仓储与审计出口。
 //
 // 数据库可用时用 MySQL 仓储并把审计写入审计表；内存模式用内存仓储 +
 // 结构化日志审计，保证本地开发不需要起库就能走通生命周期。
-func buildDeps(deps *platform.Deps) (domain.Repository, audit.Emitter, error) {
+func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	emitter := audit.Emitter(audit.SlogEmitter{Log: deps.Logger})
 	if deps.Database == nil {
-		return persistence.NewMemoryRepository(), emitter, nil
+		memory := persistence.NewMemoryRepository()
+		return store{tenants: memory, members: memory, quotas: memory}, emitter, nil
 	}
 	mysqlRepo, err := persistence.NewMySQLRepository(deps.Database.SQL())
 	if err != nil {
-		return nil, nil, fmt.Errorf("tenant repository: %w", err)
+		return store{}, nil, fmt.Errorf("tenant repository: %w", err)
 	}
 	// 双出口：审计表供查询 / 取证，结构化日志供排障；任一失败不影响另一出口。
-	return mysqlRepo, audit.MultiEmitter{
+	return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo}, audit.MultiEmitter{
 		audit.SQLEmitter{DB: deps.Database.SQL()},
 		audit.SlogEmitter{Log: deps.Logger},
 	}, nil

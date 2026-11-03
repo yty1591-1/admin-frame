@@ -84,3 +84,110 @@ components:
         page_size:
           type: integer
           description: 每页条数；超过上限时按上限收敛。
+
+    # 租户成员（ENT-09）。停用成员保留记录，不做物理删除。
+    TenantMember:
+      type: object
+      required: [tenant_id, subject_id, role, status, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: string
+        subject_id:
+          type: string
+          description: 成员主体 ID（账号主体）。
+        role:
+          type: string
+          enum: [owner, admin, member]
+          description: |
+            `owner` 管理成员与租户自身（每个租户至少保留一名在册 owner）；
+            `admin` 管业务配置；`member` 只读业务。更细的权限仍由 IAM 解析。
+        status:
+          type: string
+          enum: [active, disabled]
+          description: "`disabled` 表示已停用但保留成员关系（离职回溯与审计需要）。"
+        created_at:
+          type: string
+          format: date-time
+          description: 首次加入时间；改角色或停用再启用不会重置。
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantMemberCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [subject_id, role]
+      properties:
+        subject_id:
+          type: string
+          maxLength: 64
+        role:
+          type: string
+          enum: [owner, admin, member]
+
+    TenantMemberUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: "`role` 与 `status` 至少提供一个；同时提供时先改角色再改状态。"
+      properties:
+        role:
+          type: string
+          enum: [owner, admin, member]
+        status:
+          type: string
+          enum: [active, disabled]
+        reason:
+          type: string
+          maxLength: 255
+          description: 启停原因，写入审计。
+
+    TenantMemberListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantMember"
+        total:
+          type: integer
+
+    # 租户配额（ENT-09 定义上限，ENT-14 执行）。
+    TenantQuota:
+      type: object
+      required: [tenant_id, resource, limit, updated_at]
+      properties:
+        tenant_id:
+          type: string
+        resource:
+          type: string
+          description: 资源键，仅允许小写字母、数字与 `.` `_` `-`，如 `user` / `api.rps` / `storage.mb`。
+        limit:
+          type: integer
+          format: int64
+          description: 上限；`-1` 表示不限。
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantQuotaSetRequest:
+      type: object
+      additionalProperties: false
+      required: [limit]
+      properties:
+        limit:
+          type: integer
+          format: int64
+          minimum: -1
+          description: 上限；-1 表示不限。缺失返回 40000（与「设为 0」区分）。
+
+    TenantQuotaListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantQuota"
+        total:
+          type: integer

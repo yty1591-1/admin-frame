@@ -30,8 +30,59 @@ const (
 	ActionTerminate = "tenant.terminate"
 )
 
-// ResourceTypeTenant 审计资源类型。
-const ResourceTypeTenant = "tenant"
+// 审计资源类型。
+const (
+	// ResourceTypeTenant 租户主数据。
+	ResourceTypeTenant = "tenant"
+	// ResourceTypeMember 租户成员关系。
+	ResourceTypeMember = "tenant_member"
+	// ResourceTypeQuota 租户配额。
+	ResourceTypeQuota = "tenant_quota"
+)
+
+// auditContext 封装审计写入所需的依赖，供租户 / 成员 / 配额三类用例复用。
+//
+// 状态与成员变更都必须留痕（AUD-03）；把写入收敛到一处，避免某个新用例
+// 忘了传 service 或 TraceID 导致事件被 Validate 拒绝后静默丢失。
+type auditContext struct {
+	emitter audit.Emitter
+	ids     id.Generator
+	service string
+	now     func() time.Time
+}
+
+// emit 写一条审计事件；失败只降级为不写，不改变业务结果。
+func (a auditContext) emit(ctx context.Context, actor Actor, action, resourceType, resourceID string,
+	outcome audit.Outcome, reason string, attrs map[string]string) {
+	eventID := ""
+	if a.ids != nil {
+		if generated, err := a.ids.NextString(); err == nil {
+			eventID = generated
+		}
+	}
+	if eventID == "" {
+		// 生成失败也必须有事件 ID，否则整条审计会被 Validate 拒绝而静默丢失。
+		eventID = "tenant-" + a.now().UTC().Format("20060102150405.000000000")
+	}
+	event := audit.Event{
+		EventID:      eventID,
+		Action:       action,
+		ActorID:      actor.SubjectID,
+		ActorType:    actor.ActorType,
+		Channel:      defaultChannel(actor.Channel),
+		MerchantID:   actor.MerchantID,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Outcome:      outcome,
+		OccurredAt:   a.now().UTC(),
+		TraceID:      actor.TraceID,
+		Service:      a.service,
+		Reason:       truncate(reason, 255),
+		Attrs:        attrs,
+	}
+	// 审计失败不回滚业务：状态已落库，回滚会让「实际生效但无记录」更糟。
+	_ = a.emitter.Emit(ctx, event)
+}
 
 // StatusInvalidator 在状态迁移成功后清除本地状态缓存。
 //
@@ -98,11 +149,11 @@ type ListResult struct {
 
 // Service 是租户生命周期用例。
 type Service struct {
-	repo    domain.Repository
-	ids     id.Generator
-	emitter audit.Emitter
-	now     func() time.Time
-	opts    Options
+	repo  domain.Repository
+	ids   id.Generator
+	audit auditContext
+	now   func() time.Time
+	opts  Options
 }
 
 // NewService 构造服务；repo / ids / emitter 必填。
@@ -128,7 +179,14 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 	if opts.MaxPageSize < opts.DefaultPageSize {
 		opts.MaxPageSize = opts.DefaultPageSize
 	}
-	return &Service{repo: repo, ids: ids, emitter: emitter, now: time.Now, opts: opts}, nil
+	now := time.Now
+	return &Service{
+		repo:  repo,
+		ids:   ids,
+		audit: auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
+		now:   now,
+		opts:  opts,
+	}, nil
 }
 
 // Create 创建待开通租户。
@@ -222,38 +280,13 @@ func actionFor(from, to domain.Status) string {
 	}
 }
 
-// emit 写审计事件；失败只降级为不写，不改变业务结果（审计出口自身有重试）。
-func (s *Service) emit(ctx context.Context, actor Actor, action string, tenant domain.Tenant, outcome audit.Outcome, reason string) {
-	event := audit.Event{
-		EventID:      s.nextEventID(),
-		Action:       action,
-		ActorID:      actor.SubjectID,
-		ActorType:    actor.ActorType,
-		Channel:      defaultChannel(actor.Channel),
-		MerchantID:   actor.MerchantID,
-		ResourceType: ResourceTypeTenant,
-		ResourceID:   tenant.ID,
-		Outcome:      outcome,
-		OccurredAt:   s.now().UTC(),
-		TraceID:      actor.TraceID,
-		Service:      s.opts.Service,
-		Reason:       truncate(reason, 255),
-		Attrs: map[string]string{
-			"status": string(tenant.Status),
-			"name":   tenant.Name,
-		},
-	}
-	// 审计失败不回滚业务：状态已落库，回滚会让「实际生效但无记录」更糟。
-	_ = s.emitter.Emit(ctx, event)
-}
-
-// nextEventID 生成审计事件 ID；失败时退化为时间戳，避免整条事件丢失。
-func (s *Service) nextEventID() string {
-	eventID, err := s.ids.NextString()
-	if err != nil {
-		return "tenant-" + s.now().UTC().Format("20060102150405.000000000")
-	}
-	return eventID
+// emit 写租户主数据审计事件。
+func (s *Service) emit(ctx context.Context, actor Actor, action string, tenant domain.Tenant,
+	outcome audit.Outcome, reason string) {
+	s.audit.emit(ctx, actor, action, ResourceTypeTenant, tenant.ID, outcome, reason, map[string]string{
+		"status": string(tenant.Status),
+		"name":   tenant.Name,
+	})
 }
 
 // defaultChannel 兜底端别，保证审计事件通过 Validate（channel 必填）。
@@ -274,12 +307,31 @@ func truncate(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+// mutableTenant 读取租户并拒绝终态：已终止的租户不再接受任何变更。
+//
+// 成员与配额用例共用：把「终态不可变」的判断收敛在一处，避免某个新用例忘了检查。
+func mutableTenant(ctx context.Context, tenants domain.Repository, tenantID string) (domain.Tenant, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return domain.Tenant{}, apperr.BadRequest("tenant id is required")
+	}
+	tenant, err := tenants.Get(ctx, tenantID)
+	if err != nil {
+		return domain.Tenant{}, translate(err)
+	}
+	if tenant.Status.Terminal() {
+		return domain.Tenant{}, apperr.Conflict("tenant is terminated and cannot be changed")
+	}
+	return tenant, nil
+}
+
 // translate 把领域错误翻译为统一错误码。
 func translate(err error) error {
 	var invalid *domain.InvalidTransitionError
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		return apperr.NotFound("tenant not found")
+	case errors.Is(err, domain.ErrMemberNotFound):
+		return apperr.NotFound("tenant member not found")
 	case errors.As(err, &invalid):
 		// 409：请求本身合法，但与当前资源状态冲突。
 		return apperr.Conflict(invalid.Error())
@@ -289,10 +341,21 @@ func translate(err error) error {
 		return apperr.Conflict("tenant status changed concurrently, retry")
 	case errors.Is(err, domain.ErrAlreadyExists):
 		return apperr.Conflict("tenant already exists")
+	case errors.Is(err, domain.ErrMemberAlreadyExists):
+		return apperr.Conflict("member is already active in this tenant")
+	case errors.Is(err, domain.ErrLastOwner):
+		return apperr.Conflict(err.Error())
+	case errors.Is(err, domain.ErrSubjectRequired),
+		errors.Is(err, domain.ErrSubjectTooLong),
+		errors.Is(err, domain.ErrResourceRequired),
+		errors.Is(err, domain.ErrResourceTooLong):
+		return apperr.BadRequest(err.Error())
 	case errors.Is(err, domain.ErrNameRequired),
 		errors.Is(err, domain.ErrNameTooLong),
 		errors.Is(err, domain.ErrReasonRequired),
 		errors.Is(err, domain.ErrReasonTooLong):
+		return apperr.BadRequest(err.Error())
+	case isInvalidEnum(err):
 		return apperr.BadRequest(err.Error())
 	default:
 		return apperr.Internal("tenant operation failed", err)

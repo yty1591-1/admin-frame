@@ -48,6 +48,11 @@
 | `tenant.suspend` | A | 停用租户（`active → suspended`）；`reason` 必填并原样入审计，失败尝试同样记录（`outcome=failure`） | 租户 | 365d | active |
 | `tenant.resume` | A | 恢复租户（`suspended → active`）；与首次开通分开记录，便于还原停用时长 | 租户 | 365d | active |
 | `tenant.terminate` | A | 终止租户（→ `terminated` 终态）；`reason` 必填，终止后不可恢复 | 租户 | 365d | active |
+| `tenant.member.add` | A | 添加租户成员（`POST /admin/v1/tenants/{id}/members`）；`attrs.subject_id` / `attrs.role`，已停用成员再次添加时 `attrs.reactivated=true` | 租户 | 365d | active |
+| `tenant.member.role_change` | A | 变更成员角色；`attrs.from` / `attrs.to` / `attrs.subject_id`，降级最后一名 owner 会被拒绝（`outcome=failure` 同样留痕） | 租户 | 365d | active |
+| `tenant.member.disable` | A | 停用成员（保留成员关系，不物理删除）；`reason` 可选，建议填写离职或调岗原因 | 租户 | 365d | active |
+| `tenant.member.enable` | A | 重新启用成员 | 租户 | 365d | active |
+| `tenant.quota_change` | A | 修改租户配额（`PUT /admin/v1/tenants/{id}/quotas/{resource}`）；`attrs.resource` / `attrs.limit`（不限量记为 `unlimited`），执行与拒绝由 ENT-14 负责 | 租户 | 365d | active |
 | `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
 | `payment.refund` | B/C | 退款 | 资金 | 365d | planned |
 

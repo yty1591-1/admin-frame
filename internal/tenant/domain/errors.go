@@ -23,7 +23,43 @@ var (
 	ErrVersionConflict = errors.New("tenant: concurrent status change detected")
 	// ErrAlreadyExists 租户 ID 已存在。
 	ErrAlreadyExists = errors.New("tenant: tenant already exists")
+	// ErrSubjectRequired 成员主体 ID 必填。
+	ErrSubjectRequired = errors.New("tenant: member subject id is required")
+	// ErrSubjectTooLong 成员主体 ID 超长。
+	ErrSubjectTooLong = fmt.Errorf("tenant: member subject id must be at most %d characters", MaxSubjectIDLength)
+	// ErrMemberNotFound 成员不存在。
+	ErrMemberNotFound = errors.New("tenant: member not found")
+	// ErrMemberAlreadyExists 成员已在册，重复添加视为冲突。
+	ErrMemberAlreadyExists = errors.New("tenant: member already active in tenant")
+	// ErrLastOwner 租户至少保留一名在册 owner。
+	ErrLastOwner = errors.New("tenant: tenant must keep at least one active owner")
+	// ErrResourceRequired 配额资源键必填。
+	ErrResourceRequired = errors.New("tenant: quota resource is required")
+	// ErrResourceTooLong 配额资源键超长。
+	ErrResourceTooLong = fmt.Errorf("tenant: quota resource must be at most %d characters", MaxResourceLength)
 )
+
+// InvalidRoleError 表示未定义的成员角色。
+type InvalidRoleError struct {
+	// Role 非法角色取值。
+	Role string
+}
+
+// Error 实现 error。
+func (e *InvalidRoleError) Error() string {
+	return fmt.Sprintf("tenant: unsupported member role %q", e.Role)
+}
+
+// InvalidResourceError 表示非法的配额资源键。
+type InvalidResourceError struct {
+	// Resource 非法资源键。
+	Resource string
+}
+
+// Error 实现 error。
+func (e *InvalidResourceError) Error() string {
+	return fmt.Sprintf("tenant: invalid quota resource %q (allowed: a-z 0-9 . _ -)", e.Resource)
+}
 
 // InvalidTransitionError 表示状态机不允许的迁移。
 type InvalidTransitionError struct {

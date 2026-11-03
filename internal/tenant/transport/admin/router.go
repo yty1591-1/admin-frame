@@ -29,6 +29,15 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /admin/v1/tenants/{id}/suspend", authMW(write(http.HandlerFunc(h.Suspend))))
 	mux.Handle("POST /admin/v1/tenants/{id}/resume", authMW(write(http.HandlerFunc(h.Resume))))
 	mux.Handle("POST /admin/v1/tenants/{id}/terminate", authMW(write(http.HandlerFunc(h.Terminate))))
+
+	// 成员与配额：读沿用 tenant:read，写沿用 tenant:write。
+	// 不另开 tenant:member:*：谁能改租户就能改它的成员，拆权限会让「停用租户」
+	// 与「移除其成员」出现两个授权面，反而难以解释。
+	mux.Handle("GET /admin/v1/tenants/{id}/members", authMW(read(http.HandlerFunc(h.ListMembers))))
+	mux.Handle("POST /admin/v1/tenants/{id}/members", authMW(write(http.HandlerFunc(h.AddMember))))
+	mux.Handle("PATCH /admin/v1/tenants/{id}/members/{subject_id}", authMW(write(http.HandlerFunc(h.UpdateMember))))
+	mux.Handle("GET /admin/v1/tenants/{id}/quotas", authMW(read(http.HandlerFunc(h.ListQuotas))))
+	mux.Handle("PUT /admin/v1/tenants/{id}/quotas/{resource}", authMW(write(http.HandlerFunc(h.SetQuota))))
 }
 
 // NewRouter 注册租户路由并挂接鉴权与权限中间件（测试用）。

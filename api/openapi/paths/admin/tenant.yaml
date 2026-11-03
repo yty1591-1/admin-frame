@@ -283,3 +283,231 @@ admin-v1-tenants-by-id-terminate:
         $ref: "../../components.yaml#/components/responses/Conflict"
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-members:
+  get:
+    tags: [tenant]
+    summary: 列出租户成员
+    description: |
+      需要 `tenant:read`。默认只返回在册成员；`include_disabled=true` 时一并返回已停用成员。
+      按 owner → admin → member 排序，同角色按 `subject_id` 排序。
+    operationId: adminListTenantMembers
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: include_disabled
+        schema:
+          type: boolean
+        description: 为 true 时包含已停用成员。
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantMemberListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [tenant]
+    summary: 添加租户成员
+    description: |
+      需要 `tenant:write`。已在册的成员重复添加返回 40900（不会静默改角色）；
+      已停用成员再次添加视为复活，角色按入参更新并在审计中标记 `reactivated=true`。
+      终止态租户拒绝任何成员变更。
+    operationId: adminAddTenantMember
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantMemberCreateRequest"
+    responses:
+      "201":
+        description: created
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantMember"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-members-by-subject:
+  patch:
+    tags: [tenant]
+    summary: 变更成员角色或状态
+    description: |
+      需要 `tenant:write`。`role` 与 `status` 至少提供一个。
+      降级或停用租户最后一名在册 `owner` 返回 40900 —— 先把另一名成员设为 owner。
+    operationId: adminUpdateTenantMember
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: subject_id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantMemberUpdateRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantMember"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-quotas:
+  get:
+    tags: [tenant]
+    summary: 列出租户配额
+    description: 需要 `tenant:read`。只返回已配置的资源；未配置由执行层（ENT-14）按默认值兜底。
+    operationId: adminListTenantQuotas
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantQuotaListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-quotas-by-resource:
+  put:
+    tags: [tenant]
+    summary: 设置租户配额
+    description: |
+      需要 `tenant:write`。按 `(tenant_id, resource)` 幂等写入上限；`limit=-1` 表示不限。
+      资源键只允许小写字母、数字与 `.` `_` `-`（参与限流键与指标标签，需可枚举）。
+      变更写 `tenant.quota_change` 审计；执行（计数与 42900）由 ENT-14 负责。
+    operationId: adminSetTenantQuota
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: resource
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantQuotaSetRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantQuota"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
