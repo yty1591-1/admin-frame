@@ -65,6 +65,8 @@ const (
 	MetricReasonPasswordChangeRequired = "password_change_required"
 	// MetricReasonRateLimited 触发限流。
 	MetricReasonRateLimited = "rate_limited"
+	// MetricReasonTenantDenied 商户不在服务期，登录被拒（ENT-09 T-08）。
+	MetricReasonTenantDenied = "tenant_denied"
 	// MetricReasonUnavailable 依赖不可用（50300）。
 	MetricReasonUnavailable = "unavailable"
 	// MetricReasonInternal 内部错误。

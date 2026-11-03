@@ -212,6 +212,18 @@ func Run(ctx context.Context, opts Options) (err error) {
 		background.add(asyncRuntime.Run)
 	}
 
+	// 租户守卫先于身份运行时构造：登录（T-08）与账号开通（T-10）都要在
+	// identity 装配期读到守卫；守卫自身只依赖数据库，不反向依赖身份域。
+	if opts.NewTenantGuard != nil {
+		guard, guardErr := opts.NewTenantGuard(deps)
+		if guardErr != nil {
+			return fmt.Errorf("tenant guard: %w", guardErr)
+		}
+		if guard != nil {
+			deps.TenantGuard = guard
+		}
+	}
+
 	// 撤销检查必须在 AuthMW 构造前注入（docs/identity-authn.md §13.2）：
 	// 身份运行时同时持有仓储与撤销存储，登录态校验才能立即读取撤销状态。
 	var authOpts []security.JWTAuthOption
@@ -224,20 +236,17 @@ func Run(ctx context.Context, opts Options) (err error) {
 			authOpts = append(authOpts, security.WithRevocationChecker(validator))
 		}
 	}
+
 	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	if opts.NewTenantGuard != nil {
-		guard, guardErr := opts.NewTenantGuard(deps)
-		if guardErr != nil {
-			return fmt.Errorf("tenant guard: %w", guardErr)
-		}
-		if guard != nil {
-			// 守卫包在鉴权中间件内层：鉴权先写入 Principal，守卫再读 merchant_id。
-			deps.TenantGuard = guard
-			authMW = WithTenantGuard(authMW, guard)
-		}
+	// 守卫包在鉴权中间件内层：鉴权先写入 Principal，守卫再读 merchant_id。
+	// B 端令牌必须携带商户：缺失即签发缺陷，fail-closed（T-09）；
+	// A/C 端平台级请求没有商户，直接放行。
+	if deps.TenantGuard != nil {
+		requireMerchant := deps.Config.Channel == "biz"
+		authMW = WithTenantGuard(authMW, deps.TenantGuard, requireMerchant)
 	}
 	deps.AuthMW = authMW
 

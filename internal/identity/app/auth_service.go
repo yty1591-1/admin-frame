@@ -125,6 +125,11 @@ type AuthServiceConfig struct {
 	// ActorType 写入审计事件的 actor_type；空值时按端别推导。
 	ActorType string
 	Clock     Clock
+	// TenantCheck 判定 B 端商户是否可登录 / 可开通账号（ENT-09 T-08/T-10）。
+	//
+	// 由 cmd 注入租户域守卫（结构化接口，identity 不 import 租户域）；
+	// nil 表示本进程没有租户能力（A/C 端、内存模式），登录跳过校验。
+	TenantCheck TenantStatusChecker
 }
 
 // AuthService 编排登录、刷新、登出与会话撤销（docs/identity-authn.md §5）。
@@ -156,6 +161,7 @@ type AuthService struct {
 	service                 string
 	actorType               string
 	clock                   Clock
+	tenantCheck             TenantStatusChecker
 	mfa                     domain.MFAEnrollmentRepository
 	mfaCipher               MFASecretCipher
 	mfaTickets              MFATicketStore
@@ -252,6 +258,8 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 	if clock == nil {
 		clock = realClock{}
 	}
+	// T-08/T-10：租户登录 / 开通校验端口；nil 时跳过（A/C 端、内存模式）。
+	tenantCheck := cfg.TenantCheck
 	mfaChannels := cfg.MFAChannels
 	if len(mfaChannels) == 0 {
 		mfaChannels = map[domain.Channel]bool{domain.ChannelAdmin: true}
@@ -334,6 +342,7 @@ func NewAuthService(cfg AuthServiceConfig) (*AuthService, error) {
 		service:                 cfg.Service,
 		actorType:               actorType,
 		clock:                   clock,
+		tenantCheck:             tenantCheck,
 		mfa:                     cfg.MFA,
 		mfaCipher:               cfg.MFACipher,
 		mfaTickets:              cfg.MFATickets,
@@ -457,6 +466,8 @@ func loginFailureReason(err error) string {
 			return MetricReasonUnavailable
 		case apperr.CodeUnauthorized:
 			return MetricReasonBadCredential
+		case apperr.CodeForbidden:
+			return MetricReasonTenantDenied
 		}
 	}
 	return MetricReasonInternal
@@ -505,6 +516,19 @@ func (s *AuthService) probeLogin(ctx context.Context, in LoginInput) (*loginProb
 			return nil, apperr.BadRequest("merchant_id is not allowed on this channel")
 		}
 		merchantID = ""
+	}
+	// T-08：B 端登录先看租户是否在服务期。放在限流之前——停用租户的请求
+	// 不应消耗限流预算；缓存使本检查不构成额外数据库压力。
+	// err → 503 失败关闭；!allow → 403，与 API 守卫同一文案（不区分未登记
+	// 与已停用，避免探测租户存在性）。
+	if merchantID != "" && s.tenantCheck != nil {
+		allow, verifyErr := s.tenantCheck.Verify(ctx, merchantID)
+		if verifyErr != nil {
+			return nil, apperr.Unavailable("tenant status unavailable")
+		}
+		if !allow {
+			return nil, apperr.Forbidden("tenant is not available")
+		}
 	}
 	accountRef := AccountRef(s.hasher, s.channel, subject)
 	accountKey := loginRateKey(s.channel, accountRef, "")

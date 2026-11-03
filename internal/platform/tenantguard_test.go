@@ -56,7 +56,7 @@ func decodeCode(t *testing.T, recorder *httptest.ResponseRecorder) int {
 // TestWithTenantGuardAllowsServableTenant 验证放行路径不改变响应。
 func TestWithTenantGuardAllowsServableTenant(t *testing.T) {
 	guard := &stubGuard{allow: true}
-	handler := platform.WithTenantGuard(identityMW, guard)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -71,7 +71,7 @@ func TestWithTenantGuardAllowsServableTenant(t *testing.T) {
 
 // TestWithTenantGuardDeniesSuspendedTenant 验证拒绝返回 403 与统一错误码。
 func TestWithTenantGuardDeniesSuspendedTenant(t *testing.T) {
-	handler := platform.WithTenantGuard(identityMW, &stubGuard{allow: false})(okHandler())
+	handler := platform.WithTenantGuard(identityMW, &stubGuard{allow: false}, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -86,7 +86,7 @@ func TestWithTenantGuardDeniesSuspendedTenant(t *testing.T) {
 
 // TestWithTenantGuardFailsClosedOnError 验证判定失败返回 503 而不是放行 / 403。
 func TestWithTenantGuardFailsClosedOnError(t *testing.T) {
-	handler := platform.WithTenantGuard(identityMW, &stubGuard{err: errors.New("db down")})(okHandler())
+	handler := platform.WithTenantGuard(identityMW, &stubGuard{err: errors.New("db down")}, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -103,7 +103,7 @@ func TestWithTenantGuardFailsClosedOnError(t *testing.T) {
 // 未认证请求都不触发守卫。
 func TestWithTenantGuardSkipsNonTenantRequests(t *testing.T) {
 	guard := &stubGuard{allow: false}
-	handler := platform.WithTenantGuard(identityMW, guard)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest(""))
@@ -124,7 +124,7 @@ func TestWithTenantGuardSkipsNonTenantRequests(t *testing.T) {
 
 // TestWithTenantGuardNilIsNoop 验证未注入实现时中间件保持原行为。
 func TestWithTenantGuardNilIsNoop(t *testing.T) {
-	handler := platform.WithTenantGuard(identityMW, nil)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, nil, false)(okHandler())
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
 	if recorder.Code != http.StatusOK {
@@ -134,3 +134,49 @@ func TestWithTenantGuardNilIsNoop(t *testing.T) {
 
 // identityMW 是空鉴权中间件：本文件只验证守卫行为，鉴权由 security 包单测覆盖。
 func identityMW(next http.Handler) http.Handler { return next }
+
+// TestWithTenantGuardRejectsMissingMerchantOnBiz 验证 B 端缺商户令牌 fail-closed（T-09）。
+//
+// 旧实现 merchant_id 为空直接放行：签发缺陷会让令牌静默绕过全部租户校验。
+func TestWithTenantGuardRejectsMissingMerchantOnBiz(t *testing.T) {
+	guard := &stubGuard{allow: true}
+	handler := platform.WithTenantGuard(identityMW, guard, true)(okHandler())
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, guardRequest(""))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("缺商户 status = %d, want 403（body=%s）", recorder.Code, recorder.Body.String())
+	}
+	if code := decodeCode(t, recorder); code != 40300 {
+		t.Fatalf("code = %d, want 40300", code)
+	}
+	// 守卫根本不该被调用：没有商户就没有判定对象。
+	if guard.calls != 0 {
+		t.Fatalf("守卫被调用 %d 次, want 0", guard.calls)
+	}
+
+	// 同一配置下带商户的请求仍正常走守卫判定。
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, guardRequest("m-1"))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("带商户 status = %d, want 200", recorder.Code)
+	}
+	if guard.lastID != "m-1" {
+		t.Fatalf("守卫收到 %q, want m-1", guard.lastID)
+	}
+}
+
+// TestWithTenantGuardAllowsMissingMerchantOffBiz 验证 A/C 端空商户仍放行。
+func TestWithTenantGuardAllowsMissingMerchantOffBiz(t *testing.T) {
+	guard := &stubGuard{allow: true}
+	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, guardRequest(""))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("A/C 端空商户 status = %d, want 200", recorder.Code)
+	}
+	if guard.calls != 0 {
+		t.Fatalf("守卫不应被调用，实际 %d 次", guard.calls)
+	}
+}

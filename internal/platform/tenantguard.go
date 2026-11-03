@@ -25,9 +25,13 @@ type TenantGuard interface {
 
 // WithTenantGuard 在鉴权之后、业务处理之前校验租户状态。
 //
+// requireMerchant 表示本端所有请求都必须携带商户（B 端）：merchant_id 为空的
+// 已认证令牌按 403 拒绝（T-09 fail-closed）——签发缺陷不应静默绕过租户校验。
+// A/C 端传 false：平台级请求没有 merchant_id，无需守卫。
+//
 // 组合方式为 `mw(guard(handler))`：鉴权中间件先写入 Principal 并调用下一个 handler，
 // 守卫因此能读到 Principal；未认证请求由下游鉴权中间件处理，本层不重复判定。
-func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard) func(http.Handler) http.Handler {
+func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard, requireMerchant bool) func(http.Handler) http.Handler {
 	if guard == nil {
 		return mw
 	}
@@ -39,8 +43,14 @@ func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard) func
 				next.ServeHTTP(w, r)
 				return
 			}
-			// 平台级请求（A 端、C 端单租户）没有 merchant_id，无需守卫。
+			// 平台级请求（A 端、C 端单租户）没有 merchant_id，无需守卫；
+			// B 端缺商户属于令牌缺陷，按 403 失败关闭而不是放行。
 			if principal.MerchantID == "" {
+				if requireMerchant {
+					traceID := httpx.TraceIDFromContext(r.Context())
+					httpx.FromError(w, apperr.Forbidden("merchant context is required"), traceID)
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}

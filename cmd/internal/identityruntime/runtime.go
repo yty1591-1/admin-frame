@@ -303,7 +303,15 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		uow = persistence.NewSQLUnitOfWork(deps.Database.SQL())
 	}
 
+	// T-08/T-10：平台守卫先于身份运行时构造（bootstrap 顺序保证），
+	// B 端登录与账号开通据此校验租户是否在服务期；A/C 端守卫为 nil，跳过校验。
+	var tenantCheck app.TenantStatusChecker
+	if deps.TenantGuard != nil {
+		tenantCheck = deps.TenantGuard
+	}
+
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
+		TenantCheck:           tenantCheck,
 		Accounts:              repos.accounts,
 		Credentials:           repos.credentials,
 		Sessions:              repos.sessions,

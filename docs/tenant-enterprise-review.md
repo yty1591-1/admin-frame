@@ -296,9 +296,9 @@ make check-openapi
 | T-06 | 修正失效器语义 | 采纳方案 1（TTL-only）：删除 `Options.Invalidator` 与 A 端未使用的 `Guard`；ADR/runbook/注释三处同步 | 三处表述一致，无死代码 | ✅ 2026-11-03 |
 | T-07 | 审计一致性（D-01=②） | `tenant.audit` topic + OutboxEmitter；状态写入与 outbox 同事务；worker 注册 handler | outbox 写失败则业务失败；重复投递不重复落审计 | 待做 |
 | T-21 | 停用撤销会话（D-02=①） | `SessionRevoker` 端口由 identity 实现；suspend/terminate **先**撤销在册会话再迁移状态；撤销失败即停用失败 | 停用后旧令牌立即失效，不能换新 | ✅ 2026-11-03 |
-| T-08 | 登录期租户校验 | 定义 `TenantStatusReader` 接口，platform 注入，避免 identity→tenant 直接依赖 | 停用租户登录失败且错误可读 | 待做 |
-| T-09 | 无商户令牌 fail-closed | B 端默认拒绝，配置项保留迁移期例外 | 缺 `merchant_id` 的 B 端令牌返回 401/403 | 待做 |
-| T-10 | 建号校验 `merchant_id` | 复用 T-08 的接口 | 不存在/已终止租户建号返回 400 | 待做 |
+| T-08 | 登录期租户校验 | identity 定义 `TenantStatusChecker` 端口（结构化满足，注入 tenant Guard）；bootstrap 保证守卫先于 identity 构造 | 停用租户登录返回 403，错误可读 | ✅ 2026-11-03 |
+| T-09 | 无商户令牌 fail-closed | `WithTenantGuard` 增加 requireMerchant（biz 通道硬编码 true；守卫与回填迁移同批上线，无存量缺商户令牌，无需配置逃生门） | 缺 `merchant_id` 的 B 端令牌返回 403，守卫不被调用 | ✅ 2026-11-03 |
+| T-10 | 建号校验 `merchant_id` | 共享钩子 `checkTenantForProvision`（403/503 语义与登录一致）；当前两条开通路径均为 C 端（merchant 恒空），钩子单测覆盖，T-14 邀请流落地时强制经过 | 钩子单测 4 组语义；B 端建号路径出现时自动生效 | ✅ 2026-11-03 |
 
 **批次验收命令**
 
@@ -449,8 +449,28 @@ golangci-lint run ./internal/tenant/...
 （suspend/terminate 触发、撤销失败状态不变且 50000、activate 不触发、
 nil 撤销器可停用、审计含 revoked_sessions）。全仓测试与 lint 全绿。
 
-**未包含**：T-08～T-10（登录期校验 / 无商户令牌 fail-closed / 建号校验，共用
-`TenantStatusReader`）。
+**T-08/T-09/T-10 登录链路闭环（B2 收口）**
+
+| 文件 | 改动 |
+|---|---|
+| `internal/identity/app/tenant_check.go` | 新增 `TenantStatusChecker` 端口（`Verify` 签名与 platform.TenantGuard 结构化一致，tenant Guard 天然满足）与共享钩子 `checkTenantForProvision`（T-10） |
+| `internal/identity/app/auth_service.go` | `AuthServiceConfig.TenantCheck` 注入；`probeLogin` 在商户规范化后、限流前校验租户（T-08）：403 拒绝（与 API 守卫同文案，防探测）、503 失败关闭；`loginFailureReason` 增 `tenant_denied` 映射 |
+| `internal/platform/bootstrap.go` | **装配顺序调整**：守卫先于 identity 构造（登录校验要在 identity 装配期读到守卫；守卫只依赖数据库，无反向依赖）；`WithTenantGuard` 传 requireMerchant（biz 通道 true，T-09） |
+| `internal/platform/tenantguard.go` | `WithTenantGuard` 增加第三参 requireMerchant：B 端缺 `merchant_id` 的已认证令牌 → 403 且守卫不被调用；A/C 端不受影响 |
+
+**T-09 不留配置逃生门的理由**：守卫与回填迁移（000010）同批上线，不存在
+「存量合法但缺商户」的 B 端令牌——登录侧本就强制 B 端带商户，缺商户只能来自
+签发缺陷。逃生门等于给签发缺陷留永久后门，故硬编码 fail-closed。
+
+**T-10 的诚实边界**：当前账号开通只有 C 端自注册（OAuth / 短信），merchant
+恒空，钩子今天不产生行为变化。它的价值是把 T-14（邀请流）的建号路径钉死：
+走 `checkTenantForProvision` 才能建号，不存在 / 已终止租户无法产生孤儿账号。
+
+**验证**：平台侧 7 组（缺商户 403 且守卫零调用、A/C 端放行、原有 5 组回归）；
+identity 侧登录 4 组（停用 403 先于凭据校验、故障 503、放行后进入凭据阶段、
+A 端不触发检查）+ 钩子 4 组语义。全仓测试与 lint 全绿。
+
+**B2 至此全部收口**（T-05～T-10、T-21）。
 
 ---
 
