@@ -1,0 +1,285 @@
+admin-v1-tenants:
+  get:
+    tags: [tenant]
+    summary: 查询租户列表
+    description: |
+      需要 `tenant:read`。按 `status` / `keyword` 过滤，按创建时间倒序。
+      `page_size` 超过上限时按上限收敛（不报错），避免分页参数直接放大查询。
+    operationId: adminListTenants
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [pending, active, suspended, terminated]
+      - in: query
+        name: keyword
+        schema:
+          type: string
+        description: 名称包含匹配（LIKE 通配符已转义）。
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [tenant]
+    summary: 创建租户
+    description: |
+      需要 `tenant:write`。新租户为 `pending`（未开通），须显式 `activate` 后才允许业务访问。
+      创建动作写 `tenant.create` 审计事件。
+    operationId: adminCreateTenant
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantCreateRequest"
+    responses:
+      "201":
+        description: created
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id:
+  get:
+    tags: [tenant]
+    summary: 查询租户详情
+    description: 需要 `tenant:read`。返回状态机当前状态与最近一次状态原因。
+    operationId: adminGetTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-activate:
+  post:
+    tags: [tenant]
+    summary: 开通租户（pending → active）
+    description: |
+      需要 `tenant:write`。仅 `pending` 可开通，其它状态返回 40900。
+      开通后租户进入服务期，写 `tenant.activate` 审计。
+    operationId: adminActivateTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-suspend:
+  post:
+    tags: [tenant]
+    summary: 停用租户（active → suspended）
+    description: |
+      需要 `tenant:write`。`reason` 必填（缺失返回 40000）——停用会让客户立即不可用，
+      不能只有操作人没有理由。写 `tenant.suspend` 审计。
+    operationId: adminSuspendTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantTransitionRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-resume:
+  post:
+    tags: [tenant]
+    summary: 恢复租户（suspended → active）
+    description: 需要 `tenant:write`。写 `tenant.resume` 审计，与首次开通区分开。
+    operationId: adminResumeTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-terminate:
+  post:
+    tags: [tenant]
+    summary: 终止租户（→ terminated，终态）
+    description: |
+      需要 `tenant:write`。`reason` 必填。终止是终态：之后任何迁移都返回 40900，
+      租户数据按保留策略处置（ENT-15），不做物理删除。写 `tenant.terminate` 审计。
+    operationId: adminTerminateTenant
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantTransitionRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/Tenant"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

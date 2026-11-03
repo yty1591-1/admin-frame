@@ -62,6 +62,8 @@
 | `identity:account:credential` | admin | 否 | 活跃 | 重置目标账号密码 / MFA；账号接管高风险动作，须与生命周期权限分离 |
 | `identity:account:delete` | admin | 否 | 活跃 | 软删目标账号；不可逆操作入口，不包含恢复与会话撤销 |
 | `identity:account:session` | admin | 否 | 活跃 | 撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更 |
+| `tenant:read` | admin | 否 | 活跃 | 查询租户列表与详情（含状态与状态原因）；不包含任何状态变更 |
+| `tenant:write` | admin | 否 | 活跃 | 创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。

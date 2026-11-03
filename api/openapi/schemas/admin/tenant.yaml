@@ -1,0 +1,86 @@
+components:
+  schemas:
+    # 租户（ENT-09，隔离边界；B 端 merchant_id 取同一 id，见 ADR-0006）。
+    Tenant:
+      type: object
+      required: [id, name, status, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          description: 租户 ID；B 端各表的 `merchant_id` 即此值。
+          example: "1970000000000000001"
+        name:
+          type: string
+          maxLength: 128
+          description: 租户名称（企业 / 商户简称）。
+          example: 示例科技
+        status:
+          type: string
+          enum: [pending, active, suspended, terminated]
+          description: |
+            生命周期状态。`pending` 未开通、`active` 正常服务、`suspended` 停用（数据保留、可恢复）、
+            `terminated` 已终止（终态，不可恢复）。
+        status_reason:
+          type: string
+          maxLength: 255
+          description: 最近一次状态变更原因；停用与终止必填。
+        version:
+          type: integer
+          format: int64
+          description: 乐观锁版本；每次成功迁移 +1，可用于检测并发变更。
+        suspended_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 最近一次停用时间；恢复后仍保留，供回溯。
+        terminated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 终止时间；非空即终态。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # 创建租户请求。
+    TenantCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 128
+          description: 租户名称；首尾空白会被去除，空值返回 40000。
+
+    # 状态迁移请求（activate / resume 可省略请求体）。
+    TenantTransitionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 255
+          description: 迁移原因；`suspend` 与 `terminate` 必填，缺失返回 40000。
+
+    # 租户列表数据。
+    TenantListData:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tenant"
+        total:
+          type: integer
+          description: 满足过滤条件的总数。
+        page:
+          type: integer
+          description: 当前页码（1-based）。
+        page_size:
+          type: integer
+          description: 每页条数；超过上限时按上限收敛。

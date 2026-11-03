@@ -5,10 +5,12 @@ import (
 
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	tenantadmin "github.com/admin-frame/admin-frame/internal/tenant/transport/admin"
 )
 
 // registerRoutes 装配 A 端依赖并注册本端路由。
@@ -29,6 +31,13 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	}
 	if auditRT != nil && auditRT.Handler != nil {
 		auditadmin.Register(mux, auditRT.Handler, deps.AuthMW, deps.RequirePermission)
+	}
+	tenantRT, err := tenantruntime.New(deps)
+	if err != nil {
+		return err
+	}
+	if tenantRT != nil && tenantRT.Handler != nil {
+		tenantadmin.Register(mux, tenantRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
 }

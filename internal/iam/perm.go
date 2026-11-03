@@ -90,4 +90,8 @@ const (
 	PermConfigRead PermissionCode = "config:read"
 	// PermConfigWrite 修改运行时配置。
 	PermConfigWrite PermissionCode = "config:write"
+	// PermTenantRead 查看租户（ENT-09）。
+	PermTenantRead PermissionCode = "tenant:read"
+	// PermTenantWrite 创建租户与变更租户状态（ENT-09）。
+	PermTenantWrite PermissionCode = "tenant:write"
 )

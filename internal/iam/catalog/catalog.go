@@ -359,6 +359,22 @@ var entries = []Entry{
 		Sort:        275,
 		Description: "撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更。",
 	},
+	{
+		Code:        iam.PermTenantRead,
+		Name:        "查看租户",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        285,
+		Description: "查询租户列表与详情（含状态与状态原因）；不包含任何状态变更。",
+	},
+	{
+		Code:        iam.PermTenantWrite,
+		Name:        "管理租户",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        295,
+		Description: "创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。
