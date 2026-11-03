@@ -102,6 +102,12 @@ type Options struct {
 	// 撤销能力（单测 / 内存模式），停用与终止将只改状态不撤令牌——
 	// 生产装配必须注入 identity 的实现，见 cmd/admin-api。
 	Revoker SessionRevoker
+	// Plans 套餐目录（T-24）；nil 时 Create 拒绝服务（无法解析默认配额）。
+	Plans domain.PlanRepository
+	// Members 成员仓储（T-12）：开通前置校验与建租户时落首名 owner。
+	Members domain.MemberRepository
+	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额。
+	Quotas domain.QuotaRepository
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。
@@ -122,6 +128,11 @@ type Actor struct {
 type CreateInput struct {
 	// Name 租户名称。
 	Name string
+	// PlanCode 套餐编码（T-24）；空使用默认套餐，未知编码返回 404。
+	PlanCode string
+	// OwnerSubjectID 首名 owner 的主体 ID（T-12）；可选——开通前必须补齐，
+	// 但允许「先建租户、迁移成员、再开通」的两步操作。
+	OwnerSubjectID string
 	// Actor 操作者。
 	Actor Actor
 }
@@ -148,11 +159,13 @@ type ListResult struct {
 
 // Service 是租户生命周期用例。
 type Service struct {
-	repo  domain.Repository
-	ids   id.Generator
-	audit auditContext
-	now   func() time.Time
-	opts  Options
+	repo    domain.Repository
+	ids     id.Generator
+	audit   auditContext
+	now     func() time.Time
+	opts    Options
+	members domain.MemberRepository
+	quotas  domain.QuotaRepository
 }
 
 // NewService 构造服务；repo / ids / emitter 必填。
@@ -180,20 +193,29 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 	}
 	now := time.Now
 	return &Service{
-		repo:  repo,
-		ids:   ids,
-		audit: auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
-		now:   now,
-		opts:  opts,
+		repo:    repo,
+		ids:     ids,
+		audit:   auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
+		now:     now,
+		opts:    opts,
+		members: opts.Members,
+		quotas:  opts.Quotas,
 	}, nil
 }
 
 // Create 创建待开通租户。
 //
-// 建租户与审计同事务：审计写不进去就不建租户，避免「有租户、没记录」。
+// 建租户、物化套餐配额、落首名 owner、写审计全部同事务：任一步失败整体回滚，
+// 不存在「有租户没配额」「有租户没记录」的中间态。
 func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, error) {
+	// 套餐在事务外解析：目录读失败与未知编码都不应开始写事务。
+	plan, err := s.resolvePlan(ctx, in.PlanCode)
+	if err != nil {
+		return domain.Tenant{}, err
+	}
+
 	var tenant domain.Tenant
-	err := s.repo.WithinTx(ctx, func(txCtx context.Context) error {
+	err = s.repo.WithinTx(ctx, func(txCtx context.Context) error {
 		tenantID, idErr := s.ids.NextString()
 		if idErr != nil {
 			return apperr.Internal("tenant id generation failed", idErr)
@@ -202,10 +224,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 		if buildErr != nil {
 			return buildErr
 		}
+		built.PlanID = plan.ID
 		if createErr := s.repo.Create(txCtx, built); createErr != nil {
 			return createErr
 		}
-		if emitErr := s.emit(txCtx, in.Actor, ActionCreate, built, audit.OutcomeSuccess, ""); emitErr != nil {
+		if err := s.materializeQuotas(txCtx, built.ID, plan); err != nil {
+			return err
+		}
+		if err := s.seedOwner(txCtx, built.ID, in.OwnerSubjectID, in.Actor); err != nil {
+			return err
+		}
+		if emitErr := s.emitWithAttrs(txCtx, in.Actor, ActionCreate, built, audit.OutcomeSuccess, "",
+			map[string]string{"plan": plan.Code}); emitErr != nil {
 			return emitErr
 		}
 		tenant = built
@@ -215,6 +245,69 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 		return domain.Tenant{}, translateIfNeeded(err)
 	}
 	return tenant, nil
+}
+
+// resolvePlan 解析开账套餐：显式编码优先，否则默认套餐。
+func (s *Service) resolvePlan(ctx context.Context, planCode string) (domain.Plan, error) {
+	if s.opts.Plans == nil {
+		return domain.Plan{}, apperr.Internal("tenant plan catalog is not configured", nil)
+	}
+	if code := strings.TrimSpace(planCode); code != "" {
+		plan, err := s.opts.Plans.FindByCode(ctx, code)
+		if err != nil {
+			if errors.Is(err, domain.ErrPlanNotFound) {
+				return domain.Plan{}, apperr.NotFound("plan not found: " + code)
+			}
+			return domain.Plan{}, apperr.Internal("load tenant plan failed", err)
+		}
+		return plan, nil
+	}
+	plan, err := s.opts.Plans.DefaultPlan(ctx)
+	if err != nil {
+		// 目录没有默认套餐属部署事故（迁移 000012 保证存在），按内部错误暴露。
+		return domain.Plan{}, apperr.Internal("tenant default plan is missing", err)
+	}
+	return plan, nil
+}
+
+// materializeQuotas 把套餐默认配额物化进 tenant_quota。
+//
+// 幂等：已存在的租户级覆盖不被覆盖（回填迁移与重放同一语义）。
+func (s *Service) materializeQuotas(ctx context.Context, tenantID string, plan domain.Plan) error {
+	if s.quotas == nil {
+		return nil
+	}
+	for _, quota := range plan.SortedQuotas() {
+		built, err := domain.NewQuota(tenantID, quota.Resource, quota.Limit, s.now())
+		if err != nil {
+			return apperr.Internal("materialize plan quota failed", err)
+		}
+		if err := s.quotas.UpsertQuota(ctx, built); err != nil {
+			return translate(err)
+		}
+	}
+	return nil
+}
+
+// seedOwner 落首名 owner；主体为空时跳过（允许两步开通）。
+func (s *Service) seedOwner(ctx context.Context, tenantID, subjectID string, actor Actor) error {
+	trimmed := strings.TrimSpace(subjectID)
+	if trimmed == "" || s.members == nil {
+		return nil
+	}
+	member, err := domain.NewMember(tenantID, trimmed, domain.MemberRoleOwner, s.now())
+	if err != nil {
+		return translate(err)
+	}
+	if err := s.members.UpsertMember(ctx, member); err != nil {
+		return translate(err)
+	}
+	return s.audit.emit(ctx, actor, ActionMemberAdd, ResourceTypeMember, tenantID,
+		audit.OutcomeSuccess, "", map[string]string{
+			"subject_id": member.SubjectID,
+			"role":       string(member.Role),
+			"seeded":     "true",
+		})
 }
 
 // Get 读取租户。
@@ -288,6 +381,17 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 		locked, getErr := s.repo.Get(txCtx, in.ID)
 		if getErr != nil {
 			return getErr
+		}
+		// T-12 开通前置：0 成员的租户开出来也无法自服务，宁可让管理员先补 owner。
+		// 校验放在事务内：与迁移之间没有窗口期，并发添加 owner 也能被看到。
+		if in.Target == domain.StatusActive && locked.Status == domain.StatusPending && s.members != nil {
+			owners, ownerErr := s.members.CountActiveByRole(txCtx, locked.ID, domain.MemberRoleOwner)
+			if ownerErr != nil {
+				return ownerErr
+			}
+			if owners == 0 {
+				return domain.ErrNoOwner
+			}
 		}
 		migrated, transErr := locked.Transition(in.Target, in.Reason, s.now())
 		if transErr != nil {
@@ -431,6 +535,8 @@ func translate(err error) error {
 		return apperr.NotFound("tenant not found")
 	case errors.Is(err, domain.ErrMemberNotFound):
 		return apperr.NotFound("tenant member not found")
+	case errors.Is(err, domain.ErrNoOwner):
+		return apperr.Conflict(err.Error())
 	case errors.As(err, &invalid):
 		// 409：请求本身合法，但与当前资源状态冲突。
 		return apperr.Conflict(invalid.Error())

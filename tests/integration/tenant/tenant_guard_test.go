@@ -446,7 +446,9 @@ func TestAuditOutboxIsTransactionalOnMySQL(t *testing.T) {
 	actor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
 
 	service, err := app.NewService(repo, &seqIDs{},
-		audit.OutboxEmitter{Topic: app.TopicAudit, Events: store}, app.Options{Service: "admin-api"})
+		audit.OutboxEmitter{Topic: app.TopicAudit, Events: store}, app.Options{
+			Service: "admin-api", Plans: repo, Members: repo, Quotas: repo,
+		})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -484,5 +486,61 @@ func TestAuditOutboxIsTransactionalOnMySQL(t *testing.T) {
 	}
 	if tenants != 0 {
 		t.Fatalf("审计失败必须回滚租户，实际 %d 行", tenants)
+	}
+}
+
+// TestPlanCatalogAndMaterializationOnMySQL 验证套餐链路在真实库上成立（T-24/T-12）：
+// 迁移种子默认套餐、Create 物化配额、tenant.plan_id 落值。
+func TestPlanCatalogAndMaterializationOnMySQL(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	repo, err := persistence.NewMySQLRepository(sqlDB)
+	if err != nil {
+		t.Fatalf("NewMySQLRepository() error = %v", err)
+	}
+
+	// 迁移种子保证默认套餐存在。
+	plan, err := repo.DefaultPlan(ctx)
+	if err != nil {
+		t.Fatalf("DefaultPlan() error = %v", err)
+	}
+	if plan.Code != "standard" || !plan.IsDefault {
+		t.Fatalf("默认套餐 = %+v", plan)
+	}
+
+	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{
+		Service: "admin-api", Plans: repo, Members: repo, Quotas: repo,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	// 不带 owner 创建：同一租户上接着验证 T-12 开通前置。
+	created, err := service.Create(ctx, app.CreateInput{
+		Name: "it-plan-" + uniqueID(t), Actor: app.Actor{
+			SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	t.Cleanup(func() { _, _ = sqlDB.Exec("DELETE FROM tenant WHERE id = ?", created.ID) })
+
+	if created.PlanID != plan.ID {
+		t.Fatalf("PlanID = %q, want %q", created.PlanID, plan.ID)
+	}
+	quotas, err := repo.ListQuotas(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListQuotas() error = %v", err)
+	}
+	if len(quotas) != len(plan.Quotas) {
+		t.Fatalf("物化配额 = %+v, want %d 项", quotas, len(plan.Quotas))
+	}
+	// 0 owner 不能开通（T-12 在真实库同样生效）。
+	if _, err := service.Transition(ctx, app.TransitionInput{
+		ID: created.ID, Target: domain.StatusActive, Actor: app.Actor{
+			SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace",
+		},
+	}); err == nil {
+		t.Fatal("0 owner 开通应被拒绝")
 	}
 }

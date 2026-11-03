@@ -22,7 +22,8 @@ func failingEmitter() *recordEmitter {
 func TestCreateRollsBackWhenAuditFails(t *testing.T) {
 	ctx := context.Background()
 	repo := persistence.NewMemoryRepository()
-	service, err := app.NewService(repo, &seqIDs{}, failingEmitter(), app.Options{Service: "admin-api"})
+	seedPlan(t, repo)
+	service, err := app.NewService(repo, &seqIDs{}, failingEmitter(), testPlanOptions(repo))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -51,7 +52,7 @@ func TestTransitionRollsBackWhenAuditFails(t *testing.T) {
 	if err := repo.Create(ctx, tenant); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	service, err := app.NewService(repo, &seqIDs{}, failingEmitter(), app.Options{Service: "admin-api"})
+	service, err := app.NewService(repo, &seqIDs{}, failingEmitter(), testPlanOptions(repo))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}

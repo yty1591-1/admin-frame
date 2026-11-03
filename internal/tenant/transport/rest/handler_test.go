@@ -9,10 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
+	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/tenant/transport/rest"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
@@ -48,7 +50,10 @@ func (quietEmitter) Emit(context.Context, audit.Event) error { return nil }
 func newHandler(t *testing.T) *rest.Handler {
 	t.Helper()
 	repo := persistence.NewMemoryRepository()
-	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{Service: "admin-api"})
+	seedTestPlan(t, repo)
+	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{
+		Service: "admin-api", Plans: repo, Members: repo, Quotas: repo,
+	})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -167,6 +172,16 @@ func TestSuspendRequiresReasonAndTransitions(t *testing.T) {
 	var created tenantBody
 	if err := json.Unmarshal(decodeEnvelope(t, createRecorder).Data, &created); err != nil {
 		t.Fatalf("data 解析失败: %v", err)
+	}
+
+	// T-12 开通前置：激活前先加一名 owner。
+	addOwner := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/members",
+		`{"subject_id":"u-owner","role":"owner"}`)
+	addOwner.SetPathValue("id", created.ID)
+	ownerRecorder := httptest.NewRecorder()
+	handler.AddMember(ownerRecorder, addOwner)
+	if ownerRecorder.Code != http.StatusCreated {
+		t.Fatalf("add owner status = %d（body=%s）", ownerRecorder.Code, ownerRecorder.Body.String())
 	}
 
 	activate := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/activate", "")
@@ -303,6 +318,16 @@ func createTenant(t *testing.T, handler *rest.Handler) string {
 	if err := json.Unmarshal(decodeEnvelope(t, recorder).Data, &created); err != nil {
 		t.Fatalf("data 解析失败: %v", err)
 	}
+	// T-12 开通前置：激活前先加一名 owner。
+	addOwner := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/members",
+		`{"subject_id":"u-owner","role":"owner"}`)
+	addOwner.SetPathValue("id", created.ID)
+	ownerRecorder := httptest.NewRecorder()
+	handler.AddMember(ownerRecorder, addOwner)
+	if ownerRecorder.Code != http.StatusCreated {
+		t.Fatalf("add owner status = %d（body=%s）", ownerRecorder.Code, ownerRecorder.Body.String())
+	}
+
 	activate := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/activate", "")
 	activate.SetPathValue("id", created.ID)
 	activateRecorder := httptest.NewRecorder()
@@ -345,18 +370,28 @@ func TestMemberEndpoints(t *testing.T) {
 	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &page); err != nil {
 		t.Fatalf("data 解析失败: %v", err)
 	}
-	if page.Total != 1 || page.Items[0].SubjectID != "u1" || page.Items[0].Role != "owner" {
+	// createTenant 已种子 u-owner（owner）；u1 也是 owner → 列表 2 名，owner 排前。
+	if page.Total != 2 || page.Items[0].SubjectID != "u-owner" || page.Items[1].SubjectID != "u1" {
 		t.Fatalf("成员列表 = %+v", page)
 	}
 
-	// 唯一 owner 降级 → 409（领域规则经 HTTP 透出）。
+	// 降级 u1：u-owner 仍是 owner → 允许（200），证明「最后一名 owner」按数据判断而非按序。
 	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u1", `{"role":"member"}`)
 	patch.SetPathValue("id", tenantID)
 	patch.SetPathValue("subject_id", "u1")
 	patchRecorder := httptest.NewRecorder()
 	handler.UpdateMember(patchRecorder, patch)
-	if patchRecorder.Code != http.StatusConflict {
-		t.Fatalf("降级唯一 owner status = %d, want 409（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	if patchRecorder.Code != http.StatusOK {
+		t.Fatalf("降级非末位 owner status = %d, want 200（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	}
+	// 降级末位 owner u-owner → 409（领域规则经 HTTP 透出）。
+	lastOwner := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u-owner", `{"role":"member"}`)
+	lastOwner.SetPathValue("id", tenantID)
+	lastOwner.SetPathValue("subject_id", "u-owner")
+	lastRecorder := httptest.NewRecorder()
+	handler.UpdateMember(lastRecorder, lastOwner)
+	if lastRecorder.Code != http.StatusConflict {
+		t.Fatalf("降级末位 owner status = %d, want 409（body=%s）", lastRecorder.Code, lastRecorder.Body.String())
 	}
 
 	// 缺少 role / status → 400。
@@ -401,7 +436,10 @@ func TestQuotaEndpoints(t *testing.T) {
 	if err := json.Unmarshal(decodeEnvelope(t, getRecorder).Data, &page); err != nil {
 		t.Fatalf("data 解析失败: %v", err)
 	}
-	if page.Total != 1 || page.Items[0].Resource != "user" || page.Items[0].Limit != 50 {
+	// 套餐默认配额已在创建时物化（api.rps=100, user=50）；本用例 set user=50 覆盖同值。
+	if page.Total != 2 ||
+		page.Items[0].Resource != "api.rps" || page.Items[0].Limit != 100 ||
+		page.Items[1].Resource != "user" || page.Items[1].Limit != 50 {
 		t.Fatalf("配额列表 = %+v", page)
 	}
 
@@ -457,8 +495,14 @@ func TestUpdateMemberIsAtomicOverHTTP(t *testing.T) {
 	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &page); err != nil {
 		t.Fatalf("data 解析失败: %v", err)
 	}
-	if len(page.Items) != 1 || page.Items[0].Role != "member" {
-		t.Fatalf("失败请求不应改角色，实际 = %+v", page.Items)
+	// u-owner（createTenant 种子）与 u1 都不是 admin = 半提交未发生。
+	if len(page.Items) != 2 {
+		t.Fatalf("成员数 = %d, want 2", len(page.Items))
+	}
+	for _, item := range page.Items {
+		if item.Role == "admin" {
+			t.Fatalf("失败请求不应改角色，实际含 admin: %+v", page.Items)
+		}
 	}
 }
 
@@ -494,5 +538,22 @@ func TestUpdateMemberAppliesBothFields(t *testing.T) {
 	}
 	if updated.Role != "admin" || updated.Status != "disabled" {
 		t.Fatalf("变更后 = %+v", updated)
+	}
+}
+
+// seedTestPlan 写入默认套餐（本包独立于 app_test 的助手）。
+func seedTestPlan(t *testing.T, repo *persistence.MemoryRepository) {
+	t.Helper()
+	now := time.Now().UTC()
+	plan := domain.Plan{
+		ID: "plan-test", Code: "standard", Name: "标准套餐", IsDefault: true,
+		Quotas: []domain.Quota{
+			{Resource: "user", Limit: 50},
+			{Resource: "api.rps", Limit: 100},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := repo.UpsertPlan(plan); err != nil {
+		t.Fatalf("UpsertPlan() error = %v", err)
 	}
 }

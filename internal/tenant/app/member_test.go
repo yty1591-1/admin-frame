@@ -27,10 +27,11 @@ type memberFixture struct {
 func newMemberFixture(t *testing.T) *memberFixture {
 	t.Helper()
 	repo := persistence.NewMemoryRepository()
+	seedPlan(t, repo)
 	emitter := &recordEmitter{}
 	ids := &seqIDs{}
 
-	tenants, err := app.NewService(repo, ids, emitter, app.Options{Service: "admin-api"})
+	tenants, err := app.NewService(repo, ids, emitter, testPlanOptions(repo))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -48,8 +49,13 @@ func newMemberFixture(t *testing.T) *memberFixture {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	createdID := tenant.ID
+	// T-12 开通前置：先种子 owner 再激活（不走 AddMember，避免审计噪声）。
+	if seedErr := repo.UpsertMember(ctx, mustMember(t, createdID, "fixture-owner")); seedErr != nil {
+		t.Fatalf("seed owner error = %v", seedErr)
+	}
 	tenant, err = tenants.Transition(ctx, app.TransitionInput{
-		ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor(),
+		ID: createdID, Target: domain.StatusActive, Actor: adminActor(),
 	})
 	if err != nil {
 		t.Fatalf("activate error = %v", err)
@@ -127,6 +133,12 @@ func TestLastOwnerIsProtected(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Add(owner) error = %v", err)
 	}
+	// fixture 自带种子 owner（激活前置），先停用它使 u1 成为唯一 owner。
+	if _, err := fixture.members.SetStatus(ctx, app.SetMemberStatusInput{
+		TenantID: fixture.tenant.ID, SubjectID: "fixture-owner", Status: domain.MemberStatusDisabled, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("disable fixture owner error = %v", err)
+	}
 
 	_, err := fixture.members.SetRole(ctx, app.SetMemberRoleInput{
 		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: domain.MemberRoleAdmin, Actor: adminActor(),
@@ -165,6 +177,7 @@ func TestMemberListHidesDisabledByDefault(t *testing.T) {
 			t.Fatalf("Add(%s) error = %v", subject, err)
 		}
 	}
+	// fixture-owner（种子）保持活跃；u2 停用后默认列表应只剩 owner 与 u1。
 	if _, err := fixture.members.SetStatus(ctx, app.SetMemberStatusInput{
 		TenantID: fixture.tenant.ID, SubjectID: "u2", Status: domain.MemberStatusDisabled, Actor: adminActor(),
 	}); err != nil {
@@ -175,15 +188,15 @@ func TestMemberListHidesDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(active) != 1 || active[0].SubjectID != "u1" {
+	if len(active) != 2 || active[0].SubjectID != "fixture-owner" || active[1].SubjectID != "u1" {
 		t.Fatalf("在册成员 = %+v", active)
 	}
 	all, err := fixture.members.List(ctx, fixture.tenant.ID, true)
 	if err != nil {
 		t.Fatalf("List(all) error = %v", err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("全部成员 = %d, want 2", len(all))
+	if len(all) != 3 {
+		t.Fatalf("全部成员 = %d, want 3", len(all))
 	}
 }
 
@@ -385,7 +398,8 @@ func TestReadsAllowedOnTerminatedTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("终止态查询配额 error = %v", err)
 	}
-	if len(quotas) != 1 || quotas[0].Resource != "user" {
+	// 物化的 api.rps（套餐默认）+ 用例设置的 user。
+	if len(quotas) != 2 || quotas[1].Resource != "user" || quotas[1].Limit != 10 {
 		t.Fatalf("终止态配额 = %+v", quotas)
 	}
 	// 写路径仍必须拒绝。
@@ -410,6 +424,12 @@ func TestConcurrentOwnerDemotionKeepsOneOwner(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Add(%s) error = %v", subject, err)
 		}
+	}
+	// fixture 种子 owner 停用，保证参与并发的只有 u1 / u2。
+	if _, err := fixture.members.SetStatus(ctx, app.SetMemberStatusInput{
+		TenantID: fixture.tenant.ID, SubjectID: "fixture-owner", Status: domain.MemberStatusDisabled, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("disable fixture owner error = %v", err)
 	}
 
 	subjects := []string{"u1", "u2"}

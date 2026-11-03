@@ -25,6 +25,7 @@ type MemoryRepository struct {
 	items   map[string]domain.Tenant
 	members map[string]map[string]domain.Member
 	quotas  map[string]map[string]domain.Quota
+	plans   map[string]domain.Plan
 }
 
 // NewMemoryRepository 构造内存仓储。
@@ -33,6 +34,7 @@ func NewMemoryRepository() *MemoryRepository {
 		items:   make(map[string]domain.Tenant),
 		members: make(map[string]map[string]domain.Member),
 		quotas:  make(map[string]map[string]domain.Quota),
+		plans:   make(map[string]domain.Plan),
 	}
 }
 
@@ -299,4 +301,41 @@ func roleOrder(role domain.MemberRole) int {
 	default:
 		return 2
 	}
+}
+
+// UpsertPlan 写入或覆盖套餐目录（内存实现供测试构造目录）。
+func (r *MemoryRepository) UpsertPlan(plan domain.Plan) error {
+	if err := plan.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.plans == nil {
+		r.plans = make(map[string]domain.Plan)
+	}
+	r.plans[plan.Code] = plan
+	return nil
+}
+
+// DefaultPlan 返回默认套餐。
+func (r *MemoryRepository) DefaultPlan(_ context.Context) (domain.Plan, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, plan := range r.plans {
+		if plan.IsDefault {
+			return plan, nil
+		}
+	}
+	return domain.Plan{}, domain.ErrNoDefaultPlan
+}
+
+// FindByCode 按编码加载套餐。
+func (r *MemoryRepository) FindByCode(_ context.Context, code string) (domain.Plan, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	plan, ok := r.plans[strings.TrimSpace(code)]
+	if !ok {
+		return domain.Plan{}, domain.ErrPlanNotFound
+	}
+	return plan, nil
 }

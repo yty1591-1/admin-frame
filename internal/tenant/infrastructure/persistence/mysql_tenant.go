@@ -29,7 +29,7 @@ func NewMySQLRepository(sqlDB *sql.DB) (*MySQLRepository, error) {
 }
 
 // tenantColumns 固定列顺序，避免 SELECT * 与扫描顺序漂移。
-const tenantColumns = "id, name, status, status_reason, version, suspended_at, terminated_at, created_at, updated_at"
+const tenantColumns = "id, name, status, plan_id, status_reason, version, suspended_at, terminated_at, created_at, updated_at"
 
 // WithinTx 在事务内执行 fn，事务注入 ctx 后仓储与 OutboxEmitter 自动复用。
 func (r *MySQLRepository) WithinTx(ctx context.Context, fn func(context.Context) error) error {
@@ -45,8 +45,8 @@ func (r *MySQLRepository) Create(ctx context.Context, tenant domain.Tenant) erro
 		return err
 	}
 	_, err := r.exec(ctx).ExecContext(ctx,
-		`INSERT INTO tenant (`+tenantColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		tenant.ID, tenant.Name, string(tenant.Status), tenant.StatusReason, tenant.Version,
+		`INSERT INTO tenant (`+tenantColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		tenant.ID, tenant.Name, string(tenant.Status), nullString(tenant.PlanID), tenant.StatusReason, tenant.Version,
 		nullTime(tenant.SuspendedAt), nullTime(tenant.TerminatedAt), tenant.CreatedAt, tenant.UpdatedAt)
 	if err != nil {
 		if isDuplicateKey(err) {
@@ -214,18 +214,20 @@ type rowScanner interface {
 // scanTenant 按 tenantColumns 的顺序扫描一行。
 func scanTenant(scanner rowScanner) (domain.Tenant, error) {
 	var (
-		tenant       domain.Tenant
-		status       string
-		suspendedAt  sql.NullTime
-		terminatedAt sql.NullTime
+		tenant         domain.Tenant
+		status         string
+		nullablePlanID sql.NullString
+		suspendedAt    sql.NullTime
+		terminatedAt   sql.NullTime
 	)
 	if err := scanner.Scan(
-		&tenant.ID, &tenant.Name, &status, &tenant.StatusReason, &tenant.Version,
+		&tenant.ID, &tenant.Name, &status, &nullablePlanID, &tenant.StatusReason, &tenant.Version,
 		&suspendedAt, &terminatedAt, &tenant.CreatedAt, &tenant.UpdatedAt,
 	); err != nil {
 		return domain.Tenant{}, err
 	}
 	tenant.Status = domain.Status(status)
+	tenant.PlanID = nullablePlanID.String
 	if suspendedAt.Valid {
 		moment := suspendedAt.Time
 		tenant.SuspendedAt = &moment
@@ -235,6 +237,14 @@ func scanTenant(scanner rowScanner) (domain.Tenant, error) {
 		tenant.TerminatedAt = &moment
 	}
 	return tenant, nil
+}
+
+// nullString 把空串转 NULL：tenant.plan_id 允许未回填（领域层容忍空值）。
+func nullString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 // nullTime 把可空时间转成驱动可写的值。
@@ -394,4 +404,53 @@ func scanMember(scanner rowScanner) (domain.Member, error) {
 	member.Role = domain.MemberRole(role)
 	member.Status = domain.MemberStatus(status)
 	return member, nil
+}
+
+// planColumns 固定套餐列顺序。
+const planColumns = "id, code, name, is_default, quotas, created_at, updated_at"
+
+// DefaultPlan 返回默认套餐；多个 default 时取编码最小者（种子应保证恰好一个）。
+func (r *MySQLRepository) DefaultPlan(ctx context.Context) (domain.Plan, error) {
+	row := r.query(ctx).QueryRowContext(ctx,
+		`SELECT `+planColumns+` FROM tenant_plan WHERE is_default = 1 ORDER BY code LIMIT 1`)
+	plan, err := scanPlan(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Plan{}, domain.ErrNoDefaultPlan
+		}
+		return domain.Plan{}, fmt.Errorf("tenant: load default plan: %w", err)
+	}
+	return plan, nil
+}
+
+// FindByCode 按编码加载套餐。
+func (r *MySQLRepository) FindByCode(ctx context.Context, code string) (domain.Plan, error) {
+	row := r.query(ctx).QueryRowContext(ctx,
+		`SELECT `+planColumns+` FROM tenant_plan WHERE code = ?`, strings.TrimSpace(code))
+	plan, err := scanPlan(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Plan{}, domain.ErrPlanNotFound
+		}
+		return domain.Plan{}, fmt.Errorf("tenant: load plan %s: %w", code, err)
+	}
+	return plan, nil
+}
+
+// scanPlan 按 planColumns 顺序扫描并解析配额 JSON。
+func scanPlan(scanner rowScanner) (domain.Plan, error) {
+	var (
+		plan     domain.Plan
+		quotasJS []byte
+	)
+	if err := scanner.Scan(&plan.ID, &plan.Code, &plan.Name, &plan.IsDefault,
+		&quotasJS, &plan.CreatedAt, &plan.UpdatedAt); err != nil {
+		return domain.Plan{}, err
+	}
+	quotas, err := decodePlanQuotas(quotasJS)
+	if err != nil {
+		return domain.Plan{}, err
+	}
+	plan.Quotas = quotas
+	return plan, nil
 }

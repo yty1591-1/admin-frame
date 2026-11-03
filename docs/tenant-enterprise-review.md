@@ -315,8 +315,8 @@ TENANT_TEST_MYSQL_DSN='...' go test ./tests/integration/tenant/... -count=1 -v
 | ID | 任务 | 范围 | 验收 |
 |---|---|---|---|
 | T-11 | 租户元数据 | 迁移新增 `code`（唯一）、联系人、行业、时区/语言、外部 ID；`PATCH /tenants/{id}` 改名与改元数据 | `code` 全局唯一；改名走审计；OpenAPI 升 7.3.0 |
-| T-24 | 套餐模型（D-03=①） | `tenant_plan` 目录 + `tenant.plan_id`；`tenant_quota` 默认值由套餐派生；存量租户回填默认套餐 | 新建租户自动获得套餐默认配额；租户覆盖优先于套餐 |
-| T-12 | 开通前置 | `activate` 要求 ≥1 active owner；`Create` 支持可选 `owner_subject_id`；默认配额取套餐 | 0 成员租户无法开通，错误可读 |
+| T-24 | 套餐模型（D-03=①） | `tenant_plan` 目录 + `tenant.plan_id`；`tenant_quota` 默认值由套餐派生；存量租户回填默认套餐 | 新建租户自动获得套餐默认配额；租户覆盖优先于套餐 | ✅ 2026-11-03 |
+| T-12 | 开通前置 | `activate` 要求 ≥1 active owner；`Create` 支持可选 `owner_subject_id`；默认配额取套餐 | 0 成员租户无法开通，错误可读 | ✅ 2026-11-03 |
 | T-13 | 成员分页与席位上限 | 列表分页；`Add` 前读套餐/租户的 `user` 上限 | 超席位返回 409，附当前值与上限 |
 | T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 |
 | T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 |
@@ -471,6 +471,31 @@ identity 侧登录 4 组（停用 403 先于凭据校验、故障 503、放行�
 A 端不触发检查）+ 钩子 4 组语义。全仓测试与 lint 全绿。
 
 **B2 至此全部收口**（T-05～T-10、T-21）。
+
+### 6.4 B3 实施记录（2026-11-03，进行中）
+
+**T-24 套餐模型 + T-12 开通前置**
+
+| 改动 | 说明 |
+|---|---|
+| 迁移 `000012` | `tenant_plan` 目录（`quotas` 为 JSON 数组）+ 种子默认套餐 `standard`（user=50 / api.rps=100）+ `tenant.plan_id` 外键 + 存量回填 plan_id + 物化缺失配额（LEFT JOIN 只补缺） |
+| `domain/plan.go` | `Plan` 实体与校验；**模板配额不走 `Quota.Validate`**——它要求 TenantID，模板没有租户维度 |
+| `domain/repository.go` | `PlanRepository`（DefaultPlan / FindByCode）；目录只读，无增删改接口——避免「改了目录、存量租户怎么办」被随手触发 |
+| `app/service.go` | `Create` 支持 `plan_code`（未知 404）/ `owner_subject_id`（直落首名 owner，审计标 `seeded`）；建租户 + 物化配额 + 种 owner + 审计同一事务；`activate` 前置：pending → active 要求 ≥1 在册 owner（409） |
+| 契约 | `admin.yaml` 7.3.0：请求增 `plan_code` / `owner_subject_id`，响应增 `plan_id`（纯增量） |
+
+**套餐语义（关键取舍）**：套餐是「开账模板」不是运行时绑定——创建时把配额物化进
+`tenant_quota`，之后调套餐只影响新建租户，存量租户保持开账时的上限（与合同结算
+一致）。`activate` 前置校验放事务内：与迁移之间无窗口期。
+
+**坑**：`INSERT…SELECT…JOIN…ON DUPLICATE KEY UPDATE` 的 ON 子句在 MySQL 有
+解析歧义（Error 1064），改为 LEFT JOIN + WHERE IS NULL 的「只补缺」写法。
+
+**验证**：应用层 4 个新用例（物化 / 显式套餐 / 种 owner / 开通前置）+ 真实 MySQL
+集成用例（种子套餐存在、创建物化、0 owner 拒绝开通），6 个集成用例全过；
+go test ./... 全绿，lint 0 issues，check-openapi（7.3.0 纯增量）/ check-migrations 通过。
+
+**B3 未完成**：T-11 元数据、T-13 席位、T-14 邀请流、T-15 If-Match、T-22（依赖 T-14）。
 
 ---
 

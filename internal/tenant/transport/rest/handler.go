@@ -82,7 +82,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
-	tenant, err := h.service.Create(r.Context(), app.CreateInput{Name: body.Name, Actor: actor})
+	tenant, err := h.service.Create(r.Context(), app.CreateInput{
+		Name:           body.Name,
+		PlanCode:       body.PlanCode,
+		OwnerSubjectID: body.OwnerSubjectID,
+		Actor:          actor,
+	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
@@ -247,6 +252,10 @@ func decodeBody(r *http.Request, dst any, required bool) error {
 type createRequest struct {
 	// Name 租户名称。
 	Name string `json:"name"`
+	// PlanCode 套餐编码；空使用默认套餐（T-24）。
+	PlanCode string `json:"plan_code"`
+	// OwnerSubjectID 首名 owner 主体 ID；可选，开通前必须补齐（T-12）。
+	OwnerSubjectID string `json:"owner_subject_id"`
 }
 
 // transitionRequest 是状态迁移请求体。
@@ -260,6 +269,7 @@ type tenantResponse struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
 	Status       string  `json:"status"`
+	PlanID       string  `json:"plan_id,omitempty"`
 	StatusReason string  `json:"status_reason,omitempty"`
 	Version      int64   `json:"version"`
 	SuspendedAt  *string `json:"suspended_at"`
@@ -282,6 +292,7 @@ func toResponse(tenant domain.Tenant) tenantResponse {
 		ID:           tenant.ID,
 		Name:         tenant.Name,
 		Status:       string(tenant.Status),
+		PlanID:       tenant.PlanID,
 		StatusReason: tenant.StatusReason,
 		Version:      tenant.Version,
 		SuspendedAt:  formatTimePtr(tenant.SuspendedAt),

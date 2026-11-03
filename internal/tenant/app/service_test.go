@@ -73,19 +73,40 @@ func (e *recordEmitter) actions() []string {
 }
 
 // newService 构造带内存仓储与记录型审计的用例对象。
-func newService(t *testing.T) (*app.Service, *recordEmitter) {
+func newService(t *testing.T) (*app.Service, *recordEmitter, *persistence.MemoryRepository) {
 	t.Helper()
 	emitter := &recordEmitter{}
-	service, err := app.NewService(
-		persistence.NewMemoryRepository(),
-		&seqIDs{},
-		emitter,
-		app.Options{Service: "admin-api"},
-	)
+	repo := persistence.NewMemoryRepository()
+	seedPlan(t, repo)
+	service, err := app.NewService(repo, &seqIDs{}, emitter, testPlanOptions(repo))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
-	return service, emitter
+	return service, emitter, repo
+}
+
+// seedPlan 向仓储写入默认套餐；返回编码供断言使用。
+func seedPlan(t *testing.T, repo *persistence.MemoryRepository) string {
+	t.Helper()
+	plan := domain.Plan{
+		ID: "plan-test", Code: "standard", Name: "标准套餐", IsDefault: true,
+		Quotas: []domain.Quota{
+			{Resource: "user", Limit: 50},
+			{Resource: "api.rps", Limit: 100},
+		},
+	}
+	now := time.Now().UTC()
+	plan.CreatedAt = now
+	plan.UpdatedAt = now
+	if err := repo.UpsertPlan(plan); err != nil {
+		t.Fatalf("UpsertPlan() error = %v", err)
+	}
+	return plan.Code
+}
+
+// testPlanOptions 返回接好三仓储的 Options（套餐 / 成员 / 配额）。
+func testPlanOptions(repo *persistence.MemoryRepository) app.Options {
+	return app.Options{Service: "admin-api", Plans: repo, Members: repo, Quotas: repo}
 }
 
 // adminActor 是测试用操作者。
@@ -95,7 +116,7 @@ func adminActor() app.Actor {
 
 // TestCreateThenFullLifecycle 走完整生命周期并校验审计动作序列。
 func TestCreateThenFullLifecycle(t *testing.T) {
-	service, emitter := newService(t)
+	service, emitter, repo := newService(t)
 	ctx := context.Background()
 
 	created, err := service.Create(ctx, app.CreateInput{Name: "  Acme  ", Actor: adminActor()})
@@ -118,6 +139,11 @@ func TestCreateThenFullLifecycle(t *testing.T) {
 		{domain.StatusActive, ""},
 		{domain.StatusTerminated, "客户退租"},
 	}
+	// T-12 开通前置：激活前先补一名在册 owner。
+	if err := repo.UpsertMember(ctx, mustMember(t, created.ID, "owner-1")); err != nil {
+		t.Fatalf("seed owner error = %v", err)
+	}
+
 	tenant := created
 	for _, step := range steps {
 		tenant, err = service.Transition(ctx, app.TransitionInput{
@@ -165,7 +191,7 @@ func TestCreateThenFullLifecycle(t *testing.T) {
 
 // TestInvalidTransitionIsConflictAndAudited 验证非法迁移返回 409 且留下失败审计。
 func TestInvalidTransitionIsConflictAndAudited(t *testing.T) {
-	service, emitter := newService(t)
+	service, emitter, _ := newService(t)
 	ctx := context.Background()
 
 	created, err := service.Create(ctx, app.CreateInput{Name: "Beta", Actor: adminActor()})
@@ -200,11 +226,15 @@ func TestInvalidTransitionIsConflictAndAudited(t *testing.T) {
 
 // TestSuspendRequiresReason 验证停用缺原因返回 400，且状态不变。
 func TestSuspendRequiresReason(t *testing.T) {
-	service, _ := newService(t)
+	service, _, repo := newService(t)
 	ctx := context.Background()
 	tenant, err := service.Create(ctx, app.CreateInput{Name: "Gamma", Actor: adminActor()})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	// T-12 开通前置：激活前先补一名 owner（建号与激活允许分两步）。
+	if err := repo.UpsertMember(ctx, mustMember(t, tenant.ID, "owner-1")); err != nil {
+		t.Fatalf("seed owner error = %v", err)
 	}
 	tenant, err = service.Transition(ctx, app.TransitionInput{ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor()})
 	if err != nil {
@@ -219,7 +249,7 @@ func TestSuspendRequiresReason(t *testing.T) {
 
 // TestTerminatedTenantCannotResume 验证终态拒绝恢复。
 func TestTerminatedTenantCannotResume(t *testing.T) {
-	service, _ := newService(t)
+	service, _, _ := newService(t)
 	ctx := context.Background()
 	tenant, err := service.Create(ctx, app.CreateInput{Name: "Delta", Actor: adminActor()})
 	if err != nil {
@@ -237,14 +267,14 @@ func TestTerminatedTenantCannotResume(t *testing.T) {
 
 // TestGetMissingTenantIsNotFound 验证不存在返回 404。
 func TestGetMissingTenantIsNotFound(t *testing.T) {
-	service, _ := newService(t)
+	service, _, _ := newService(t)
 	_, err := service.Get(context.Background(), "absent")
 	assertCode(t, err, apperr.CodeNotFound)
 }
 
 // TestListCapsPageSizeAndRejectsUnknownStatus 验证分页收敛与状态枚举校验。
 func TestListCapsPageSizeAndRejectsUnknownStatus(t *testing.T) {
-	service, _ := newService(t)
+	service, _, _ := newService(t)
 	ctx := context.Background()
 	for _, name := range []string{"A", "B", "C"} {
 		if _, err := service.Create(ctx, app.CreateInput{Name: name, Actor: adminActor()}); err != nil {
@@ -338,4 +368,14 @@ func assertCode(t *testing.T, err error, want int) {
 // WithinTx 在测试中直接执行 fn（无事务语义）。
 func (r *conflictRepo) WithinTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
+}
+
+// mustMember 构造在册 owner 成员（开通前置用例使用）。
+func mustMember(t *testing.T, tenantID, subjectID string) domain.Member {
+	t.Helper()
+	member, err := domain.NewMember(tenantID, subjectID, domain.MemberRoleOwner, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewMember() error = %v", err)
+	}
+	return member
 }

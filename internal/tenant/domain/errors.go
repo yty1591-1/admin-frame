@@ -31,6 +31,16 @@ var (
 	ErrMemberNotFound = errors.New("tenant: member not found")
 	// ErrMemberAlreadyExists 成员已在册，重复添加视为冲突。
 	ErrMemberAlreadyExists = errors.New("tenant: member already active in tenant")
+	// ErrPlanNotFound 指定编码的套餐不存在。
+	ErrPlanNotFound = errors.New("tenant: plan not found")
+	// ErrPlanCodeRequired 套餐编码必填。
+	ErrPlanCodeRequired = errors.New("tenant: plan code is required")
+	// ErrPlanCodeTooLong 套餐编码超长。
+	ErrPlanCodeTooLong = errors.New("tenant: plan code exceeds length limit")
+	// ErrNoDefaultPlan 目录中缺少默认套餐（迁移 000012 保证存在；缺失属部署事故）。
+	ErrNoDefaultPlan = errors.New("tenant: no default plan configured")
+	// ErrNoOwner 开通前置：租户至少要有一名在册 owner 才能开通（T-12）。
+	ErrNoOwner = errors.New("tenant: activation requires at least one active owner member")
 	// ErrLastOwner 租户至少保留一名在册 owner。
 	ErrLastOwner = errors.New("tenant: tenant must keep at least one active owner")
 	// ErrResourceRequired 配额资源键必填。

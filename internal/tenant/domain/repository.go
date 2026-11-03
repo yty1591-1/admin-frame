@@ -83,3 +83,15 @@ type QuotaRepository interface {
 	// UpsertQuota 按 (tenant_id, resource) 幂等写入上限。
 	UpsertQuota(ctx context.Context, quota Quota) error
 }
+
+// PlanRepository 是套餐目录的持久化契约。
+//
+// 目录由迁移种子维护（000012），本切片不提供增删改接口——
+// 运营改套餐走迁移或后续管理端，避免「改了目录、存量租户怎么办」
+// 的语义问题在没有任何工具的情况下被随手触发。
+type PlanRepository interface {
+	// DefaultPlan 返回默认套餐；不存在返回 ErrNoDefaultPlan。
+	DefaultPlan(ctx context.Context) (Plan, error)
+	// FindByCode 按编码加载套餐；不存在返回 ErrPlanNotFound。
+	FindByCode(ctx context.Context, code string) (Plan, error)
+}

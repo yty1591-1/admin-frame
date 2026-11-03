@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 7.2.0
+  version: 7.3.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -25,6 +25,8 @@ info:
     `pending → active → suspended → terminated`，停用与终止必须给原因。
     7.2.0：新增租户成员与配额端点（`/admin/v1/tenants/{id}/members*`、`/quotas*`，ENT-09，纯增量）；
     成员停用代替物理删除，最后一名 owner 不可降级；配额 `-1` 表示不限，执行由 ENT-14 承担。
+    7.3.0：租户创建支持 `plan_code`（T-24，套餐配额创建时物化）与 `owner_subject_id`（T-12）；
+    `activate` 要求租户至少有一名在册 owner（否则 40900）；`Tenant` 响应增加 `plan_id`（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）

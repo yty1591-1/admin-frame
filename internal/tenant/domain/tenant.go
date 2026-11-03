@@ -79,6 +79,9 @@ type Tenant struct {
 	Name string
 	// Status 当前状态。
 	Status Status
+	// PlanID 开账时使用的套餐（T-24）；空表示历史数据未回填。
+	// 套餐是模板：配额已在创建时物化进 tenant_quota，本字段仅留痕与报表用。
+	PlanID string
 	// StatusReason 最近一次状态变更原因（审计之外的运营说明）。
 	StatusReason string
 	// Version 乐观锁版本；每次成功迁移 +1。

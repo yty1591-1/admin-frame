@@ -75,7 +75,7 @@
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：Wave 2 已全部关闭（`ENT-05`～`ENT-08`）；`ENT-09` 主体完成但存在验收缺口（见下条）；`ENT-10`～`ENT-24` 待做 |
-| [tenant-enterprise-review.md](./tenant-enterprise-review.md) | 评审完成 v1.2 | 租户域企业级差距与分批开发计划：**B1、B2 已完成（P0×3 + 并发保护 + 审计 Outbox + 会话撤销 + 登录链路闭环）**；B3、B4 未开始；D-01～D-05 已定 |
+| [tenant-enterprise-review.md](./tenant-enterprise-review.md) | 评审完成 v1.2 | 租户域企业级差距与分批开发计划：**B1、B2 已完成；B3 进行中（套餐模型 + 开通前置已落地，契约 7.3.0）**；B4 未开始；D-01～D-05 已定 |
 
 > 这三份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次）已全部闭环，位于 [`archive/`](./archive/)。
 

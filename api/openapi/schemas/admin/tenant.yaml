@@ -20,6 +20,9 @@ components:
           description: |
             生命周期状态。`pending` 未开通、`active` 正常服务、`suspended` 停用（数据保留、可恢复）、
             `terminated` 已终止（终态，不可恢复）。
+        plan_id:
+          type: string
+          description: 开账套餐（T-24）；配额已在创建时物化进配额列表，本字段用于对账与报表。
         status_reason:
           type: string
           maxLength: 255
@@ -55,6 +58,17 @@ components:
           type: string
           maxLength: 128
           description: 租户名称；首尾空白会被去除，空值返回 40000。
+        plan_code:
+          type: string
+          description: |
+            套餐编码（T-24）；省略时使用默认套餐（`standard`）。
+            未知编码返回 40400。套餐配额在创建时物化，之后改套餐不影响本租户。
+        owner_subject_id:
+          type: string
+          maxLength: 64
+          description: |
+            首名 owner 的主体 ID（T-12）；可选——允许「先建租户、迁移成员、再开通」
+            两步操作，但开通（activate）前必须存在至少一名在册 owner，否则返回 40900。
 
     # 状态迁移请求（activate / resume 可省略请求体）。
     TenantTransitionRequest:

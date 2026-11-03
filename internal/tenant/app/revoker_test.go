@@ -37,14 +37,21 @@ type revokerFixture struct {
 func newRevokerFixture(t *testing.T, revoker app.SessionRevoker) *revokerFixture {
 	t.Helper()
 	repo := persistence.NewMemoryRepository()
+	seedPlan(t, repo)
 	emitter := &recordEmitter{}
-	service, err := app.NewService(repo, &seqIDs{}, emitter, app.Options{Service: "admin-api", Revoker: revoker})
+	opts := testPlanOptions(repo)
+	opts.Revoker = revoker
+	service, err := app.NewService(repo, &seqIDs{}, emitter, opts)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	created, err := service.Create(context.Background(), app.CreateInput{Name: "Acme", Actor: adminActor()})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	// T-12 开通前置：激活前种子一名 owner。
+	if seedErr := repo.UpsertMember(context.Background(), mustMember(t, created.ID, "fixture-owner")); seedErr != nil {
+		t.Fatalf("seed owner error = %v", seedErr)
 	}
 	tenant, err := service.Transition(context.Background(), app.TransitionInput{
 		ID: created.ID, Target: domain.StatusActive, Actor: adminActor(),
@@ -120,14 +127,20 @@ func TestRevocationFailureAbortsSuspension(t *testing.T) {
 // TestActivateDoesNotRevoke 验证开通不触发撤销。
 func TestActivateDoesNotRevoke(t *testing.T) {
 	repo := persistence.NewMemoryRepository()
+	seedPlan(t, repo)
 	revoker := &stubRevoker{revoked: 0}
-	service, err := app.NewService(repo, &seqIDs{}, &recordEmitter{}, app.Options{Service: "admin-api", Revoker: revoker})
+	opts := testPlanOptions(repo)
+	opts.Revoker = revoker
+	service, err := app.NewService(repo, &seqIDs{}, &recordEmitter{}, opts)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	created, err := service.Create(context.Background(), app.CreateInput{Name: "Beta", Actor: adminActor()})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	if seedErr := repo.UpsertMember(context.Background(), mustMember(t, created.ID, "fixture-owner")); seedErr != nil {
+		t.Fatalf("seed owner error = %v", seedErr)
 	}
 	if _, err := service.Transition(context.Background(), app.TransitionInput{
 		ID: created.ID, Target: domain.StatusActive, Actor: adminActor(),
