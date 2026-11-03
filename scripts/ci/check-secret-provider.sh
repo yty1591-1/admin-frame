@@ -5,7 +5,9 @@
 #   1. 密钥 Provider 抽象存在，且已接入启动路径（防「写了抽象但没人用」的死代码）；
 #   2. 生产样例配置必须声明托管来源，不得依赖隐式环境变量注入；
 #   3. 生产制品必须把 Secret 挂载为文件（环境变量会进入 /proc 与子进程环境）；
-#   4. 生产样例不得出现密钥明文。
+#   4. 生产样例不得出现密钥明文；
+#   5. Vault 生产实现存在，且以 HTTP 实现（不引入 Vault SDK，绕开 DEP-06 依赖评审）；
+#   6. Provider 故障必须 fail fast —— Chain 只在 ErrNotFound 时继续。
 #
 # 用法: bash scripts/ci/check-secret-provider.sh
 set -euo pipefail
@@ -33,6 +35,40 @@ fi
 if ! grep -q "c.resolveSecrets()" internal/platform/config.go; then
   fail "internal/platform/config.go 的 normalize 未调用 resolveSecrets（Provider 不会被启动路径执行）"
 fi
+
+echo "==> ENT-07: vault production provider (T3)"
+if [[ ! -f "internal/platform/secrets/vault.go" ]]; then
+  fail "internal/platform/secrets/vault.go 缺失（无生产密钥托管实现）"
+else
+  for sym in "func NewVaultProvider" "func (p *VaultProvider) Get" "X-Vault-Token"; do
+    if ! grep -qF "${sym}" internal/platform/secrets/vault.go; then
+      fail "internal/platform/secrets/vault.go 缺少 ${sym}"
+    fi
+  done
+  # 刻意不引 Vault SDK：T3 用 HTTP 实现，新增直接依赖须先走 DEP-06 评审。
+  if grep -qE '"github\.com/hashicorp/(vault|go-retryablehttp)' internal/platform/secrets/*.go; then
+    fail "internal/platform/secrets 引入了 Vault SDK；新增强制依赖须先走 DEP-06 依赖评审"
+  fi
+fi
+if ! grep -qF "SecretProviderVault" internal/platform/config_secrets.go; then
+  fail "internal/platform/config_secrets.go 未注册 vault 来源（生产实现无法被配置启用）"
+fi
+
+echo "==> ENT-07: provider failure must fail fast"
+# Provider 不可用时禁止回落到环境变量：Chain 只允许在 ErrNotFound 时继续。
+if ! grep -qF "errors.Is(err, ErrNotFound)" internal/platform/secrets/chain.go; then
+  fail "chain.go 未按 ErrNotFound 判定回落（其它错误可能被静默吞掉）"
+fi
+# 403 / 5xx 与「密钥不存在」必须区分，否则鉴权失败会被降级成回落。
+if ! grep -qF "errVaultNotFound" internal/platform/secrets/vault.go; then
+  fail "vault.go 未区分 404 与鉴权/传输错误（403/5xx 会被误判为密钥缺失）"
+fi
+# 上述保证必须有用例守住，否则改实现时无人发现。
+for testName in TestVaultProviderForbiddenDoesNotFallBack TestVaultProviderMissingObjectFailsFast; do
+  if ! grep -qF "func ${testName}" internal/platform/secrets/vault_test.go 2>/dev/null; then
+    fail "缺少 fail-fast 用例 ${testName}"
+  fi
+done
 
 echo "==> ENT-07: prod config declares managed source"
 PLATFORM_EXAMPLE="configs/prod/modules/platform.yaml.example"

@@ -4,7 +4,7 @@
 // Provider，本地用 env / file 实现；业务与配置只依赖 Provider 接口，
 // 切换来源不需要改业务代码，也不会出现「生产回落到环境变量」的隐式路径。
 //
-// 约束（SECURITY_STANDARDS §10.3 / ENT-07）：
+// 约束（SECURITY_STANDARDS §5 / ARCHITECTURE §10.3 / ENT-07）：
 //   - Provider 未就绪时启动必须失败，不允许空值继续运行；
 //   - 密钥值禁止出现在日志、错误信息与审计载荷中（只允许出现密钥名）；
 //   - env / file 实现仅适用于 local / dev / test，prod 由配置校验拒绝。

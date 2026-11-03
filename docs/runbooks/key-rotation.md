@@ -88,6 +88,35 @@
 回滚：任一步启动失败，把 `allow_env_fallback` 置回 `true`、恢复被删的 env 项，单独发布。
 不要删除 Secret 文件（迁移后它是唯一真相），也不要先删 Secret 再回滚配置。
 
+### 托管源切到 Vault（`secrets.providers: [vault, file]`，ENT-07 T3）
+
+Vault 适配走 HTTP API（`net/http` + `pkg/httpclient`），不含 Vault SDK，配置段为 `secrets.vault.*`。
+
+1. **准备 KV 对象**，两种布局二选一（`path` 与 `prefix` 互斥，同时配置会在启动期报错）：
+   - **单对象（推荐）**：`secret/data/admin-frame/prod` 内写 8 个字段，字段名即逻辑密钥名
+     （`db_dsn`、`auth_jwt_secret`、`auth_jwt_secrets`、`identity_hash_key`、
+     `identity_mfa_secret_key`、`redis_password`、`storage_s3_access_key`、`storage_s3_secret_key`）。
+     启动期只发一次请求。
+   - **逐键**：`secret/data/admin-frame/prod/<name>`，取值放 `value` 字段（可用 `value_field` 改名）。
+2. **注入令牌**：优先 `token_file`（K8s 投射 / Vault Agent），其次 `token_env`（默认 `VAULT_TOKEN`）。
+   **prod 禁止 `token` 字段**（明文进配置等于没有托管），启动校验会拒绝。
+3. **切换来源**：`providers: [vault, file]`（vault 在前、file 作迁移期兜底）后单独发布。
+4. **确认读到的是 Vault**：启动日志应出现
+   `secrets: vault object read mount=secret path=… kv_version=2 fields=N`，
+   且 `secrets` 段只输出来源结构，不出现任何取值（SEC-05）。
+5. **收尾**：确认无误后把 `allow_env_fallback` 置 `false`，再逐项移除 env 注入。
+
+排障时的失败语义（按此判定，不要靠猜）：
+
+| 现象 | 含义 | 是否回落 |
+|---|---|---|
+| 403 / 5xx / 连不上 / 响应无法解析 | 依赖或鉴权故障 | **不回落**，启动失败 |
+| 单对象模式下对象不存在 | `mount` / `path` 写错 | **不回落**，启动失败 |
+| 逐键模式下某个键 404 | 该密钥确实不在 Vault | 该键按「未命中」继续下一个来源 |
+
+回滚：把 `providers` 改回 `[file]`（或把 vault 移到 file 之后）单独发布。**不要先在 Vault 侧撤权限**
+——那会让回滚前的每次启动都直接失败。
+
 ### 数据库 / Redis 凭据
 
 1. 在数据库侧创建新账号并授予同等权限（不修改旧账号）；

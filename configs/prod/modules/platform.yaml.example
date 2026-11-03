@@ -83,3 +83,14 @@ secrets:
     dir: "/var/run/secrets/admin-frame" # 与 values-prod.yaml secretMounts.mountPath 一致
   env:
     prefix: ADMIN_FRAME # 变量名 <prefix>_<NAME 大写>，与 pkg/config.BindEnv 同源
+
+  # Vault 托管（ENT-07 T3，HTTP 实现，无 SDK）。切到 providers: [vault, file] 后取消注释。
+  # 单对象模式用 path（一个对象承载全部密钥字段，启动期一次请求）；
+  # 逐键模式用 prefix（<prefix>/<name>，取值读 value_field）—— path 与 prefix 互斥。
+  # vault:
+  #   address: "https://vault.internal:8200"
+  #   mount: "secret"
+  #   path: "admin-frame/prod"
+  #   token_file: "/var/run/secrets/vault/token" # prod 禁止 token 明文，只能用文件 / 环境变量
+  #   timeout: "5s"
+  #   cache_ttl: "60s"

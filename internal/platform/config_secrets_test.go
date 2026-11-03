@@ -1,6 +1,8 @@
 package platform_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,6 +191,72 @@ func TestSecretsProdRejectsEnvOnly(t *testing.T) {
 	}
 }
 
+// TestSecretsVaultOverridesConfig 验证 vault 来源接入 normalize 阶段：
+// 一个 KV 对象承载全部密钥，命中即覆盖配置文件中的明文。
+func TestSecretsVaultOverridesConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/secret/data/admin-frame/prod" {
+			t.Errorf("path = %q, want /v1/secret/data/admin-frame/prod", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Vault-Token"); got != "s.inline" {
+			t.Errorf("X-Vault-Token = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"data":{"data":{` +
+			`"db_dsn":"svc:from-vault@tcp(db:3306)/app",` +
+			`"auth_jwt_secret":"` + strings.Repeat("v", 32) + `"}}}`))
+	}))
+	defer server.Close()
+
+	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+		"auth:\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
+		"db:\n  driver: mysql\n  dsn: \"svc:from-config@tcp(db:3306)/app\"\n" +
+		"secrets:\n  providers: [vault]\n  vault:\n    address: \"" + server.URL + "\"\n" +
+		"    token: \"s.inline\"\n    path: \"admin-frame/prod\"\n"
+	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-vault.yaml", yaml))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.DB.DSN != "svc:from-vault@tcp(db:3306)/app" {
+		t.Fatalf("DB.DSN = %q, want vault value", cfg.DB.DSN)
+	}
+	if cfg.Auth.JWT.Secret != strings.Repeat("v", 32) {
+		t.Fatalf("auth.jwt.secret 未被 vault 覆盖")
+	}
+}
+
+// TestSecretsVaultRequiresAddress 验证地址缺失在启动期即阻断（构造期校验）。
+func TestSecretsVaultRequiresAddress(t *testing.T) {
+	yaml := secretsBaseConfig + "db:\n  driver: memory\n" +
+		"secrets:\n  providers: [vault]\n  vault:\n    path: \"admin-frame/prod\"\n"
+	_, err := platform.LoadConfig(writeConfig(t, "secrets-vault-noaddr.yaml", yaml))
+	if err == nil {
+		t.Fatalf("vault 缺地址应当被拒绝")
+	}
+	if !strings.Contains(err.Error(), "vault address is required") {
+		t.Fatalf("错误应指向 vault address，实际 = %v", err)
+	}
+}
+
+// TestSecretsVaultProdRejectsInlineToken 验证生产禁用显式令牌：
+// 配置里出现令牌等于没有托管（SEC-05），必须改由 token_file / token_env 注入。
+func TestSecretsVaultProdRejectsInlineToken(t *testing.T) {
+	cfg := &platform.Config{Env: "prod"}
+	cfg.Secrets.Providers = []string{platform.SecretProviderVault}
+	cfg.Secrets.Vault.Address = "https://vault.internal:8200"
+	cfg.Secrets.Vault.Path = "admin-frame/prod"
+	cfg.Secrets.Vault.Token = "s.inline"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "secrets.vault.token") {
+		t.Fatalf("prod + 显式令牌应被拒绝，err = %v", err)
+	}
+
+	cfg.Secrets.Vault.Token = ""
+	cfg.Secrets.Vault.TokenFile = "/var/run/secrets/vault/token"
+	if err := cfg.Validate(); err != nil && strings.Contains(err.Error(), "secrets.vault.token") {
+		t.Fatalf("改用 token_file 后不应再报令牌规则，err = %v", err)
+	}
+}
+
 // TestSecretsFileRequiresDir 验证 file 来源必须给出目录。
 func TestSecretsFileRequiresDir(t *testing.T) {
 	yaml := secretsBaseConfig + "db:\n  driver: memory\n" + "secrets:\n  providers: [file]\n"
@@ -203,7 +271,7 @@ func TestSecretsFileRequiresDir(t *testing.T) {
 
 // TestSecretsUnknownProvider 验证未知来源被拒绝。
 func TestSecretsUnknownProvider(t *testing.T) {
-	yaml := secretsBaseConfig + "db:\n  driver: memory\n" + "secrets:\n  providers: [vault]\n"
+	yaml := secretsBaseConfig + "db:\n  driver: memory\n" + "secrets:\n  providers: [bogus]\n"
 	_, err := platform.LoadConfig(writeConfig(t, "secrets-unknown.yaml", yaml))
 	if err == nil {
 		t.Fatalf("未知 provider 应当被拒绝")

@@ -42,6 +42,8 @@ const (
 	SecretProviderEnv = "env"
 	// SecretProviderFile 从目录读取，文件名即密钥名，内容为密钥值。
 	SecretProviderFile = "file"
+	// SecretProviderVault 从 Vault KV 读取（HTTP API，无 SDK 依赖）。
+	SecretProviderVault = "vault"
 )
 
 // secretResolveTimeout 限制启动期解析密钥的总耗时。
@@ -57,12 +59,14 @@ const secretResolveTimeout = 10 * time.Second
 // 命中的值**覆盖**配置文件与环境变量的值，使「密钥来自托管源」可被验证。
 type SecretsConfig struct {
 	// Providers 密钥来源顺序；按序尝试，首个命中的值生效。
-	// 取值 env | file；空表示不启用 Provider（回落到纯环境变量注入）。
+	// 取值 env | file | vault；空表示不启用 Provider（回落到纯环境变量注入）。
 	Providers []string `yaml:"providers"`
 	// Env 环境变量来源参数。
 	Env SecretsEnvConfig `yaml:"env"`
 	// File 文件来源参数（K8s Secret / Vault Agent 挂载目录）。
 	File SecretsFileConfig `yaml:"file"`
+	// Vault Vault KV 来源参数（ENT-07 T3）。
+	Vault SecretsVaultConfig `yaml:"vault"`
 	// AllowEnvFallback 迁移期豁免：Provider 链尾自动追加 env 来源。
 	//
 	// 仅用于「已切换 file 但部分环境尚未挂载」的过渡期；prod 默认禁止
@@ -82,12 +86,59 @@ type SecretsFileConfig struct {
 	Dir string `yaml:"dir"`
 }
 
+// SecretsVaultConfig 是 Vault KV 来源参数（ENT-07 T3）。
+//
+// 走 Vault HTTP API，不引入 Vault SDK：避免新增直接依赖与 DEP-06 评审面。
+// 两种读数布局二选一：
+//   - 单对象模式（path）：一个 KV 对象承载全部密钥，字段名即逻辑密钥名，启动期仅一次请求；
+//   - 逐键模式（prefix）：每个密钥一个对象 `<prefix>/<name>`，取值读 value_field。
+type SecretsVaultConfig struct {
+	// Address Vault 地址；providers 含 vault 时必填。
+	Address string `yaml:"address"`
+	// Token 显式令牌；仅本地调试，prod 使用会被启动校验拒绝（SEC-05）。
+	Token string `yaml:"token"`
+	// TokenEnv 令牌所在环境变量名；默认 VAULT_TOKEN。
+	TokenEnv string `yaml:"token_env"`
+	// TokenFile 令牌文件路径（K8s 投影 / Vault Agent）。
+	TokenFile string `yaml:"token_file"`
+	// Mount KV 引擎挂载点；默认 secret。
+	Mount string `yaml:"mount"`
+	// Path 单对象模式的对象路径，如 admin-frame/prod。
+	Path string `yaml:"path"`
+	// Prefix 逐键模式的对象前缀，如 admin-frame/prod。
+	Prefix string `yaml:"prefix"`
+	// ValueField 逐键模式的取值字段名；默认 value。
+	ValueField string `yaml:"value_field"`
+	// Namespace Vault Enterprise 命名空间；空表示不设置。
+	Namespace string `yaml:"namespace"`
+	// CAFile 自签 Vault 的 CA 证书；空使用系统根证书。
+	CAFile string `yaml:"ca_file"`
+	// Timeout 单次请求超时；默认 5s。
+	Timeout time.Duration `yaml:"timeout"`
+	// CacheTTL 取值缓存时长（默认 60s）；负数禁用缓存。
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+}
+
 // LogValue 实现 slog.LogValuer：只输出来源结构，不输出任何密钥值（SEC-05）。
 func (c SecretsConfig) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Any("providers", c.Providers),
 		slog.String("env_prefix", c.Env.Prefix),
 		slog.String("file_dir", c.File.Dir),
+		slog.Group("vault",
+			slog.String("address", c.Vault.Address),
+			slog.String("mount", c.Vault.Mount),
+			slog.String("path", c.Vault.Path),
+			slog.String("prefix", c.Vault.Prefix),
+			slog.String("namespace", c.Vault.Namespace),
+			slog.String("ca_file", c.Vault.CAFile),
+			// 令牌只记录来源，不记录期望值，也不记录解析结果。
+			slog.String("token_env", c.Vault.TokenEnv),
+			slog.String("token_file", c.Vault.TokenFile),
+			slog.Bool("inline_token", strings.TrimSpace(c.Vault.Token) != ""),
+			slog.Duration("timeout", c.Vault.Timeout),
+			slog.Duration("cache_ttl", c.Vault.CacheTTL),
+		),
 		slog.Bool("allow_env_fallback", c.AllowEnvFallback),
 	)
 }
@@ -135,6 +186,26 @@ func buildSecretProvider(cfg SecretsConfig) (secrets.Provider, error) {
 			providers = append(providers, secrets.NewEnvProvider(cfg.effectiveEnvPrefix()))
 		case SecretProviderFile:
 			providers = append(providers, secrets.NewFileProvider(cfg.File.Dir))
+		case SecretProviderVault:
+			// 构造期即校验地址/路径/令牌，失败直接阻断启动（依赖故障 fail fast）。
+			provider, err := secrets.NewVaultProvider(secrets.VaultConfig{
+				Address:    cfg.Vault.Address,
+				Token:      cfg.Vault.Token,
+				TokenEnv:   cfg.Vault.TokenEnv,
+				TokenFile:  cfg.Vault.TokenFile,
+				Mount:      cfg.Vault.Mount,
+				Path:       cfg.Vault.Path,
+				Prefix:     cfg.Vault.Prefix,
+				ValueField: cfg.Vault.ValueField,
+				Namespace:  cfg.Vault.Namespace,
+				CAFile:     cfg.Vault.CAFile,
+				Timeout:    cfg.Vault.Timeout,
+				CacheTTL:   cfg.Vault.CacheTTL,
+			})
+			if err != nil {
+				return nil, err
+			}
+			providers = append(providers, provider)
 		default:
 			return nil, fmt.Errorf("secrets.providers unsupported: %s", name)
 		}
@@ -257,9 +328,14 @@ func (c *Config) resolveSecrets() {
 // validateSecrets 校验密钥来源配置的合法性与生产约束（ENT-07）。
 //
 // 规则：
-//   - providers 只允许 env / file；
+//   - providers 只允许 env / file / vault；
 //   - file 来源必须给出目录；
+//   - vault 来源在 prod 下禁止显式令牌（必须由 token_file / token_env 注入）；
 //   - prod 下不得仅以 env 作为来源，除非显式开启 allow_env_fallback（迁移期）。
+//
+// vault 的结构性校验（地址、path/prefix 二选一、令牌是否存在）由
+// secrets.NewVaultProvider 在构造期完成，错误经 normalize 阶段汇入 secretErr；
+// 此处只承担「运行环境相关的策略判断」，避免同一问题报两遍。
 //
 // 不强制 prod 必须声明 providers：未声明时保持「环境变量注入」的既有行为，
 // 避免升级即导致存量部署启动失败。生产制品必须托管由 `make check-secret-provider`
@@ -278,6 +354,12 @@ func (c *Config) validateSecrets() []error {
 		case SecretProviderFile:
 			if strings.TrimSpace(c.Secrets.File.Dir) == "" {
 				errs = append(errs, errors.New("secrets.file.dir is required when secrets.providers includes file"))
+			}
+		case SecretProviderVault:
+			// 令牌明文出现在配置里等于没有托管：prod 只允许文件 / 环境变量注入。
+			if prod && strings.TrimSpace(c.Secrets.Vault.Token) != "" {
+				errs = append(errs, errors.New(
+					"secrets.vault.token must be empty when env=prod; use token_file or token_env (SEC-05)"))
 			}
 		default:
 			errs = append(errs, fmt.Errorf("secrets.providers unsupported: %s", name))
