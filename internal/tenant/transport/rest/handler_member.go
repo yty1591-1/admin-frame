@@ -62,6 +62,9 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 //
 // 同一接口承载「改角色」与「启停」：两者都是对同一条成员记录的字段变更，
 // 拆成两个路径会让前端需要在一次操作里发两个请求。
+//
+// 只调用一次用例：入参校验与写入在应用层合并为一次落库，
+// 避免「角色已改、状态非法」的半提交（旧实现分两次调用，第二步失败时第一步已生效）。
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	traceID := httpx.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
@@ -74,38 +77,27 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
-	if strings.TrimSpace(body.Role) == "" && strings.TrimSpace(body.Status) == "" {
-		httpx.FromError(w, apperr.BadRequest("role or status is required"), traceID)
-		return
-	}
 
-	tenantID := r.PathValue("id")
-	subjectID := r.PathValue("subject_id")
-	var member domain.Member
+	input := app.UpdateMemberInput{
+		TenantID:  r.PathValue("id"),
+		SubjectID: r.PathValue("subject_id"),
+		Reason:    body.Reason,
+		Actor:     actor,
+	}
+	// 空串表示「未提供」；是否至少给了一个由应用层统一判定，handler 不重复校验。
 	if role := strings.TrimSpace(body.Role); role != "" {
-		member, err = h.members.SetRole(r.Context(), app.SetMemberRoleInput{
-			TenantID:  tenantID,
-			SubjectID: subjectID,
-			Role:      domain.MemberRole(role),
-			Actor:     actor,
-		})
-		if err != nil {
-			httpx.FromError(w, err, traceID)
-			return
-		}
+		target := domain.MemberRole(role)
+		input.Role = &target
 	}
 	if status := strings.TrimSpace(body.Status); status != "" {
-		member, err = h.members.SetStatus(r.Context(), app.SetMemberStatusInput{
-			TenantID:  tenantID,
-			SubjectID: subjectID,
-			Status:    domain.MemberStatus(status),
-			Reason:    body.Reason,
-			Actor:     actor,
-		})
-		if err != nil {
-			httpx.FromError(w, err, traceID)
-			return
-		}
+		target := domain.MemberStatus(status)
+		input.Status = &target
+	}
+
+	member, err := h.members.Update(r.Context(), input)
+	if err != nil {
+		httpx.FromError(w, err, traceID)
+		return
 	}
 	httpx.OK(w, toMemberResponse(member), traceID)
 }

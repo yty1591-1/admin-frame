@@ -61,6 +61,21 @@ func (e *InvalidResourceError) Error() string {
 	return fmt.Sprintf("tenant: invalid quota resource %q (allowed: a-z 0-9 . _ -)", e.Resource)
 }
 
+// InvalidStatusError 表示未定义的成员状态。
+//
+// 与 InvalidRoleError 分开建模：调用方（HTTP 层）需要把它翻译成 400，
+// 而仓储回读到的脏数据仍应是 500。因此只有入参校验路径返回本错误，
+// Member.Validate（脏数据防御）保持裸错误。
+type InvalidStatusError struct {
+	// Status 非法状态取值。
+	Status string
+}
+
+// Error 实现 error。
+func (e *InvalidStatusError) Error() string {
+	return fmt.Sprintf("tenant: unsupported member status %q", e.Status)
+}
+
 // InvalidTransitionError 表示状态机不允许的迁移。
 type InvalidTransitionError struct {
 	// From 当前状态。

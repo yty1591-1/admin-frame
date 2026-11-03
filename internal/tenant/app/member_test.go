@@ -18,6 +18,7 @@ type memberFixture struct {
 	members *app.MemberService
 	quotas  *app.QuotaService
 	emitter *recordEmitter
+	repo    *persistence.MemoryRepository
 	tenant  domain.Tenant
 }
 
@@ -52,7 +53,7 @@ func newMemberFixture(t *testing.T) *memberFixture {
 	if err != nil {
 		t.Fatalf("activate error = %v", err)
 	}
-	return &memberFixture{tenants: tenants, members: members, quotas: quotas, emitter: emitter, tenant: tenant}
+	return &memberFixture{tenants: tenants, members: members, quotas: quotas, emitter: emitter, repo: repo, tenant: tenant}
 }
 
 // TestAddMemberAndDuplicate 验证添加成员成功、重复添加冲突、停用后可复活。
@@ -105,6 +106,14 @@ func TestAddMemberAndDuplicate(t *testing.T) {
 	last, _ = fixture.emitter.last()
 	if last.Attrs["reactivated"] != "true" {
 		t.Fatalf("reactivated = %q, want true", last.Attrs["reactivated"])
+	}
+	// 复活必须沿用首次加入时间：UPSERT 不覆盖 created_at，返回体不能自说自话。
+	stored, err := fixture.repo.GetMember(ctx, fixture.tenant.ID, "u-owner")
+	if err != nil {
+		t.Fatalf("GetMember() error = %v", err)
+	}
+	if !reactivated.CreatedAt.Equal(stored.CreatedAt) {
+		t.Fatalf("复活返回 created_at = %v，库中 = %v", reactivated.CreatedAt, stored.CreatedAt)
 	}
 }
 
@@ -258,3 +267,130 @@ func isBadRequest(err error) bool {
 
 // 确保 audit 包被引用（口径断言依赖 Outcome 常量）。
 var _ = audit.OutcomeSuccess
+
+// TestUpdateRejectsInvalidStatusWithoutSideEffect 验证非法状态不会产生半提交。
+//
+// 旧实现先改角色再改状态，第二步报错时角色已经落库；本用例是该缺陷的回归闸门。
+func TestUpdateRejectsInvalidStatusWithoutSideEffect(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: domain.MemberRoleMember, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	before := len(fixture.emitter.actions())
+
+	role := domain.MemberRoleAdmin
+	bogus := domain.MemberStatus("bogus")
+	_, err := fixture.members.Update(ctx, app.UpdateMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: &role, Status: &bogus, Actor: adminActor(),
+	})
+	if !isBadRequest(err) {
+		t.Fatalf("非法状态 error = %v, want 400", err)
+	}
+	stored, err := fixture.repo.GetMember(ctx, fixture.tenant.ID, "u1")
+	if err != nil {
+		t.Fatalf("GetMember() error = %v", err)
+	}
+	if stored.Role != domain.MemberRoleMember {
+		t.Fatalf("非法状态不应改角色，实际 role = %s", stored.Role)
+	}
+	if after := len(fixture.emitter.actions()); after != before {
+		t.Fatalf("失败请求不应写审计，新增 %d 条", after-before)
+	}
+}
+
+// TestUpdateAppliesRoleAndStatusInOneWrite 验证一次请求同时改角色与状态。
+func TestUpdateAppliesRoleAndStatusInOneWrite(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: domain.MemberRoleMember, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	role := domain.MemberRoleAdmin
+	status := domain.MemberStatusDisabled
+	updated, err := fixture.members.Update(ctx, app.UpdateMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: &role, Status: &status,
+		Reason: "转岗", Actor: adminActor(),
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated.Role != role || updated.Status != status {
+		t.Fatalf("变更后 = %+v", updated)
+	}
+	actions := fixture.emitter.actions()
+	if len(actions) < 2 ||
+		actions[len(actions)-2] != app.ActionMemberRoleChange ||
+		actions[len(actions)-1] != app.ActionMemberDisable {
+		t.Fatalf("审计动作 = %v，want [role_change disable]", actions)
+	}
+}
+
+// TestUpdateWithoutChangesIsIdempotent 验证无实际变化时不写库、不写审计。
+func TestUpdateWithoutChangesIsIdempotent(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: domain.MemberRoleMember, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	before := len(fixture.emitter.actions())
+
+	role := domain.MemberRoleMember
+	status := domain.MemberStatusActive
+	if _, err := fixture.members.Update(ctx, app.UpdateMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: &role, Status: &status, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if after := len(fixture.emitter.actions()); after != before {
+		t.Fatalf("空变更不应写审计，新增 %d 条", after-before)
+	}
+}
+
+// TestReadsAllowedOnTerminatedTenant 验证终止态仍可读成员与配额。
+//
+// 只读接口套写守卫会让同一租户的成员列表 200、配额列表 409；
+// 终止态恰恰是取证与对账最需要读的场景。
+func TestReadsAllowedOnTerminatedTenant(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u1", Role: domain.MemberRoleOwner, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if _, err := fixture.quotas.Set(ctx, app.SetQuotaInput{
+		TenantID: fixture.tenant.ID, Resource: "user", Limit: 10, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("SetQuota() error = %v", err)
+	}
+	if _, err := fixture.tenants.Transition(ctx, app.TransitionInput{
+		ID: fixture.tenant.ID, Target: domain.StatusTerminated, Reason: "退租", Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("terminate error = %v", err)
+	}
+
+	if _, err := fixture.members.List(ctx, fixture.tenant.ID, false); err != nil {
+		t.Fatalf("终止态查询成员 error = %v", err)
+	}
+	quotas, err := fixture.quotas.List(ctx, fixture.tenant.ID)
+	if err != nil {
+		t.Fatalf("终止态查询配额 error = %v", err)
+	}
+	if len(quotas) != 1 || quotas[0].Resource != "user" {
+		t.Fatalf("终止态配额 = %+v", quotas)
+	}
+	// 写路径仍必须拒绝。
+	if _, err := fixture.quotas.Set(ctx, app.SetQuotaInput{
+		TenantID: fixture.tenant.ID, Resource: "user", Limit: 20, Actor: adminActor(),
+	}); !isConflict(err) {
+		t.Fatalf("终止态写配额 error = %v, want 409", err)
+	}
+}

@@ -112,6 +112,11 @@ func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Memb
 	if err != nil {
 		return domain.Member{}, translate(err)
 	}
+	if reactivated {
+		// 复活沿用首次加入时间：UPSERT 有意不覆盖 created_at，
+		// 返回体必须与库中一致，否则前端展示的「加入时间」会跳变。
+		member.CreatedAt = existing.CreatedAt
+	}
 	if err := s.members.UpsertMember(ctx, member); err != nil {
 		return domain.Member{}, translate(err)
 	}
@@ -136,84 +141,132 @@ func (s *MemberService) List(ctx context.Context, tenantID string, includeDisabl
 	return members, nil
 }
 
-// SetRole 变更成员角色；降级最后一名在册 owner 会被拒绝。
-func (s *MemberService) SetRole(ctx context.Context, in SetMemberRoleInput) (domain.Member, error) {
+// UpdateMemberInput 是成员变更入参；Role 与 Status 至少给一个。
+//
+// 用指针区分「未提供」与「显式设为某值」：只改角色时不能顺手把状态重置为 active。
+type UpdateMemberInput struct {
+	// TenantID 租户 ID。
+	TenantID string
+	// SubjectID 成员主体 ID。
+	SubjectID string
+	// Role 目标角色；nil 表示不改角色。
+	Role *domain.MemberRole
+	// Status 目标状态；nil 表示不改状态。
+	Status *domain.MemberStatus
+	// Reason 状态变更原因，写入审计。
+	Reason string
+	// Actor 操作者。
+	Actor Actor
+}
+
+// Update 变更成员角色与状态，一次请求只写一次。
+//
+// 三条约束：
+//   - 先校验全部入参再落库，避免「角色改了、状态非法」的半提交；
+//   - 角色与状态合并成一行一次 UPSERT，审计按实际变化维度各记一条；
+//   - 「最后一名 owner」按变更后的终态判断，降级与停用共用同一段逻辑。
+func (s *MemberService) Update(ctx context.Context, in UpdateMemberInput) (domain.Member, error) {
+	if in.Role == nil && in.Status == nil {
+		return domain.Member{}, apperr.BadRequest("role or status is required")
+	}
+	// 入参校验前置：非法枚举不查库、不写库，直接 400。
+	if in.Role != nil && !in.Role.Valid() {
+		return domain.Member{}, translate(&domain.InvalidRoleError{Role: string(*in.Role)})
+	}
+	if in.Status != nil {
+		if err := domain.ValidateMemberStatus(*in.Status); err != nil {
+			return domain.Member{}, translate(err)
+		}
+	}
 	if _, err := mutableTenant(ctx, s.tenants, in.TenantID); err != nil {
 		return domain.Member{}, err
 	}
-	member, err := s.members.GetMember(ctx, in.TenantID, in.SubjectID)
+	current, err := s.members.GetMember(ctx, in.TenantID, in.SubjectID)
 	if err != nil {
 		return domain.Member{}, translate(err)
 	}
-	if member.Role == in.Role {
-		return member, nil
+
+	roleChanged := in.Role != nil && *in.Role != current.Role
+	statusChanged := in.Status != nil && *in.Status != current.Status
+	if !roleChanged && !statusChanged {
+		// 幂等：无实际变化不写库、不写审计，避免审计里出现空变更。
+		return current, nil
 	}
-	// 降级 / 停用最后一名 owner 会让租户失去管理者，必须先在别处补一个 owner。
-	if member.Role == domain.MemberRoleOwner && member.Active() {
-		count, err := s.members.CountActiveByRole(ctx, in.TenantID, domain.MemberRoleOwner)
-		if err != nil {
+
+	next := current
+	if roleChanged {
+		if next, err = next.WithRole(*in.Role, s.now()); err != nil {
 			return domain.Member{}, translate(err)
 		}
-		if count <= 1 {
-			return domain.Member{}, translate(domain.ErrLastOwner)
+	}
+	if statusChanged {
+		if next, err = next.WithStatus(*in.Status, s.now()); err != nil {
+			return domain.Member{}, translate(err)
 		}
 	}
-	next, err := member.WithRole(in.Role, s.now())
-	if err != nil {
-		return domain.Member{}, translate(err)
+	if err := s.ensureOwnerRemains(ctx, current, next); err != nil {
+		return domain.Member{}, err
 	}
 	if err := s.members.UpsertMember(ctx, next); err != nil {
 		return domain.Member{}, translate(err)
 	}
-	s.audit.emit(ctx, in.Actor, ActionMemberRoleChange, ResourceTypeMember, next.TenantID,
-		audit.OutcomeSuccess, "", map[string]string{
-			"subject_id": next.SubjectID,
-			"from":       string(member.Role),
-			"to":         string(next.Role),
-		})
+
+	if roleChanged {
+		s.audit.emit(ctx, in.Actor, ActionMemberRoleChange, ResourceTypeMember, next.TenantID,
+			audit.OutcomeSuccess, "", map[string]string{
+				"subject_id": next.SubjectID,
+				"from":       string(current.Role),
+				"to":         string(next.Role),
+			})
+	}
+	if statusChanged {
+		action := ActionMemberDisable
+		if next.Active() {
+			action = ActionMemberEnable
+		}
+		s.audit.emit(ctx, in.Actor, action, ResourceTypeMember, next.TenantID,
+			audit.OutcomeSuccess, in.Reason, map[string]string{
+				"subject_id": next.SubjectID,
+				"role":       string(next.Role),
+			})
+	}
 	return next, nil
 }
 
-// SetStatus 启用 / 停用成员；停用最后一名在册 owner 会被拒绝。
-func (s *MemberService) SetStatus(ctx context.Context, in SetMemberStatusInput) (domain.Member, error) {
-	if _, err := mutableTenant(ctx, s.tenants, in.TenantID); err != nil {
-		return domain.Member{}, err
+// ensureOwnerRemains 保证变更后仍有在册 owner。
+//
+// 只处理「原本是在册 owner、变更后不再是」这一种情况：其余变更不会减少在册 owner 数。
+func (s *MemberService) ensureOwnerRemains(ctx context.Context, current, next domain.Member) error {
+	wasOwner := current.Role == domain.MemberRoleOwner && current.Active()
+	stillOwner := next.Role == domain.MemberRoleOwner && next.Active()
+	if !wasOwner || stillOwner {
+		return nil
 	}
-	member, err := s.members.GetMember(ctx, in.TenantID, in.SubjectID)
+	count, err := s.members.CountActiveByRole(ctx, current.TenantID, domain.MemberRoleOwner)
 	if err != nil {
-		return domain.Member{}, translate(err)
+		return translate(err)
 	}
-	if member.Status == in.Status {
-		return member, nil
+	if count <= 1 {
+		return translate(domain.ErrLastOwner)
 	}
-	if in.Status == domain.MemberStatusDisabled &&
-		member.Role == domain.MemberRoleOwner && member.Active() {
-		count, err := s.members.CountActiveByRole(ctx, in.TenantID, domain.MemberRoleOwner)
-		if err != nil {
-			return domain.Member{}, translate(err)
-		}
-		if count <= 1 {
-			return domain.Member{}, translate(domain.ErrLastOwner)
-		}
-	}
-	next, err := member.WithStatus(in.Status, s.now())
-	if err != nil {
-		return domain.Member{}, translate(err)
-	}
-	if err := s.members.UpsertMember(ctx, next); err != nil {
-		return domain.Member{}, translate(err)
-	}
+	return nil
+}
 
-	action := ActionMemberDisable
-	if next.Active() {
-		action = ActionMemberEnable
-	}
-	s.audit.emit(ctx, in.Actor, action, ResourceTypeMember, next.TenantID, audit.OutcomeSuccess,
-		in.Reason, map[string]string{
-			"subject_id": next.SubjectID,
-			"role":       string(next.Role),
-		})
-	return next, nil
+// SetRole 变更成员角色；等价于只提供 Role 的 Update。
+func (s *MemberService) SetRole(ctx context.Context, in SetMemberRoleInput) (domain.Member, error) {
+	role := in.Role
+	return s.Update(ctx, UpdateMemberInput{
+		TenantID: in.TenantID, SubjectID: in.SubjectID, Role: &role, Actor: in.Actor,
+	})
+}
+
+// SetStatus 启用 / 停用成员；等价于只提供 Status 的 Update。
+func (s *MemberService) SetStatus(ctx context.Context, in SetMemberStatusInput) (domain.Member, error) {
+	status := in.Status
+	return s.Update(ctx, UpdateMemberInput{
+		TenantID: in.TenantID, SubjectID: in.SubjectID, Status: &status,
+		Reason: in.Reason, Actor: in.Actor,
+	})
 }
 
 // boolString 输出 true/false，供审计 attrs 使用。
@@ -224,9 +277,10 @@ func boolString(value bool) string {
 	return "false"
 }
 
-// isInvalidEnum 判断是否为枚举类错误（角色 / 资源键），统一按 400 处理。
+// isInvalidEnum 判断是否为枚举类错误（角色 / 状态 / 资源键），统一按 400 处理。
 func isInvalidEnum(err error) bool {
 	var invalidRole *domain.InvalidRoleError
+	var invalidStatus *domain.InvalidStatusError
 	var invalidResource *domain.InvalidResourceError
-	return errors.As(err, &invalidRole) || errors.As(err, &invalidResource)
+	return errors.As(err, &invalidRole) || errors.As(err, &invalidStatus) || errors.As(err, &invalidResource)
 }

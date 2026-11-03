@@ -309,7 +309,8 @@ func truncate(value string, limit int) string {
 
 // mutableTenant 读取租户并拒绝终态：已终止的租户不再接受任何变更。
 //
-// 成员与配额用例共用：把「终态不可变」的判断收敛在一处，避免某个新用例忘了检查。
+// 只给写用例用。只读接口必须直接 tenants.Get —— 终止态租户的成员与配额
+// 仍需要可查（取证、对账、客诉回溯），套上写守卫会让只读接口返回 409。
 func mutableTenant(ctx context.Context, tenants domain.Repository, tenantID string) (domain.Tenant, error) {
 	if strings.TrimSpace(tenantID) == "" {
 		return domain.Tenant{}, apperr.BadRequest("tenant id is required")

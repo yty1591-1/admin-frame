@@ -4,7 +4,7 @@
 > **评审对象**：`internal/tenant`（4243 行）、`migrations/000008`～`000011`、`api/openapi/{paths,schemas}/admin/tenant.yaml`、`cmd/internal/tenantruntime`、`internal/platform/tenantguard.go`、`docs/adr/0006`。
 > **评审日期**：2026-11-03
 > **当前结论**：**不满足企业级租户模块要求**；作为「主数据 + 状态机」垂直切片质量合格，但缺入驻审核、套餐、邀请、租户自助与 IAM 联动，且有 3 个已复现的 P0 缺陷。
-> **状态**：B1～B4 均未开始。
+> **状态**：**B1 已完成（2026-11-03）**，B2～B4 未开始。执行记录见 [§6.2](#62-b1-实施记录2026-11-03)。
 
 ---
 
@@ -270,12 +270,12 @@
 
 ### B1 缺陷修复（P0）— 预计 0.5 天
 
-| ID | 任务 | 改动文件 | 验收 |
-|---|---|---|---|
-| T-01 | `PATCH` 成员改为单一用例原子提交 | `app/member.go`（新增 `Update`）、`transport/rest/handler_member.go` | 非法 status 时角色不变；一次请求一条审计 |
-| T-02 | `MemberStatus` 非法值类型化并映射 400 | `domain/errors.go`、`domain/member.go`、`app/service.go` | 三类非法枚举均返回 `40000` |
-| T-03 | 读路径与写守卫分离 | `app/quota.go:80` | 终止态三读接口均 200，写接口仍 409 |
-| T-04 | 复活成员回填 `created_at` | `app/member.go:111-124` | 返回体与库中一致 |
+| ID | 任务 | 改动文件 | 验收 | 状态 |
+|---|---|---|---|---|
+| T-01 | `PATCH` 成员改为单一用例原子提交 | `app/member.go`（新增 `Update`）、`transport/rest/handler_member.go` | 非法 status 时角色不变；写库只发生一次 | ✅ 2026-11-03 |
+| T-02 | `MemberStatus` 非法值类型化并映射 400 | `domain/errors.go`、`domain/member.go`、`app/member.go` | 非法状态返回 `40000`，不再 50000 | ✅ 2026-11-03 |
+| T-03 | 读路径与写守卫分离 | `app/quota.go:80` | 终止态读接口 200，写接口仍 409 | ✅ 2026-11-03 |
+| T-04 | 复活成员回填 `created_at` | `app/member.go` | 返回体与库中一致 | ✅ 2026-11-03 |
 
 **批次验收命令**
 
@@ -285,7 +285,7 @@ golangci-lint run ./internal/tenant/...
 make check-openapi
 ```
 
-**风险**：T-01 改动 HTTP 行为（一条请求从两条审计变一条），需在 `docs/audit/EVENTS.md` 注明 `tenant.member.role_change` / `disable` 的触发路径变化。
+**风险**：T-01 不改变审计动作集合（仍按「改角色」「启停」两个维度各记一条），但失败请求不再产生半截事件，且审计只在写库成功后发出。`docs/audit/EVENTS.md` 无需新增动作。
 
 ### B2 正确性与一致性（P1）— 预计 1.5～2 天
 
@@ -356,6 +356,39 @@ B1（P0，无依赖）
 ```
 
 > 若排期紧张：**B1 + T-05 + T-06 是「不做会出事」的最小集**，其余可按产品优先级裁剪。
+
+### 6.2 B1 实施记录（2026-11-03）
+
+**改动**
+
+| 文件 | 改动 |
+|---|---|
+| `internal/tenant/domain/errors.go` | 新增 `InvalidStatusError`；注释说明它只服务入参校验，`Member.Validate` 仍返回裸错误（脏数据应是 500，不是 400） |
+| `internal/tenant/domain/member.go` | 新增 `ValidateMemberStatus`；`WithStatus` 改用类型化错误 |
+| `internal/tenant/app/member.go` | 新增 `UpdateMemberInput` / `MemberService.Update`：入参全部校验通过才读库；角色与状态合并为一次 `UpsertMember`；`ensureOwnerRemains` 按变更后终态判断；审计按实际变化维度发出。`SetRole` / `SetStatus` 降为 `Update` 的薄封装；`Add` 复活时回填 `existing.CreatedAt` |
+| `internal/tenant/app/quota.go` | `List` 改用 `tenants.Get`，读路径不再套写守卫 |
+| `internal/tenant/app/service.go` | `isInvalidEnum` 纳入 `InvalidStatusError`；`mutableTenant` 注释明确「只给写用例」 |
+| `internal/tenant/transport/rest/handler_member.go` | `PATCH` 只调用一次 `Members.Update`，handler 不再做「至少给一个字段」的重复校验 |
+
+**行为变化**
+
+- 非法 `status`：`50000` → `40000`，且不再产生任何写入与审计。
+- 角色 + 状态同时变更：一次写库；审计按 `role_change` + `disable`/`enable` 各一条（与变更维度一致，不是按请求条数）。
+- 无实际变化：不写库、不写审计（幂等），与旧 `SetRole` 行为一致。
+- 终止态租户：`GET /members`、`GET /quotas` 均 200；`PUT /quotas` 仍 409。
+- 复活成员：响应 `created_at` 等于库中首次加入时间。
+
+**验证**
+
+```bash
+go test ./internal/tenant/... -count=1     # 全绿（新增 6 个回归用例）
+golangci-lint run ./internal/tenant/...     # 0 issues
+go test ./... -count=1                      # 全仓全绿
+```
+
+新增用例：`TestUpdateRejectsInvalidStatusWithoutSideEffect`、`TestUpdateAppliesRoleAndStatusInOneWrite`、`TestUpdateWithoutChangesIsIdempotent`、`TestReadsAllowedOnTerminatedTenant`、`TestUpdateMemberIsAtomicOverHTTP`、`TestUpdateMemberAppliesBothFields`；并在 `TestAddMemberAndDuplicate` 中补 `created_at` 一致性断言。
+
+**未包含**：T-05 的并发 owner 保护（仍需事务/行锁，属 B2）、T-07 审计原子性（依赖 D-01 决策）。
 
 ---
 

@@ -129,10 +129,22 @@ func (m Member) WithRole(role MemberRole, now time.Time) (Member, error) {
 	return next, nil
 }
 
+// ValidateMemberStatus 校验成员状态取值，供入参校验使用。
+//
+// 与 Member.Validate 的区别：本函数只服务「调用方传入的值」，
+// 返回可被翻译成 400 的 InvalidStatusError；Validate 用于仓储回读的脏数据防御，
+// 保持裸错误以免把数据损坏误报成参数问题。
+func ValidateMemberStatus(status MemberStatus) error {
+	if !status.Valid() {
+		return &InvalidStatusError{Status: string(status)}
+	}
+	return nil
+}
+
 // WithStatus 返回改状态后的副本；状态不变时原样返回。
 func (m Member) WithStatus(status MemberStatus, now time.Time) (Member, error) {
-	if !status.Valid() {
-		return m, fmt.Errorf("tenant: member unsupported status %q", status)
+	if err := ValidateMemberStatus(status); err != nil {
+		return m, err
 	}
 	if m.Status == status {
 		return m, nil

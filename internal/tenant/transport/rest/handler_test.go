@@ -415,3 +415,84 @@ func TestQuotaEndpoints(t *testing.T) {
 		t.Fatalf("缺 limit status = %d, want 400", missingRecorder.Code)
 	}
 }
+
+// TestUpdateMemberIsAtomicOverHTTP 验证「非法状态 + 合法角色」不会产生半提交。
+//
+// 旧实现分两次调用用例：角色先落库，状态再报错，客户端看到 500 但权限已提升。
+func TestUpdateMemberIsAtomicOverHTTP(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	add := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/members",
+		`{"subject_id":"u1","role":"member"}`)
+	add.SetPathValue("id", tenantID)
+	addRecorder := httptest.NewRecorder()
+	handler.AddMember(addRecorder, add)
+	if addRecorder.Code != http.StatusCreated {
+		t.Fatalf("add status = %d（body=%s）", addRecorder.Code, addRecorder.Body.String())
+	}
+
+	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u1",
+		`{"role":"admin","status":"bogus"}`)
+	patch.SetPathValue("id", tenantID)
+	patch.SetPathValue("subject_id", "u1")
+	patchRecorder := httptest.NewRecorder()
+	handler.UpdateMember(patchRecorder, patch)
+	if patchRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("非法状态 status = %d, want 400（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	}
+
+	list := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID+"/members", "")
+	list.SetPathValue("id", tenantID)
+	listRecorder := httptest.NewRecorder()
+	handler.ListMembers(listRecorder, list)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d", listRecorder.Code)
+	}
+	var page struct {
+		Items []struct {
+			Role string `json:"role"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &page); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Role != "member" {
+		t.Fatalf("失败请求不应改角色，实际 = %+v", page.Items)
+	}
+}
+
+// TestUpdateMemberAppliesBothFields 验证一次 PATCH 同时改角色与状态。
+func TestUpdateMemberAppliesBothFields(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	add := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/members",
+		`{"subject_id":"u1","role":"member"}`)
+	add.SetPathValue("id", tenantID)
+	addRecorder := httptest.NewRecorder()
+	handler.AddMember(addRecorder, add)
+	if addRecorder.Code != http.StatusCreated {
+		t.Fatalf("add status = %d", addRecorder.Code)
+	}
+
+	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID+"/members/u1",
+		`{"role":"admin","status":"disabled","reason":"转岗"}`)
+	patch.SetPathValue("id", tenantID)
+	patch.SetPathValue("subject_id", "u1")
+	patchRecorder := httptest.NewRecorder()
+	handler.UpdateMember(patchRecorder, patch)
+	if patchRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	}
+	var updated struct {
+		Role   string `json:"role"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, patchRecorder).Data, &updated); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+	if updated.Role != "admin" || updated.Status != "disabled" {
+		t.Fatalf("变更后 = %+v", updated)
+	}
+}
