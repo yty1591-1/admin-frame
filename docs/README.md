@@ -74,7 +74,7 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
-| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：Wave 2 已全部关闭（`ENT-05`～`ENT-08`）；`ENT-09` 进行中（A 端租户生命周期已落地，停用生效与成员/配额未做）；`ENT-10`～`ENT-24` 待做 |
+| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：Wave 2 已全部关闭（`ENT-05`～`ENT-08`）；`ENT-09` 进行中（A 端生命周期 + B 端停用守卫已落地，成员/配额未做）；`ENT-10`～`ENT-24` 待做 |
 
 > 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次）已全部闭环，位于 [`archive/`](./archive/)。
 

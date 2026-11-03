@@ -42,6 +42,8 @@ type Deps struct {
 	AuthMW func(http.Handler) http.Handler
 	// RequirePermission 是权限中间件工厂，由 cmd 注入的 Authorizer 提供。
 	RequirePermission auth.PermissionMiddleware
+	// TenantGuard 是租户状态守卫（ENT-09）；nil 表示本端不做租户校验。
+	TenantGuard TenantGuard
 	// Health 用于 Register 阶段追加就绪检查（如仓储 ping）。
 	Health *health.Handler
 	// ClientIP 是可信代理解析器；nil 表示不信任任何代理头。
@@ -75,6 +77,11 @@ type Options struct {
 	//
 	// 该回调在 AuthMW 构造前调用，使登录态校验能立即读取撤销状态。
 	NewSessionValidator func(*Deps) (SessionValidator, error)
+	// NewTenantGuard 构造租户状态守卫；返回 nil 表示本端不启用（A 端 / C 端）。
+	//
+	// 在 AuthMW 组装前调用：守卫是鉴权链的一环，必须与 AuthMW 一起装配，
+	// 否则「认证已通过但租户已停用」的请求会漏到业务处理器。
+	NewTenantGuard func(*Deps) (TenantGuard, error)
 	// NewAuthorizer 构造权限校验器；返回 nil 或 nil 函数时默认拒绝所有权限点（fail-closed）。
 	//
 	// 参数为已装配的平台能力（配置 / 数据库 / Redis / 指标 / 健康检查），
@@ -220,6 +227,17 @@ func Run(ctx context.Context, opts Options) (err error) {
 	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
+	}
+	if opts.NewTenantGuard != nil {
+		guard, guardErr := opts.NewTenantGuard(deps)
+		if guardErr != nil {
+			return fmt.Errorf("tenant guard: %w", guardErr)
+		}
+		if guard != nil {
+			// 守卫包在鉴权中间件内层：鉴权先写入 Principal，守卫再读 merchant_id。
+			deps.TenantGuard = guard
+			authMW = WithTenantGuard(authMW, guard)
+		}
 	}
 	deps.AuthMW = authMW
 

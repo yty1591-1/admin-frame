@@ -89,7 +89,7 @@
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
 
-**服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN`；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
+**服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN` / `TENANT_TEST_MYSQL_DSN`（两者指向同一 service 与库）；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
 
 ### 3.2 GitHub Actions
 

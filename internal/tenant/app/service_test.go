@@ -320,6 +320,48 @@ func (r *conflictRepo) UpdateStatus(context.Context, domain.Tenant) error {
 	return domain.ErrVersionConflict
 }
 
+// TestTransitionInvalidatesStatusCache 验证迁移成功后清空状态缓存（同进程立即生效）。
+func TestTransitionInvalidatesStatusCache(t *testing.T) {
+	repo := persistence.NewMemoryRepository()
+	invalidator := &spyInvalidator{}
+	service, err := app.NewService(repo, &seqIDs{}, &recordEmitter{}, app.Options{Invalidator: invalidator})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	ctx := context.Background()
+	tenant, err := service.Create(ctx, app.CreateInput{Name: "Epsilon", Actor: adminActor()})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := service.Transition(ctx, app.TransitionInput{
+		ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Transition() error = %v", err)
+	}
+	if len(invalidator.ids) != 1 || invalidator.ids[0] != tenant.ID {
+		t.Fatalf("失效调用 = %v, want [%s]", invalidator.ids, tenant.ID)
+	}
+
+	// 非法迁移不得触发失效：状态没变，缓存仍然有效。
+	if _, err := service.Transition(ctx, app.TransitionInput{
+		ID: tenant.ID, Target: domain.StatusPending, Actor: adminActor(),
+	}); err == nil {
+		t.Fatal("active → pending 应被拒绝")
+	}
+	if len(invalidator.ids) != 1 {
+		t.Fatalf("非法迁移不应失效缓存，调用 = %v", invalidator.ids)
+	}
+}
+
+// spyInvalidator 记录被失效的租户 ID。
+type spyInvalidator struct {
+	ids []string
+}
+
+func (s *spyInvalidator) Invalidate(tenantID string) {
+	s.ids = append(s.ids, tenantID)
+}
+
 // assertCode 断言错误是 apperr 且业务码匹配。
 func assertCode(t *testing.T, err error, want int) {
 	t.Helper()

@@ -19,6 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 	pkgmetrics "github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
+
 	// worker 也要写对象存储（审计异步导出的 CSV），未导入驱动时
 	// storage.Open 会返回 unknown driver 并让进程直接退出（ENT-04 T5）。
 	_ "github.com/admin-frame/admin-frame/pkg/storage/all"

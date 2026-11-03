@@ -10,6 +10,7 @@ import (
 
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
@@ -58,6 +59,9 @@ func run(configPath string) error {
 	return platform.Run(context.Background(), platform.Options{
 		ConfigPath: configPath,
 		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09）。
+		// 守卫在 AuthMW 组装前注入，成为鉴权链的一环。
+		NewTenantGuard: tenantruntime.NewGuard,
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {
