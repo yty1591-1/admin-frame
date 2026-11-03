@@ -18,6 +18,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
@@ -420,5 +421,68 @@ func TestConcurrentOwnerDemotionOnMySQL(t *testing.T) {
 	}
 	if owners != 1 {
 		t.Fatalf("在册 owner = %d, want 1", owners)
+	}
+}
+
+// failingAuditEmitter 模拟审计出口不可用。
+type failingAuditEmitter struct{}
+
+func (failingAuditEmitter) Emit(context.Context, audit.Event) error {
+	return errors.New("audit sink down")
+}
+
+// TestAuditOutboxIsTransactionalOnMySQL 验证审计事件与业务写入同一事务。
+//
+// 成功：租户与 async_outbox 行同时存在；
+// 审计失败：租户与 outbox 行都不存在（不是「状态已改、审计丢失」）。
+func TestAuditOutboxIsTransactionalOnMySQL(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	repo, err := persistence.NewMySQLRepository(sqlDB)
+	if err != nil {
+		t.Fatalf("NewMySQLRepository() error = %v", err)
+	}
+	store := outbox.NewMySQLStore(sqlDB)
+	actor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+
+	service, err := app.NewService(repo, &seqIDs{},
+		audit.OutboxEmitter{Topic: app.TopicAudit, Events: store}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	created, err := service.Create(ctx, app.CreateInput{Name: "it-outbox-ok-" + uniqueID(t), Actor: actor})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = sqlDB.Exec("DELETE FROM tenant WHERE id = ?", created.ID)
+		_, _ = sqlDB.Exec("DELETE FROM async_outbox WHERE aggregate_id = ?", created.ID)
+	})
+	var outboxRows int
+	if err := sqlDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM async_outbox WHERE topic = ? AND aggregate_id = ?`,
+		app.TopicAudit, created.ID).Scan(&outboxRows); err != nil {
+		t.Fatalf("count outbox: %v", err)
+	}
+	if outboxRows != 1 {
+		t.Fatalf("outbox 行数 = %d, want 1", outboxRows)
+	}
+
+	// 失败路径：审计出口报错 → 整个事务回滚，租户不落库。
+	failingService, err := app.NewService(repo, &seqIDs{}, failingAuditEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewService(failing) error = %v", err)
+	}
+	failName := "it-outbox-fail-" + uniqueID(t)
+	if _, err := failingService.Create(ctx, app.CreateInput{Name: failName, Actor: actor}); err == nil {
+		t.Fatal("审计失败时 Create 应返回错误")
+	}
+	t.Cleanup(func() { _, _ = sqlDB.Exec("DELETE FROM tenant WHERE name = ?", failName) })
+	var tenants int
+	if err := sqlDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant WHERE name = ?`, failName).Scan(&tenants); err != nil {
+		t.Fatalf("count tenant: %v", err)
+	}
+	if tenants != 0 {
+		t.Fatalf("审计失败必须回滚租户，实际 %d 行", tenants)
 	}
 }

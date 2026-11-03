@@ -72,7 +72,31 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tenant handler: %w", err)
 	}
+	if deps.Async != nil {
+		if err := RegisterAsync(deps); err != nil {
+			return nil, fmt.Errorf("tenant async handlers: %w", err)
+		}
+	}
 	return &Runtime{Handler: handler}, nil
+}
+
+// RegisterAsync 注册租户域异步 topic handler（API 与 worker 共用）。
+//
+// 审计事件由 Relay 投递到审计表并旁路结构化日志；表写入失败按可重试错误处理，
+// 由 Relay 退避重试（event_id 幂等）。
+func RegisterAsync(deps *platform.Deps) error {
+	if deps == nil || deps.Async == nil {
+		return nil
+	}
+	emitters := audit.MultiEmitter{}
+	if deps.Database != nil {
+		emitters = append(emitters, audit.SQLEmitter{DB: deps.Database.SQL()})
+	}
+	emitters = append(emitters, audit.SlogEmitter{Log: deps.Logger})
+	if err := deps.Async.Register(app.TopicAudit, audit.OutboxHandler(emitters)); err != nil {
+		return fmt.Errorf("tenant async handler %s: %w", app.TopicAudit, err)
+	}
+	return nil
 }
 
 // NewGuard 构造 B 端租户状态守卫（platform.TenantGuard 实现）。
@@ -118,6 +142,12 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	mysqlRepo, err := persistence.NewMySQLRepository(deps.Database.SQL())
 	if err != nil {
 		return store{}, nil, fmt.Errorf("tenant repository: %w", err)
+	}
+	// 生产优先走 Outbox：审计与业务写入同事务，Relay 负责重试与死信。
+	// 异步未启用时退回直写审计表 + 结构化日志（本地 / 单进程模式）。
+	if deps.Async != nil && deps.Async.Store() != nil {
+		return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo},
+			audit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
 	}
 	// 双出口：审计表供查询 / 取证，结构化日志供排障；任一失败不影响另一出口。
 	return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo}, audit.MultiEmitter{

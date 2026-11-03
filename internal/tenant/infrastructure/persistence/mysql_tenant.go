@@ -31,6 +31,14 @@ func NewMySQLRepository(sqlDB *sql.DB) (*MySQLRepository, error) {
 // tenantColumns 固定列顺序，避免 SELECT * 与扫描顺序漂移。
 const tenantColumns = "id, name, status, status_reason, version, suspended_at, terminated_at, created_at, updated_at"
 
+// WithinTx 在事务内执行 fn，事务注入 ctx 后仓储与 OutboxEmitter 自动复用。
+func (r *MySQLRepository) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	if fn == nil {
+		return errors.New("tenant: transaction requires a function")
+	}
+	return db.WithinUnitOfWork(ctx, r.db, nil, fn)
+}
+
 // Create 插入租户；主键冲突返回 ErrAlreadyExists 而不是驱动错误。
 func (r *MySQLRepository) Create(ctx context.Context, tenant domain.Tenant) error {
 	if err := tenant.Validate(); err != nil {

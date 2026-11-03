@@ -30,6 +30,9 @@ const (
 	ActionTerminate = "tenant.terminate"
 )
 
+// TopicAudit 租户审计事件的 Outbox 主题。
+const TopicAudit = "tenant.audit"
+
 // 审计资源类型。
 const (
 	// ResourceTypeTenant 租户主数据。
@@ -51,9 +54,12 @@ type auditContext struct {
 	now     func() time.Time
 }
 
-// emit 写一条审计事件；失败只降级为不写，不改变业务结果。
+// emit 写一条审计事件。
+//
+// 返回错误而不是吞掉：与业务写入同事务时（Outbox），失败必须让业务回滚，
+// 否则就回到「状态已改、审计丢失」。需要 best-effort 的调用方显式忽略返回值。
 func (a auditContext) emit(ctx context.Context, actor Actor, action, resourceType, resourceID string,
-	outcome audit.Outcome, reason string, attrs map[string]string) {
+	outcome audit.Outcome, reason string, attrs map[string]string) error {
 	eventID := ""
 	if a.ids != nil {
 		if generated, err := a.ids.NextString(); err == nil {
@@ -80,8 +86,7 @@ func (a auditContext) emit(ctx context.Context, actor Actor, action, resourceTyp
 		Reason:       truncate(reason, 255),
 		Attrs:        attrs,
 	}
-	// 审计失败不回滚业务：状态已落库，回滚会让「实际生效但无记录」更糟。
-	_ = a.emitter.Emit(ctx, event)
+	return a.emitter.Emit(ctx, event)
 }
 
 // Options 是用例参数。
@@ -179,19 +184,31 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 }
 
 // Create 创建待开通租户。
+//
+// 建租户与审计同事务：审计写不进去就不建租户，避免「有租户、没记录」。
 func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, error) {
-	tenantID, err := s.ids.NextString()
+	var tenant domain.Tenant
+	err := s.repo.WithinTx(ctx, func(txCtx context.Context) error {
+		tenantID, idErr := s.ids.NextString()
+		if idErr != nil {
+			return apperr.Internal("tenant id generation failed", idErr)
+		}
+		built, buildErr := domain.NewTenant(tenantID, in.Name, s.now())
+		if buildErr != nil {
+			return buildErr
+		}
+		if createErr := s.repo.Create(txCtx, built); createErr != nil {
+			return createErr
+		}
+		if emitErr := s.emit(txCtx, in.Actor, ActionCreate, built, audit.OutcomeSuccess, ""); emitErr != nil {
+			return emitErr
+		}
+		tenant = built
+		return nil
+	})
 	if err != nil {
-		return domain.Tenant{}, apperr.Internal("tenant id generation failed", err)
+		return domain.Tenant{}, translateIfNeeded(err)
 	}
-	tenant, err := domain.NewTenant(tenantID, in.Name, s.now())
-	if err != nil {
-		return domain.Tenant{}, translate(err)
-	}
-	if err := s.repo.Create(ctx, tenant); err != nil {
-		return domain.Tenant{}, translate(err)
-	}
-	s.emit(ctx, in.Actor, ActionCreate, tenant, audit.OutcomeSuccess, "")
 	return tenant, nil
 }
 
@@ -222,27 +239,55 @@ func (s *Service) List(ctx context.Context, filter domain.Filter) (ListResult, e
 	return ListResult{Items: items, Total: total}, nil
 }
 
-// Transition 执行一次状态迁移；失败时不写审计成功事件，但拒绝动作记 failure。
+// Transition 执行一次状态迁移。
+//
+// 成功路径：读当前状态、CAS 写入、写审计在**同一事务**内完成，任一步失败整体回滚。
+// 失败路径：业务已回滚，拒绝事件在事务外 best-effort 记录（非法迁移本身有价值，
+// 但不允许它把 409 变成 500）。
 func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Tenant, error) {
 	if strings.TrimSpace(in.ID) == "" {
 		return domain.Tenant{}, apperr.BadRequest("tenant id is required")
 	}
+	var next domain.Tenant
+	err := s.repo.WithinTx(ctx, func(txCtx context.Context) error {
+		// 事务内重新读：锁外读到的状态可能已被并发请求改掉。
+		current, getErr := s.repo.Get(txCtx, in.ID)
+		if getErr != nil {
+			return getErr
+		}
+		computed, transErr := current.Transition(in.Target, in.Reason, s.now())
+		if transErr != nil {
+			return transErr
+		}
+		if updateErr := s.repo.UpdateStatus(txCtx, computed); updateErr != nil {
+			return updateErr
+		}
+		if emitErr := s.emit(txCtx, in.Actor, actionFor(current.Status, in.Target), computed,
+			audit.OutcomeSuccess, in.Reason); emitErr != nil {
+			return emitErr
+		}
+		next = computed
+		return nil
+	})
+	if err != nil {
+		s.emitRejected(ctx, in, err)
+		return domain.Tenant{}, translateIfNeeded(err)
+	}
+	return next, nil
+}
+
+// emitRejected 记录被拒绝的迁移；事务已回滚，本事件必须独立落库。
+//
+// 只做 best-effort：拒绝事件丢失不应把「409 冲突」变成「500 故障」。
+func (s *Service) emitRejected(ctx context.Context, in TransitionInput, cause error) {
+	if errors.Is(cause, domain.ErrNotFound) {
+		return // 没有资源可记，也不应凭空造一条事件。
+	}
 	current, err := s.repo.Get(ctx, in.ID)
 	if err != nil {
-		return domain.Tenant{}, translate(err)
+		return
 	}
-	next, err := current.Transition(in.Target, in.Reason, s.now())
-	if err != nil {
-		// 失败也留痕：非法迁移往往意味着有人在尝试绕过流程。
-		s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), current, audit.OutcomeFailure, err.Error())
-		return domain.Tenant{}, translate(err)
-	}
-	if err := s.repo.UpdateStatus(ctx, next); err != nil {
-		s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), current, audit.OutcomeFailure, err.Error())
-		return domain.Tenant{}, translate(err)
-	}
-	s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), next, audit.OutcomeSuccess, in.Reason)
-	return next, nil
+	_ = s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), current, audit.OutcomeFailure, cause.Error())
 }
 
 // actionFor 按「源状态 + 目标状态」区分开通与恢复。
@@ -267,8 +312,8 @@ func actionFor(from, to domain.Status) string {
 
 // emit 写租户主数据审计事件。
 func (s *Service) emit(ctx context.Context, actor Actor, action string, tenant domain.Tenant,
-	outcome audit.Outcome, reason string) {
-	s.audit.emit(ctx, actor, action, ResourceTypeTenant, tenant.ID, outcome, reason, map[string]string{
+	outcome audit.Outcome, reason string) error {
+	return s.audit.emit(ctx, actor, action, ResourceTypeTenant, tenant.ID, outcome, reason, map[string]string{
 		"status": string(tenant.Status),
 		"name":   tenant.Name,
 	})
@@ -308,6 +353,15 @@ func mutableTenant(ctx context.Context, tenants domain.Repository, tenantID stri
 		return domain.Tenant{}, apperr.Conflict("tenant is terminated and cannot be changed")
 	}
 	return tenant, nil
+}
+
+// translateIfNeeded 在已经带业务码时原样返回，避免二次包装成 500。
+func translateIfNeeded(err error) error {
+	var appErr *apperr.AppError
+	if errors.As(err, &appErr) {
+		return err
+	}
+	return translate(err)
 }
 
 // translate 把领域错误翻译为统一错误码。

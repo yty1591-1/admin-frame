@@ -206,3 +206,6 @@ func (memoryStub) List(context.Context, domain.Filter) ([]domain.Tenant, int, er
 	return nil, 0, nil
 }
 func (memoryStub) UpdateStatus(context.Context, domain.Tenant) error { return nil }
+
+// WithinTx 在测试中直接执行 fn（无事务语义）。
+func (memoryStub) WithinTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }

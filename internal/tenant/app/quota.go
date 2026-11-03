@@ -57,22 +57,34 @@ type SetQuotaInput struct {
 }
 
 // Set 设置（或覆盖）某资源的配额上限。
+//
+// 配额写入与审计同事务：审计写不进去就不改配额。
 func (s *QuotaService) Set(ctx context.Context, in SetQuotaInput) (domain.Quota, error) {
-	if _, err := mutableTenant(ctx, s.tenants, in.TenantID); err != nil {
-		return domain.Quota{}, err
-	}
-	quota, err := domain.NewQuota(in.TenantID, in.Resource, in.Limit, s.now())
+	var quota domain.Quota
+	err := s.tenants.WithinTx(ctx, func(txCtx context.Context) error {
+		if _, err := mutableTenant(txCtx, s.tenants, in.TenantID); err != nil {
+			return err
+		}
+		built, buildErr := domain.NewQuota(in.TenantID, in.Resource, in.Limit, s.now())
+		if buildErr != nil {
+			return buildErr
+		}
+		if upsertErr := s.quotas.UpsertQuota(txCtx, built); upsertErr != nil {
+			return upsertErr
+		}
+		if emitErr := s.audit.emit(txCtx, in.Actor, ActionQuotaChange, ResourceTypeQuota, built.TenantID,
+			audit.OutcomeSuccess, "", map[string]string{
+				"resource": built.Resource,
+				"limit":    quotaLimitString(built.Limit),
+			}); emitErr != nil {
+			return emitErr
+		}
+		quota = built
+		return nil
+	})
 	if err != nil {
-		return domain.Quota{}, translate(err)
+		return domain.Quota{}, translateIfNeeded(err)
 	}
-	if err := s.quotas.UpsertQuota(ctx, quota); err != nil {
-		return domain.Quota{}, translate(err)
-	}
-	s.audit.emit(ctx, in.Actor, ActionQuotaChange, ResourceTypeQuota, quota.TenantID,
-		audit.OutcomeSuccess, "", map[string]string{
-			"resource": quota.Resource,
-			"limit":    quotaLimitString(quota.Limit),
-		})
 	return quota, nil
 }
 

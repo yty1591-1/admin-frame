@@ -44,6 +44,12 @@ type Repository interface {
 	Get(ctx context.Context, id string) (Tenant, error)
 	// List 分页查询，返回当页数据与总数。
 	List(ctx context.Context, filter Filter) ([]Tenant, int, error)
+	// WithinTx 在事务内执行 fn，并把事务注入 ctx。
+	//
+	// 用途：把业务写入与审计 Outbox 记录放进同一事务，避免「状态已改、审计丢失」
+	// 或「审计已写、状态回滚」。fn 内必须通过同一个 ctx 调用仓储与 Emitter。
+	// 内存实现不提供事务语义，仅顺序执行（本地开发不追求原子性）。
+	WithinTx(ctx context.Context, fn func(context.Context) error) error
 	// UpdateStatus 以 CAS 方式写入迁移结果。
 	//
 	// 约定：tenant.Version 是**迁移后**的新版本，仓储以其减一作为预期旧版本；

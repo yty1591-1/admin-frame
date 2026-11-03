@@ -334,3 +334,8 @@ func assertCode(t *testing.T, err error, want int) {
 		t.Fatalf("code = %d, want %d (message=%s)", appErr.Code, want, appErr.Message)
 	}
 }
+
+// WithinTx 在测试中直接执行 fn（无事务语义）。
+func (r *conflictRepo) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}

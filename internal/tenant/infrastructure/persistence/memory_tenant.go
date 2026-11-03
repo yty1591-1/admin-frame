@@ -36,6 +36,69 @@ func NewMemoryRepository() *MemoryRepository {
 	}
 }
 
+// WithinTx 通过快照实现回滚：fn 返回错误时恢复写入前的三张表。
+//
+// 内存模式也要有事务语义，否则「审计失败 → 业务回滚」的用例在本地永远是绿的，
+// 到 MySQL 上才发现行为不同。写入串行由 txMu 保证（与 Mutate 互斥）。
+func (r *MemoryRepository) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	if fn == nil {
+		return fmt.Errorf("tenant: transaction requires a function")
+	}
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+	snapshot := r.snapshot()
+	if err := fn(ctx); err != nil {
+		r.restore(snapshot)
+		return err
+	}
+	return nil
+}
+
+// memorySnapshot 是内存表的最小快照。
+//
+// 只复制 map，不深拷贝实体：仓储的写入都是「整条替换」，不会原地改结构体。
+type memorySnapshot struct {
+	items   map[string]domain.Tenant
+	members map[string]map[string]domain.Member
+	quotas  map[string]map[string]domain.Quota
+}
+
+func (r *MemoryRepository) snapshot() memorySnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := memorySnapshot{
+		items:   make(map[string]domain.Tenant, len(r.items)),
+		members: make(map[string]map[string]domain.Member, len(r.members)),
+		quotas:  make(map[string]map[string]domain.Quota, len(r.quotas)),
+	}
+	for k, v := range r.items {
+		out.items[k] = v
+	}
+	for tenantID, bySubject := range r.members {
+		copied := make(map[string]domain.Member, len(bySubject))
+		for k, v := range bySubject {
+			copied[k] = v
+		}
+		out.members[tenantID] = copied
+	}
+	for tenantID, byResource := range r.quotas {
+		copied := make(map[string]domain.Quota, len(byResource))
+		for k, v := range byResource {
+			copied[k] = v
+		}
+		out.quotas[tenantID] = copied
+	}
+	return out
+}
+
+func (r *MemoryRepository) restore(snapshot memorySnapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.items = snapshot.items
+	r.members = snapshot.members
+	r.quotas = snapshot.quotas
+}
+
 // Mutate 串行化同一租户的成员变更。
 //
 // 内存实现没有事务，用独立互斥锁模拟「持锁执行」：临界区内调用本仓储的

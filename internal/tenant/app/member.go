@@ -89,43 +89,55 @@ type SetMemberStatusInput struct {
 }
 
 // Add 添加成员；已在册的成员重复添加返回冲突，不静默改角色。
+//
+// 成员写入与审计同事务：审计写不进去就不加成员，避免「成员已加、无记录」。
 func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Member, error) {
-	if _, err := mutableTenant(ctx, s.tenants, in.TenantID); err != nil {
-		return domain.Member{}, err
-	}
-	existing, err := s.members.GetMember(ctx, in.TenantID, in.SubjectID)
-	reactivated := false
-	switch {
-	case err == nil && existing.Active():
-		// 显式 Add 不应顺手改角色：改角色是另一个动作，需要单独的审计语义。
-		return domain.Member{}, translate(domain.ErrMemberAlreadyExists)
-	case err == nil:
-		// 已停用 → 重新启用并采用入参角色；审计仍记 add，用 reactivated 标明这次是复活。
-		reactivated = true
-	case errors.Is(err, domain.ErrMemberNotFound):
-		// 正常新增路径。
-	default:
-		return domain.Member{}, translate(err)
-	}
+	var member domain.Member
+	err := s.tenants.WithinTx(ctx, func(txCtx context.Context) error {
+		if _, err := mutableTenant(txCtx, s.tenants, in.TenantID); err != nil {
+			return err
+		}
+		existing, err := s.members.GetMember(txCtx, in.TenantID, in.SubjectID)
+		reactivated := false
+		switch {
+		case err == nil && existing.Active():
+			// 显式 Add 不应顺手改角色：改角色是另一个动作，需要单独的审计语义。
+			return domain.ErrMemberAlreadyExists
+		case err == nil:
+			// 已停用 → 重新启用并采用入参角色；审计仍记 add，用 reactivated 标明这次是复活。
+			reactivated = true
+		case errors.Is(err, domain.ErrMemberNotFound):
+			// 正常新增路径。
+		default:
+			return err
+		}
 
-	member, err := domain.NewMember(in.TenantID, in.SubjectID, in.Role, s.now())
+		built, buildErr := domain.NewMember(in.TenantID, in.SubjectID, in.Role, s.now())
+		if buildErr != nil {
+			return buildErr
+		}
+		if reactivated {
+			// 复活沿用首次加入时间：UPSERT 有意不覆盖 created_at，
+			// 返回体必须与库中一致，否则前端展示的「加入时间」会跳变。
+			built.CreatedAt = existing.CreatedAt
+		}
+		if upsertErr := s.members.UpsertMember(txCtx, built); upsertErr != nil {
+			return upsertErr
+		}
+		if emitErr := s.audit.emit(txCtx, in.Actor, ActionMemberAdd, ResourceTypeMember, built.TenantID,
+			audit.OutcomeSuccess, "", map[string]string{
+				"subject_id":  built.SubjectID,
+				"role":        string(built.Role),
+				"reactivated": boolString(reactivated),
+			}); emitErr != nil {
+			return emitErr
+		}
+		member = built
+		return nil
+	})
 	if err != nil {
-		return domain.Member{}, translate(err)
+		return domain.Member{}, translateIfNeeded(err)
 	}
-	if reactivated {
-		// 复活沿用首次加入时间：UPSERT 有意不覆盖 created_at，
-		// 返回体必须与库中一致，否则前端展示的「加入时间」会跳变。
-		member.CreatedAt = existing.CreatedAt
-	}
-	if err := s.members.UpsertMember(ctx, member); err != nil {
-		return domain.Member{}, translate(err)
-	}
-	s.audit.emit(ctx, in.Actor, ActionMemberAdd, ResourceTypeMember, member.TenantID,
-		audit.OutcomeSuccess, "", map[string]string{
-			"subject_id":  member.SubjectID,
-			"role":        string(member.Role),
-			"reactivated": boolString(reactivated),
-		})
 	return member, nil
 }
 
@@ -219,37 +231,36 @@ func (s *MemberService) Update(ctx context.Context, in UpdateMemberInput) (domai
 		if err := s.ensureOwnerRemains(txCtx, current, next); err != nil {
 			return err
 		}
-		return s.members.UpsertMember(txCtx, next)
+		if err := s.members.UpsertMember(txCtx, next); err != nil {
+			return err
+		}
+		if roleChanged {
+			if err := s.audit.emit(txCtx, in.Actor, ActionMemberRoleChange, ResourceTypeMember, next.TenantID,
+				audit.OutcomeSuccess, "", map[string]string{
+					"subject_id": next.SubjectID,
+					"from":       string(current.Role),
+					"to":         string(next.Role),
+				}); err != nil {
+				return err
+			}
+		}
+		if statusChanged {
+			action := ActionMemberDisable
+			if next.Active() {
+				action = ActionMemberEnable
+			}
+			if err := s.audit.emit(txCtx, in.Actor, action, ResourceTypeMember, next.TenantID,
+				audit.OutcomeSuccess, in.Reason, map[string]string{
+					"subject_id": next.SubjectID,
+					"role":       string(next.Role),
+				}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		var appErr *apperr.AppError
-		if errors.As(err, &appErr) {
-			return domain.Member{}, err
-		}
-		return domain.Member{}, translate(err)
-	}
-	if !roleChanged && !statusChanged {
-		return next, nil
-	}
-
-	if roleChanged {
-		s.audit.emit(ctx, in.Actor, ActionMemberRoleChange, ResourceTypeMember, next.TenantID,
-			audit.OutcomeSuccess, "", map[string]string{
-				"subject_id": next.SubjectID,
-				"from":       string(current.Role),
-				"to":         string(next.Role),
-			})
-	}
-	if statusChanged {
-		action := ActionMemberDisable
-		if next.Active() {
-			action = ActionMemberEnable
-		}
-		s.audit.emit(ctx, in.Actor, action, ResourceTypeMember, next.TenantID,
-			audit.OutcomeSuccess, in.Reason, map[string]string{
-				"subject_id": next.SubjectID,
-				"role":       string(next.Role),
-			})
+		return domain.Member{}, translateIfNeeded(err)
 	}
 	return next, nil
 }

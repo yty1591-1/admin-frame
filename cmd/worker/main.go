@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	pkgmetrics "github.com/admin-frame/admin-frame/pkg/metrics"
@@ -116,6 +117,9 @@ func run(configPath, replayDLQ string) error {
 	}
 	if err := identityruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register identity async handlers: %w", err)
+	}
+	if err := tenantruntime.RegisterAsync(deps); err != nil {
+		return fmt.Errorf("register tenant async handlers: %w", err)
 	}
 	cleanupHandle, err := identityruntime.StartCleanup(ctx, deps)
 	if err != nil {

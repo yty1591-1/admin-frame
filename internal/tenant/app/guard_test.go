@@ -253,3 +253,8 @@ func TestGuardVerifySeparatesDeniedFromUndetermined(t *testing.T) {
 		t.Fatalf("Verify(broken) = %v,%v want false,err", allow, err)
 	}
 }
+
+// WithinTx 在测试中直接执行 fn（无事务语义）。
+func (r *countingRepo) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
