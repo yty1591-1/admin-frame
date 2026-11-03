@@ -25,8 +25,16 @@ ENT-09 要引入租户生命周期（`pending → active → suspended → termi
 
 1. `tenant.id` 是隔离边界，`VARCHAR(64)`，与既有 `merchant_id` 宽度一致；
    业务表不需要改列、不需要映射表、不需要回填。
-2. **不引入 `tenant.code`**：多一个对外标识就多一处「用哪个查」的分歧，
-   而租户改名 / 改编码的需求并不存在；展示名称用 `tenant.name`。
+2. **`tenant.code` 仅作对账引用，不作映射键**（2026-11-03 更正，原表述
+   「不引入 code」已被 T-11 推翻）：
+   - 本决策最初认为「多一个对外标识就多一处用哪个查的分歧」；实施中发现
+     CRM / 结算等外部系统需要一个**人可读、稳定、可校验**的引用键，雪花 ID
+     在对账与工单里不可用，于是在 T-11（迁移 `000013`）引入 `code`
+     （全局唯一、`uk_tenant_code`、存量以 `id` 兜底回填）；
+   - 边界不变：**隔离边界仍是 `tenant.id`**，业务表的 `merchant_id` 依旧
+     只认 id；`code` 不出现在任何业务表、不参与查询路由，仅做外部对账；
+   - `code` 创建后不可变——改它等于改别人的主键，修订走数据订正流程；
+   - 改名需求存在（运营常规操作），走 `PATCH /tenants/{id}` + `tenant.update` 审计。
 3. **状态机不可跳过、不可回退**：`pending → active → suspended → terminated`，
    其中 `terminated` 为终态。暂停可直接终止，但恢复必须经过 `active`；
    禁止 `suspended → pending`（会让已开通租户丢失开通事实），

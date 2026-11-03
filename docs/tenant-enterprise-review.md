@@ -321,7 +321,7 @@ TENANT_TEST_MYSQL_DSN='...' go test ./tests/integration/tenant/... -count=1 -v
 | T-14 | 邀请流 | `tenant_invitation` 表（token hash、过期、状态）、创建/接受/撤销/重发接口 | 过期邀请不可用；重复接受幂等；全流程审计 | ✅ 2026-11-03 |
 | T-15 | 条件更新 | 迁移/写接口接受 `If-Match` 或 `expected_version` | 版本不匹配返回 409 + 当前版本 | ✅ 2026-11-03 |
 | T-22 | 当前租户上下文（D-04=①） | B 端 claims 增 `current_tenant` + 切换端点；契约 major 版本 | 一人多租户可切换；切换写审计；旧令牌行为有明确定义 | ✅ 2026-11-03 |
-| T-23 | 数据生命周期（D-05） | `docs/tenant-data-lifecycle.md`：保留期 / 导出窗口 / 硬删除边界；到期任务与证据链 | 到期流程可演练；导出可校验；硬删有审计与报告 |
+| T-23 | 数据生命周期（D-05） | `docs/tenant-data-lifecycle.md`：保留期 / 导出窗口 / 硬删除边界；到期任务与证据链 | 到期流程可演练；导出可校验；硬删有审计与报告 | ✅ 2026-11-04 |
 
 **批次验收命令**
 
@@ -339,8 +339,8 @@ go test ./internal/tenant/... -count=1
 | T-16 | 租户指标               | `tenant_status`（Gauge，按状态）、`tenant_guard_decisions_total{result}`、`tenant_guard_cache_hit_total`、`tenant_transition_total{from,to}`、`tenant_audit_emit_failed_total` |
 | T-17 | 域门禁 `check-tenant` | ① 代码中 `Action*` 常量必须出现在 `docs/audit/EVENTS.md`；② 路由 ↔ OpenAPI 双向对账；③ 状态机迁移矩阵快照（改白名单必须同步改测试）；并入 `make ci`                                                             |
 | T-18 | IAM 联动（P1-8）       | 选定映射方案并实现；成员变更同步绑定；集成用例覆盖授权生效与失效                                                                                                                                     |
-| T-19 | 清理与文档              | 删除或接线 `Deps.TenantGuard` / `ErrTenantGuardMissing`；ADR-0006 更正；计划状态表把 ENT-09 从「完成」改为「主体完成 + 验收缺口链接本文」                                                                |
-| T-20 | 运维补充               | `tenant-suspend.md` 补「登录仍成功」的现状与处置；新增 `tenant-onboarding.md`（回填 + 开通检查清单）                                                                                            |
+| T-19 | 清理与文档              | 删除或接线 `Deps.TenantGuard` / `ErrTenantGuardMissing`；ADR-0006 更正；计划状态表把 ENT-09 从「完成」改为「主体完成 + 验收缺口链接本文」 | ✅ 2026-11-04 |
+| T-20 | 运维补充               | `tenant-suspend.md` 补「登录仍成功」的现状与处置；新增 `tenant-onboarding.md`（回填 + 开通检查清单） | ✅ 2026-11-04 |
 
 **批次验收命令**
 
@@ -579,7 +579,18 @@ ETag 闭环）；T-22 identity +3 组（成员切换成功与 claims 断言、�
 11 用例复跑全过。
 
 **B3 全部完成**：T-11 / T-13 / T-14 / T-15 / T-22 / T-24 / T-12 ✅。
-B4（治理收口：T-16 指标、T-17 域门禁等）为下一批次。
+
+**B4 治理批次（T-16 / T-17 / T-19 / T-20 / T-23）**
+
+| 改动 | 说明 |
+|---|---|
+| T-17 域门禁 | `scripts/ci/check-tenant.sh` 三项对账：TN-01 Action* 常量 ↔ EVENTS.md（只认 Action* 前缀排除 TopicAudit）；TN-02 路由 ↔ OpenAPI 双向对账（**上线即抓到 7.5.0 邀请端点 5 路径漏挂 paths 段**，已补挂）；TN-03 状态机矩阵快照（`Transitions()` 导出副本 + `TestTransitionMatrixSnapshot` 硬编码锁定）。已入 `make ci` |
+| T-16 指标 | `tenant/observability` 实现 `app.Observer`：guard_decisions / cache_hit / transition / audit_emit_failed 四计数器 + `tenant_status` 按状态 Gauge（自定义 Collector + 2s 缓存，失败沿用旧快照）；Guard.Check / Service.Transition / auditContext.emit 三处埋点，nil 归一化 noop |
+| T-19 清理 | 删除未用 `ErrTenantGuardMissing`（`Deps.TenantGuard` 已在 bootstrap 接线，保留）；ADR-0006 更正「不引入 code」决策（T-11 引入 code 为对账引用，边界仍是 id）；计划状态表 ENT-09 更新至 B4 完成 |
+| T-20 运维 | `tenant-suspend.md` 补「已知边界」四条（装配逃生门 / TTL 窗口 / refresh 已封死 / 切换语义）；新增 `tenant-onboarding.md`（两条开通路径 + 8 项检查清单） |
+| T-23 生命周期 | `docs/tenant-data-lifecycle.md`：保留期 90d + 导出窗口 30d + 硬删除三段式；各域边界表（审计唯一不删）；导出 manifest 校验；到期任务五步证据链；归口 ENT-15 执行 |
+
+**B4 完成**。ENT-09 剩 T-18（IAM 联动，需独立 ADR-0007 后实施）。
 
 ---
 

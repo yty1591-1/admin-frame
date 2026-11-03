@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -82,6 +81,3 @@ func WithTenantGuard(mw func(http.Handler) http.Handler, guard TenantGuard, requ
 		}))
 	}
 }
-
-// ErrTenantGuardMissing 表示需要守卫但未注入实现（供装配期断言使用）。
-var ErrTenantGuardMissing = errors.New("platform: tenant guard is required for multi-tenant channel")

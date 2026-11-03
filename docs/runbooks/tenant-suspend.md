@@ -59,6 +59,23 @@ UNION SELECT DISTINCT merchant_id FROM identity_account   WHERE merchant_id <> '
 回填生成的租户 `name` 等于 `merchant_id`、`status_reason` 为 `backfill: 存量商户自动登记`，
 需要运营随后补全名称；回填**不覆盖**已存在的租户记录。
 
+## 已知边界（T-20 勘误）
+
+以下场景中「登录仍然成功」或阻断不完整，属于**当前明确定义的行为**而非缺陷；
+出现对应症状先对照本节，再考虑升级：
+
+1. **登录期校验依赖装配**：`TenantStatusChecker` 未注入的部署形态
+   （本地内存模式、最小进程）登录不校验租户状态——该形态本就不面向生产，
+   生产装配（`cmd/admin-api` / worker）必须注入；若生产出现「suspended 仍能登录」，
+   先查该进程是否漏装配（守卫 403 与登录 403 应同时生效）。
+2. **守卫 TTL 窗口**：停用生效上限 30s（缓存 TTL）。窗口内已发出的请求仍会成功，
+   这是「停用 ≤ 60s 生效」验收的口径内行为，不算漏拦。
+3. **refresh 换发**：停用即撤销会话（D-02=①），refresh token 随会话失效，
+   不存在「旧 refresh 换新 access」的绕过路径；若观察到，优先查撤销是否实际执行
+   （审计 `tenant.suspend` 的 `attrs.revoked_sessions`）。
+4. **切换租户（T-22）**：主体对另一个租户仍是成员时，可 `tenant-switch` 到该租户继续工作；
+   停用只影响目标租户本身，这是多租户语义（同一主体在不同租户的成员关系相互独立）。
+
 ## 升级
 
 - 影响多个商户或无法判定原因 → 升级至平台值班（P1），并附：`merchant_id`、`/readyz` 结果、
