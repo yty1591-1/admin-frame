@@ -153,6 +153,10 @@ type TransitionInput struct {
 	Target domain.Status
 	// Reason 迁移原因；停用与终止必填。
 	Reason string
+	// ExpectedVersion 客户端期望的乐观锁版本（T-15，可选）。
+	// 提供且与当前版本不符时直接 409（附当前版本），避免为注定失败的
+	// 请求撤销会话；未提供时行为与之前一致（事务内 CAS 兜底）。
+	ExpectedVersion *int64
 	// Actor 操作者。
 	Actor Actor
 }
@@ -287,6 +291,9 @@ type UpdateProfileInput struct {
 	Locale *string
 	// ExternalID 外部系统 ID；nil 不变，空串清空。
 	ExternalID *string
+	// ExpectedVersion 客户端期望的乐观锁版本（T-15，可选）；提供且不符时
+	// 409 + 当前版本。未提供时由 CAS 兜底。
+	ExpectedVersion *int64
 	// Actor 操作者。
 	Actor Actor
 }
@@ -306,6 +313,12 @@ func (s *Service) UpdateProfile(ctx context.Context, in UpdateProfileInput) (dom
 		current, err := mutableTenant(txCtx, s.repo, in.ID)
 		if err != nil {
 			return err
+		}
+		// T-15 条件更新：版本不符直接 409 + 当前版本（写入前拦截）。
+		if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+			return &domain.VersionMismatchError{
+				Expected: *in.ExpectedVersion, Current: current.Version,
+			}
 		}
 		profile := domain.Profile{
 			Name:         current.Name,
@@ -487,6 +500,12 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 	if err != nil {
 		return domain.Tenant{}, translate(err)
 	}
+	// T-15 条件更新：期望版本不符直接 409 + 当前版本，会话不被撤销。
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return domain.Tenant{}, translate(&domain.VersionMismatchError{
+			Expected: *in.ExpectedVersion, Current: current.Version,
+		})
+	}
 	computed, err := current.Transition(in.Target, in.Reason, s.now())
 	if err != nil {
 		s.emitRejected(ctx, in, err)
@@ -511,6 +530,13 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 		locked, getErr := s.repo.Get(txCtx, in.ID)
 		if getErr != nil {
 			return getErr
+		}
+		// T-15：锁内期望版本再校验一次——预检与迁移之间可能有并发写入，
+		// 这里失败同样要 409 附当前版本，而不是泛化的 CAS 冲突。
+		if in.ExpectedVersion != nil && locked.Version != *in.ExpectedVersion {
+			return &domain.VersionMismatchError{
+				Expected: *in.ExpectedVersion, Current: locked.Version,
+			}
 		}
 		// T-12 开通前置：0 成员的租户开出来也无法自服务，宁可让管理员先补 owner。
 		// 校验放在事务内：与迁移之间没有窗口期，并发添加 owner 也能被看到。
@@ -660,6 +686,7 @@ func translateIfNeeded(err error) error {
 // translate 把领域错误翻译为统一错误码。
 func translate(err error) error {
 	var invalid *domain.InvalidTransitionError
+	var versionMismatch *domain.VersionMismatchError
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		return apperr.NotFound("tenant not found")
@@ -674,6 +701,9 @@ func translate(err error) error {
 		return apperr.Conflict("tenant is terminated and cannot be changed")
 	case errors.Is(err, domain.ErrVersionConflict):
 		return apperr.Conflict("tenant status changed concurrently, retry")
+	case errors.As(err, &versionMismatch):
+		// T-15：消息携带期望与当前版本，前端无需再 GET 即可重试。
+		return apperr.New(apperr.CodeConflict, versionMismatch.Error(), err)
 	case errors.Is(err, domain.ErrAlreadyExists):
 		return apperr.Conflict("tenant already exists")
 	case errors.Is(err, domain.ErrMemberAlreadyExists):

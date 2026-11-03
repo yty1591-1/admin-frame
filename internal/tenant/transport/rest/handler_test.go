@@ -829,3 +829,87 @@ func TestInvitationEndpoints(t *testing.T) {
 		t.Fatalf("revoked accept status = %d, want 409", revAcceptRecorder.Code)
 	}
 }
+
+// TestConditionalUpdateHeaders 验证 T-15：If-Match / expected_version / ETag 的 HTTP 契约。
+func TestConditionalUpdateHeaders(t *testing.T) {
+	handler := newHandler(t)
+	tenantID := createTenant(t, handler)
+
+	// GET 返回 ETag（createTenant 已 activate，当前版本 2）。
+	get := adminRequest(http.MethodGet, "/admin/v1/tenants/"+tenantID, "")
+	get.SetPathValue("id", tenantID)
+	getRecorder := httptest.NewRecorder()
+	handler.Get(getRecorder, get)
+	etag := getRecorder.Header().Get("ETag")
+	if etag != "2" {
+		t.Fatalf("ETag = %q, want 2", etag)
+	}
+
+	// If-Match 过期版本 → 409 + 当前版本在消息里。
+	suspend := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/suspend",
+		`{"reason":"测试停用"}`)
+	suspend.SetPathValue("id", tenantID)
+	suspend.Header.Set("If-Match", `"99"`)
+	suspendRecorder := httptest.NewRecorder()
+	handler.Suspend(suspendRecorder, suspend)
+	if suspendRecorder.Code != http.StatusConflict {
+		t.Fatalf("If-Match 99 status = %d, want 409（body=%s）", suspendRecorder.Code, suspendRecorder.Body.String())
+	}
+	if !strings.Contains(suspendRecorder.Body.String(), "current 2") {
+		t.Fatalf("409 应携带当前版本: %s", suspendRecorder.Body.String())
+	}
+
+	// If-Match * 不支持 → 400。
+	wildcard := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/suspend",
+		`{"reason":"测试停用"}`)
+	wildcard.SetPathValue("id", tenantID)
+	wildcard.Header.Set("If-Match", "*")
+	wildcardRecorder := httptest.NewRecorder()
+	handler.Suspend(wildcardRecorder, wildcard)
+	if wildcardRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("If-Match * status = %d, want 400", wildcardRecorder.Code)
+	}
+
+	// If-Match 与 body.expected_version 不一致 → 400。
+	conflict := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/suspend",
+		`{"reason":"测试停用","expected_version":1}`)
+	conflict.SetPathValue("id", tenantID)
+	conflict.Header.Set("If-Match", "2")
+	conflictRecorder := httptest.NewRecorder()
+	handler.Suspend(conflictRecorder, conflict)
+	if conflictRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("不一致 status = %d, want 400", conflictRecorder.Code)
+	}
+
+	// If-Match 正确版本 → 200 + 新 ETag。
+	okSuspend := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/suspend",
+		`{"reason":"测试停用"}`)
+	okSuspend.SetPathValue("id", tenantID)
+	okSuspend.Header.Set("If-Match", "2")
+	okRecorder := httptest.NewRecorder()
+	handler.Suspend(okRecorder, okSuspend)
+	if okRecorder.Code != http.StatusOK {
+		t.Fatalf("正确 If-Match status = %d（body=%s）", okRecorder.Code, okRecorder.Body.String())
+	}
+	if okRecorder.Header().Get("ETag") != "3" {
+		t.Fatalf("新 ETag = %q, want 3", okRecorder.Header().Get("ETag"))
+	}
+
+	// PATCH expected_version 过期 → 409；正确 → 200。
+	patch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID,
+		`{"name":"V2","expected_version":2}`)
+	patch.SetPathValue("id", tenantID)
+	patchRecorder := httptest.NewRecorder()
+	handler.Update(patchRecorder, patch)
+	if patchRecorder.Code != http.StatusConflict {
+		t.Fatalf("PATCH 过期版本 status = %d, want 409（body=%s）", patchRecorder.Code, patchRecorder.Body.String())
+	}
+	okPatch := adminRequest(http.MethodPatch, "/admin/v1/tenants/"+tenantID,
+		`{"name":"V2","expected_version":3}`)
+	okPatch.SetPathValue("id", tenantID)
+	okPatchRecorder := httptest.NewRecorder()
+	handler.Update(okPatchRecorder, okPatch)
+	if okPatchRecorder.Code != http.StatusOK {
+		t.Fatalf("PATCH 正确版本 status = %d（body=%s）", okPatchRecorder.Code, okPatchRecorder.Body.String())
+	}
+}

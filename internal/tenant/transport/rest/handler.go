@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -150,6 +151,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	// T-15：详情响应带 ETag，客户端直接用于后续 If-Match。
+	setETag(w, tenant.Version)
 	httpx.OK(w, toResponse(tenant), traceID)
 }
 
@@ -169,21 +172,28 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
+	expected, err := expectedVersionFrom(r, body.ExpectedVersion)
+	if err != nil {
+		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
 	tenant, err := h.service.UpdateProfile(r.Context(), app.UpdateProfileInput{
-		ID:           r.PathValue("id"),
-		Name:         body.Name,
-		ContactName:  body.ContactName,
-		ContactEmail: body.ContactEmail,
-		Industry:     body.Industry,
-		Timezone:     body.Timezone,
-		Locale:       body.Locale,
-		ExternalID:   body.ExternalID,
-		Actor:        actor,
+		ID:              r.PathValue("id"),
+		Name:            body.Name,
+		ContactName:     body.ContactName,
+		ContactEmail:    body.ContactEmail,
+		Industry:        body.Industry,
+		Timezone:        body.Timezone,
+		Locale:          body.Locale,
+		ExternalID:      body.ExternalID,
+		ExpectedVersion: expected,
+		Actor:           actor,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	setETag(w, tenant.Version)
 	httpx.OK(w, toResponse(tenant), traceID)
 }
 
@@ -221,17 +231,60 @@ func (h *Handler) transition(w http.ResponseWriter, r *http.Request, target doma
 		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
+	// T-15 条件更新：If-Match 头优先，body.expected_version 其次（二者同时
+	// 提供时必须一致——只取其一反而会掩盖调用方的歧义）。
+	expected, err := expectedVersionFrom(r, body.ExpectedVersion)
+	if err != nil {
+		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
 	tenant, err := h.service.Transition(r.Context(), app.TransitionInput{
-		ID:     r.PathValue("id"),
-		Target: target,
-		Reason: body.Reason,
-		Actor:  actor,
+		ID:              r.PathValue("id"),
+		Target:          target,
+		Reason:          body.Reason,
+		ExpectedVersion: expected,
+		Actor:           actor,
 	})
 	if err != nil {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	setETag(w, tenant.Version)
 	httpx.OK(w, toResponse(tenant), traceID)
+}
+
+// expectedVersionFrom 解析 If-Match 头与 body 期望版本（T-15）。
+//
+// If-Match 只接受单个版本值（`"3"` 或 `3`），不支持 `*`——通配的语义是
+// 「任何版本都行」，与乐观锁写入互斥。返回 nil 表示未提供（无条件更新）。
+func expectedVersionFrom(r *http.Request, bodyVersion *int64) (*int64, error) {
+	var headerVersion *int64
+	if raw := strings.TrimSpace(r.Header.Get("If-Match")); raw != "" {
+		if raw == "*" {
+			return nil, errors.New("If-Match * is not supported; provide a specific version")
+		}
+		trimmed := strings.Trim(raw, `"`)
+		parsed, parseErr := strconv.ParseInt(trimmed, 10, 64)
+		if parseErr != nil || parsed <= 0 {
+			return nil, errors.New("If-Match must be a positive version number")
+		}
+		headerVersion = &parsed
+	}
+	switch {
+	case headerVersion == nil:
+		return bodyVersion, nil
+	case bodyVersion == nil:
+		return headerVersion, nil
+	case *headerVersion == *bodyVersion:
+		return headerVersion, nil
+	default:
+		return nil, errors.New("If-Match and expected_version must match")
+	}
+}
+
+// setETag 以当前版本设置 ETag 响应头（T-15），供下次 If-Match 使用。
+func setETag(w http.ResponseWriter, version int64) {
+	w.Header().Set("ETag", strconv.FormatInt(version, 10))
 }
 
 // actor 从 Principal 构造操作者，并校验端别一致。
@@ -320,12 +373,16 @@ type updateTenantRequest struct {
 	Locale *string `json:"locale,omitempty"`
 	// ExternalID 外部系统 ID。
 	ExternalID *string `json:"external_id,omitempty"`
+	// ExpectedVersion 期望版本（T-15）；与 If-Match 头二选一。
+	ExpectedVersion *int64 `json:"expected_version,omitempty"`
 }
 
 // transitionRequest 是状态迁移请求体。
 type transitionRequest struct {
 	// Reason 迁移原因；停用与终止必填。
 	Reason string `json:"reason"`
+	// ExpectedVersion 期望版本（T-15）；与 If-Match 头二选一。
+	ExpectedVersion *int64 `json:"expected_version,omitempty"`
 }
 
 // tenantResponse 是租户响应体。

@@ -140,6 +140,10 @@ components:
         external_id:
           type: string
           maxLength: 128
+        expected_version:
+          type: integer
+          format: int64
+          description: 期望的乐观锁版本（T-15）；与 `If-Match` 头二选一，不符返回 40900（消息携带当前版本）。
       anyOf:
         - required: [name]
         - required: [contact_name]
@@ -158,6 +162,12 @@ components:
           type: string
           maxLength: 255
           description: 迁移原因；`suspend` 与 `terminate` 必填，缺失返回 40000。
+        expected_version:
+          type: integer
+          format: int64
+          description: |
+            期望的乐观锁版本（T-15）；与 `If-Match` 头二选一，同时提供时必须一致。
+            版本不符返回 40900（消息携带当前版本）。版本可从详情响应的 `ETag` 头获取。
 
     # 租户列表数据。
     TenantListData:

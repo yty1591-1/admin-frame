@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 7.5.0
+  version: 7.6.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -33,6 +33,9 @@ info:
     7.5.0：成员邀请流（T-14）——新增 `/admin/v1/tenants/{id}/invitations*` 五个端点
     （创建 / 列表 / 接受 / 撤销 / 重发）；token 摘要化存储、明文一次性下发；
     接受幂等、过期惰性回写、pending 唯一（纯增量）。
+    7.6.0：条件更新（T-15）——迁移动作与资料变更支持 `If-Match` 头或
+    body `expected_version`（二选一，不一致 40000），版本不符返回 40900
+    （消息携带当前版本）；租户详情与成功写入响应带 `ETag` 头（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）

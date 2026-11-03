@@ -276,3 +276,62 @@ func TestMemberListPagination(t *testing.T) {
 		t.Fatalf("越界页: err=%v total=%d items=%d", err, total, len(members))
 	}
 }
+
+// TestTransitionExpectedVersionMismatch 验证 T-15：迁移的期望版本不符返回 409 并携带当前版本。
+func TestTransitionExpectedVersionMismatch(t *testing.T) {
+	fixture := newSeatFixture(t)
+	ctx := context.Background()
+
+	stale := int64(99)
+	_, err := fixture.tenants.Transition(ctx, app.TransitionInput{
+		ID: fixture.tenant.ID, Target: domain.StatusActive,
+		ExpectedVersion: &stale, Actor: adminActor(),
+	})
+	var mismatch *domain.VersionMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("error = %v, want VersionMismatchError", err)
+	}
+	if mismatch.Expected != 99 || mismatch.Current != fixture.tenant.Version {
+		t.Fatalf("mismatch = %+v, want expected 99 / current %d", mismatch, fixture.tenant.Version)
+	}
+	var appErr *apperr.AppError
+	if !errors.As(err, &appErr) || appErr.Code != apperr.CodeConflict {
+		t.Fatalf("应映射 409, got %v", err)
+	}
+
+	// 正确版本 → 迁移成功（fixture 已 active，走 suspend）。
+	current := fixture.tenant.Version
+	if _, err := fixture.tenants.Transition(ctx, app.TransitionInput{
+		ID: fixture.tenant.ID, Target: domain.StatusSuspended, Reason: "条件更新验证",
+		ExpectedVersion: &current, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("正确版本迁移 error = %v", err)
+	}
+}
+
+// TestUpdateProfileExpectedVersionMismatch 验证资料变更的条件更新（T-15）。
+func TestUpdateProfileExpectedVersionMismatch(t *testing.T) {
+	fixture := newSeatFixture(t)
+	ctx := context.Background()
+
+	name := "X"
+	stale := int64(42)
+	if _, err := fixture.tenants.UpdateProfile(ctx, app.UpdateProfileInput{
+		ID: fixture.tenant.ID, Name: &name,
+		ExpectedVersion: &stale, Actor: adminActor(),
+	}); !isConflict(err) {
+		t.Fatalf("过期版本更新 error = %v, want 409", err)
+	}
+
+	current := fixture.tenant.Version
+	updated, err := fixture.tenants.UpdateProfile(ctx, app.UpdateProfileInput{
+		ID: fixture.tenant.ID, Name: &name,
+		ExpectedVersion: &current, Actor: adminActor(),
+	})
+	if err != nil {
+		t.Fatalf("正确版本更新 error = %v", err)
+	}
+	if updated.Version != current+1 {
+		t.Fatalf("Version = %d, want %d", updated.Version, current+1)
+	}
+}

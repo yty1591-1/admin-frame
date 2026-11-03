@@ -120,6 +120,8 @@ admin-v1-tenants-by-id:
       需要 `tenant:write`。字段缺省表示不变，显式空串表示清空；至少提供一个字段。
       变更写 `tenant.update` 审计（含变更字段列表）。`code` 不可变——
       它是外部系统的对账引用，修订须走数据订正流程。
+      条件更新（T-15）：提供 `If-Match` 头或 `expected_version` 字段时，版本不符
+      返回 40900（消息携带当前版本）；成功响应带 `ETag` 头（新版本）。
       资料变更与状态迁移共用乐观锁版本：并发「改名 + 停用」后到者返回 40900。
     operationId: adminUpdateTenant
     security:
@@ -207,6 +209,8 @@ admin-v1-tenants-by-id-suspend:
     description: |
       需要 `tenant:write`。`reason` 必填（缺失返回 40000）——停用会让客户立即不可用，
       不能只有操作人没有理由。写 `tenant.suspend` 审计。
+      条件更新（T-15）：可提供 `If-Match` 头或 body `expected_version`（二选一），
+      版本不符返回 40900（消息携带当前版本）且**不撤销会话**；成功响应带 `ETag`。
     operationId: adminSuspendTenant
     security:
       - bearerAuth: []

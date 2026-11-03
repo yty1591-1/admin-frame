@@ -71,6 +71,23 @@ var (
 	ErrInvitationAlreadyAccepted = errors.New("tenant: invitation already accepted")
 )
 
+// VersionMismatchError 表示客户端提供的期望版本与当前版本不符（T-15）。
+//
+// 与 ErrVersionConflict（CAS 兜底，不知道客户端期望）不同，本错误携带
+// 两个版本号：409 响应直接给出当前值，前端无需再发一次 GET 就能重试。
+type VersionMismatchError struct {
+	// Expected 客户端期望的版本。
+	Expected int64
+	// Current 服务端当前版本。
+	Current int64
+}
+
+// Error 实现 error。
+func (e *VersionMismatchError) Error() string {
+	return fmt.Sprintf("tenant: version mismatch: expected %d, current %d (re-read and retry)",
+		e.Expected, e.Current)
+}
+
 // InvalidRoleError 表示未定义的成员角色。
 type InvalidRoleError struct {
 	// Role 非法角色取值。
