@@ -84,15 +84,6 @@ func (a auditContext) emit(ctx context.Context, actor Actor, action, resourceTyp
 	_ = a.emitter.Emit(ctx, event)
 }
 
-// StatusInvalidator 在状态迁移成功后清除本地状态缓存。
-//
-// 跨副本无法即时失效（那需要共享缓存），验收口径是「停用 ≤ 60s 生效」，
-// 由缓存 TTL 保证；同一进程内则通过本接口立即生效，避免刚停用又放行一个 TTL。
-type StatusInvalidator interface {
-	// Invalidate 清除指定租户的缓存。
-	Invalidate(tenantID string)
-}
-
 // Options 是用例参数。
 type Options struct {
 	// DefaultPageSize 列表默认每页条数。
@@ -101,8 +92,6 @@ type Options struct {
 	MaxPageSize int
 	// Service 服务名，写入审计事件。
 	Service string
-	// Invalidator 状态缓存失效器；nil 表示本进程没有租户状态缓存。
-	Invalidator StatusInvalidator
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。
@@ -251,10 +240,6 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 	if err := s.repo.UpdateStatus(ctx, next); err != nil {
 		s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), current, audit.OutcomeFailure, err.Error())
 		return domain.Tenant{}, translate(err)
-	}
-	// 迁移成功即失效本地缓存：同进程内停用立刻生效，不等 TTL 过期。
-	if s.opts.Invalidator != nil {
-		s.opts.Invalidator.Invalidate(next.ID)
 	}
 	s.emit(ctx, in.Actor, actionFor(current.Status, in.Target), next, audit.OutcomeSuccess, in.Reason)
 	return next, nil

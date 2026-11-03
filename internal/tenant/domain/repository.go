@@ -53,6 +53,13 @@ type Repository interface {
 
 // MemberRepository 是租户成员持久化契约。
 type MemberRepository interface {
+	// Mutate 在「同一租户串行」的临界区内执行 fn。
+	//
+	// 存在的理由是一个跨行不变量：租户必须至少保留一名在册 owner。
+	// 计数与写入若不在同一临界区，两个 owner 并发降级会都读到 count=2 而全部通过，
+	// 最终留下 0 名 owner。SQL 实现用事务 + 租户行 FOR UPDATE，
+	// 内存实现用独立互斥锁；fn 内必须通过同一个 ctx 调用本仓储的方法以复用事务。
+	Mutate(ctx context.Context, tenantID string, fn func(context.Context) error) error
 	// UpsertMember 按 (tenant_id, subject_id) 幂等写入：不存在则插入，存在则覆盖角色与状态。
 	UpsertMember(ctx context.Context, member Member) error
 	// GetMember 读取单条成员；不存在返回 ErrMemberNotFound。

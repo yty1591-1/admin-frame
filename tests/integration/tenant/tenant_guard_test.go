@@ -127,10 +127,11 @@ func uniqueID(t *testing.T) string {
 	return "it-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
-// TestTenantGuardUsesRealStatusAndHonoursTTL 验证守卫读真实库、TTL 到期后停用生效。
+// TestTenantGuardUsesRealStatusAndHonoursTTL 验证守卫读真实库，且收敛只依赖 TTL。
 //
-// 这是「停用 ≤ 60s 拒绝访问」的核心链路：仓储 → 守卫缓存 → 判定。
-// 用假时钟推进到 TTL 边界，证明最坏生效时延 = TTL 而不是无限。
+// 「停用 ≤ 60s 拒绝访问」的证明方式是：TTL 内允许沿用旧缓存（A/B 端是两个进程，
+// 不存在进程内失效），推进到 TTL 之后必须拒绝。若未来引入共享缓存，
+// 本用例需要同步改成「写入后立刻拒绝」。
 func TestTenantGuardUsesRealStatusAndHonoursTTL(t *testing.T) {
 	sqlDB := testDB(t)
 	ctx := context.Background()
@@ -148,10 +149,7 @@ func TestTenantGuardUsesRealStatusAndHonoursTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGuard() error = %v", err)
 	}
-	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{
-		Service:     "admin-api",
-		Invalidator: guard,
-	})
+	service, err := app.NewService(repo, &seqIDs{}, quietEmitter{}, app.Options{Service: "admin-api"})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -166,7 +164,7 @@ func TestTenantGuardUsesRealStatusAndHonoursTTL(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = sqlDB.Exec("DELETE FROM tenant WHERE id = ?", tenantID) })
 
-	// 1) pending 不放行（未开通）。
+	// 1) pending 不放行（未开通），同时把该状态写入缓存。
 	if err := guard.Check(ctx, tenantID); !errors.Is(err, app.ErrTenantNotActive) {
 		t.Fatalf("pending Check() error = %v, want ErrTenantNotActive", err)
 	}
@@ -177,39 +175,27 @@ func TestTenantGuardUsesRealStatusAndHonoursTTL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("activate error = %v", err)
 	}
-
-	// 2) active 放行；同进程迁移已失效缓存，因此这里必然查到新状态。
+	// 2) TTL 内仍是旧缓存：证明没有进程内失效，收敛由 TTL 负责。
+	if err := guard.Check(ctx, tenantID); !errors.Is(err, app.ErrTenantNotActive) {
+		t.Fatalf("TTL 内应沿用旧缓存（pending），error = %v", err)
+	}
+	clock.Advance(31 * time.Second)
 	if err := guard.Check(ctx, tenantID); err != nil {
-		t.Fatalf("active Check() error = %v, want nil", err)
+		t.Fatalf("TTL 到期后应放行 active，error = %v", err)
 	}
 
-	// 3) 另一个副本（独立守卫、独立缓存）先缓存「可服务」。
-	replicaClock := &fakeClock{now: clock.Now()}
-	replica, err := app.NewGuard(repo, app.GuardOptions{Clock: replicaClock.Now})
-	if err != nil {
-		t.Fatalf("NewGuard(replica) error = %v", err)
-	}
-	if err := replica.Check(ctx, tenantID); err != nil {
-		t.Fatalf("replica Check() error = %v, want nil", err)
-	}
-
-	// 4) 停用：本进程立即拒绝，另一副本在 TTL 内仍放行。
+	// 3) 停用后同样：TTL 内放行旧缓存，TTL 到期必须拒绝。
 	if _, err := service.Transition(ctx, app.TransitionInput{
 		ID: tenantID, Target: domain.StatusSuspended, Reason: "集成测试停用", Actor: actor,
 	}); err != nil {
 		t.Fatalf("suspend error = %v", err)
 	}
+	if err := guard.Check(ctx, tenantID); err != nil {
+		t.Fatalf("TTL 内应沿用旧缓存（active），error = %v", err)
+	}
+	clock.Advance(31 * time.Second)
 	if err := guard.Check(ctx, tenantID); !errors.Is(err, app.ErrTenantNotActive) {
-		t.Fatalf("停用后本进程 Check() error = %v, want ErrTenantNotActive", err)
-	}
-	if err := replica.Check(ctx, tenantID); err != nil {
-		t.Fatalf("TTL 内副本仍按旧缓存放行，error = %v", err)
-	}
-
-	// 5) 推进到 TTL 之后：副本也必须拒绝（最坏生效时延 = TTL < 60s）。
-	replicaClock.Advance(31 * time.Second)
-	if err := replica.Check(ctx, tenantID); !errors.Is(err, app.ErrTenantNotActive) {
-		t.Fatalf("TTL 到期后副本 Check() error = %v, want ErrTenantNotActive", err)
+		t.Fatalf("TTL 到期后 Check() error = %v, want ErrTenantNotActive", err)
 	}
 }
 
@@ -356,5 +342,83 @@ func TestMemberAndQuotaOnMySQL(t *testing.T) {
 	}
 	if configured[1].Limit != 50 {
 		t.Fatalf("user 配额 = %d, want 50", configured[1].Limit)
+	}
+}
+
+// TestConcurrentOwnerDemotionOnMySQL 验证行锁把「计数 + 写入」变成原子段。
+//
+// 没有 SELECT ... FOR UPDATE 时，两个事务都能读到 count=2 并各自提交，
+// 结果租户 0 名 owner。本用例在真实 MySQL 上验证：至多一个成功，另一个 409。
+func TestConcurrentOwnerDemotionOnMySQL(t *testing.T) {
+	sqlDB := testDB(t)
+	ctx := context.Background()
+	repo, err := persistence.NewMySQLRepository(sqlDB)
+	if err != nil {
+		t.Fatalf("NewMySQLRepository() error = %v", err)
+	}
+
+	tenantID := uniqueID(t)
+	tenant, err := domain.NewTenant(tenantID, "it-concurrent-owner", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewTenant() error = %v", err)
+	}
+	if err := repo.Create(ctx, tenant); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	active, err := tenant.Transition(domain.StatusActive, "", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Transition(active) error = %v", err)
+	}
+	if err := repo.UpdateStatus(ctx, active); err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+	t.Cleanup(func() { _, _ = sqlDB.Exec("DELETE FROM tenant WHERE id = ?", tenantID) })
+
+	members, err := app.NewMemberService(repo, repo, quietEmitter{}, app.Options{Service: "admin-api"})
+	if err != nil {
+		t.Fatalf("NewMemberService() error = %v", err)
+	}
+	actor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+	for _, subject := range []string{"u1", "u2"} {
+		if _, err := members.Add(ctx, app.AddMemberInput{
+			TenantID: tenantID, SubjectID: subject, Role: domain.MemberRoleOwner, Actor: actor,
+		}); err != nil {
+			t.Fatalf("Add(%s) error = %v", subject, err)
+		}
+	}
+
+	subjects := []string{"u1", "u2"}
+	errs := make([]error, len(subjects))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, subject := range subjects {
+		wg.Add(1)
+		go func(idx int, sid string) {
+			defer wg.Done()
+			<-start
+			role := domain.MemberRoleAdmin
+			_, errs[idx] = members.Update(ctx, app.UpdateMemberInput{
+				TenantID: tenantID, SubjectID: sid, Role: &role, Actor: actor,
+			})
+		}(i, subject)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("并发降级成功 %d 次，want 1（errs=%v）", succeeded, errs)
+	}
+	owners, err := repo.CountActiveByRole(ctx, tenantID, domain.MemberRoleOwner)
+	if err != nil {
+		t.Fatalf("CountActiveByRole() error = %v", err)
+	}
+	if owners != 1 {
+		t.Fatalf("在册 owner = %d, want 1", owners)
 	}
 }

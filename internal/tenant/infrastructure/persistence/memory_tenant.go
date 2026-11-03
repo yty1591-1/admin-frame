@@ -18,7 +18,10 @@ import (
 //
 // 语义与 MySQL 实现保持一致：创建检测主键冲突、更新走版本 CAS。
 type MemoryRepository struct {
-	mu      sync.RWMutex
+	mu sync.RWMutex
+	// txMu 串行化成员变更临界区（对应 MySQL 实现的租户行锁）。
+	// 独立于 mu：临界区内仍要调用读写方法，共用一把锁会自锁。
+	txMu    sync.Mutex
 	items   map[string]domain.Tenant
 	members map[string]map[string]domain.Member
 	quotas  map[string]map[string]domain.Quota
@@ -31,6 +34,20 @@ func NewMemoryRepository() *MemoryRepository {
 		members: make(map[string]map[string]domain.Member),
 		quotas:  make(map[string]map[string]domain.Quota),
 	}
+}
+
+// Mutate 串行化同一租户的成员变更。
+//
+// 内存实现没有事务，用独立互斥锁模拟「持锁执行」：临界区内调用本仓储的
+// 读写方法不会死锁（它们用 mu，本方法用 txMu）。代价是全局串行，
+// 但内存实现只服务本地开发与单测，可接受。
+func (r *MemoryRepository) Mutate(ctx context.Context, _ string, fn func(context.Context) error) error {
+	if fn == nil {
+		return fmt.Errorf("tenant: member mutation requires a function")
+	}
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+	return fn(ctx)
 }
 
 // Create 新建租户；ID 重复返回 ErrAlreadyExists。

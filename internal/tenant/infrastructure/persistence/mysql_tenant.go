@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
+	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
 // MySQLRepository 是租户仓储的 MySQL 实现。
@@ -20,11 +21,11 @@ type MySQLRepository struct {
 }
 
 // NewMySQLRepository 构造 MySQL 仓储；db 为 nil 返回错误（装配期即失败）。
-func NewMySQLRepository(db *sql.DB) (*MySQLRepository, error) {
-	if db == nil {
+func NewMySQLRepository(sqlDB *sql.DB) (*MySQLRepository, error) {
+	if sqlDB == nil {
 		return nil, errors.New("tenant repository requires a database handle")
 	}
-	return &MySQLRepository{db: db}, nil
+	return &MySQLRepository{db: sqlDB}, nil
 }
 
 // tenantColumns 固定列顺序，避免 SELECT * 与扫描顺序漂移。
@@ -35,7 +36,7 @@ func (r *MySQLRepository) Create(ctx context.Context, tenant domain.Tenant) erro
 	if err := tenant.Validate(); err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx).ExecContext(ctx,
 		`INSERT INTO tenant (`+tenantColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		tenant.ID, tenant.Name, string(tenant.Status), tenant.StatusReason, tenant.Version,
 		nullTime(tenant.SuspendedAt), nullTime(tenant.TerminatedAt), tenant.CreatedAt, tenant.UpdatedAt)
@@ -50,7 +51,7 @@ func (r *MySQLRepository) Create(ctx context.Context, tenant domain.Tenant) erro
 
 // Get 按 ID 读取租户。
 func (r *MySQLRepository) Get(ctx context.Context, id string) (domain.Tenant, error) {
-	row := r.db.QueryRowContext(ctx,
+	row := r.query(ctx).QueryRowContext(ctx,
 		`SELECT `+tenantColumns+` FROM tenant WHERE id = ?`, strings.TrimSpace(id))
 	tenant, err := scanTenant(row)
 	if err != nil {
@@ -82,12 +83,12 @@ func (r *MySQLRepository) List(ctx context.Context, filter domain.Filter) ([]dom
 	}
 
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant`+clause, args...).Scan(&total); err != nil {
+	if err := r.query(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant`+clause, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("tenant: count: %w", err)
 	}
 
 	query := `SELECT ` + tenantColumns + ` FROM tenant` + clause + ` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
-	rows, err := r.db.QueryContext(ctx, query, append(args, filter.Limit, filter.Offset)...)
+	rows, err := r.query(ctx).QueryContext(ctx, query, append(args, filter.Limit, filter.Offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("tenant: list: %w", err)
 	}
@@ -112,7 +113,7 @@ func (r *MySQLRepository) UpdateStatus(ctx context.Context, tenant domain.Tenant
 	if err := tenant.Validate(); err != nil {
 		return err
 	}
-	result, err := r.db.ExecContext(ctx,
+	result, err := r.exec(ctx).ExecContext(ctx,
 		`UPDATE tenant
 		    SET status = ?, status_reason = ?, suspended_at = ?, terminated_at = ?,
 		        version = ?, updated_at = ?
@@ -132,13 +133,69 @@ func (r *MySQLRepository) UpdateStatus(ctx context.Context, tenant domain.Tenant
 
 	// 0 行有两种原因：租户不存在，或版本已被并发改动。二者语义不同，必须区分。
 	var exists int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant WHERE id = ?`, tenant.ID).Scan(&exists); err != nil {
+	if err := r.query(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant WHERE id = ?`, tenant.ID).Scan(&exists); err != nil {
 		return fmt.Errorf("tenant: verify %s: %w", tenant.ID, err)
 	}
 	if exists == 0 {
 		return domain.ErrNotFound
 	}
 	return fmt.Errorf("%w: tenant %s version %d", domain.ErrVersionConflict, tenant.ID, tenant.Version-1)
+}
+
+// execer / queryer 让仓储在事务内复用调用方的 *sql.Tx（pkg/db.TxFromContext）。
+//
+// 没有这两个助手时，事务内的每次查询都会另开连接，锁与写入不在同一会话，
+// 「先 FOR UPDATE 再计数」会退化成两个独立快照。
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (r *MySQLRepository) exec(ctx context.Context) execer {
+	if tx, ok := db.TxFromContext(ctx); ok {
+		return tx
+	}
+	return r.db
+}
+
+func (r *MySQLRepository) query(ctx context.Context) queryer {
+	if tx, ok := db.TxFromContext(ctx); ok {
+		return tx
+	}
+	return r.db
+}
+
+// Mutate 在事务内锁住租户行后执行 fn，串行化同一租户的成员变更。
+//
+// 选择锁 tenant 行而不是 member 行：不变量是租户级的（至少一名 owner），
+// 锁租户行能一次性覆盖「计数 + 改这一行」，也不会产生间隙锁竞争。
+func (r *MySQLRepository) Mutate(ctx context.Context, tenantID string, fn func(context.Context) error) error {
+	if fn == nil {
+		return errors.New("tenant: member mutation requires a function")
+	}
+	trimmed := strings.TrimSpace(tenantID)
+	if trimmed == "" {
+		return domain.ErrNotFound
+	}
+	return db.WithinUnitOfWork(ctx, r.db, nil, func(txCtx context.Context) error {
+		tx, ok := db.TxFromContext(txCtx)
+		if !ok {
+			return errors.New("tenant: member mutation requires a transaction")
+		}
+		var id string
+		err := tx.QueryRowContext(txCtx, `SELECT id FROM tenant WHERE id = ? FOR UPDATE`, trimmed).Scan(&id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.ErrNotFound
+			}
+			return fmt.Errorf("tenant: lock %s: %w", trimmed, err)
+		}
+		return fn(txCtx)
+	})
 }
 
 // rowScanner 抽象 *sql.Row 与 *sql.Rows 的共同能力。
@@ -201,7 +258,7 @@ func (r *MySQLRepository) UpsertMember(ctx context.Context, member domain.Member
 	if err := member.Validate(); err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx).ExecContext(ctx,
 		`INSERT INTO tenant_member (`+memberColumns+`) VALUES (?, ?, ?, ?, ?, ?) AS new
 		 ON DUPLICATE KEY UPDATE role = new.role, status = new.status, updated_at = new.updated_at`,
 		member.TenantID, member.SubjectID, string(member.Role), string(member.Status),
@@ -214,7 +271,7 @@ func (r *MySQLRepository) UpsertMember(ctx context.Context, member domain.Member
 
 // GetMember 读取单个成员。
 func (r *MySQLRepository) GetMember(ctx context.Context, tenantID, subjectID string) (domain.Member, error) {
-	row := r.db.QueryRowContext(ctx,
+	row := r.query(ctx).QueryRowContext(ctx,
 		`SELECT `+memberColumns+` FROM tenant_member WHERE tenant_id = ? AND subject_id = ?`,
 		strings.TrimSpace(tenantID), strings.TrimSpace(subjectID))
 	member, err := scanMember(row)
@@ -235,7 +292,7 @@ func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, incl
 	}
 	query += ` ORDER BY FIELD(role, 'owner', 'admin', 'member'), subject_id`
 
-	rows, err := r.db.QueryContext(ctx, query, strings.TrimSpace(tenantID))
+	rows, err := r.query(ctx).QueryContext(ctx, query, strings.TrimSpace(tenantID))
 	if err != nil {
 		return nil, fmt.Errorf("tenant: list members %s: %w", tenantID, err)
 	}
@@ -256,10 +313,16 @@ func (r *MySQLRepository) ListMembers(ctx context.Context, tenantID string, incl
 }
 
 // CountActiveByRole 统计某角色的在册成员数。
+//
+// 事务内追加 FOR UPDATE：REPEATABLE READ 下普通 SELECT 可能复用事务开始时的快照，
+// 让刚拿到租户锁的请求仍看到别人提交前的 owner 数，行锁就白加了。
 func (r *MySQLRepository) CountActiveByRole(ctx context.Context, tenantID string, role domain.MemberRole) (int, error) {
+	query := `SELECT COUNT(*) FROM tenant_member WHERE tenant_id = ? AND role = ? AND status = 'active'`
+	if _, ok := db.TxFromContext(ctx); ok {
+		query += ` FOR UPDATE`
+	}
 	var count int
-	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tenant_member WHERE tenant_id = ? AND role = ? AND status = 'active'`,
+	if err := r.query(ctx).QueryRowContext(ctx, query,
 		strings.TrimSpace(tenantID), string(role)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("tenant: count members %s/%s: %w", tenantID, role, err)
 	}
@@ -271,7 +334,7 @@ func (r *MySQLRepository) UpsertQuota(ctx context.Context, quota domain.Quota) e
 	if err := quota.Validate(); err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.exec(ctx).ExecContext(ctx,
 		`INSERT INTO tenant_quota (tenant_id, resource, limit_value, updated_at) VALUES (?, ?, ?, ?) AS new
 		 ON DUPLICATE KEY UPDATE limit_value = new.limit_value, updated_at = new.updated_at`,
 		quota.TenantID, quota.Resource, quota.Limit, quota.UpdatedAt)
@@ -283,7 +346,7 @@ func (r *MySQLRepository) UpsertQuota(ctx context.Context, quota domain.Quota) e
 
 // ListQuotas 列出租户配额。
 func (r *MySQLRepository) ListQuotas(ctx context.Context, tenantID string) ([]domain.Quota, error) {
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.query(ctx).QueryContext(ctx,
 		`SELECT tenant_id, resource, limit_value, updated_at FROM tenant_quota
 		  WHERE tenant_id = ? ORDER BY resource`, strings.TrimSpace(tenantID))
 	if err != nil {

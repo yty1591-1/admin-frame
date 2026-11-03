@@ -141,8 +141,9 @@ func (g *Guard) Verify(ctx context.Context, merchantID string) (bool, error) {
 
 // Invalidate 主动清除某个商户的缓存。
 //
-// 同一进程内发生状态迁移后必须调用，否则该副本仍会按旧状态放行最多一个 TTL；
-// 跨副本的收敛依赖 TTL 本身（验收上限 60s）。
+// 仅供测试与「同进程内确有状态变更」的场景使用。A 端与 B 端是两个进程、
+// 各自持有独立缓存，A 端的迁移无法触达 B 端实例，因此生产收敛完全依赖 TTL
+// （验收上限 60s）；不要指望在管理端调用本方法能让业务端立即停用。
 func (g *Guard) Invalidate(tenantID string) {
 	trimmed := strings.TrimSpace(tenantID)
 	if trimmed == "" {

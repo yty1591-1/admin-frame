@@ -27,8 +27,6 @@ const (
 type Runtime struct {
 	// Handler A 端租户管理 Handler；为 nil 表示本进程未启用（缺配置或依赖）。
 	Handler *tenantrest.Handler
-	// Guard B 端租户状态守卫；内存模式下为 nil。
-	Guard *app.Guard
 }
 
 // New 构造租户运行时（A 端管理能力）。
@@ -43,18 +41,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	repo := store.tenants
 
-	// 守卫同时担任「状态缓存失效器」：本进程发生迁移后立刻清缓存，
-	// 同一副本不必等 TTL 过期才停止放行。
-	guard, err := app.NewGuard(repo, app.GuardOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("tenant guard: %w", err)
-	}
-
 	service, err := app.NewService(repo, deps.IDs, emitter, app.Options{
 		DefaultPageSize: defaultPageSize,
 		MaxPageSize:     maxPageSize,
 		Service:         deps.Config.Service,
-		Invalidator:     guard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant service: %w", err)
@@ -82,7 +72,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tenant handler: %w", err)
 	}
-	return &Runtime{Handler: handler, Guard: guard}, nil
+	return &Runtime{Handler: handler}, nil
 }
 
 // NewGuard 构造 B 端租户状态守卫（platform.TenantGuard 实现）。

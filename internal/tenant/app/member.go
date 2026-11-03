@@ -161,8 +161,10 @@ type UpdateMemberInput struct {
 
 // Update 变更成员角色与状态，一次请求只写一次。
 //
-// 三条约束：
+// 四条约束：
 //   - 先校验全部入参再落库，避免「角色改了、状态非法」的半提交；
+//   - 读当前状态、计数、写入全部在 MemberRepository.Mutate 的临界区内完成，
+//     否则两个 owner 并发降级会都读到 count=2 而全部通过；
 //   - 角色与状态合并成一行一次 UPSERT，审计按实际变化维度各记一条；
 //   - 「最后一名 owner」按变更后的终态判断，降级与停用共用同一段逻辑。
 func (s *MemberService) Update(ctx context.Context, in UpdateMemberInput) (domain.Member, error) {
@@ -178,37 +180,56 @@ func (s *MemberService) Update(ctx context.Context, in UpdateMemberInput) (domai
 			return domain.Member{}, translate(err)
 		}
 	}
-	if _, err := mutableTenant(ctx, s.tenants, in.TenantID); err != nil {
-		return domain.Member{}, err
-	}
-	current, err := s.members.GetMember(ctx, in.TenantID, in.SubjectID)
+
+	var (
+		current       domain.Member
+		next          domain.Member
+		roleChanged   bool
+		statusChanged bool
+	)
+	err := s.members.Mutate(ctx, in.TenantID, func(txCtx context.Context) error {
+		// 锁内重新读租户与成员：锁外读到的状态可能已被并发请求改掉。
+		if _, err := mutableTenant(txCtx, s.tenants, in.TenantID); err != nil {
+			return err
+		}
+		loaded, err := s.members.GetMember(txCtx, in.TenantID, in.SubjectID)
+		if err != nil {
+			return err
+		}
+		current = loaded
+		roleChanged = in.Role != nil && *in.Role != current.Role
+		statusChanged = in.Status != nil && *in.Status != current.Status
+		if !roleChanged && !statusChanged {
+			// 幂等：无实际变化不写库、不写审计，避免审计里出现空变更。
+			next = current
+			return nil
+		}
+
+		next = current
+		if roleChanged {
+			if next, err = next.WithRole(*in.Role, s.now()); err != nil {
+				return err
+			}
+		}
+		if statusChanged {
+			if next, err = next.WithStatus(*in.Status, s.now()); err != nil {
+				return err
+			}
+		}
+		if err := s.ensureOwnerRemains(txCtx, current, next); err != nil {
+			return err
+		}
+		return s.members.UpsertMember(txCtx, next)
+	})
 	if err != nil {
+		var appErr *apperr.AppError
+		if errors.As(err, &appErr) {
+			return domain.Member{}, err
+		}
 		return domain.Member{}, translate(err)
 	}
-
-	roleChanged := in.Role != nil && *in.Role != current.Role
-	statusChanged := in.Status != nil && *in.Status != current.Status
 	if !roleChanged && !statusChanged {
-		// 幂等：无实际变化不写库、不写审计，避免审计里出现空变更。
-		return current, nil
-	}
-
-	next := current
-	if roleChanged {
-		if next, err = next.WithRole(*in.Role, s.now()); err != nil {
-			return domain.Member{}, translate(err)
-		}
-	}
-	if statusChanged {
-		if next, err = next.WithStatus(*in.Status, s.now()); err != nil {
-			return domain.Member{}, translate(err)
-		}
-	}
-	if err := s.ensureOwnerRemains(ctx, current, next); err != nil {
-		return domain.Member{}, err
-	}
-	if err := s.members.UpsertMember(ctx, next); err != nil {
-		return domain.Member{}, translate(err)
+		return next, nil
 	}
 
 	if roleChanged {

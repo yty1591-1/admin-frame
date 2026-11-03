@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -392,5 +393,68 @@ func TestReadsAllowedOnTerminatedTenant(t *testing.T) {
 		TenantID: fixture.tenant.ID, Resource: "user", Limit: 20, Actor: adminActor(),
 	}); !isConflict(err) {
 		t.Fatalf("终止态写配额 error = %v, want 409", err)
+	}
+}
+
+// TestConcurrentOwnerDemotionKeepsOneOwner 验证并发降级不会把 owner 清零。
+//
+// 计数与写入若不在同一临界区，两个请求都会读到 count=2 并通过校验，
+// 最终租户失去全部 owner。本用例是「至少一名 owner」不变量的并发闸门。
+func TestConcurrentOwnerDemotionKeepsOneOwner(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := context.Background()
+	for _, subject := range []string{"u1", "u2"} {
+		if _, err := fixture.members.Add(ctx, app.AddMemberInput{
+			TenantID: fixture.tenant.ID, SubjectID: subject,
+			Role: domain.MemberRoleOwner, Actor: adminActor(),
+		}); err != nil {
+			t.Fatalf("Add(%s) error = %v", subject, err)
+		}
+	}
+
+	subjects := []string{"u1", "u2"}
+	errs := make([]error, len(subjects))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, subject := range subjects {
+		wg.Add(1)
+		go func(idx int, sid string) {
+			defer wg.Done()
+			<-start
+			role := domain.MemberRoleAdmin
+			_, errs[idx] = fixture.members.Update(ctx, app.UpdateMemberInput{
+				TenantID: fixture.tenant.ID, SubjectID: sid,
+				Role: &role, Actor: adminActor(),
+			})
+		}(i, subject)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		if !isConflict(err) {
+			t.Fatalf("并发降级 error = %v, want 409", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("成功降级 %d 次，want 1（两次都成功会清空 owner）", succeeded)
+	}
+	members, err := fixture.members.List(ctx, fixture.tenant.ID, false)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	owners := 0
+	for _, member := range members {
+		if member.Role == domain.MemberRoleOwner {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("在册 owner = %d, want 1", owners)
 	}
 }
