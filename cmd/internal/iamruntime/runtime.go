@@ -69,7 +69,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return &Runtime{Authorizer: security.NewAuthorizer(staticChecker)}, nil
 	}
 
-	roles, bindings, templates, snapshots, err := buildRepositories(deps)
+	roles, bindings, templates, snapshots, err := BuildRepositories(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -373,8 +373,11 @@ func breakglassActiveCounter(
 	}
 }
 
-// buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
-func buildRepositories(deps *platform.Deps) (
+// BuildRepositories 按 db.driver 选择内存或 MySQL 仓储。
+//
+// 导出原因：tenantruntime 的角色绑定同步（T-18，ADR-0007）
+// 需要同一套 IAM 仓储（同库同事务），不能各建各的。
+func BuildRepositories(deps *platform.Deps) (
 	domain.RoleRepository,
 	domain.BindingRepository,
 	domain.RoleTemplateRepository,

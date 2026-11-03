@@ -35,8 +35,10 @@ type MemberService struct {
 	members domain.MemberRepository
 	// quotas 配额仓储（T-13 席位上限）；nil 表示不启用席位校验（单测 / 简化部署）。
 	quotas domain.QuotaRepository
-	audit  auditContext
-	now    func() time.Time
+	// rolesync 成员角色 → IAM 绑定同步（T-18，ADR-0007）；noop 当未装配。
+	rolesync RoleSyncer
+	audit    auditContext
+	now      func() time.Time
 }
 
 // NewMemberService 构造成员用例；三个依赖均必填（配额仓储可空，见 Options.Quotas）。
@@ -52,11 +54,12 @@ func NewMemberService(tenants domain.Repository, members domain.MemberRepository
 	}
 	now := time.Now
 	return &MemberService{
-		tenants: tenants,
-		members: members,
-		quotas:  opts.Quotas,
-		audit:   auditContext{emitter: emitter, ids: nil, service: opts.Service, now: now, observer: observerOrNoop(opts.Observer)},
-		now:     now,
+		tenants:  tenants,
+		members:  members,
+		quotas:   opts.Quotas,
+		rolesync: roleSyncerOrNoop(opts.RoleSyncer),
+		audit:    auditContext{emitter: emitter, ids: nil, service: opts.Service, now: now, observer: observerOrNoop(opts.Observer)},
+		now:      now,
 	}, nil
 }
 
@@ -141,6 +144,10 @@ func (s *MemberService) Add(ctx context.Context, in AddMemberInput) (domain.Memb
 		}
 		if upsertErr := s.members.UpsertMember(txCtx, built); upsertErr != nil {
 			return upsertErr
+		}
+		// T-18（ADR-0007）：成员角色同步到 IAM 模板绑定；同事务内失败即整体回滚。
+		if syncErr := s.rolesync.SyncRole(txCtx, built.TenantID, built.SubjectID, &built.Role); syncErr != nil {
+			return apperr.Internal("sync member role binding failed", syncErr)
 		}
 		if emitErr := s.audit.emit(txCtx, in.Actor, ActionMemberAdd, ResourceTypeMember, built.TenantID,
 			audit.OutcomeSuccess, "", s.addAttrs(txCtx, built, reactivated)); emitErr != nil {
@@ -322,6 +329,15 @@ func (s *MemberService) Update(ctx context.Context, in UpdateMemberInput) (domai
 		}
 		if err := s.members.UpsertMember(txCtx, next); err != nil {
 			return err
+		}
+		// T-18（ADR-0007）：成员状态 / 角色变更同步 IAM 模板绑定；
+		// 停用成员解绑（role=nil），在册成员绑定到目标角色。同事务 fail closed。
+		var targetRole *domain.MemberRole
+		if next.Active() {
+			targetRole = &next.Role
+		}
+		if syncErr := s.rolesync.SyncRole(txCtx, next.TenantID, next.SubjectID, targetRole); syncErr != nil {
+			return apperr.Internal("sync member role binding failed", syncErr)
 		}
 		if roleChanged {
 			if err := s.audit.emit(txCtx, in.Actor, ActionMemberRoleChange, ResourceTypeMember, next.TenantID,

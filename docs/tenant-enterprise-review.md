@@ -338,7 +338,7 @@ go test ./internal/tenant/... -count=1
 | ---- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | T-16 | 租户指标               | `tenant_status`（Gauge，按状态）、`tenant_guard_decisions_total{result}`、`tenant_guard_cache_hit_total`、`tenant_transition_total{from,to}`、`tenant_audit_emit_failed_total` |
 | T-17 | 域门禁 `check-tenant` | ① 代码中 `Action*` 常量必须出现在 `docs/audit/EVENTS.md`；② 路由 ↔ OpenAPI 双向对账；③ 状态机迁移矩阵快照（改白名单必须同步改测试）；并入 `make ci`                                                             |
-| T-18 | IAM 联动（P1-8）       | 选定映射方案并实现；成员变更同步绑定；集成用例覆盖授权生效与失效                                                                                                                                     |
+| T-18 | IAM 联动（P1-8）       | 选定映射方案并实现；成员变更同步绑定；集成用例覆盖授权生效与失效 | ✅ 2026-11-04 |
 | T-19 | 清理与文档              | 删除或接线 `Deps.TenantGuard` / `ErrTenantGuardMissing`；ADR-0006 更正；计划状态表把 ENT-09 从「完成」改为「主体完成 + 验收缺口链接本文」 | ✅ 2026-11-04 |
 | T-20 | 运维补充               | `tenant-suspend.md` 补「登录仍成功」的现状与处置；新增 `tenant-onboarding.md`（回填 + 开通检查清单） | ✅ 2026-11-04 |
 
@@ -591,6 +591,22 @@ ETag 闭环）；T-22 identity +3 组（成员切换成功与 claims 断言、�
 | T-23 生命周期 | `docs/tenant-data-lifecycle.md`：保留期 90d + 导出窗口 30d + 硬删除三段式；各域边界表（审计唯一不删）；导出 manifest 校验；到期任务五步证据链；归口 ENT-15 执行 |
 
 **B4 完成**。ENT-09 剩 T-18（IAM 联动，需独立 ADR-0007 后实施）。
+
+**T-18 IAM 联动（ADR-0007）**
+
+| 改动 | 说明 |
+|---|---|
+| ADR-0007 | 选型「写时同步 + 同库事务复用 + 商户级模板角色」；**平台级模板被库层 CHECK 约束否决**（biz 角色必须 merchant_id 非空），改为随租户创建物化（与配额物化同模式） |
+| 迁移 `000015` | 存量回填：每租户三个模板角色（`tenant_owner/admin/member`，system 类型）+ ADR 最小权限集 + 在册成员绑定（停用成员跳过）；幂等靠 `uk_iam_role_scope_code` / `uk_iam_binding`，重放已验证 |
+| `app/rolesync.go` | `RoleSyncer` 端口：`EnsureTemplates`（Create 时物化）+ `SyncRole`（幂等收敛，nil=解绑）；nil→noop，生产装配必须注入 |
+| 接线 | `Create` 事务内 EnsureTemplates（与配额同批）；`Add` / `Update` 事务内 SyncRole（停用→nil，复活/换角色→目标）；`seedOwner` 同步；**同步失败整体回滚**（fail closed，不允许「有成员无绑定」） |
+| 装配 | `iamruntime.BuildRepositories` 导出复用；`newRoleSyncer` 注入全部 Options；两域同库→绑定写入复用租户事务 |
+| adapter | `rolesyncAdapter`：多退少补只动模板角色绑定（system + tenant_ 前缀），商户 custom 角色绑定不碰；目标角色缺失显式失败 |
+
+**坑**：① `INSERT…SELECT…JOIN` 无 ON 子句直接接 `ON DUPLICATE KEY` 解析歧义
+（Error 1064，与 000011 同款），改逗号连接；② 授权语句别名笔误（p.grants→g.grants）。
+
+**ENT-09 全部完成**：B1-B4 + T-18 ✅。
 
 ---
 

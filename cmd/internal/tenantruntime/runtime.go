@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
@@ -61,6 +62,13 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 		observer = tenantMetrics
 	}
 
+	// T-18（ADR-0007）：成员角色 → IAM 绑定同步。IAM 仓储与租户共用同一
+	// *sql.DB（或同为内存），绑定写入复用租户域事务，失败整体回滚。
+	roleSyncer, err := newRoleSyncer(deps)
+	if err != nil {
+		return nil, err
+	}
+
 	// T-22：成员关系查询注入 Deps（identity 的切换端点据此校验成员关系）。
 	// New 自身也会被 worker 等路径单独调用，这里幂等注入。
 	if err := InjectMembership(deps); err != nil {
@@ -76,6 +84,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 		Members:         store.members,
 		Quotas:          store.quotas,
 		Observer:        observer,
+		RoleSyncer:      roleSyncer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant service: %w", err)
@@ -83,9 +92,10 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 
 	// 成员用例必须拿到配额仓储：T-13 席位上限依赖它（缺了就静默不校验）。
 	memberService, err := app.NewMemberService(store.tenants, store.members, emitter, app.Options{
-		Service:  deps.Config.Service,
-		Quotas:   store.quotas,
-		Observer: observer,
+		Service:    deps.Config.Service,
+		Quotas:     store.quotas,
+		Observer:   observer,
+		RoleSyncer: roleSyncer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tenant member service: %w", err)
@@ -96,7 +106,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 	}
 	// 邀请用例（T-14）：成员与配额仓储复用同一套实现；TTL 用领域默认值（7 天）。
 	invitationService, err := app.NewInvitationService(store.tenants, store.members, store.invitations,
-		deps.IDs, emitter, app.Options{Service: deps.Config.Service, Quotas: store.quotas, Observer: observer})
+		deps.IDs, emitter, app.Options{Service: deps.Config.Service, Quotas: store.quotas, Observer: observer, RoleSyncer: roleSyncer})
 	if err != nil {
 		return nil, fmt.Errorf("tenant invitation service: %w", err)
 	}
@@ -247,4 +257,17 @@ func InjectMembership(deps *platform.Deps) error {
 	}
 	deps.TenantMembership = membershipChecker{members: store.members}
 	return nil
+}
+
+// newRoleSyncer 构造成员角色 → IAM 绑定同步器（T-18，ADR-0007）。
+//
+// IAM 仓储经 iamruntime.BuildRepositories 构造：与租户域同一 *sql.DB
+// （或同为内存实现），绑定写入复用 ctx 内的租户事务——这是「成员变更与
+// 绑定同步同事务」的前提。deps 未启用 IAM（无 ids 等）时返回 noop。
+func newRoleSyncer(deps *platform.Deps) (app.RoleSyncer, error) {
+	roles, bindings, _, _, err := iamruntime.BuildRepositories(deps)
+	if err != nil {
+		return nil, fmt.Errorf("tenant role sync: build iam repositories: %w", err)
+	}
+	return newRoleSyncAdapter(roles, bindings, deps.IDs)
 }

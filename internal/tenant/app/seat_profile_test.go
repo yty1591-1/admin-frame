@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -367,6 +368,122 @@ func TestTransitionObserverSignal(t *testing.T) {
 	for i, w := range want {
 		if transitions[i] != w {
 			t.Fatalf("transitions[%d] = %v, want %v", i, transitions[i], w)
+		}
+	}
+}
+
+// recordSyncer 是 RoleSyncer 的记录实现，断言成员变更触发同步（T-18）。
+type recordSyncer struct {
+	mu      sync.Mutex
+	ensured []string
+	syncs   [][2]string // tenantID, subjectID（role 序列化进第三个槽由 separate map 记）
+	roles   map[string]*domain.MemberRole
+	failAt  string // 非空时对匹配 tenantID 返回错误
+}
+
+func newRecordSyncer() *recordSyncer {
+	return &recordSyncer{roles: map[string]*domain.MemberRole{}}
+}
+
+// EnsureTemplates 记录物化请求。
+func (r *recordSyncer) EnsureTemplates(_ context.Context, tenantID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensured = append(r.ensured, tenantID)
+	return nil
+}
+
+// SyncRole 记录同步请求；failAt 匹配租户时返回错误模拟绑定故障。
+func (r *recordSyncer) SyncRole(_ context.Context, tenantID, subjectID string, role *domain.MemberRole) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.syncs = append(r.syncs, [2]string{tenantID, subjectID})
+	r.roles[tenantID+"/"+subjectID] = role
+	if r.failAt == tenantID {
+		return errors.New("simulated binding failure")
+	}
+	return nil
+}
+
+// TestMemberChangeSyncsRole 验证成员变更事务内触发绑定同步（T-18）。
+func TestMemberChangeSyncsRole(t *testing.T) {
+	fixture := newSeatFixture(t)
+	syncer := newRecordSyncer()
+	opts := testPlanOptions(fixture.repo)
+	opts.RoleSyncer = syncer
+	members, err := app.NewMemberService(fixture.repo, fixture.repo, &recordEmitter{}, opts)
+	if err != nil {
+		t.Fatalf("NewMemberService() error = %v", err)
+	}
+	ctx := context.Background()
+
+	// 加成员 → 同步 owner/目标角色。
+	if _, err := members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u-sync", Role: domain.MemberRoleAdmin, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if role := syncer.roles[fixture.tenant.ID+"/u-sync"]; role == nil || *role != domain.MemberRoleAdmin {
+		t.Fatalf("Add 后未同步到 admin 角色: %v", syncer.roles[fixture.tenant.ID+"/u-sync"])
+	}
+
+	// 改角色 → 同步新角色。
+	if _, err := members.SetRole(ctx, app.SetMemberRoleInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u-sync", Role: domain.MemberRoleMember, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("SetRole() error = %v", err)
+	}
+	if role := syncer.roles[fixture.tenant.ID+"/u-sync"]; role == nil || *role != domain.MemberRoleMember {
+		t.Fatalf("SetRole 后未同步到 member 角色")
+	}
+
+	// 停用 → 同步 nil（解绑）。
+	if _, err := members.SetStatus(ctx, app.SetMemberStatusInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u-sync", Status: domain.MemberStatusDisabled, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("SetStatus() error = %v", err)
+	}
+	if role := syncer.roles[fixture.tenant.ID+"/u-sync"]; role != nil {
+		t.Fatalf("停用后应同步 nil（解绑）, got %v", *role)
+	}
+
+	// 复活 → 重新同步。
+	if _, err := members.SetStatus(ctx, app.SetMemberStatusInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u-sync", Status: domain.MemberStatusActive, Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("复活 error = %v", err)
+	}
+	if role := syncer.roles[fixture.tenant.ID+"/u-sync"]; role == nil || *role != domain.MemberRoleMember {
+		t.Fatalf("复活后应重新绑定")
+	}
+}
+
+// TestMemberAddRollsBackWhenSyncFails 验证绑定同步失败回滚成员变更（fail closed）。
+func TestMemberAddRollsBackWhenSyncFails(t *testing.T) {
+	fixture := newSeatFixture(t)
+	syncer := newRecordSyncer()
+	syncer.failAt = fixture.tenant.ID
+	opts := testPlanOptions(fixture.repo)
+	opts.RoleSyncer = syncer
+	members, err := app.NewMemberService(fixture.repo, fixture.repo, &recordEmitter{}, opts)
+	if err != nil {
+		t.Fatalf("NewMemberService() error = %v", err)
+	}
+	ctx := context.Background()
+	if _, err := members.Add(ctx, app.AddMemberInput{
+		TenantID: fixture.tenant.ID, SubjectID: "u-rollback", Role: domain.MemberRoleMember, Actor: adminActor(),
+	}); err == nil {
+		t.Fatal("同步失败应让 Add 失败")
+	}
+
+	// memory 仓储的 Mutate 有快照回滚：成员不应存在。
+	list, _, err := fixture.repo.ListMembers(ctx, fixture.tenant.ID, true, 0, 0)
+	if err != nil {
+		t.Fatalf("ListMembers() error = %v", err)
+	}
+	for _, m := range list {
+		if m.SubjectID == "u-rollback" {
+			t.Fatal("同步失败后成员应被回滚（fail closed，不允许「有成员无绑定」）")
 		}
 	}
 }

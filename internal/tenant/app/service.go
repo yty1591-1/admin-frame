@@ -115,6 +115,9 @@ type Options struct {
 	Plans domain.PlanRepository
 	// Observer 可观测端口（T-16）；nil 时使用 noop 实现。由所有租户用例共享。
 	Observer Observer
+	// RoleSyncer 成员角色 → IAM 绑定同步端口（T-18，ADR-0007）；nil 时使用
+	// noop 实现（内存模式 / 单测）。生产装配必须注入，否则成员拿不到任何 IAM 权限。
+	RoleSyncer RoleSyncer
 	// Members 成员仓储（T-12）：开通前置校验与建租户时落首名 owner。
 	Members domain.MemberRepository
 	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额；T-13 席位与
@@ -180,13 +183,14 @@ type ListResult struct {
 
 // Service 是租户生命周期用例。
 type Service struct {
-	repo    domain.Repository
-	ids     id.Generator
-	audit   auditContext
-	now     func() time.Time
-	opts    Options
-	members domain.MemberRepository
-	quotas  domain.QuotaRepository
+	repo     domain.Repository
+	ids      id.Generator
+	audit    auditContext
+	rolesync RoleSyncer
+	now      func() time.Time
+	opts     Options
+	members  domain.MemberRepository
+	quotas   domain.QuotaRepository
 }
 
 // NewService 构造服务；repo / ids / emitter 必填。
@@ -214,14 +218,16 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 	}
 	now := time.Now
 	opts.Observer = observerOrNoop(opts.Observer)
+	opts.RoleSyncer = roleSyncerOrNoop(opts.RoleSyncer)
 	return &Service{
-		repo:    repo,
-		ids:     ids,
-		audit:   auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: opts.Observer},
-		now:     now,
-		opts:    opts,
-		members: opts.Members,
-		quotas:  opts.Quotas,
+		repo:     repo,
+		ids:      ids,
+		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: opts.Observer},
+		rolesync: opts.RoleSyncer,
+		now:      now,
+		opts:     opts,
+		members:  opts.Members,
+		quotas:   opts.Quotas,
 	}, nil
 }
 
@@ -263,6 +269,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Tenant, er
 		}
 		if err := s.materializeQuotas(txCtx, built.ID, plan); err != nil {
 			return err
+		}
+		// T-18（ADR-0007）：物化 IAM 模板角色（与配额同批，同事务）。
+		if tmplErr := s.rolesync.EnsureTemplates(txCtx, built.ID); tmplErr != nil {
+			return apperr.Internal("materialize iam template roles failed", tmplErr)
 		}
 		if err := s.seedOwner(txCtx, built.ID, in.OwnerSubjectID, in.Actor); err != nil {
 			return err
@@ -454,6 +464,10 @@ func (s *Service) seedOwner(ctx context.Context, tenantID, subjectID string, act
 	}
 	if err := s.members.UpsertMember(ctx, member); err != nil {
 		return translate(err)
+	}
+	// T-18：首名 owner 的 IAM 绑定与成员写入同事务同步。
+	if syncErr := s.rolesync.SyncRole(ctx, tenantID, member.SubjectID, &member.Role); syncErr != nil {
+		return apperr.Internal("sync member role binding failed", syncErr)
 	}
 	return s.audit.emit(ctx, actor, ActionMemberAdd, ResourceTypeMember, tenantID,
 		audit.OutcomeSuccess, "", map[string]string{
