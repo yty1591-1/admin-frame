@@ -59,6 +59,13 @@
 | `tenant.member.disable` | A | 停用成员（保留成员关系，不物理删除）；`reason` 可选，建议填写离职或调岗原因 | 租户 | 365d | active |
 | `tenant.member.enable` | A | 重新启用成员 | 租户 | 365d | active |
 | `tenant.quota_change` | A | 修改租户配额（`PUT /admin/v1/tenants/{id}/quotas/{resource}`）；`attrs.resource` / `attrs.limit`（不限量记为 `unlimited`），执行与拒绝由 ENT-14 负责 | 租户 | 365d | active |
+| `notification.template.create` | A | 注册通知模板（ENT-10）；`attrs.template_key` / `attrs.channel` / `attrs.locale` / `attrs.version` | 通知 | 365d | active |
+| `notification.template.update` | A | 更新 / 停用 / 启用模板（同键落新版本或切换 `enabled`）；`attrs.template_key` / `attrs.channel` / `attrs.version` / `attrs.enabled` | 通知 | 365d | active |
+| `notification.preference.update` | A/B | 变更渠道偏好（含退订）；`attrs.subject_type` / `attrs.subject_id` / `attrs.scene_class` / `attrs.channel` / `attrs.enabled`；事务类场景退订被拒不落事件 | 通知 | 365d | active |
+| `notification.blacklist.add` | A | 加入渠道黑名单（投诉 / 退信 / 手工）；`attrs.channel` / `attrs.source` / `attrs.target_hmac`（仅摘要前 8 位，明文地址不入审计） | 通知 | 365d | active |
+| `notification.blacklist.remove` | A | 移除黑名单条目；`attrs.channel` / `attrs.target_hmac` | 通知 | 365d | active |
+| `notification.dlq.replay` | A | 重放死信通知（补偿动作，写操作）；`attrs.request_id`，重放生成新事件、保留原幂等键防重复 | 通知 | 365d | planned |
+| `notification.send` | A | 运营代发通知（`POST /admin/v1/notifications`）；`attrs.scene` / `attrs.channels` / `attrs.template_key`；收件人引用经 HMAC 脱敏 | 通知 | 365d | planned |
 | `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
 | `payment.refund` | B/C | 退款 | 资金 | 365d | planned |
 
