@@ -618,7 +618,7 @@ admin-v1-tenants-by-id-invitations:
     description: |
       需要 `tenant:write`。同租户同邮箱仅允许一个 pending 邀请（重复返回 40900，走 resend）。
       明文 token 仅在本次响应返回一次，服务端只存 SHA-256 摘要；
-      邮件投递依赖 ENT-10，就绪前由运营线下转交（「只落库不发送」的阶段语义）。
+      邀请邮件由通知中心（ENT-10）异步投递（事件与邀请同事务），通知中心未部署时由运营线下转交。
       写 `tenant.invitation.create` 审计。
     operationId: adminCreateTenantInvitation
     security:

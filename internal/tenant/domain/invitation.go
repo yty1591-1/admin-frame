@@ -60,7 +60,7 @@ type Invitation struct {
 	ID string
 	// TenantID 目标租户。
 	TenantID string
-	// Email 被邀请人邮箱；投递目标，T-14 阶段仅记录（ENT-10 就绪前不发送）。
+	// Email 被邀请人邮箱；投递目标（ENT-10 就绪后经通知中心异步投递）。
 	Email string
 	// Role 受邀角色；接受时据此建立成员关系。
 	Role MemberRole

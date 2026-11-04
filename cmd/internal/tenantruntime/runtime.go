@@ -32,6 +32,18 @@ const (
 type Runtime struct {
 	// Handler A 端租户管理 Handler；为 nil 表示本进程未启用（缺配置或依赖）。
 	Handler *tenantrest.Handler
+	// invitationService 保留引用：ENT-10 通知装配晚于本构造时，
+	// 经 SetInvitationNotifier 后补注入（服务指针与 Handler 共享）。
+	invitationService *app.InvitationService
+}
+
+// SetInvitationNotifier 注入邀请邮件投递端口（ENT-10）。
+// 必须在 Handler 对外服务前调用（装配期一次）；nil 值忽略（保持只落库语义）。
+func (r *Runtime) SetInvitationNotifier(notifier app.InvitationNotifier) {
+	if r == nil || r.invitationService == nil || notifier == nil {
+		return
+	}
+	r.invitationService.SetNotifier(notifier)
 }
 
 // New 构造租户运行时（A 端管理能力）。
@@ -131,7 +143,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 			return nil, fmt.Errorf("tenant async handlers: %w", err)
 		}
 	}
-	return &Runtime{Handler: handler}, nil
+	return &Runtime{Handler: handler, invitationService: invitationService}, nil
 }
 
 // RegisterAsync 注册租户域异步 topic handler（API 与 worker 共用）。

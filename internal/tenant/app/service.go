@@ -125,6 +125,9 @@ type Options struct {
 	Quotas domain.QuotaRepository
 	// InvitationTTL 邀请有效期（T-14）；<=0 使用领域默认值（7 天）。
 	InvitationTTL time.Duration
+	// Notifier 邀请邮件投递端口（ENT-10）；nil = 只落库不发送（T-14 阶段
+	// 语义）。注入方必须保证实现把事件写入 Outbox 且复用 ctx 事务。
+	Notifier InvitationNotifier
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。

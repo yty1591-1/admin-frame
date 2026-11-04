@@ -314,7 +314,7 @@ components:
         email:
           type: string
           maxLength: 128
-          description: 被邀请人邮箱；邮件投递依赖 ENT-10，就绪前仅记录（线下转交 token）。
+          description: 被邀请人邮箱；邮件由通知中心（ENT-10）异步投递，事件与邀请同事务，投递失败则邀请创建整体失败。
         role:
           type: string
           enum: [owner, admin, member]
@@ -368,7 +368,7 @@ components:
           properties:
             token:
               type: string
-              description: 一次性明文 token；ENT-10 就绪前由运营线下转交，泄露时用 resend 轮换。
+              description: 一次性明文 token；正常路径经通知中心邮件送达（token 在链接中），泄露时用 resend 轮换；通知中心未部署时由运营线下转交。
 
     TenantInvitationAcceptRequest:
       type: object

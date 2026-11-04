@@ -5,6 +5,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
@@ -39,6 +40,15 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	}
 	if tenantRT != nil && tenantRT.Handler != nil {
 		tenantadmin.Register(mux, tenantRT.Handler, deps.AuthMW, deps.RequirePermission)
+	}
+	// ENT-10：邀请邮件接入——A 端只需要轻量 Dispatcher（编排消费在 worker）。
+	// async 未启用（单进程最小形态）时跳过注入，保持「只落库不发送」阶段语义。
+	if tenantRT != nil && deps.Async != nil {
+		dispatcher, derr := notificationruntime.NewDispatcher(deps)
+		if derr != nil {
+			return derr
+		}
+		tenantRT.SetInvitationNotifier(notificationruntime.NewInvitationNotifier(dispatcher, ""))
 	}
 	return nil
 }

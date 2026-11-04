@@ -26,10 +26,41 @@ const (
 	ResourceTypeInvitation = "tenant_invitation"
 )
 
+// InvitationNotifyEvent 是邀请邮件的投递请求（ENT-10 接入）。
+//
+// 字段都是投递所需的最小集：Email 是收件地址（仅入事件载荷，
+// 不入通知表）；Token 用于拼接接受链接（明文仅存在于此事件）。
+type InvitationNotifyEvent struct {
+	// TenantID 租户 ID。
+	TenantID string
+	// TenantName 租户名称（邮件正文变量）。
+	TenantName string
+	// InvitationID 邀请 ID（业务引用）。
+	InvitationID string
+	// Email 被邀请邮箱（收件地址 + invitee 变量）。
+	Email string
+	// Role 受邀角色。
+	Role domain.MemberRole
+	// Token 一次性明文 token（接受链接的路径参数）。
+	Token string
+	// ExpiresAt 邀请过期时间。
+	ExpiresAt time.Time
+}
+
+// InvitationNotifier 是邀请邮件投递端口（ENT-10）：实现方把事件写入
+// Outbox（通知中心异步消费）。接口由消费方定义，装配层注入实现——
+// nil 语义是「ENT-10 未就绪，只落库不发送」（T-14 的阶段语义兜底）。
+type InvitationNotifier interface {
+	// NotifyInvitationCreated 邀请已创建 / 重发，请求投递邮件。
+	// 必须与邀请写入同事务（ctx 携带事务），失败整体回滚（fail closed）。
+	NotifyInvitationCreated(ctx context.Context, event InvitationNotifyEvent) error
+}
+
 // InvitationService 编排成员邀请用例（T-14）。
 //
 // 邮件投递依赖 ENT-10，未就绪前的明确语义是「只落库不发送」：
 // 明文 token 仅在创建 / 重发响应返回一次，由运营线下转交。
+// Notifier 注入后（ENT-10 就绪）改为事务内写 Outbox 事件，邮件异步投递。
 type InvitationService struct {
 	tenants     domain.Repository
 	members     domain.MemberRepository
@@ -39,6 +70,8 @@ type InvitationService struct {
 	ids         id.Generator
 	now         func() time.Time
 	ttl         time.Duration
+	// notifier 邀请邮件投递端口（ENT-10）；nil = 只落库不发送（T-14 阶段语义）。
+	notifier InvitationNotifier
 }
 
 // NewInvitationService 构造邀请用例；依赖均必填（配额仓储可空，见 Options.Quotas）。
@@ -71,6 +104,7 @@ func NewInvitationService(tenants domain.Repository, members domain.MemberReposi
 		ids:         ids,
 		now:         now,
 		ttl:         ttl,
+		notifier:    opts.Notifier,
 	}, nil
 }
 
@@ -128,6 +162,17 @@ type InvitationAction struct {
 	Idempotent bool
 }
 
+// SetNotifier 注入邀请邮件投递端口（ENT-10 装配期调用；nil 忽略）。
+//
+// 装配时序说明：通知运行时可能晚于租户运行时构造（admin-api 的懒装配
+// 顺序），服务以共享指针暴露 setter，注入对 Handler 同样生效。
+func (s *InvitationService) SetNotifier(notifier InvitationNotifier) {
+	if s == nil || notifier == nil {
+		return
+	}
+	s.notifier = notifier
+}
+
 // Create 创建邀请；同租户同邮箱的 pending 邀请唯一（重复邀请走 Resend）。
 //
 // 返回值里的明文 token 是唯一一次下发机会（库里只有摘要）。
@@ -137,7 +182,8 @@ func (s *InvitationService) Create(ctx context.Context, in CreateInvitationInput
 		plaintext  string
 	)
 	err := s.tenants.WithinTx(ctx, func(txCtx context.Context) error {
-		if _, err := mutableTenant(txCtx, s.tenants, in.TenantID); err != nil {
+		tenant, err := mutableTenant(txCtx, s.tenants, in.TenantID)
+		if err != nil {
 			return err
 		}
 		invitationID, err := s.ids.NextString()
@@ -167,6 +213,21 @@ func (s *InvitationService) Create(ctx context.Context, in CreateInvitationInput
 		}
 		invitation = built
 		plaintext = token
+		// ENT-10：Notifier 在事务内写 Outbox 事件，失败整体回滚——
+		// 「邀请已建但邮件永不发出」的静默丢失比失败重试更难排查。
+		if s.notifier != nil {
+			if err := s.notifier.NotifyInvitationCreated(txCtx, InvitationNotifyEvent{
+				TenantID:     built.TenantID,
+				TenantName:   tenant.Name,
+				InvitationID: built.ID,
+				Email:        built.Email,
+				Role:         built.Role,
+				Token:        token,
+				ExpiresAt:    built.ExpiresAt,
+			}); err != nil {
+				return apperr.Internal("enqueue invitation email failed", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -388,6 +449,25 @@ func (s *InvitationService) Resend(ctx context.Context, in ResendInvitationInput
 		}
 		invitation = next
 		plaintext = token
+		// ENT-10：重发同样是「新 token 新邮件」，事件与刷新同事务（fail closed）。
+		// 租户名是邮件正文变量（渲染缺参即拒发），查不到就显式失败。
+		if s.notifier != nil {
+			tenant, terr := s.tenants.Get(txCtx, next.TenantID)
+			if terr != nil {
+				return apperr.Internal("load tenant for invitation email failed", terr)
+			}
+			if err := s.notifier.NotifyInvitationCreated(txCtx, InvitationNotifyEvent{
+				TenantID:     next.TenantID,
+				TenantName:   tenant.Name,
+				InvitationID: next.ID,
+				Email:        next.Email,
+				Role:         next.Role,
+				Token:        token,
+				ExpiresAt:    next.ExpiresAt,
+			}); err != nil {
+				return apperr.Internal("enqueue invitation email failed", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
