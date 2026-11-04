@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -120,6 +121,15 @@ func run(configPath, replayDLQ string) error {
 	}
 	if err := tenantruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register tenant async handlers: %w", err)
+	}
+	// 通知域（ENT-10）：编排 Handler 消费 notification.requested；
+	// 渠道默认 memory 驱动（阶段语义见 notificationruntime 包注释）。
+	notificationRT, err := notificationruntime.New(deps)
+	if err != nil {
+		return fmt.Errorf("notification runtime: %w", err)
+	}
+	if err := notificationruntime.RegisterAsync(deps, notificationRT); err != nil {
+		return fmt.Errorf("register notification async handlers: %w", err)
 	}
 	cleanupHandle, err := identityruntime.StartCleanup(ctx, deps)
 	if err != nil {
