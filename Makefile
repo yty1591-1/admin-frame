@@ -220,6 +220,11 @@ check-load-baseline:
 check-featureflag:
 	bash scripts/ci/check-featureflag.sh
 
+# ENT-17：发布迁移门禁——expand-only / append-only / 无未完成迁移（静态检查；
+# 设 MIGRATE_DSN 后追加 schema 探测）。
+check-migration-gate:
+	bash scripts/ci/check-migration-gate.sh
+
 # ENT-13：依赖韧性门禁——注册表接线 / 回调模板三件套 / 裸出站 HTTP 扫描
 # （RELIABILITY_STANDARDS.md §4.2 / §5.1）。
 check-resilience:
@@ -270,7 +275,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

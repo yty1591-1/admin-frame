@@ -30,6 +30,10 @@
 | RELS-06 | 含迁移的发版须遵循 expand → 代码 → contract（DATA-05）；Checklist 勾选 | 发布 Checklist |
 | RELS-07 | 发版前完成 [`docs/release/CHECKLIST.md`](./release/CHECKLIST.md) | Review |
 | RELS-08 | 合并请求触及发布/镜像时须勾选发布自检 | PR 模板 |
+| RELS-09 | 发布流水线必须先过**迁移门禁**（expand-only / append-only / 无未完成迁移）再部署；每次 `helm upgrade` 必须带 `--atomic --wait` | `.github/workflows/release.yml` + `check-migration-gate.sh` + `check-release.sh` |
+| RELS-10 | 每次部署后必须跑发布冒烟（`/healthz`、`/readyz`、`/version` 版本一致、未认证 401） | `release-smoke.sh`（流水线强制） |
+| RELS-11 | 生产放量前必须有金丝雀阶段：单端单副本、独立 release、指标门禁（流量下限 + 5xx + p95）达标才放量 | `values-canary.yaml` + `release-canary-gate.sh` |
+| RELS-12 | 失败必须可自动回滚：`rollback` job 卸载金丝雀并把生产回退到上一 revision；人工命令固化在 runbook | `release.yml` + `runbooks/release-rollback.md` |
 
 ---
 
@@ -86,18 +90,51 @@ docker build --target admin-api \
 
 ### 5.1 默认策略
 
-- **滚动发布**；三端可独立变更。  
-- 高风险：金丝雀 / 蓝绿（可只对单端）。  
+- **滚动发布**；三端可独立变更（RELS-05）。  
+- 高风险变更（含迁移、鉴权、计费路径）：**金丝雀**——见 §5.3。  
 - DB：expand/contract，与 DATA 专文一致。
 
-### 5.2 回滚
+### 5.2 流水线（ENT-17 已落地）
 
-1. 将 Deployment 镜像改回上一 **digest**（或预存的良好 tag+digest）。  
-2. 若已执行不可逆 contract 迁移：按 DATA / runbook，**禁止**盲目 down；走数据修复预案。  
-3. 验证 `/readyz`、关键 RED 指标与业务冒烟。  
-4. 事后补 Postmortem（若构成事故）。
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) 的阶段与门禁：
 
-详细步骤见 [`docs/runbooks/release-rollback.md`](./runbooks/release-rollback.md)。
+| 阶段 | 触发条件 | 门禁 | 失败后果 |
+|---|---|---|---|
+| `plan` | tag `v*` / 手动 | 版本号 semver 校验 | 不进入后续阶段 |
+| `preflight` | 同上 | `check-migration-gate.sh`（expand-only / append-only / dirty=false）+ `check-release.sh` | **任何环境都不部署** |
+| `digests` | 非 dry_run 且 `RELEASE_ENABLED=true` | 每个镜像解析出 `sha256:` digest，形态校验 | 不允许用浮动 tag 继续 |
+| `staging` | Environment `staging` 审批 | `helm upgrade --atomic --wait` + 发布冒烟 +（可选）部署后 schema 探测 | 自动回滚，不进生产 |
+| `canary` | Environment `production` 审批 | 独立 release 单副本 + 金丝雀冒烟 + 指标门禁（流量下限 / 5xx / p95） | 只保留金丝雀，生产流量不变 |
+| `promote` | 金丝雀通过 | 全量 `helm upgrade --atomic --wait` + 冒烟 + 生产指标门禁 | `rollback` job 接管 |
+| `rollback` | 任一发布阶段失败 | 卸载金丝雀、`helm rollback <release> 0`、回滚后冒烟 | 自动失败 → 人工按 runbook 介入（P1） |
+
+关键约定：
+
+- **迁移先于代码**：`preflight` 不过，`digests` 之后的所有作业都不会启动；
+- **不可变引用**：全部 workload 与迁移 Job 都按 digest 部署（`image.digest`），tag 只作可读标识；
+- **fail closed**：缺 `KUBE_CONFIG_*` / `STAGING_BASE_URL` / `CANARY_BASE_URL` / `PROM_URL` 时显式报错，不静默跳过；
+- **dry_run**：手动触发默认只打印计划（`plan` + `preflight`），不接触任何集群；
+- **开关**：仓库变量 `RELEASE_ENABLED` 未设为 `true` 时，`notice` job 明确写出「未部署及原因」。
+
+### 5.3 金丝雀细则
+
+- 以**独立 Helm release** 承载（`admin-frame-canary`），不复用生产 release 名：
+  `Deployment.spec.selector` 不可变，改标签等于重建；独立 release 的 Service/Pod 名带 `-canary` 前缀，
+  网关可按权重切流，回滚只需卸载该 release；
+- 金丝雀**不执行迁移**（`migrate.enabled=false`）：迁移由生产 release 的 `pre-upgrade` Job 执行一次；
+- 金丝雀固定单副本、关闭 HPA/PDB/Ingress（`deploy/helm/admin-frame/values-canary.yaml`）；
+- 指标门禁先校验**请求速率下限**，避免「零流量 → 零错误 → 假绿」；指标按
+  `namespace + pod=~"<canary>-<workload>-.*"` 过滤，不与稳定版混算。
+
+### 5.4 回滚
+
+1. 优先让流水线的 `rollback` job 完成（卸载金丝雀 + `helm rollback <release> 0` + 冒烟）；  
+2. 自动化失败时按 runbook 人工执行（`helm history` → `helm rollback` → 冒烟）；  
+3. 若已执行不可逆 contract 迁移：按 DATA / runbook，**禁止**盲目 down；走数据修复预案；  
+4. 验证 `/readyz`、关键 RED 指标与业务冒烟；  
+5. 事后补 Postmortem（若构成事故）。
+
+详细命令见 [`docs/runbooks/release-rollback.md`](./runbooks/release-rollback.md)。
 
 ---
 
@@ -118,6 +155,8 @@ docker build --target admin-api \
 - 跳过 `/version` 字段注入的「纯手工」生产镜像。  
 - 未完成发布 Checklist 即变更生产流量。  
 - 在未就绪（`/readyz` 失败）时接入流量。  
+- 绕过迁移门禁手工 `helm upgrade`（`--atomic` 与 expand 校验同时失效）。  
+- 用「金丝雀零错误」作为放量依据而不校验其是否真的接到流量。  
 
 ---
 

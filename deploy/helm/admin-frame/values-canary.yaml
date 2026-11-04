@@ -1,0 +1,73 @@
+# 金丝雀发布值（ENT-17 / RELS-11）
+#
+# 用法：以**独立 release** 承载金丝雀，不复用生产 release 名：
+#
+#   helm upgrade --install admin-frame-canary deploy/helm/admin-frame \
+#     -n admin-frame \
+#     -f deploy/helm/admin-frame/values-prod.yaml \
+#     -f deploy/helm/admin-frame/values-canary.yaml \
+#     --set fullnameOverride=admin-frame-canary \
+#     --set image.digest=sha256:<64 hex> \
+#     --wait --atomic --timeout 10m
+#
+# 为什么是独立 release，而不是给生产 Deployment 打 canary 标签：
+#   1. `Deployment.spec.selector` 不可变，改标签等于重建工作负载（违反零中断发布）；
+#   2. 独立 release 的 Service / Pod 名天然带 `-canary` 前缀，网关可按权重把
+#      少量流量切到金丝雀 Service，回滚只需 `helm uninstall` 这个 release；
+#   3. 金丝雀与稳定版共用同一批 Secret（同环境凭据），但配置、副本与网络策略独立。
+#
+# 金丝雀**绝不**执行迁移：迁移由生产 release 的 pre-upgrade Job 完成一次；
+# 金丝雀再跑一遍会在并发情况下抢 advisory lock，且掩盖「迁移已在生产执行过」的事实。
+
+migrate:
+  enabled: false
+
+# 只保留被测端；其余端关闭。切换被测端用 --set workloads.<key>.enabled=true/false。
+workloads:
+  admin:
+    enabled: true
+    # 单副本：金丝雀只需要「能接流量、能被观测」，不需要扛容量。
+    replicas: 1
+    # StatefulSet 与单副本金丝雀语义冲突（ordinal 派生 node_id），强制 Deployment。
+    statefulset:
+      enabled: false
+    # 金丝雀不参与 HPA / PDB：副本数波动会让「单副本」结论失效。
+    autoscaling:
+      enabled: false
+    pdb:
+      enabled: false
+    # 不注册 Ingress：流量由网关/Ingress 控制器按权重指向金丝雀 Service，
+    # 避免金丝雀直接抢走生产域名流量。
+    ingress:
+      enabled: false
+  biz:
+    enabled: false
+    replicas: 1
+    statefulset:
+      enabled: false
+    autoscaling:
+      enabled: false
+    pdb:
+      enabled: false
+    ingress:
+      enabled: false
+  c:
+    enabled: false
+    replicas: 1
+    statefulset:
+      enabled: false
+    autoscaling:
+      enabled: false
+    pdb:
+      enabled: false
+    ingress:
+      enabled: false
+  worker:
+    enabled: false
+    replicas: 1
+    statefulset:
+      enabled: false
+    autoscaling:
+      enabled: false
+    pdb:
+      enabled: false

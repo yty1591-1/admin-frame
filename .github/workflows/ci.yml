@@ -315,7 +315,9 @@ jobs:
           curl -fsSL https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz | tar -xz
           echo "${PWD}/prometheus-2.55.1.linux-amd64" >> "${GITHUB_PATH}"
 
-      - name: Helm template + alert rules
+      - name: Helm template + alert rules + release gates
         run: |
           bash scripts/ci/check-deploy.sh
           bash scripts/ci/check-alerts.sh
+          # check-release 的金丝雀渲染断言需要 helm；本地 make ci 无 helm 时该段 SKIP。
+          bash scripts/ci/check-release.sh

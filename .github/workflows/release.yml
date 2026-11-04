@@ -1,0 +1,519 @@
+# 发布流水线（ENT-17 / RELEASE_STANDARDS §5）
+#
+# 触发：push `v*` tag（正式发布）、workflow_dispatch（演练，默认 dry_run）。
+# 阶段：plan → preflight（迁移门禁）→ digests → staging（审批）→ 金丝雀（审批）
+#       → 指标门禁 → 生产放量 → 失败自动回滚。
+#
+# 设计约束（改本文件须同步 docs/RELEASE_STANDARDS.md 与 check-release.sh）：
+#   1. **迁移先于代码**：preflight 的 check-migration-gate 不过，任何环境都不部署；
+#   2. **不可变引用**：所有 helm 参数用 `image.digest`（RELS-04），不用浮动 tag；
+#   3. **失败必回滚**：helm 用 `--atomic --wait`，另有 rollback job 兜底并卸载金丝雀；
+#   4. **金丝雀必须真接流量**：指标门禁先校验请求速率下限，避免「零流量假绿」；
+#   5. **缺凭据即失败**：未配置集群/指标凭据时显式报错，不静默跳过部署。
+#
+# 需要的仓库配置（Settings → Environments / Variables / Secrets）：
+#   Variables: RELEASE_ENABLED=true、IMAGE_REGISTRY、STAGING_BASE_URL、
+#              CANARY_BASE_URL、PROD_BASE_URL、PROM_URL、PROM_TOKEN(可空)
+#   Secrets:   KUBE_CONFIG_STAGING、KUBE_CONFIG_PRODUCTION、
+#              STAGING_MIGRATE_DSN（可选，开启 MG-07 探测）
+#   Environments: staging、production（均配置 required reviewers）
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 发布版本（不含 v 前缀，如 1.4.2）
+        required: true
+        type: string
+      service:
+        description: 金丝雀目标端
+        required: true
+        default: admin
+        type: choice
+        options: [admin, biz, c, worker]
+      dry_run:
+        description: 仅打印计划，不接触任何集群
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: read
+
+# 发布不可并发：两次升级交错会让「回滚到上一版本」指向错误 revision。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CHART: deploy/helm/admin-frame
+  NAMESPACE: ${{ vars.RELEASE_NAMESPACE || 'admin-frame' }}
+  RELEASE: admin-frame
+  CANARY_RELEASE: admin-frame-canary
+  REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+  IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE || 'admin-frame' }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      service: ${{ steps.plan.outputs.service }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      - name: Resolve release parameters
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SERVICE: ${{ inputs.service }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION}"
+            service="${INPUT_SERVICE:-admin}"
+            dry_run="${INPUT_DRY_RUN:-true}"
+          else
+            version="${REF_NAME#v}"
+            service="admin"
+            dry_run="false"
+          fi
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::版本号 '${version}' 不合法（应为 semver，如 1.4.2）"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "service=${service}" >> "${GITHUB_OUTPUT}"
+          echo "dry_run=${dry_run}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## 发布计划"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 版本 | ${version} |"
+            echo "| 金丝雀端 | ${service} |"
+            echo "| dry_run | ${dry_run} |"
+            echo "| 发布开关 | 见仓库变量 RELEASE_ENABLED（未开启时 notice job 会说明原因） |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  preflight:
+    name: preflight (migration gate)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 迁移门禁要与上一个 tag 比对「新增迁移」，浅克隆拿不到历史。
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Migration gate (expand-only, append-only)
+        run: |
+          set -euo pipefail
+          base="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo main)"
+          echo "migration base: ${base}"
+          bash scripts/ci/check-migration-gate.sh --base "${base}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Release static checks (RELS-01/02/03/09/10/11/12)
+        # preflight 安装 helm 是为了让 check-release 能真正渲染金丝雀值：
+        # 否则「canary values 写坏」要等到金丝雀阶段才发现。
+        run: bash scripts/ci/check-release.sh
+
+  digests:
+    name: resolve digests
+    needs: [plan, preflight]
+    if: needs.plan.outputs.dry_run != 'true' && vars.RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      admin: ${{ steps.digest.outputs.admin }}
+      biz: ${{ steps.digest.outputs.biz }}
+      c: ${{ steps.digest.outputs.c }}
+      worker: ${{ steps.digest.outputs.worker }}
+      migrate: ${{ steps.digest.outputs.migrate }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image digests
+        id: digest
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          # tag 触发的 image 流水线与本流水线并行启动：镜像可能尚未推送完成，
+          # 因此按「有限重试 + 明确报错」处理，而不是一次失败就判定发布失败。
+          for pair in "admin:admin-api" "biz:biz-api" "c:c-api" "worker:worker" "migrate:migrate"; do
+            key="${pair%%:*}"
+            cmd="${pair##*:}"
+            image="${REGISTRY}/${owner}/${cmd}:${VERSION}"
+            digest=""
+            for attempt in 1 2 3 4 5; do
+              digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')"
+              if printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+                break
+              fi
+              echo "    ${image} 尚未就绪（第 ${attempt}/5 次），20s 后重试"
+              sleep 20
+            done
+            if ! printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::${image} 的 digest 不可用：'${digest}'（确认 image 流水线已成功推送该 tag；RELS-04 要求不可变引用）"
+              exit 1
+            fi
+            echo "    ${image} -> ${digest}"
+            echo "${key}=${digest}" >> "${GITHUB_OUTPUT}"
+          done
+
+  staging:
+    name: staging deploy
+    needs: [plan, preflight, digests]
+    if: needs.plan.outputs.dry_run != 'true' && vars.RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBE_CONFIG_STAGING }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KUBECONFIG_B64:-}" ]; then
+            echo "::error::KUBE_CONFIG_STAGING 未配置；staging 发布不允许在无集群访问时静默通过"
+            exit 1
+          fi
+          mkdir -p "${HOME}/.kube"
+          printf '%s' "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Helm upgrade (staging, atomic)
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          D_ADMIN: ${{ needs.digests.outputs.admin }}
+          D_BIZ: ${{ needs.digests.outputs.biz }}
+          D_C: ${{ needs.digests.outputs.c }}
+          D_WORKER: ${{ needs.digests.outputs.worker }}
+          D_MIGRATE: ${{ needs.digests.outputs.migrate }}
+        run: |
+          set -euo pipefail
+          # --atomic：迁移 Job 或探针失败即回滚到上一 revision（T7 的流水线侧兑现）。
+          helm upgrade --install "${RELEASE}" "${CHART}" \
+            --namespace "${NAMESPACE}" --create-namespace \
+            -f "${CHART}/values-staging.yaml" \
+            --set image.registry="${REGISTRY}" \
+            --set image.namespace="${IMAGE_NAMESPACE}" \
+            --set image.tag="${VERSION}" \
+            --set workloads.admin.image.digest="${D_ADMIN}" \
+            --set workloads.biz.image.digest="${D_BIZ}" \
+            --set workloads.c.image.digest="${D_C}" \
+            --set workloads.worker.image.digest="${D_WORKER}" \
+            --set migrate.image.digest="${D_MIGRATE}" \
+            --atomic --wait --timeout 15m --history-max 10
+
+      - name: Post-deploy schema probe
+        env:
+          MIGRATE_DSN: ${{ secrets.STAGING_MIGRATE_DSN }}
+        run: |
+          set -euo pipefail
+          # secrets 不能出现在 step 的 if 里（GitHub 表达式限制），在脚本内判定并显式打印原因。
+          if [ -z "${MIGRATE_DSN:-}" ]; then
+            echo "SKIP: STAGING_MIGRATE_DSN 未配置，跳过部署后 schema 探测（MG-07）"
+            exit 0
+          fi
+          bash scripts/ci/check-migration-gate.sh --stage post
+
+      - name: Smoke (staging)
+        env:
+          BASE_URL: ${{ vars.STAGING_BASE_URL }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::STAGING_BASE_URL 未配置，无法执行发布冒烟"
+            exit 1
+          fi
+          bash scripts/ci/release-smoke.sh "${BASE_URL}" "${VERSION}"
+
+  canary:
+    name: canary (${{ needs.plan.outputs.service }})
+    needs: [plan, digests, staging]
+    if: needs.plan.outputs.dry_run != 'true' && vars.RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KUBECONFIG_B64:-}" ]; then
+            echo "::error::KUBE_CONFIG_PRODUCTION 未配置；生产发布不允许在无集群访问时静默通过"
+            exit 1
+          fi
+          mkdir -p "${HOME}/.kube"
+          printf '%s' "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Deploy canary release (single workload, no migration)
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SERVICE: ${{ needs.plan.outputs.service }}
+          D_ADMIN: ${{ needs.digests.outputs.admin }}
+          D_BIZ: ${{ needs.digests.outputs.biz }}
+          D_C: ${{ needs.digests.outputs.c }}
+          D_WORKER: ${{ needs.digests.outputs.worker }}
+        run: |
+          set -euo pipefail
+          case "${SERVICE}" in
+            admin) digest="${D_ADMIN}" ;;
+            biz) digest="${D_BIZ}" ;;
+            c) digest="${D_C}" ;;
+            worker) digest="${D_WORKER}" ;;
+            *) echo "::error::未知金丝雀端 '${SERVICE}'"; exit 1 ;;
+          esac
+          args=()
+          for key in admin biz c worker; do
+            if [ "${key}" = "${SERVICE}" ]; then value=true; else value=false; fi
+            args+=(--set "workloads.${key}.enabled=${value}")
+          done
+          # values-canary.yaml 已关闭 migrate / ingress / HPA / PDB，副本固定 1。
+          helm upgrade --install "${CANARY_RELEASE}" "${CHART}" \
+            --namespace "${NAMESPACE}" --create-namespace \
+            -f "${CHART}/values-prod.yaml" \
+            -f "${CHART}/values-canary.yaml" \
+            --set fullnameOverride="${CANARY_RELEASE}" \
+            --set image.registry="${REGISTRY}" \
+            --set image.namespace="${IMAGE_NAMESPACE}" \
+            --set image.tag="${VERSION}" \
+            --set "workloads.${SERVICE}.image.digest=${digest}" \
+            "${args[@]}" \
+            --atomic --wait --timeout 15m --history-max 5
+
+      - name: Smoke (canary)
+        env:
+          BASE_URL: ${{ vars.CANARY_BASE_URL }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::CANARY_BASE_URL 未配置；金丝雀必须有独立入口才能验证流量"
+            exit 1
+          fi
+          bash scripts/ci/release-smoke.sh "${BASE_URL}" "${VERSION}"
+
+      - name: Canary metric gate
+        env:
+          PROM_URL: ${{ vars.PROM_URL }}
+          PROM_TOKEN: ${{ vars.PROM_TOKEN }}
+          SERVICE: ${{ needs.plan.outputs.service }}
+        run: |
+          set -euo pipefail
+          # 只统计金丝雀 Pod：pod 名以 <release>-<workload>- 开头，稳定版不会混入。
+          export CANARY_EXTRA_SELECTOR="namespace=\"${NAMESPACE}\",pod=~\"${CANARY_RELEASE}-${SERVICE}-.*\""
+          bash scripts/ci/release-canary-gate.sh
+
+      - name: Record canary window
+        run: |
+          echo "金丝雀观察窗口 5m 通过指标门禁；后续 promote 将把同一 digest 推到全量。" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+  promote:
+    name: promote (full rollout)
+    needs: [plan, digests, canary]
+    if: needs.plan.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.kube"
+          printf '%s' "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Remove canary release (keep production clean)
+        run: helm uninstall "${CANARY_RELEASE}" --namespace "${NAMESPACE}" --ignore-not-found --wait
+
+      - name: Helm upgrade (production, atomic)
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          D_ADMIN: ${{ needs.digests.outputs.admin }}
+          D_BIZ: ${{ needs.digests.outputs.biz }}
+          D_C: ${{ needs.digests.outputs.c }}
+          D_WORKER: ${{ needs.digests.outputs.worker }}
+          D_MIGRATE: ${{ needs.digests.outputs.migrate }}
+        run: |
+          set -euo pipefail
+          helm upgrade --install "${RELEASE}" "${CHART}" \
+            --namespace "${NAMESPACE}" --create-namespace \
+            -f "${CHART}/values-prod.yaml" \
+            --set image.registry="${REGISTRY}" \
+            --set image.namespace="${IMAGE_NAMESPACE}" \
+            --set image.tag="${VERSION}" \
+            --set workloads.admin.image.digest="${D_ADMIN}" \
+            --set workloads.biz.image.digest="${D_BIZ}" \
+            --set workloads.c.image.digest="${D_C}" \
+            --set workloads.worker.image.digest="${D_WORKER}" \
+            --set migrate.image.digest="${D_MIGRATE}" \
+            --atomic --wait --timeout 20m --history-max 10
+
+      - name: Smoke (production)
+        env:
+          BASE_URL: ${{ vars.PROD_BASE_URL }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::PROD_BASE_URL 未配置，无法执行生产冒烟"
+            exit 1
+          fi
+          bash scripts/ci/release-smoke.sh "${BASE_URL}" "${VERSION}"
+
+      - name: Production metric gate
+        env:
+          PROM_URL: ${{ vars.PROM_URL }}
+          PROM_TOKEN: ${{ vars.PROM_TOKEN }}
+          SERVICE: ${{ needs.plan.outputs.service }}
+        run: |
+          set -euo pipefail
+          export CANARY_EXTRA_SELECTOR="namespace=\"${NAMESPACE}\",pod=~\"${RELEASE}-${SERVICE}-.*\""
+          bash scripts/ci/release-canary-gate.sh
+
+  rollback:
+    name: rollback
+    needs: [plan, canary, promote]
+    # 任一发布阶段失败即兜底：卸载金丝雀 + 确认生产处于上一良好 revision。
+    if: always() && needs.plan.outputs.dry_run != 'true' && (needs.canary.result == 'failure' || needs.promote.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.0
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.kube"
+          printf '%s' "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Drop canary release
+        run: helm uninstall "${CANARY_RELEASE}" --namespace "${NAMESPACE}" --ignore-not-found --wait || true
+
+      - name: Ensure production on last good revision
+        run: |
+          set -euo pipefail
+          # --atomic 已尝试自动回滚；这里显式兜底 `helm rollback <release> 0`
+          # （0 = 上一 revision），覆盖「升级成功但指标门禁失败」的场景。
+          helm history "${RELEASE}" --namespace "${NAMESPACE}" --max 5 || true
+          if ! helm rollback "${RELEASE}" 0 --namespace "${NAMESPACE}" --wait --timeout 10m; then
+            echo "::error::自动回滚失败，按 docs/runbooks/release-rollback.md 人工介入（P1）"
+            exit 1
+          fi
+
+      - name: Smoke after rollback
+        env:
+          BASE_URL: ${{ vars.PROD_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BASE_URL:-}" ]; then
+            bash scripts/ci/release-smoke.sh "${BASE_URL}"
+          fi
+
+      - name: Summarize incident
+        run: |
+          {
+            echo "## 发布已回滚"
+            echo ""
+            echo "- 版本：${{ needs.plan.outputs.version }}（金丝雀端 ${{ needs.plan.outputs.service }}）"
+            echo "- 处置：卸载 ${CANARY_RELEASE}，生产回滚到上一 revision"
+            echo "- 后续：按 docs/runbooks/release-rollback.md 记录时间线与根因，进入 Postmortem"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  notice:
+    name: skipped (release disabled)
+    needs: [plan, staging]
+    if: always() && (needs.plan.outputs.dry_run == 'true' || vars.RELEASE_ENABLED != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain why nothing was deployed
+        run: |
+          {
+            echo "## 未执行部署"
+            echo ""
+            if [ "${{ needs.plan.outputs.dry_run }}" = "true" ]; then
+              echo "- 原因：dry_run=true（演练模式）"
+            else
+              echo "- 原因：仓库变量 RELEASE_ENABLED 未设为 true"
+            fi
+            echo "- 本次只执行了 plan / preflight（迁移门禁 + 发布静态检查）"
+            echo "- 要真正部署：设置 RELEASE_ENABLED=true 并配置对应 Environment 与 Secrets"
+          } >> "${GITHUB_STEP_SUMMARY}"

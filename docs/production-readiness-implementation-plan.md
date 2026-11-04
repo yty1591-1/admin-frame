@@ -1,12 +1,12 @@
 # 生产级能力缺口实施规划（Production Readiness Implementation Plan）
 
-> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2
-> **定位**：把 `ENT-01`～`ENT-25` 的差距评估转化为**可执行、可验收、可回滚**的任务包；只规划平台级能力，不新增业务域功能
-> **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md) 同级
-> **适用范围**：`internal/`、`pkg/`、`cmd/`、`migrations/`、`deploy/`、`tests/`、`scripts/ci/`、`.github/`、`docs/`
-> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)
-> **执行方式**：每条 `ENT` 独立 MR；验收标准全绿 + `make ci` + 本条新增门禁通过 + 文档回写完成，方可标记关闭
-> **最后更新**：2026-10-22
+> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2  
+> **定位**：把 `ENT-01`～`ENT-25` 的差距评估转化为**可执行、可验收、可回滚**的任务包；只规划平台级能力，不新增业务域功能  
+> **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md) 同级  
+> **适用范围**：`internal/`、`pkg/`、`cmd/`、`migrations/`、`deploy/`、`tests/`、`scripts/ci/`、`.github/`、`docs/`  
+> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)  
+> **执行方式**：每条 `ENT` 独立 MR；验收标准全绿 + `make ci` + 本条新增门禁通过 + 文档回写完成，方可标记关闭  
+> **最后更新**：2026-10-22  
 > **变更方式**：调整波次、范围或验收标准须同步更新「十二、状态跟踪」与「执行记录」，经架构 Owner Review；P0 关闭须附验收命令与输出
 
 ---
@@ -33,14 +33,14 @@
 
 ### 1.1 上游输入
 
-| 项 | 内容 |
-|---|---|
-| 差距评估 | [`production-readiness-gaps.md`](./production-readiness-gaps.md) v0.2（2026-10-22） |
-| 代码基线 | `dad8fc0`（工作区干净；演示业务域已清理） |
-| 已完成的平台整改 | `platform-remediation-plan.md` PLAT-01～PLAT-15 全部完成 |
-| 已完成的 IAM | `rbac-iam.md` M0～M4.7；M5 生产加固进行中 |
-| 现有门禁 | `make ci` 23 个 target；`scripts/ci/` 20 个检查脚本 |
-| 现状结论 | 工程治理接近企业级，运行时能力仍是「单进程 + 内存 + 手工运维」骨架 |
+| 项        | 内容                                                                                |
+| -------- | --------------------------------------------------------------------------------- |
+| 差距评估     | [`production-readiness-gaps.md`](./production-readiness-gaps.md) v0.2（2026-10-22） |
+| 代码基线     | `dad8fc0`（工作区干净；演示业务域已清理）                                                         |
+| 已完成的平台整改 | `platform-remediation-plan.md` PLAT-01～PLAT-15 全部完成                               |
+| 已完成的 IAM | `rbac-iam.md` M0～M4.7；M5 生产加固进行中                                                  |
+| 现有门禁     | `make ci` 23 个 target；`scripts/ci/` 20 个检查脚本                                      |
+| 现状结论     | 工程治理接近企业级，运行时能力仍是「单进程 + 内存 + 手工运维」骨架                                              |
 
 ### 1.2 规划目标
 
@@ -52,36 +52,36 @@
 
 ### 1.3 成功判据
 
-| 阶段 | 判据 | 目标等级 |
-|---|---|---|
-| **E1 可生产灰度** | `ENT-01`～`ENT-08` 全部关闭；staging 多副本可运行；真实身份、异步底座、审计、备份、告警、部署闭环；`make ci` + 新增门禁全绿 | L2 |
-| **E2 可企业运营** | `ENT-09`～`ENT-18` 全部关闭；租户、通知、开关、数据范围、测试、发布、值班闭环 | L2+ |
-| **E3 规模化与合规** | `ENT-19`～`ENT-25` 按触发条件落地；有 SLO、演练记录与容量模型 | L3 |
+| 阶段            | 判据                                                                               | 目标等级 |
+| ------------- | -------------------------------------------------------------------------------- | ---- |
+| **E1 可生产灰度**  | `ENT-01`～`ENT-08` 全部关闭；staging 多副本可运行；真实身份、异步底座、审计、备份、告警、部署闭环；`make ci` + 新增门禁全绿 | L2   |
+| **E2 可企业运营**  | `ENT-09`～`ENT-18` 全部关闭；租户、通知、开关、数据范围、测试、发布、值班闭环                                  | L2+  |
+| **E3 规模化与合规** | `ENT-19`～`ENT-25` 按触发条件落地；有 SLO、演练记录与容量模型                                        | L3   |
 
 ### 1.4 不在规划范围
 
-| 项 | 原因 |
-|---|---|
-| 任何业务域功能（订单、文件、营销等） | 本规划只补平台底座；业务域另行立项 |
-| 微服务拆分、服务网格、多活 | 当前规模不成立，触发条件见 `ARCHITECTURE.md` §5.6 与差距评估 §7.3 |
-| 自建完整 IdP | 身份域只做账号映射与会话策略；优先复用组织 OIDC |
-| ABAC 表达式引擎、组织架构树 | 差距评估 `ENT-25` 明确暂缓，先立 ADR |
-| 低流量阶段引入 Kafka | 先用 DB Outbox 轮询满足可靠性，容量触发后再换 broker |
+| 项                  | 原因                                              |
+| ------------------ | ----------------------------------------------- |
+| 任何业务域功能（订单、文件、营销等） | 本规划只补平台底座；业务域另行立项                               |
+| 微服务拆分、服务网格、多活      | 当前规模不成立，触发条件见 `ARCHITECTURE.md` §5.6 与差距评估 §7.3 |
+| 自建完整 IdP           | 身份域只做账号映射与会话策略；优先复用组织 OIDC                      |
+| ABAC 表达式引擎、组织架构树   | 差距评估 `ENT-25` 明确暂缓，先立 ADR                       |
+| 低流量阶段引入 Kafka      | 先用 DB Outbox 轮询满足可靠性，容量触发后再换 broker             |
 
 ### 1.5 不可违背的既存约束
 
 以下约束来自现有架构与标准，规划与实施均不得突破：
 
-| 约束 | 来源 | 落地检查 |
-|---|---|---|
-| API 进程**禁止**自动执行数据库迁移 | `DATA_STANDARDS`、`check-migrations.sh` | 迁移只允许 `cmd/migrate` 与部署 Job 执行 |
-| 生产 `iam.mode` 必须为 `enforce` | 项目硬约束、配置 `Validate` | `check-config` + 启动校验 |
-| 高风险 IAM 直写在 `iam.approval.enabled=true` 时必须转审批单 | IAM M5 实现 | 单测 + 配置校验 |
-| 生产 IAM 必须使用持久化数据库驱动 + Redis 缓存 + Outbox | 配置 `Validate` | 启动失败关闭 |
-| 禁止明文密钥进入仓库、日志、镜像 | `SECURITY_STANDARDS` SEC-01/05 | gitleaks + 配置脱敏 + 镜像扫描 |
-| 三端身份隔离（issuer / audience / 密钥） | `SECURITY_STANDARDS` SEC-04 | 跨端令牌必须 401 |
-| `transport` 不得依赖 `internal/platform`；`platform` 不得依赖业务域 | `ARCHITECTURE.md` §6.1 | `check-layering` + depguard |
-| 演示域代码不得回流 | 项目硬约束 | 新增包不得出现 `order` / `file` 演示语义 |
+| 约束                                                      | 来源                                     | 落地检查                           |
+| ------------------------------------------------------- | -------------------------------------- | ------------------------------ |
+| API 进程**禁止**自动执行数据库迁移                                   | `DATA_STANDARDS`、`check-migrations.sh` | 迁移只允许 `cmd/migrate` 与部署 Job 执行 |
+| 生产 `iam.mode` 必须为 `enforce`                             | 项目硬约束、配置 `Validate`                    | `check-config` + 启动校验          |
+| 高风险 IAM 直写在 `iam.approval.enabled=true` 时必须转审批单         | IAM M5 实现                              | 单测 + 配置校验                      |
+| 生产 IAM 必须使用持久化数据库驱动 + Redis 缓存 + Outbox                 | 配置 `Validate`                          | 启动失败关闭                         |
+| 禁止明文密钥进入仓库、日志、镜像                                        | `SECURITY_STANDARDS` SEC-01/05         | gitleaks + 配置脱敏 + 镜像扫描         |
+| 三端身份隔离（issuer / audience / 密钥）                          | `SECURITY_STANDARDS` SEC-04            | 跨端令牌必须 401                     |
+| `transport` 不得依赖 `internal/platform`；`platform` 不得依赖业务域 | `ARCHITECTURE.md` §6.1                 | `check-layering` + depguard    |
+| 演示域代码不得回流                                               | 项目硬约束                                  | 新增包不得出现 `order` / `file` 演示语义  |
 
 ---
 
@@ -100,13 +100,13 @@
 
 ### 2.2 波次划分
 
-| 波次 | 范围 | 出口标准 | 备注 |
-|---|---|---|---|
-| **Wave 0 基座准备** | `ENT-16` 前置切片（`pkg/testkit` + `tests/integration` 骨架 + docker compose 依赖）、门禁脚本骨架、配置示例扩充 | 本地一条命令拉起 MySQL / Redis / MinIO；集成测试可运行；新增门禁可空跑 | 不改变运行时语义，先让后续任务「可验证」 |
-| **Wave 1 运行时闭环** | `ENT-02`、`ENT-03`、`ENT-01`、`ENT-04` | 多副本 ID / 幂等 / 限流共享；通用 Outbox 与消费运行时；登录 / 刷新 / 登出 / 撤销；审计可查询 | 主线 A，E1 核心 |
-| **Wave 2 交付闭环** | `ENT-05`、`ENT-06`、`ENT-07`、`ENT-08` | Helm 三环境可渲染；告警 / 看板 / SLO 代码化；密钥托管与轮换；备份与恢复演练 | 主线 B，可与 Wave 1 并行 |
-| **Wave 3 企业运营** | `ENT-09`～`ENT-15` | 租户、数据范围、通知、开关、韧性、配额、数据生命周期 | 主线 C，E2 |
-| **Wave 4 规模化治理** | `ENT-17`、`ENT-18`、`ENT-19`～`ENT-25` | CD、值班、供应链、边缘、容量、多区域按需 | 仅触发条件成立后启动 |
+| 波次               | 范围                                                                                      | 出口标准                                                        | 备注                   |
+| ---------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------- |
+| **Wave 0 基座准备**  | `ENT-16` 前置切片（`pkg/testkit` + `tests/integration` 骨架 + docker compose 依赖）、门禁脚本骨架、配置示例扩充 | 本地一条命令拉起 MySQL / Redis / MinIO；集成测试可运行；新增门禁可空跑              | 不改变运行时语义，先让后续任务「可验证」 |
+| **Wave 1 运行时闭环** | `ENT-02`、`ENT-03`、`ENT-01`、`ENT-04`                                                     | 多副本 ID / 幂等 / 限流共享；通用 Outbox 与消费运行时；登录 / 刷新 / 登出 / 撤销；审计可查询 | 主线 A，E1 核心           |
+| **Wave 2 交付闭环**  | `ENT-05`、`ENT-06`、`ENT-07`、`ENT-08`                                                     | Helm 三环境可渲染；告警 / 看板 / SLO 代码化；密钥托管与轮换；备份与恢复演练               | 主线 B，可与 Wave 1 并行    |
+| **Wave 3 企业运营**  | `ENT-09`～`ENT-15`                                                                       | 租户、数据范围、通知、开关、韧性、配额、数据生命周期                                  | 主线 C，E2              |
+| **Wave 4 规模化治理** | `ENT-17`、`ENT-18`、`ENT-19`～`ENT-25`                                                     | CD、值班、供应链、边缘、容量、多区域按需                                       | 仅触发条件成立后启动           |
 
 ### 2.3 依赖关系
 
@@ -155,35 +155,35 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 ### 3.1 新增包的目录与分层归属
 
-| 能力 | 新增路径 | 分层职责 | 禁止事项 |
-|---|---|---|---|
-| 身份域 `ENT-01` | `internal/identity/{domain,app,infrastructure,transport}` | 账号、凭据、会话、MFA、登录审计 | 不得 import `internal/platform`；不得承载 IAM 权限规则 |
-| 审计存储 `ENT-04` | `internal/auditlog/{app,infrastructure,transport}` | 审计落库、查询、导出、保留 | 事件模型继续复用 `internal/shared/audit` |
-| 秘钥托管 `ENT-07` | `internal/platform/secrets/` | `Provider` 接口与 env/file/vault/kms 实现 | 接口定义在消费侧；实现不得被业务域直接引用 |
-| 租户域 `ENT-09` | `internal/tenant/{domain,app,infrastructure,transport}` | 租户生命周期、配额、成员 | 不得复制 IAM 角色模型 |
-| 通知中心 `ENT-10` | `internal/notification/{domain,app,infrastructure}` | 模板、偏好、投递编排、状态 | 渠道实现继续用 `pkg/sms` / `email` / `push` / `webhook` |
-| 特性开关 `ENT-11` | `internal/featureflag/{domain,app,infrastructure,transport}` | 规则、灰度、审计、到期清理 | 不得读取业务域内部状态 |
-| 异步运行时 `ENT-03` | `pkg/outbox`、`pkg/mq`、`internal/platform/async.go`、`internal/platform/async_nats.go` | Relay、消费注册、重试、DLQ、指标、JetStream 适配 | `pkg/` 不得 import `internal/` |
-| 测试基座 `ENT-16` | `pkg/testkit/`、`tests/integration/`、`tests/e2e/` | 容器化依赖、测试数据、E2E 驱动 | 不得依赖固定端口、固定路径、真实云凭据 |
+| 能力             | 新增路径                                                                                 | 分层职责                                 | 禁止事项                                             |
+| -------------- | ------------------------------------------------------------------------------------ | ------------------------------------ | ------------------------------------------------ |
+| 身份域 `ENT-01`   | `internal/identity/{domain,app,infrastructure,transport}`                            | 账号、凭据、会话、MFA、登录审计                    | 不得 import `internal/platform`；不得承载 IAM 权限规则      |
+| 审计存储 `ENT-04`  | `internal/auditlog/{app,infrastructure,transport}`                                   | 审计落库、查询、导出、保留                        | 事件模型继续复用 `internal/shared/audit`                 |
+| 秘钥托管 `ENT-07`  | `internal/platform/secrets/`                                                         | `Provider` 接口与 env/file/vault/kms 实现 | 接口定义在消费侧；实现不得被业务域直接引用                            |
+| 租户域 `ENT-09`   | `internal/tenant/{domain,app,infrastructure,transport}`                              | 租户生命周期、配额、成员                         | 不得复制 IAM 角色模型                                    |
+| 通知中心 `ENT-10`  | `internal/notification/{domain,app,infrastructure}`                                  | 模板、偏好、投递编排、状态                        | 渠道实现继续用 `pkg/sms` / `email` / `push` / `webhook` |
+| 特性开关 `ENT-11`  | `internal/featureflag/{domain,app,infrastructure,transport}`                         | 规则、灰度、审计、到期清理                        | 不得读取业务域内部状态                                      |
+| 异步运行时 `ENT-03` | `pkg/outbox`、`pkg/mq`、`internal/platform/async.go`、`internal/platform/async_nats.go` | Relay、消费注册、重试、DLQ、指标、JetStream 适配    | `pkg/` 不得 import `internal/`                     |
+| 测试基座 `ENT-16`  | `pkg/testkit/`、`tests/integration/`、`tests/e2e/`                                     | 容器化依赖、测试数据、E2E 驱动                    | 不得依赖固定端口、固定路径、真实云凭据                              |
 
 > 目录归属在实施时若需调整，须在本文件与 `ARCHITECTURE.md` §5 同 MR 更新；**禁止**继续把新能力塞进 `internal/platform`（PLAT-15 的拆分触发条件仍有效）。
 
 ### 3.2 代码规范（S-01～S-12）
 
-| 约束 | 在本规划中的落地方式 |
-|---|---|
-| S-01 格式 | 每个 MR 执行 `make fmt-check`；禁止手调对齐 |
-| S-02 命名 | 包名单数小写；`identity` 而非 `accounts`；实现 `mysqlAccountRepository`；事件 `AccountLocked` |
-| S-03 签名 | 所有用例 / 仓储入口 `ctx context.Context` 第一参数，`error` 最后返回 |
-| S-04 context key | 身份、租户、数据范围使用未导出 key 类型，禁止字符串 key |
-| S-05 错误早返回 | 认证 / 审计失败路径一律早返回，禁止嵌套成功分支 |
-| S-06 导入 | 禁止点导入；`pkg/storage/all` 类副作用导入必须注释 |
-| S-07 接口位置 | `RevocationChecker`、`SecretProvider`、`OutboxStore` 接口定义在消费侧 |
-| S-08 panic | 运行路径禁止 panic；仅允许 `Must*` 且须注释适用场景 |
-| S-09 导出 | 禁止导出未导出类型；DTO 与领域对象分离 |
-| S-10 忽略 error | `_ =` 必须注释原因；关键路径（审计、令牌撤销）禁止忽略 |
-| S-11 复杂度 | 单函数 ≤ 80 行、圈复杂度建议 ≤ 15；认证 / 消费运行时逻辑拆分 |
-| S-12 并发 | Relay / 消费者 goroutine 必须 `ctx` 可取消、退出可汇合；禁止请求路径裸飞 goroutine |
+| 约束               | 在本规划中的落地方式                                                                     |
+| ---------------- | ------------------------------------------------------------------------------ |
+| S-01 格式          | 每个 MR 执行 `make fmt-check`；禁止手调对齐                                               |
+| S-02 命名          | 包名单数小写；`identity` 而非 `accounts`；实现 `mysqlAccountRepository`；事件 `AccountLocked` |
+| S-03 签名          | 所有用例 / 仓储入口 `ctx context.Context` 第一参数，`error` 最后返回                            |
+| S-04 context key | 身份、租户、数据范围使用未导出 key 类型，禁止字符串 key                                               |
+| S-05 错误早返回       | 认证 / 审计失败路径一律早返回，禁止嵌套成功分支                                                      |
+| S-06 导入          | 禁止点导入；`pkg/storage/all` 类副作用导入必须注释                                             |
+| S-07 接口位置        | `RevocationChecker`、`SecretProvider`、`OutboxStore` 接口定义在消费侧                    |
+| S-08 panic       | 运行路径禁止 panic；仅允许 `Must*` 且须注释适用场景                                              |
+| S-09 导出          | 禁止导出未导出类型；DTO 与领域对象分离                                                          |
+| S-10 忽略 error    | `_ =` 必须注释原因；关键路径（审计、令牌撤销）禁止忽略                                                 |
+| S-11 复杂度         | 单函数 ≤ 80 行、圈复杂度建议 ≤ 15；认证 / 消费运行时逻辑拆分                                          |
+| S-12 并发          | Relay / 消费者 goroutine 必须 `ctx` 可取消、退出可汇合；禁止请求路径裸飞 goroutine                    |
 
 **测试文件**：表驱动优先；`t.Helper()`；断言失败信息包含输入与期望；集成测试必须可用 build tag 或目录隔离。
 
@@ -199,14 +199,14 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 **生产强制项（由 `Validate` 拒绝启动）**：
 
-| 能力 | 强制项 |
-|---|---|
-| 身份 | `auth.mode=jwt`、`identity.revocation.failure_mode=fail_closed`、A 端 `identity.mfa.admin_required=true` |
-| 多实例 | 禁止默认 `NodeID=1`；`idempotency.driver=redis`；`rate_limit.driver=redis` |
-| 异步 | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`async.driver=nats` 时 `async.broker.url` 必须 `tls://`/`wss://`；`iam.mode=enforce` 时强制 `async.enabled=true` |
-| 审计 | `audit.store=db`；`audit.retention_days ≥ 180`；`audit.critical_fail_closed=true` |
-| 密钥 | `secrets.provider ∈ {vault, kms}`；禁止仅 env 注入生产密钥 |
-| 备份 | `backup.enabled=true`；`backup.retention_days > 0` |
+| 能力  | 强制项                                                                                                                                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 身份  | `auth.mode=jwt`、`identity.revocation.failure_mode=fail_closed`、A 端 `identity.mfa.admin_required=true`                                                             |
+| 多实例 | 禁止默认 `NodeID=1`；`idempotency.driver=redis`；`rate_limit.driver=redis`                                                                                              |
+| 异步  | `async.driver=db` 时 `async.outbox.publish_in_api=false`；`async.driver=nats` 时 `async.broker.url` 必须 `tls://`/`wss://`；`iam.mode=enforce` 时强制 `async.enabled=true` |
+| 审计  | `audit.store=db`；`audit.retention_days ≥ 180`；`audit.critical_fail_closed=true`                                                                                   |
+| 密钥  | `secrets.provider ∈ {vault, kms}`；禁止仅 env 注入生产密钥                                                                                                                  |
+| 备份  | `backup.enabled=true`；`backup.retention_days > 0`                                                                                                                 |
 
 ### 3.4 数据与迁移规范（DATA）
 
@@ -227,19 +227,21 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 ### 3.6 测试规范（TEST）
 
-| 层级 | 范围 | 运行方式 | 门槛 |
-|---|---|---|---|
-| 单元测试 | `domain` / `app` / 中间件 / 配置 | `go test -race ./...` | 新域 `domain` 覆盖率 ≥ 70%，`identity` / `auditlog` / `platform` ≥ 80% |
-| 集成测试 | 真实 MySQL / Redis / MinIO | `tests/integration/`，CI 独立 job | 关键路径必须有集成用例（登录、刷新、撤销、Outbox、审计查询） |
-| 契约测试 | 三端 OpenAPI | `make check-openapi` + 新增 schema 断言 | 破坏性变更必须在 `oasdiff` 中显式声明 |
-| E2E | 登录 → 核心写路径 → 查询 | `tests/e2e/`，nightly | 三端各 ≥ 1 条主链路 |
-| 演练 | 多副本、故障注入、恢复 | staging 手工 + 记录归档 | 每季度至少 1 次 |
+| 层级   | 范围                          | 运行方式                                | 门槛                                                               |
+| ---- | --------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+|      |                             |                                     |                                                                  |
+| 单元测试 | `domain` / `app` / 中间件 / 配置 | `go test -race ./...`               | 新域 `domain` 覆盖率 ≥ 70%，`identity` / `auditlog` / `platform` ≥ 80% |
+| 集成测试 | 真实 MySQL / Redis / MinIO    | `tests/integration/`，CI 独立 job      | 关键路径必须有集成用例（登录、刷新、撤销、Outbox、审计查询）                                |
+| 契约测试 | 三端 OpenAPI                  | `make check-openapi` + 新增 schema 断言 | 破坏性变更必须在 `oasdiff` 中显式声明                                         |
+| E2E  | 登录 → 核心写路径 → 查询             | `tests/e2e/`，nightly                | 三端各 ≥ 1 条主链路                                                     |
+| 演练   | 多副本、故障注入、恢复                 | staging 手工 + 记录归档                   | 每季度至少 1 次                                                        |
 
 - 新增测试不得依赖固定端口、固定路径、真实云凭据；容器端口由运行时分配。
 - 竞态敏感代码（Relay、限流、会话撤销）必须 `-race` 且包含并发用例。
 - 覆盖率门槛只允许上调，下调须 Owner 批准并记录 ADR。
 
 ### 3.7 可观测与可靠性（OBS / REL）
+
 
 - 每条新能力必须定义指标：至少包含请求量、错误量、时延或积压（RED / USE 择一）。
 - 关键依赖调用必须有超时与重试策略；禁止无超时 HTTP 客户端（REL-01）。
@@ -514,6 +516,7 @@ async:
 | T6 | 保留与归档 | worker 日任务：先写归档对象再按 ID 删除；legal hold / dry-run 优先 | `AC-ENT-04-2` |
 | T7 | 存储切换 | `audit.store=db`；`SlogEmitter` 保留为本地调试出口 | prod 禁止仅日志 |
 
+
 **配置规划**
 
 ```yaml
@@ -783,6 +786,8 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 7. **DSAR 不可硬删**：默认匿名化 / 软删除 + 法务保留；物理删除需审批与审计。
 8. **测试基座先行**：`ENT-16` 的 `testkit` 必须先于任何 P1 集成用例落地，避免每个域重复造轮子。
 
+
+
 ---
 
 ## 六、P2 任务包（ENT-19～ENT-25）
@@ -834,6 +839,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | `make check-backup` | ENT-08 | 脚本、CronJob、runbook、演练模板、保留期配置 | B | T2 / T3 |
 | `make check-e2e` | ENT-16 | 三端 E2E 存在且可运行 | C（nightly） | T3 |
 | `make check-load-baseline` | ENT-16 | 压测登记表 ↔ 执行器 ↔ 产物三方对账；孤儿产物；压测不得进默认门禁；k6 阈值与 `identity-slo.md` 一致 | A（已实现 2026-11-04） | T3 |
+| `make check-migration-gate` | ENT-17 | 迁移命名/配对、序号连续、append-only、expand-only、NOT NULL 需 DEFAULT、down 可逆、dirty 探测 | A（静态）+ C（含 DSN 探测） | ENT-17 |
 | `make check-sbom` | ENT-19 | 镜像 SBOM / 签名产物 | C（P2） | — |
 
 ### 7.3 门禁实施顺序
@@ -973,6 +979,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 
 ---
 
+
 ## 十二、状态跟踪与执行记录
 
 > 状态：`待做` / `进行中` / `已完成` / `暂缓`。完成须附验收证据链接或命令输出。
@@ -995,7 +1002,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-14 | P1 | Wave 3 | 完成（2026-11-04）——`tenant/app.QuotaEnforcer` 配额执行器：限流型资源（`api.rps` 约定键）按分键令牌桶扣减（键 `quota:{tenant}:{resource}[:{dimension}]`，channel/tenant/user/接口分键齐备），计数型资源 `Check` 静态校验；上限解析 配额行→默认值→不限（30s TTL 缓存防配额表热点），仓储/后端故障 fail-open（Redis 后端可用 failure_mode=fail_closed 收紧）；超限统一 42900 + Retry-After。多副本共享：`pkg/ratelimit.RedisKeyed` 增 `AllowNWithParams` 键级参数执行（Lua 原子不变，配额按租户异容量），tenantruntime 装配 Redis 后端；HTTP 守卫 `platform.WithQuotaGuard`（接口反转，包在 TenantGuard 内层——已停用租户不消耗配额判定），biz-api 注入。席位计数执行 T-13 已内联（同口径）。配额变更审计 T-13 已有（`tenant.quota_change`）。测试：执行器 5 用例（限流/不限与默认/Check/fail-open/维度分键）+ 守卫 4 用例（放行/429+Retry-After/fail-open/平台级跳过） | 分布式限流与租户配额 |
 | ENT-15 | P1 | Wave 3 | **主体完成（2026-11-04）**——PurgeService 五步证据链（扫描 ListDueForPurge → 导出证据校验（无 manifest 绝不裸删，SHA 一致性复核）→ 按边界顺序删除（租户四表 / IAM 商户角色与绑定 / identity 商户账号，级联 RESTRICT 表经 join 清理）→ `tenant.data_purge` 审计（EVENTS.md 登记）→ 处置报告）；迁移 000022 `tenant_export_manifest`（D-05 导出证据）；`tenant.retention.*` 配置（hold/export/batch/dry_run + validate 边界）；worker 周期任务（1h）；PII 分类分级登记 `docs/data-inventory.md`（P0–P3 六域全量登记 + DSAR 路径）；审计保留/归档/导出复用 ENT-04 既有件；测试：app 5 用例（证据铁律/审计字段/失败中止/证据损坏）+ 集成 2 用例 | 数据分类 / 保留 / 导出 / 删除 |
 | ENT-16 | P1 | Wave 0 / 3 | 完成（`pkg/testkit`（MySQL / Redis / Storage / Repo）+ `tests/integration/{async,iam,identity,multiinstance,smoke,tenant,notification,featureflag}` + `tests/load` 已落，2026-11-04 补齐通知 / featureflag 两域 MySQL 集成矩阵并偿还 ENT-10/11 挂账；同日补 `tests/contract`（OpenAPI ↔ 实现路由双向漂移检测，静态无依赖随 CI 全量跑；上线即修复 biz.yaml auth/login 断链与 3 条 B 端角色模板路由漏登，biz.yaml 6.2.0）；`tests/e2e` 三端主链路（真实二进制 × MySQL8 × Redis，探针 → 未认证拒绝 → 引导账号首登强制改密票据链 → 租户创建/读取 → 通道隔离，`make check-e2e` nightly，单轮 ~16s，含口令轮换幂等）；**压测基线登记已补（2026-11-04）**：`tests/e2e/load_baseline_test.go`（真实二进制 × MySQL × Redis，固定到达率压已认证读路径，产物 JSON 落 `tests/load/artifacts/`）+ 登记表 [perf/LOAD_BASELINES.md](./perf/LOAD_BASELINES.md)（本机 50/100/200/500 rps 四档实测 + staging k6 三场景待执行，不伪造数值）+ `make load-baseline`（手动）+ `make check-load-baseline`（登记一致性门禁，入 `make ci`；压测本身按 PERF-06 不进默认门禁）。**ENT-16 完成**） | 集成矩阵 + E2E + 契约 + 压测 |
-| ENT-17 | P1 | Wave 4 | 待做（仅 `.github/workflows/{ci,image}.yml`，无 `release.yml`） | CD + 迁移门禁 + 金丝雀 / 回滚 |
+| ENT-17 | P1 | Wave 4 | 完成（2026-11-04）——`.github/workflows/release.yml` 八阶段：`plan`（semver 校验）→ `preflight`（`check-migration-gate` + `check-release`）→ `digests`（按 `sha256:` 解析，禁止浮动 tag）→ `staging`（Environment 审批 + `--atomic --wait` + 冒烟 + 可选部署后 schema 探测）→ `canary`（独立 release 单副本 + 金丝雀冒烟 + 指标门禁）→ `promote`（全量 + 冒烟 + 生产指标门禁）→ `rollback`（卸载金丝雀 + `helm rollback <release> 0` + 回滚后冒烟）→ `notice`（关闭发布开关时的显式说明）。迁移门禁 `scripts/ci/check-migration-gate.sh`（MG-01～07：命名配对 / 序号连续 / append-only / expand-only / NOT NULL 需 DEFAULT / down 可逆或声明 / dirty 探测），已入 `make ci`；`values-canary.yaml`（独立 release、单副本、不跑迁移、无 Ingress/HPA/PDB）；`release-smoke.sh`（探针 / 版本一致 / 未认证 401）；`release-canary-gate.sh`（流量下限 + 5xx + p95，缺 `PROM_URL` fail closed）；`check-release.sh` 扩 RELS-09～12 并逐条证伪（少 `--atomic`、金丝雀开迁移、门禁脚本去掉 fail-closed、迁移门禁移到部署之后均被拦）。**遗留**：staging/production 集群凭据与 `RELEASE_ENABLED` 属仓库配置，未配置时流水线走 `notice` 并写明原因 | CD + 迁移门禁 + 金丝雀 / 回滚 |
 | ENT-18 | P1 | Wave 4 | 待做（runbook / `ALERTS.md` 已有；**缺 on-call 排班、P1/P2 分级矩阵、Postmortem 模板、Game Day**） | on-call + 分级 + 复盘 + 演练 |
 | ENT-19 | P2 | Wave 4 | 待做（无 SBOM / 签名 / DAST；触发条件：对外发布或客户安全评审） | SBOM / 签名 / DAST |
 | ENT-20 | P2 | Wave 4 | 待做（无 WAF / 网关 / mTLS 配置；触发条件：公网暴露或等保测评） | WAF / 网关 / mTLS / 安全头 |
@@ -1004,6 +1011,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-23 | P2 | Wave 4 | 待做（单区域单库；触发条件：可用性目标提升） | 读副本 / 多区域 / 切换演练 |
 | ENT-24 | P2 | Wave 4 | 待做（无 CDC / ETL；触发条件：运营分析或对账） | CDC / 数仓 / 报表 |
 | ENT-25 | P2 | — | 暂缓 | 先立 ADR，再评估 ABAC / 组织树 |
+
 
 ### 执行记录
 
@@ -1026,6 +1034,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | 2026-11-03 | ENT-09 收口：成员与配额 | 完成 | 迁移 `000011` 建 `tenant_member`（PK `(tenant_id, subject_id)`、停用不删除、`idx_tenant_member_role_status` 支撑 owner 计数）与 `tenant_quota`（PK `(tenant_id, resource)`、`limit_value=-1` 表示不限），外键级联到 `tenant`。domain 增 `Member`（owner/admin/member，角色与状态枚举）与 `Quota`（资源键限定 `a-z0-9._-`，防指标基数爆炸），「至少一名在册 owner」由应用层保证（SQL 无法表达跨行不变量）。仓储 memory + MySQL 双实现，`INSERT … ON DUPLICATE KEY UPDATE` 幂等且**不重置 `created_at`**；成员列表按 `FIELD(role,…)` 排序使 owner 在前。用例：`MemberService`（Add / List / SetRole / SetStatus，重复添加 409、停用后可复活并标 `reactivated`）、`QuotaService`（Set / List）；终态租户拒绝任何成员与配额变更。接口：5 个新路由，读沿用 `tenant:read`、写沿用 `tenant:write`（不另开 `tenant:member:*`，避免两个授权面）；`admin.yaml` 7.2.0 纯增量；`EVENTS.md` 增 5 个动作。验证：单测（成员 5 组 + 配额 1 组 + HTTP 2 组）、**真实 MySQL 集成用例 3 个全通过**（含成员排序 / 停用过滤 / 末位 owner 保护 / 配额不限量）、`golangci-lint` 0 issues、`check-openapi / check-migrations / check-audit / check-layering / check-doclinks / check-runbooks` 通过 |
 | 2026-11-04 | ENT-16 收尾：压测基线登记 | 完成 | 补齐 ENT-16 最后一项缺口（此前「缺压测基线登记」）。执行器：`tests/e2e/load_baseline_test.go`——复用 E2E 的进程编排（真实二进制 × MySQL 8 × Redis 7），以**固定到达率**（令牌间隔发放，闭路循环会被服务端时延反向钳制）压已认证读路径 `GET /admin/v1/tenants?page_size=20`，覆盖鉴权 → 权限快照 → 数据范围谓词 → 仓储 SQL → 信封序列化；预热 5s 丢弃、连接池 = 2×到达率、不走代理；产物 JSON 记录分位 / 成功率 / 错误数 / Go 版本 / CPU 数。**实测（DEV-01：Windows 11 / 12 vCPU / Go 1.26.10 / docker MySQL 8 + Redis 7 / loopback）**：50 rps → p50 3.17 / p95 6.37 / p99 8.78 ms；100 rps → 6.26 / 8.99；200 rps → 6.03 / 8.94；500 rps → 11.14 / 44.56（max 164ms，尾部拉长而非整体抬升）。样本 1000/1995/4000/7476，成功率 100%、5xx=0。判读：50～200 rps 近似平权（无排队），拐点在 200→500 之间且形态指向客户端与服务端争抢 CPU，应用层不是瓶颈；容量规划按 DB 连接预算 + 副本数推进（ENT-22 接手）。**没有压登录**：Argon2 成本随 CPU 核数剧烈波动，登录 / 刷新 / MFA 的 SLO 只登记 staging k6 读数（三行登记为「待执行」并留 `-` 产物位，**不填估算值**）。登记表 [perf/LOAD_BASELINES.md](./perf/LOAD_BASELINES.md)（环境规格 / 判读 / 复现命令 / 回归口径 p95 恶化 >30% 可疑 / MUST NOT）。门禁 `scripts/ci/check-load-baseline.sh`（入 `make ci`）六条：登记行格式与执行器真实性、通过行必须有产物且 `samples>0 / errors=0 / success_rate≥0.99`、孤儿产物、**压测不得进默认门禁**（按独立 target 词匹配，`check-load-baseline` 不误伤）、待执行行产物必须为 `-`、k6 阈值与 `identity-slo.md` §1 数值一致。三条已证伪（孤儿产物 / 把 `load-baseline` 塞进 ci / k6 阈值与 SLO 偏移）。验证：`make load-baseline` 四档实跑通过、`make check-load-baseline` 通过、`go vet ./tests/e2e/`、`golangci-lint` 0 issues |
 | 2026-11-04 | 门禁债清偿（压测基线落地时暴露） | 完成 | 为让 `make ci` 真正全绿，修掉 5 类历史欠账：① **domain 覆盖率**——audit/domain 64.3%→100%、featureflag/domain 67.6%→91.2%、notification/domain 56.7%→78.5%、tenant/domain 35.3%→94.9%（TEST-02 门槛 70%）；新增 6 个测试文件，覆盖成员/邀请/配额/套餐/导出证据/投递状态机/分桶单调性与均匀性，并补 `SeatLimitError.Unwrap` 与哨兵互斥断言。② **gitleaks**——`tests/e2e` 三处 JWT 字面量改为 `strings.Repeat` 构造（`e2eJWTSecret`），历史提交向量按既有惯例进 `.gitleaks.toml` 白名单并注明原因。③ **审计动作缺失**——`auth.tenant_switch` 只存在于 identity 本地常量，未进 `shared/audit` 目录与 `KnownActions`（AUD 铁律 + check-authn 失败）；补 `ActionAuthTenantSwitch` 并改用目录常量。④ **门禁静默失败**——`check-authn.sh` 的 `grep \| head \| sed` 在无匹配时被 `set -e` 直接终止，导致「常量缺失」表现为「无输出退出」；补 `\|\| true` 并证伪（删常量后能打印 ERROR）。⑤ **OpenAPI 契约断链**——B 端 paths 跨引 `schemas/admin`（notification / role templates），bundle 出现 Role / VersionInfo / SubjectTypePath 同名不同源冲突；下沉两份 schema 到 `schemas/biz`、修正 biz `Role.scope_type` 枚举（`admin`→`platform`，与 `iam/domain.RoleScopeType` 对齐），并新增 API-13 门禁（B/C 端不得引用 `schemas/admin`）；bundle 工具改为「先展开后比较 + 规范化 JSON 比较 + 忽略 example」，不再把注释/示例差异误判成冲突。验证：`make ci`（GOPROXY=goproxy.cn）全绿、`make check-e2e` 通过、`make load-baseline` 四档通过 |
+| 2026-11-04 | ENT-17 发布自动化与迁移门禁 | 完成 | `release.yml`（plan/preflight/digests/staging/canary/promote/rollback/notice）：迁移门禁先于任何 `helm upgrade`；镜像按 digest 部署；staging 与 production 均走 Environment 审批；`--atomic --wait` 覆盖全部三次 upgrade；指标门禁通过后才放量，失败由 `rollback` job 兜底（卸载金丝雀 + `helm rollback 0` + 回滚后冒烟）。迁移门禁 `check-migration-gate.sh` 七条（MG-01～07），已入 `make ci`，并逐条证伪：`DROP COLUMN`、`ADD COLUMN NOT NULL` 无默认值、删除既有迁移、缺 down 均被拦。金丝雀：`values-canary.yaml` 渲染实测 1 Deployment / replicas=1 / 0 Job / 0 Ingress / 0 HPA，digest 钉住；独立 release 规避 `Deployment.spec.selector` 不可变问题。冒烟 `release-smoke.sh` 与金丝雀门禁 `release-canary-gate.sh` 用本地假服务端验证：绿色放行、版本不符/5xx 超限/p95 超限/零流量均报错，`PROM_URL` 缺失时 fail closed。`check-release.sh` 扩 RELS-09～12（含 `--atomic` 计数校验，剔除注释行避免假通过）并证伪四条。文档回写：`RELEASE_STANDARDS` §5（流水线表 / 金丝雀细则 / 回滚）、`runbooks/release-rollback.md`（自动化处置 + 六步人工命令）、`release/CHECKLIST.md`。验证：`make check-release`、`make check-migration-gate`、`actionlint release.yml`（0 findings）、`make ci` 全绿 |
 | — | 后续条目关闭时在此追加 | — | 须附验收命令与输出、回滚结果、文档回写链接 |
 
 ---

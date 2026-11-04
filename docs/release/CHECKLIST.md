@@ -22,18 +22,23 @@
 
 - [ ] 本次为 expand / 无 DB 变更 / contract（择一）
 - [ ] 兼容顺序符合 DATA-05；contract 已确认无旧代码依赖
+- [ ] `Release` 流水线的 preflight 已通过（`check-migration-gate`：expand-only / append-only / dirty=false）
 - [ ] 回滚策略已写明（应用 digest / 是否禁止 down）
 
 ## 发布执行
 
-- [ ] staging 冒烟通过
+- [ ] `Release` 流水线由 `v*` tag 或 `workflow_dispatch`（dry_run 先演练一次）触发
+- [ ] staging 阶段冒烟通过（`release-smoke.sh`：探针 / 版本一致 / 未认证 401）
+- [ ] 金丝雀阶段指标门禁通过（流量下限 / 5xx / p95），且金丝雀确实接到流量
 - [ ] 生产 Deployment 使用 tag **且** digest（非 `latest`）
 - [ ] 就绪后再接流量（`/readyz`）
 - [ ] `/version` 显示预期 version/commit/build_time（非全 `dev`）
+- [ ] 金丝雀 release（`admin-frame-canary`）已在 promote 阶段卸载
 
 ## 回滚预备
 
-- [ ] 上一良好 digest 已备好
+- [ ] 上一良好 digest 已备好（`helm history admin-frame` 可查）
+- [ ] 确认流水线 `rollback` job 可用；否则按 runbook 手工 `helm rollback`
 - [ ] 已打开 [release-rollback.md](../runbooks/release-rollback.md)
 - [ ] 值班与升级频道已通知
 

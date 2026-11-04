@@ -53,6 +53,8 @@
 
 **许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检）+ `check-load-baseline.sh`（ENT-16：压测登记表 ↔ 执行器 ↔ 产物对账，**不重跑压测**；全链路压测本身按 PERF-06 仍为手动 / nightly）。
 
+**发布流水线（ENT-17，`.github/workflows/release.yml`）**：tag `v*` 或手动触发；`preflight` 先跑迁移门禁（`check-migration-gate.sh` 的 expand-only / append-only / dirty 检查），`staging` 与 `production` 均为 GitHub Environment（required reviewers），金丝雀阶段由 `release-canary-gate.sh` 校验流量下限与 5xx/p95，失败由 `rollback` job 自动卸载金丝雀并 `helm rollback`。缺凭据时显式失败，`RELEASE_ENABLED` 未开启时由 `notice` job 写明未部署原因。
+
 **发版镜像（不在 PR 必跑，见 §3.5）**：`image` job 在 push `main`/`master` 与 `v*` tag 时构建多架构镜像、推送并用 Trivy 扫描；命中 `CRITICAL/HIGH` 即失败，该 digest 不得上生产。
 
 **部署制品门禁（ENT-05/ENT-06）**：job `deploy` 安装 Helm + promtool，执行 `check-deploy.sh`（`helm lint`、三套 values `helm template`、明文密钥与 digest 断言）与 `check-alerts.sh`（告警目录 ↔ 规则 ↔ runbook ↔ 看板一致性）。
