@@ -101,6 +101,7 @@ func scanRoutes(root string) (map[string]bool, error) {
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
+			//nolint:gosec // G304: path 来自固定扫描根（internal / cmd）下的 WalkDir 结果，非用户输入。
 			content, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return rerr
@@ -207,6 +208,7 @@ func collectMethods(routes map[string]bool, path string, body map[string]yaml.No
 
 // loadYAML 读取并把文件解码为顶层映射节点。
 func loadYAML(path string) (map[string]yaml.Node, error) {
+	//nolint:gosec // G304: 路径来自固定 spec 清单与已解析的 $ref 目标，非用户输入。
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

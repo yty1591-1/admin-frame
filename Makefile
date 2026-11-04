@@ -196,6 +196,13 @@ check-tenant:
 check-authz:
 	bash scripts/ci/check-authz.sh
 
+# ENT-16：三端 E2E（真实二进制 + MySQL 8 + Redis；nightly / 本地手动）。
+# 不进 make ci——单轮约 15s 且依赖真实容器，PR 必跑门禁保持轻量。
+check-e2e:
+	@test -n "$$E2E_MYSQL_DSN" || (echo "E2E_MYSQL_DSN is required (mysql8, parseTime=true)" >&2; exit 1)
+	@test -n "$$E2E_REDIS_ADDR" || (echo "E2E_REDIS_ADDR is required (redis 7)" >&2; exit 1)
+	go test ./tests/e2e/ -count=1 -v
+
 # ENT-11：特性开关门禁——key 命名 / 审计对账 / 幽灵 key 扫描 / 到期治理
 # （feature-flag-plan.md §2.G）。
 check-featureflag:

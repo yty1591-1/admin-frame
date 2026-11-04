@@ -83,7 +83,7 @@ func TestAuditRetentionArchivesThenDeletes(t *testing.T) {
 		t.Fatalf("归档对象 = %d 个, want 3", len(listed.Items))
 	}
 	for _, item := range listed.Items {
-		archivedRows += countCSVRows(t, ctx, objects, item.Key)
+		archivedRows += countCSVRows(ctx, t, objects, item.Key)
 	}
 	if archivedRows != expired {
 		t.Fatalf("归档行数 = %d, want %d（归档内容与删除行数不符）", archivedRows, expired)
@@ -97,7 +97,7 @@ func TestAuditRetentionArchivesThenDeletes(t *testing.T) {
 }
 
 // countCSVRows 读取归档对象的数据行数（不含表头）。
-func countCSVRows(t *testing.T, ctx context.Context, objects storage.Store, key string) int {
+func countCSVRows(ctx context.Context, t *testing.T, objects storage.Store, key string) int {
 	t.Helper()
 	rc, _, err := objects.Get(ctx, key)
 	if err != nil {
