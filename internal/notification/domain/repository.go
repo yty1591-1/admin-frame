@@ -71,6 +71,9 @@ type DeliveryRepository interface {
 	ListByRequest(ctx context.Context, requestID string) ([]Delivery, error)
 	// Update 以 CAS 方式写入明细状态迁移结果（含 attempt 与诊断字段）。
 	Update(ctx context.Context, d Delivery) error
+	// FindByMessageID 按渠道消息 ID 定位明细（回执回调的对账键）；
+	// 不存在返回 ErrDeliveryNotFound。
+	FindByMessageID(ctx context.Context, channel Channel, messageID string) (Delivery, error)
 	// CountByStatus 按状态统计明细数（notify_delivery Gauge 数据源）。
 	CountByStatus(ctx context.Context) (map[DeliveryStatus]int, error)
 }

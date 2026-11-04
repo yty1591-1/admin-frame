@@ -55,13 +55,24 @@ func (s DeliveryStatus) Sent() bool {
 }
 
 // Terminal 判断是否终态：终态明细不再接受更新。
+//
+// accepted 刻意不算机器终态：有回执渠道（短信回执 / 未来邮件 DSN）需要
+// accepted → delivered | undelivered 的推进；无回执渠道不会再有回执到达，
+// accepted 在业务语义上等价终态，但状态机必须给回执留路。
 func (s DeliveryStatus) Terminal() bool {
 	switch s {
-	case DeliveryAccepted, DeliveryFailed, DeliveryDelivered, DeliveryUndelivered:
+	case DeliveryFailed, DeliveryDelivered, DeliveryUndelivered:
 		return true
 	default:
 		return false
 	}
+}
+
+// Settled 判断业务上是否已了结（编排器跳过重试的依据）：
+// Terminal 之外包含 accepted——无回执渠道受理即完成；有回执渠道的
+// delivered / undelivered 推进由回执路径单独处理，不走编排重试。
+func (s DeliveryStatus) Settled() bool {
+	return s.Terminal() || s == DeliveryAccepted
 }
 
 // deliveryTransitions 是投递明细状态机的唯一真相。

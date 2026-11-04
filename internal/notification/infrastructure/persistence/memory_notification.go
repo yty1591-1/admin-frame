@@ -8,6 +8,7 @@ package persistence
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
@@ -182,6 +183,21 @@ func (r *MemoryDeliveryRepository) Update(_ context.Context, d domain.Delivery) 
 	}
 	r.deliveries[key] = d
 	return nil
+}
+
+// FindByMessageID 按渠道消息 ID 定位明细（回执对账键）。
+func (r *MemoryDeliveryRepository) FindByMessageID(_ context.Context, channel domain.Channel, messageID string) (domain.Delivery, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if strings.TrimSpace(messageID) == "" {
+		return domain.Delivery{}, domain.ErrDeliveryNotFound
+	}
+	for _, d := range r.deliveries {
+		if d.Channel == channel && d.MessageID == messageID {
+			return d, nil
+		}
+	}
+	return domain.Delivery{}, domain.ErrDeliveryNotFound
 }
 
 // CountByStatus 按状态统计。

@@ -316,6 +316,14 @@ func (r *MySQLDeliveryRepository) Update(ctx context.Context, d domain.Delivery)
 	return nil
 }
 
+// FindByMessageID 按渠道消息 ID 定位明细（回执对账键）。
+func (r *MySQLDeliveryRepository) FindByMessageID(ctx context.Context, channel domain.Channel, messageID string) (domain.Delivery, error) {
+	row := r.handle.query(ctx).QueryRowContext(ctx,
+		`SELECT `+deliveryColumns+` FROM notification_delivery WHERE channel = ? AND message_id = ? LIMIT 1`,
+		string(channel), strings.TrimSpace(messageID))
+	return scanDelivery(row)
+}
+
 // CountByStatus 按状态统计（notify_delivery Gauge 数据源）。
 func (r *MySQLDeliveryRepository) CountByStatus(ctx context.Context) (map[domain.DeliveryStatus]int, error) {
 	rows, err := r.handle.query(ctx).QueryContext(ctx,

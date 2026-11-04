@@ -21,6 +21,8 @@ type AdminServices struct {
 	Replay *app.ReplayService
 	// Send 代发用例。
 	Send *app.SendService
+	// Receipts 回执处理用例（回调端点消费）。
+	Receipts *app.ReceiptService
 	// Dispatcher 生产侧出口（邀请通知适配等复用）。
 	Dispatcher *app.OutboxDispatcher
 }
@@ -69,11 +71,16 @@ func NewAdminServices(deps *platform.Deps) (*AdminServices, error) {
 	if err != nil {
 		return nil, fmt.Errorf("notification send: %w", err)
 	}
+	receipts, err := app.NewReceiptService(repos.requests, repos.deliveries, opts)
+	if err != nil {
+		return nil, fmt.Errorf("notification receipts: %w", err)
+	}
 	return &AdminServices{
 		Queries:    queries,
 		Templates:  templates,
 		Replay:     replay,
 		Send:       send,
+		Receipts:   receipts,
 		Dispatcher: dispatcher,
 	}, nil
 }

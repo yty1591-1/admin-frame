@@ -411,8 +411,8 @@ func (o *Orchestrator) deliverChannel(ctx context.Context, n domain.Notification
 		}
 		return apperr.Internal("load delivery failed", err)
 	}
-	if d.Status.Terminal() {
-		return nil // 续跑：该渠道已完成。
+	if d.Status.Settled() {
+		return nil // 续跑：该渠道业务已了结（accepted / 终态），回执推进走 ReceiptService。
 	}
 
 	// 频控：供应商配额 + 收件人配额；拒绝按可重试处理（退避后再试）。
