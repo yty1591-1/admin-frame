@@ -119,6 +119,8 @@ jobs:
     env:
       IAM_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
       TENANT_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
+      NOTIFY_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
+      FEATUREFLAG_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
