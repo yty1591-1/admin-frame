@@ -1,7 +1,7 @@
 # ENT-10 通知中心（投递编排）领域规划
 
-> **状态**：实施中 v1.1（NT-01～05、NT-08、NT-09 已落地；NT-06 API 面、NT-07 回执回调、NT-10 验证码收敛待做）
-> **实施记录**：迁移 000016（五表）+ 000017（邀请邮件模板种子）；`internal/notification` 五层齐备；worker 消费已注册；租户邀请邮件已接入（ADR-0008）
+> **状态**：主体完成 v1.2（NT-01～NT-10 全部落地；仅余 MySQL 集成用例与生产渠道驱动装配——依赖 ENT-16 testkit 基线）
+> **实施记录**：迁移 000016（五表）/ 000017（邀请邮件模板）/ 000018（权限点）/ 000019（回执对账索引）；`internal/notification` 五层 + transport（admin/biz/callback）齐备；worker 消费与 c-api 回执已装配；租户邀请邮件端到端接入；OpenAPI admin 8.0.0 / biz 6.1.0
 > **关联**：[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md)（ENT-10）、[`notification-channels.md`](./notification-channels.md)（渠道驱动，M4 即本文）、[`adr/0008-notification-event-driven.md`](./adr/0008-notification-event-driven.md)（编排决策）、[`runbooks/notification-delivery.md`](./runbooks/notification-delivery.md)（故障处置）
 > **规划日期**：2026-11-04
 > **目标读者**：后端 / 平台装配 / 安全 Review / SRE
