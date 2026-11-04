@@ -1,0 +1,113 @@
+# B 端角色模板（ENT-16 契约补登）：模板定义由平台维护，B 端只读并可
+# 实例化为本商户角色。权限与 admin 同源（iam:role:read / write），
+# 范围强制按 Principal 的 merchant_id 收窄。
+biz-v1-iam-role-templates:
+  get:
+    tags: [iam]
+    summary: 角色模板列表（B 端）
+    description: 需要 `iam:role:read`。仅返回本端（biz）可用模板；分页与关键字过滤与 A 端一致。
+    operationId: bizListIAMRoleTemplates
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: status
+        schema:
+          $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateStatus"
+      - in: query
+        name: keyword
+        description: 按模板码 / 名称模糊匹配
+        schema:
+          type: string
+      - $ref: "../../components.yaml#/components/parameters/Page"
+      - $ref: "../../components.yaml#/components/parameters/PageSize"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+biz-v1-iam-role-templates-by-id:
+  get:
+    tags: [iam]
+    summary: 角色模板详情（B 端）
+    description: 需要 `iam:role:read`。仅本端（biz）模板可见，跨端返回 404。
+    operationId: bizGetIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+biz-v1-iam-role-templates-by-id-instantiate:
+  post:
+    tags: [iam]
+    summary: 按模板实例化本商户角色（B 端）
+    description: >
+      需要 `iam:role:write`。把平台模板实例化为本商户（merchant 作用域）角色；
+      channel 固定为 biz、merchant_id 取自令牌，请求不可覆盖。模板停用时返回 409。
+    operationId: bizInstantiateIAMRoleTemplate
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/InstantiateTemplateRequest"
+    responses:
+      "201":
+        description: 已创建（返回本商户角色）
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/biz/iam-roles.yaml#/components/schemas/Role"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"

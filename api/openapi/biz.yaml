@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Biz API (B)
-  version: 6.1.0
+  version: 6.2.0
   description: |
     商家/企业端。数据范围强制 Token 内 `merchant_id`。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -41,13 +41,13 @@ paths:
   /version:
     $ref: './paths/biz/probe.yaml#/version'
   /biz/v1/auth/login:
+    $ref: './paths/biz/auth.yaml#/biz-v1-auth-login'
   /biz/v1/notifications:
     $ref: './paths/biz/notification.yaml#/biz-v1-notifications'
   /biz/v1/notifications/{id}:
     $ref: './paths/biz/notification.yaml#/biz-v1-notifications-by-id'
   /biz/v1/notifications/{id}/deliveries:
     $ref: './paths/biz/notification.yaml#/biz-v1-notifications-by-id-deliveries'
-    $ref: './paths/biz/auth.yaml#/biz-v1-auth-login'
   /biz/v1/auth/refresh:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-refresh'
   /biz/v1/auth/logout:
@@ -58,6 +58,12 @@ paths:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-tenant-switch'
   /biz/v1/me:
     $ref: './paths/biz/me.yaml#/biz-v1-me'
+  /biz/v1/iam/role-templates:
+    $ref: './paths/biz/iam-role-templates.yaml#/biz-v1-iam-role-templates'
+  /biz/v1/iam/role-templates/{id}:
+    $ref: './paths/biz/iam-role-templates.yaml#/biz-v1-iam-role-templates-by-id'
+  /biz/v1/iam/role-templates/{id}/instantiate:
+    $ref: './paths/biz/iam-role-templates.yaml#/biz-v1-iam-role-templates-by-id-instantiate'
   /biz/v1/iam/permissions:
     $ref: './paths/biz/iam-permissions.yaml#/biz-v1-iam-permissions'
   /biz/v1/iam/roles:
