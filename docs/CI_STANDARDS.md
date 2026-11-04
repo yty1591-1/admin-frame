@@ -93,12 +93,15 @@
 
 **服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN` / `TENANT_TEST_MYSQL_DSN`（两者指向同一 service 与库）；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
 
+**工具依赖（CI-05 补充）**：`check-oncall.sh` 的 OC-03 通过 `scripts/ops/paging_probe.py` 解析 Alertmanager 路由，该脚本依赖 PyYAML。版本钉在 `scripts/ci/requirements.txt`（`pyyaml==6.0.3`），GitHub `arch` job 在运行门禁前安装该文件。本地首次运行前执行一次 `make ci-deps`（优先创建仓库内 `.venv`，避免污染受 PEP 668 管理的系统 Python）；`check-oncall.sh` 会优先使用 `.venv` 解释器，并在缺少 PyYAML 时直接提示修复命令，不再以笼统的汇总结论失败。Gitee Go 的 `build@golang` 镜像未预装 PyYAML，若启用 `arch` step 须显式执行 `make ci-deps`（或等效安装），否则 OC-03 报 `ModuleNotFoundError: No module named 'yaml'`。
+
 ### 3.2 GitHub Actions
 
 - 触发：`push` / `pull_request` → `main`、`master`
 - 并行 job + `concurrency` 取消旧 run
 - `permissions: contents: read`
 - Go 版本：`actions/setup-go` 读取 `go.mod`
+- `arch` job 使用 runner 系统 Python；运行前钉扎安装 `pyyaml==6.0.3`，供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
 
 ### 3.3 Gitee Go
@@ -242,6 +245,7 @@ make ci
 | vuln | 升级依赖或官方缓解；否则 ADR + 风险接受后方可临时豁免 |
 | image（Trivy 命中） | 升级依赖 / 基础镜像到修复版本（如 grpc 补丁版、`alpine` 支持期内 minor）；**禁止**放宽 severity 或加 ignore 消警；确属不可触达且无修复走 ADR 豁免（含到期日） |
 | arch 跨端引用 | 删除错误 import；端能力只通过 app/domain 共享 |
+| arch OC-03 报 `ModuleNotFoundError: No module named 'yaml'` | 按 §3.1「工具依赖」安装钉扎版 PyYAML；禁止跳过路由断言 |
 | 平台 / 插件故障 | 可重跑；连续失败升级 Owner，不降低检查标准 |
 | Gitee Go 版本不足 | 换自建 Agent 或升级构建镜像，见 §3.3 |
 

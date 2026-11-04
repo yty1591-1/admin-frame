@@ -193,6 +193,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # check-oncall.sh 的 OC-03 通过 paging_probe.py 解析 Alertmanager 路由，
+      # 该脚本依赖 PyYAML；runner 系统 Python 未预装，需在此钉扎安装。
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet -r scripts/ci/requirements.txt
+
       - name: Arch gates (transport + DATA/REL/OBS)
         run: bash scripts/ci/gitee-job.sh arch
 

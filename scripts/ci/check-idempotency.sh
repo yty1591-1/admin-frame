@@ -21,10 +21,10 @@ else
 fi
 
 echo "==> ENT-02: config samples must declare id and idempotency"
-# 配置按端拆分后：端别差异在 configs/prod-<channel>.yaml，公共段（id / idempotency /
-# async）收敛到 configs/prod/modules/platform.yaml.example。先校验端样例存在，
-# 再校验公共段声明，避免继续引用已被重构掉的 configs/<channel>.yaml.example。
-for sample in configs/prod-admin.yaml configs/prod-biz.yaml configs/prod-c.yaml configs/prod-worker.yaml; do
+# 配置按端拆分后：端样例入库为 configs/prod/<channel>.yaml.example，本地运行配置
+# configs/prod-<channel>.yaml 被 .gitignore 排除，仅存在本地，CI 不得依赖。
+# 公共段（id / idempotency / async）收敛到 configs/prod/modules/platform.yaml.example。
+for sample in configs/prod/admin.yaml.example configs/prod/biz.yaml.example configs/prod/c.yaml.example configs/prod/worker.yaml.example; do
   if [[ ! -f "${sample}" ]]; then
     echo "ERROR: missing ${sample} (ENT-02)" >&2
     FAIL=1

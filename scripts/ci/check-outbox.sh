@@ -84,8 +84,10 @@ if [[ -f "${DOWN}" ]]; then
 fi
 
 echo "==> ENT-03: async config samples must be complete"
-# 配置按端拆分后 async 段收敛到公共模块，端别差异在 configs/prod-<channel>.yaml。
-for sample in configs/prod-admin.yaml configs/prod-biz.yaml configs/prod-c.yaml configs/prod-worker.yaml; do
+# 配置按端拆分后 async 段收敛到公共模块；端样例入库为
+# configs/prod/<channel>.yaml.example，本地运行配置 configs/prod-<channel>.yaml
+# 被 .gitignore 排除，仅存在本地，CI 不得依赖。
+for sample in configs/prod/admin.yaml.example configs/prod/biz.yaml.example configs/prod/c.yaml.example configs/prod/worker.yaml.example; do
   if [[ ! -f "${sample}" ]]; then
     echo "ERROR: missing ${sample} (ENT-03)" >&2
     FAIL=1
