@@ -102,14 +102,14 @@ func TestNewNotificationValidation(t *testing.T) {
 	expires := now.Add(time.Hour)
 
 	cases := []struct {
-		name    string
-		id      string
-		tenant  string
-		scene   string
-		ref     string
+		name     string
+		id       string
+		tenant   string
+		scene    string
+		ref      string
 		channels []Channel
-		key     string
-		wantErr error
+		key      string
+		wantErr  error
 	}{
 		{"ok", "n1", "t1", "tenant.invitation", "user-1", []Channel{ChannelEmail}, "tenant.invitation", nil},
 		{"no id", " ", "t1", "tenant.invitation", "user-1", []Channel{ChannelEmail}, "k", nil},
@@ -127,17 +127,19 @@ func TestNewNotificationValidation(t *testing.T) {
 			if tc.name == "bad priority" {
 				priority = Priority("urgent")
 			}
-			n, err := NewNotification(tc.id, tc.tenant, tc.scene, tc.ref, tc.channels, tc.key, "zh-CN", priority, expires, now)
+			n, err := NewNotification(tc.id, tc.tenant, tc.scene, tc.ref, "notify:test:"+tc.id, tc.channels, tc.key, "zh-CN", priority, expires, now)
+			isOk := tc.name == "ok"
+			softErr := tc.name == "no id" || tc.name == "bad scene charset" ||
+				tc.name == "inbox not implemented" || tc.name == "bad priority"
 			switch {
-			case tc.name == "ok":
+			case isOk:
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
 				if n.Status != RequestPending || n.Version != 1 || n.ExpiresAt != expires {
 					t.Fatalf("unexpected notification: %+v", n)
 				}
-			case tc.name == "no id" || tc.name == "bad scene charset" ||
-				tc.name == "inbox not implemented" || tc.name == "bad priority":
+			case softErr:
 				if err == nil {
 					t.Fatalf("expected error")
 				}
@@ -276,7 +278,7 @@ func TestBlacklistHMACShape(t *testing.T) {
 
 func mustNotification(t *testing.T, now time.Time) Notification {
 	t.Helper()
-	n, err := NewNotification("n1", "t1", "tenant.invitation", "user-1",
+	n, err := NewNotification("n1", "t1", "tenant.invitation", "user-1", "notify:tenant.invitation:inv-1",
 		[]Channel{ChannelEmail, ChannelSms}, "tenant.invitation", "zh-CN", PriorityNormal,
 		now.Add(time.Hour), now)
 	if err != nil {

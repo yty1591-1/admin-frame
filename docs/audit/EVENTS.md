@@ -64,7 +64,8 @@
 | `notification.preference.update` | A/B | 变更渠道偏好（含退订）；`attrs.subject_type` / `attrs.subject_id` / `attrs.scene_class` / `attrs.channel` / `attrs.enabled`；事务类场景退订被拒不落事件 | 通知 | 365d | active |
 | `notification.blacklist.add` | A | 加入渠道黑名单（投诉 / 退信 / 手工）；`attrs.channel` / `attrs.source` / `attrs.target_hmac`（仅摘要前 8 位，明文地址不入审计） | 通知 | 365d | active |
 | `notification.blacklist.remove` | A | 移除黑名单条目；`attrs.channel` / `attrs.target_hmac` | 通知 | 365d | active |
-| `notification.dlq.replay` | A | 重放死信通知（补偿动作，写操作）；`attrs.request_id`，重放生成新事件、保留原幂等键防重复 | 通知 | 365d | planned |
+| `notification.request.rejected` | system | 通知被拒发（黑名单 / 全渠道退订 / 过期 / 无可达地址）；`attrs.scene` / `attrs.semantic`，reason 记录逐渠道跳过原因 | 通知 | 365d | active |
+| `notification.dlq.replay` | A | 重放死信通知（补偿动作，写操作）；`attrs.scene` / `attrs.replay_request`，重放生成新事件与新通知单、新幂等键防重复，原请求保留为审计痕迹 | 通知 | 365d | active |
 | `notification.send` | A | 运营代发通知（`POST /admin/v1/notifications`）；`attrs.scene` / `attrs.channels` / `attrs.template_key`；收件人引用经 HMAC 脱敏 | 通知 | 365d | planned |
 | `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
 | `payment.refund` | B/C | 退款 | 资金 | 365d | planned |

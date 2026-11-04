@@ -12,23 +12,44 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
 // Observer 是通知域的可观测端口：编排埋点与审计失败计数经此上报，
 // 由 observability 包实现；nil 安全由构造保证（noop）。
+//
+// 全部标签取低基数枚举（渠道 / 语义码 / 状态），收件人等 PII
+// 一律不得进入标签（SEC：指标标签基数与脱敏双重约束）。
 type Observer interface {
 	// AuditEmitFailed 审计事件写出失败计数（Outbox 模式下非零即应告警）。
 	AuditEmitFailed()
+	// DeliveryObserved 渠道投递结果计数。
+	// result ∈ accepted | retrying | failed | degraded（主备切换）；
+	// provider 为实际供应商；semanticCode 仅 failed / retrying 非空。
+	DeliveryObserved(channel domain.Channel, provider, result, semanticCode string)
+	// RateLimited 频控拒绝计数（收件人键哈希不得入标签）。
+	RateLimited()
+	// RequestObserved 通知单状态落定计数（含 rejected / failed 终态）。
+	RequestObserved(scene string, status domain.RequestStatus)
 }
 
 // noopObserver 是 Observer 的空实现（单测 / 内存模式）。
 type noopObserver struct{}
 
+// AuditEmitFailed 实现 Observer（空操作）。
 func (noopObserver) AuditEmitFailed() {}
+
+// DeliveryObserved 实现 Observer（空操作）。
+func (noopObserver) DeliveryObserved(domain.Channel, string, string, string) {}
+
+// RateLimited 实现 Observer（空操作）。
+func (noopObserver) RateLimited() {}
+
+// RequestObserved 实现 Observer（空操作）。
+func (noopObserver) RequestObserved(string, domain.RequestStatus) {}
 
 func observerOrNoop(o Observer) Observer {
 	if o == nil {
@@ -117,12 +138,12 @@ func defaultChannel(channel string) string {
 	}
 }
 
-func truncate(s string, max int) string {
+func truncate(s string, limit int) string {
 	runes := []rune(strings.TrimSpace(s))
-	if len(runes) <= max {
+	if len(runes) <= limit {
 		return strings.TrimSpace(s)
 	}
-	return string(runes[:max])
+	return string(runes[:limit])
 }
 
 // translate 把领域错误翻译为 apperr 语义；已翻译的 apperr 原样透传。

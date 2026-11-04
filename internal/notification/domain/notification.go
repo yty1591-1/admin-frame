@@ -194,6 +194,9 @@ type Notification struct {
 	// RecipientRef 收件人引用：已注册主体用 subject_id，匿名目标
 	// （未注册邮箱 / 手机号）用加盐 HMAC——原始地址不落库。
 	RecipientRef string
+	// IdempotencyKey 幂等键（业务侧语义键，如 notify:tenant.invitation:inv-1）：
+	// 全局唯一，重复事件 / 重放 / 双副本并发在此收敛为一次受理。
+	IdempotencyKey string
 	// Channels 期望渠道（按优先顺序）；编排层可按路由配置裁剪。
 	Channels []Channel
 	// TemplateKey 模板键；渲染所需模板必须存在且 enabled。
@@ -270,7 +273,7 @@ func validateLocale(value string) error {
 //
 // 收件人引用由调用方完成脱敏（subject_id 或 HMAC），本构造器只做
 // 结构与取值校验；params 不经过领域层（见结构注释）。
-func NewNotification(id, tenantID, scene, recipientRef string, channels []Channel,
+func NewNotification(id, tenantID, scene, recipientRef, idempotencyKey string, channels []Channel,
 	templateKey, locale string, priority Priority, expiresAt time.Time, now time.Time) (Notification, error) {
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
@@ -299,6 +302,13 @@ func NewNotification(id, tenantID, scene, recipientRef string, channels []Channe
 	}
 	if len([]rune(trimmedRef)) > MaxRecipientRefLength {
 		return Notification{}, ErrRecipientTooLong
+	}
+	trimmedIdem := strings.TrimSpace(idempotencyKey)
+	if trimmedIdem == "" {
+		return Notification{}, ErrIdempotencyKeyRequired
+	}
+	if len([]rune(trimmedIdem)) > MaxIdempotencyKeyLength {
+		return Notification{}, ErrIdempotencyKeyTooLong
 	}
 	if len(channels) == 0 {
 		return Notification{}, ErrChannelRequired
@@ -340,19 +350,20 @@ func NewNotification(id, tenantID, scene, recipientRef string, channels []Channe
 	}
 
 	return Notification{
-		ID:           trimmedID,
-		TenantID:     trimmedTenant,
-		Scene:        trimmedScene,
-		RecipientRef: trimmedRef,
-		Channels:     normalized,
-		TemplateKey:  trimmedKey,
-		Locale:       trimmedLocale,
-		Priority:     priority,
-		Status:       RequestPending,
-		Version:      1,
-		ExpiresAt:    expiresAt.UTC(),
-		CreatedAt:    now.UTC(),
-		UpdatedAt:    now.UTC(),
+		ID:             trimmedID,
+		TenantID:       trimmedTenant,
+		Scene:          trimmedScene,
+		RecipientRef:   trimmedRef,
+		IdempotencyKey: trimmedIdem,
+		Channels:       normalized,
+		TemplateKey:    trimmedKey,
+		Locale:         trimmedLocale,
+		Priority:       priority,
+		Status:         RequestPending,
+		Version:        1,
+		ExpiresAt:      expiresAt.UTC(),
+		CreatedAt:      now.UTC(),
+		UpdatedAt:      now.UTC(),
 	}, nil
 }
 
@@ -372,6 +383,9 @@ func (n Notification) Validate() error {
 	}
 	if strings.TrimSpace(n.TenantID) == "" {
 		return ErrTenantIDRequired
+	}
+	if strings.TrimSpace(n.IdempotencyKey) == "" {
+		return ErrIdempotencyKeyRequired
 	}
 	if !n.Status.Valid() {
 		return fmt.Errorf("notification: unsupported status %q", n.Status)

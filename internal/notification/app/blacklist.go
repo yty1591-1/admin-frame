@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 

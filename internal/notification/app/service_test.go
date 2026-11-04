@@ -6,10 +6,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/internal/notification/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 

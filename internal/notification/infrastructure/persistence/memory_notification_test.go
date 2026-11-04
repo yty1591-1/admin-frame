@@ -22,7 +22,7 @@ func TestMemoryRequestRepositoryIdempotency(t *testing.T) {
 	if err := repo.Create(ctx, n); !errors.Is(err, domain.ErrDuplicateRequest) {
 		t.Fatalf("duplicate create: want ErrDuplicateRequest, got %v", err)
 	}
-	got, err := repo.FindByIdempotencyKey(ctx, n.ID)
+	got, err := repo.FindByIdempotencyKey(ctx, n.IdempotencyKey)
 	if err != nil {
 		t.Fatalf("FindByIdempotencyKey: %v", err)
 	}
@@ -82,15 +82,11 @@ func TestMemoryRequestRepositoryListFilter(t *testing.T) {
 	}
 }
 
-func newID(prefix string) (string, error) {
-	// ID 形态在本包测试里无关紧要，只要互异且非空。
-	return prefix + "-0001", nil
-}
-
 // mustNotification 在本包构造测试通知单（domain 包的 helper 不可跨包引用）。
 func mustNotification(t *testing.T, now time.Time, id string) domain.Notification {
 	t.Helper()
 	n, err := domain.NewNotification(id, "t1", "tenant.invitation", "user-1",
+		"notify:tenant.invitation:"+id,
 		[]domain.Channel{domain.ChannelEmail, domain.ChannelSms}, "tenant.invitation", "zh-CN",
 		domain.PriorityNormal, now.Add(time.Hour), now)
 	if err != nil {

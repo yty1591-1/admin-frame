@@ -36,7 +36,8 @@ func (r *MemoryRequestRepository) Create(_ context.Context, n domain.Notificatio
 	if _, exists := r.byKey[n.ID]; exists {
 		return domain.ErrDuplicateRequest
 	}
-	if key := idempotencyKey(n); key != "" {
+	key := n.IdempotencyKey
+	if key != "" {
 		if _, exists := r.byKey[key]; exists {
 			return domain.ErrDuplicateRequest
 		}
@@ -119,13 +120,6 @@ func (r *MemoryRequestRepository) List(_ context.Context, filter domain.RequestF
 // WithinTx 顺序执行（内存实现不提供事务语义）。
 func (r *MemoryRequestRepository) WithinTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
-}
-
-func idempotencyKey(n domain.Notification) string {
-	// v1 通知单以自身 ID 即幂等键的承载：事件重放携带同一 ID，
-	// 幂等键列与 ID 列当前同值；保留独立键位是为 A 端代发等
-	// 「调用方自定键」场景留演进空间。
-	return n.ID
 }
 
 // MemoryDeliveryRepository 是投递明细仓储的内存实现。

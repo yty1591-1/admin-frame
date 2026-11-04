@@ -23,6 +23,10 @@ var (
 	ErrRecipientRequired = errors.New("notification: recipient ref is required")
 	// ErrRecipientTooLong 收件人引用超长。
 	ErrRecipientTooLong = fmt.Errorf("notification: recipient ref must be at most %d characters", MaxRecipientRefLength)
+	// ErrIdempotencyKeyRequired 幂等键必填。
+	ErrIdempotencyKeyRequired = errors.New("notification: idempotency key is required")
+	// ErrIdempotencyKeyTooLong 幂等键超长。
+	ErrIdempotencyKeyTooLong = fmt.Errorf("notification: idempotency key must be at most %d characters", MaxIdempotencyKeyLength)
 	// ErrChannelRequired 期望渠道至少一个。
 	ErrChannelRequired = errors.New("notification: at least one channel is required")
 	// ErrTemplateKeyRequired 模板键必填。
