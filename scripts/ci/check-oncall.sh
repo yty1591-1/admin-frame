@@ -17,12 +17,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
-if command -v python3 >/dev/null 2>&1; then
+# 解释器优先级：CI_PYTHON 覆盖 > 仓库 .venv（make ci-deps）> python3 > python
+if [[ -n "${CI_PYTHON:-}" ]]; then
+  PY="${CI_PYTHON}"
+elif [[ -x ".venv/Scripts/python.exe" ]]; then
+  PY=".venv/Scripts/python.exe"
+elif [[ -x ".venv/bin/python3" ]]; then
+  PY=".venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
   PY=python3
 elif command -v python >/dev/null 2>&1; then
   PY=python
 else
   echo "ERROR: 需要 python3 或 python" >&2
+  exit 1
+fi
+
+# OC-03 依赖 PyYAML；缺失时立即给出可执行修复命令，避免只剩笼统的汇总结论。
+if ! "${PY}" -c "import yaml" >/dev/null 2>&1; then
+  echo "ERROR: ${PY} 缺少 PyYAML（OC-03 依赖），请执行：make ci-deps" >&2
+  echo "       或：${PY} -m pip install -r scripts/ci/requirements.txt" >&2
   exit 1
 fi
 

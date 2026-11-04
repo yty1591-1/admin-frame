@@ -10,6 +10,8 @@ coverage.out
 configs/**/*.yaml
 !configs/**/*.yaml.example
 .env
+# 本地 Python 工具环境（make ci-deps 创建），不得入库
+/.venv/
 # 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
 /tmp*
 .idea/

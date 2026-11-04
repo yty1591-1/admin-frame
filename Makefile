@@ -5,6 +5,7 @@ LDFLAGS := -s -w
 
 GOIMPORTS ?= $(GO) run golang.org/x/tools/cmd/goimports@v0.30.0
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
+PYTHON ?= python3
 
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
@@ -13,7 +14,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	check-migrations check-reliability check-observability \
 	check-git check-release check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci mock migrate-up vuln docker docker-admin docker-push ops-image
+        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -169,6 +170,11 @@ check-runbooks:
 # ENT-18（RB-08/09）：分级矩阵、告警路由、复盘模板、行动项、演练、交接。
 check-oncall:
 	bash scripts/ci/check-oncall.sh
+
+# 安装 CI 门禁所需的本地 Python 依赖（目前仅 PyYAML，供 OC-03 解析告警路由）。
+# 优先创建仓库内 .venv，避免污染受 PEP 668 管理的系统 Python；无 uv 时退回 venv + pip。
+ci-deps:
+	bash scripts/ci/ci-deps.sh
 
 # AUD-01/02/04：事件目录、字段字典、audit 包抽检。
 check-audit:
