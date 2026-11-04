@@ -1,0 +1,265 @@
+# ENT-10：通知管理端路径（查询 / 代发 / DLQ 补偿 / 模板管理）。
+
+admin-v1-notifications:
+  get:
+    tags: [notification]
+    summary: 查询通知单列表
+    description: |
+      需要 `notification:read`。`tenant_id` 缺省为平台哨兵（平台级通知视图）；
+      指定即跨租户查询。收件人在任何视图只以摘要（recipient_ref）出现。
+    operationId: adminListNotifications
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: tenant_id
+        schema:
+          type: string
+        description: 租户隔离键；缺省为平台级（platform）。
+      - in: query
+        name: scene
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [pending, dispatched, sent, delivered, undelivered, failed, rejected]
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          default: 0
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  post:
+    tags: [notification]
+    summary: 代发通知
+    description: |
+      需要 `notification:write`。运营显式触发一次通知；走与业务域同一 Outbox
+      出口（事件驱动，编排消费在 worker），代发动作写 `notification.send` 审计。
+      渲染失败 / 黑名单命中等在投递阶段判定，本接口返回 202 表示已受理。
+    operationId: adminSendNotification
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationSendRequest"
+    responses:
+      "202":
+        description: accepted
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationAccepted"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+
+admin-v1-notifications-by-id:
+  get:
+    tags: [notification]
+    summary: 查询通知单详情
+    description: 需要 `notification:read`。租户不匹配按 404 处理（不泄露存在性）。
+    operationId: adminGetNotification
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/Notification"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+admin-v1-notifications-by-id-deliveries:
+  get:
+    tags: [notification]
+    summary: 查询通知单逐渠道投递明细
+    description: 需要 `notification:read`。明细含供应商、尝试次数、失败语义码（已脱敏）。
+    operationId: adminListNotificationDeliveries
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/DeliveryListData"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+admin-v1-notifications-by-id-replay:
+  post:
+    tags: [notification]
+    summary: 重放失败通知（DLQ 补偿）
+    description: |
+      需要 `notification:write`。仅 failed 终态可重放；生成新事件与新通知单
+      （新幂等键防重复），原请求保留为审计痕迹。写 `notification.dlq.replay` 审计。
+    operationId: adminReplayNotification
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "202":
+        description: accepted
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationAccepted"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+
+admin-v1-notification-templates:
+  get:
+    tags: [notification]
+    summary: 查询模板版本历史
+    description: 需要 `notification:read`。按 `key` 列出全部版本（版本递增）。
+    operationId: adminListNotificationTemplates
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: key
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/TemplateListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+  post:
+    tags: [notification]
+    summary: 注册 / 更新模板
+    description: |
+      需要 `notification:write`。同 (key, channel, locale) 已存在时版本 +1；
+      渲染按版本锁定。占位符集合即变量白名单，投递期缺参 / 多参拒绝。
+      写 `notification.template.create` / `notification.template.update` 审计。
+    operationId: adminUpsertNotificationTemplate
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationTemplateUpsert"
+    responses:
+      "201":
+        description: created
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationTemplate"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+
+admin-v1-notification-templates-status:
+  put:
+    tags: [notification]
+    summary: 启用 / 停用模板
+    description: 需要 `notification:write`。停用的模板渲染直接 404（拒发留审计）。
+    operationId: adminSetNotificationTemplateStatus
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationTemplateStatus"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/Envelope"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"

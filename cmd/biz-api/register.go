@@ -5,8 +5,11 @@ import (
 
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	iambiz "github.com/admin-frame/admin-frame/internal/iam/transport/biz"
 	identitybiz "github.com/admin-frame/admin-frame/internal/identity/transport/biz"
+	notificationbiz "github.com/admin-frame/admin-frame/internal/notification/transport/biz"
+	notificationrest "github.com/admin-frame/admin-frame/internal/notification/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 )
 
@@ -21,6 +24,19 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamruntime.Runt
 	}
 	if identityRT != nil && identityRT.Handler != nil {
 		identitybiz.Register(mux, identityRT.Handler, deps.AuthMW)
+	}
+	// ENT-10：B 端通知查询（强制 CurrentTenant 隔离，无权限点）。
+	if services, err := notificationruntime.NewAdminServices(deps); err != nil {
+		return err
+	} else if services != nil {
+		handler, herr := notificationrest.NewHandler(notificationrest.HandlerConfig{
+			Queries: services.Queries,
+			Channel: "biz",
+		})
+		if herr != nil {
+			return herr
+		}
+		notificationbiz.Register(mux, handler, deps.AuthMW)
 	}
 	return nil
 }

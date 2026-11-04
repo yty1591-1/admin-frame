@@ -64,6 +64,8 @@
 | `identity:account:session` | admin | 否 | 活跃 | 撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更 |
 | `tenant:read` | admin | 否 | 活跃 | 查询租户列表与详情（含状态与状态原因）；不包含任何状态变更 |
 | `tenant:write` | admin | 否 | 活跃 | 创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计 |
+| `notification:read` | admin | 否 | 活跃 | 查询通知单、渠道投递明细与模板版本历史；正文与收件人明文不在任何视图暴露 |
+| `notification:write` | admin | 否 | 活跃 | 代发通知（notification.send 审计）、DLQ 死信补偿重放（notification.dlq.replay 审计）与模板注册 / 停用 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。

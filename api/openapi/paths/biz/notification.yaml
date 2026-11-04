@@ -1,0 +1,110 @@
+# ENT-10：B 端通知查询路径（强制 CurrentTenant 隔离，无权限点）。
+
+biz-v1-notifications:
+  get:
+    tags: [notification]
+    summary: 查询本租户通知列表
+    description: |
+      隔离约束：强制使用令牌内 current_tenant 过滤，不接受 tenant_id 参数。
+      收件人在任何视图只以摘要（recipient_ref）出现。
+    operationId: bizListNotifications
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: scene
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [pending, dispatched, sent, delivered, undelivered, failed, rejected]
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          default: 0
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+biz-v1-notifications-by-id:
+  get:
+    tags: [notification]
+    summary: 查询本租户通知详情
+    description: 租户不匹配按 404 处理（不泄露存在性）。
+    operationId: bizGetNotification
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/Notification"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+biz-v1-notifications-by-id-deliveries:
+  get:
+    tags: [notification]
+    summary: 查询本租户通知投递明细
+    description: 逐渠道投递状态（含失败语义码，已脱敏）。
+    operationId: bizListNotificationDeliveries
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/DeliveryListData"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"

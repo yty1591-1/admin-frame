@@ -375,6 +375,22 @@ var entries = []Entry{
 		Sort:        295,
 		Description: "创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计。",
 	},
+	{
+		Code:        iam.PermNotificationRead,
+		Name:        "查看通知",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        305,
+		Description: "查询通知单、渠道投递明细与模板版本历史；正文与收件人明文不在任何视图暴露。",
+	},
+	{
+		Code:        iam.PermNotificationWrite,
+		Name:        "管理通知",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        315,
+		Description: "代发通知（notification.send 审计）、DLQ 死信补偿重放（notification.dlq.replay 审计）与模板注册 / 停用。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。

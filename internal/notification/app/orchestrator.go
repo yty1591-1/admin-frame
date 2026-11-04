@@ -100,7 +100,7 @@ const (
 	SemanticChannelUnavailable = "channel_unavailable"
 )
 
-// 拒发审计动作（EVENTS.md notification.* 段；编排层唯一自发审计）。
+// ActionRequestRejected 拒发审计动作（EVENTS.md notification.* 段；编排层唯一自发审计）。
 const ActionRequestRejected = "notification.request.rejected"
 
 // 重试预算（按优先级）：耗尽后失败终态，补偿走 Replay（规划 §2.F）。

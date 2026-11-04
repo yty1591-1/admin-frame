@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Biz API (B)
-  version: 6.0.0
+  version: 6.1.0
   description: |
     商家/企业端。数据范围强制 Token 内 `merchant_id`。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -41,6 +41,12 @@ paths:
   /version:
     $ref: './paths/biz/probe.yaml#/version'
   /biz/v1/auth/login:
+  /biz/v1/notifications:
+    $ref: './paths/biz/notification.yaml#/biz-v1-notifications'
+  /biz/v1/notifications/{id}:
+    $ref: './paths/biz/notification.yaml#/biz-v1-notifications-by-id'
+  /biz/v1/notifications/{id}/deliveries:
+    $ref: './paths/biz/notification.yaml#/biz-v1-notifications-by-id-deliveries'
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-login'
   /biz/v1/auth/refresh:
     $ref: './paths/biz/auth.yaml#/biz-v1-auth-refresh'

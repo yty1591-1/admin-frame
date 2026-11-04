@@ -10,6 +10,8 @@ import (
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
+	notificationadmin "github.com/admin-frame/admin-frame/internal/notification/transport/admin"
+	notificationrest "github.com/admin-frame/admin-frame/internal/notification/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	tenantadmin "github.com/admin-frame/admin-frame/internal/tenant/transport/admin"
@@ -41,14 +43,28 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	if tenantRT != nil && tenantRT.Handler != nil {
 		tenantadmin.Register(mux, tenantRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
-	// ENT-10：邀请邮件接入——A 端只需要轻量 Dispatcher（编排消费在 worker）。
-	// async 未启用（单进程最小形态）时跳过注入，保持「只落库不发送」阶段语义。
-	if tenantRT != nil && deps.Async != nil {
-		dispatcher, derr := notificationruntime.NewDispatcher(deps)
-		if derr != nil {
-			return derr
+	// ENT-10：通知管理端（查询 / 代发 / DLQ 补偿 / 模板管理）+ 邀请邮件接入。
+	// A 端只需要轻量出口（编排消费在 worker）；async 未启用（单进程最小形态）
+	// 时整体跳过，租户邀请保持「只落库不发送」阶段语义。
+	services, err := notificationruntime.NewAdminServices(deps)
+	if err != nil {
+		return err
+	}
+	if services != nil {
+		if tenantRT != nil {
+			tenantRT.SetInvitationNotifier(notificationruntime.NewInvitationNotifier(services.Dispatcher, ""))
 		}
-		tenantRT.SetInvitationNotifier(notificationruntime.NewInvitationNotifier(dispatcher, ""))
+		notificationHandler, herr := notificationrest.NewHandler(notificationrest.HandlerConfig{
+			Queries:   services.Queries,
+			Templates: services.Templates,
+			Replay:    services.Replay,
+			Send:      services.Send,
+			Channel:   "admin",
+		})
+		if herr != nil {
+			return herr
+		}
+		notificationadmin.Register(mux, notificationHandler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
 }

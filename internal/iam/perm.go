@@ -94,4 +94,8 @@ const (
 	PermTenantRead PermissionCode = "tenant:read"
 	// PermTenantWrite 创建租户与变更租户状态（ENT-09）。
 	PermTenantWrite PermissionCode = "tenant:write"
+	// PermNotificationRead 查询通知与投递状态（ENT-10）。
+	PermNotificationRead PermissionCode = "notification:read"
+	// PermNotificationWrite 代发通知、DLQ 补偿重放与模板管理（ENT-10）。
+	PermNotificationWrite PermissionCode = "notification:write"
 )
