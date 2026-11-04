@@ -201,6 +201,11 @@ check-authz:
 check-featureflag:
 	bash scripts/ci/check-featureflag.sh
 
+# ENT-13：依赖韧性门禁——注册表接线 / 回调模板三件套 / 裸出站 HTTP 扫描
+# （RELIABILITY_STANDARDS.md §4.2 / §5.1）。
+check-resilience:
+	bash scripts/ci/check-resilience.sh
+
 # ENT-10 NT-08：通知域门禁——审计动作 ↔ EVENTS.md 对账、状态机矩阵快照、
 # 渠道包 internal 引用面扫描（ADR-0008 铁律）。
 check-notification:
@@ -246,7 +251,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-notification build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

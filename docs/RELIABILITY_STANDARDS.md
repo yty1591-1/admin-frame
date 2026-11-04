@@ -73,6 +73,8 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 
 - 下游持续失败时应快速失败，避免线程/连接池被打满。  
 - 关键路径使用独立连接池或配额（舱壁）。
+- **依赖注册表（ENT-13，2026-11-04）**：出站依赖（第三方 HTTP API / 渠道驱动等）在装配期按名登记到 `internal/platform/dependency`（`Spec{Name, Timeout, Retry, Breaker}`），运行期经 `Caller.Do` 执行——统一产出超时兜底、熔断快速失败与 `dependency_call_total{name,result}` / `dependency_retry_total` 指标。**禁止**绕过注册表新增裸出站调用（`check-deps.sh` DP-03 扫描；既有白名单：oauth 驱动、Vault 密钥读取——两者已各自端口化且有 fail-fast 语义）。
+- 重试语义对齐 §4.1：只有显式 `Retryable` 的错误触发重试；非幂等调用用 `retry.Permanent` 终止。
 
 ### 4.3 限流与错误码
 
@@ -97,6 +99,14 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | 内部重试 | 与上游幂等键或自然键对齐 |
 
 同一幂等键冲突且载荷不一致时，返回 `40900`，不得静默覆盖。
+
+### 5.1 第三方回调接入模板（ENT-13，参照实现：`internal/notification/transport/callback`）
+
+新增供应商回调端点**必须**满足三件套，缺一即 review 拒绝（`check-deps.sh` DP-02 静态断言既有实现）：
+
+1. **验签**：`pkg/webhook` 的 HMAC 签名 + 时间窗 + nonce 防重放；密钥缺失构造失败（禁止无验签的公开写端点）。
+2. **幂等**：按业务对账键（如 message_id）幂等吸收——重复 / 乱序回执不回退状态、对供应商返回 2xx（防重放风暴打爆公网入口）。
+3. **状态机**：回执推进走领域状态机白名单（`Transition`），单调不回退；未知对账键返回「已受理」语义（业务上不存在即可忽略），不返回内部错误细节。
 
 ---
 

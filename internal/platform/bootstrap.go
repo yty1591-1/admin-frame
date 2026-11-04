@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/platform/dependency"
+	dependencyobservability "github.com/admin-frame/admin-frame/internal/platform/dependency/observability"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -46,6 +48,10 @@ type Deps struct {
 	TenantGuard TenantGuard
 	// QuotaGuard 是租户 API 配额守卫（ENT-14）；nil 表示本端不执行配额。
 	QuotaGuard QuotaGuard
+	// Dependencies 是外部依赖注册表（ENT-13）：出站依赖（第三方 HTTP API
+	// 等）在装配期按名登记超时 / 重试 / 熔断，运行期经 Caller.Do 执行并
+	// 出指标。nil 仅出现在单测形态。
+	Dependencies *dependency.Registry
 	// TenantMembership 判定主体是否为租户在册成员（ENT-09 T-22 切换端点）；
 	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
 	TenantMembership TenantMembership
@@ -210,6 +216,17 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Health:     hh,
 		Background: background.add,
 	}
+	// ENT-13：外部依赖注册表——出站依赖统一登记（超时 / 重试 / 熔断 +
+	// dependency_* 指标）；指标缺失时 Observer 为 noop（app 层归一）。
+	var depObserver dependency.Observer
+	if met != nil {
+		obs, obsErr := dependencyobservability.NewMetrics(met.RegistererWithoutChannel())
+		if obsErr != nil {
+			return fmt.Errorf("dependency observability: %w", obsErr)
+		}
+		depObserver = obs
+	}
+	deps.Dependencies = dependency.NewRegistry(depObserver)
 
 	// 异步运行时必须先于身份运行时构造：身份域启用时审计写入 identity.audit Outbox，
 	// 装配期需要可见 deps.Async（禁用时为空操作）。
