@@ -44,6 +44,8 @@ type Deps struct {
 	RequirePermission auth.PermissionMiddleware
 	// TenantGuard 是租户状态守卫（ENT-09）；nil 表示本端不做租户校验。
 	TenantGuard TenantGuard
+	// QuotaGuard 是租户 API 配额守卫（ENT-14）；nil 表示本端不执行配额。
+	QuotaGuard QuotaGuard
 	// TenantMembership 判定主体是否为租户在册成员（ENT-09 T-22 切换端点）；
 	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
 	TenantMembership TenantMembership
@@ -85,6 +87,11 @@ type Options struct {
 	// 在 AuthMW 组装前调用：守卫是鉴权链的一环，必须与 AuthMW 一起装配，
 	// 否则「认证已通过但租户已停用」的请求会漏到业务处理器。
 	NewTenantGuard func(*Deps) (TenantGuard, error)
+	// NewQuotaGuard 构造租户 API 配额守卫（ENT-14）；返回 nil 表示本端不执行。
+	//
+	// 与 NewTenantGuard 同一批组装：配额守卫包在租户状态守卫内层，
+	// 已停用租户不应再消耗配额判定。
+	NewQuotaGuard func(*Deps) (QuotaGuard, error)
 	// NewAuthorizer 构造权限校验器；返回 nil 或 nil 函数时默认拒绝所有权限点（fail-closed）。
 	//
 	// 参数为已装配的平台能力（配置 / 数据库 / Redis / 指标 / 健康检查），
@@ -226,6 +233,16 @@ func Run(ctx context.Context, opts Options) (err error) {
 			deps.TenantGuard = guard
 		}
 	}
+	// ENT-14：API 配额守卫与租户状态守卫同批组装（中间件链内层）。
+	if opts.NewQuotaGuard != nil {
+		quota, quotaErr := opts.NewQuotaGuard(deps)
+		if quotaErr != nil {
+			return fmt.Errorf("quota guard: %w", quotaErr)
+		}
+		if quota != nil {
+			deps.QuotaGuard = quota
+		}
+	}
 
 	// 撤销检查必须在 AuthMW 构造前注入（docs/identity-authn.md §13.2）：
 	// 身份运行时同时持有仓储与撤销存储，登录态校验才能立即读取撤销状态。
@@ -250,6 +267,11 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if deps.TenantGuard != nil {
 		requireMerchant := deps.Config.Channel == "biz"
 		authMW = WithTenantGuard(authMW, deps.TenantGuard, requireMerchant)
+		// ENT-14：API 配额守卫包在租户状态守卫内层——已停用租户
+		// 在上一环就被 403，不应再消耗配额判定。
+		if deps.QuotaGuard != nil {
+			authMW = WithQuotaGuard(authMW, deps.QuotaGuard)
+		}
 	}
 	deps.AuthMW = authMW
 

@@ -86,10 +86,19 @@ func (r *RedisKeyed) Allow(key string) Result { return r.AllowN(key, 1) }
 
 // AllowN 原子扣减 n 个令牌；Redis 故障按 failure_mode 处理。
 func (r *RedisKeyed) AllowN(key string, n int) Result {
+	return r.AllowNWithParams(key, r.rps, r.burst, n)
+}
+
+// AllowNWithParams 以键级参数执行原子扣减：配额场景下每个租户的
+// 容量不同（ENT-14），无法在构造期固定 RPS / Burst。其余语义
+// （Lua 原子、服务端 TIME、键空闲过期、fail mode）与 AllowN 一致。
+//
+// 参数非法（rps<=0 / burst<1）时按 onFailure 处理，不 panic。
+func (r *RedisKeyed) AllowNWithParams(key string, rps float64, burst, n int) Result {
 	if n <= 0 {
 		n = 1
 	}
-	if r == nil || r.client == nil {
+	if r == nil || r.client == nil || rps <= 0 || burst < 1 {
 		return r.onFailure()
 	}
 	if key == "" {
@@ -98,7 +107,7 @@ func (r *RedisKeyed) AllowN(key string, n int) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	result, err := tokenBucketScript.Run(ctx, r.client.Redis(), []string{r.client.FullKey(r.keyPrefix + key)},
-		r.rps, r.burst, r.idleTTL.Milliseconds(), n).Result()
+		rps, burst, r.idleTTL.Milliseconds(), n).Result()
 	if err != nil {
 		return r.onFailure()
 	}
@@ -106,6 +115,11 @@ func (r *RedisKeyed) AllowN(key string, n int) Result {
 	if !ok || len(values) < 3 {
 		return r.onFailure()
 	}
+	return decodeTokenBucket(values)
+}
+
+// decodeTokenBucket 把 Lua 返回值解析为 Result。
+func decodeTokenBucket(values []any) Result {
 	allowed, _ := values[0].(int64)
 	remaining, _ := values[1].(int64)
 	retryRaw, _ := values[2].(string)
