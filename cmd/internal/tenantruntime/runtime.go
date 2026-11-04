@@ -105,6 +105,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 		Plans:           store.plans,
 		Members:         store.members,
 		Quotas:          store.quotas,
+		Approvals:       store.approvals,
 		Observer:        observer,
 		RoleSyncer:      roleSyncer,
 	})
@@ -219,6 +220,7 @@ type store struct {
 	quotas      domain.QuotaRepository
 	plans       domain.PlanRepository
 	invitations domain.InvitationRepository
+	approvals   domain.ApprovalRepository
 }
 
 // buildDeps 按数据库可用性选择仓储与审计出口。
@@ -229,7 +231,8 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	emitter := audit.Emitter(audit.SlogEmitter{Log: deps.Logger})
 	if deps.Database == nil {
 		memory := persistence.NewMemoryRepository()
-		return store{tenants: memory, members: memory, quotas: memory, plans: memory, invitations: memory}, emitter, nil
+		return store{tenants: memory, members: memory, quotas: memory, plans: memory,
+			invitations: memory, approvals: memory}, emitter, nil
 	}
 	mysqlRepo, err := persistence.NewMySQLRepository(deps.Database.SQL())
 	if err != nil {
@@ -238,14 +241,16 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	// 生产优先走 Outbox：审计与业务写入同事务，Relay 负责重试与死信。
 	// 异步未启用时退回直写审计表 + 结构化日志（本地 / 单进程模式）。
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo, invitations: mysqlRepo},
+		return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo,
+				invitations: mysqlRepo, approvals: mysqlRepo},
 			audit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
 	}
 	// 双出口：审计表供查询 / 取证，结构化日志供排障；任一失败不影响另一出口。
-	return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo, invitations: mysqlRepo}, audit.MultiEmitter{
-		audit.SQLEmitter{DB: deps.Database.SQL()},
-		audit.SlogEmitter{Log: deps.Logger},
-	}, nil
+	return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo,
+			invitations: mysqlRepo, approvals: mysqlRepo}, audit.MultiEmitter{
+			audit.SQLEmitter{DB: deps.Database.SQL()},
+			audit.SlogEmitter{Log: deps.Logger},
+		}, nil
 }
 
 // membershipChecker 把租户成员仓储适配成 identity 需要的成员关系端口（T-22）。

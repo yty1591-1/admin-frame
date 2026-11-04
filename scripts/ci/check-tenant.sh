@@ -16,6 +16,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1; then
+  PY=python
+else
+  echo "ERROR: 需要 python3 或 python（TN-04 静态断言）" >&2
+  exit 1
+fi
+
 FAIL=0
 
 # 提取 EVENTS.md 中的 tenant.* 动作（表格第一列反引号包裹）。
@@ -114,6 +123,60 @@ else
   echo "    ERROR: transition matrix changed - update the snapshot in tenant_test.go" >&2
   FAIL=1
 fi
+
+echo "==> TN-04: activation requires an approved application"
+# 审核流是 ENT-09 的验收缺口，只靠单测覆盖不够：这里检查「开通前置还在、
+# 且审批校验排在 owner 校验之前」，防止将来重构把审批前置挪走或改成可跳过。
+svc="internal/tenant/app/service.go"
+router="internal/tenant/transport/admin/router.go"
+if [[ ! -f "${svc}" ]]; then
+  echo "    ERROR: missing ${svc}" >&2
+  FAIL=1
+elif ! grep -rqF 'func (s *Service) ensureApproved(' internal/tenant/app/; then
+  echo "    ERROR: missing ensureApproved definition (TN-04)" >&2
+  FAIL=1
+elif ! "${PY}" - "${svc}" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+call = text.find("s.ensureApproved(txCtx")
+owner = text.find("s.members.CountActiveByRole(txCtx")
+if call < 0:
+    print("ERROR: activation path does not call ensureApproved (TN-04)", file=sys.stderr)
+    raise SystemExit(1)
+if owner >= 0 and call > owner:
+    print("ERROR: approval check must run before owner check (TN-04)", file=sys.stderr)
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+then
+  FAIL=1
+else
+  echo "    OK: pending → active checks approval before owner"
+fi
+
+for route in \
+  'GET /admin/v1/tenants/{id}/approval' \
+  'POST /admin/v1/tenants/{id}/approval' \
+  'POST /admin/v1/tenants/{id}/approval/approve' \
+  'POST /admin/v1/tenants/{id}/approval/reject'; do
+  if ! grep -qF "\"${route}\"" "${router}" 2>/dev/null; then
+    echo "    ERROR: router missing '${route}' (TN-04)" >&2
+    FAIL=1
+  fi
+done
+if ! grep -qF 'PermTenantApprove' "${router}"; then
+  echo "    ERROR: approval decisions must use tenant:approve, not tenant:write (TN-04)" >&2
+  FAIL=1
+fi
+if ! grep -rqF "tenant:approve" migrations/; then
+  echo "    ERROR: missing permission seed for tenant:approve (TN-04)" >&2
+  FAIL=1
+fi
+if ! grep -qF "tenant:approve" docs/iam/PERMISSIONS.md; then
+  echo "    ERROR: docs/iam/PERMISSIONS.md missing tenant:approve (TN-04)" >&2
+  FAIL=1
+fi
+echo "    OK: approval routes and permission wired"
 
 if [[ ${FAIL} -ne 0 ]]; then
   echo "FAIL: check-tenant" >&2

@@ -1,7 +1,7 @@
 # 租户开通运维手册（tenant-onboarding）
 
 > 关联：ENT-09、ADR-0006、[tenant-suspend.md](./tenant-suspend.md)（反向操作：停用）、
-> `docs/audit/EVENTS.md`（`tenant.create` / `tenant.activate`）
+> `docs/audit/EVENTS.md`（`tenant.create` / `tenant.approval.*` / `tenant.activate`）
 
 本手册覆盖新商户从「进系统」到「可服务」的两条路径，以及首部署时的存量回填。
 所有命令都要求 A 端 `tenant:write` 权限。
@@ -11,7 +11,7 @@
 开通交付阶段的异常信号：
 
 - 新商户用户登录返回 403 `tenant is not available`（租户未建、未回填或未 `activate`）；
-- `activate` 返回 409（无在册 owner）或 404（`plan_code` 不存在）；
+- `activate` 返回 409（未通过入驻审核，或未补在册 owner）或 404（`plan_code` 不存在）；
 - 创建返回 409 `tenant code already exists`（编码全局唯一冲突）；
 - 添加成员返回 409（席位超限，`user` 配额不足）。
 
@@ -49,14 +49,28 @@ POST /admin/v1/tenants
 }
 ```
 
-随后开通：
+随后走**入驻审核**（ENT-09：未审批不能开通）：
+
+```http
+POST /admin/v1/tenants/{id}/approval
+{ "note": "营业执照、法人证件、联系人已核验" }
+
+POST /admin/v1/tenants/{id}/approval/approve
+{ "note": "资质齐全，同意开通" }          // 需 tenant:approve；提交人不得审批自己的申请
+```
+
+- 提交用 `tenant:write`，通过 / 驳回用 `tenant:approve`；驳回必须写原因，改完资料可重提；
+- `GET /admin/v1/tenants/{id}/approval` 查看当前态（`draft` / `submitted` / `approved` / `rejected`）与历史；
+- 审核通过**不会**自动开通，仍需调用 `activate`（审批与开通是两件事，便于分别审计）。
+
+最后开通：
 
 ```http
 POST /admin/v1/tenants/{id}/activate
 ```
 
-- `pending → active` 要求至少一名在册 owner，否则 409（先
-  `POST /tenants/{id}/members` 补齐）；
+- `pending → active` 要求「已通过入驻审核」+ 至少一名在册 owner，缺任一项返回 409
+  （先补审批或 `POST /tenants/{id}/members` 补 owner）；
 - 开通即对外服务：B 端该 `merchant_id` 的请求在守卫缓存刷新后（≤30s）放行；
 - 首名 owner 若经由创建参数直落，审计记 `tenant.member.add`（`seeded=true`）。
 
@@ -66,7 +80,8 @@ POST /admin/v1/tenants/{id}/activate
 **先回填再开守卫**，顺序不能反：
 
 1. 执行迁移 `000010`（幂等，可重复跑）：把 `iam_role` / `iam_role_binding` /
-   `identity_account` 中非空 `merchant_id` 登记为 `active` 租户；
+   `identity_account` 中非空 `merchant_id` 登记为 `active` 租户。回填直接落 `active`，
+   不经过审批与开通（`000023` 的审批前置只作用于 `pending → active`）；
 2. 回填生成的租户 `name` = `merchant_id`、`status_reason` = `backfill: 存量商户自动登记`，
    **需要运营随后补全名称与元数据**（`PATCH /admin/v1/tenants/{id}`）；
 3. 回填不覆盖已存在记录；排查影响面的手工 SQL 见 [tenant-suspend.md](./tenant-suspend.md)。
@@ -77,6 +92,7 @@ POST /admin/v1/tenants/{id}/activate
 
 | # | 检查项 | 方式 | 失败处置 |
 |---|---|---|---|
+| 0 | 入驻审核已通过 | `GET /admin/v1/tenants/{id}/approval` → `status=approved` | 提交申请并请另一位持 `tenant:approve` 的同事审批 |
 | 1 | 租户存在且 `status=active` | `GET /admin/v1/tenants/{id}` | 补 `activate` |
 | 2 | 至少一名在册 owner | `GET /tenants/{id}/members?role=owner` | `POST members` 补 owner |
 | 3 | 配额已物化（`user` 等资源有行） | `GET /tenants/{id}/quotas` | 检查创建时 `plan_code` 是否有效 |

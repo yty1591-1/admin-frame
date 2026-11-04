@@ -28,6 +28,10 @@ type MemoryRepository struct {
 	quotas      map[string]map[string]domain.Quota
 	plans       map[string]domain.Plan
 	invitations map[string]domain.Invitation
+	// approvals 审批事件（append-only）；键为租户，值为按追加顺序的事件。
+	approvals map[string][]domain.Approval
+	// approvalSeq 模拟自增主键，保证派生顺序稳定。
+	approvalSeq int64
 }
 
 // NewMemoryRepository 构造内存仓储。
@@ -38,6 +42,7 @@ func NewMemoryRepository() *MemoryRepository {
 		quotas:      make(map[string]map[string]domain.Quota),
 		plans:       make(map[string]domain.Plan),
 		invitations: make(map[string]domain.Invitation),
+		approvals:   make(map[string][]domain.Approval),
 	}
 }
 
@@ -67,6 +72,8 @@ type memorySnapshot struct {
 	members     map[string]map[string]domain.Member
 	quotas      map[string]map[string]domain.Quota
 	invitations map[string]domain.Invitation
+	approvals   map[string][]domain.Approval
+	approvalSeq int64
 }
 
 func (r *MemoryRepository) snapshot() memorySnapshot {
@@ -98,6 +105,13 @@ func (r *MemoryRepository) snapshot() memorySnapshot {
 	for k, v := range r.invitations {
 		out.invitations[k] = v
 	}
+	out.approvals = make(map[string][]domain.Approval, len(r.approvals))
+	for tenantID, events := range r.approvals {
+		copied := make([]domain.Approval, len(events))
+		copy(copied, events)
+		out.approvals[tenantID] = copied
+	}
+	out.approvalSeq = r.approvalSeq
 	return out
 }
 
@@ -108,6 +122,8 @@ func (r *MemoryRepository) restore(snapshot memorySnapshot) {
 	r.members = snapshot.members
 	r.quotas = snapshot.quotas
 	r.invitations = snapshot.invitations
+	r.approvals = snapshot.approvals
+	r.approvalSeq = snapshot.approvalSeq
 }
 
 // Mutate 串行化同一租户的成员变更。

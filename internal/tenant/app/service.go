@@ -121,6 +121,9 @@ type Options struct {
 	RoleSyncer RoleSyncer
 	// Members 成员仓储（T-12）：开通前置校验与建租户时落首名 owner。
 	Members domain.MemberRepository
+	// Approvals 入驻审批仓储（ENT-09 审核流）；nil 时退化为进程内实现，
+	// 保持「无审批记录不能开通」的 fail-closed 语义（仅适用于单进程/单测）。
+	Approvals domain.ApprovalRepository
 	// Quotas 配额仓储（T-24）：创建租户时物化套餐默认配额；T-13 席位与
 	// T-14 邀请接受也复用。
 	Quotas domain.QuotaRepository
@@ -190,14 +193,15 @@ type ListResult struct {
 
 // Service 是租户生命周期用例。
 type Service struct {
-	repo     domain.Repository
-	ids      id.Generator
-	audit    auditContext
-	rolesync RoleSyncer
-	now      func() time.Time
-	opts     Options
-	members  domain.MemberRepository
-	quotas   domain.QuotaRepository
+	repo      domain.Repository
+	ids       id.Generator
+	audit     auditContext
+	rolesync  RoleSyncer
+	now       func() time.Time
+	opts      Options
+	members   domain.MemberRepository
+	quotas    domain.QuotaRepository
+	approvals domain.ApprovalRepository
 }
 
 // NewService 构造服务；repo / ids / emitter 必填。
@@ -226,15 +230,22 @@ func NewService(repo domain.Repository, ids id.Generator, emitter audit.Emitter,
 	now := time.Now
 	opts.Observer = observerOrNoop(opts.Observer)
 	opts.RoleSyncer = roleSyncerOrNoop(opts.RoleSyncer)
+	// 审批仓储必填语义：未注入时用进程内实现兜底，保证开通前置始终生效
+	// （宁可本地/单进程看不到共享审批，也不能让「未审批就开通」通过）。
+	approvals := opts.Approvals
+	if approvals == nil {
+		approvals = newMemoryApprovalRepository()
+	}
 	return &Service{
-		repo:     repo,
-		ids:      ids,
-		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: opts.Observer},
-		rolesync: opts.RoleSyncer,
-		now:      now,
-		opts:     opts,
-		members:  opts.Members,
-		quotas:   opts.Quotas,
+		repo:      repo,
+		ids:       ids,
+		audit:     auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now, observer: opts.Observer},
+		rolesync:  opts.RoleSyncer,
+		now:       now,
+		opts:      opts,
+		members:   opts.Members,
+		quotas:    opts.Quotas,
+		approvals: approvals,
 	}, nil
 }
 
@@ -571,13 +582,21 @@ func (s *Service) Transition(ctx context.Context, in TransitionInput) (domain.Te
 		}
 		// T-12 开通前置：0 成员的租户开出来也无法自服务，宁可让管理员先补 owner。
 		// 校验放在事务内：与迁移之间没有窗口期，并发添加 owner 也能被看到。
-		if in.Target == domain.StatusActive && locked.Status == domain.StatusPending && s.members != nil {
-			owners, ownerErr := s.members.CountActiveByRole(txCtx, locked.ID, domain.MemberRoleOwner)
-			if ownerErr != nil {
-				return ownerErr
+		if in.Target == domain.StatusActive && locked.Status == domain.StatusPending {
+			// ENT-09 审核流：必须在事务内确认最新审批为「通过」。
+			// 与 owner 校验同一位置：两者之间不能有窗口期，否则并发「先激活后审批」
+			// 会绕过控制。
+			if approvalErr := s.ensureApproved(txCtx, locked.ID); approvalErr != nil {
+				return approvalErr
 			}
-			if owners == 0 {
-				return domain.ErrNoOwner
+			if s.members != nil {
+				owners, ownerErr := s.members.CountActiveByRole(txCtx, locked.ID, domain.MemberRoleOwner)
+				if ownerErr != nil {
+					return ownerErr
+				}
+				if owners == 0 {
+					return domain.ErrNoOwner
+				}
 			}
 		}
 		migrated, transErr := locked.Transition(in.Target, in.Reason, s.now())
@@ -744,6 +763,23 @@ func translate(err error) error {
 		return apperr.NotFound("tenant member not found")
 	case errors.Is(err, domain.ErrNoOwner):
 		return apperr.Conflict(err.Error())
+	case errors.Is(err, domain.ErrApprovalRequired):
+		// 开通前置：审核未通过。消息直接说明缺什么，运营无需翻文档。
+		return apperr.New(apperr.CodeConflict, "activation requires an approved application (submit and approve it first)", err)
+	case errors.Is(err, domain.ErrApprovalAlreadySubmitted),
+		errors.Is(err, domain.ErrApprovalAlreadyApproved),
+		errors.Is(err, domain.ErrApprovalNotPending):
+		return apperr.New(apperr.CodeConflict, err.Error(), err)
+	case errors.Is(err, domain.ErrApprovalSelfReview):
+		// 职责分离：提交人不能审批自己的申请。
+		return apperr.New(apperr.CodeConflict, err.Error(), err)
+	case errors.Is(err, domain.ErrApprovalTenantRequired),
+		errors.Is(err, domain.ErrApprovalActorRequired),
+		errors.Is(err, domain.ErrApprovalActionInvalid),
+		errors.Is(err, domain.ErrApprovalRejectNoteRequired),
+		errors.Is(err, domain.ErrApprovalNoteTooLong),
+		errors.Is(err, domain.ErrApprovalActorTooLong):
+		return apperr.BadRequest(err.Error())
 	case errors.As(err, &invalid):
 		// 409：请求本身合法，但与当前资源状态冲突。
 		return apperr.Conflict(invalid.Error())

@@ -85,8 +85,13 @@ func newHandler(t *testing.T) *rest.Handler {
 	return handler
 }
 
-// adminRequest 构造带 A 端 Principal 的请求。
+// adminRequest 构造带 A 端 Principal 的请求（默认操作者 u1）。
 func adminRequest(method, target, body string) *http.Request {
+	return adminRequestAs("u1", method, target, body)
+}
+
+// adminRequestAs 指定操作者主体：审批用例需要「提交人 ≠ 审批人」。
+func adminRequestAs(subject, method, target, body string) *http.Request {
 	var reader *strings.Reader
 	if body == "" {
 		reader = strings.NewReader("")
@@ -94,8 +99,27 @@ func adminRequest(method, target, body string) *http.Request {
 		reader = strings.NewReader(body)
 	}
 	request := httptest.NewRequest(method, target, reader)
-	principal := auth.Principal{Channel: "admin", SubjectID: "u1"}
+	principal := auth.Principal{Channel: "admin", SubjectID: subject}
 	return request.WithContext(auth.WithPrincipal(request.Context(), principal))
+}
+
+// approveTenant 走 HTTP 端点补齐「提交 → 通过」审批（ENT-09 开通前置）。
+func approveTenant(t *testing.T, handler *rest.Handler, tenantID string) {
+	t.Helper()
+	submit := adminRequest(http.MethodPost, "/admin/v1/tenants/"+tenantID+"/approval", `{"note":"fixture"}`)
+	submit.SetPathValue("id", tenantID)
+	submitRecorder := httptest.NewRecorder()
+	handler.SubmitApproval(submitRecorder, submit)
+	if submitRecorder.Code != http.StatusOK {
+		t.Fatalf("submit approval status = %d（body=%s）", submitRecorder.Code, submitRecorder.Body.String())
+	}
+	approve := adminRequestAs("u-approver", http.MethodPost, "/admin/v1/tenants/"+tenantID+"/approval/approve", `{"note":"ok"}`)
+	approve.SetPathValue("id", tenantID)
+	approveRecorder := httptest.NewRecorder()
+	handler.ApproveApproval(approveRecorder, approve)
+	if approveRecorder.Code != http.StatusOK {
+		t.Fatalf("approve status = %d（body=%s）", approveRecorder.Code, approveRecorder.Body.String())
+	}
 }
 
 // envelope 是响应信封（只取需要的字段）。
@@ -191,6 +215,7 @@ func TestSuspendRequiresReasonAndTransitions(t *testing.T) {
 		t.Fatalf("add owner status = %d（body=%s）", ownerRecorder.Code, ownerRecorder.Body.String())
 	}
 
+	approveTenant(t, handler, created.ID)
 	activate := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/activate", "")
 	activate.SetPathValue("id", created.ID)
 	activateRecorder := httptest.NewRecorder()
@@ -335,6 +360,7 @@ func createTenant(t *testing.T, handler *rest.Handler) string {
 		t.Fatalf("add owner status = %d（body=%s）", ownerRecorder.Code, ownerRecorder.Body.String())
 	}
 
+	approveTenant(t, handler, created.ID)
 	activate := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/activate", "")
 	activate.SetPathValue("id", created.ID)
 	activateRecorder := httptest.NewRecorder()
@@ -911,5 +937,100 @@ func TestConditionalUpdateHeaders(t *testing.T) {
 	handler.Update(okPatchRecorder, okPatch)
 	if okPatchRecorder.Code != http.StatusOK {
 		t.Fatalf("PATCH 正确版本 status = %d（body=%s）", okPatchRecorder.Code, okPatchRecorder.Body.String())
+	}
+}
+
+// TestApprovalEndpoints 覆盖审批端点的 HTTP 契约：
+// draft → submit → 自审被拒（409）→ 他人通过（200）→ 重复提交（409）。
+func TestApprovalEndpoints(t *testing.T) {
+	handler := newHandler(t)
+	createRecorder := httptest.NewRecorder()
+	handler.Create(createRecorder, adminRequest(http.MethodPost, "/admin/v1/tenants", `{"name":"Approval"}`))
+	var created tenantBody
+	if err := json.Unmarshal(decodeEnvelope(t, createRecorder).Data, &created); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+
+	// 1) 初始 draft。
+	getRecorder := httptest.NewRecorder()
+	get := adminRequest(http.MethodGet, "/admin/v1/tenants/"+created.ID+"/approval", "")
+	get.SetPathValue("id", created.ID)
+	handler.GetApproval(getRecorder, get)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get approval status = %d（body=%s）", getRecorder.Code, getRecorder.Body.String())
+	}
+	var draft struct {
+		Status string          `json:"status"`
+		Latest json.RawMessage `json:"latest"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, getRecorder).Data, &draft); err != nil {
+		t.Fatalf("approval data 解析失败: %v", err)
+	}
+	if draft.Status != string(domain.ApprovalStatusDraft) || string(draft.Latest) != "null" {
+		t.Fatalf("初始审批 = %s / %s, want draft / null", draft.Status, string(draft.Latest))
+	}
+
+	// 2) 提交。
+	submitRecorder := httptest.NewRecorder()
+	submit := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval", `{"note":"材料已备"}`)
+	submit.SetPathValue("id", created.ID)
+	handler.SubmitApproval(submitRecorder, submit)
+	if submitRecorder.Code != http.StatusOK {
+		t.Fatalf("submit status = %d（body=%s）", submitRecorder.Code, submitRecorder.Body.String())
+	}
+
+	// 3) 提交人自审 → 409。
+	selfRecorder := httptest.NewRecorder()
+	self := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval/approve", `{}`)
+	self.SetPathValue("id", created.ID)
+	handler.ApproveApproval(selfRecorder, self)
+	if selfRecorder.Code != http.StatusConflict {
+		t.Fatalf("自审 status = %d, want 409（body=%s）", selfRecorder.Code, selfRecorder.Body.String())
+	}
+
+	// 4) 他人通过 → 200。
+	approveRecorder := httptest.NewRecorder()
+	approve := adminRequestAs("u-approver", http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval/approve", `{}`)
+	approve.SetPathValue("id", created.ID)
+	handler.ApproveApproval(approveRecorder, approve)
+	if approveRecorder.Code != http.StatusOK {
+		t.Fatalf("approve status = %d（body=%s）", approveRecorder.Code, approveRecorder.Body.String())
+	}
+
+	// 5) 已通过再提交 → 409。
+	againRecorder := httptest.NewRecorder()
+	again := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval", `{}`)
+	again.SetPathValue("id", created.ID)
+	handler.SubmitApproval(againRecorder, again)
+	if againRecorder.Code != http.StatusConflict {
+		t.Fatalf("已通过再提交 status = %d, want 409（body=%s）", againRecorder.Code, againRecorder.Body.String())
+	}
+}
+
+// TestApprovalSubmitAcceptsEmptyBody 锁定契约：提交 / 通过允许空请求体
+// （requestBody.required=false），驳回必须带 body（原因必填由领域层校验）。
+func TestApprovalSubmitAcceptsEmptyBody(t *testing.T) {
+	handler := newHandler(t)
+	createRecorder := httptest.NewRecorder()
+	handler.Create(createRecorder, adminRequest(http.MethodPost, "/admin/v1/tenants", `{"name":"EmptyBody"}`))
+	var created tenantBody
+	if err := json.Unmarshal(decodeEnvelope(t, createRecorder).Data, &created); err != nil {
+		t.Fatalf("data 解析失败: %v", err)
+	}
+
+	submitRecorder := httptest.NewRecorder()
+	submit := adminRequest(http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval", "")
+	submit.SetPathValue("id", created.ID)
+	handler.SubmitApproval(submitRecorder, submit)
+	if submitRecorder.Code != http.StatusOK {
+		t.Fatalf("空 body 提交 status = %d（body=%s）", submitRecorder.Code, submitRecorder.Body.String())
+	}
+
+	rejectRecorder := httptest.NewRecorder()
+	reject := adminRequestAs("u-approver", http.MethodPost, "/admin/v1/tenants/"+created.ID+"/approval/reject", "")
+	reject.SetPathValue("id", created.ID)
+	handler.RejectApproval(rejectRecorder, reject)
+	if rejectRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("空 body 驳回 status = %d, want 400（body=%s）", rejectRecorder.Code, rejectRecorder.Body.String())
 	}
 }

@@ -804,3 +804,185 @@ admin-v1-tenants-by-id-invitations-by-invitation-id-resend:
         $ref: "../../components.yaml#/components/responses/Conflict"
       "500":
         $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-approval:
+  get:
+    tags: [tenant]
+    summary: 查询租户入驻审批
+    description: |
+      需要 `tenant:read`。返回当前审批态（`draft` / `submitted` / `approved` / `rejected`）
+      与最近一轮事件；`latest` 在 `draft` 时为 null。
+      `approved` 只是开通前置之一，另一个是「至少一名在册 owner」。
+    operationId: adminGetTenantApproval
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApproval"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+  post:
+    tags: [tenant]
+    summary: 提交 / 重新提交入驻申请
+    description: |
+      需要 `tenant:write`。仅 `draft`（首次）与 `rejected`（驳回后重提）可提交；
+      已提交或已通过返回 40900，避免重复提交覆盖上一轮审批意见。
+      写 `tenant.approval.submit` 审计；驳回后重新提交会开启新一轮，历史事件保留。
+    operationId: adminSubmitTenantApproval
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApprovalRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApproval"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-approval-approve:
+  post:
+    tags: [tenant]
+    summary: 审核通过入驻申请
+    description: |
+      需要 `tenant:approve`。仅 `submitted` 可裁决；**提交人不得审批自己的申请**
+      （40900，并留一条 `outcome=failure` 的 `tenant.approval.approve` 审计）。
+      通过不改变租户状态：开通仍需调用 `/activate`，且要求「已通过 + ≥1 名在册 owner」。
+      写 `tenant.approval.approve` 审计。
+    operationId: adminApproveTenantApplication
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApprovalRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApproval"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+
+admin-v1-tenants-by-id-approval-reject:
+  post:
+    tags: [tenant]
+    summary: 驳回入驻申请
+    description: |
+      需要 `tenant:approve`。仅 `submitted` 可驳回，`note` 必填（缺失返回 40000）——
+      驳回必须给出可执行的原因，否则申请人无法补齐材料。
+      提交人不得驳回自己的申请（40900）。写 `tenant.approval.reject` 审计；
+      驳回后可修改资料并重新提交。
+    operationId: adminRejectTenantApplication
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApprovalRequest"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/tenant.yaml#/components/schemas/TenantApproval"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"

@@ -94,6 +94,11 @@ const (
 	PermTenantRead PermissionCode = "tenant:read"
 	// PermTenantWrite 创建租户与变更租户状态（ENT-09）。
 	PermTenantWrite PermissionCode = "tenant:write"
+	// PermTenantApprove 入驻审核裁决（ENT-09 审核流）。
+	//
+	// 与 tenant:write 分开：提交申请用 tenant:write，通过 / 驳回用本权限，
+	// 便于把「能建租户」与「能批准自己建的租户」拆给不同角色（职责分离）。
+	PermTenantApprove PermissionCode = "tenant:approve"
 	// PermNotificationRead 查询通知与投递状态（ENT-10）。
 	PermNotificationRead PermissionCode = "notification:read"
 	// PermNotificationWrite 代发通知、DLQ 补偿重放与模板管理（ENT-10）。

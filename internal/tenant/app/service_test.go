@@ -139,10 +139,11 @@ func TestCreateThenFullLifecycle(t *testing.T) {
 		{domain.StatusActive, ""},
 		{domain.StatusTerminated, "客户退租"},
 	}
-	// T-12 开通前置：激活前先补一名在册 owner。
+	// T-12 开通前置：激活前先补一名在册 owner；ENT-09 审核流：再补齐审批。
 	if err := repo.UpsertMember(ctx, mustMember(t, created.ID, "owner-1")); err != nil {
 		t.Fatalf("seed owner error = %v", err)
 	}
+	approveForTest(t, service, created.ID)
 
 	tenant := created
 	for _, step := range steps {
@@ -165,6 +166,8 @@ func TestCreateThenFullLifecycle(t *testing.T) {
 
 	want := []string{
 		app.ActionCreate,
+		app.ActionApprovalSubmit,
+		app.ActionApprovalApprove,
 		app.ActionActivate,
 		app.ActionSuspend,
 		app.ActionResume,
@@ -236,6 +239,7 @@ func TestSuspendRequiresReason(t *testing.T) {
 	if err := repo.UpsertMember(ctx, mustMember(t, tenant.ID, "owner-1")); err != nil {
 		t.Fatalf("seed owner error = %v", err)
 	}
+	approveForTest(t, service, tenant.ID)
 	tenant, err = service.Transition(ctx, app.TransitionInput{ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor()})
 	if err != nil {
 		t.Fatalf("激活 error = %v", err)

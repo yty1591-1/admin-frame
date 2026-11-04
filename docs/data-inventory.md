@@ -38,7 +38,7 @@
 | iam_role_binding | subject_id ↔ 角色绑定 | P2 | 随租户处置删除；成员停用保留关系（停用 ≠ 删除） |
 | iam_change_request | 审批载荷 | P3 | 随租户处置删除；平台级审批单按 365d |
 
-### tenant（000008 / 000011 / 000014 / 000022）
+### tenant（000008 / 000011 / 000014 / 000022 / 000023）
 
 | 表 | 数据 | 级别 | 保留 / 删除边界 |
 |---|---|---|---|
@@ -46,6 +46,7 @@
 | tenant_member | subject_id 成员关系 | P2 | 随租户级联删除 |
 | tenant_quota / tenant_invitation | 配额 / 邀请（token 摘要） | P3 / P1（email 摘要） | 随租户级联删除 |
 | tenant_export_manifest | 导出证据（SHA-256） | P0 | ≥ 365d（处置证据链，不随租户删除） |
+| tenant_approval | 入驻审批事件（操作者主体 ID + 申请/审批意见） | P3（`note` 可能含企业资质说明，禁止写入个人敏感信息） | 随租户级联删除；审批事实另由 `tenant.approval.*` 审计保留 365d |
 
 ### notification（000016–000019，ENT-10）
 

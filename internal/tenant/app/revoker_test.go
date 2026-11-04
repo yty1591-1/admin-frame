@@ -53,6 +53,7 @@ func newRevokerFixture(t *testing.T, revoker app.SessionRevoker) *revokerFixture
 	if seedErr := repo.UpsertMember(context.Background(), mustMember(t, created.ID, "fixture-owner")); seedErr != nil {
 		t.Fatalf("seed owner error = %v", seedErr)
 	}
+	approveForTest(t, service, created.ID)
 	tenant, err := service.Transition(context.Background(), app.TransitionInput{
 		ID: created.ID, Target: domain.StatusActive, Actor: adminActor(),
 	})
@@ -142,6 +143,7 @@ func TestActivateDoesNotRevoke(t *testing.T) {
 	if seedErr := repo.UpsertMember(context.Background(), mustMember(t, created.ID, "fixture-owner")); seedErr != nil {
 		t.Fatalf("seed owner error = %v", seedErr)
 	}
+	approveForTest(t, service, created.ID)
 	if _, err := service.Transition(context.Background(), app.TransitionInput{
 		ID: created.ID, Target: domain.StatusActive, Actor: adminActor(),
 	}); err != nil {

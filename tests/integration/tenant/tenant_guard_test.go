@@ -171,6 +171,14 @@ func TestTenantGuardUsesRealStatusAndHonoursTTL(t *testing.T) {
 	}
 
 	actor := app.Actor{SubjectID: "it-user", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+	// ENT-09 审核流：先补齐「提交 → 通过」，否则开通被拒（审批前置）。
+	approver := app.Actor{SubjectID: "it-approver", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+	if _, err := service.SubmitApproval(ctx, app.ApprovalInput{TenantID: tenantID, Actor: actor}); err != nil {
+		t.Fatalf("submit approval error = %v", err)
+	}
+	if _, err := service.ApproveApproval(ctx, app.ApprovalInput{TenantID: tenantID, Actor: approver}); err != nil {
+		t.Fatalf("approve error = %v", err)
+	}
 	if _, err := service.Transition(ctx, app.TransitionInput{
 		ID: tenantID, Target: domain.StatusActive, Actor: actor,
 	}); err != nil {
@@ -545,11 +553,17 @@ func TestPlanCatalogAndMaterializationOnMySQL(t *testing.T) {
 	if len(quotas) != len(plan.Quotas) {
 		t.Fatalf("物化配额 = %+v, want %d 项", quotas, len(plan.Quotas))
 	}
-	// 0 owner 不能开通（T-12 在真实库同样生效）。
+	// 0 owner 不能开通（T-12 在真实库同样生效）；先补齐审批，确保拒绝原因来自 owner。
+	adminActor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+	approverActor := app.Actor{SubjectID: "it-approver", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
+	if _, err := service.SubmitApproval(ctx, app.ApprovalInput{TenantID: created.ID, Actor: adminActor}); err != nil {
+		t.Fatalf("submit approval error = %v", err)
+	}
+	if _, err := service.ApproveApproval(ctx, app.ApprovalInput{TenantID: created.ID, Actor: approverActor}); err != nil {
+		t.Fatalf("approve error = %v", err)
+	}
 	if _, err := service.Transition(ctx, app.TransitionInput{
-		ID: created.ID, Target: domain.StatusActive, Actor: app.Actor{
-			SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace",
-		},
+		ID: created.ID, Target: domain.StatusActive, Actor: adminActor,
 	}); err == nil {
 		t.Fatal("0 owner 开通应被拒绝")
 	}

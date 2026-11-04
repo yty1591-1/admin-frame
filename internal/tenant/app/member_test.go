@@ -54,6 +54,7 @@ func newMemberFixture(t *testing.T) *memberFixture {
 	if seedErr := repo.UpsertMember(ctx, mustMember(t, createdID, "fixture-owner")); seedErr != nil {
 		t.Fatalf("seed owner error = %v", seedErr)
 	}
+	approveForTest(t, tenants, createdID)
 	tenant, err = tenants.Transition(ctx, app.TransitionInput{
 		ID: createdID, Target: domain.StatusActive, Actor: adminActor(),
 	})

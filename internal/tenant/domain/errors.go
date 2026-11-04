@@ -69,6 +69,32 @@ var (
 	ErrInvitationPendingExists = errors.New("tenant: a pending invitation already exists for this email")
 	// ErrInvitationAlreadyAccepted 邀请已被其他主体接受。
 	ErrInvitationAlreadyAccepted = errors.New("tenant: invitation already accepted")
+	// ErrApprovalTenantRequired 审批事件的租户 ID 必填。
+	ErrApprovalTenantRequired = errors.New("tenant: approval requires a tenant id")
+	// ErrApprovalActionInvalid 审批动作取值非法。
+	ErrApprovalActionInvalid = errors.New("tenant: unsupported approval action")
+	// ErrApprovalActorRequired 审批操作者必填。
+	ErrApprovalActorRequired = errors.New("tenant: approval actor is required")
+	// ErrApprovalActorTooLong 审批操作者主体 ID 超长。
+	ErrApprovalActorTooLong = fmt.Errorf("tenant: approval actor must be at most %d characters", MaxApprovalActorLength)
+	// ErrApprovalNoteTooLong 审批意见超长。
+	ErrApprovalNoteTooLong = fmt.Errorf("tenant: approval note must be at most %d characters", MaxApprovalNoteLength)
+	// ErrApprovalRejectNoteRequired 驳回必须写原因。
+	ErrApprovalRejectNoteRequired = errors.New("tenant: rejection requires a note")
+	// ErrApprovalTimeRequired 事件时间必填（仓储写入前的完整性校验）。
+	ErrApprovalTimeRequired = errors.New("tenant: approval event requires a timestamp")
+	// ErrApprovalStatusInvalid 派生状态非法（脏数据防御）。
+	ErrApprovalStatusInvalid = errors.New("tenant: unsupported approval status")
+	// ErrApprovalAlreadySubmitted 申请已提交，等待裁决；重复提交返回冲突。
+	ErrApprovalAlreadySubmitted = errors.New("tenant: an application is already awaiting review")
+	// ErrApprovalAlreadyApproved 申请已通过；已开通租户无需再提交。
+	ErrApprovalAlreadyApproved = errors.New("tenant: the application is already approved")
+	// ErrApprovalNotPending 当前没有待裁决的申请。
+	ErrApprovalNotPending = errors.New("tenant: no application is awaiting a decision")
+	// ErrApprovalSelfReview 职责分离：提交人不得审批自己的申请。
+	ErrApprovalSelfReview = errors.New("tenant: the submitter cannot review their own application")
+	// ErrApprovalRequired 开通前置：pending → active 必须已通过入驻审核。
+	ErrApprovalRequired = errors.New("tenant: activation requires an approved application")
 )
 
 // VersionMismatchError 表示客户端提供的期望版本与当前版本不符（T-15）。

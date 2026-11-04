@@ -61,6 +61,7 @@ func newNotifyingInvitationFixture(t *testing.T, notifier InvitationNotifierAlia
 	if seedErr := repo.UpsertMember(ctx, mustMember(t, tenant.ID, "fixture-owner")); seedErr != nil {
 		t.Fatalf("seed owner error = %v", seedErr)
 	}
+	approveForTest(t, tenants, tenant.ID)
 	tenant, err = tenants.Transition(ctx, app.TransitionInput{
 		ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor(),
 	})

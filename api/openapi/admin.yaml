@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.1.0
+  version: 8.2.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -243,6 +243,12 @@ paths:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations-by-invitation-id-revoke'
   /admin/v1/tenants/{id}/invitations/{invitation_id}/resend:
     $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-invitations-by-invitation-id-resend'
+  /admin/v1/tenants/{id}/approval:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-approval'
+  /admin/v1/tenants/{id}/approval/approve:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-approval-approve'
+  /admin/v1/tenants/{id}/approval/reject:
+    $ref: './paths/admin/tenant.yaml#/admin-v1-tenants-by-id-approval-reject'
 components:
   securitySchemes:
     bearerAuth:

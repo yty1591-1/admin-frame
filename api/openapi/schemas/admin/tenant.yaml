@@ -418,3 +418,64 @@ components:
           type: integer
         page_size:
           type: integer
+
+    TenantApprovalEvent:
+      type: object
+      required: [id, action, actor_id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 自增序号；同一租户内按 id 升序即事件发生顺序。
+        action:
+          type: string
+          enum: [submit, approve, reject]
+          description: 事件动作。当前审批态由最后一条事件决定。
+        actor_id:
+          type: string
+          maxLength: 64
+          description: 操作者主体 ID；提交人与审批人不得为同一人。
+        note:
+          type: string
+          maxLength: 255
+          description: 申请说明或审批意见；驳回时必填。
+        created_at:
+          type: string
+          format: date-time
+          description: 事件时间（UTC）。
+    TenantApproval:
+      type: object
+      required: [tenant_id, tenant_status, status, history]
+      properties:
+        tenant_id:
+          type: string
+        tenant_status:
+          type: string
+          enum: [pending, active, suspended, terminated]
+          description: 租户生命周期状态；审批通过不等于已开通。
+        status:
+          type: string
+          enum: [draft, submitted, approved, rejected]
+          description: |
+            审批派生状态：`draft` 未提交、`submitted` 待裁决、`approved` 已通过、
+            `rejected` 已驳回（可重新提交）。
+        submitter:
+          type: string
+          description: 当前这一轮的申请人主体 ID；用于核对职责分离。
+        latest:
+          allOf:
+            - $ref: "#/components/schemas/TenantApprovalEvent"
+          nullable: true
+          description: 最新一条事件；`draft` 时为 null。
+        history:
+          type: array
+          description: 回看到的审批事件（时间正序）；驳回重提后同时包含上一轮记录。
+          items:
+            $ref: "#/components/schemas/TenantApprovalEvent"
+    TenantApprovalRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 255
+          description: 申请说明或审批意见；驳回时必填，通过时可留空。

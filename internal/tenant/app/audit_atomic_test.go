@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
@@ -14,6 +15,22 @@ import (
 // failingEmitter 模拟审计出口不可用。
 func failingEmitter() *recordEmitter {
 	return &recordEmitter{err: errors.New("audit sink down")}
+}
+
+// failOnEmitter 只让指定 action 的审计失败。
+//
+// 用途：验证「审批已通过、迁移审计失败」时状态回滚。若整个出口都失败，
+// 连审批事件都写不进去，就测不到迁移那一步的原子性。
+type failOnEmitter struct {
+	inner  *recordEmitter
+	failOn string
+}
+
+func (e failOnEmitter) Emit(ctx context.Context, event audit.Event) error {
+	if event.Action == e.failOn {
+		return errors.New("audit sink down")
+	}
+	return e.inner.Emit(ctx, event)
 }
 
 // TestCreateRollsBackWhenAuditFails 验证审计写失败时租户不会被创建。
@@ -52,10 +69,17 @@ func TestTransitionRollsBackWhenAuditFails(t *testing.T) {
 	if err := repo.Create(ctx, tenant); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	service, err := app.NewService(repo, &seqIDs{}, failingEmitter(), testPlanOptions(repo))
+	recorder := &recordEmitter{}
+	service, err := app.NewService(repo, &seqIDs{}, failOnEmitter{inner: recorder, failOn: app.ActionActivate},
+		testPlanOptions(repo))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
+	// 审批与 owner 前置都要先满足，否则走不到「迁移审计失败」这一步。
+	if seedErr := repo.UpsertMember(ctx, mustMember(t, tenant.ID, "owner-1")); seedErr != nil {
+		t.Fatalf("seed owner error = %v", seedErr)
+	}
+	approveForTest(t, service, tenant.ID)
 
 	if _, err := service.Transition(ctx, app.TransitionInput{
 		ID: tenant.ID, Target: domain.StatusActive, Actor: adminActor(),

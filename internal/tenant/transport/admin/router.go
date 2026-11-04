@@ -20,6 +20,9 @@ import (
 func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) http.Handler, perm auth.PermissionMiddleware) {
 	read := perm(string(iam.PermTenantRead))
 	write := perm(string(iam.PermTenantWrite))
+	// 审批裁决单独授权：提交申请用 tenant:write，通过 / 驳回用 tenant:approve。
+	// 领域层还会拒绝「提交人审批自己的申请」，权限拆分是第一道、职责分离是第二道。
+	approve := perm(string(iam.PermTenantApprove))
 
 	mux.Handle("GET /admin/v1/tenants", authMW(read(http.HandlerFunc(h.List))))
 	mux.Handle("POST /admin/v1/tenants", authMW(write(http.HandlerFunc(h.Create))))
@@ -32,6 +35,13 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("POST /admin/v1/tenants/{id}/suspend", authMW(write(http.HandlerFunc(h.Suspend))))
 	mux.Handle("POST /admin/v1/tenants/{id}/resume", authMW(write(http.HandlerFunc(h.Resume))))
 	mux.Handle("POST /admin/v1/tenants/{id}/terminate", authMW(write(http.HandlerFunc(h.Terminate))))
+
+	// 入驻审核（ENT-09）：读沿用 tenant:read；提交用 tenant:write；
+	// 通过 / 驳回用 tenant:approve。审批不改变租户状态，开通仍走 activate。
+	mux.Handle("GET /admin/v1/tenants/{id}/approval", authMW(read(http.HandlerFunc(h.GetApproval))))
+	mux.Handle("POST /admin/v1/tenants/{id}/approval", authMW(write(http.HandlerFunc(h.SubmitApproval))))
+	mux.Handle("POST /admin/v1/tenants/{id}/approval/approve", authMW(approve(http.HandlerFunc(h.ApproveApproval))))
+	mux.Handle("POST /admin/v1/tenants/{id}/approval/reject", authMW(approve(http.HandlerFunc(h.RejectApproval))))
 
 	// 成员与配额：读沿用 tenant:read，写沿用 tenant:write。
 	// 不另开 tenant:member:*：谁能改租户就能改它的成员，拆权限会让「停用租户」

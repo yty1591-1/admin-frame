@@ -97,6 +97,8 @@ func TestActivateRequiresOwner(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
+	// 先补齐审批：本用例验证的是「0 owner」前置，不是审批前置。
+	approveForTest(t, service, created.ID)
 	_, err = service.Transition(ctx, app.TransitionInput{ID: created.ID, Target: domain.StatusActive, Actor: adminActor()})
 	if !isConflict(err) {
 		t.Fatalf("0 owner 开通 error = %v, want 409", err)

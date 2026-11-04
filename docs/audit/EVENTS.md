@@ -46,7 +46,10 @@
 | `data.query_scope` | A | 跨商户/大范围查询明细 | 导出 | 365d | planned |
 | `tenant.create` | A | 创建租户（`POST /admin/v1/tenants`）；记录名称、编码（`attrs.code`）与初始状态 `pending` | 租户 | 365d | active |
 | `tenant.update` | A | 变更租户资料（T-11，`PATCH /admin/v1/tenants/{id}`：改名 + 元数据）；`attrs.fields` 记录变更字段列表（逗号分隔）；编码不可变，不在本动作范围内 | 租户 | 365d | active |
-| `tenant.activate` | A | 开通租户（`pending → active`）；租户自此进入服务期 | 租户 | 365d | active |
+| `tenant.approval.submit` | A | 提交 / 重新提交入驻申请（`POST /admin/v1/tenants/{id}/approval`）；`reason` 记录申请说明；驳回后重提开启新一轮，历史事件保留（append-only，当前态由最后一条事件派生） | 租户 | 365d | active |
+| `tenant.approval.approve` | A | 入驻审核通过（`POST /admin/v1/tenants/{id}/approval/approve`）；**提交人不得审批自己的申请**，违反时以 `outcome=failure` 留痕。通过只是开通前置之一，不改变租户状态 | 租户 | 365d | active |
+| `tenant.approval.reject` | A | 入驻审核驳回（`POST /admin/v1/tenants/{id}/approval/reject`）；`reason` 必填并原样入审计；驳回后可修改资料重新提交 | 租户 | 365d | active |
+| `tenant.activate` | A | 开通租户（`pending → active`）；要求**已通过入驻审核**（否则 40900，不写成功事件）且至少一名在册 owner。租户自此进入服务期 | 租户 | 365d | active |
 | `tenant.suspend` | A | 停用租户（`active → suspended`）；`reason` 必填并原样入审计，失败尝试同样记录（`outcome=failure`）。停用前先撤销该租户全部会话，`attrs.revoked_sessions` 记录撤销数（D-02=①） | 租户 | 365d | active |
 | `tenant.resume` | A | 恢复租户（`suspended → active`）；与首次开通分开记录，便于还原停用时长 | 租户 | 365d | active |
 | `tenant.terminate` | A | 终止租户（→ `terminated` 终态）；`reason` 必填，终止后不可恢复 | 租户 | 365d | active |

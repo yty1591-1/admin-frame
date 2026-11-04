@@ -376,6 +376,14 @@ var entries = []Entry{
 		Description: "创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计。",
 	},
 	{
+		Code:        iam.PermTenantApprove,
+		Name:        "审核租户入驻",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        296,
+		Description: "入驻审核裁决（通过 / 驳回）；与 tenant:write 拆开授予，领域层拒绝提交人自审。",
+	},
+	{
 		Code:        iam.PermNotificationRead,
 		Name:        "查看通知",
 		Channel:     ChannelAdmin,

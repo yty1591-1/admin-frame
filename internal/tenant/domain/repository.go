@@ -137,3 +137,18 @@ type InvitationRepository interface {
 	// （0 行返回 ErrInvitationNotPending）。
 	RefreshInvitation(ctx context.Context, invitation Invitation) error
 }
+
+// ApprovalRepository 是入驻审批事件的持久化契约。
+//
+// 只追加、不更新、不删除：审批事实一旦发生就不可改写（AUD 口径），
+// 当前态由事件序列派生（DeriveApproval），因此不需要版本列或状态列。
+type ApprovalRepository interface {
+	// AppendApproval 追加一条审批事件；tenant 不存在时返回 ErrNotFound
+	// （MySQL 由外键兜底，内存实现显式校验）。
+	AppendApproval(ctx context.Context, approval Approval) error
+	// ListRecentApprovals 按时间倒序返回最近 limit 条事件。
+	//
+	// 倒序而不是正序：派生当前态只需要最近窗口，正序 + LIMIT 会取到最旧的
+	// 一批，驳回重提后反而看不到最新裁决。
+	ListRecentApprovals(ctx context.Context, tenantID string, limit int) ([]Approval, error)
+}
