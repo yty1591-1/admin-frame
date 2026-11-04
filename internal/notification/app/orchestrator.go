@@ -100,6 +100,9 @@ const (
 	SemanticChannelUnavailable = "channel_unavailable"
 )
 
+// 拒发审计动作（EVENTS.md notification.* 段；编排层唯一自发审计）。
+const ActionRequestRejected = "notification.request.rejected"
+
 // 重试预算（按优先级）：耗尽后失败终态，补偿走 Replay（规划 §2.F）。
 const (
 	DefaultCriticalAttempts = 6
@@ -586,7 +589,7 @@ func (o *Orchestrator) finalizeReject(ctx context.Context, n domain.Notification
 	o.observer.RequestObserved(n.Scene, domain.RequestRejected)
 	// 拒发是安全控制生效的证明，需要审计留痕（规划 §2.K）。
 	if err := o.auditCtx.emit(ctx, Actor{SubjectID: "system", ActorType: "system", Channel: "system"},
-		"notification.request.rejected", "notification_request", n.ID,
+		ActionRequestRejected, "notification_request", n.ID,
 		audit.OutcomeSuccess, reason, map[string]string{"scene": n.Scene, "semantic": semantic}); err != nil {
 		return apperr.Internal("emit reject audit failed", err)
 	}
