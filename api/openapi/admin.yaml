@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.0.0
+  version: 8.1.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -197,6 +197,12 @@ paths:
     $ref: './paths/admin/iam-sod-groups.yaml#/admin-v1-iam-sod-groups-by-id'
   /admin/v1/iam/sod-groups/{id}/violations:
     $ref: './paths/admin/iam-sod-groups.yaml#/admin-v1-iam-sod-groups-by-id-violations'
+  /admin/v1/feature-flags:
+    $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags'
+  /admin/v1/feature-flags/{key}:
+    $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key'
+  /admin/v1/feature-flags/{key}/status:
+    $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key-status'
   /admin/v1/notifications:
     $ref: './paths/admin/notification.yaml#/admin-v1-notifications'
   /admin/v1/notifications/{id}:

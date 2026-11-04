@@ -67,6 +67,12 @@
 | `notification.request.rejected` | system | 通知被拒发（黑名单 / 全渠道退订 / 过期 / 无可达地址）；`attrs.scene` / `attrs.semantic`，reason 记录逐渠道跳过原因 | 通知 | 365d | active |
 | `notification.dlq.replay` | A | 重放死信通知（补偿动作，写操作）；`attrs.scene` / `attrs.replay_request`，重放生成新事件与新通知单、新幂等键防重复，原请求保留为审计痕迹 | 通知 | 365d | active |
 | `notification.send` | A | 运营代发通知（`POST /admin/v1/notifications`，ENT-10 NT-06）；`attrs.scene` / `attrs.channels` / `attrs.template_key` / `attrs.recipient_ref`（摘要）；收件人明文仅入事件载荷 | 通知 | 365d | active |
+| `featureflag.create` | A | 创建特性开关（ENT-11）；`attrs.permanent` / `attrs.default` / `attrs.rules`；防御性默认拒绝 default_enabled=true 的裸全量创建 | 治理 | 365d | active |
+| `featureflag.update` | A | 变更开关描述 / 规则 / 默认值 / 到期时间；`attrs.fields`（变更字段列表）与 `attrs.version` | 治理 | 365d | active |
+| `featureflag.enable` | A | 启用开关（kill switch 解除）；`POST .../status`，乐观锁防并发覆盖 | 治理 | 365d | active |
+| `featureflag.disable` | A | 停用开关（kill switch，秒级生效 ≤5s）；`POST .../status` | 治理 | 365d | active |
+| `featureflag.delete` | A | 物理删除开关；仅允许对非 enabled 状态执行（在用 kill switch 必须先停用） | 治理 | 365d | active |
+| `featureflag.expire` | system | 到期自动禁用（worker 治理任务）；`attrs.expires_at`；「无长期遗留 flag」判据的执行留痕 | 治理 | 365d | active |
 | `payment.capture` | B/C | 支付成功确认 | 资金 | 365d | planned |
 | `payment.refund` | B/C | 退款 | 资金 | 365d | planned |
 

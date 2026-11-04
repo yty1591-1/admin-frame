@@ -129,6 +129,9 @@ type Options struct {
 	// Notifier 邀请邮件投递端口（ENT-10）；nil = 只落库不发送（T-14 阶段
 	// 语义）。注入方必须保证实现把事件写入 Outbox 且复用 ctx 事务。
 	Notifier InvitationNotifier
+	// FeatureEvaluator 特性开关消费端口（ENT-11）；nil = 未启用 flag 体系
+	// （notifier 注入即发送，沿用 ENT-10 语义）。
+	FeatureEvaluator FeatureEvaluator
 }
 
 // Actor 是操作者信息，来自 Principal 与请求上下文。

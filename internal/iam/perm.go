@@ -98,4 +98,8 @@ const (
 	PermNotificationRead PermissionCode = "notification:read"
 	// PermNotificationWrite 代发通知、DLQ 补偿重放与模板管理（ENT-10）。
 	PermNotificationWrite PermissionCode = "notification:write"
+	// PermFeatureFlagRead 查询特性开关与灰度规则（ENT-11）。
+	PermFeatureFlagRead PermissionCode = "featureflag:read"
+	// PermFeatureFlagWrite 管理特性开关（启停 / 规则 / 到期治理）（ENT-11）。
+	PermFeatureFlagWrite PermissionCode = "featureflag:write"
 )

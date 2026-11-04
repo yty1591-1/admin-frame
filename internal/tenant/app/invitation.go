@@ -56,6 +56,35 @@ type InvitationNotifier interface {
 	NotifyInvitationCreated(ctx context.Context, event InvitationNotifyEvent) error
 }
 
+// FeatureEvaluator 是特性开关消费端口（ENT-11 FF-07）：只暴露本域
+// 需要的能力，实现由装配层注入（featureflag runtime）；nil 语义 =
+// 未启用 flag 体系（ENT-10 现状不变：notifier 注入即发送）。
+type FeatureEvaluator interface {
+	// IsEnabled 判断 flag 在给定租户 / 主体上下文下是否生效。
+	IsEnabled(flagKey string, channel, tenantID, subjectID string) bool
+}
+
+// FlagInvitationEmail 是邀请邮件灰度开关键（featureflag-plan.md FF-07）。
+//
+// 语义：禁用 = 邀请照常落库但不发送邮件（运营线下转交兜底）；启用 =
+// 走通知中心异步投递。首发默认关闭，按租户灰度放量。
+const FlagInvitationEmail = "tenant.invitation_email"
+
+// invitationEmailEnabled 评估邀请邮件开关：evaluator 未注入 = 沿用
+// ENT-10 现状（notifier 注入即发送）；注入后以 flag 结果为准。
+// 主体缺省按 "system"（百分比分桶 fail closed 语义下空主体不命中，
+// 显式占位保证分桶可复现）。
+func invitationEmailEnabled(e FeatureEvaluator, tenantID, actorID string) bool {
+	if e == nil {
+		return true
+	}
+	subject := strings.TrimSpace(actorID)
+	if subject == "" {
+		subject = "system"
+	}
+	return e.IsEnabled(FlagInvitationEmail, "admin", tenantID, subject)
+}
+
 // InvitationService 编排成员邀请用例（T-14）。
 //
 // 邮件投递依赖 ENT-10，未就绪前的明确语义是「只落库不发送」：
@@ -72,6 +101,8 @@ type InvitationService struct {
 	ttl         time.Duration
 	// notifier 邀请邮件投递端口（ENT-10）；nil = 只落库不发送（T-14 阶段语义）。
 	notifier InvitationNotifier
+	// features 特性开关消费端口（ENT-11）；nil = 未启用 flag 体系。
+	features FeatureEvaluator
 }
 
 // NewInvitationService 构造邀请用例；依赖均必填（配额仓储可空，见 Options.Quotas）。
@@ -105,6 +136,7 @@ func NewInvitationService(tenants domain.Repository, members domain.MemberReposi
 		now:         now,
 		ttl:         ttl,
 		notifier:    opts.Notifier,
+		features:    opts.FeatureEvaluator,
 	}, nil
 }
 
@@ -162,6 +194,13 @@ type InvitationAction struct {
 	Idempotent bool
 }
 
+// SetFeatureEvaluator 注入特性开关消费端口（ENT-11 装配期调用；nil 忽略）。
+func (s *InvitationService) SetFeatureEvaluator(e FeatureEvaluator) {
+	if e != nil {
+		s.features = e
+	}
+}
+
 // SetNotifier 注入邀请邮件投递端口（ENT-10 装配期调用；nil 忽略）。
 //
 // 装配时序说明：通知运行时可能晚于租户运行时构造（admin-api 的懒装配
@@ -215,7 +254,9 @@ func (s *InvitationService) Create(ctx context.Context, in CreateInvitationInput
 		plaintext = token
 		// ENT-10：Notifier 在事务内写 Outbox 事件，失败整体回滚——
 		// 「邀请已建但邮件永不发出」的静默丢失比失败重试更难排查。
-		if s.notifier != nil {
+		// ENT-11：flag 禁用 = 只落库不发送（运营线下转交兜底），
+		// 邀请写入不受影响；evaluator 未注入沿用既有语义。
+		if s.notifier != nil && invitationEmailEnabled(s.features, in.TenantID, in.Actor.SubjectID) {
 			if err := s.notifier.NotifyInvitationCreated(txCtx, InvitationNotifyEvent{
 				TenantID:     built.TenantID,
 				TenantName:   tenant.Name,
@@ -455,6 +496,9 @@ func (s *InvitationService) Resend(ctx context.Context, in ResendInvitationInput
 			tenant, terr := s.tenants.Get(txCtx, next.TenantID)
 			if terr != nil {
 				return apperr.Internal("load tenant for invitation email failed", terr)
+			}
+			if !invitationEmailEnabled(s.features, in.TenantID, in.Actor.SubjectID) {
+				return nil
 			}
 			if err := s.notifier.NotifyInvitationCreated(txCtx, InvitationNotifyEvent{
 				TenantID:     next.TenantID,

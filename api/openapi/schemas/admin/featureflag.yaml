@@ -1,0 +1,145 @@
+# ENT-11：特性开关域 Schema（flag 规则不含 PII；subject 只进哈希不落明文）。
+components:
+  schemas:
+    FeatureFlag:
+      type: object
+      description: 特性开关（聚合根）；kill switch 无条件优先于一切规则。
+      properties:
+        key:
+          type: string
+          description: flag 键（module.feature 小写点分）。
+          example: tenant.invitation_email
+        description:
+          type: string
+          description: 用途说明；permanent flag 须写明常驻理由。
+        status:
+          type: string
+          enum: [enabled, disabled, expired]
+          description: 治理状态；expired 为到期任务自动置入（终态，须重建）。
+        default_enabled:
+          type: boolean
+          description: 规则全部未命中的回退值；防御性默认 false。
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureFlagRule"
+          description: 有序规则数组，首个命中生效；单 flag 上限 32 条。
+        permanent:
+          type: boolean
+          description: 常驻 kill-switch 标记；true 豁免到期治理。
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 到期时间；permanent=true 时为空。
+        version:
+          type: integer
+          format: int64
+          description: 乐观锁版本。
+        created_by:
+          type: string
+          description: 创建主体标识。
+        effective_within_seconds:
+          type: integer
+          description: 变更全集群生效上限（秒）——kill switch 面 5s，规则面 30s。
+      required:
+        - key
+        - status
+        - default_enabled
+        - rules
+        - permanent
+        - version
+        - effective_within_seconds
+
+    FeatureFlagRule:
+      type: object
+      description: 三维度互斥（channel / tenant_ids / percentage 只允许其一）。
+      properties:
+        channel:
+          type: string
+          enum: [admin, biz, c]
+          description: 端别匹配；空 = 不限渠道。
+        tenant_ids:
+          type: array
+          items:
+            type: string
+          description: 租户白名单（不接受通配符；全量放开走 percentage=10000）。
+        percentage:
+          type: integer
+          maximum: 10000
+          description: 万分比灰度（10000 = 100%）；按 (flag_key, subject_id) 稳定哈希分桶。
+
+    FeatureFlagCreate:
+      type: object
+      required: [key, description]
+      properties:
+        key:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+          description: 全局唯一；冲突返回 40900。
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureFlagRule"
+        default_enabled:
+          type: boolean
+          default: false
+          description: true 且无规则 = 裸全量放开，返回 40000。
+        permanent:
+          type: boolean
+          default: false
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 非 permanent 必填且必须在将来。
+
+    FeatureFlagUpdate:
+      type: object
+      required: [expected_version]
+      properties:
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureFlagRule"
+        default_enabled:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        expected_version:
+          type: integer
+          format: int64
+          description: 乐观锁版本；不匹配返回 40900。
+
+    FeatureFlagStatus:
+      type: object
+      required: [target, expected_version]
+      properties:
+        target:
+          type: string
+          enum: [enabled, disabled]
+          description: disabled 即 kill switch（秒级生效 ≤5s）。
+        expected_version:
+          type: integer
+          format: int64
+
+    FeatureFlagListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureFlag"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer

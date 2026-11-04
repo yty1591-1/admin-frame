@@ -4,10 +4,12 @@ import (
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
+	featureflagadmin "github.com/admin-frame/admin-frame/internal/featureflag/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
 	notificationadmin "github.com/admin-frame/admin-frame/internal/notification/transport/admin"
@@ -49,6 +51,21 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	services, err := notificationruntime.NewAdminServices(deps)
 	if err != nil {
 		return err
+	}
+	// ENT-11：featureflag 装配——管理路由 + 邀请邮件灰度开关
+	// （tenant.invitation_email）。装配失败不阻断通知链路
+	// （保持 ENT-10 语义），但记入装配错误以便排查。
+	flagRT, ferr := featureflagruntime.New(deps, featureflagruntime.Options{Service: "admin-api"})
+	if ferr != nil {
+		deps.Logger.Warn("featureflag runtime unavailable, flag management disabled", "error", ferr)
+	}
+	if flagRT != nil {
+		if flagRT.Handler != nil {
+			featureflagadmin.Register(mux, flagRT.Handler, deps.AuthMW, deps.RequirePermission)
+		}
+		if tenantRT != nil && flagRT.Evaluator != nil {
+			tenantRT.SetFeatureEvaluator(featureflagruntime.NewTenantEvaluator(flagRT.Evaluator))
+		}
 	}
 	if services != nil {
 		if tenantRT != nil {

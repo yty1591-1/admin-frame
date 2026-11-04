@@ -46,6 +46,15 @@ func (r *Runtime) SetInvitationNotifier(notifier app.InvitationNotifier) {
 	r.invitationService.SetNotifier(notifier)
 }
 
+// SetFeatureEvaluator 注入特性开关消费端口（ENT-11：邀请邮件灰度开关）。
+// 装配期一次；nil 值忽略（保持 ENT-10 语义）。
+func (r *Runtime) SetFeatureEvaluator(evaluator app.FeatureEvaluator) {
+	if r == nil || r.invitationService == nil || evaluator == nil {
+		return
+	}
+	r.invitationService.SetFeatureEvaluator(evaluator)
+}
+
 // New 构造租户运行时（A 端管理能力）。
 func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.IDs == nil {

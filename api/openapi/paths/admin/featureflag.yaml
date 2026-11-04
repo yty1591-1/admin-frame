@@ -1,0 +1,233 @@
+# ENT-11：特性开关管理端路径（CRUD / 启停 / 删除）。
+#
+# flag 是平台级治理资源（kill switch / 灰度配比），仅 A 端；
+# B 端 / C 端无任何 flag 端点（不泄露功能面）。
+
+admin-v1-feature-flags:
+  get:
+    tags: [featureflag]
+    summary: 查询特性开关列表
+    description: |
+      需要 `featureflag:read`。state 过滤（enabled / disabled / expired）；
+      遗留台账按 permanent 与 expires_at 分组在管理端呈现。
+    operationId: adminListFeatureFlags
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: state
+        schema:
+          type: string
+          enum: [enabled, disabled, expired]
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          default: 0
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlagListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  post:
+    tags: [featureflag]
+    summary: 创建特性开关
+    description: |
+      需要 `featureflag:write`。防御性默认：`default_enabled=true` 且无规则
+      的裸全量放开返回 40000；非 permanent 必须携带 `expires_at`（且在将来）。
+      写 `featureflag.create` 审计。
+    operationId: adminCreateFeatureFlag
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlagCreate"
+    responses:
+      "201":
+        description: 已创建
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlag"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+admin-v1-feature-flags-by-key:
+  get:
+    tags: [featureflag]
+    summary: 查询特性开关详情
+    description: 需要 `featureflag:read`。
+    operationId: adminGetFeatureFlag
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlag"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  patch:
+    tags: [featureflag]
+    summary: 变更特性开关（描述 / 规则 / 默认值 / 到期）
+    description: |
+      需要 `featureflag:write`。乐观锁：`expected_version` 不匹配返回 40900。
+      已到期（expired）flag 不可编辑，须重建。写 `featureflag.update` 审计。
+    operationId: adminUpdateFeatureFlag
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlagUpdate"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlag"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  delete:
+    tags: [featureflag]
+    summary: 删除特性开关
+    description: |
+      需要 `featureflag:write`。仅允许对非 enabled 状态执行（在用
+      kill switch 必须先停用）。写 `featureflag.delete` 审计。
+    operationId: adminDeleteFeatureFlag
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: 已删除
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+admin-v1-feature-flags-by-key-status:
+  post:
+    tags: [featureflag]
+    summary: 启停特性开关（kill switch 入口）
+    description: |
+      需要 `featureflag:write`。`target=disabled` 即 kill switch——无条件禁用
+      （优先于一切规则），最迟 5 秒全集群生效。乐观锁防并发覆盖。
+      写 `featureflag.enable` / `featureflag.disable` 审计。
+    operationId: adminSetFeatureFlagStatus
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlagStatus"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/featureflag.yaml#/components/schemas/FeatureFlag"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"

@@ -391,6 +391,22 @@ var entries = []Entry{
 		Sort:        315,
 		Description: "代发通知（notification.send 审计）、DLQ 死信补偿重放（notification.dlq.replay 审计）与模板注册 / 停用。",
 	},
+	{
+		Code:        iam.PermFeatureFlagRead,
+		Name:        "查看特性开关",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        325,
+		Description: "查询特性开关列表、灰度规则与遗留 flag 台账（永久 / 即将到期 / 已过期分组）。",
+	},
+	{
+		Code:        iam.PermFeatureFlagWrite,
+		Name:        "管理特性开关",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        335,
+		Description: "创建 / 变更 / 启停 / 删除特性开关（featureflag.* 审计）；kill switch 秒级生效，变更全部留痕。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。
