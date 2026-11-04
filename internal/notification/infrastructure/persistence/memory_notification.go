@@ -88,6 +88,10 @@ func (r *MemoryRequestRepository) UpdateStatus(_ context.Context, n domain.Notif
 
 // List 分页查询（tenant_id 强制过滤；场景 / 状态可选）。
 func (r *MemoryRequestRepository) List(_ context.Context, filter domain.RequestFilter) ([]domain.Notification, int, error) {
+	// 与 MySQL 实现同语义：空租户键拒绝（ENT-12 fail closed）。
+	if strings.TrimSpace(filter.TenantID) == "" {
+		return nil, 0, domain.ErrTenantIDRequired
+	}
 	filter = filter.Normalize()
 	r.mu.RLock()
 	defer r.mu.RUnlock()

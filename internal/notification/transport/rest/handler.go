@@ -6,6 +6,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	sharedhttpx "github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
@@ -66,6 +68,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 
 // tenantScope 返回本次请求允许查询的租户：B 端强制 CurrentTenant（T-22），
 // A 端按查询参数（未传取平台哨兵——平台级通知运维视图）。
+//
+// 解析后统一过数据范围契约（ENT-12）：快照存在时，目标租户必须落在
+// 主体对该资源的数据范围内（如运营专员被配成 merchant_set 只能看集合
+// 内租户）；快照缺失（未启用 iam 的部署形态）由权限中间件兜底。
 func (h *Handler) tenantScope(r *http.Request) (string, error) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || strings.TrimSpace(principal.SubjectID) == "" {
@@ -74,18 +80,27 @@ func (h *Handler) tenantScope(r *http.Request) (string, error) {
 	if string(principal.Channel) != h.channel {
 		return "", apperr.Unauthorized("channel mismatch")
 	}
+	var tenant string
 	if h.channel == "biz" {
-		tenant := principal.CurrentTenant()
+		tenant = principal.CurrentTenant()
 		if strings.TrimSpace(tenant) == "" {
 			return "", apperr.Forbidden("no active tenant in token")
 		}
-		return tenant, nil
+	} else {
+		tenant = strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+		if tenant == "" {
+			tenant = domain.PlatformTenantID
+		}
 	}
-	tenant := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
-	if tenant == "" {
-		tenant = domain.PlatformTenantID
+	return tenant, enforceDataScope(r.Context(), tenant)
+}
+
+// enforceDataScope 数据范围契约校验（ENT-12）；越界翻译为 40300。
+func enforceDataScope(ctx context.Context, tenant string) error {
+	if err := authz.EnforceFromContext(ctx, "notification", tenant); err != nil {
+		return apperr.Forbidden("target tenant outside data scope")
 	}
-	return tenant, nil
+	return nil
 }
 
 func (h *Handler) actor(r *http.Request) (app.Actor, error) {
@@ -189,6 +204,11 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	tenant := strings.TrimSpace(body.TenantID)
 	if tenant == "" {
 		tenant = domain.PlatformTenantID
+	}
+	// 代发目标租户同样受数据范围契约约束（ENT-12）。
+	if err := enforceDataScope(r.Context(), tenant); err != nil {
+		sharedhttpx.FromError(w, err, traceID)
+		return
 	}
 	requestID, err := h.send.Send(r.Context(), app.SendInput{
 		TenantID:    tenant,

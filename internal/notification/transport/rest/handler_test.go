@@ -14,6 +14,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/notification/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -142,6 +143,36 @@ func TestNotificationHandlerUnauthenticated(t *testing.T) {
 	handler.List(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated must be 401, got %d", rec.Code)
+	}
+}
+
+// TestNotificationHandlerDataScopeDenied ENT-12：快照存在时，目标租户
+// 必须落在主体数据范围内；越界统一 40300（fail closed）。
+func TestNotificationHandlerDataScopeDenied(t *testing.T) {
+	handler := newTestHandler(t)
+
+	newReq := func(tenant string) *http.Request {
+		req := principalRequest(t, http.MethodGet, "/admin/v1/notifications?tenant_id="+tenant, "admin", "")
+		snapshot := authz.Snapshot{
+			Channel: "admin", SubjectID: "ops-1", MerchantID: "t-1",
+			Scopes: map[string]authz.Scope{
+				// 运营专员只管 t-2，t-1（自己商户）反而在范围外。
+				"notification": {Type: authz.ScopeMerchantSet, MerchantIDs: []string{"t-2"}},
+			},
+		}
+		return req.WithContext(authz.WithSnapshot(req.Context(), snapshot))
+	}
+
+	rec := httptest.NewRecorder()
+	handler.List(rec, newReq("t-1"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("out-of-scope list must be 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	handler.List(rec, newReq("t-2"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("in-scope list must be 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -93,6 +93,9 @@ func (s *QuotaService) Set(ctx context.Context, in SetQuotaInput) (domain.Quota,
 // 读路径用 Get 而不是 mutableTenant：终止态租户恰恰是取证与对账最需要读的对象，
 // 写守卫不能套在只读接口上（否则同一租户的成员列表 200、配额列表 409）。
 func (s *QuotaService) List(ctx context.Context, tenantID string) ([]domain.Quota, error) {
+	if err := enforceDataScope(ctx, tenantID); err != nil {
+		return nil, err
+	}
 	if _, err := s.tenants.Get(ctx, tenantID); err != nil {
 		return nil, translate(err)
 	}

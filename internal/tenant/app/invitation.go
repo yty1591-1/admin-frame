@@ -481,6 +481,9 @@ func (s *InvitationService) List(ctx context.Context, tenantID, status string, l
 	if status != "" && !domain.InvitationStatus(status).Valid() {
 		return nil, 0, apperr.BadRequest("status must be one of pending, accepted, revoked, expired")
 	}
+	if err := enforceDataScope(ctx, tenantID); err != nil {
+		return nil, 0, err
+	}
 	if _, err := s.tenants.Get(ctx, tenantID); err != nil {
 		return nil, 0, translate(err)
 	}

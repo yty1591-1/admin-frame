@@ -163,6 +163,11 @@ func (r *MySQLRequestRepository) UpdateStatus(ctx context.Context, n domain.Noti
 
 // List 分页查询（tenant_id 强制过滤）。
 func (r *MySQLRequestRepository) List(ctx context.Context, filter domain.RequestFilter) ([]domain.Notification, int, error) {
+	// 租户隔离 fail closed（ENT-12）：仓储层不再信任 app 传入的过滤条件，
+	// 空租户键直接拒绝，杜绝"全表通知单"查询路径。
+	if strings.TrimSpace(filter.TenantID) == "" {
+		return nil, 0, domain.ErrTenantIDRequired
+	}
 	filter = filter.Normalize()
 	where := []string{"tenant_id = ?"}
 	args := []any{filter.TenantID}

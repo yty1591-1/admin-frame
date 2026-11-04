@@ -178,6 +178,7 @@ wildcard   := "*" | segment ":" "*"
 4. 标记为 `data_bearing` 的权限点，角色授权时必须至少配置一条数据范围，否则拒绝创建 / 更新。
 5. 数据范围必须由 app + 仓储条件双重落实；**禁止**只查全量再在内存过滤（ARCHITECTURE §5.5、SEC-14）。
 6. 数据范围不写入 JWT；每次鉴权从快照解析，并注入 `context` 供 app 读取。
+7. **执行原语（ENT-12，2026-11-04）**：`internal/shared/authz` 提供 `ScopeWhere`（范围 → SQL 谓词描述，`Clause(column)` 生成 `IN (...)` 片段）、`Snapshot.EnforceMerchant`（写目标校验）与 `EnforceFromContext`（业务 app 一行式接入；快照缺失放行，由 RequirePermission 层兜底）。越界统一 `ErrScopeDenied` → 40300。落地见 `internal/tenant/app`（`mutableTenant` 写汇聚点 + 三个读路径）与通知 transport；门禁 `make check-authz`（AZ-01～04）。`self` 范围 v1 在租户维度执行（与 merchant 同界），主体级比对由 app 显式完成。
 
 ### 4.5 职责分离（SoD）
 

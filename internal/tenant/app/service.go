@@ -13,6 +13,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
@@ -693,6 +694,10 @@ func mutableTenant(ctx context.Context, tenants domain.Repository, tenantID stri
 	if strings.TrimSpace(tenantID) == "" {
 		return domain.Tenant{}, apperr.BadRequest("tenant id is required")
 	}
+	// 数据范围契约（ENT-12）：写目标租户必须在主体范围内。
+	if err := enforceDataScope(ctx, tenantID); err != nil {
+		return domain.Tenant{}, err
+	}
 	tenant, err := tenants.Get(ctx, tenantID)
 	if err != nil {
 		return domain.Tenant{}, translate(err)
@@ -701,6 +706,19 @@ func mutableTenant(ctx context.Context, tenants domain.Repository, tenantID stri
 		return domain.Tenant{}, apperr.Conflict("tenant is terminated and cannot be changed")
 	}
 	return tenant, nil
+}
+
+// enforceDataScope 校验目标租户在主体数据范围内（ENT-12 数据范围契约）。
+//
+// 快照缺失（未启用 iam 的单进程部署形态）放行——功能权限已由
+// RequirePermission 中间件挡住；快照存在时，运营主体被配成 merchant /
+// merchant_set 范围就只能操作集合内租户，越界统一 40300。
+// 读用例也必须调用：越权读与越权写同样不可接受（SEC-14）。
+func enforceDataScope(ctx context.Context, tenantID string) error {
+	if err := authz.EnforceFromContext(ctx, "tenant", tenantID); err != nil {
+		return apperr.Forbidden("target tenant outside data scope")
+	}
+	return nil
 }
 
 // translateIfNeeded 在已经带业务码时原样返回，避免二次包装成 500。

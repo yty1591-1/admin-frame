@@ -191,6 +191,11 @@ check-outbox:
 check-tenant:
 	bash scripts/ci/check-tenant.sh
 
+# ENT-12：数据范围契约门禁——authz 原语、越权用例、仓储 fail closed、
+# 业务接线四处对账（rbac-iam.md §4.4）。
+check-authz:
+	bash scripts/ci/check-authz.sh
+
 # ENT-10 NT-08：通知域门禁——审计动作 ↔ EVENTS.md 对账、状态机矩阵快照、
 # 渠道包 internal 引用面扫描（ADR-0008 铁律）。
 check-notification:
@@ -236,7 +241,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-notification build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-notification build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

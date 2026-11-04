@@ -239,6 +239,9 @@ func seatLimitOf(ctx context.Context, quotas domain.QuotaRepository, tenantID st
 
 // List 分页列出租户成员（T-13）；limit<=0 由仓储按全量处理。
 func (s *MemberService) List(ctx context.Context, tenantID string, includeDisabled bool, limit, offset int) ([]domain.Member, int, error) {
+	if err := enforceDataScope(ctx, tenantID); err != nil {
+		return nil, 0, err
+	}
 	if _, err := s.tenants.Get(ctx, tenantID); err != nil {
 		return nil, 0, translate(err)
 	}

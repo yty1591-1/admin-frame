@@ -82,6 +82,17 @@ func TestMemoryRequestRepositoryListFilter(t *testing.T) {
 	}
 }
 
+// TestRequestRepositoryListRequiresTenant ENT-12：仓储层对空租户键
+// fail closed——不信任 app 过滤条件，杜绝全表通知单查询路径。
+// MySQL 实现同语义（SQL 构造前同位守卫），需要 DB 的用例归 ENT-16 集成。
+func TestRequestRepositoryListRequiresTenant(t *testing.T) {
+	repo := NewMemoryRequestRepository()
+	_, _, err := repo.List(context.Background(), domain.RequestFilter{})
+	if !errors.Is(err, domain.ErrTenantIDRequired) {
+		t.Fatalf("empty tenant must be ErrTenantIDRequired, got %v", err)
+	}
+}
+
 // mustNotification 在本包构造测试通知单（domain 包的 helper 不可跨包引用）。
 func mustNotification(t *testing.T, now time.Time, id string) domain.Notification {
 	t.Helper()
