@@ -79,7 +79,6 @@ func (s *SQLExportStore) Get(ctx context.Context, id string) (domain.ExportJob, 
 	if s == nil || s.DB == nil {
 		return domain.ExportJob{}, fmt.Errorf("audit export store is not configured")
 	}
-	//nolint:gosec // G201: 表名与列名均为本文件常量。
 	query := fmt.Sprintf(`SELECT %s FROM %s WHERE export_id = ?`, exportColumns, s.table())
 	job, err := scanExportJob(s.DB.QueryRowContext(ctx, query, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -108,7 +107,6 @@ func (s *SQLExportStore) ClaimPending(ctx context.Context, now time.Time) (domai
 		_ = tx.Rollback()
 	}()
 
-	//nolint:gosec // G201: 表名与列名均为本文件常量。
 	selectSQL := fmt.Sprintf(
 		`SELECT %s FROM %s WHERE status = ? ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
 		exportColumns, s.table())
@@ -317,9 +315,9 @@ func nullableTime(value time.Time) any {
 }
 
 // truncate 按字节截断字符串，保证不超过列宽。
-func truncate(value string, max int) string {
-	if len(value) <= max {
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
 		return value
 	}
-	return value[:max]
+	return value[:limit]
 }

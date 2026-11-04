@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -160,15 +161,20 @@ func (b *bundler) hoist(abs string) error {
 		for j := 0; j < len(items.Content); j += 2 {
 			name := items.Content[j].Value
 			value := items.Content[j+1]
-			if existing := lookup(dst, name); existing != nil {
-				if !sameNode(existing, value) {
-					return fmt.Errorf("component conflict: %s/%s (%s)", section, name, abs)
-				}
-				continue
-			}
+			// 先展开再比较：existing 是已展开形态（内部 $ref 已改写为本地指针），
+			// 拿原始节点去比会把「同一个组件」误判成冲突。
 			clone := deepCopy(value)
 			if err := b.expand(clone, dir); err != nil {
 				return err
+			}
+			if existing := lookup(dst, name); existing != nil {
+				// example/examples 是非规范性的说明字段（各端示例值天然不同，
+				// 例如 VersionInfo.service 在 A 端是 admin-api、B 端是 biz-api）。
+				// 同名组件只在「忽略示例」后仍不同时才算真冲突。
+				if !sameNodeIgnoringExamples(existing, clone) {
+					return fmt.Errorf("component conflict: %s/%s (%s)", section, name, abs)
+				}
+				continue
 			}
 			dst.Content = append(dst.Content, scalar(name), clone)
 		}
@@ -253,13 +259,56 @@ func deepCopy(n *yaml.Node) *yaml.Node {
 	return &c
 }
 
-func sameNode(a, b *yaml.Node) bool {
-	var ab, bb bytes.Buffer
-	ea := yaml.NewEncoder(&ab)
-	ea.SetIndent(2)
-	_ = ea.Encode(a)
-	eb := yaml.NewEncoder(&bb)
-	eb.SetIndent(2)
-	_ = eb.Encode(b)
-	return ab.String() == bb.String()
+// sameNodeIgnoringExamples 比较两个节点，忽略 example / examples 说明字段。
+//
+// 多端规范会各自维护同名通用组件（如 VersionInfo、分页信封），示例取值
+// 按端填写是有意的；把示例差异当成组件冲突会让 bundle 无法进行，也会
+// 迫使各端写一份「没有信息量的」示例。结构、枚举、必填项仍严格比较。
+func sameNodeIgnoringExamples(a, b *yaml.Node) bool {
+	return canonical(a, true) == canonical(b, true)
+}
+
+// canonical 把节点编码为稳定的 JSON 字符串，供结构比较。
+//
+// 直接比较 YAML 文本会被注释、键序、锚点别名干扰：同一个组件从两个文件
+// 展开后注释不同是常态，不能算冲突。
+func canonical(n *yaml.Node, dropExamples bool) string {
+	if n == nil {
+		return ""
+	}
+	var v any
+	if err := n.Decode(&v); err != nil {
+		return "decode-error:" + err.Error()
+	}
+	if dropExamples {
+		v = withoutExamples(v)
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "marshal-error:" + err.Error()
+	}
+	return string(raw)
+}
+
+// withoutExamples 递归删除 example / examples 键。
+func withoutExamples(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, item := range typed {
+			if k == "example" || k == "examples" {
+				continue
+			}
+			out[k] = withoutExamples(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = withoutExamples(item)
+		}
+		return out
+	default:
+		return v
+	}
 }

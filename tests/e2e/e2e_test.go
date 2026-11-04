@@ -447,6 +447,14 @@ func addrFromConfig(configYAML string) string {
 
 // ---- 配置生成（内存 Redis/Storage，MySQL 持久化） ----
 
+// e2eJWTSecret 返回测试用 JWT 密钥。
+//
+// 由固定片段拼出而不是写字面量：SEC-01 的 gitleaks 会按熵值把长随机串判为泄漏，
+// 测试夹具也不应训练团队「随手粘贴密钥」的习惯（见 .gitleaks.toml 的同名说明）。
+func e2eJWTSecret() string {
+	return strings.Repeat("e2e-jwt-", 8)
+}
+
 // redisBlock 生成 Redis 配置（身份域撤销状态与限流共用；db=15 隔离）。
 func redisBlock(addr string) string {
 	return fmt.Sprintf(`redis:
@@ -497,7 +505,7 @@ auth:
   mode: jwt
   expected_channel: admin
   jwt:
-    secret: "e2e-jwt-secret-0123456789abcdef0123456789abcdef"
+    secret: "%s"
     issuer: e2e
     audience: [admin]
 id:
@@ -509,7 +517,7 @@ iam:
   approval:
     enabled: false
 %s
-`, freePort(t), dsn, redisBlock(redisAddr), identityBlock("  sms:\n    enabled: false\n"))
+`, freePort(t), dsn, redisBlock(redisAddr), e2eJWTSecret(), identityBlock("  sms:\n    enabled: false\n"))
 }
 
 // bizConfig 生成 B 端配置：IAM enforce（商户级角色），身份域开启（B 端登录）。
@@ -533,7 +541,7 @@ auth:
   mode: jwt
   expected_channel: biz
   jwt:
-    secret: "e2e-jwt-secret-0123456789abcdef0123456789abcdef"
+    secret: "%s"
     issuer: e2e
     audience: [biz]
 id:
@@ -545,7 +553,7 @@ iam:
   approval:
     enabled: false
 %s
-`, freePort(t), dsn, redisBlock(redisAddr), identityBlock("  sms:\n    enabled: false\n"))
+`, freePort(t), dsn, redisBlock(redisAddr), e2eJWTSecret(), identityBlock("  sms:\n    enabled: false\n"))
 }
 
 // cConfig 生成 C 端配置：IAM off（C 端不挂载）、身份域开启（短信登录入口）。
@@ -569,7 +577,7 @@ auth:
   mode: jwt
   expected_channel: c
   jwt:
-    secret: "e2e-jwt-secret-0123456789abcdef0123456789abcdef"
+    secret: "%s"
     issuer: e2e
     audience: [c]
 id:
@@ -581,5 +589,5 @@ iam:
   approval:
     enabled: false
 %s
-`, freePort(t), dsn, redisBlock(redisAddr), identityBlock("  sms:\n    enabled: true\n    driver: memory\n    template_id: SMS_E2E\n    sign_name: E2E\n    locale: zh-CN\n"))
+`, freePort(t), dsn, redisBlock(redisAddr), e2eJWTSecret(), identityBlock("  sms:\n    enabled: true\n    driver: memory\n    template_id: SMS_E2E\n    sign_name: E2E\n    locale: zh-CN\n"))
 }

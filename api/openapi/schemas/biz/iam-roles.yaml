@@ -51,8 +51,11 @@ components:
           $ref: "./common.yaml#/components/schemas/Channel"
         scope_type:
           type: string
-          description: 角色作用域；A 端为 admin，B 端为 merchant
-          enum: [admin, merchant]
+          # 枚举与 internal/iam/domain 的 RoleScopeType 对齐：platform / merchant。
+          # 旧文档把 A 端写成 admin，与实现不符（B 端看不到 platform 角色，
+          # 但同一组件名在 bundle 时与 A 端合并，必须保持同一枚举）。
+          description: 角色作用域；A 端为 platform，B 端为 merchant
+          enum: [platform, merchant]
         merchant_id:
           type: string
         parent_id:

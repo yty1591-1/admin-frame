@@ -213,6 +213,7 @@ func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
+	//nolint:gosec // G705: body 是服务端生成的 CSV 导出内容，Content-Type 固定 text/csv，不经 HTML 渲染。
 	_, _ = w.Write(body)
 }
 

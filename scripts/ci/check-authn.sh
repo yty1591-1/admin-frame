@@ -117,7 +117,9 @@ if [[ ! -f docs/audit/EVENTS.md || ! -f "${ACTIONS_FILE}" ]]; then
 else
   AUTH_ACTIONS="$(grep -oE 'auth\.[a-z._]+' docs/audit/EVENTS.md | sort -u)"
   for action in ${AUTH_ACTIONS}; do
-    name="$(grep -oE "Action[A-Za-z0-9]+[[:space:]]*=[[:space:]]*\"${action}\"" "${ACTIONS_FILE}" | head -n1 | sed -E 's/^([A-Za-z0-9]+).*/\1/')"
+    # 末尾 || true：无匹配时 grep 返回 1，在 set -euo pipefail 下会静默终止脚本，
+    # 让「常量缺失」变成「门禁无输出即失败」——这里必须走到下面的 ERROR 分支。
+    name="$(grep -oE "Action[A-Za-z0-9]+[[:space:]]*=[[:space:]]*\"${action}\"" "${ACTIONS_FILE}" | head -n1 | sed -E 's/^([A-Za-z0-9]+).*/\1/' || true)"
     if [[ -z "${name}" ]]; then
       echo "ERROR: ${ACTIONS_FILE} missing constant for ${action}" >&2
       FAIL=1

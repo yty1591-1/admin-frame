@@ -32,6 +32,7 @@
 | API-08 | OpenAPI 必须通过语法/引用校验（oasdiff validate） | `make openapi` |
 | API-09 | 弃用字段/路径须标 `deprecated: true`，并写 `x-deprecated-since`（ISO 日期）；最短保留 **一个 major 或 90 天**（取更长） | Review + oasdiff deprecation |
 | API-10 | C 端契约禁止运营内部字段（如 `remark`、`cost_cent`）；B 端路径不得信任客户端伪造的跨商户范围 | Review（对齐 SEC-06/14） |
+| API-13 | 分端规范自包含：`api/openapi/paths/{biz,c}` 与 `schemas/{biz,c}` 不得引用 `schemas/admin`；跨端共享组件须在本端维护同名副本 | `check-openapi`（API-13 段） |
 | API-11 | C 端创建类写操作请求头必须带 `Idempotency-Key` | 契约 `required` + Handler |
 | API-12 | 合并请求须使用仓库 MR 模板并勾选 API 自检 | `.github/` 与 `.gitee/` PR 模板 |
 

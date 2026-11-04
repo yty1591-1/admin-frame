@@ -51,7 +51,7 @@
 
 **Git / 发布 / Runbook / 审计门禁（GIT / RELS / RB / AUD，并入 job `arch`）：** `check-git.sh` + `check-release.sh` + `check-runbooks.sh` + `check-audit.sh`。
 
-**许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检；全链路压测仍可选）。
+**许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检）+ `check-load-baseline.sh`（ENT-16：压测登记表 ↔ 执行器 ↔ 产物对账，**不重跑压测**；全链路压测本身按 PERF-06 仍为手动 / nightly）。
 
 **发版镜像（不在 PR 必跑，见 §3.5）**：`image` job 在 push `main`/`master` 与 `v*` tag 时构建多架构镜像、推送并用 Trivy 扫描；命中 `CRITICAL/HIGH` 即失败，该 digest 不得上生产。
 

@@ -83,7 +83,7 @@ func (s *AuthService) SwitchTenant(ctx context.Context, in SwitchTenantInput) (T
 	if err != nil {
 		return TenantSwitchResult{}, err
 	}
-	_ = s.emitAudit(ctx, actionTenantSwitch, in.AccountID, tenantID, "account", in.AccountID,
+	_ = s.emitAudit(ctx, audit.ActionAuthTenantSwitch, in.AccountID, tenantID, "account", in.AccountID,
 		audit.OutcomeSuccess, "", in.TraceID, map[string]string{
 			"previous_tenant": in.MerchantID,
 			"session_id":      in.SessionID,
@@ -95,5 +95,4 @@ func (s *AuthService) SwitchTenant(ctx context.Context, in SwitchTenantInput) (T
 	}, nil
 }
 
-// actionTenantSwitch 租户切换审计动作（docs/audit/EVENTS.md）。
-const actionTenantSwitch = "auth.tenant_switch"
+// audit.ActionAuthTenantSwitch 租户切换审计动作（docs/audit/EVENTS.md）。

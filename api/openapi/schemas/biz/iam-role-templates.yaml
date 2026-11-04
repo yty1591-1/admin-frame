@@ -1,0 +1,193 @@
+# 角色模板 Schema（B 端视角）。
+#
+# 通道自包含（API-10）：不跨引 schemas/admin。B 端可见字段与 A 端一致，
+# 但实例化请求的约束（scope_type / data_scope 取值）按商户域收紧，
+# 因此保留本通道副本而不是共享文件。
+components:
+  schemas:
+    RoleTemplateStatus:
+      type: string
+      enum: [active, disabled]
+
+    RoleTemplate:
+      type: object
+      required:
+        - id
+        - channel
+        - code
+        - name
+        - description
+        - status
+        - version
+        - permissions
+        - data_scopes
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/RoleTemplateStatus"
+        version:
+          type: integer
+          format: int64
+          description: 乐观锁版本；写接口必须回传
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "./iam-roles.yaml#/components/schemas/DataScope"
+        created_by:
+          type: string
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RoleTemplateListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleTemplate"
+        total:
+          type: integer
+
+    CreateRoleTemplateRequest:
+      type: object
+      required: [code, name, permissions]
+      properties:
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        code:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        data_scopes:
+          type: array
+          items:
+            $ref: "./iam-roles.yaml#/components/schemas/DataScope"
+
+    UpdateRoleTemplateRequest:
+      type: object
+      required: [version]
+      description: nil 字段表示不修改；至少提供一个字段，否则 40000。
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/RoleTemplateStatus"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+
+    ReplaceTemplatePermissionsRequest:
+      type: object
+      required: [permissions, version]
+      properties:
+        permissions:
+          type: array
+          description: 全量替换；空数组表示清空
+          items:
+            type: string
+        data_scopes:
+          type: array
+          description: 省略表示不修改；空数组表示清空
+          items:
+            $ref: "./iam-roles.yaml#/components/schemas/DataScope"
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+
+    DeleteRoleTemplateRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+
+    InstantiateTemplateRequest:
+      type: object
+      required: [code, name]
+      properties:
+        channel:
+          $ref: "./common.yaml#/components/schemas/Channel"
+        scope_type:
+          type: string
+          enum: [platform, merchant]
+        code:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+
+    TemplateDrift:
+      type: object
+      required: [role_id, role_code, role_version, template_version]
+      properties:
+        role_id:
+          type: string
+        role_code:
+          type: string
+        role_version:
+          type: integer
+          format: int64
+        template_version:
+          type: integer
+          format: int64
+
+    TemplateDriftListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateDrift"
+        total:
+          type: integer
+
+    SyncTemplateRequest:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+          description: true 只返回待同步实例，不写入
+        reason:
+          type: string

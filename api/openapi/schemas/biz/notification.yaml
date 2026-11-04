@@ -1,0 +1,231 @@
+# ENT-10：通知域 Schema（收件人明文不出现在任何响应字段）。
+#
+# 通道自包含（API-10）：B 端只引用本目录 schema，不跨引 schemas/admin，
+# 否则 bundle 会把 A 端同名组件一并提升，产生同名不同源的组件冲突。
+# 与 A 端同名文件的差异只允许出现在「B 端不可见字段」上；结构变更须两端同步
+# 并通过 make check-openapi（test openapi 契约门禁）。
+components:
+  schemas:
+    Notification:
+      type: object
+      description: 通知单（聚合根）；渲染参数与收件人明文不落库，仅 recipient_ref 摘要。
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        scene:
+          type: string
+          description: 业务场景键（路由 / 偏好分类 / 配额分键依据）。
+        recipient_ref:
+          type: string
+          description: 收件人引用（subject_id 或摘要，32~64 位十六进制）。
+        idempotency_key:
+          type: string
+        channels:
+          type: array
+          items:
+            type: string
+            enum: [email, sms, push]
+        template_key:
+          type: string
+        locale:
+          type: string
+        priority:
+          type: string
+          enum: [critical, normal, low]
+        status:
+          type: string
+          enum: [pending, dispatched, sent, delivered, undelivered, failed, rejected]
+        reject_reason:
+          type: string
+          description: 拒发原因（rejected 终态非空）。
+        version:
+          type: integer
+          format: int64
+        actor:
+          type: string
+        reference:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NotificationListData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    Delivery:
+      type: object
+      description: 渠道投递明细；(request_id, channel) 唯一，重试在同一行累加 attempt。
+      properties:
+        id:
+          type: string
+        request_id:
+          type: string
+        channel:
+          type: string
+          enum: [email, sms, push]
+        provider:
+          type: string
+          description: 实际供应商（主备切换后记录实际值）。
+        status:
+          type: string
+          enum: [pending, retrying, accepted, failed, delivered, undelivered]
+        attempt:
+          type: integer
+        semantic_code:
+          type: string
+          description: 编排层归一化失败语义码（低基数：timeout / rate_limited / invalid_address / auth_failed / token_invalid / provider_error / channel_unavailable / internal 等）。
+        provider_code:
+          type: string
+          description: 供应商原始码（仅排障）。
+        message_id:
+          type: string
+        finished_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    DeliveryListData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
+        total:
+          type: integer
+
+    NotificationSendRequest:
+      type: object
+      required: [scene, channels, template_key]
+      description: 代发入参；收件人明文仅用于本次投递，不落库不入审计。
+      properties:
+        tenant_id:
+          type: string
+          description: 目标租户；缺省为平台级（platform）。
+        scene:
+          type: string
+        scene_class:
+          type: string
+          enum: [transactional, operational, marketing]
+          default: operational
+        user_id:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        push_token:
+          type: string
+        channels:
+          type: array
+          items:
+            type: string
+            enum: [email, sms, push]
+          minItems: 1
+        template_key:
+          type: string
+        locale:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        priority:
+          type: string
+          enum: [critical, normal, low]
+          default: normal
+        reference:
+          type: string
+
+    NotificationAccepted:
+      type: object
+      properties:
+        request_id:
+          type: string
+
+    NotificationTemplate:
+      type: object
+      properties:
+        key:
+          type: string
+        channel:
+          type: string
+          enum: [email, sms, push]
+        locale:
+          type: string
+        version:
+          type: integer
+        subject:
+          type: string
+        body:
+          type: string
+          description: 正文模板；占位符 {{name}} 集合即变量白名单。
+        enabled:
+          type: boolean
+        created_by:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    TemplateListData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationTemplate"
+        total:
+          type: integer
+
+    NotificationTemplateUpsert:
+      type: object
+      required: [key, channel, body]
+      properties:
+        key:
+          type: string
+        channel:
+          type: string
+          enum: [email, sms, push]
+        locale:
+          type: string
+          default: zh-CN
+        subject:
+          type: string
+          description: email 渠道必填。
+        body:
+          type: string
+
+    NotificationTemplateStatus:
+      type: object
+      required: [key, channel, enabled]
+      properties:
+        key:
+          type: string
+        channel:
+          type: string
+        locale:
+          type: string
+        enabled:
+          type: boolean

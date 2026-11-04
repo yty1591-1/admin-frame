@@ -101,6 +101,7 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionAuthOAuthCallback:   true,
 		audit.ActionAuthRateLimited:     true,
 		audit.ActionAuthSessionEvicted:  true,
+		audit.ActionAuthTenantSwitch:    true,
 		audit.ActionRBACRoleChange:      true,
 		audit.ActionRBACBindingChange:   true,
 		audit.ActionRBACBreakglass:      true,

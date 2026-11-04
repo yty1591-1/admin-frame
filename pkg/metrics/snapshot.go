@@ -51,7 +51,7 @@ func NewSnapshotCache[T any](ttl time.Duration, load func(context.Context) (T, e
 //     成功快照（fresh=false，err 非空）；从未成功过则返回零值。
 //
 // 并发安全：同一时刻只有一个 goroutine 执行 load，其余调用方等待后复用其结果。
-func (c *SnapshotCache[T]) Get(ctx context.Context) (T, bool, error) {
+func (c *SnapshotCache[T]) Get(ctx context.Context) (snapshot T, fresh bool, err error) {
 	if c == nil {
 		var zero T
 		return zero, false, errSnapshotCacheNil
@@ -67,14 +67,14 @@ func (c *SnapshotCache[T]) Get(ctx context.Context) (T, bool, error) {
 	if c.ttl > 0 && !c.at.IsZero() && time.Since(c.at) < c.ttl {
 		return c.value, c.lastErr == nil, c.lastErr
 	}
-	value, err := c.load(ctx)
+	loaded, loadErr := c.load(ctx)
 	c.at = time.Now()
-	if err != nil {
-		c.lastErr = err
-		return c.value, false, err
+	if loadErr != nil {
+		c.lastErr = loadErr
+		return c.value, false, loadErr
 	}
-	c.value = value
+	c.value = loaded
 	c.has = true
 	c.lastErr = nil
-	return value, true, nil
+	return loaded, true, nil
 }

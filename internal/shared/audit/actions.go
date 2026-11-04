@@ -33,6 +33,7 @@ const (
 	ActionAuthOAuthCallback   = "auth.oauth.callback"
 	ActionAuthRateLimited     = "auth.rate_limited"
 	ActionAuthSessionEvicted  = "auth.session.evicted"
+	ActionAuthTenantSwitch    = "auth.tenant_switch"
 	ActionRBACRoleChange      = "rbac.role_change"
 	ActionRBACBindingChange   = "rbac.binding_change"
 	ActionRBACBreakglass      = "rbac.breakglass"
@@ -85,6 +86,7 @@ func KnownActions() []string {
 		ActionAuthOAuthCallback,
 		ActionAuthRateLimited,
 		ActionAuthSessionEvicted,
+		ActionAuthTenantSwitch,
 		ActionRBACRoleChange,
 		ActionRBACBindingChange,
 		ActionRBACBreakglass,

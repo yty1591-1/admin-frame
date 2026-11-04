@@ -4,8 +4,8 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：已登记的关键路径微基准、列表背压与容量相关合入门槛
 > **关联**：架构 §11.3 / §11.4；可靠性见 `RELIABILITY_STANDARDS.md`；分页见 `API_STANDARDS.md`
-> **执行方式**：[`docs/perf/BASELINES.md`](./perf/BASELINES.md) + `check-perf.sh` + Review
-> **最后更新**：2026-10-13
+> **执行方式**：[`docs/perf/BASELINES.md`](./perf/BASELINES.md) + [`docs/perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) + `check-perf.sh` / `check-load-baseline.sh` + Review
+> **最后更新**：2026-11-04
 > **变更方式**：修改本规范须同步更新 BASELINES、相关 Benchmark 与 `scripts/ci/check-perf.sh`，经架构 Owner Review
 
 > **说明**：本专文强制**轻量、可复现**的微基准与登记制，**不**在默认 CI 跑全链路压测。全链路压测属发版/容量规划可选门禁。
@@ -29,7 +29,7 @@
 | PERF-03 | 新增/重写已登记热点逻辑的 MR 须更新 BASELINES 说明（或证明无回归动机） | Review + PR 模板 |
 | PERF-04 | 列表 `page_size` 上限（API-05 / REL-07）不得以提高性能为由移除 | OpenAPI + 单测 |
 | PERF-05 | 禁止在无超时的热路径上引入无界重试或无界扇出（对齐 REL） | Review |
-| PERF-06 | 全链路压测**不**作为默认合并门禁；若组织启用，须单独流水线与基线文件 | 发版 Checklist（可选） |
+| PERF-06 | 全链路压测**不**作为默认合并门禁；已执行的基线统一登记在 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md)，登记一致性由 `check-load-baseline.sh` 校验（不重跑压测） | `check-load-baseline` |
 | PERF-07 | 合并请求触及已登记热点时须勾选自检 | PR 模板 |
 
 ---
@@ -43,6 +43,7 @@
 | `iam.authorize.CacheHit` | `internal/iam/app` | `BenchmarkAuthorize_CacheHit` | L1 命中：解码 + 清洗 + 快照复用 | 微基准 |
 
 - 仅登记**稳定、CPU/分配敏感**的纯逻辑或本地路径；IO 密集路径用集成压测，不塞进默认 CI。
+- 全链路（真实二进制 × MySQL × Redis）的到达率 / 分位 / 成功率读数登记在 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md)，由 `tests/load` 与 `tests/e2e` 的执行器产出；本表不承接链路级数据。
 - 删除登记项须 Owner 批准并说明替代观测手段。
 
 ---

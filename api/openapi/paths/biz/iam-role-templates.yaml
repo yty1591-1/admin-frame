@@ -13,7 +13,7 @@ biz-v1-iam-role-templates:
       - in: query
         name: status
         schema:
-          $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateStatus"
+          $ref: "../../schemas/biz/iam-role-templates.yaml#/components/schemas/RoleTemplateStatus"
       - in: query
         name: keyword
         description: 按模板码 / 名称模糊匹配
@@ -32,7 +32,7 @@ biz-v1-iam-role-templates:
                 - type: object
                   properties:
                     data:
-                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplateListData"
+                      $ref: "../../schemas/biz/iam-role-templates.yaml#/components/schemas/RoleTemplateListData"
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
       "403":
@@ -63,7 +63,7 @@ biz-v1-iam-role-templates-by-id:
                 - type: object
                   properties:
                     data:
-                      $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/RoleTemplate"
+                      $ref: "../../schemas/biz/iam-role-templates.yaml#/components/schemas/RoleTemplate"
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
       "404":
@@ -90,7 +90,7 @@ biz-v1-iam-role-templates-by-id-instantiate:
       content:
         application/json:
           schema:
-            $ref: "../../schemas/admin/iam-role-templates.yaml#/components/schemas/InstantiateTemplateRequest"
+            $ref: "../../schemas/biz/iam-role-templates.yaml#/components/schemas/InstantiateTemplateRequest"
     responses:
       "201":
         description: 已创建（返回本商户角色）

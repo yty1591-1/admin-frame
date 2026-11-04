@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -302,7 +303,7 @@ func TestExportJobProcessSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	if string(body) != string(payload) {
+	if !bytes.Equal(body, payload) {
 		t.Fatal("download body differs from stored object")
 	}
 }

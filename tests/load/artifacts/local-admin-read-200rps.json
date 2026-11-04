@@ -1,0 +1,20 @@
+{
+  "scenario": "admin.tenants.list",
+  "target": "GET /admin/v1/tenants?page_size=20（鉴权 + 权限快照 + SQL + 序列化）",
+  "rate_rps": 200,
+  "duration": "20s",
+  "warmup": "5s",
+  "samples": 4000,
+  "success_rate": 1,
+  "errors": 0,
+  "p50_ms": 2.947,
+  "p95_ms": 6.027,
+  "p99_ms": 8.938,
+  "max_ms": 27.255,
+  "target_p95_ms": 100,
+  "target_p99_ms": 300,
+  "passed": true,
+  "go_version": "go1.26.10",
+  "cpus": 12,
+  "started_at": "2026-11-04T14:28:12Z"
+}

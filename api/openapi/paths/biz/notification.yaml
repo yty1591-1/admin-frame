@@ -41,7 +41,7 @@ biz-v1-notifications:
                 - type: object
                   properties:
                     data:
-                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/NotificationListData"
+                      $ref: "../../schemas/biz/notification.yaml#/components/schemas/NotificationListData"
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
       "403":
@@ -72,7 +72,7 @@ biz-v1-notifications-by-id:
                 - type: object
                   properties:
                     data:
-                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/Notification"
+                      $ref: "../../schemas/biz/notification.yaml#/components/schemas/Notification"
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
       "404":
@@ -103,7 +103,7 @@ biz-v1-notifications-by-id-deliveries:
                 - type: object
                   properties:
                     data:
-                      $ref: "../../schemas/admin/notification.yaml#/components/schemas/DeliveryListData"
+                      $ref: "../../schemas/biz/notification.yaml#/components/schemas/DeliveryListData"
       "401":
         $ref: "../../components.yaml#/components/responses/Unauthorized"
       "404":

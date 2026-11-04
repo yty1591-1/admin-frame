@@ -37,7 +37,7 @@ func serveAndGetServerSpan(t *testing.T, handler http.Handler) sdktrace.ReadOnly
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	wrapped := tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer("http.server")))(handler)
 
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/v1/audit/events?from=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/admin/v1/audit/events?from=1", http.NoBody)
 	wrapped.ServeHTTP(httptest.NewRecorder(), req)
 
 	for _, span := range recorder.Ended() {

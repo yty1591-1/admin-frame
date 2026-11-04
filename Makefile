@@ -203,6 +203,18 @@ check-e2e:
 	@test -n "$$E2E_REDIS_ADDR" || (echo "E2E_REDIS_ADDR is required (redis 7)" >&2; exit 1)
 	go test ./tests/e2e/ -count=1 -v
 
+# ENT-16：全链路压测基线（真实二进制 + MySQL + Redis；手动 / 发布前对比）。
+# 默认 50 rps × 30s；参数见 docs/perf/LOAD_BASELINES.md §5。不进 make ci（PERF-06）。
+load-baseline:
+	@test -n "$$E2E_MYSQL_DSN" || (echo "E2E_MYSQL_DSN is required (mysql8, parseTime=true)" >&2; exit 1)
+	@test -n "$$E2E_REDIS_ADDR" || (echo "E2E_REDIS_ADDR is required (redis 7)" >&2; exit 1)
+	E2E_LOAD_BASELINE=1 go test ./tests/e2e/ -run TestLoadBaselineAdminRead -count=1 -v
+
+# ENT-16：压测基线登记一致性（不重跑压测）——行/执行器/产物对账、
+# 孤儿产物、压测不得进默认门禁、k6 阈值与 identity-slo 一致。
+check-load-baseline:
+	bash scripts/ci/check-load-baseline.sh
+
 # ENT-11：特性开关门禁——key 命名 / 审计对账 / 幽灵 key 扫描 / 到期治理
 # （feature-flag-plan.md §2.G）。
 check-featureflag:
@@ -258,7 +270,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
