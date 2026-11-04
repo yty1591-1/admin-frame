@@ -1,0 +1,131 @@
+{
+  "generated_by": "scripts/ops/game-day-drill.sh",
+  "scenarios": [
+    {
+      "id": "G1",
+      "verdict": "PASS",
+      "elapsed_ms": 1584,
+      "checks": [
+        {
+          "check": "runbook",
+          "status": "pass",
+          "detail": "docs/runbooks/release-rollback.md"
+        },
+        {
+          "check": "alerts_catalog",
+          "status": "pass",
+          "detail": "api.5xx.rate_high=P1"
+        },
+        {
+          "check": "rule",
+          "status": "pass",
+          "detail": "api.5xx.rate_high 规则存在"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "helm rollback"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "release-smoke"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "release-canary-gate"
+        },
+        {
+          "check": "route",
+          "status": "pass",
+          "detail": "severity=P1 → pager"
+        }
+      ]
+    },
+    {
+      "id": "G2",
+      "verdict": "PASS",
+      "elapsed_ms": 1631,
+      "checks": [
+        {
+          "check": "runbook",
+          "status": "pass",
+          "detail": "docs/runbooks/async-dlq.md"
+        },
+        {
+          "check": "alerts_catalog",
+          "status": "pass",
+          "detail": "async.dlq.depth=P2"
+        },
+        {
+          "check": "rule",
+          "status": "pass",
+          "detail": "async.dlq.depth 规则存在"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "replay-dlq"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "async_dlq_depth"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "WHERE replayed_at IS NULL"
+        },
+        {
+          "check": "route",
+          "status": "pass",
+          "detail": "severity=P2 → ticket"
+        }
+      ]
+    },
+    {
+      "id": "G3",
+      "verdict": "PASS",
+      "elapsed_ms": 1650,
+      "checks": [
+        {
+          "check": "runbook",
+          "status": "pass",
+          "detail": "docs/runbooks/identity-auth-failure.md"
+        },
+        {
+          "check": "alerts_catalog",
+          "status": "pass",
+          "detail": "identity.revocation.store_error=P1"
+        },
+        {
+          "check": "rule",
+          "status": "pass",
+          "detail": "identity.revocation.store_error 规则存在"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "identity_revocation_store_errors_total"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "fail_closed"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "503"
+        },
+        {
+          "check": "route",
+          "status": "pass",
+          "detail": "severity=P1 → pager"
+        }
+      ]
+    }
+  ]
+}

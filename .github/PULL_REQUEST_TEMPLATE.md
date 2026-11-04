@@ -77,6 +77,13 @@
 - [ ] 若新增/变更 P1/P2 告警：已更新 `docs/runbooks/ALERTS.md` 与对应 runbook
 - [ ] 未在 runbook 写入密钥或生产连接串
 
+## 事故与值班自检（RUNBOOK_STANDARDS RB-08/RB-09）
+
+- [ ] 若改变用户影响面：`docs/incident/SEVERITY_MATRIX.md` 的判定条件与时限已同步
+- [ ] 若来自事故/演练：复盘用 `POSTMORTEM_TEMPLATE.md`，行动项已登记且带可执行验证方式
+- [ ] 若触及呼叫链路：`bash scripts/ops/paging-probe.sh --labels severity=P1 --expect-receiver pager` 已跑（占位地址会失败）
+- [ ] `make check-oncall` 通过
+
 ## 审计自检（AUDIT_STANDARDS）
 
 - [ ] 新必审路径已登记 `docs/audit/EVENTS.md`，并经 `audit.Emitter` 发出

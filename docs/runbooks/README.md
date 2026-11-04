@@ -1,6 +1,6 @@
 # Runbooks（值班与事故预案）
 
-本目录受 [`docs/RUNBOOK_STANDARDS.md`](../RUNBOOK_STANDARDS.md) 约束。
+本目录受 [`docs/RUNBOOK_STANDARDS.md`](../RUNBOOK_STANDARDS.md) 约束；值班、定级与复盘流程见 [`docs/incident/`](../incident/README.md) 与 [`docs/oncall/ROTATION.md`](../oncall/ROTATION.md)。
 
 ## 入口
 
@@ -20,6 +20,21 @@
 | [identity-sms-balance.md](./identity-sms-balance.md) | 短信供应商余额与熔断 |
 | [key-rotation.md](./key-rotation.md) | JWT 密钥环与摘要密钥的计划内轮换 |
 | [key-compromise.md](./key-compromise.md) | 密钥泄露应急（P1，先止血后轮换） |
+| [feature-flag.md](./feature-flag.md) | 特性开关误放量 / 缓存不一致 |
+| [notification-delivery.md](./notification-delivery.md) | 通知投递失败 / 回执异常 |
+| [tenant-onboarding.md](./tenant-onboarding.md) | 租户开通 |
+| [tenant-suspend.md](./tenant-suspend.md) | 租户停用 |
+
+## 事故管理入口（ENT-18）
+
+| 资源 | 用途 |
+|------|------|
+| [../incident/SEVERITY_MATRIX.md](../incident/SEVERITY_MATRIX.md) | P1/P2/P3 判定条件、确认/通报/升级时限 |
+| [../incident/RESPONSE.md](../incident/RESPONSE.md) | 声明 → 缓解 → 关闭流程、IC/OL/Comms/Scribe 角色 |
+| [../incident/POSTMORTEM_TEMPLATE.md](../incident/POSTMORTEM_TEMPLATE.md) | 复盘模板（含三段耗时与行动项） |
+| [../incident/ACTION_ITEMS.md](../incident/ACTION_ITEMS.md) | 行动项台账（owner / 截止 / 验证证据） |
+| [../incident/GAME_DAY.md](../incident/GAME_DAY.md) | 季度演练剧本（G1 金丝雀回滚 / G2 DLQ / G3 撤销存储） |
+| [../oncall/ROTATION.md](../oncall/ROTATION.md) | 排班模型、交接清单、呼叫链路验证 |
 
 ## 值班与升级（基线）
 
@@ -29,9 +44,5 @@
 | L2 | 端/域 Owner | L1 超时未收敛，或需改代码/数据 |
 | L3 | SRE / 架构 Oncall | 多端故障、数据丢失风险、安全事件 |
 
-组织值班表 / 呼叫链路请挂在此处（替换为实际链接）：
-
-- 值班表：（待填：日历或 Pager 链接）
-- 升级频道：（待填：IM / 电话树）
-
-响应时限见 RUNBOOK_STANDARDS §5（P1 ≈ 15 min，P2 ≈ 60 min）。
+具体排班、交接与呼叫链路见 [../oncall/ROTATION.md](../oncall/ROTATION.md)；定级时限见 [../incident/SEVERITY_MATRIX.md](../incident/SEVERITY_MATRIX.md)。  
+响应时限：P1 确认 ≤ 5 分钟、15 分钟无收敛升级；P2 确认 ≤ 30 分钟、60 分钟无收敛升级（`RUNBOOK_STANDARDS` §5）。

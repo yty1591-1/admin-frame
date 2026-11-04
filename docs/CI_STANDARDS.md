@@ -49,7 +49,7 @@
 
 **数据 / 可靠性 / 可观测门禁（DATA / REL / OBS，并入 job `arch`）：** `check-migrations.sh` + `check-reliability.sh` + `check-observability.sh`。
 
-**Git / 发布 / Runbook / 审计门禁（GIT / RELS / RB / AUD，并入 job `arch`）：** `check-git.sh` + `check-release.sh` + `check-runbooks.sh` + `check-audit.sh`。
+**Git / 发布 / Runbook / 审计门禁（GIT / RELS / RB / AUD，并入 job `arch`）：** `check-git.sh` + `check-release.sh` + `check-runbooks.sh` + `check-oncall.sh`（ENT-18：分级矩阵 / P1 路由 / 复盘模板 / 行动项 / 演练 / 交接）+ `check-audit.sh`。
 
 **许可证 / 代码生成 / 性能门禁（LIC / GEN / PERF，并入 job `arch`）：** `check-license.sh` + `check-codegen.sh` + `check-perf.sh`（微基准抽检）+ `check-load-baseline.sh`（ENT-16：压测登记表 ↔ 执行器 ↔ 产物对账，**不重跑压测**；全链路压测本身按 PERF-06 仍为手动 / nightly）。
 
@@ -194,6 +194,7 @@ make check-observability  # OBS-01/02/04
 make check-git            # GIT-05/06
 make check-release        # RELS-01/02/03/07
 make check-runbooks       # RB-01～04
+make check-oncall         # RB-08/09（ENT-18）
 make check-audit          # AUD-01/02/04
 make check-license        # LIC-01/02/06
 make check-codegen        # GEN-01/02
@@ -302,6 +303,7 @@ make ci
 | `scripts/ci/check-git.sh` | GIT-05/06 |
 | `scripts/ci/check-release.sh` | RELS-01/02/03/07 |
 | `scripts/ci/check-runbooks.sh` | RB-01～04 |
+| `scripts/ci/check-oncall.sh` | RB-08/09（ENT-18） |
 | `scripts/ci/check-audit.sh` | AUD-01/02/04 |
 | `scripts/ci/check-license.sh` | LIC-01/02/06 |
 | `scripts/ci/check-codegen.sh` | GEN-01/02 |

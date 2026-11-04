@@ -11,7 +11,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
 	check-migrations check-reliability check-observability \
-	check-git check-release check-runbooks check-audit \
+	check-git check-release check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
         check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci mock migrate-up vuln docker docker-admin docker-push ops-image
 
@@ -166,6 +166,10 @@ check-release:
 check-runbooks:
 	bash scripts/ci/check-runbooks.sh
 
+# ENT-18（RB-08/09）：分级矩阵、告警路由、复盘模板、行动项、演练、交接。
+check-oncall:
+	bash scripts/ci/check-oncall.sh
+
 # AUD-01/02/04：事件目录、字段字典、audit 包抽检。
 check-audit:
 	bash scripts/ci/check-audit.sh
@@ -275,7 +279,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
