@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
+	iamapp "github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
@@ -64,7 +65,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 
 	// T-18（ADR-0007）：成员角色 → IAM 绑定同步。IAM 仓储与租户共用同一
 	// *sql.DB（或同为内存），绑定写入复用租户域事务，失败整体回滚。
-	roleSyncer, err := newRoleSyncer(deps)
+	roleSyncer, err := newRoleSyncerFromDeps(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -264,10 +265,11 @@ func InjectMembership(deps *platform.Deps) error {
 // IAM 仓储经 iamruntime.BuildRepositories 构造：与租户域同一 *sql.DB
 // （或同为内存实现），绑定写入复用 ctx 内的租户事务——这是「成员变更与
 // 绑定同步同事务」的前提。deps 未启用 IAM（无 ids 等）时返回 noop。
-func newRoleSyncer(deps *platform.Deps) (app.RoleSyncer, error) {
+func newRoleSyncerFromDeps(deps *platform.Deps) (app.RoleSyncer, error) {
 	roles, bindings, _, _, err := iamruntime.BuildRepositories(deps)
 	if err != nil {
 		return nil, fmt.Errorf("tenant role sync: build iam repositories: %w", err)
 	}
-	return newRoleSyncAdapter(roles, bindings, deps.IDs)
+	// IAM 侧实现租户端口（与 identity 的 TenantStatusChecker / SessionRevoker 同模式）。
+	return iamapp.NewRoleSyncer(roles, bindings, deps.IDs)
 }

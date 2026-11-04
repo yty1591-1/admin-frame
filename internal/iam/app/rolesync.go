@@ -1,4 +1,4 @@
-package tenantruntime
+package app
 
 // 成员角色 → IAM 绑定同步（T-18，ADR-0007）。
 //
@@ -11,10 +11,10 @@ import (
 	"errors"
 	"fmt"
 
-	iamdomain "github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
-	"github.com/admin-frame/admin-frame/internal/tenant/domain"
+	tenantdomain "github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -26,16 +26,17 @@ const templateCodePrefix = "tenant_"
 
 // roleSyncAdapter 把 IAM 仓储适配成租户域的 RoleSyncer 端口。
 type roleSyncAdapter struct {
-	roles    iamdomain.RoleRepository
-	bindings iamdomain.BindingRepository
+	roles    domain.RoleRepository
+	bindings domain.BindingRepository
 	ids      id.Generator
 }
 
 // 编译期断言：适配器必须满足租户域端口。
 var _ app.RoleSyncer = roleSyncAdapter{}
 
-// newRoleSyncAdapter 构造适配器；三个依赖均必填。
-func newRoleSyncAdapter(roles iamdomain.RoleRepository, bindings iamdomain.BindingRepository, ids id.Generator) (app.RoleSyncer, error) {
+// NewRoleSyncer 构造适配器（公共入口）：集成测试与外部装配复用同一实现；
+// 生产装配经 newRoleSyncerFromDeps。三个依赖均必填。
+func NewRoleSyncer(roles domain.RoleRepository, bindings domain.BindingRepository, ids id.Generator) (app.RoleSyncer, error) {
 	if roles == nil || bindings == nil {
 		return nil, fmt.Errorf("tenant role sync requires iam role and binding repositories")
 	}
@@ -49,7 +50,7 @@ func newRoleSyncAdapter(roles iamdomain.RoleRepository, bindings iamdomain.Bindi
 // 软删的同名角色视为装配缺陷（code 复用被禁止），直接报错。
 func (a roleSyncAdapter) EnsureTemplates(ctx context.Context, tenantID string) error {
 	for _, spec := range templates {
-		existing, err := a.roles.FindByCode(ctx, iamdomain.ChannelBiz, tenantID, spec.code)
+		existing, err := a.roles.FindByCode(ctx, domain.ChannelBiz, tenantID, spec.code)
 		switch {
 		case err == nil:
 			if existing.IsDeleted() {
@@ -61,15 +62,15 @@ func (a roleSyncAdapter) EnsureTemplates(ctx context.Context, tenantID string) e
 		default:
 			return fmt.Errorf("tenant role sync: find role %s: %w", spec.code, err)
 		}
-		role, buildErr := iamdomain.NewRole(iamdomain.NewRoleParams{
+		role, buildErr := domain.NewRole(domain.NewRoleParams{
 			ID:          a.mustID(),
-			Channel:     iamdomain.ChannelBiz,
-			Scope:       iamdomain.RoleScopeMerchant,
+			Channel:     domain.ChannelBiz,
+			Scope:       domain.RoleScopeMerchant,
 			MerchantID:  tenantID,
 			Code:        spec.code,
 			Name:        spec.name,
 			Description: spec.desc,
-			Type:        iamdomain.RoleTypeSystem,
+			Type:        domain.RoleTypeSystem,
 			Actor:       roleSyncActor,
 		})
 		if buildErr != nil {
@@ -88,10 +89,10 @@ func (a roleSyncAdapter) EnsureTemplates(ctx context.Context, tenantID string) e
 // role 非 nil → 目标模板之外的模板绑定解绑，缺的目标绑定补上。
 // 只动本租户的模板角色绑定（system 类型 + tenant_ 前缀），
 // 商户自建角色（custom）的绑定不碰。
-func (a roleSyncAdapter) SyncRole(ctx context.Context, tenantID, subjectID string, role *domain.MemberRole) error {
-	current, err := a.bindings.ListBySubject(ctx, iamdomain.SubjectQuery{
-		Channel:     iamdomain.ChannelBiz,
-		SubjectType: iamdomain.SubjectMerchantStaff,
+func (a roleSyncAdapter) SyncRole(ctx context.Context, tenantID, subjectID string, role *tenantdomain.MemberRole) error {
+	current, err := a.bindings.ListBySubject(ctx, domain.SubjectQuery{
+		Channel:     domain.ChannelBiz,
+		SubjectType: domain.SubjectMerchantStaff,
 		SubjectID:   subjectID,
 		MerchantID:  tenantID,
 	})
@@ -103,7 +104,7 @@ func (a roleSyncAdapter) SyncRole(ctx context.Context, tenantID, subjectID strin
 	// 属装配缺陷——绑定一个不存在的角色会被外键拒绝，宁可在这里显式失败。
 	var wantID string
 	if role != nil {
-		target, findErr := a.roles.FindByCode(ctx, iamdomain.ChannelBiz, tenantID, templateCodePrefix+string(*role))
+		target, findErr := a.roles.FindByCode(ctx, domain.ChannelBiz, tenantID, templateCodePrefix+string(*role))
 		if findErr != nil {
 			return fmt.Errorf("tenant role sync: find target role %s: %w", templateCodePrefix+string(*role), findErr)
 		}
@@ -132,10 +133,10 @@ func (a roleSyncAdapter) SyncRole(ctx context.Context, tenantID, subjectID strin
 			return nil
 		}
 	}
-	created, buildErr := iamdomain.NewBinding(iamdomain.NewBindingParams{
+	created, buildErr := domain.NewBinding(domain.NewBindingParams{
 		ID:          a.mustID(),
-		Channel:     iamdomain.ChannelBiz,
-		SubjectType: iamdomain.SubjectMerchantStaff,
+		Channel:     domain.ChannelBiz,
+		SubjectType: domain.SubjectMerchantStaff,
 		SubjectID:   subjectID,
 		MerchantID:  tenantID,
 		RoleID:      wantID,
@@ -154,13 +155,13 @@ func (a roleSyncAdapter) SyncRole(ctx context.Context, tenantID, subjectID strin
 //
 // 角色读取失败按非模板处理会让解绑漏掉脏数据——但绑定外键保证 role 存在，
 // 这里失败只可能是库异常，返回 false 并由上层调用方的下一次操作暴露。
-func (a roleSyncAdapter) isTemplateBinding(ctx context.Context, binding *iamdomain.Binding) bool {
+func (a roleSyncAdapter) isTemplateBinding(ctx context.Context, binding *domain.Binding) bool {
 	role, err := a.roles.FindByID(ctx, binding.RoleID)
 	if err != nil {
 		return false
 	}
-	return role.Type == iamdomain.RoleTypeSystem &&
-		role.Channel == iamdomain.ChannelBiz &&
+	return role.Type == domain.RoleTypeSystem &&
+		role.Channel == domain.ChannelBiz &&
 		role.MerchantID == binding.MerchantID &&
 		len(role.Code) > len(templateCodePrefix) &&
 		role.Code[:len(templateCodePrefix)] == templateCodePrefix
