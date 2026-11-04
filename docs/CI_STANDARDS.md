@@ -146,10 +146,14 @@
 | 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
 | 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
 | 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
+| SBOM | 按推送后的 **digest** 生成 CycloneDX，作为 `sbom-<cmd>` artifact 上传（缺文件即失败）；同一 digest 上以 `cosign attest --type cyclonedx` 附加（RELS-13） |
+| 签名 | `cosign sign`（keyless，`id-token: write`）签 **digest**，不签 tag；cosign 版本经 `COSIGN_VERSION` 钉扎（RELS-13） |
+| 验签 | 不在本流水线：由 `release.yml` 的 `verify` job 在部署前完成（RELS-14）；本流水线只负责「签得对」 |
 | 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
 
-- 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备）。
+- 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备），`check-sbom.sh` 校验 SBOM/签名/验签结构（SB-01～SB-11）。
+- 供应链门禁是**静态**的：`make check-sbom` 不联网、不需要 cosign，因此可在合并门禁里跑；真实密码学链路由 `release.yml` 首跑与 `scripts/ci/supply-chain-rehearsal.sh` 覆盖。
 - Gitee 端暂未接入（需组织 registry 凭据）；接入前镜像只由 GitHub 流水线产出，Gitee 只跑质量门禁。
 
 ---

@@ -9,6 +9,8 @@
 - [ ] 镜像 tag：________
 - [ ] 镜像由 GitHub `Image` 流水线产出（push main / `v*` tag），非本机手工构建
 - [ ] 镜像 digest：`sha256:________`（已记录）
+- [ ] SBOM：`sbom-<cmd>` artifact 已生成并可下载（CycloneDX），且 attestation 挂在**同一 digest** 上
+- [ ] 验签：`Release` 流水线 `verify` job 通过（keyless 身份 = 本仓库 `image.yml`），无 `continue-on-error`
 - [ ] git commit：________
 
 ## 质量门禁
@@ -34,6 +36,7 @@
 - [ ] 就绪后再接流量（`/readyz`）
 - [ ] `/version` 显示预期 version/commit/build_time（非全 `dev`）
 - [ ] 金丝雀 release（`admin-frame-canary`）已在 promote 阶段卸载
+- [ ] 生产实际运行的 digest 与「已验签的 digest」一致（`kubectl get deploy -o jsonpath` 抽查一端）
 
 ## 回滚预备
 

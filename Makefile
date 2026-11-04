@@ -12,9 +12,9 @@ PYTHON ?= python3
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
 	check-migrations check-reliability check-observability \
-	check-git check-release check-runbooks check-oncall check-audit \
+	check-git check-release check-sbom check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image
+        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -163,6 +163,14 @@ check-git:
 check-release:
 	bash scripts/ci/check-release.sh
 
+# RELS-13/14：SBOM / 镜像签名 / 部署前验签的流水线结构（静态，无网络）。
+check-sbom:
+	bash scripts/ci/check-sbom.sh
+
+# 手动：本地 registry + cosign 密钥对做签名/验签等价演练（需 docker，不进 make ci）。
+supply-chain-rehearsal:
+	bash scripts/ci/supply-chain-rehearsal.sh
+
 # RB-01～04：基线 runbook 与告警目录。
 check-runbooks:
 	bash scripts/ci/check-runbooks.sh
@@ -285,7 +293,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

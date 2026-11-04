@@ -34,6 +34,8 @@
 | RELS-10 | 每次部署后必须跑发布冒烟（`/healthz`、`/readyz`、`/version` 版本一致、未认证 401） | `release-smoke.sh`（流水线强制） |
 | RELS-11 | 生产放量前必须有金丝雀阶段：单端单副本、独立 release、指标门禁（流量下限 + 5xx + p95）达标才放量 | `values-canary.yaml` + `release-canary-gate.sh` |
 | RELS-12 | 失败必须可自动回滚：`rollback` job 卸载金丝雀并把生产回退到上一 revision；人工命令固化在 runbook | `release.yml` + `runbooks/release-rollback.md` |
+| RELS-13 | 每个发版镜像必须产出 **CycloneDX SBOM**（按 digest，随镜像 artifact 上传），并以 `cosign attest` 附加到同一 digest；SBOM 缺失视同发布失败 | `image.yml` + `check-sbom.sh`（SB-02/03/05） |
+| RELS-14 | 部署前必须验签：签名身份须为**本仓库 `image.yml` 的 keyless 身份**、issuer 为 GitHub Actions，且同一 digest 上有 CycloneDX SBOM attestation；任一不满足即中止发布，不得 `continue-on-error` 或 `\|\| true` | `verify-supply-chain.sh` + `release.yml` + `check-sbom.sh`（SB-07/08/09/10） |
 
 ---
 
@@ -103,6 +105,7 @@ docker build --target admin-api \
 | `plan` | tag `v*` / 手动 | 版本号 semver 校验 | 不进入后续阶段 |
 | `preflight` | 同上 | `check-migration-gate.sh`（expand-only / append-only / dirty=false）+ `check-release.sh` | **任何环境都不部署** |
 | `digests` | 非 dry_run 且 `RELEASE_ENABLED=true` | 每个镜像解析出 `sha256:` digest，形态校验 | 不允许用浮动 tag 继续 |
+| `verify` | 同上 | `verify-supply-chain.sh`：5 个镜像逐个验签（keyless 身份 + OIDC issuer）并校验 CycloneDX SBOM attestation 内容 | **中止发布**（RELS-14） |
 | `staging` | Environment `staging` 审批 | `helm upgrade --atomic --wait` + 发布冒烟 +（可选）部署后 schema 探测 | 自动回滚，不进生产 |
 | `canary` | Environment `production` 审批 | 独立 release 单副本 + 金丝雀冒烟 + 指标门禁（流量下限 / 5xx / p95） | 只保留金丝雀，生产流量不变 |
 | `promote` | 金丝雀通过 | 全量 `helm upgrade --atomic --wait` + 冒烟 + 生产指标门禁 | `rollback` job 接管 |
@@ -112,6 +115,7 @@ docker build --target admin-api \
 
 - **迁移先于代码**：`preflight` 不过，`digests` 之后的所有作业都不会启动；
 - **不可变引用**：全部 workload 与迁移 Job 都按 digest 部署（`image.digest`），tag 只作可读标识；
+- **来源可信**：`verify` 在第一次 `helm upgrade` 之前完成，且是 `staging` 的硬依赖——删掉它或让它软失败都会被 `check-sbom.sh`（SB-07/08/10）拦住；
 - **fail closed**：缺 `KUBE_CONFIG_*` / `STAGING_BASE_URL` / `CANARY_BASE_URL` / `PROM_URL` 时显式报错，不静默跳过；
 - **dry_run**：手动触发默认只打印计划（`plan` + `preflight`），不接触任何集群；
 - **开关**：仓库变量 `RELEASE_ENABLED` 未设为 `true` 时，`notice` job 明确写出「未部署及原因」。
@@ -145,7 +149,11 @@ docker build --target admin-api \
 - 扫描失败**不得**通过「放宽 severity / 加 ignore 文件」解决；须先升级依赖或基础镜像。确属不可触达且无修复时，按 DEPENDENCY_STANDARDS §5 走 ADR 豁免（含到期日）。  
 - 与 `govulncheck` 口径差异见 `docs/DEPENDENCY_STANDARDS.md` §5：`govulncheck` 按源码可达性判定，Trivy 按镜像实际内容判定，后者可能更严格。  
 - 镜像非 root 运行；不含 `.git` 与源码树（多阶段构建）。  
-- SBOM / 签名按组织要求启用（推荐，本仓库脚手架不强制工具版本）。
+- **SBOM（RELS-13）**：每个镜像按**推送后的 digest** 生成 CycloneDX（Trivy `--format cyclonedx`），作为 `sbom-<cmd>` artifact 上传（保留 90 天），并以 `cosign attest --type cyclonedx` 附加到同一 digest。按 tag 生成 SBOM 会把「被扫描的镜像」与「被部署的镜像」解耦，禁止。
+- **签名（RELS-13）**：`cosign sign` 的对象必须是 digest（`<image>@sha256:...`），使用 **keyless**（OIDC → Fulcio 短期证书，`id-token: write`），不引入长期私钥 secret；签 tag 等于没签。
+- **部署前验签（RELS-14）**：`release.yml` 的 `verify` job 在第一次 `helm upgrade` 之前调用 `scripts/ci/verify-supply-chain.sh`，逐个校验 5 个镜像的签名与 SBOM，失败即中止（`staging` 把 `verify` 列入 `needs`，没有「跳过继续」的路径）。
+- **为什么 digest 不够**：digest 只证明「内容没变」，不证明「内容来自本仓库的流水线」。有 registry 写权限的人（或凭据泄漏）推一个同 tag 的新 digest，`digests` 阶段照样能解析出合法 `sha256:`，冒烟也不会失败——验签是唯一能拦住这条路径的环节。
+- **验证边界**：keyless 链路依赖 GitHub OIDC，本地无法复现。签名/验签/attestation 的等价演练见 `scripts/ci/supply-chain-rehearsal.sh`（本地 registry + 本地密钥对，11 项断言），细节与挂账见 [`release/supply-chain.md`](./release/supply-chain.md)。
 
 ---
 
@@ -157,6 +165,8 @@ docker build --target admin-api \
 - 在未就绪（`/readyz` 失败）时接入流量。  
 - 绕过迁移门禁手工 `helm upgrade`（`--atomic` 与 expand 校验同时失效）。  
 - 用「金丝雀零错误」作为放量依据而不校验其是否真的接到流量。  
+- 部署未通过验签的镜像，或用 `continue-on-error` / `|| true` / `--insecure-ignore-tlog` 让验签「软失败」。  
+- 只在 tag 上签名，或为「签名成功」而放宽 `--certificate-identity-regexp`（`.*` 等于不校验来源）。
 
 ---
 
@@ -164,6 +174,7 @@ docker build --target admin-api \
 
 ```bash
 make check-release   # RELS-01/02/03 可自动项（含 image 流水线静态校验）
+make check-sbom      # RELS-13/14 可自动项（SBOM / 签名 / 部署前验签的静态校验）
 make docker          # 本地 tag:local（非生产）
 make docker-push VERSION=<semver|sha>   # 本地复现推送（single-arch，不扫描）
 make ci
@@ -171,9 +182,10 @@ make ci
 
 | 平台 | 入口 |
 |------|------|
-| GitHub / Gitee | job `arch` 内跑 `check-release.sh` |
-| 发版镜像 | GitHub `image` 流水线（push main / `v*` tag；buildx 多架构 + Trivy） |
-| 发版 | `docs/release/CHECKLIST.md` |
+| GitHub / Gitee | job `arch` 内跑 `check-release.sh` + `check-sbom.sh` |
+| 发版镜像 | GitHub `image` 流水线（push main / `v*` tag；buildx 多架构 + Trivy + SBOM + cosign 签名） |
+| 发版 | `docs/release/CHECKLIST.md`；部署前 `verify` job 验签 |
+| 供应链演练 | `bash scripts/ci/supply-chain-rehearsal.sh`（手动，需 docker） |
 | MR | PR 模板「发布自检」 |
 
 ---
@@ -194,6 +206,7 @@ make ci
 - [ ] 镜像由 `image` 流水线产出（非本机手工构建）  
 - [ ] 迁移顺序与 Checklist 已完成  
 - [ ] `make check-release` 通过  
+- [ ] SBOM 已生成并随 digest 签名；`make check-sbom` 通过
 
 ---
 
@@ -202,7 +215,12 @@ make ci
 | 工具 / 文件 | 作用 |
 |-------------|------|
 | `Dockerfile` | 多 stage；版本 ARG；HEALTHCHECK；`BUILDPLATFORM` 交叉编译 |
-| `.github/workflows/image.yml` | 发版镜像：多架构构建 + 推送 + Trivy 扫描 |
+| `.github/workflows/image.yml` | 发版镜像：多架构构建 + 推送 + Trivy 扫描 + CycloneDX SBOM + cosign keyless 签名/attestation |
+| `.github/workflows/release.yml` | 发布：迁移门禁 → **验签** → staging → 金丝雀 → 放量 → 回滚 |
+| `scripts/ci/verify-supply-chain.sh` | RELS-14：部署前验签 + SBOM attestation 内容校验（fail closed） |
+| `scripts/ci/check-sbom.sh` | RELS-13/14 静态门禁（SB-01～SB-11） |
+| `scripts/ci/supply-chain-rehearsal.sh` | 本地等价演练（registry + 密钥对，不含 OIDC） |
+| `docs/release/supply-chain.md` | 威胁模型、验证边界与挂账 |
 | `internal/platform/endpoints.go` | `/version` |
 | `docs/release/CHECKLIST.md` | 发版核对 |
 | `scripts/ci/check-release.sh` | RELS-01/02/03 |

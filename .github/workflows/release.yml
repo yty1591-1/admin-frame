@@ -1,15 +1,16 @@
 # 发布流水线（ENT-17 / RELEASE_STANDARDS §5）
 #
 # 触发：push `v*` tag（正式发布）、workflow_dispatch（演练，默认 dry_run）。
-# 阶段：plan → preflight（迁移门禁）→ digests → staging（审批）→ 金丝雀（审批）
-#       → 指标门禁 → 生产放量 → 失败自动回滚。
+# 阶段：plan → preflight（迁移门禁）→ digests → verify（验签 + SBOM）
+#       → staging（审批）→ 金丝雀（审批）→ 指标门禁 → 生产放量 → 失败自动回滚。
 #
-# 设计约束（改本文件须同步 docs/RELEASE_STANDARDS.md 与 check-release.sh）：
+# 设计约束（改本文件须同步 docs/RELEASE_STANDARDS.md 与 check-release.sh / check-sbom.sh）：
 #   1. **迁移先于代码**：preflight 的 check-migration-gate 不过，任何环境都不部署；
 #   2. **不可变引用**：所有 helm 参数用 `image.digest`（RELS-04），不用浮动 tag；
-#   3. **失败必回滚**：helm 用 `--atomic --wait`，另有 rollback job 兜底并卸载金丝雀；
-#   4. **金丝雀必须真接流量**：指标门禁先校验请求速率下限，避免「零流量假绿」；
-#   5. **缺凭据即失败**：未配置集群/指标凭据时显式报错，不静默跳过部署。
+#   3. **来源可信**：verify 在第一次 helm upgrade 之前验签并校验 SBOM attestation（RELS-14）；
+#   4. **失败必回滚**：helm 用 `--atomic --wait`，另有 rollback job 兜底并卸载金丝雀；
+#   5. **金丝雀必须真接流量**：指标门禁先校验请求速率下限，避免「零流量假绿」；
+#   6. **缺凭据即失败**：未配置集群/指标凭据时显式报错，不静默跳过部署。
 #
 # 需要的仓库配置（Settings → Environments / Variables / Secrets）：
 #   Variables: RELEASE_ENABLED=true、IMAGE_REGISTRY、STAGING_BASE_URL、
@@ -196,9 +197,58 @@ jobs:
             echo "${key}=${digest}" >> "${GITHUB_OUTPUT}"
           done
 
+  verify:
+    name: verify supply chain
+    needs: [plan, preflight, digests]
+    if: needs.plan.outputs.dry_run != 'true' && vars.RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to registry
+        # cosign 要读 registry 里的签名与 attestation（OCI referrer）；
+        # 私有仓库未登录时 verify 会以 401 失败，看起来像「没有签名」，容易误判。
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.9.1
+        with:
+          cosign-release: v2.4.1
+
+      - name: Verify signatures + SBOM before any deploy
+        # RELS-14：digest 只保证内容不变，不保证来源可信。这里校验
+        # 「签名身份 = 本仓库 image.yml」+「同一 digest 上有 CycloneDX SBOM」，
+        # 任一失败即中止（staging 把 verify 列入 needs，没有「跳过就继续」的分支）。
+        env:
+          D_ADMIN: ${{ needs.digests.outputs.admin }}
+          D_BIZ: ${{ needs.digests.outputs.biz }}
+          D_C: ${{ needs.digests.outputs.c }}
+          D_WORKER: ${{ needs.digests.outputs.worker }}
+          D_MIGRATE: ${{ needs.digests.outputs.migrate }}
+        run: |
+          set -euo pipefail
+          refs=()
+          for pair in "admin-api:${D_ADMIN}" "biz-api:${D_BIZ}" "c-api:${D_C}" \
+            "worker:${D_WORKER}" "migrate:${D_MIGRATE}"; do
+            cmd="${pair%%:*}"
+            digest="${pair##*:}"
+            if ! printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::${cmd} 的 digest 非法：'${digest}'，拒绝验签（RELS-04/14）"
+              exit 1
+            fi
+            refs+=("${REGISTRY}/${IMAGE_NAMESPACE}/${cmd}@${digest}")
+          done
+          bash scripts/ci/verify-supply-chain.sh "${refs[@]}"
+
   staging:
     name: staging deploy
-    needs: [plan, preflight, digests]
+    needs: [plan, preflight, digests, verify]
     if: needs.plan.outputs.dry_run != 'true' && vars.RELEASE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40

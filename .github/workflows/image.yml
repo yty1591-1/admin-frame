@@ -3,6 +3,9 @@
 #
 # 触发：push 到 main/master、push v* tag、手动。
 # 产物：<registry>/<owner>/<cmd>:<version>，多架构 linux/amd64 + linux/arm64，推后 Trivy 扫描。
+# 供应链（ENT-19 / RELEASE_STANDARDS §6）：按 **digest** 生成 CycloneDX SBOM 并上传 artifact，
+# 用 cosign keyless 对 digest 签名、把 SBOM 作为 attestation 附加到 digest 上。
+# 发布流水线在部署前验签（scripts/ci/verify-supply-chain.sh），验不过不部署。
 # 注册表：默认 GHCR（GITHUB_TOKEN 推送）；私有仓库可设 Repository variable
 #         IMAGE_REGISTRY，并另外注入推送凭据。
 
@@ -22,10 +25,15 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  # keyless 签名：cosign 用 workflow 的 OIDC 身份换取 Fulcio 短期证书。
+  # 缺这一项签名为空，发布流水线验签直接失败（宁可失败，不允许无签名镜像上线）。
+  id-token: write
 
 env:
   REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
   PLATFORMS: linux/amd64,linux/arm64
+  # 供应链工具版本钉扎（SB-07）：禁止 latest / master，否则校验逻辑随上游漂移。
+  COSIGN_VERSION: v2.4.1
 
 jobs:
   image:
@@ -92,6 +100,7 @@ jobs:
             org.opencontainers.image.title=${{ matrix.cmd }}
 
       - name: Build and push (multi-arch)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -110,11 +119,54 @@ jobs:
 
       - name: Trivy scan (HIGH/CRITICAL)
         # 推后扫描：命中高危则 job 失败，禁止该 digest 进入生产（RELS-06 / §6）。
+        # 按 digest 扫而不是按 tag：tag 可以被重新指向，扫 tag 等于扫了一个「当时的样子」。
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ steps.ver.outputs.image }}:${{ steps.ver.outputs.version }}
+          image-ref: ${{ steps.ver.outputs.image }}@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
           format: table
+
+      - name: SBOM (CycloneDX, by digest)
+        # RELS-13：SBOM 与镜像同源（同一个 digest），不做「先造 SBOM 再补镜像」的事。
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ver.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx
+          output: sbom-${{ matrix.cmd }}.cdx.json
+          exit-code: "0"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.cmd }}
+          path: sbom-${{ matrix.cmd }}.cdx.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.9.1
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Sign image digest (keyless)
+        env:
+          IMAGE: ${{ steps.ver.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # RELS-13：签的是 digest，不是 tag——签 tag 等于什么都没签（tag 可变）。
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Attest SBOM (CycloneDX)
+        env:
+          IMAGE: ${{ steps.ver.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SBOM: sbom-${{ matrix.cmd }}.cdx.json
+        run: |
+          set -euo pipefail
+          # attestation 挂到 digest 上（OCI referrer），发布侧用 verify-attestation 取回。
+          cosign attest --yes --type cyclonedx --predicate "${SBOM}" "${IMAGE}@${DIGEST}"

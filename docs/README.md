@@ -51,6 +51,7 @@
 - [codegen/MANIFEST.md](./codegen/MANIFEST.md) — 生成物清单
 - [perf/BASELINES.md](./perf/BASELINES.md) — 性能基线与微基准登记
 - [release/CHECKLIST.md](./release/CHECKLIST.md) — 发布检查清单
+- [release/supply-chain.md](./release/supply-chain.md) — SBOM / 镜像签名 / 部署前验签与验证边界
 - [iam/PERMISSIONS.md](./iam/PERMISSIONS.md) — 权限点目录（与 `internal/iam/catalog` 由单测强一致）
 
 ---

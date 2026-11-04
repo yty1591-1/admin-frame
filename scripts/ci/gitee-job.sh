@@ -79,6 +79,7 @@ case "${job}" in
     bash scripts/ci/check-observability.sh
     bash scripts/ci/check-git.sh
     bash scripts/ci/check-release.sh
+    bash scripts/ci/check-sbom.sh
     bash scripts/ci/check-runbooks.sh
     bash scripts/ci/check-oncall.sh
     bash scripts/ci/check-audit.sh

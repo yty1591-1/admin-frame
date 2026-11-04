@@ -162,8 +162,14 @@ else
     FAIL=1
   fi
   # 迁移门禁必须在第一次 helm upgrade 之前：顺序错了等于「先上线再校验迁移」。
-  mig_line="$(grep -n 'check-migration-gate.sh' "${REL_WF}" | head -1 | cut -d: -f1)"
-  upgrade_line="$(grep -n 'helm upgrade' "${REL_WF}" | head -1 | cut -d: -f1)"
+  # 只取**非注释行**：文件头与步骤注释里提到 `helm upgrade` 会把行号拉到最前面，
+  # 让「门禁在部署之后」的坏顺序反而看起来合规（与下方 --atomic 计数同口径）。
+  first_code_line() {
+    grep -nE -- "$2" "$1" 2>/dev/null |
+      awk -F: '{ln=$1; sub(/^[0-9]+:/,""); if ($0 !~ /^[[:space:]]*#/) {print ln; exit}}'
+  }
+  mig_line="$(first_code_line "${REL_WF}" 'check-migration-gate\.sh')"
+  upgrade_line="$(first_code_line "${REL_WF}" 'helm upgrade')"
   if [[ -z "${mig_line}" ]]; then
     echo "ERROR: ${REL_WF} must run ${MIG_GATE}" >&2
     FAIL=1
