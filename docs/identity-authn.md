@@ -4,7 +4,7 @@
 > **定位**：定义账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；解决「只有验签、没有登录」的上线阻断问题
 > **适用范围**：`internal/identity/`、`internal/security/`、`internal/shared/{auth,audit,apperr}`、`internal/platform/`、`pkg/{jwt,totp,password,crypto,redis,sms}`、`cmd/`、`migrations/`、`api/openapi/`、`scripts/ci/`、`docs/`
 > **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md) `ENT-01`、[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) `ENT-01`、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §10、[`rbac-iam.md`](./rbac-iam.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md) `SEC-04`、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`docs/audit/EVENTS.md`](./audit/EVENTS.md)
-> **最后更新**：2026-10-30（首个管理员改为迁移 `000005_seed_bootstrap_admin` 创建，移除 `cmd/identity-seed`）
+> **最后更新**：2026-11-05（首个管理员改由 `000005` 角色种子 + A 端启动引导开通；移除 `cmd/identity-seed`）
 > **变更方式**：调整领域模型、撤销语义、表结构或验收标准须同步更新 [`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) 与 [`production-readiness-gaps.md`](./production-readiness-gaps.md)，经架构 Owner 与安全 Reviewer 评审后合入
 
 ---
@@ -12,7 +12,7 @@
 ## 目录
 
 1. [结论与范围](#一结论与范围)
-2. [现状评估](#二现状评估)
+2. [设计前缺口（已闭环）](#二设计前缺口已闭环)
 3. [领域模型](#三领域模型)
 4. [令牌模型与密钥轮换](#四令牌模型与密钥轮换)
 5. [登录、刷新与登出](#五登录刷新与登出)
@@ -67,49 +67,11 @@
 
 ---
 
-## 二、现状评估
+## 二、设计前缺口（已闭环）
 
-### 2.1 能力盘点
+设计启动时仅有可复用原语（JWT 验签、密码哈希、Redis 缓存/锁、Outbox、审计事件），账号实体、会话表、令牌签发编排、撤销检查与三端认证端点均缺失。上述缺口已由 §三～§十三 落地，当前实现状态见 §十八。
 
-| 维度 | 现状 | 证据 |
-|---|---|---|
-| 令牌校验 | 支持 HMAC / RSA、多密钥轮换校验、`iss` / `aud` / `exp` / `leeway`；跨端 `channel` 声明校验 | [`jwt.go`](../internal/security/jwt.go)、[`manager.go`](../pkg/jwt/manager.go) |
-| 令牌签发 | `pkg/jwt.Manager.Sign` 可用；无 `kid` 头、无对外签发端点 | [`manager.go`](../pkg/jwt/manager.go#L181-L204) |
-| 账号域 | 不存在；`Principal` 只有 `SubjectID` / `MerchantID` / `Roles` | [`principal.go`](../internal/shared/auth/principal.go#L30-L36) |
-| 认证端点 | 三端 `register.go` 均未注册 `/auth/*`，OpenAPI 无认证契约 | [`admin/register.go`](../cmd/admin-api/register.go) |
-| 密码 | Argon2id / bcrypt，支持透明重哈希 | [`hasher.go`](../pkg/password/hasher.go) |
-| 撤销 | 无 | — |
-| MFA | 无 | — |
-| C 端登录 | 无；`pkg/sms` 仅提供发送契约 | [`sms`](../pkg/sms/doc.go) |
-| 会话存储 | 无；`pkg/redis` 提供 Cache / Lock / 原生客户端 | [`client.go`](../pkg/redis/client.go) |
-| 审计 | `audit.Event` 与 `auth.login` / `auth.login_failed` 已定义，仅写结构化日志 | [`event.go`](../internal/shared/audit/event.go)、[`actions.go`](../internal/shared/audit/actions.go) |
-| 异步 | `platform.AsyncRuntime` + `pkg/outbox` 可用，可作为审计可靠出口 | [`async.go`](../internal/platform/async.go) |
-| 配置 | 无 `identity.*`；`auth.jwt` 只有验签参数 | [`config.go`](../internal/platform/config.go#L375-L398) |
-| 迁移 | `000001_create_identity_tables`（模块基线） | `migrations/` |
-| 门禁 | 无 `check-authn.sh` | `scripts/ci/`、`Makefile` |
-
-### 2.2 复核命令
-
-```bash
-# 1. 确认无身份域与认证端点
-rg -n "internal/identity|/auth/login|/auth/refresh|/auth/logout" internal cmd api || true
-
-# 2. 确认验签中间件与 JWT 配置
-rg -n "NewJWTAuth|RevocationChecker|active_kid" internal pkg
-
-# 3. 确认迁移编号占用
-ls migrations | sed -n 's/^\([0-9]\{6\}\)_.*/\1/p' | sort -u
-
-# 4. 确认幂等 / 限流 / Outbox 可复用原语
-rg -n "func .*Cache\)|func .*Lock\)|AsyncRuntime" pkg/redis internal/platform
-```
-
-### 2.3 关键结论
-
-1. **可复用原语已齐备**，`ENT-01` 不需要引入新的基础设施。
-2. **缺口集中在领域与应用层**：账号实体、会话表、令牌签发编排、撤销检查。
-3. **装配顺序需要调整**：撤销检查必须在 `AuthMW` 构造前注入（见 §13）。
-4. **迁移编号按领域合并**：身份表为模块基线 `000001`，IAM 为 `000002`（结构）/ `000003`（种子），平台 async 为 `000004`。
+迁移编号按领域合并：身份表 `000001`，IAM 结构 `000002` / 种子 `000003`，平台 async `000004`，MFA bootstrap `000005`。
 
 ---
 
@@ -450,31 +412,9 @@ type RevocationChecker interface {
 
 ### 7.2.1 强制绑定 MFA 的契约与首个管理员 bootstrap
 
-> **状态**：已定稿并落地（D1=①、D2=①、D3=①、D4=① 迁移脚本、D5 按建议实现）。
+> **状态**：已定稿并落地（D1=①、D2=①、D3=①、D4=角色种子迁移 + 启动引导、D5 按建议实现）。
 
-**落地前的问题（代码事实）**
-
-| # | 问题 | 证据 |
-|---|---|---|
-| 1 | 未绑定 MFA 且 `admin_required=true` 时返回 `401 / 40100`，`message` 为自由文本 `mfa binding required`，与「账号不存在 / 密码错误 / 锁定 / 停用」**同一业务码**；错误信封无子码字段，客户端无法结构化判定 | [`mfa.go`](../internal/identity/app/mfa.go) |
-| 2 | `mfa/setup`、`mfa/disable` 均挂在 `authMW` 之后，没有令牌就不可能完成首次绑定 | [`router.go`](../internal/identity/transport/admin/router.go) |
-| 3 | prod / staging **强制** `identity.mfa.admin_required=true`，仓库内必须有账号初始化入口，否则新环境首个管理员没有任何可用登录路径（bootstrap 死锁）；现已由迁移 `000005_seed_bootstrap_admin` 提供 | [`config.go`](../internal/platform/config.go)、[`000005`](../migrations/000005_seed_bootstrap_admin.up.sql) |
-| 4 | 契约闭合：`MFAChallenge` 为 `additionalProperties: false` 且 `required: [mfa_required, mfa_ticket]`；登录 200 为 `TokenPair \| MFAChallenge` 的 `oneOf`。后端若直接加字段而不改契约，消费方会报「响应格式非法」 | [`components.yaml`](../api/openapi/components.yaml) |
-| 5 | 消费方可能把 `40100` 统一映射为「账号或密码错误」，用户会反复重试密码直到锁定 | 契约语义见 [`components.yaml`](../api/openapi/components.yaml) |
-
-**已拍板结论**
-
-| # | 决策点 | 可选方案 | 建议 |
-|---|---|---|---|
-| D1 | 登录响应如何表达「需绑定」 | ① 200 新增分支 ② 新业务码（如 `40110`）③ 保持 `40100` + 文案 | ①：密码已通过，属「认证未完成」，不是错误 |
-| D2 | 绑定凭据形态 | ① 独立 `mfa_setup_ticket` ② 半权限 Access Token（`scope=mfa_setup`）③ 一次性邀请码 | ①：不引入可访问业务接口的中间态令牌 |
-| D3 | 绑定完成后的会话 | ① 直接签发 `TokenPair` ② 返回 204 并要求重新登录 | ①：一次交互完成，票据生命周期更短 |
-| D4 | 首个管理员 bootstrap | ① 迁移脚本 ② 一次性邀请码 ③ 部署期注入 | ①（已实现 `migrations/000005_seed_bootstrap_admin`）：账号、凭据、`system_admin` 角色、授权绑定与审计在同一迁移事务内提交 |
-| D5 | 失败语义 | 绑定失败是否计入锁定、票据重放是否作废、重复 `setup` 是否覆盖未确认绑定 | 与 `mfa/verify` 的 `mfaFailure` 对齐；重放返回 `40100` 且无副作用 |
-
-**已定稿契约（D1=①、D2=①、D3=①、D4=①、D5=按建议）**
-
-`POST /admin/v1/auth/login` → `200`：
+**登录响应（`POST /admin/v1/auth/login` → `200`）**
 
 ```json
 {
@@ -501,62 +441,15 @@ pending --mfa/verify 失败 N 次--> locked（按锁定策略）
 setup_required / pending --票据过期、重放、账号禁用--> 40100，客户端回登录页
 ```
 
-**OpenAPI 变更（已合入）**
+**契约与 OpenAPI（已合入）**
 
-```diff
---- a/api/openapi/components.yaml
-+++ b/api/openapi/components.yaml
-@@ MFAChallenge 之后
-+    MFABindingRequired:
-+      type: object
-+      required: [mfa_binding_required, mfa_setup_ticket]
-+      additionalProperties: false
-+      description: |
-+        密码已通过，但账号尚未绑定 TOTP 且 A 端强制绑定；不包含任何业务令牌。
-+        `mfa_setup_ticket` 只能用于 mfa/setup 与 mfa/verify，一次性消费，禁止写日志。
-+      properties:
-+        mfa_binding_required:
-+          type: boolean
-+          enum: [true]
-+        mfa_setup_ticket:
-+          type: string
-+          minLength: 1
-@@ MFAVerifyRequest.properties
-+        mfa_setup_ticket:
-+          type: string
-+          description: 强制绑定流程的票据；与 mfa_ticket 互斥，同时出现返回 40000
-@@ 新增
-+    MFASetupRequest:
-+      type: object
-+      additionalProperties: false
-+      description: 已认证绑定确认时省略；强制绑定流程必须携带票据。
-+      properties:
-+        mfa_setup_ticket:
-+          type: string
-+          minLength: 1
+- 新增 `MFABindingRequired`：`required: [mfa_binding_required, mfa_setup_ticket]`、`additionalProperties: false`、`mfa_binding_required` 枚举 `[true]`；登录 `200` 的 `data.oneOf` 增加该 schema。
+- `MFAVerifyRequest` 新增 `mfa_setup_ticket`（与 `mfa_ticket` 互斥，同时出现返回 `40000`）。
+- `mfa/verify` 支持无 `Authorization` 的强制绑定流程：成功返回 `TokenPair`；携带 `Authorization` 时仍返回 `204`。
+- 新增 `MFASetupRequest`（`additionalProperties: false`，可选 `mfa_setup_ticket`）；`mfa/setup` 请求体可选。
+- `mfa_setup_ticket` 禁止写入日志 / Trace。
 
---- a/api/openapi/admin.yaml
-+++ b/api/openapi/admin.yaml
-@@ /admin/v1/auth/login → 200 data.oneOf
-                           - $ref: "./components.yaml#/components/schemas/TokenPair"
-                           - $ref: "./components.yaml#/components/schemas/MFAChallenge"
-+                          - $ref: "./components.yaml#/components/schemas/MFABindingRequired"
-@@ /admin/v1/auth/mfa/setup
-       security:
-         - bearerAuth: []
-+      requestBody:
-+        required: false
-+        content:
-+          application/json:
-+            schema:
-+              $ref: "./components.yaml#/components/schemas/MFASetupRequest"
-@@ /admin/v1/auth/mfa/verify 描述
--        - 携带 `Authorization`：使用动态码或恢复码确认首次绑定，返回 204（无响应体）。
-+        - 携带 `Authorization`：使用动态码或恢复码确认首次绑定，返回 204（无响应体）。
-+        - 携带 `mfa_setup_ticket`（且无 `Authorization`）：强制绑定流程，成功后返回 `TokenPair`。
-```
-
-**首个管理员 bootstrap（D4=① 迁移 `000005_seed_bootstrap_admin` + A 端启动引导）**
+**首个管理员 bootstrap（迁移 `000005_seed_bootstrap_admin` 角色种子 + A 端启动引导）**
 
 - `000005_seed_bootstrap_admin` 只创建 `iam_role(system_admin)`、逐项权限授权、`all` 数据范围与存量订正；
   首个管理员（`identity_account`、`identity_credential`、`iam_role_binding`、`auth.account.created` 审计）
@@ -977,7 +870,7 @@ internal/identity/
 | `AC-ENT-01-4` | 登录失败限流与锁定生效；A 端未完成 MFA 不得获得管理令牌 | `internal/identity/app/lockout_test.go`、`internal/identity/app/mfa_test.go` | 同上 |
 | `AC-ENT-01-5` | 登录、登出、失败、锁定、MFA 绑定均产生审计事件 | `internal/identity/app/audit_test.go`、`docs/audit/EVENTS.md` | `bash scripts/ci/check-audit.sh` |
 | `AC-ENT-01-6` | `admin_required=true` 下未绑定账号可凭 `mfa_setup_ticket` 完成绑定并直接获得令牌 | `internal/identity/app/mfa_test.go` | `go test ./internal/identity/...` |
-| `AC-ENT-01-7` | 首个管理员由迁移 `000005` 幂等开通（账号已存在时只补授权），口令与 TOTP 密钥不入日志 / 命令行 | [`000005_seed_bootstrap_admin.up.sql`](../migrations/000005_seed_bootstrap_admin.up.sql) | `bash scripts/ci/check-migrations.sh` |
+| `AC-ENT-01-7` | 首个管理员由迁移 `000005` 创建角色 / 授权、由 A 端启动引导幂等开通账号（已存在时只校验授权），口令与 TOTP 密钥不入日志 / 命令行 | [`000005_seed_bootstrap_admin.up.sql`](../migrations/000005_seed_bootstrap_admin.up.sql) | `bash scripts/ci/check-migrations.sh` |
 
 补充用例要求：
 
@@ -1028,10 +921,10 @@ internal/identity/
 
 | 阶段 | 内容 | 对应任务 | 出口标准 |
 |---|---|---|---|
-| 0 契约 | 本文档、OpenAPI 骨架、配置字段与 `Validate`、迁移草案、审计 action 目录 | T1/T2/T9 前置 | 文档评审通过；`check-openapi` 通过 |
+| 0 契约 | 已完成（本文档、OpenAPI 骨架、配置字段与 `Validate`、迁移草案、审计 action 目录） | T1/T2/T9 前置 | 文档评审通过；`check-openapi` 通过 |
 | 1 账号域 | domain + 仓储 + 密码策略 + 锁定 + 迁移 + 单测 | T1/T2/T3 | 状态机与仓储用例全绿 |
 | 2 令牌闭环 | `pkg/jwt` kid / 密钥环、签发、登录 / 刷新 / 登出、撤销 checker、A/B 端点 | T4/T5/T6/T10 | `AC-ENT-01-1/2/3/5` 通过 |
-| 3 MFA | TOTP、`mfa_ticket`、`mfa_setup_ticket` 强制绑定、`000005` 迁移 bootstrap、会话管理 | T8 | `AC-ENT-01-4/6/7` 通过 |
+| 3 MFA | TOTP、`mfa_ticket`、`mfa_setup_ticket` 强制绑定、`000005` 角色种子 + 启动引导、会话管理 | T8 | `AC-ENT-01-4/6/7` 通过 |
 | 4 C 端 | 短信验证码、防刷、OAuth 回调、OIDC 预留 | T6（C）/T7 | C 端登录与限流用例通过 |
 | 5 收口 | 审计回写、`check-authn`、全量门禁、真实依赖集成测试、状态回写 | T9/T10 | `make ci` + `make test-integration` 全绿 |
 
@@ -1039,7 +932,7 @@ internal/identity/
 
 | 阶段 | 状态 |
 |---|---|
-| 0 契约 | 进行中（本文档） |
+| 0 契约 | 已完成 |
 | 1 账号域 | 已完成 |
 | 2 令牌闭环 | 已完成 |
 | 3 MFA | 已完成 |

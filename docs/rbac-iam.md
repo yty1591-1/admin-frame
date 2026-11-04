@@ -1,11 +1,12 @@
 # RBAC 权限管理服务（IAM）规划与设计
 
-> **状态**：实施中（v0.16；ADR-0004 已接受；M1 已完成；M2 已完成；M3 已完成：A 端管理 API（15 个端点）、应用服务、审计接线、配置装配、OpenAPI、健康检查、指标与 runbook；M4.1 已完成：B 端自助 API（13 个端点，`/biz/v1/iam/*`）、`cmd/internal/iamruntime` 统一装配、商户角色配额与分页 total；M4.2 已完成：审批单聚合（SoD / 状态机 / 载荷校验）+ memory / MySQL 仓储 + 应用服务 + apply 接线 + A 端 6 个审批端点；M4.3 已完成：破玻璃（申请 / 审批 / 生效 / 撤销 + 快照 `*` 展开 + `iam_breakglass_active` + `rbac.breakglass`）；M4.4 已完成：事务性 Outbox（IAM Outbox 聚合 + memory / MySQL 仓储 + `OutboxRecorder` / `OutboxPublisher` + 退避重试 / 死信 + `iam_outbox_pending` / `iam_outbox_lag_seconds` / `iam_outbox_delivery_total` + prod enforce 强制启用；ENT-03 起存储已迁至平台 `async_outbox`）；M4.5 已完成：UnitOfWork（`pkg/db.WithinUnitOfWork` + `app.UnitOfWork`，业务写入与 outbox 同事务提交，嵌套复用外层事务）；M4.6 已完成：B 端审批单（审批单 `merchant_id` 商户维度与 B 端权限点已并入 000002 / 000003 模块基线、`ChangeScope` 租户隔离、B 端 6 个审批端点、跨商户 404）；M4.7 已完成：高风险直写强制转审批（`iam.approval.enabled`；开启后角色 / 绑定直写端点统一返回 `40900`，审批单 apply 走用例内部调用不受影响）；M5 进行中：可执行故障演练用例 + `BenchmarkReplaceRolePermissions_Diff` 登记 + 容量评估（staging shadow/enforce 与真实 SQL 压测待环境执行））
+> **状态**：实施中（v0.16；ADR-0004 已接受）
+> **里程碑**：M1 权限目录 + 迁移 + 领域模型 ✅｜M2 快照与两级缓存 ✅｜M3 A 端管理 API（15 端点）✅｜M4 B 端自助（13 端点）、审批 / 破玻璃 / Outbox / UnitOfWork ✅｜M5 故障演练 + 容量评估（进行中，待 staging 环境执行）
 > **定位**：模块化单体中的 `internal/iam` 业务域，**不新增独立进程 / 微服务**
 > **适用范围**：A 端平台角色、B 端商户内角色与权限管理；C 端不接入 IAM
 > **决策记录**：[`docs/adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)（落位、失败关闭、`50300`、灰度路线）
-> **关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) §五/§六/§七/§十/§十四、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`pkg-roadmap.md`](./pkg-roadmap.md) §3.3
-> **最后更新**：2026-10-21
+> **关联**：[`ARCHITECTURE.md`](./ARCHITECTURE.md) §五/§六/§七/§十/§十四、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`pkg-roadmap.md`](./pkg-roadmap.md) §2.6
+> **最后更新**：2026-11-05
 > **变更方式**：权限模型、存储模型、缓存一致性策略、超级管理员机制变更须提交 ADR（模板见 `ARCHITECTURE.md` 附录 C），经架构 / 安全 Owner 评审后实施；错误码新增按 API-04 只追加，并同步 `apperr` / `components.yaml` / 单测
 > **目标读者**：后端工程师、架构 Reviewer、安全 Reviewer、SRE、A/B 端产品负责人
 
@@ -30,46 +31,17 @@
 
 **一句话**：以数据库为唯一真相，以「有效权限快照」为鉴权输入，以 `pkg/rbac` 做纯匹配，以审计、缓存、灰度与门禁保证生产可运营。
 
-### 1.1 已评审决策（2026-10-21）
-
-| 决策项 | 结论 | 落地状态 |
-|--------|------|----------|
-| 新增稳定错误码 `50300`（鉴权依赖不可用，HTTP 503） | **批准**，按 API-04 只追加 | 已落地：`apperr.CodeServiceUnavailable` + `Unavailable()`、`pkg/httpx` 503 映射、`components.yaml` 开放码表、单测；见 ADR-0004 |
-| 按 `internal/iam` + `off/shadow/enforce` 路线进入 M0（ADR + 权限目录评审）与 M1（迁移 + 领域模型） | **批准** | M0 已完成设计输入（本文 + ADR-0004）；M1 已开工，权限目录与迁移已落地 |
-| M1 权限目录一致性门禁 | **用 Go 测试**（`internal/iam/catalog`），不新增 shell 解析 | 已落地：`TestPermissionCatalog*` 6 个用例，覆盖格式 / 唯一性 / 常量 / 种子迁移 / 文档 / down |
-| M2 快照与缓存 | 消费侧 `SnapshotLoader` + L1/L2 + shadow | 已落地：见 §6.3 / §8.2 / §14；覆盖率见 §13.1 |
-| 迁移序号 `000002` / `000003` | **确认未被占用**（早期仅有 `000001_create_orders` 演示域） | 已落地：`000002_create_iam_tables`（结构 + 菜单表）与 `000003_seed_iam_baseline`（权限 / 破玻璃角色 / 菜单）；按领域合并后 `000001` 为身份域、`000004` 为平台异步表 |
-| 数据库引擎 | **MySQL 8.0.19+ 单基线** | 已落地：`DATETIME(3)` + 原生 `JSON` + 显式 `utf8mb4_0900_ai_ci` + `RESTRICT` 外键；不并行维护 PostgreSQL |
-
-> 上述两项不再作为待确认项；其余仍开放的问题见 [§16.2](#162-开放问题owner-决策)。
+> 已评审结论（2026-10-21）：批准新增稳定码 `50300`（API-04 只追加）；确认迁移 `000002` / `000003` 未被占用；数据库引擎为 MySQL 8.0.19+ 单基线。上述事项均已落地，不再作为待确认项；仍未关闭的问题见 §16.2。
 
 ---
 
-## 二、现状与差距
+## 二、已落地现状
 
-### 2.1 已有能力
+- `pkg/rbac` 提供纯判定原语（默认拒绝、`*` 与 `resource:*`、超级角色、并发安全）；`internal/security.Authorizer` 适配为 `auth.PermissionMiddleware`，401 / 403 映射 `apperr`。
+- 角色、权限、绑定已持久化在 `000002` / `000003` 基线；`cmd/internal/iamruntime` 统一装配，A 端挂 `/admin/v1/iam/*`、B 端挂 `/biz/v1/iam/*`；静态表仅在 `iam.mode=off` 作为回滚兜底。
+- 审计动作 `rbac.role_change` / `rbac.binding_change` 已激活并接线；权限点常量统一维护在 `internal/iam/perm.go`。
 
-| 能力 | 当前位置 | 现状 |
-|------|----------|------|
-| 权限匹配原语 | `pkg/rbac` | 已完成：`Permission` / `Subject` / `Checker` / `Require` 中间件；默认拒绝、支持 `*` 与 `resource:*`、支持超级角色、并发安全 |
-| HTTP 授权适配 | `internal/security.Authorizer` | 已完成：把 `rbac.Checker` 适配为 `auth.PermissionMiddleware`；401/403 映射 `apperr` |
-| 认证主体 | `internal/shared/auth` | 已完成：`Principal`（channel / subject_id / merchant_id / roles / request_id） |
-| 角色表装配 | `cmd/admin-api/register.go`、`cmd/biz-api/register.go` | **两端均已切 IAM**：`cmd/internal/iamruntime` 统一装配，A 端挂 `/admin/v1/iam/*`，B 端挂 `/biz/v1/iam/*`；静态表仅在 `iam.mode=off` 作为回滚兜底 |
-| 审计动作 | `internal/shared/audit`、`docs/audit/EVENTS.md` | `rbac.role_change` / `rbac.binding_change` 已置 `active` 并接线（`app.SlogRecorder` + `observability.ChangeRecorder`） |
-| 权限点常量 | `internal/iam/perm.go` | 统一维护，`resource:action` 或 `domain:resource:action` |
-
-### 2.2 生产化差距
-
-| 差距 | 风险 | 本方案对应章节 |
-|------|------|----------------|
-| 角色 / 权限无持久化，重启即回到代码常量 | 无法运营、无法审计、无法按商户定制 | §五 |
-| 无权限管理 API | 所有变更靠发版，违反最小权限与职责分离 | §七 |
-| 无数据范围模型 | B 端只能靠 Handler 手工判断，易漏判 | §四、§八 |
-| 无权限快照缓存 | 每请求查库不可接受；直接缓存角色又易越权 | §六、§八 |
-| 无撤销时效定义 | 离职 / 降权后旧令牌仍可能长期有效 | §八 |
-| 无审计接线 | 不满足 AUD-05 / AUD-07 | §十 |
-| 无权限目录治理 | 权限码拼写漂移、重复、通配符滥用 | §四、§十三 |
-| 无灰度与回滚 | 一次切换失败会影响 A/B 全部鉴权 | §十五 |
+设计前的八项缺口（无持久化、无管理 API、无数据范围、无快照缓存、无撤销时效、无审计、无目录治理、无灰度回滚）已由 §四～§十五 闭合。
 
 ---
 
@@ -1573,169 +1545,12 @@ TestPermissionCatalogSeedIsIdempotent
 > | `TestCacheInvalidation` | `TestReplacePermissionsComputesDiffAndInvalidatesSubjects`、`TestUnbindIsIdempotentAndAudited`、`TestSnapshotCache*` |
 > | `TestBreakglassRequiresApproval` | `TestBreakglassBindingRequiresBoundedExpiry`、`TestNewBreakglassGrantRejectsInvalidInput`、`TestBreakglassRequestApproveExpandsWildcardSnapshot` |
 
-**M1 已落地**（`internal/iam/domain`、`internal/iam/infrastructure/persistence`）：
-
-```text
-TestWildcardRejected                 # 通配符在集合构造与聚合替换两处都被拒绝
-TestCrossChannelIsolation            # A 端绑定不能指向 B 端角色（反之亦然）
-TestExpiredBindingIgnored            # 过期绑定在域内与仓储查询两处都被过滤
-TestDataScopeMerchant                # B 端 merchant 允许
-TestDataScopeSelf                    # self 在两个端别都允许
-TestVersionConflict                  # 乐观锁不匹配返回 40900 且状态不变
-TestBreakglassBindingRequiresBoundedExpiry  # 破玻璃必须限时且 ≤ 2h
-TestMemoryRoleRepositoryOptimisticLock
-TestMemoryBindingRepositoryTenantIsolation
-```
-
-**M2 已落地**（`internal/shared/authz`、`internal/security`、`internal/iam/{app,infrastructure/cache,observability}`）：
-
-```text
-TestAuthorizeServiceCachesAndCleans            # 回源一次 + L1 命中 + 清洗 / 去重 / 排序
-TestAuthorizeServiceNegativeCache              # 空快照 negative cache，不打穿 DB
-TestAuthorizeServiceRepositoryFailureIsClosed  # DB 失败 → 50300，且不写缓存
-TestAuthorizeServiceTimeout                    # 300ms 回源超时失败关闭
-TestAuthorizeServiceSingleflight               # 并发未命中只回源一次
-TestAuthorizeServiceRejectsSubjectMismatch     # 仓储串主体 → 50300
-TestAuthorizeServiceRejectsOversizedSnapshot   # 超限失败关闭，不截断
-TestAuthorizeServiceReusesContextSnapshot      # 同请求复用 context 快照
-TestSnapshotCacheL2Backfill                    # L2 命中回填 L1
-TestSnapshotCacheCorruptValue                  # 脏值删除并视为 miss
-TestSnapshotCacheNegativeTTL                   # 空快照 30s 过期
-TestSnapshotCacheSoftFailAndDelete             # L2 读降级、写 / 删失败可观测
-TestEncodeDecodeRoundTrip                      # schema_version 与字段往返
-TestDecodeRejectsCorruptPayload                # 旧 schema / 非法 JSON 一律 ErrCorrupt
-TestSnapshotLoadFailureClosed                  # loader 失败 → 503 / 50300
-TestSnapshotLoad4xxPassthrough                 # 身份错误不被误报 503
-TestAuthorizerWritesSnapshotToContext          # 嵌套 Require 只加载一次
-TestAuthorizerShadowKeepsStaticDecision        # shadow 不改变行为，差异 / 错误可观测
-TestAuthorizerShadowMatchesStaticWhenEquivalent # 等价配置下差异为 0
-TestAuthorizerDecisionObserver                 # allow / deny / unavailable 决策事件
-TestAuthorizerOffIgnoresLoader                 # off 不产生快照 I/O
-TestAuthorizerRequireAnyEnforce                # 动态 RequireAny
-TestParseMode                                  # off|shadow|enforce 白名单
-TestCacheAndDecisionMetrics                    # 缓存 / 决策 / 加载指标
-TestShadowMetrics                              # shadow 差异与失败指标
-```
+**落地覆盖**：设计基线测试已按里程碑落地，分布于 `internal/iam/{domain,app,infrastructure,transport}`、`internal/shared/authz`、`internal/security`、`internal/platform` 与 `tests/integration/async`；实际命名以代码为准，语义等价即视为覆盖。回归命令见 §13.1 测试矩阵与 §13.6 SQL 集成测试。
 
 - 测试命名、表驱动、`t.Run`、`t.Helper()` 遵循 CODE_STYLE §8。
 - 禁止无 issue 的 `t.Skip` 掩盖必测场景（TEST-06）。
 - 禁止测试连生产 / 共享库（TEST-05）。
 
-**M3 已落地**（`internal/iam/app`、`internal/iam/transport/admin`、`internal/platform`）：
-
-```text
-TestCreateRolePersistsPermissionsAndAudits        # 创建成功即写审计，返回聚合与 version
-TestCreateRoleRejectsUnknownAndIncompatiblePermissions # 目录外 / 端别不匹配 → 40000
-TestCreateRoleValidatesActorAndLimits             # 缺 actor、超限 → 拒绝
-TestReplacePermissionsComputesDiffAndInvalidatesSubjects # added/removed + 主动失效主体快照
-TestReplacePermissionsRequiresReasonAndScopes     # 数据权限必须声明范围；reason 必填
-TestUpdateRoleStatusAndDetails                    # PATCH 局部更新 + 启停
-TestCloneRoleCreatesDisabledCopy                  # 克隆默认停用
-TestDeleteRoleRequiresNoBindingsAndReason         # 有绑定 / 缺 reason → 40900 / 40000
-TestAuditFailureFailsClosed                       # 审计写失败 → 50000 且不落库
-TestBindLoadsSnapshotAndIsIdempotent              # 绑定幂等 + 快照可见
-TestBindReplacesExpiredBindingAndSkipsQuota       # 过期后重绑刷新原记录且不占额度
-TestUpdateRoleValidatesReasonAndInvalidatesSubjects # 空 PATCH / 停用缺 reason → 40000；停用主动失效
-TestDeleteRoleIgnoresExpiredBindings              # 仅过期绑定不阻断软删
-TestBindRejectsCrossChannelAndDisabledRole        # 跨端别 / 停用角色拒绝
-TestBindEnforcesSubjectLimit                      # max_bindings_per_subject 生效
-TestBindValidatesExpiry                           # expires_at 必须晚于当前
-TestUnbindIsIdempotentAndAudited                  # 解绑幂等 + 审计 + 主体失效
-TestUnbindHidesCrossMerchantBinding               # 跨商户对外 40400
-TestSimulateAuthorizeUsesSnapshot                 # 模拟鉴权只读、不修改状态
-TestPermissionCatalogQueries / TestQueryRoleAndList # 目录树 / 角色详情与绑定数
-TestCreateGetAndUpdateRole                        # HTTP：创建 / 详情 / PATCH
-TestReplacePermissionsReturnsDiffAndRejectsMismatchedVersion # HTTP：差量 + 40900
-TestBindingSubjectPermissionsAndAuthorize         # HTTP：绑定 / 主体快照 / 模拟鉴权
-TestDeleteRoleRequiresVersionAndReportsNotFound   # HTTP：version 校验 / 404
-TestMissingPrincipalIsUnauthorized                # HTTP：缺 Principal → 40100
-TestValidateIAMDefaultsAndRules                   # 默认值、边界、prod/staging、端别互斥
-TestValidateIAMProductionRules                    # prod+enforce 必须 redis；prod 禁通配符
-TestIAMConfigLogValueRedacts                      # 日志不输出 redis 密码等敏感值
-```
-
-**M4.1 已落地**（`internal/iam/transport/{rest,biz}`、`cmd/internal/iamruntime`、配额与计数能力）：
-
-```text
-TestBizRouterMountsSelfServiceRoutes            # 13 个 B 端路由全部注册，且不挂 /authorize
-TestBizRolesScopedToPrincipalMerchant           # 列表 / 详情只返回本商户，跨商户 40400
-TestBizCreateRoleRejectsAdminChannelAndForeignMerchant # body 里伪造 merchant_id / channel=admin → 40000
-TestBizRoleQuotaRejectsOverLimit                # max_custom_roles_per_merchant 超限 → 40000
-TestBizPermissionCatalogFiltersAdminOnly        # 目录只含 biz/both，A 端专属权限点不可见
-TestBizBindingsRequireMerchantStaff             # 主体类型 / 归属校验；跨商户绑定 40400
-TestBizHasNoAuthorizeEndpoint                   # 未挂载平台排障端点
-TestBizMePermissionsUsesPrincipal               # /me 以 Principal 为准，忽略 query 覆盖
-TestListRolesReportsTotalAcrossPages            # Count 与分页解耦（memory + MySQL）
-TestRuntimeSharedBetweenAdminAndBiz             # iamruntime.New 复用一个 Authorizer / 仓储 / 缓存实例
-```
-
-**M4.2 已落地**（`internal/iam/domain/change_request.go`、memory / MySQL 审批单仓储、`app.ChangeRequestService` + `app.RoleChangeApplicator`、A 端 6 个端点）：
-
-```text
-TestNewChangeRequestDefaults                    # pending / version=1 / target_type 由 action 派生
-TestNewChangeRequestNormalizesPayloadAndReason  # 空载荷归一为 {}，reason 去空白
-TestNewChangeRequestAllowsEmptyTargetForCreateActions # role_create 允许无目标 ID
-TestNewChangeRequestValidation                  # 动作、目标、载荷、长度逐项 40000
-TestNewChangeRequestRejectsBizTenantOverride    # B 端载荷带 merchant_id → 40300（SEC-14）
-TestApproveEnforcesSeparationOfDuties           # 申请人自审 → 40300，状态不变
-TestApproveHappyPathAndIdempotency              # 通过后二次审批 → 40900
-TestApproveRejectsVersionConflict               # 乐观锁
-TestRejectFlow / TestRejectEnforcesSeparationOfDuties
-TestCancelOnlyByRequester                       # 仅申请人可撤销
-TestMarkAppliedRequiresApproval                 # pending 不可应用；applied 不可重复
-TestChangeStatusValidate / TestChangeActionTargetTypes
-TestMemoryChangeRequestRepositorySaveAndFind
-TestMemoryChangeRequestRepositoryOptimisticLock
-TestMemoryChangeRequestRepositoryListFiltersAndOrder
-TestMemoryChangeRequestRepositoryReturnsDeepCopies
-TestChangeRequestFullFlowAppliesPermissions      # 创建 → 审批 → 应用，角色权限落库且只写一条变更审计
-TestChangeRequestApplyRequiresApproval           # 未审批不动目标聚合
-TestChangeRequestApplyIsVersionGuarded           # 过期版本 40900
-TestChangeRequestApplyFailureKeepsApprovedState  # 应用失败保持 approved，可重试
-TestChangeRequestRoleCreateBindsTargetOnApply    # 新建类动作回填 target_id
-TestChangeRequestBindingCreateApplies            # 绑定类审批落库
-TestChangeRequestRejectsUnknownPayloadFields     # 载荷字段拼错 → 40000（不静默清空）
-TestChangeRequestCreateGuardsChannelAndBreakglass # B 端 / breakglass / 缺 reason 的创建拒绝
-TestChangeRequestHTTPFlow                        # A 端全链路 HTTP：自审 40300 → 换人审批 → 应用
-TestChangeRequestHTTPRejectsMistypedPayload
-TestChangeRequestHTTPRequiresVersion
-TestBizRouterHasNoChangeRequestEndpoints         # 审批端点不对 B 端暴露
-TestSQLChangeRequestRepository                   # MySQL：落库 / 状态流转 / 乐观锁 / 过滤（需 IAM_TEST_MYSQL_DSN）
-TestNewBreakglassGrantAdmin / TestNewBreakglassGrantRejectsInvalidInput
-TestBreakglassRequestApproveExpandsWildcardSnapshot  # 申请 → 审批 → 绑定 → 快照展开 "*" → 撤销后收回
-TestBreakglassWritesAuditTrail                    # request / approve / revoke 三条 rbac.breakglass
-TestBreakglassGuards                              # 开关 / 白名单 / 超时长 / 主体类型
-TestBreakglassHTTPFlow                            # A 端全链路：自审 40300 → 换人审批 → 撤销
-TestBreakglassHTTPRejectsOverlongDuration
-TestSQLSnapshotBreakglassWildcard                 # MySQL：绑定期内 "*"，过期后不再展开（需 IAM_TEST_MYSQL_DSN）
-TestNewEventValidatesEnvelope / TestRetryPolicy # 载荷校验、指数退避与耗尽判定（pkg/outbox）
-TestMemoryStoreLifecycle / TestMemoryStoreReclaimStale # 认领原子性、租约回收
-TestRelayDelivers / TestRelayRetriesThenDeadLetters / TestRelayPoisonGoesToDLQ # 投递、退避、死信
-TestRelayObserverReportsResults / TestRelayGracefulCancel # 指标出口与优雅退出
-TestRouterDispatch / TestRouterUnknownTopicIsPermanent # 路由与未知 topic 进 DLQ
-TestIdempotentSkipsCompletedEvent / TestIdempotentReleasesOnFailure / TestMemoryDeduperTakeOverAfterVisibility # 消费幂等
-TestOutboxRecorderWritesPendingAuditEvent         # 审计事件写入 async_outbox（topic=iam.audit），重复写入 fail-closed
-TestAuditEventHandlerDeliversAuditEvent           # 审计载荷投递到 Emitter
-TestAuditEventHandlerRetriesEmitterFailure        # 出口失败可重试（非 poison）
-TestAuditEventHandlerPoisonsCorruptPayload / TestAuditEventHandlerPoisonsUnknownEventType # 毒消息进 DLQ
-TestAuditEventHandlerIgnoresLegacyCacheInvalidation / TestAuditTopicObserverFiltersOtherTopics # 缓存 topic 空操作、指标只统计 iam.audit
-TestOutboxResumeAfterRestart / TestOutboxConcurrentReplicasDeliverOnce # MySQL：重启续投、并发副本只投一次（tests/integration/async）
-TestOutboxPermanentFailureWritesDLQ / TestOutboxRetryExhaustedWritesDLQ # MySQL：毒消息 / 重试耗尽进死信
-TestValidateAsyncRules / TestValidateAsyncRequiresPersistentDB / TestValidateAsyncProductionPublishInAPI # async 配置边界
-TestValidateIAMEnforceRequiresAsync              # prod/staging + enforce 强制 async.enabled
-TestWithinUnitOfWorkCommitsAndExposesTx           # 提交一次、ctx 可见 *sql.Tx
-TestWithinUnitOfWorkRollsBackAndKeepsCause        # 回滚且保留业务错误链（ErrTxFailed）
-TestWithinUnitOfWorkJoinsExistingTx               # 嵌套复用外层事务，不重复 Begin/Commit
-TestWithinUnitOfWorkRejectsInvalidInput / TestWithTxNilClearsTx # fail-closed 与显式清空
-TestCreateRoleRunsInsideSingleTransaction         # 「角色写入 + 审计」同事务装配
-TestCreateRolePropagatesUnitOfWorkFailure         # 事务不可用时不落库、不写审计（50300）
-TestBreakglassApprovalReusesOuterTransaction      # 审批 → 应用 → 审计全程单层事务（maxDepth=1）
-TestApplyChangeRequestPropagatesCommitFailure     # 应用失败保持 approved，不标记 applied
-TestNoopUnitOfWorkPropagatesErrors                # 内存实现语义：无事务、不吞错
-TestSQLUnitOfWorkCommitsRoleAndOutboxTogether     # MySQL：角色与 outbox 一次提交（需 IAM_TEST_MYSQL_DSN）
-TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails     # MySQL：outbox 冲突 ⇒ 角色与权限明细一并回滚（需 IAM_TEST_MYSQL_DSN）
-TestSQLUnitOfWorkNestedApplyReusesTransaction     # MySQL：嵌套写入随外层回滚（需 IAM_TEST_MYSQL_DSN）
-```
 
 ### 13.3 性能基准
 
@@ -2059,47 +1874,21 @@ BenchmarkReplaceRolePermissions_Diff
 
 ---
 
-## 附录 A：权限点目录基线
+## 附录 A：权限点目录
 
-> 可读主表见 [`docs/iam/PERMISSIONS.md`](./iam/PERMISSIONS.md)；机器可读的唯一真相为 `internal/iam/catalog/catalog.go`，并由 Go 测试强制与 `internal/iam/perm.go`、全部 `migrations/*_seed_*.up.sql` 及该文档一致（§13.5）。本附录仅作设计摘要，**冲突时以 `PERMISSIONS.md` 为准**。`channel` 为 `admin` 表示仅 A 端可授予，`biz` 表示 B 端仅商户可授予，`both` 表示两端均可。
+权限点主表见 [`docs/iam/PERMISSIONS.md`](./iam/PERMISSIONS.md)；机器可读的唯一真相为 `internal/iam/catalog/catalog.go`，并由 Go 测试强制与 `internal/iam/perm.go`、全部 `migrations/*_seed_*.up.sql` 及该文档一致（§13.5）。`channel` 语义：`admin` 仅 A 端可授予，`biz` 仅商户可授予，`both` 两端均可。
 
-| code | channel | data_bearing | 说明 |
-|------|---------|--------------|------|
-| `iam:permission:read` | admin | 否 | 查看权限目录 |
-| `iam:role:read` | both | 否 | 查看角色 |
-| `iam:role:write` | both | 否 | 创建 / 更新 / 停用 / 删除角色 |
-| `iam:role:grant` | both | 否 | 替换角色权限点 |
-| `iam:binding:read` | both | 否 | 查看绑定 |
-| `iam:binding:write` | both | 否 | 绑定 / 解绑 |
-| `iam:check` | admin | 否 | 模拟鉴权 |
-| `iam:change:read` | admin | 否 | 查看审批单 |
-| `iam:change:approve` | admin | 否 | 审批变更 |
-| `iam:change:request` | biz | 否 | 发起本商户变更申请 / 查看本商户待办 |
-| `iam:change:review` | biz | 否 | 审批本商户变更（申请人不得自审） |
-| `iam:breakglass:request` | admin | 否 | 申请破玻璃 |
-| `iam:breakglass:approve` | admin | 否 | 审批破玻璃 |
-| `order:read` | both | 是 | 已弃用；保留既有授权，禁止新授 |
-| `order:write` | both | 是 | 已弃用；保留既有授权，禁止新授 |
-| `file:read` | both | 是 | 已弃用；保留既有授权，禁止新授 |
-| `file:write` | both | 是 | 已弃用；保留既有授权，禁止新授 |
-| `audit:read` | admin | 是 | 查询审计 |
-| `data:export` | both | 是 | 导出数据 |
-| `config:read` | admin | 否 | 查看配置 |
-| `config:write` | admin | 否 | 修改配置 |
-
-**系统角色种子（示例，非最终）**：
+系统角色种子：
 
 | channel | code | 权限 | 数据范围 |
 |---------|------|------|----------|
-| admin | `system_admin` | 逐项授予 IAM 管理权限 + `audit:read` + `config:read/write` | `all` |
+| admin | `system_admin` | 逐项授予 IAM 管理 + `audit:read` + `config:read/write` | `all` |
 | admin | `ops` | `iam:permission:read`、`iam:role:read`、`iam:binding:read`、`iam:change:read`、`audit:read`、`config:read` | `all`（或 `merchant_set`） |
 | admin | `breakglass_admin`（`role_type=breakglass`） | 目录中无权限点；仅在有效审批绑定时展开 `*` | `all` |
 | biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review` | `merchant` |
 | biz | `merchant_staff` | `iam:change:request` | `merchant` |
 
-> B 端审批 SoD：`merchant_staff` 只能提申请；`merchant_owner` 虽同时持有申请与审批权限点，仍受「申请人 ≠ 审批人」约束，同一主体无法自审。
-
-> `system_admin` 不含 `iam:breakglass:approve`，以满足「申请 ≠ 审批」；破玻璃审批人单独配置。系统角色在种子中逐项授予权限，**不写 `*`**；`*` 只由 `breakglass` 角色在有效审批绑定时动态展开。
+SoD：申请人 ≠ 审批人（`merchant_owner` 同时持有申请与审批权限点时仍受约束）；`system_admin` 不含 `iam:breakglass:approve`；系统角色逐项授予、不写 `*`，`*` 只由 `breakglass` 角色在有效审批绑定时动态展开。
 
 ---
 

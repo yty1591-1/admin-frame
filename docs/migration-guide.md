@@ -3,6 +3,7 @@
 > **状态**：已落地（PostgreSQL / MySQL）  
 > **关联**：[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)（DATA-01～DATA-08）、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)（RELS-06）、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十四、[`pkg-roadmap.md`](./pkg-roadmap.md)、[`migrations/`](../migrations)  
 > **最后更新**：2026-10-20  
+> **变更方式**：CLI 参数、配置优先级、迁移文件规范或故障处置流程变更须同步 `cmd/migrate`、`pkg/migrate` 单测与本文，并确认与 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 一致  
 > **目标读者**：后端开发、SRE / 发布负责人、Code Review  
 > **效力说明**：本文是使用说明。硬约束以 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 为准；两者冲突时以规范为准。
 
@@ -1217,41 +1218,20 @@ go test ./cmd/migrate/... -count=1
 
 ## 16. FAQ
 
-**Q1：可以在 API / worker 启动时自动迁移吗？**  
-不能。DATA-03 明确禁止，唯一入口是 `cmd/migrate` 或发布流水线。
-
-**Q2：可以重复执行 `up` 吗？**  
-可以。已应用版本按版本号跳过，不会重复执行 SQL。
-
-**Q3：只改了注释，为什么报 checksum 漂移？**  
-checksum 覆盖 up 文件全部原始字节，注释和空白同样计入。恢复原文件或新增迁移。
-
-**Q4：可以修改已应用的 down 文件吗？**  
-技术上可以（不参与 checksum），但会破坏可回滚性。修改后必须在 staging 重新验证，并走 Review。
-
-**Q5：两个 CI Job 同时跑 `up` 会怎样？**  
-PostgreSQL / MySQL 会用咨询锁串行化，后来者等待；仍建议流水线保证单实例，避免超时与日志混乱。
-
-**Q6：支持 SQLite / Oracle / SQL Server 吗？**  
-CLI 不支持；`pkg/migrate` 提供 `DialectSQLite` / `DialectGeneric`，需自行注册驱动并验证锁与 DDL 事务语义。
-
-**Q7：`-dry-run` 会改数据库吗？**  
-不会执行迁移 SQL，但会创建并读取历史表。需要 DDL 权限。
-
-**Q8：如何在 CI 中检查“迁移是否已对齐”？**  
-`-action status` 后检查 `dirty: false`、`pending: none`、无 drift/missing；或用 `-action version` 与期望版本比较。
-
-**Q9：迁移失败了一半，能直接重跑吗？**  
-事务型会自动回滚，可修正后重跑；非事务型先按 §11.1 处理 `dirty`，不能直接重跑。
-
-**Q10：如何只回滚某一条迁移？**  
-只能按版本顺序回滚（`-steps` / `-to`），不支持跳过中间版本单独回滚。需要时写新的补偿迁移。
-
-**Q11：数据库口令会被打印吗？**  
-不会。`pkg/db` 使用 `RedactDSN` 脱敏；仍建议用环境变量而非 `-dsn`。
-
-**Q12：多个数据库（分库）怎么迁移？**  
-每个库单独执行一次，使用不同的 `-dir` / `-table` / DSN；锁键包含 schema 与表名，互不干扰。
+| 问题 | 结论 |
+|------|------|
+| 可在 API / worker 启动时自动迁移？ | 不能。唯一入口是 `cmd/migrate` 或发布流水线（DATA-03）。 |
+| 可重复执行 `up`？ | 可以，已应用版本按版本号跳过。 |
+| 只改注释为何报 checksum 漂移？ | checksum 覆盖 up 文件全部原始字节；恢复原文件或新增迁移。 |
+| 可修改已应用的 down 文件？ | 技术可行（不参与 checksum），但破坏可回滚性；须 staging 重验并走 Review。 |
+| 两个 CI Job 同时跑 `up`？ | 咨询锁会串行化，后来者等待；仍建议流水线保证单实例。 |
+| 支持 SQLite / Oracle / SQL Server？ | CLI 不支持；库提供 `DialectSQLite` / `DialectGeneric`，需自行注册驱动并验证锁与 DDL 事务语义。 |
+| `-dry-run` 会改数据库？ | 不执行迁移 SQL，但会创建并读取历史表，需要 DDL 权限。 |
+| CI 如何检查迁移已对齐？ | `status` 后确认 `dirty: false`、无 pending / drift / missing；或用 `version` 与期望版本比较。 |
+| 迁移失败一半能直接重跑？ | 事务型自动回滚，可修正后重跑；非事务型先按 §11.1 处理 `dirty`。 |
+| 如何只回滚某一条？ | 只能按版本顺序 `-steps` / `-to`；需跳过中间版本时写补偿迁移。 |
+| 数据库口令会被打印？ | 不会，`pkg/db` 使用 `RedactDSN` 脱敏；仍建议用环境变量而非 `-dsn`。 |
+| 分库怎么迁移？ | 每个库单独执行，使用不同 `-dir` / `-table` / DSN；锁键含 schema 与表名。 |
 
 ---
 

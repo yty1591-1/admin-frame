@@ -3,20 +3,23 @@
 > **状态**：已落地（M0–M5；默认 L1，`native=true` 切 L2）
 > **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五
 > **最后更新**：2026-10-20
+> **变更方式**：新增驱动、调整键/错误语义或默认 `driver` 须同步 `pkg/storage` 契约、配置示例与本文选型表，经安全 Review 后合入
 > **目标读者**：后端 / 平台装配 / 安全 Review
 
 ---
 
-## 1. 定位
+## 1. 定位与边界
 
 对象存储是本仓库的**模块化基础设施能力**：
 
 - **契约统一**：业务只依赖 `pkg/storage.Store` / `Presigner`，不感知厂商。
 - **驱动可插拔**：阿里云 OSS、腾讯云 COS、华为云 OBS、AWS S3、MinIO 等以**独立子包 + 注册表**接入（类比 `database/sql` 驱动模型）。
 - **装配可选**：`cmd` / `platform` **按需 blank-import** 所需驱动；未引用的驱动不进入进程。
+- **语义一致**：一套键规范、错误语义、前缀隔离（`Join` / `ValidateKey` / `WithPrefix`）覆盖所有后端。
+- **安全默认**：大文件 **Presign 直传**；密钥走环境变量 / IAM / 云角色（SEC-01）；日志禁止完整签名串（SEC-05）。
 - **本地可测**：内置 `memory` / `local`；CI 可用 MinIO。
 
-```
+```text
 业务 / app
     │ 只用 Store
     ▼
@@ -29,29 +32,19 @@ pkg/storage          ← Store / Presigner / Open / Register
     └── storage/obs        （华为云 OBS）
 ```
 
----
-
-## 2. 目标与非目标
-
-### 2.1 目标
-
-1. 一套键规范、错误语义、前缀隔离（`Join` / `ValidateKey` / `WithPrefix`）覆盖所有后端。
-2. 配置用 `driver: s3|minio|oss|cos|obs|local|memory` 切换，业务代码零改动。
-3. 每种云作为**可选项**独立演进：可先走 S3 兼容协议，再按需补原生 SDK 能力。
-4. 大文件 **Presign 直传**；密钥走环境变量 / IAM / 云角色（SEC-01）；日志禁止完整签名串（SEC-05）。
-5. 新增 SDK 遵守 DEP-06（用途、许可证、替代方案）。
-
-### 2.2 非目标
+### 1.1 非目标
 
 - 运行时热切换多云双写 / 自动 failover（另开 ADR）。
 - CDN、图片处理、内容审核（上传后异步流水线）。
 - 在领域层引用任何云 SDK。
 
+新增 SDK 须遵守 DEP-06（用途、许可证、替代方案）。
+
 ---
 
-## 3. 模块化模型
+## 2. 模块化模型
 
-### 3.1 注册表（已实现方向）
+### 2.1 注册表（已实现方向）
 
 ```go
 // 进程装配
@@ -74,7 +67,7 @@ store, err := storage.Open(ctx, storage.Config{
 | `storage.Open(ctx, Config)` | 按 `Driver` 查找并构造；可选套 `WithPrefix` |
 | 各 `pkg/storage/{s3,oss,cos,obs}` | `init` 注册；封装厂商 SDK 或 S3 兼容客户端 |
 
-### 3.2 驱动命名
+### 2.2 驱动命名
 
 | `driver` | 含义 | 推荐实现路径 |
 |----------|------|----------------|
@@ -93,9 +86,9 @@ store, err := storage.Open(ctx, storage.Config{
 
 ---
 
-## 4. 选型对比
+## 3. 选型对比
 
-### 4.1 协议与 SDK
+### 3.1 协议与 SDK
 
 | 厂商 / 产品 | 协议选项 | Go SDK 候选 | 许可证（引入时复核） | 建议 |
 |-------------|----------|-------------|----------------------|------|
@@ -111,7 +104,7 @@ store, err := storage.Open(ctx, storage.Config{
 - L1 阶段 **禁止** AWS SDK 与 minio-go 双栈；S3 兼容一律 AWS SDK v2。
 - L2 原生 SDK **仅**出现在对应子包，不泄漏到 `pkg/storage` 根包。
 
-### 4.2 放置边界
+### 3.2 放置边界
 
 | 放哪里 | 内容 |
 |--------|------|
@@ -119,11 +112,11 @@ store, err := storage.Open(ctx, storage.Config{
 | `pkg/storage/{s3,oss,cos,obs}` | 可选驱动（可跨仓库复用） |
 | `internal/platform` | 读 yaml/env、选 driver、blank-import、注入业务 |
 
-与早期「SDK 只放 platform」相比：驱动作为 **pkg 可选模块** 更符合「模块化项目能力 + 多可选项」；platform 只做装配，不实现厂商协议细节。
+驱动作为 **pkg 可选模块** 承载厂商协议细节；platform 只做装配。
 
 ---
 
-## 5. 配置草案
+## 4. 配置草案
 
 ```yaml
 storage:
@@ -189,7 +182,7 @@ storage:
 
 ---
 
-## 6. 安全与多租户
+## 5. 安全与多租户
 
 1. 键：`{env}/{channel}/{merchant_id|user_id}/...`，强制 `ValidateKey`。
 2. 桶默认私有；对外短 TTL PresignGet。
@@ -198,20 +191,20 @@ storage:
 5. 优先桶 SSE / KMS；应用层加密用 `pkg/crypto`。
 6. Trace/日志：禁止 Secret 与完整 signed query（SEC-05）。
 
-### 6.1 Multipart（M5）
+### 5.1 Multipart（M5）
 
 - 契约：`pkg/storage.MultipartUploader`（`CreateMultipart` / `UploadPart` / `CompleteMultipart` / `AbortMultipart`）
 - 实现：`pkg/storage/s3`；`PrefixStore` 转发并改写键；经 `storage.AsMultipart(store)` 探测
 - 业务 Handler 尚未暴露 HTTP；大文件直传优先用 PresignPut
 
-### 6.2 多桶（M5）
+### 5.2 多桶（M5）
 
 - 装配：`platform.OpenStorageSet` → `StorageSet{Default, named…}`；`Get("default"|name)`
 - 配置：顶层 `storage` 为默认桶；`storage.buckets.<name>` 为附加桶（名不可为 `default`）
 - 健康：`StorageSet.ReadyAll`；admin-api 另注册 `storage:<name>`
 - 注入：业务按名取 Store（如 `stores.MustGet("public")`）；未指定时使用 `stores.Default`
 
-### 6.3 生命周期（M5）
+### 5.3 生命周期（M5）
 
 - 契约：`pkg/storage.LifecycleManager`（`PutLifecycle` / `GetLifecycle`）；`AsLifecycle` / `ApplyLifecycle`
 - 实现：`pkg/storage/s3`（空 rules = 删除桶生命周期）
@@ -220,7 +213,7 @@ storage:
 
 ---
 
-## 7. 分期落地
+## 6. 分期落地
 
 | 阶段 | 交付 | 验收 |
 |------|------|------|
@@ -233,7 +226,7 @@ storage:
 
 ---
 
-## 8. 测试策略
+## 7. 测试策略
 
 | 层级 | 内容 |
 |------|------|
@@ -244,7 +237,7 @@ storage:
 
 ---
 
-## 9. 依赖与许可证（DEP-06）
+## 8. 依赖与许可证（DEP-06）
 
 | 直接依赖 | 用途 | 许可证 | 替代方案 |
 |----------|------|--------|----------|
@@ -253,11 +246,10 @@ storage:
 | `github.com/tencentyun/cos-go-sdk-v5` | L2 腾讯云 COS 原生 | Apache-2.0 | L1 S3 兼容 |
 | `github.com/huaweicloud/huaweicloud-sdk-go-obs` | L2 华为云 OBS 原生 | Apache-2.0 | L1 S3 兼容 |
 
-- L2 SDK **仅**出现在 `pkg/storage/{oss,cos,obs}`，不泄漏到 `pkg/storage` 根包。
 - 默认配置 `native: false`（L1）；进程 blank-import 驱动包后才会链接对应 SDK。
 - 引入后须跑 `make vuln` / `make check-license`（CI）。
 
-### 9.1 启用 L2
+### 8.1 启用 L2
 
 ```yaml
 storage:
@@ -274,19 +266,8 @@ storage:
 
 ---
 
-## 10. 开放问题（Owner 可关）
+## 9. 参考
 
-| 问题 | 建议默认 |
-|------|----------|
-| 国内是否允许只用 S3 兼容、不上原生？ | ✅ 默认 L1；`native=true` 切 L2（M4 已实现） |
-| 是否支持同进程多 Store（公有静态桶 + 私有附件桶）？ | ✅ `OpenStorageSet` + `storage.buckets` |
-| 驱动包是否拆独立 Go module？ | 近期单 module；依赖膨胀再拆 |
-
----
-
-## 11. 参考
-
-- 代码：`pkg/storage`、`pkg/storage/s3|oss|cos|obs`
-- 路线图：`docs/pkg-roadmap.md`
+- 代码：`pkg/storage`、`pkg/storage/{s3,oss,cos,obs}`
 - 约束：SEC-01/05、DEP-01～06、REL 超时
-- AWS SDK v2 S3 / Presign；各云「S3 兼容」官方说明
+- 协议：AWS SDK v2 S3 / Presign；各云「S3 兼容」官方说明

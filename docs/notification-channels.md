@@ -1,8 +1,9 @@
 # 通知渠道：短信 / 邮件 / 推送 模块化驱动规划
 
 > **状态**：核心契约与 L1 驱动已实现（短信阿里云、邮件 SMTP、推送 APNs/FCM；M4 业务编排待首个真实调用方）  
-> **关联**：[`pkg-roadmap.md`](./pkg-roadmap.md) §3.6、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §5.7 / §6 / §11 / §12、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)  
+> **关联**：[`pkg-roadmap.md`](./pkg-roadmap.md) §2.6、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §5.7 / §6 / §11 / §12、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)  
 > **最后更新**：2026-10-20  
+> **变更方式**：渠道契约、错误语义、驱动矩阵或安全红线变更须同步 `pkg/{sms,email,push}` 契约、契约测试与本文配置 / 观测章节，经安全 Review 后合入
 > **目标读者**：后端 / 平台装配 / 安全 Review / SRE
 
 ---
@@ -66,18 +67,7 @@ pkg/sms        pkg/email        pkg/push
 
 ---
 
-## 2. 目标与非目标
-
-### 2.1 目标
-
-1. **契约稳定**：业务只依赖 `Send(ctx, Message) (Receipt, error)`，换厂商零改动。
-2. **默认可测**：不配置任何真实凭据也能跑通单测与本地联调（memory 驱动）。
-3. **失败可判定**：每个错误都能回答「是否可重试」「是否 Token/号码问题」「是否配置/权限问题」。
-4. **安全可审计**：PII 不落日志；密钥不入库；A/B 发送有审计触发点；频控可配置。
-5. **可观测**：发送量、成功率、时延、错误分类、熔断状态、限流拒绝均有指标。
-6. **渐进交付**：每个里程碑独立可上线，不阻塞其他渠道。
-
-### 2.2 非目标
+## 2. 非目标
 
 - 模板管理后台、可视化编辑器、营销自动化、A/B 实验。
 - 收件箱解析、退信/投诉自动处理（M5 之后按需）。
@@ -860,16 +850,7 @@ func Run(t *testing.T, newSender func(t *testing.T) sms.Sender)
 | **M4** 业务编排 | 模板中心、渠道路由、去重、退订、发送记录、回执回调、指标/告警 | `internal/notify/*`、`internal/platform` 装配、`configs/*.yaml.example` | 首个业务场景上线；`/readyz` 不依赖外部渠道；降级可观测 | 3–5 天 |
 | **M5** 增强 | 批量、腾讯云/华为云、SES、国内 Push、送达回执、主备切换 | 各驱动子包 + `internal/notify` | 主备演练通过；回执签名校验通过 | 按需 |
 
-### 12.1 M0 详细任务
-
-1. `pkg/sms`：`Sender` / `Message.Validate` / `Config` / `Register` / `Open` / `memory`；`smstest.Run`。
-2. `pkg/email`：`Sender` / `Address` / `Message.Validate` / `Config` / 注册表 / `memory`；`emailtest.Run`。
-3. `pkg/push`：`Sender` / `Platform` / `Message.Validate` / `Config` / 注册表 / `memory`；`pushtest.Run`。
-4. 三包 `Observer` 与 `Event`（结构一致，避免跨包依赖）。
-5. `doc.go` 包注释：职责、边界、并发安全、零值、错误语义（C-01～C-04）。
-6. 单测覆盖校验表全部分支；`go test -race ./pkg/...`。
-
-### 12.2 每个里程碑的 DoD
+### 12.1 每个里程碑的 DoD
 
 - [ ] `go build ./...`、`go vet ./...`、`go test -race ./...`、`golangci-lint` 全绿。
 - [ ] 新增直接依赖已在 MR 说明用途/许可证/替代方案（DEP-06）；默认无新增。
@@ -917,23 +898,7 @@ func Run(t *testing.T, newSender func(t *testing.T) sms.Sender)
 
 ---
 
-## 14. 风险与缓解
-
-| 风险 | 影响 | 缓解 |
-|------|------|------|
-| 厂商 API/签名细节理解错误 | 全量发送失败 | 官方文档 golden test；沙箱/测试账号联调；错误码映射表单测 |
-| 短信合规/模板报备延迟 | 无法上线 | 提前提交签名与模板；`memory` 驱动先联调业务 |
-| 邮件进垃圾箱 | 通知不可达 | SPF/DKIM/DMARC、独立发信域、IP 预热；监控退信率 |
-| 短信轰炸/薅羊毛 | 成本与投诉 | 人机校验、频控、黑名单、预算告警 |
-| Token 失效累积 | 推送成功率下降 | `ErrTokenInvalid` 驱动清理；失效率告警 |
-| 重试放大 | 供应商限流/封禁 | 驱动不重试；熔断包住重试；尊重 `RetryAfter` |
-| PII 泄漏 | 合规事故 | `mask`、脱敏测试、Code Review 清单、日志采样检查 |
-| 供应链风险 | 构建/漏洞 | L1 零新增依赖；L2 走 DEP-06 + `make vuln` |
-| 多供应商行为差异 | 业务体验不一致 | 统一校验与语义错误；契约测试覆盖所有驱动 |
-
----
-
-## 15. 开放问题（需 Owner 确认）
+## 14. 开放问题（需 Owner 确认）
 
 | # | 问题 | 建议默认 | 影响 |
 |---|------|----------|------|
@@ -948,7 +913,7 @@ func Run(t *testing.T, newSender func(t *testing.T) sms.Sender)
 
 ---
 
-## 16. 验收清单（启动前）
+## 15. 验收清单（启动前）
 
 - [ ] 确认首个真实调用方与场景（验证码 / 告警 / 订单通知）。
 - [ ] 完成厂商账号、签名、模板、发信域与 SPF/DKIM/DMARC 准备。
@@ -960,8 +925,8 @@ func Run(t *testing.T, newSender func(t *testing.T) sms.Sender)
 
 ---
 
-## 17. 参考
+## 16. 参考
 
 - 代码：`pkg/storage`（注册表 / L1-L2 驱动模式）、`pkg/httpclient`、`pkg/retry`、`pkg/circuitbreaker`、`pkg/clock`、`pkg/errors`、`pkg/mask`
-- 文档：[`pkg-roadmap.md`](./pkg-roadmap.md)、[`storage-s3-oss.md`](./storage-s3-oss.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)
-- 协议：RFC 5321/5322（SMTP/邮件）、RFC 2045–2047/2231（MIME）、APNs Provider API、FCM HTTP v1、阿里云 Dysmsapi、腾讯云 SMS API
+- 协议：RFC 5321/5322（SMTP / 邮件）、RFC 2045–2047/2231（MIME）、APNs Provider API、FCM HTTP v1、阿里云 Dysmsapi、腾讯云 SMS API
+- 规范：SEC-01/05、REL-01/05/06、OBS-03/07、CFG-04/06/07、DEP-02/04/05

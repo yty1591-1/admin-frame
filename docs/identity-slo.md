@@ -1,9 +1,10 @@
 # 身份域 SLO 与容量基线
 
-> 本文定义身份域（internal/identity）的生产 SLO、容量公式与压测方法。  
-> 指标来源：`internal/identity/observability` 注册的 `identity_*` 指标 + 平台 `http_server_*`。
-> 当前有效口径（2026-11，MNT-04）：刷新 / MFA / step-up / OAuth 均已注册时延直方图；
-> Redis 读口径按 L1 缓存与单 jti 校验更新，见 §2.2。
+> **状态**：已落地（MNT-04 口径生效）
+> **最后更新**：2026-11-05
+> **变更方式**：SLO 目标、容量公式或告警口径变更须同步 `internal/identity/observability` 指标与 `docs/runbooks/`，经 SRE Review 后合入
+
+本文给出身份域（`internal/identity`）的生产 SLO、容量公式与压测方法。指标来自 `internal/identity/observability` 的 `identity_*` 与平台 `http_server_*`；自 2026-11（MNT-04）起刷新 / MFA / step-up / OAuth 均已注册时延直方图，Redis 读口径见 §2.2。
 
 ## 1. SLO
 
