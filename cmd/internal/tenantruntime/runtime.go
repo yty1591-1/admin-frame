@@ -152,6 +152,11 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 			return nil, fmt.Errorf("tenant async handlers: %w", err)
 		}
 	}
+	// ENT-15：租户数据处置任务（D-05 第三段）——装配失败不阻断主流程
+	// （处置是周期任务，装配异常由日志跟进），但记录错误便于排查。
+	if _, perr := buildPurgeService(deps, repo); perr != nil {
+		deps.Logger.Warn("tenant purge service unavailable", "error", perr)
+	}
 	return &Runtime{Handler: handler, invitationService: invitationService}, nil
 }
 

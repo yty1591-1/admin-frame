@@ -165,6 +165,37 @@ func (r *MySQLRepository) CountByStatus(ctx context.Context) (map[domain.Status]
 	return counts, nil
 }
 
+// ListDueForPurge 返回保留期 + 导出窗口均已届满的 terminated 租户（ENT-15）。
+// 只依赖 terminated_at 单列：hold_days 与 export_days 的时长由调用方折算进
+// before（仓储不感知处置参数，避免配置漂移出两个真相源）。
+func (r *MySQLRepository) ListDueForPurge(ctx context.Context, before time.Time, limit int) ([]domain.Tenant, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.query(ctx).QueryContext(ctx,
+		`SELECT `+tenantColumns+` FROM tenant
+		  WHERE status = ? AND terminated_at IS NOT NULL AND terminated_at < ?
+		  ORDER BY terminated_at ASC, id ASC
+		  LIMIT ?`, string(domain.StatusTerminated), before, limit)
+	if err != nil {
+		return nil, fmt.Errorf("tenant: list due for purge: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]domain.Tenant, 0, limit)
+	for rows.Next() {
+		tenant, scanErr := scanTenant(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("tenant: scan due for purge: %w", scanErr)
+		}
+		items = append(items, tenant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("tenant: iterate due for purge: %w", err)
+	}
+	return items, nil
+}
+
 // UpdateProfile 以 CAS 写入资料变更（T-11）。
 //
 // 只写资料列，不碰状态列：两条 CAS 通道共用 version 计数器，

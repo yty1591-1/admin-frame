@@ -27,6 +27,10 @@ func (r *countingRepo) UpdateStatus(context.Context, domain.Tenant) error       
 func (r *countingRepo) UpdateProfile(context.Context, domain.Tenant) error           { return nil }
 func (r *countingRepo) CountByStatus(context.Context) (map[domain.Status]int, error) { return nil, nil }
 
+func (r *countingRepo) ListDueForPurge(context.Context, time.Time, int) ([]domain.Tenant, error) {
+	return nil, nil
+}
+
 func (r *countingRepo) Get(_ context.Context, id string) (domain.Tenant, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // Filter 是租户列表的过滤条件。
@@ -63,6 +64,11 @@ type Repository interface {
 	// CountByStatus 按状态统计租户数（T-16 的 tenant_status Gauge 数据源）。
 	// 返回的 map 只包含有租户的状态；查询失败返回 error，由调用方决定降级方式。
 	CountByStatus(ctx context.Context) (map[Status]int, error)
+
+	// ListDueForPurge 返回保留期 + 导出窗口均已届满的 terminated 租户
+	// （ENT-15 D-05 三段式处置的扫描口径：terminated_at < before）。
+	// 按 terminated_at 升序返回（先到期的先处置），limit 上限保护单轮批量。
+	ListDueForPurge(ctx context.Context, before time.Time, limit int) ([]Tenant, error)
 }
 
 // MemberRepository 是租户成员持久化契约。

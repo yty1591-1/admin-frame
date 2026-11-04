@@ -57,6 +57,7 @@ type Config struct {
 	IAM             IAMConfig         `yaml:"iam"`
 	Identity        IdentityConfig    `yaml:"identity"`
 	Audit           AuditConfig       `yaml:"audit"`
+	Tenant          TenantConfig      `yaml:"tenant"`
 	Secrets         SecretsConfig     `yaml:"secrets"`
 
 	// secretErr 暂存 normalize 阶段的密钥解析错误。
@@ -147,6 +148,24 @@ type AuditRetentionConfig struct {
 	//
 	// 非空时必须「先归档成功再删除」：对象存储不可用即中止清理，避免销毁无副本。
 	ArchivePrefix string `yaml:"archive_prefix"`
+}
+
+// TenantConfig 是租户域配置（T-23 / ENT-15：D-05 三段式处置参数）。
+type TenantConfig struct {
+	// Retention 租户终止后的数据处置时间线（tenant-data-lifecycle.md）。
+	Retention TenantRetentionConfig `yaml:"retention"`
+}
+
+// TenantRetentionConfig 是三段式处置的时间线参数。
+type TenantRetentionConfig struct {
+	// HoldDays 保留期天数（从 terminated_at 起算；默认 90，合同可延长且延长必须留审计）。
+	HoldDays int `yaml:"hold_days"`
+	// ExportDays 导出窗口天数（默认 30；逾期未签收视为放弃并进入硬删除）。
+	ExportDays int `yaml:"export_days"`
+	// PurgeBatchSize 硬删除分批行数（默认 500，避免长事务）。
+	PurgeBatchSize int `yaml:"purge_batch_size"`
+	// DryRun 为 true 时只扫描与报告，不执行删除（演练模式）。
+	DryRun bool `yaml:"dry_run"`
 }
 
 // EffectiveStore 返回按数据库驱动解析后的审计出口。
@@ -1775,6 +1794,17 @@ func (c *Config) validateAudit() []error {
 	}
 	if effective == AuditStoreLog && isProdEnv(c.Env) {
 		errs = append(errs, errors.New("audit.store must resolve to db when env=prod (AUD-06)"))
+	}
+	// ENT-15：租户处置时间线边界——保留期不得短于 30 天（争议期底线），
+	// 导出窗口不得短于 7 天（客户拿数据需要真实时间）。
+	if c.Tenant.Retention.HoldDays < 0 || c.Tenant.Retention.HoldDays > 3650 {
+		errs = append(errs, errors.New("tenant.retention.hold_days must be within [0, 3650]"))
+	}
+	if c.Tenant.Retention.ExportDays < 0 || c.Tenant.Retention.ExportDays > 3650 {
+		errs = append(errs, errors.New("tenant.retention.export_days must be within [0, 3650]"))
+	}
+	if c.Tenant.Retention.PurgeBatchSize < 0 || c.Tenant.Retention.PurgeBatchSize > 100000 {
+		errs = append(errs, errors.New("tenant.retention.purge_batch_size must be within [0, 100000]"))
 	}
 	if store == AuditStoreDB && strings.EqualFold(strings.TrimSpace(c.DB.Driver), "memory") {
 		errs = append(errs, errors.New("audit.store=db requires a persistent db.driver"))

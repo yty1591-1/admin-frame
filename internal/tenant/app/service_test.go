@@ -348,6 +348,10 @@ func (r *conflictRepo) List(context.Context, domain.Filter) ([]domain.Tenant, in
 }
 func (r *conflictRepo) UpdateProfile(context.Context, domain.Tenant) error           { return nil }
 func (r *conflictRepo) CountByStatus(context.Context) (map[domain.Status]int, error) { return nil, nil }
+
+func (r *conflictRepo) ListDueForPurge(context.Context, time.Time, int) ([]domain.Tenant, error) {
+	return nil, nil
+}
 func (r *conflictRepo) UpdateStatus(context.Context, domain.Tenant) error {
 	return domain.ErrVersionConflict
 }

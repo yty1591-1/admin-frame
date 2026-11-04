@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 )
@@ -211,6 +212,26 @@ func (r *MemoryRepository) CountByStatus(_ context.Context) (map[domain.Status]i
 		counts[tenant.Status]++
 	}
 	return counts, nil
+}
+
+// ListDueForPurge 返回保留期 + 导出窗口届满的 terminated 租户（ENT-15）。
+// 内存实现按 terminated_at 升序排列，与 MySQL 实现同口径。
+func (r *MemoryRepository) ListDueForPurge(_ context.Context, before time.Time, limit int) ([]domain.Tenant, error) {
+	r.mu.RLock()
+	due := make([]domain.Tenant, 0, 8)
+	for _, tenant := range r.items {
+		if tenant.Status == domain.StatusTerminated && tenant.TerminatedAt != nil && tenant.TerminatedAt.Before(before) {
+			due = append(due, tenant)
+		}
+	}
+	r.mu.RUnlock()
+	sort.Slice(due, func(i, j int) bool {
+		return due[i].TerminatedAt.Before(*due[j].TerminatedAt)
+	})
+	if limit > 0 && len(due) > limit {
+		due = due[:limit]
+	}
+	return due, nil
 }
 
 // UpdateProfile 以版本 CAS 写入资料变更（T-11）。

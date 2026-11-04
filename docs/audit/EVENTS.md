@@ -55,6 +55,7 @@
 | `tenant.invitation.accept` | A | 接受邀请并建立成员关系；`attrs.subject_id` 记录实际接受主体（与 email 解耦）；同一主体重复接受幂等（不产生重复事件），换人抢受被拒不落事件（防枚举） | 租户 | 365d | active |
 | `tenant.invitation.revoke` | A | 撤销待处理邀请，token 立即失效；`reason` 写入审计 | 租户 | 365d | active |
 | `tenant.invitation.resend` | A | 重发邀请：旧 token 作废（摘要覆盖）、有效期顺延；泄露场景下即为轮换手段 | 租户 | 365d | active |
+| `tenant.data_purge` | system | 租户硬删除完成（ENT-15 D-05 第 3 段）；`attrs.tables`（边界清单）/ `attrs.rows_deleted` / `attrs.export_manifest_sha256` / `attrs.terminated_at`；仅对「导出证据已校验」的租户执行，删除后写入且永久可查（审计是唯一不删的数据） | 租户 | 365d | active |
 | `tenant.member.role_change` | A | 变更成员角色；`attrs.from` / `attrs.to` / `attrs.subject_id`，降级最后一名 owner 会被拒绝（`outcome=failure` 同样留痕） | 租户 | 365d | active |
 | `tenant.member.disable` | A | 停用成员（保留成员关系，不物理删除）；`reason` 可选，建议填写离职或调岗原因 | 租户 | 365d | active |
 | `tenant.member.enable` | A | 重新启用成员 | 租户 | 365d | active |
