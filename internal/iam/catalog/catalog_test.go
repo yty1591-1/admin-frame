@@ -64,6 +64,33 @@ func TestPermissionCatalog(t *testing.T) {
 	}
 }
 
+// TestEntryResourceAndCodes 验证权限码首段派生、全量码导出与按码查找。
+func TestEntryResourceAndCodes(t *testing.T) {
+	entry := catalog.Entry{Code: iam.PermissionCode("iam:role:read")}
+	if got := entry.Resource(); got != "iam" {
+		t.Fatalf("Resource() = %q, want iam", got)
+	}
+
+	entries := catalog.All()
+	codes := catalog.Codes()
+	if len(codes) != len(entries) {
+		t.Fatalf("Codes() 长度 %d != All() 长度 %d", len(codes), len(entries))
+	}
+	for i := range entries {
+		if codes[i] != entries[i].Code {
+			t.Fatalf("Codes()[%d] = %q, want %q", i, codes[i], entries[i].Code)
+		}
+	}
+
+	found, ok := catalog.ByCode(entries[0].Code)
+	if !ok || found.Code != entries[0].Code {
+		t.Fatalf("ByCode(%q) = %v, %v", entries[0].Code, found.Code, ok)
+	}
+	if _, ok := catalog.ByCode("missing:code"); ok {
+		t.Fatal("ByCode 不应命中不存在的权限码")
+	}
+}
+
 // TestPermissionCatalogMatchesConstants 保证 perm.go 的常量与目录双向一致。
 //
 // 用 go/ast 解析源码而不是 shell grep：可精确定位常量声明、忽略注释中的示例，

@@ -2,6 +2,7 @@ package observability_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -201,6 +202,125 @@ func TestMetricsNilSafety(_ *testing.T) {
 	metrics.OnMismatch(ctx, security.Mismatch{})
 	metrics.OnLoadError(ctx, "admin", context.Canceled)
 	metrics.OnChange(ctx, audit.ActionRBACRoleChange, "admin", "create", "success")
+	metrics.OnOutboxDelivered(ctx, "success")
+	metrics.OnConstraintCheck(ctx, "unique", "violation")
+}
+
+// TestBreakglassAndOutboxGauges 验证破玻璃 / Outbox 采集器与投递、约束指标；
+// 查询失败必须按 0 暴露，避免把「无法观测」误判为「有破玻璃权限」。
+func TestBreakglassAndOutboxGauges(t *testing.T) {
+	metrics, registry := newMetrics(t)
+	called := 0
+	if err := metrics.RegisterBreakglassGauge(func() (int, error) {
+		called++
+		return 3, nil
+	}); err != nil {
+		t.Fatalf("register breakglass gauge: %v", err)
+	}
+	if got := gaugeValue(t, registry, "iam_breakglass_active"); got != 3 {
+		t.Fatalf("iam_breakglass_active = %v, want 3", got)
+	}
+	if called != 1 {
+		t.Fatalf("breakglass counter calls = %d, want 1", called)
+	}
+	if err := metrics.RegisterOutboxGauges(func() (int, float64, error) {
+		return 7, 12.5, nil
+	}); err != nil {
+		t.Fatalf("register outbox gauges: %v", err)
+	}
+	if got := gaugeValue(t, registry, "iam_outbox_pending"); got != 7 {
+		t.Fatalf("iam_outbox_pending = %v, want 7", got)
+	}
+	if got := gaugeValue(t, registry, "iam_outbox_lag_seconds"); got != 12.5 {
+		t.Fatalf("iam_outbox_lag_seconds = %v, want 12.5", got)
+	}
+
+	ctx := context.Background()
+	metrics.OnOutboxDelivered(ctx, "success")
+	metrics.OnOutboxDelivered(ctx, "")
+	if got := counterValue(t, registry, "iam_outbox_delivery_total", map[string]string{
+		"result": "success",
+	}); got != 1 {
+		t.Fatalf("outbox success = %v, want 1", got)
+	}
+	if got := counterValue(t, registry, "iam_outbox_delivery_total", map[string]string{
+		"result": "unknown",
+	}); got != 1 {
+		t.Fatalf("outbox unknown = %v, want 1", got)
+	}
+
+	metrics.OnConstraintCheck(ctx, "unique", "violation")
+	metrics.OnConstraintCheck(ctx, "", "")
+	if got := counterValue(t, registry, "iam_constraint_checks_total", map[string]string{
+		"kind": "unique", "result": "violation",
+	}); got != 1 {
+		t.Fatalf("constraint unique = %v, want 1", got)
+	}
+	if got := counterValue(t, registry, "iam_constraint_checks_total", map[string]string{
+		"kind": "unknown", "result": "unknown",
+	}); got != 1 {
+		t.Fatalf("constraint unknown = %v, want 1", got)
+	}
+
+	// 采集函数失败时两个 Gauge 仍要可采集且为 0，不能因查询异常丢弃整个指标响应。
+	failing, failingRegistry := newMetrics(t)
+	if err := failing.RegisterBreakglassGauge(func() (int, error) {
+		return 0, errors.New("db down")
+	}); err != nil {
+		t.Fatalf("register failing breakglass gauge: %v", err)
+	}
+	if err := failing.RegisterOutboxGauges(func() (int, float64, error) {
+		return 0, 0, errors.New("db down")
+	}); err != nil {
+		t.Fatalf("register failing outbox gauges: %v", err)
+	}
+	if got := gaugeValue(t, failingRegistry, "iam_breakglass_active"); got != 0 {
+		t.Fatalf("failing breakglass = %v, want 0", got)
+	}
+	if got := gaugeValue(t, failingRegistry, "iam_outbox_pending"); got != 0 {
+		t.Fatalf("failing outbox pending = %v, want 0", got)
+	}
+	if got := gaugeValue(t, failingRegistry, "iam_outbox_lag_seconds"); got != 0 {
+		t.Fatalf("failing outbox lag = %v, want 0", got)
+	}
+}
+
+// TestRegisterGaugesRejectInvalidSetup 验证采集器注册期参数校验与 nil 安全。
+func TestRegisterGaugesRejectInvalidSetup(t *testing.T) {
+	var nilMetrics *observability.Metrics
+	if err := nilMetrics.RegisterBreakglassGauge(func() (int, error) { return 0, nil }); err == nil {
+		t.Fatal("nil metrics must reject breakglass gauge")
+	}
+	if err := nilMetrics.RegisterOutboxGauges(func() (int, float64, error) { return 0, 0, nil }); err == nil {
+		t.Fatal("nil metrics must reject outbox gauges")
+	}
+	metrics, _ := newMetrics(t)
+	if err := metrics.RegisterBreakglassGauge(nil); err == nil {
+		t.Fatal("nil breakglass counter must be rejected")
+	}
+	if err := metrics.RegisterOutboxGauges(nil); err == nil {
+		t.Fatal("nil outbox stats must be rejected")
+	}
+}
+
+// gaugeValue 从 Gather 结果中取指定 Gauge 的值。
+func gaugeValue(t *testing.T, registry *prometheus.Registry, name string) float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		if len(family.GetMetric()) == 0 {
+			break
+		}
+		return family.GetMetric()[0].GetGauge().GetValue()
+	}
+	t.Fatalf("gauge %s not found", name)
+	return 0
 }
 
 // assertHistogramHasSample 断言直方图至少有一个样本。
