@@ -6,11 +6,13 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +28,8 @@ type oidcFixture struct {
 	key     *rsa.PrivateKey
 	kid     string
 	idToken string
+	// jwksStatus 非 0 时 /jwks 直接返回该状态码，用于模拟刷新失败。
+	jwksStatus int
 }
 
 func newOIDCFixture(t *testing.T) *oidcFixture {
@@ -37,7 +41,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	return &oidcFixture{key: key, kid: "key-1"}
 }
 
-func (f *oidcFixture) snapshot() (*rsa.PrivateKey, string, string) {
+func (f *oidcFixture) snapshot() (key *rsa.PrivateKey, kid, token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.key, f.kid, f.idToken
@@ -61,18 +65,33 @@ func (f *oidcFixture) rotate(t *testing.T) {
 	f.kid = "key-2"
 }
 
+// setJWKSStatus 模拟 JWKS 端点故障；0 表示恢复正常。
+func (f *oidcFixture) setJWKSStatus(status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.jwksStatus = status
+}
+
 // handler 提供 /jwks 与 /token。
 func (f *oidcFixture) handler(t *testing.T) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/jwks":
+			f.mu.Lock()
+			status := f.jwksStatus
+			f.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				return
+			}
 			key, kid, _ := f.snapshot()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(jwksJSON(kid, &key.PublicKey)))
 		case "/token":
 			_, _, token := f.snapshot()
 			w.Header().Set("Content-Type", "application/json")
+			//nolint:gosec // G117: 测试 IdP 返回固定假令牌，字段名命中密钥模式但非硬编码凭证。
 			_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "access-1", IDToken: token, TokenType: "Bearer"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -106,11 +125,12 @@ func newOIDCProvider(t *testing.T, server *httptest.Server) *OAuth2Provider {
 	provider, err := NewOAuth2Provider(Config{
 		Name:         "oidc",
 		ClientID:     "client-1",
-		ClientSecret: "secret-1",
+		ClientSecret: strings.Repeat("s", 8),
 		AuthURL:      "https://idp.example.com/authorize",
 		TokenURL:     server.URL + "/token",
 		RedirectURI:  "https://c.example.com/callback",
 		Scopes:       []string{"profile"},
+		OIDCEnabled:  true,
 		Issuer:       "https://idp.example.com",
 		JWKSURL:      server.URL + "/jwks",
 		Audience:     "client-1",
@@ -273,6 +293,75 @@ func TestJWKSRefreshesForRotatedKey(t *testing.T) {
 	}
 	_, unknownErr := keys.key(context.Background(), "unknown-key", "RS256")
 	requireCode(t, unknownErr, apperr.CodeUnauthorized)
+}
+
+// TestJWKSRetainsCacheWhenRefreshFails 验证 IdP 故障时保留旧公钥：
+// 已缓存 kid 的合法令牌仍可校验；未知 kid 返回 50300 而不是降级到 userinfo。
+func TestJWKSRetainsCacheWhenRefreshFails(t *testing.T) {
+	fixture := newOIDCFixture(t)
+	server := httptest.NewServer(fixture.handler(t))
+	t.Cleanup(server.Close)
+
+	now := time.Now()
+	keys, err := newJWKS(jwksConfig{
+		URL:                server.URL + "/jwks",
+		TTL:                50 * time.Millisecond,
+		MinRefreshInterval: 10 * time.Millisecond,
+		Now:                func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new jwks: %v", err)
+	}
+	if _, err := keys.key(context.Background(), "key-1", "RS256"); err != nil {
+		t.Fatalf("initial key: %v", err)
+	}
+
+	fixture.setJWKSStatus(http.StatusInternalServerError)
+	now = now.Add(100 * time.Millisecond) // 超过 TTL 且超过最小刷新间隔
+	if _, err := keys.key(context.Background(), "key-1", "RS256"); err != nil {
+		t.Fatalf("cached key must keep working when refresh fails: %v", err)
+	}
+	_, unknownErr := keys.key(context.Background(), "unknown-key", "RS256")
+	if unknownErr == nil {
+		t.Fatal("unknown kid during outage must fail closed")
+	}
+	if !errors.Is(unknownErr, apperr.ErrUnauthorized) && !errors.Is(unknownErr, apperr.ErrUnavailable) {
+		t.Fatalf("unknown kid during outage = %v, want 40100/50300", unknownErr)
+	}
+
+	fixture.setJWKSStatus(0)
+	fixture.rotate(t)
+	now = now.Add(20 * time.Millisecond)
+	if _, err := keys.key(context.Background(), "key-2", "RS256"); err != nil {
+		t.Fatalf("rotated key after recovery: %v", err)
+	}
+	if age, ok := keys.age(); !ok || age < 0 {
+		t.Fatalf("cache age = %v, %v, want non-negative", age, ok)
+	}
+}
+
+// TestOIDCRequiresExplicitFlag 验证 OIDC 必须显式开启，避免仅凭 issuer/jwks 隐式切换登录语义。
+func TestOIDCRequiresExplicitFlag(t *testing.T) {
+	idp := "https://idp.example.com"
+	base := Config{
+		Name:         "oidc",
+		ClientID:     "client-1",
+		ClientSecret: strings.Repeat("s", 8),
+		AuthURL:      idp + "/authorize",
+		TokenURL:     idp + "/token",
+		RedirectURI:  "https://c.example.com/callback",
+	}
+	implicit := base
+	implicit.Issuer = "https://idp.example.com"
+	implicit.JWKSURL = "https://idp.example.com/jwks"
+	if _, err := NewOAuth2Provider(implicit); err == nil {
+		t.Fatal("issuer/jwks without oidc_enabled must be rejected")
+	}
+	missing := base
+	missing.OIDCEnabled = true
+	if _, err := NewOAuth2Provider(missing); err == nil {
+		t.Fatal("oidc_enabled without issuer/jwks must be rejected")
+	}
 }
 
 func TestJWKSRejectsUnsupportedAlgorithm(t *testing.T) {

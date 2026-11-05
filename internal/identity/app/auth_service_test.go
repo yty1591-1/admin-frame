@@ -945,8 +945,13 @@ func (m *recordingMetrics) ObserveSMSSend(_ context.Context, result string) {
 }
 
 // ObserveOAuthCallback 实现 app.Metrics。
-func (m *recordingMetrics) ObserveOAuthCallback(_ context.Context, provider, result string) {
-	m.add("oauth_callback", provider, result)
+func (m *recordingMetrics) ObserveOAuthCallback(_ context.Context, provider, result, reason string) {
+	m.add("oauth_callback", provider, result, reason)
+}
+
+// ObserveJWKSRefresh 实现 app.Metrics。
+func (m *recordingMetrics) ObserveJWKSRefresh(_ context.Context, provider, result string) {
+	m.add("jwks_refresh", provider, result)
 }
 
 // TestRefreshReplayFailsClosedWhenRevokeFails 验证撤销失败时事务失败关闭，不产生「审计成功但未撤销」。

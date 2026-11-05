@@ -80,7 +80,23 @@ identity:
       ip_rps: 0 # 0 表示不启用 IP 维度
       ip_burst: 0 # 0 表示不启用 IP 维度
       failure_mode: fail_closed # prod/staging 强制 fail_closed
-    providers: [] # 每项 name/client_id/client_secret_env/auth_url/token_url/userinfo_url/redirect_uri/scopes/subject_field
+    # 每个 provider 的字段：name/client_id/client_secret_env/auth_url/token_url/redirect_uri/scopes/subject_field。
+    # OIDC 默认关闭；显式 oidc_enabled: true 时才校验 id_token（issuer 与 jwks_url 必填，
+    # 此时 userinfo_url 可省略）。示例：
+    #   - name: keycloak
+    #     client_id: admin-frame-c
+    #     client_secret_env: OAUTH_KEYCLOAK_CLIENT_SECRET
+    #     auth_url: https://sso.example.com/realms/main/protocol/openid-connect/auth
+    #     token_url: https://sso.example.com/realms/main/protocol/openid-connect/token
+    #     redirect_uri: https://c.example.com/c/v1/auth/oauth/keycloak/callback
+    #     scopes: [openid, profile]
+    #     oidc_enabled: true
+    #     issuer: https://sso.example.com/realms/main
+    #     jwks_url: https://sso.example.com/realms/main/protocol/openid-connect/certs
+    #     jwks_ttl: 15m
+    #     jwks_min_refresh_interval: 1m
+    #     id_token_leeway: 30s
+    providers: []
 
 storage:
   key_prefix: "prod/c/"

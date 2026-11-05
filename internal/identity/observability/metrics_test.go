@@ -26,6 +26,14 @@ func TestMetricsRecordCoreEvents(t *testing.T) {
 	m.ObserveSessionRevoke(ctx, string(domain.RevokeReasonReplay), app.MetricResultFailure)
 	m.OnRevocationStoreFailure(ctx, "account_load", errors.New("store down"))
 	m.ObserveSMSProviderAlert("insufficient_balance", "aliyun")
+	m.ObserveOAuthCallback(ctx, "idp", app.MetricResultFailure, app.MetricReasonOAuthInvalid)
+	m.ObserveOAuthCallback(ctx, "idp", app.MetricResultSuccess, app.MetricReasonOK)
+	m.ObserveJWKSRefresh(ctx, "idp", app.MetricResultSuccess)
+	if err := m.RegisterOAuthJWKSAgeGauge("idp", func() (time.Duration, bool) {
+		return 42 * time.Second, true
+	}); err != nil {
+		t.Fatalf("register oauth jwks age gauge: %v", err)
+	}
 
 	counters := gatheredCounters(t, registry)
 	if got := counters["identity_token_reuse_total"]; got != 1 {
@@ -42,6 +50,12 @@ func TestMetricsRecordCoreEvents(t *testing.T) {
 	}
 	if got := counters["identity_sms_provider_alerts_total"]; got != 1 {
 		t.Fatalf("identity_sms_provider_alerts_total = %v, want 1", got)
+	}
+	if got := counters["identity_oauth_callback_total"]; got != 2 {
+		t.Fatalf("identity_oauth_callback_total = %v, want 2", got)
+	}
+	if got := counters["identity_oauth_jwks_refresh_total"]; got != 1 {
+		t.Fatalf("identity_oauth_jwks_refresh_total = %v, want 1", got)
 	}
 
 	// 重复注册必须 fail-fast，避免同一 Registry 下指标冲突。

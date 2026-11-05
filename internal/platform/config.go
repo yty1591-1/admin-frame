@@ -378,7 +378,11 @@ type IdentityOAuthProviderConfig struct {
 	Scopes []string `yaml:"scopes"`
 	// SubjectField userinfo JSON 中主体标识字段名，默认 sub。
 	SubjectField string `yaml:"subject_field"`
-	// Issuer 与 JWKSURL 同时配置时启用 OIDC：以 id_token 的签名与 issuer 为准。
+	// OIDCEnabled 显式启用 OIDC（id_token 验签）；默认关闭。
+	//
+	// 关闭时即使误填 issuer / jwks_url 也不会启用 OIDC，且启动校验直接失败关闭。
+	OIDCEnabled bool `yaml:"oidc_enabled"`
+	// Issuer 与 JWKSURL 在 oidc_enabled=true 时必填：以 id_token 的签名与 issuer 为准。
 	Issuer string `yaml:"issuer"`
 	// JWKSURL OIDC 公钥集端点；随 Issuer 成对出现。
 	JWKSURL string `yaml:"jwks_url"`
@@ -2872,11 +2876,17 @@ func (c *Config) validateIdentityOAuth() []error {
 		if strings.TrimSpace(provider.RedirectURI) == "" {
 			errs = append(errs, fmt.Errorf("%s.redirect_uri is required", path))
 		}
-		oidcEnabled := strings.TrimSpace(provider.Issuer) != "" || strings.TrimSpace(provider.JWKSURL) != ""
-		if oidcEnabled && (strings.TrimSpace(provider.Issuer) == "" || strings.TrimSpace(provider.JWKSURL) == "") {
-			// issuer 与 jwks_url 必须成对出现，否则无法完成 id_token 验签与来源校验。
-			errs = append(errs, fmt.Errorf("%s.issuer and jwks_url must be set together", path))
+		oidcConfigured := strings.TrimSpace(provider.Issuer) != "" || strings.TrimSpace(provider.JWKSURL) != ""
+		if provider.OIDCEnabled {
+			if strings.TrimSpace(provider.Issuer) == "" || strings.TrimSpace(provider.JWKSURL) == "" {
+				// issuer 与 jwks_url 必须成对出现，否则无法完成 id_token 验签与来源校验。
+				errs = append(errs, fmt.Errorf("%s.issuer and jwks_url are required when oidc_enabled is true", path))
+			}
+		} else if oidcConfigured {
+			// OIDC 默认关闭；禁止仅凭 issuer/jwks 字段隐式启用，避免绕过评审的配置漂移。
+			errs = append(errs, fmt.Errorf("%s.issuer and jwks_url require oidc_enabled=true", path))
 		}
+		oidcEnabled := provider.OIDCEnabled
 		urls := map[string]string{
 			"auth_url":     provider.AuthURL,
 			"token_url":    provider.TokenURL,

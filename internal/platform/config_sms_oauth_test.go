@@ -121,6 +121,19 @@ func oauthProvider(name string) platform.IdentityOAuthProviderConfig {
 	}
 }
 
+// oauthOIDCProvider 返回满足 OIDC 校验的最小提供方配置（显式开启 oidc_enabled）。
+func oauthOIDCProvider(name string) platform.IdentityOAuthProviderConfig {
+	provider := oauthProvider(name)
+	provider.UserInfoURL = ""
+	provider.OIDCEnabled = true
+	provider.Issuer = "https://idp.example.com"
+	provider.JWKSURL = "https://idp.example.com/oidc/jwks"
+	provider.JWKSTTL = 15 * time.Minute
+	provider.JWKSMinRefreshInterval = time.Minute
+	provider.IDTokenLeeway = 30 * time.Second
+	return provider
+}
+
 // TestValidateCChannelBaseline 验证 C 端本地与生产基线配置可通过对齐校验。
 func TestValidateCChannelBaseline(t *testing.T) {
 	if err := cBaseConfig().Validate(); err != nil {
@@ -135,6 +148,13 @@ func TestValidateCChannelBaseline(t *testing.T) {
 	oauthOnly.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
 	if err := oauthOnly.Validate(); err != nil {
 		t.Fatalf("prod c config with oauth only: %v", err)
+	}
+
+	oidcOnly := cProdConfig()
+	oidcOnly.Identity.SMS.Enabled = false
+	oidcOnly.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthOIDCProvider("keycloak")}
+	if err := oidcOnly.Validate(); err != nil {
+		t.Fatalf("prod c config with oidc only: %v", err)
 	}
 }
 
@@ -358,6 +378,24 @@ func TestValidateOAuthRules(t *testing.T) {
 				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].token_url",
+		},
+		{
+			name: "oidc enabled without jwks",
+			mutate: func(cfg *platform.Config) {
+				provider := oauthOIDCProvider("keycloak")
+				provider.JWKSURL = ""
+				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+			},
+			want: "issuer and jwks_url are required when oidc_enabled is true",
+		},
+		{
+			name: "oidc fields without explicit flag",
+			mutate: func(cfg *platform.Config) {
+				provider := oauthOIDCProvider("keycloak")
+				provider.OIDCEnabled = false
+				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+			},
+			want: "issuer and jwks_url require oidc_enabled=true",
 		},
 	}
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
@@ -30,6 +31,10 @@ type jwksConfig struct {
 	MinRefreshInterval time.Duration
 	Client             *http.Client
 	Now                func() time.Time
+	// Provider 是提供方名，仅用于指标标签。
+	Provider string
+	// Metrics 是刷新结果与缓存新鲜度指标出口；可为 nil。
+	Metrics app.Metrics
 }
 
 type jwksDocument struct {
@@ -52,6 +57,8 @@ type jwks struct {
 	keys        map[string]*rsa.PublicKey
 	fetchedAt   time.Time
 	lastAttempt time.Time
+	// lastSuccess 是最后一次成功解析出可用公钥的时刻，用于暴露缓存新鲜度。
+	lastSuccess time.Time
 }
 
 func newJWKS(cfg jwksConfig) (*jwks, error) {
@@ -91,8 +98,17 @@ func (j *jwks) key(ctx context.Context, kid, alg string) (*rsa.PublicKey, error)
 
 	now := j.cfg.Now()
 	if len(j.keys) == 0 || now.Sub(j.fetchedAt) >= j.cfg.TTL {
-		if err := j.refresh(ctx, now); err != nil {
-			return nil, err
+		// 刷新失败后同样受最小间隔约束，避免 IdP 故障期间每次校验都触发重试。
+		if now.Sub(j.lastAttempt) >= j.cfg.MinRefreshInterval {
+			if err := j.refresh(ctx, now); err != nil {
+				// IdP 短时不可用时保留上一份缓存，避免已签发的合法 id_token 全部被拒；
+				// 从未成功拉取过任何公钥时仍失败关闭。
+				if len(j.keys) == 0 {
+					return nil, err
+				}
+			}
+		} else if len(j.keys) == 0 {
+			return nil, apperr.Unavailable("oidc jwks unavailable")
 		}
 	}
 	if key, ok := j.keys[kid]; ok {
@@ -110,8 +126,28 @@ func (j *jwks) key(ctx context.Context, kid, alg string) (*rsa.PublicKey, error)
 	return nil, apperr.Unauthorized("id_token signing key not found")
 }
 
+// age 返回距上次成功拉取 JWKS 的时长；从未成功时 ok=false。
+func (j *jwks) age() (time.Duration, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.lastSuccess.IsZero() {
+		return 0, false
+	}
+	return j.cfg.Now().Sub(j.lastSuccess), true
+}
+
 // refresh 拉取并解析 JWKS；失败时保留旧缓存（若存在），由调用方决定是否接受。
-func (j *jwks) refresh(ctx context.Context, now time.Time) error {
+func (j *jwks) refresh(ctx context.Context, now time.Time) (err error) {
+	defer func() {
+		if j.cfg.Metrics == nil {
+			return
+		}
+		result := app.MetricResultSuccess
+		if err != nil {
+			result = app.MetricResultFailure
+		}
+		j.cfg.Metrics.ObserveJWKSRefresh(ctx, j.cfg.Provider, result)
+	}()
 	j.lastAttempt = now
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, j.cfg.URL, http.NoBody)
 	if err != nil {
@@ -144,14 +180,12 @@ func (j *jwks) refresh(ctx context.Context, now time.Time) error {
 		keys[item.Kid] = key
 	}
 	if len(keys) == 0 {
-		if len(j.keys) > 0 {
-			// 保留旧密钥：IdP 短暂返回异常内容时不立刻中断全部登录。
-			return nil
-		}
+		// 旧缓存由调用方保留：本次刷新按失败计数，已签发的合法令牌仍可按旧公钥校验。
 		return apperr.Unavailable("oidc jwks contains no usable signing key")
 	}
 	j.keys = keys
 	j.fetchedAt = now
+	j.lastSuccess = now
 	return nil
 }
 

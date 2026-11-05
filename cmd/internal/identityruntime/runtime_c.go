@@ -48,7 +48,7 @@ func buildChannelC(
 	if err != nil {
 		return nil, err
 	}
-	oauthService, err := buildOAuthService(deps, cfg, accounts, identities, authSvc, hasher, metrics)
+	oauthService, err := buildOAuthService(deps, cfg, accounts, identities, authSvc, hasher, metrics, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +216,7 @@ func buildOAuthService(
 	authSvc *app.AuthService,
 	hasher *crypto.Hasher,
 	metrics app.Metrics,
+	observer *identityobs.Metrics,
 ) (*app.OAuthService, error) {
 	providerCfgs := cfg.Identity.OAuth.Providers
 	if len(providerCfgs) == 0 {
@@ -241,15 +242,23 @@ func buildOAuthService(
 			Scopes:                 providerCfg.Scopes,
 			SubjectField:           providerCfg.SubjectField,
 			Timeout:                cfg.Identity.OAuth.Timeout,
+			OIDCEnabled:            providerCfg.OIDCEnabled,
 			Issuer:                 providerCfg.Issuer,
 			JWKSURL:                providerCfg.JWKSURL,
 			Audience:               providerCfg.Audience,
 			JWKSTTL:                providerCfg.JWKSTTL,
 			JWKSMinRefreshInterval: providerCfg.JWKSMinRefreshInterval,
 			Leeway:                 providerCfg.IDTokenLeeway,
+			Metrics:                metrics,
 		})
 		if err != nil {
 			return nil, apperr.Internal("identity oauth provider "+providerCfg.Name, err)
+		}
+		// OIDC 提供方额外暴露公钥缓存新鲜度；轮换 / IdP 故障时该值持续增长。
+		if observer != nil && provider.OIDCEnabled() {
+			if gaugeErr := observer.RegisterOAuthJWKSAgeGauge(providerCfg.Name, provider.JWKSCacheAge); gaugeErr != nil {
+				return nil, apperr.Internal("identity oauth jwks age gauge", gaugeErr)
+			}
 		}
 		providers[providerCfg.Name] = provider
 	}

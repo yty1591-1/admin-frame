@@ -463,7 +463,7 @@ type fakeOIDCProvider struct {
 
 func (p *fakeOIDCProvider) OIDCEnabled() bool { return true }
 
-func (p *fakeOIDCProvider) AuthorizationURLWithNonce(state, codeVerifier, nonce string) (string, error) {
+func (p *fakeOIDCProvider) AuthorizationURLWithNonce(state, _, nonce string) (string, error) {
 	p.nonce = nonce
 	return "https://idp.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 }

@@ -7,6 +7,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,7 @@ type Metrics struct {
 	smsSendTotal          *prometheus.CounterVec
 	smsProviderAlert      *prometheus.CounterVec
 	oauthCallbackTotal    *prometheus.CounterVec
+	oauthJWKSRefreshTotal *prometheus.CounterVec
 	revocationStoreError  *prometheus.CounterVec
 	stateWriteErrors      *prometheus.CounterVec
 	l1Hits                *prometheus.CounterVec
@@ -225,7 +227,11 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		}, []string{"kind", "provider"}),
 		oauthCallbackTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "identity_oauth_callback_total",
-			Help: "OAuth 授权回调次数。",
+			Help: "OAuth 授权回调次数；result=success|failure，reason 为粗粒度失败原因。",
+		}, []string{"provider", "result", "reason"}),
+		oauthJWKSRefreshTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_oauth_jwks_refresh_total",
+			Help: "OIDC 公钥集刷新次数；result=success|failure。失败时会保留上一份可用缓存。",
 		}, []string{"provider", "result"}),
 		revocationStoreError: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "identity_revocation_store_errors_total",
@@ -252,7 +258,8 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		m.loginTotal, m.loginDuration, m.loginTxDuration, m.lockoutTotal, m.mfaVerifyTotal,
 		m.refreshTotal, m.refreshDuration, m.mfaVerifyDuration, m.stepUpDuration,
 		m.oauthCallbackDuration, m.tokenReuseTotal, m.sessionRevokeTotal, m.smsSendTotal,
-		m.smsProviderAlert, m.mfaRecoveryUsed, m.oauthCallbackTotal, m.revocationStoreError,
+		m.smsProviderAlert, m.mfaRecoveryUsed, m.oauthCallbackTotal, m.oauthJWKSRefreshTotal,
+		m.revocationStoreError,
 		m.stateWriteErrors, m.l1Hits, m.redisCalls, m.dbRefetches,
 	} {
 		if err := registerer.Register(collector); err != nil {
@@ -303,6 +310,18 @@ func (m *Metrics) preinit() {
 		m.stepUpDuration.WithLabelValues(result)
 		m.smsSendTotal.WithLabelValues(result)
 		m.oauthCallbackDuration.WithLabelValues("unknown", result)
+		m.oauthJWKSRefreshTotal.WithLabelValues("unknown", result)
+	}
+	// OAuth 回调成功与各失败原因均预创建，保证告警表达式在无回调时也能取到 0。
+	m.oauthCallbackTotal.WithLabelValues("unknown", app.MetricResultSuccess, app.MetricReasonOK)
+	for _, reason := range []string{
+		app.MetricReasonOAuthInvalid,
+		app.MetricReasonOAuthNotConfigured,
+		app.MetricReasonUnavailable,
+		app.MetricReasonRateLimited,
+		app.MetricReasonInternal,
+	} {
+		m.oauthCallbackTotal.WithLabelValues("unknown", app.MetricResultFailure, reason)
 	}
 	for _, op := range []string{"set", "delete", "session_set", "session_delete"} {
 		m.stateWriteErrors.WithLabelValues(op)
@@ -551,14 +570,58 @@ func (m *Metrics) ObserveSMSSend(_ context.Context, result string) {
 }
 
 // ObserveOAuthCallback 实现 app.Metrics。
-func (m *Metrics) ObserveOAuthCallback(_ context.Context, provider, result string) {
+func (m *Metrics) ObserveOAuthCallback(_ context.Context, provider, result, reason string) {
 	if m == nil {
 		return
 	}
 	if provider == "" {
 		provider = "unknown"
 	}
-	m.oauthCallbackTotal.WithLabelValues(provider, result).Inc()
+	if reason == "" {
+		reason = app.MetricReasonInternal
+	}
+	m.oauthCallbackTotal.WithLabelValues(provider, result, reason).Inc()
+}
+
+// ObserveJWKSRefresh 实现 app.Metrics；provider 为空时归入 unknown。
+func (m *Metrics) ObserveJWKSRefresh(_ context.Context, provider, result string) {
+	if m == nil {
+		return
+	}
+	if provider == "" {
+		provider = "unknown"
+	}
+	m.oauthJWKSRefreshTotal.WithLabelValues(provider, result).Inc()
+}
+
+// RegisterOAuthJWKSAgeGauge 注册 identity_oauth_jwks_cache_age_seconds（provider 维度）。
+//
+// 取值是「距上次成功拉取 JWKS 的秒数」；达到 jwks_ttl 附近而继续增长，说明 IdP 不可用或
+// 刷新失败。GaugeFunc 抓取时读取内存快照，不发起网络请求。
+func (m *Metrics) RegisterOAuthJWKSAgeGauge(provider string, age func() (time.Duration, bool)) error {
+	if m == nil || m.registerer == nil {
+		return fmt.Errorf("identity observability: metrics is not initialized")
+	}
+	if strings.TrimSpace(provider) == "" || age == nil {
+		return fmt.Errorf("identity observability: provider and age function are required")
+	}
+	gauge := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "identity_oauth_jwks_cache_age_seconds",
+		Help: "OIDC 公钥集距上次成功拉取的秒数；持续增长表示刷新失败或 IdP 不可达。",
+		ConstLabels: prometheus.Labels{
+			"provider": provider,
+		},
+	}, func() float64 {
+		value, ok := age()
+		if !ok || value < 0 {
+			return 0
+		}
+		return value.Seconds()
+	})
+	if err := m.registerer.Register(gauge); err != nil {
+		return fmt.Errorf("identity observability: register oauth jwks age gauge: %w", err)
+	}
+	return nil
 }
 
 // OnAccountStateWriteFailure 实现 app.RevocationObserver。

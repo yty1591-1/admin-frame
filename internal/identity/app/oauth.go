@@ -212,6 +212,25 @@ func oauthAuditReason(err error) string {
 	return "oauth_failed"
 }
 
+// oauthMetricReason 把回调错误映射为低基数指标 reason；与审计原因保持一致。
+func oauthMetricReason(err error) string {
+	switch {
+	case err == nil:
+		return MetricReasonOK
+	case errors.Is(err, apperr.ErrNotFound):
+		return MetricReasonOAuthNotConfigured
+	case errors.Is(err, apperr.ErrUnauthorized):
+		return MetricReasonOAuthInvalid
+	case errors.Is(err, apperr.ErrUnavailable):
+		return MetricReasonUnavailable
+	}
+	var limited *RateLimitedError
+	if errors.As(err, &limited) {
+		return MetricReasonRateLimited
+	}
+	return MetricReasonInternal
+}
+
 // ProviderNames 返回已配置的 provider 名称（升序），供路由裁剪使用。
 func (s *OAuthService) ProviderNames() []string {
 	out := make([]string, 0, len(s.providers))
@@ -317,8 +336,9 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		if err != nil {
 			status = MetricResultFailure
 		}
-		s.metrics.ObserveOAuthCallback(ctx, strings.TrimSpace(in.Provider), status)
-		s.metrics.ObserveOAuthCallbackDuration(ctx, strings.TrimSpace(in.Provider), status, time.Since(started))
+		providerLabel := strings.TrimSpace(in.Provider)
+		s.metrics.ObserveOAuthCallback(ctx, providerLabel, status, oauthMetricReason(err))
+		s.metrics.ObserveOAuthCallbackDuration(ctx, providerLabel, status, time.Since(started))
 	}
 	defer deferred()
 	if err := s.checkRateLimit("callback", in.IPHash); err != nil {

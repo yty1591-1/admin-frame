@@ -474,11 +474,23 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 
 ### 7.3 OIDC（已实现，SAML / SCIM / M2M 待交付）
 
-- `identity.oauth.providers[]` 同时配置 `issuer` 与 `jwks_url` 即启用 OIDC；两项必须成对出现，否则启动期校验失败。
+- `identity.oauth.providers[]` 的每个 provider 必须显式 `oidc_enabled: true` 才启用 OIDC；默认关闭。
+  - 开启时 `issuer` 与 `jwks_url` 必填且必须成对出现，`userinfo_url` 可省略；
+  - 关闭时若仍填写 `issuer` / `jwks_url`，启动期校验直接失败，避免隐式启用或配置漂移。
 - 流程固定：state + nonce + PKCE（S256）。nonce 由服务生成并写入一次性 state（TTL 10 分钟），回调时回传校验；缺失或与 id_token 不一致统一返回 `40100`。
 - id_token 校验：仅接受 `RS256`；校验签名（JWKS，支持 `kid` 未知时限频强制刷新以完成密钥轮换）、`iss`、`aud`（默认 `client_id`）、`exp`/`iat`（默认 30s 时钟偏差）与 `nonce`。
 - 主体取自 id_token 的 `sub`；OIDC 模式下不允许回退到 userinfo，避免绕过签名校验。
 - 配置项：`audience`（默认 `client_id`）、`jwks_ttl`（默认 15m，范围 `[1m, 24h]`）、`jwks_min_refresh_interval`（默认 1m）、`id_token_leeway`（默认 30s）。
+- 可观测性：
+  - `identity_oauth_callback_total{provider,result,reason}`：`reason=ok|oauth_invalid|oauth_not_configured|unavailable|rate_limited|internal`；
+  - `identity_oauth_jwks_refresh_total{provider,result}`：公钥集刷新成功 / 失败次数；
+  - `identity_oauth_jwks_cache_age_seconds{provider}`：距上次成功拉取的秒数，持续增长表示 IdP 不可达或刷新失败。
+- 密钥轮换与故障处置（Runbook）：
+  - IdP 先在 JWKS 中并行发布新 `kid`，再切换 id_token 签名密钥；旧公钥在缓存 `jwks_ttl` 内仍可验证。
+  - 未知 `kid` 会在 `jwks_min_refresh_interval` 限频内强制刷新一次，用于快速收敛轮换。
+  - 刷新失败时保留上一份可用公钥：已缓存的 `kid` 继续验证，未知 `kid` 失败关闭（`40100` / `50300`），不降级到 userinfo。
+  - `identity_oauth_jwks_cache_age_seconds` 持续超过 `jwks_ttl` 时，检查到 IdP 的网络、证书信任链与 JWKS 端点；恢复后下一次校验自动刷新。
+- 验收用例：`TestOIDCEndToEndAuthorizationCodeFlow`（授权码 + PKCE + nonce 全链路、授权码重放与 nonce 不匹配拒绝）、`TestJWKSRetainsCacheWhenRefreshFails`（故障期保留旧公钥、未知 kid 失败关闭）、`TestOIDCRequiresExplicitFlag`（显式开关）。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
 - 仍待交付：SAML 2.0、SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。
 
@@ -504,7 +516,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 ### 8.2 OAuth 授权码
 
 - `POST /c/v1/auth/oauth/{provider}/authorize`：服务端生成一次性 state 与 PKCE verifier（S256），返回授权地址；state 存 Redis，TTL 10 分钟，一次性消费。
-- `POST /c/v1/auth/oauth/{provider}/callback`：code + state → 换取 access_token → 读取 userinfo（`subject_field`，默认 `sub`）→ 映射账号。
+- `POST /c/v1/auth/oauth/{provider}/callback`：code + state → 换取令牌；OIDC 模式（`oidc_enabled: true`）下校验 id_token 的 nonce / 签名 / issuer / audience 并取 `sub`，其余模式读取 userinfo（`subject_field`，默认 `sub`）→ 映射账号。
 - provider 未配置时不注册路由；state 无效、provider 不匹配、授权码被拒与未映射身份统一返回 `40100`，IdP 故障返回 `50300`。
 - 账号映射表 `identity_oauth_identity`，`UNIQUE(provider, provider_subject)`。
 - 自动建号受 `identity.oauth.auto_provision` 控制，默认关闭；建号主体为 `subject = "oauth:<provider>:" + sha256(provider_subject)`，避免第三方主体含 PII 或超长。
@@ -671,7 +683,8 @@ identity:
       rps: 1
       burst: 5
       failure_mode: fail_closed
-    providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, userinfo_url, redirect_uri, scopes, subject_field}]
+    providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, userinfo_url, redirect_uri, scopes, subject_field,
+                               #   oidc_enabled(默认 false), issuer, jwks_url, audience, jwks_ttl, jwks_min_refresh_interval, id_token_leeway}]
 ```
 
 ### 10.2 校验规则
@@ -683,6 +696,8 @@ identity:
 | 密码策略 | `password.min_length ∈ [8, max_length]`；`max_length ≤ 4096`；未配置时取 12～128 且 `require_complexity=true`；显式 `false` 才关闭复杂度 |
 | 密码并发 | `password.max_concurrent ≥ 0`（0=2×CPU）；`password.wait_timeout ∈ [100ms, 30s]`，0 取默认 2s；超出等待返回 50300 |
 | OAuth 限流 | `oauth.rate_limit.rps ≥ 0`、`burst ≥ 0`（0 取默认 1 / 5）；`failure_mode` 仅 `fail_closed` / `fail_open`，prod/staging 强制 `fail_closed` |
+| OIDC 开关 | `providers[].oidc_enabled` 默认 `false`；开启时 `issuer` 与 `jwks_url` 必填且成对；关闭时填写 `issuer` / `jwks_url` 视为配置错误 |
+| OIDC 缓存 | `jwks_ttl ∈ [1m, 24h]`（默认 15m）；`jwks_min_refresh_interval ∈ [5s, jwks_ttl]`（默认 1m）；`id_token_leeway ∈ [0, 5m]`（默认 30s） |
 | 短信熔断 | `sms.breaker_failures ≥ 0`（0=5）；`sms.breaker_timeout ∈ [1s, 10m]`，0 取默认 60s |
 | 持久化 | prod/staging 且 `identity.enabled=true` 时 `db.driver` 不得为 `memory`；运行时 `db.driver` 非 memory 但无数据库连接直接启动失败，禁止回退内存仓储 |
 | 审计出口 | prod/staging 且 `identity.enabled=true` 时 `async.enabled=true`（审计写入 Outbox）；启动日志输出 `identity audit sink`（`outbox` / `slog`） |

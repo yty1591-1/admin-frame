@@ -45,7 +45,9 @@ type Config struct {
 	// HTTPClient 是出站客户端；nil 时使用带超时的默认客户端。
 	HTTPClient *http.Client
 
-	// 以下字段非空时启用 OIDC：校验 id_token 的签名、issuer、audience 与 nonce。
+	// OIDCEnabled 显式启用 OIDC（id_token 验签）；默认关闭，避免仅因误配 issuer 而改变登录语义。
+	OIDCEnabled bool
+	// 以下字段在 OIDCEnabled=true 时必填：校验 id_token 的签名、issuer、audience 与 nonce。
 	Issuer  string
 	JWKSURL string
 	// Audience 是 id_token 的期望 audience；为空时使用 ClientID。
@@ -56,6 +58,8 @@ type Config struct {
 	JWKSMinRefreshInterval time.Duration
 	// Leeway 是 id_token 时间字段的时钟偏差容忍；≤0 使用 30s。
 	Leeway time.Duration
+	// Metrics 是 OIDC 公钥集刷新指标出口；可为 nil。
+	Metrics app.Metrics
 }
 
 // OAuth2Provider 用标准库实现授权码 + PKCE(S256) 的 OAuth2 客户端。
@@ -79,10 +83,15 @@ func NewOAuth2Provider(cfg Config) (*OAuth2Provider, error) {
 		strings.TrimSpace(cfg.RedirectURI) == "" {
 		return nil, fmt.Errorf("oauth provider %q is missing required config", cfg.Name)
 	}
-	oidcEnabled := strings.TrimSpace(cfg.Issuer) != "" || strings.TrimSpace(cfg.JWKSURL) != ""
-	if oidcEnabled && (strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.JWKSURL) == "") {
-		return nil, fmt.Errorf("oauth provider %q must set both issuer and jwks url", cfg.Name)
+	oidcConfigured := strings.TrimSpace(cfg.Issuer) != "" || strings.TrimSpace(cfg.JWKSURL) != ""
+	if cfg.OIDCEnabled && (strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.JWKSURL) == "") {
+		return nil, fmt.Errorf("oauth provider %q must set both issuer and jwks url when oidc is enabled", cfg.Name)
 	}
+	if !cfg.OIDCEnabled && oidcConfigured {
+		// 显式开关是安全基线：禁止仅凭 issuer/jwks 字段隐式启用，避免配置漂移绕过评审。
+		return nil, fmt.Errorf("oauth provider %q sets issuer/jwks url without oidc_enabled", cfg.Name)
+	}
+	oidcEnabled := cfg.OIDCEnabled
 	if !oidcEnabled && strings.TrimSpace(cfg.UserInfoURL) == "" {
 		return nil, fmt.Errorf("oauth provider %q is missing required config", cfg.Name)
 	}
@@ -106,6 +115,8 @@ func NewOAuth2Provider(cfg Config) (*OAuth2Provider, error) {
 			TTL:                cfg.JWKSTTL,
 			MinRefreshInterval: cfg.JWKSMinRefreshInterval,
 			Client:             client,
+			Provider:           cfg.Name,
+			Metrics:            cfg.Metrics,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("oauth provider %q: %w", cfg.Name, err)
@@ -178,6 +189,14 @@ func (p *OAuth2Provider) ExchangeWithNonce(ctx context.Context, code, codeVerifi
 
 // OIDCEnabled 报告是否已启用 id_token 校验。
 func (p *OAuth2Provider) OIDCEnabled() bool { return p.jwks != nil }
+
+// JWKSCacheAge 返回距上次成功拉取 JWKS 的时长；纯 OAuth2 或从未成功时为 false。
+func (p *OAuth2Provider) JWKSCacheAge() (time.Duration, bool) {
+	if p.jwks == nil {
+		return 0, false
+	}
+	return p.jwks.age()
+}
 
 func (p *OAuth2Provider) exchange(ctx context.Context, code, codeVerifier, nonce string) (app.OAuthIdentityInfo, error) {
 	if strings.TrimSpace(code) == "" || strings.TrimSpace(codeVerifier) == "" {

@@ -38,10 +38,12 @@ type Metrics interface {
 	ObserveSessionRevoke(ctx context.Context, reason, result string)
 	// ObserveSMSSend 记录一次短信验证码发送结果。
 	ObserveSMSSend(ctx context.Context, result string)
-	// ObserveOAuthCallback 记录一次 OAuth 回调结果。
-	ObserveOAuthCallback(ctx context.Context, provider, result string)
+	// ObserveOAuthCallback 记录一次 OAuth 回调结果；reason 为粗粒度失败原因。
+	ObserveOAuthCallback(ctx context.Context, provider, result, reason string)
 	// ObserveOAuthCallbackDuration 记录一次 OAuth 回调耗时（OPS-03）。
 	ObserveOAuthCallbackDuration(ctx context.Context, provider, result string, duration time.Duration)
+	// ObserveJWKSRefresh 记录一次 OIDC 公钥集刷新结果；provider 为已配置的提供方名。
+	ObserveJWKSRefresh(ctx context.Context, provider, result string)
 }
 
 // 指标结果与原因的稳定枚举值。
@@ -71,4 +73,8 @@ const (
 	MetricReasonUnavailable = "unavailable"
 	// MetricReasonInternal 内部错误。
 	MetricReasonInternal = "internal"
+	// MetricReasonOAuthInvalid 授权回调被拒（state 失效、nonce 不匹配、id_token 校验失败等）。
+	MetricReasonOAuthInvalid = "oauth_invalid"
+	// MetricReasonOAuthNotConfigured 请求的提供方未配置。
+	MetricReasonOAuthNotConfigured = "oauth_not_configured"
 )
