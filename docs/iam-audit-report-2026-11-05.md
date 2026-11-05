@@ -111,8 +111,8 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | 审批覆盖 | 角色/绑定/约束/SoD 已覆盖 | **角色模板创建/更新/删除/权限替换/实例化/同步未覆盖**（见 P0-1） |
 | 幂等 | 中间件与 Redis 存储已实现 | 生产 `required: false`，漏传即失去保护（见 P1-2） |
 | 降级 | IAM 快照 Redis 读失败转 DB 回源 | 平台限流/幂等 fail-closed，Redis 故障时请求在 IAM 之前被拒绝（见 P1-4） |
-| 身份联邦 | OIDC 接口已预留 | 无 OIDC/SAML 实际实现；无 SCIM（见 P1-6） |
-| 访问复核 | 文档定义了季度人工导出流程 | 无 API、无认证周期任务、无复核工单（见 P1-7） |
+| 身份联邦 | OIDC 授权码 + PKCE 已实现，并在 staging 用真实 Keycloak 完成冒烟 | SAML 2.0、SCIM、M2M 待交付；JWKS 轮换演练待执行（见 P1-6） |
+| 访问复核 | Campaign/Task/Decision 领域、清单生成、决策回收、证据导出已实现 | 季度复核演练、证据归档与责任人规则待完成（见 P1-7） |
 | 配置治理 | 生产样例已提供 | 启动期未强制 enforce/approval；样例内含明文密钥（见 P1-1、P1-3） |
 
 ### 3.3 未实现（企业级缺项）
@@ -132,7 +132,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | 多环境适配 | 满足 | 模块化配置 `configs/modules/*` + `configs/prod-*.yaml`；Helm values 覆盖 dev/kind/staging/prod/canary |
 | 高可用部署 | 满足 | prod 副本 3、HPA 3–10（worker 3–20）、PDB、topologySpread、NetworkPolicy、ServiceMonitor（[values-prod.yaml](../deploy/helm/admin-frame/values-prod.yaml#L122-L194)、`templates/pdb.yaml#L5`、`templates/hpa.yaml#L5`、`templates/_workload.tpl#L152`） |
 | 缓存降级 | 部分满足 | L2 读错误按 miss 处理并回源 DB，写失败不阻断鉴权；但无限流回源保护，Redis 长时间故障会压垮 DB（[cache/snapshot.go](../internal/iam/infrastructure/cache/snapshot.go#L122-L215)） |
-| 依赖降级 | 不满足 | 限流 `failure_mode: fail_closed`、幂等存储不可用返回 503；Redis 单点故障放大为全站写不可用（[configs/modules/platform.yaml](../configs/modules/platform.yaml#L20)、[pkg/idempotency/errors.go](../pkg/idempotency/errors.go#L16-L17)） |
+| 依赖降级 | 不满足 | 限流 `failure_mode: fail_closed`、幂等存储不可用返回 503；Redis 单点故障放大为全站写不可用（[configs/prod/modules/platform.yaml.example](../configs/prod/modules/platform.yaml.example)、[pkg/idempotency/errors.go](../pkg/idempotency/errors.go#L16-L17)） |
 | 异常容错 | 基本满足 | 快照加载超时、singleflight、Outbox 重试与死信、请求体限制、超时中间件、上下文透传 |
 | 数据安全 | 满足 | IAM 不落敏感明文；身份域使用 AES-GCM 密文 + HMAC 索引；审计仅存主体 ID 与操作元数据 |
 | 敏感信息防护 | 部分满足 | Vault/File/Env Provider + gitleaks/gosec + CORS/限流/体限制；但生产样例含可用密钥（P1-1） |
@@ -224,20 +224,22 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 
 | ID | 问题 | 证据 | 影响范围 | 整改方案 | 验收标准 |
 |----|------|------|----------|----------|----------|
-| P1-1 | 生产配置样例内嵌可用密钥与 root DSN，密钥门禁未覆盖 `configs/prod-*.yaml` | [configs/prod-admin.yaml](../configs/prod-admin.yaml#L38-L52)；[check-secret-provider.sh](../scripts/ci/check-secret-provider.sh#L102-L115) 仅扫描 `configs/prod/modules/*.example` | 所有环境；误部署即使用公开密钥 | 将“本地演练配置”与“生产样例”拆分；生产样例密钥字段留空并由 Provider 注入；对 `prod-*.yaml` 增加明文/示例值扫描；启动期拒绝已知示例密钥与非生产 DSN | 门禁可拦截；启动期校验失败即失败退出 |
-| P1-2 | 幂等键非强制 | [configs/modules/platform.yaml](../configs/modules/platform.yaml#L7-L12) `required: false`；[pkg/idempotency/middleware.go](../pkg/idempotency/middleware.go#L21-L24) | 审批单、绑定、破玻璃、模板同步等写操作 | 生产开启 `required: true`；前端统一注入 `Idempotency-Key`；对无键写请求返回明确错误码 | 生产配置为 true；E2E 覆盖重复提交仅生效一次 |
+| P1-1 | 生产配置样例内嵌可用密钥与 root DSN，密钥门禁未覆盖 `configs/prod-*.yaml` | [configs/prod/admin.yaml.example](../configs/prod/admin.yaml.example)；[check-secret-provider.sh](../scripts/ci/check-secret-provider.sh#L102-L115) 仅扫描 `configs/prod/modules/*.example` | 所有环境；误部署即使用公开密钥 | 将“本地演练配置”与“生产样例”拆分；生产样例密钥字段留空并由 Provider 注入；对 `prod-*.yaml` 增加明文/示例值扫描；启动期拒绝已知示例密钥与非生产 DSN | 门禁可拦截；启动期校验失败即失败退出 |
+| P1-2 | 幂等键非强制 | [configs/prod/modules/platform.yaml.example](../configs/prod/modules/platform.yaml.example) `required: false`；[pkg/idempotency/middleware.go](../pkg/idempotency/middleware.go#L21-L24) | 审批单、绑定、破玻璃、模板同步等写操作 | 生产开启 `required: true`；前端统一注入 `Idempotency-Key`；对无键写请求返回明确错误码 | 生产配置为 true；E2E 覆盖重复提交仅生效一次 |
 | P1-3 | 生产安全开关缺少硬校验 | [internal/platform/config.go](../internal/platform/config.go#L2105-L2202) 仅在 enforce 时校验 Redis/async，未强制 `iam.mode=enforce` 或 `approval.enabled=true`；生产样例当前值正确但无兜底 | 全部 A/B 端；误配可静默降级为 shadow/关闭审批 | 在 prod 校验中硬性要求 `iam.mode=enforce`、`iam.approval.enabled=true`、`idempotency.required=true`；CI 增加生产配置断言 | 篡改任一开关后启动失败、CI 失败 |
-| P1-4 | Redis 单点放大为全站写不可用 | [configs/modules/platform.yaml](../configs/modules/platform.yaml#L20) 限流 fail-closed；[pkg/idempotency/errors.go](../pkg/idempotency/errors.go#L16-L17) 存储不可用返回错误；`pkg/redis` 无 Sentinel/Cluster 客户端 | 所有写请求与登录链路 | 生产使用托管 Redis/集群；增加熔断与本地降级（限流降级为宽松策略并告警，幂等降级为“允许但标记”）；明确 IAM 快照回源限流 | Redis 故障演练中核心写链路可用；告警触发 |
+| P1-4 | Redis 单点放大为全站写不可用 | [configs/prod/modules/platform.yaml.example](../configs/prod/modules/platform.yaml.example) 限流 fail-closed；[pkg/idempotency/errors.go](../pkg/idempotency/errors.go#L16-L17) 存储不可用返回错误；`pkg/redis` 无 Sentinel/Cluster 客户端 | 所有写请求与登录链路 | 生产使用托管 Redis/集群；增加熔断与本地降级（限流降级为宽松策略并告警，幂等降级为“允许但标记”）；明确 IAM 快照回源限流 | Redis 故障演练中核心写链路可用；告警触发 |
 | P1-5 | 测试与门禁覆盖不足 | 实测 57.2% / persistence 21.3% / rest 40.1%；[check-test-gates.sh](../scripts/ci/check-test-gates.sh#L22) 仅 domain ≥70；[Makefile](../Makefile#L59-L61) 集成测试不在 `make ci` | SQL 仓储、HTTP 契约、模板/审批分支 | 对 `iam/infrastructure` 与 `iam/transport` 设独立覆盖率门槛；将 IAM MySQL 集成测试纳入 PR 必跑；补审批、模板、缓存竞态、SQL 边界用例 | 覆盖率门禁生效；PR 缺测试即失败 |
 | P1-6 | 企业身份能力缺口 | OIDC 仅预留（[docs/identity-authn.md](./identity-authn.md)）；仓库无 OIDC/SAML/SCIM 实现；无机器身份 | 企业 SSO 接入、自动化开通、服务间调用 | 分阶段实现 OIDC（授权码 + PKCE）→ SAML → SCIM 用户/组同步；M2M 采用 client credentials + 短令牌 | 至少一种 IdP 端到端接入；服务账号可审计轮换 |
 | P1-7 | 访问复核无工具化 | [docs/rbac-iam.md](./rbac-iam.md#L1314-L1318) 仅为人工导出流程 | 等保/SOC2 周期性复核证据 | 增加认证周期任务：生成待复核清单、责任人确认、超期自动回收或升级；复核结果写审计 | 认证周期可执行、可导出、有留痕 |
 
-> **修复状态（2026-11-05）**：P1-1～P1-3 已修复；P1-4 已完成应用侧熔断降级，部署侧（托管 Redis/集群、IAM 快照回源限流）待完成；P1-5 门禁已生效，app（≥75%）与 transport/rest（≥60%）的长尾覆盖率目标已达成；P1-6、P1-7 已形成工程规划（`docs/iam-p1-5-7-engineering-plan.md`），待实施。
+> **修复状态（2026-11-05）**：P1-1～P1-3 已修复；P1-4 已完成应用侧熔断降级，部署侧（托管 Redis/集群、IAM 快照回源限流）待完成；P1-5 门禁已生效，app（≥75%）与 transport/rest（≥60%）的长尾覆盖率目标已达成；P1-6 的 OIDC 阶段已在 staging 用真实 Keycloak 完成端到端冒烟，SAML/SCIM/M2M 待交付；P1-7 工具链已实现，季度复核演练与证据归档待完成。
 > - P1-1：`validateSampleCredentials` 在 `env=prod` 拒绝仓库已公开的演练密钥与本地 root DSN；`check-secret-provider.sh` 增加 `configs/prod-*.yaml` 扫描。
 > - P1-2：`configs/modules/platform.yaml` 与生产样例改为 `idempotency.required: true`；缺键仍返回 400 `ErrMissingKey`。
 > - P1-3：生产 A/B 端启动硬校验 `iam.mode=enforce`、`iam.approval.enabled=true`、`idempotency.enabled/required=true`。
 > - P1-4：限流新增连续故障熔断降级（`X-RateLimit-Degraded`），幂等存储不可用时可配置放行并标记（`X-Idempotency-Degraded`）；仍建议生产使用托管 Redis/集群。
 > - P1-5：`check-iam-coverage.sh` 以 `-coverpkg` 合并 IAM 全包与 MySQL 集成测试，按包设门槛（domain 80、app 75、catalog 60、cache 75、persistence 50、menuview 90、observability 45、rest 60、admin/biz 90、total 69）；`check-iam-diff-coverage.sh` 校验 PR 变更行 ≥70%；新增角色克隆/删除、绑定解绑、模板增改删、互斥组增改删审批执行用例，以及 rest 包内 SOD/模板/约束/菜单/审批撤销 HTTP 用例。实测（含 MySQL 集成测试）domain 85.6%、app 76.5%、catalog 63.6%、cache 79.6%、persistence 57.3%、menuview 100%、observability 49.0%、rest 63.5%、total 69.9%。
+> - P1-6：OIDC 授权码 + PKCE、JWKS 缓存/轮换、显式开关与可观测性已落地；2026-11-05 在 staging 用真实 Keycloak 完成冒烟。JWKS 轮换演练步骤见 [identity-authn.md](./identity-authn.md#L493-L499)；SAML/SCIM/M2M 未交付。
+> - P1-7：Campaign/Task/Decision 领域与用例、清单生成、决策回收、证据导出已实现；待完成一次季度复核演练与证据归档。
 
 ### 6.3 P2（规模化/合规优化）
 
@@ -250,7 +252,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | P2-5 | memory 与 MySQL 语义差异 | [memory_snapshot.go](../internal/iam/infrastructure/persistence/memory_snapshot.go#L30-L50) 手工过滤 vs SQL 查询条件 | 建立仓储契约测试，同一套用例跑两种实现 |
 | P2-6 | 角色软删除无清理策略 | 角色使用 `deleted_at`；worker 仅执行身份清理与审计保留（[cmd/worker/main.go](../cmd/worker/main.go#L134-L147)） | 增加归档/清理任务与保留期配置，清理前校验无有效绑定 |
 | P2-7 | 文档与实现漂移 | 文档仍提 `iam_outbox`、`before_hash/after_hash`、未实现的 `approval.required_permissions`/`sod_*` 配置；端点数量仍标注 M3 15 / M4 13，实际约 50 / 32（[docs/rbac-iam.md](./rbac-iam.md#L1463)、[docs/rbac-iam.md](./rbac-iam.md#L4)） | 以代码为准修订文档；在 CI 增加配置项与端点数量断言 |
-| P2-8 | 破玻璃默认关闭且无演练 SOP；缺少显式 `constraint_bypass` 标记 | [configs/modules/iam.yaml](../configs/modules/iam.yaml#L23) `breakglass.enabled: false`；审计中无 `constraint_bypass` 字段 | 提供开通 SOP 与季度演练；破玻璃绑定事件显式标记 `constraint_bypass=breakglass` |
+| P2-8 | 破玻璃默认关闭且无演练 SOP；缺少显式 `constraint_bypass` 标记 | [configs/prod/modules/iam.yaml.example](../configs/prod/modules/iam.yaml.example) `breakglass.enabled: false`；审计中无 `constraint_bypass` 字段 | 提供开通 SOP 与季度演练；破玻璃绑定事件显式标记 `constraint_bypass=breakglass` |
 | P2-9 | OpenAPI 无“实现覆盖”漂移检查 | [check-openapi.sh](../scripts/ci/check-openapi.sh#L2) 仅做规范校验与 breaking 对比 | 增加路由表与 OpenAPI path 的自动差集检查，防止已实现未文档化端点 |
 | P2-10 | 审计事件权限列表可能膨胀 | 审计记录 `added/removed` 完整权限码列表（[app/audit.go](../internal/iam/app/audit.go)） | 超过阈值时改为数量 + 摘要哈希，并保留可下载明细 |
 
@@ -271,7 +273,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 |------|------|------|
 | 生产全量上线 | **不通过** | P0 未关闭 |
 | staging 灰度 | **有条件通过** | 关闭 P0-1/P0-2；P1-1～P1-4 完成；灰度期监控撤销时延与 503 率 |
-| 企业客户接入 | **不通过** | 另需 P1-6/P1-7 完成 |
+| 企业客户接入 | **不通过** | OIDC 已通过 staging 真实验收；另需 SAML/SCIM/M2M 与 P1-7 季度复核演练完成 |
 
 ### 7.3 已确认通过的关键项
 

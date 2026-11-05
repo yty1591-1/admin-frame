@@ -472,7 +472,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
-### 7.3 OIDC（已实现，SAML / SCIM / M2M 待交付）
+### 7.3 OIDC（已实现并通过 staging 真实 Keycloak 验收，SAML / SCIM / M2M 待交付）
 
 - `identity.oauth.providers[]` 的每个 provider 必须显式 `oidc_enabled: true` 才启用 OIDC；默认关闭。
   - 开启时 `issuer` 与 `jwks_url` 必填且必须成对出现，`userinfo_url` 可省略；
@@ -490,7 +490,15 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   - 未知 `kid` 会在 `jwks_min_refresh_interval` 限频内强制刷新一次，用于快速收敛轮换。
   - 刷新失败时保留上一份可用公钥：已缓存的 `kid` 继续验证，未知 `kid` 失败关闭（`40100` / `50300`），不降级到 userinfo。
   - `identity_oauth_jwks_cache_age_seconds` 持续超过 `jwks_ttl` 时，检查到 IdP 的网络、证书信任链与 JWKS 端点；恢复后下一次校验自动刷新。
+- JWKS 轮换演练（M2 退出条件，需在 staging + 真实 IdP 执行，判定以指标变化为准）：
+  1. 基线：完成一次正常登录，确认 `identity_oauth_callback_total{result="ok"}` 递增、`identity_oauth_jwks_cache_age_seconds` 处于 `jwks_ttl` 以内。
+  2. 发布新公钥：Keycloak `Realm Settings → Keys → Providers` 新增 RSA provider，优先级高于当前 active key；确认 JWKS 端点同时返回新旧 `kid`，此时业务无需重启。
+  3. 切换签名 key：把新 provider 置为 active，使 id_token 使用新 `kid`；在本地缓存仍只有旧公钥时发起一次回调。
+  4. 预期：未知 `kid` 触发一次限频刷新，`identity_oauth_jwks_refresh_total{result="success"}` 递增，登录成功；回调耗时突增属预期，下一次恢复缓存命中。
+  5. 故障演练（可选）：临时阻断到 JWKS 端点的网络，在已缓存 `kid` 下重复登录应成功；用未缓存 `kid` 时刷新失败返回 `50300`（刷新成功但 JWKS 仍无该 `kid` 时为 `40100`），`cache_age_seconds` 持续增长；恢复网络后下一次校验自动刷新。
+  6. 回滚：把旧 provider 重新置为 active，并保留新公钥；删除新 provider 须等所有已签发 id_token 过期后再执行。
 - 验收用例：`TestOIDCEndToEndAuthorizationCodeFlow`（授权码 + PKCE + nonce 全链路、授权码重放与 nonce 不匹配拒绝）、`TestJWKSRetainsCacheWhenRefreshFails`（故障期保留旧公钥、未知 kid 失败关闭）、`TestOIDCRequiresExplicitFlag`（显式开关）。
+- 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
 - 仍待交付：SAML 2.0、SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。
 
