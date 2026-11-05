@@ -38,10 +38,27 @@ type OAuthProvider interface {
 	Exchange(ctx context.Context, code, codeVerifier string) (OAuthIdentityInfo, error)
 }
 
+// OIDCProvider 是 OIDC 提供方的可选扩展。
+//
+// 未实现该接口的 provider 继续走纯 OAuth2 userinfo 路径；
+// 实现后服务会在授权发起时生成 nonce 并持久化到 state，回调时回传校验，
+// 从而把 id_token 的 nonce 绑定到本次浏览器会话（防重放 / 防跨会话注入）。
+type OIDCProvider interface {
+	OAuthProvider
+	// OIDCEnabled 报告该 provider 是否已配置 issuer/JWKS；false 时按纯 OAuth2 处理。
+	OIDCEnabled() bool
+	// AuthorizationURLWithNonce 在授权地址中加入 nonce 与 openid scope。
+	AuthorizationURLWithNonce(state, codeVerifier, nonce string) (string, error)
+	// ExchangeWithNonce 换取并校验 id_token；nonce 不匹配或签名/issuer/audience 非法返回 40100。
+	ExchangeWithNonce(ctx context.Context, code, codeVerifier, nonce string) (OAuthIdentityInfo, error)
+}
+
 // OAuthState 是授权发起时保存的一次性上下文。
 type OAuthState struct {
 	Provider string
 	Verifier string
+	// Nonce 是 OIDC id_token 的一次性绑定值；纯 OAuth2 流程为空。
+	Nonce string
 	// AccountID 非空表示绑定流程：回调只能落到该账号（BIZ-02）。
 	AccountID string
 }
@@ -232,19 +249,45 @@ func (s *OAuthService) AuthorizeWithClient(ctx context.Context, provider, ipHash
 	if err != nil {
 		return AuthorizeResult{}, apperr.Unavailable("oauth state generation failed")
 	}
-	if err := s.states.Save(ctx, state, OAuthState{Provider: name, Verifier: verifier}, s.stateTTL); err != nil {
-		return AuthorizeResult{}, apperr.Unavailable("oauth state store unavailable")
-	}
-	url, err := providerImpl.AuthorizationURL(state, verifier)
+	stateValue := OAuthState{Provider: name, Verifier: verifier}
+	authorizeURL, err := s.authorizationURL(providerImpl, state, verifier, &stateValue)
 	if err != nil {
-		return AuthorizeResult{}, apperr.Internal("build oauth authorize url failed", err)
+		return AuthorizeResult{}, err
+	}
+	if err := s.states.Save(ctx, state, stateValue, s.stateTTL); err != nil {
+		return AuthorizeResult{}, apperr.Unavailable("oauth state store unavailable")
 	}
 	// 授权发起属于外部身份入口事件；审计失败时直接拒绝（state 由 TTL 自然过期）。
 	if auditErr := s.auth.emitAuditAs(ctx, "anonymous", audit.ActionAuthOAuthAuthorize, "anonymous", "",
 		"oauth_provider", name, audit.OutcomeSuccess, "state_issued", traceID, nil); auditErr != nil {
 		return AuthorizeResult{}, auditErr
 	}
-	return AuthorizeResult{AuthorizeURL: url, State: state}, nil
+	return AuthorizeResult{AuthorizeURL: authorizeURL, State: state}, nil
+}
+
+// authorizationURL 按 provider 能力构造授权地址；OIDC 时生成 nonce 并写入 stateValue。
+func (s *OAuthService) authorizationURL(
+	provider OAuthProvider,
+	state, verifier string,
+	stateValue *OAuthState,
+) (string, error) {
+	if oidc, ok := provider.(OIDCProvider); ok && oidc.OIDCEnabled() {
+		nonce, err := randomURLSafe(oauthSecretBytes)
+		if err != nil {
+			return "", apperr.Unavailable("oauth state generation failed")
+		}
+		stateValue.Nonce = nonce
+		url, err := oidc.AuthorizationURLWithNonce(state, verifier, nonce)
+		if err != nil {
+			return "", apperr.Internal("build oauth authorize url failed", err)
+		}
+		return url, nil
+	}
+	url, err := provider.AuthorizationURL(state, verifier)
+	if err != nil {
+		return "", apperr.Internal("build oauth authorize url failed", err)
+	}
+	return url, nil
 }
 
 // Callback 校验 state 与授权码，完成身份映射与登录。
@@ -306,7 +349,7 @@ func (s *OAuthService) Callback(ctx context.Context, in OAuthCallbackInput) (res
 		return LoginResult{}, oauthInvalid()
 	}
 
-	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier)
+	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier, saved.Nonce)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -333,11 +376,20 @@ func (s *OAuthService) exchangeCode(
 	ctx context.Context,
 	name string,
 	provider OAuthProvider,
-	code, verifier string,
+	code, verifier, nonce string,
 ) (OAuthIdentityInfo, error) {
 	var info OAuthIdentityInfo
 	exchange := func() error {
 		var exchangeErr error
+		if nonce != "" {
+			oidc, ok := provider.(OIDCProvider)
+			if !ok || !oidc.OIDCEnabled() {
+				// state 带 nonce 却无 OIDC 能力，说明状态被篡改或配置漂移，按无效授权拒绝。
+				return oauthInvalid()
+			}
+			info, exchangeErr = oidc.ExchangeWithNonce(ctx, code, verifier, nonce)
+			return exchangeErr
+		}
 		info, exchangeErr = provider.Exchange(ctx, code, verifier)
 		return exchangeErr
 	}
@@ -451,16 +503,17 @@ func (s *OAuthService) AuthorizeBinding(
 	if err != nil {
 		return AuthorizeResult{}, apperr.Unavailable("oauth state generation failed")
 	}
-	if err := s.states.Save(ctx, state, OAuthState{
+	stateValue := OAuthState{
 		Provider: name, Verifier: verifier, AccountID: actor.AccountID,
-	}, s.stateTTL); err != nil {
+	}
+	authorizeURL, err := s.authorizationURL(providerImpl, state, verifier, &stateValue)
+	if err != nil {
+		return AuthorizeResult{}, err
+	}
+	if err := s.states.Save(ctx, state, stateValue, s.stateTTL); err != nil {
 		return AuthorizeResult{}, apperr.Unavailable("oauth state store unavailable")
 	}
-	url, err := providerImpl.AuthorizationURL(state, verifier)
-	if err != nil {
-		return AuthorizeResult{}, apperr.Internal("build oauth authorize url failed", err)
-	}
-	return AuthorizeResult{AuthorizeURL: url, State: state}, nil
+	return AuthorizeResult{AuthorizeURL: authorizeURL, State: state}, nil
 }
 
 // CompleteBinding 完成绑定回调：state 必须由同一账号发起，外部主体不得已绑定他人（BIZ-02）。
@@ -498,7 +551,7 @@ func (s *OAuthService) CompleteBinding(
 	if saved.Provider != name || saved.Verifier == "" || saved.AccountID != actor.AccountID {
 		return oauthInvalid()
 	}
-	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier)
+	info, err := s.exchangeCode(ctx, name, provider, code, saved.Verifier, saved.Nonce)
 	if err != nil {
 		return err
 	}

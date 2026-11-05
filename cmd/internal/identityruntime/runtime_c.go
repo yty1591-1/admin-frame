@@ -231,16 +231,22 @@ func buildOAuthService(
 				"identity oauth provider "+providerCfg.Name+": client secret env "+secretEnv+" is empty", nil)
 		}
 		provider, err := identityoauth.NewOAuth2Provider(identityoauth.Config{
-			Name:         providerCfg.Name,
-			ClientID:     providerCfg.ClientID,
-			ClientSecret: secret,
-			AuthURL:      providerCfg.AuthURL,
-			TokenURL:     providerCfg.TokenURL,
-			UserInfoURL:  providerCfg.UserInfoURL,
-			RedirectURI:  providerCfg.RedirectURI,
-			Scopes:       providerCfg.Scopes,
-			SubjectField: providerCfg.SubjectField,
-			Timeout:      cfg.Identity.OAuth.Timeout,
+			Name:                   providerCfg.Name,
+			ClientID:               providerCfg.ClientID,
+			ClientSecret:           secret,
+			AuthURL:                providerCfg.AuthURL,
+			TokenURL:               providerCfg.TokenURL,
+			UserInfoURL:            providerCfg.UserInfoURL,
+			RedirectURI:            providerCfg.RedirectURI,
+			Scopes:                 providerCfg.Scopes,
+			SubjectField:           providerCfg.SubjectField,
+			Timeout:                cfg.Identity.OAuth.Timeout,
+			Issuer:                 providerCfg.Issuer,
+			JWKSURL:                providerCfg.JWKSURL,
+			Audience:               providerCfg.Audience,
+			JWKSTTL:                providerCfg.JWKSTTL,
+			JWKSMinRefreshInterval: providerCfg.JWKSMinRefreshInterval,
+			Leeway:                 providerCfg.IDTokenLeeway,
 		})
 		if err != nil {
 			return nil, apperr.Internal("identity oauth provider "+providerCfg.Name, err)

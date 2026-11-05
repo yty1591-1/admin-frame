@@ -378,6 +378,18 @@ type IdentityOAuthProviderConfig struct {
 	Scopes []string `yaml:"scopes"`
 	// SubjectField userinfo JSON 中主体标识字段名，默认 sub。
 	SubjectField string `yaml:"subject_field"`
+	// Issuer 与 JWKSURL 同时配置时启用 OIDC：以 id_token 的签名与 issuer 为准。
+	Issuer string `yaml:"issuer"`
+	// JWKSURL OIDC 公钥集端点；随 Issuer 成对出现。
+	JWKSURL string `yaml:"jwks_url"`
+	// Audience id_token 期望的 audience；空时使用 ClientID。
+	Audience string `yaml:"audience"`
+	// JWKSTTL 公钥缓存时长；0 使用 15m，范围 [1m, 24h]。
+	JWKSTTL time.Duration `yaml:"jwks_ttl"`
+	// JWKSMinRefreshInterval 未知 kid 触发强制刷新的最小间隔；0 使用 1m。
+	JWKSMinRefreshInterval time.Duration `yaml:"jwks_min_refresh_interval"`
+	// IDTokenLeeway id_token 时间字段时钟偏差容忍；0 使用 30s，范围 [0, 5m]。
+	IDTokenLeeway time.Duration `yaml:"id_token_leeway"`
 }
 
 // identityDefaultMFAIssuer 与 internal/identity/app.DefaultMFAIssuer 保持一致。
@@ -1617,8 +1629,18 @@ func (c *Config) applyIdentityDefaults() {
 		c.Identity.SMS.BreakerTimeout = identityDefaultSMSBreakerTimeout
 	}
 	for i := range c.Identity.OAuth.Providers {
-		if strings.TrimSpace(c.Identity.OAuth.Providers[i].SubjectField) == "" {
-			c.Identity.OAuth.Providers[i].SubjectField = "sub"
+		provider := &c.Identity.OAuth.Providers[i]
+		if strings.TrimSpace(provider.SubjectField) == "" {
+			provider.SubjectField = "sub"
+		}
+		if provider.JWKSTTL == 0 {
+			provider.JWKSTTL = 15 * time.Minute
+		}
+		if provider.JWKSMinRefreshInterval == 0 {
+			provider.JWKSMinRefreshInterval = time.Minute
+		}
+		if provider.IDTokenLeeway == 0 {
+			provider.IDTokenLeeway = 30 * time.Second
 		}
 	}
 }
@@ -2823,14 +2845,37 @@ func (c *Config) validateIdentityOAuth() []error {
 		if strings.TrimSpace(provider.RedirectURI) == "" {
 			errs = append(errs, fmt.Errorf("%s.redirect_uri is required", path))
 		}
-		for field, raw := range map[string]string{
+		oidcEnabled := strings.TrimSpace(provider.Issuer) != "" || strings.TrimSpace(provider.JWKSURL) != ""
+		if oidcEnabled && (strings.TrimSpace(provider.Issuer) == "" || strings.TrimSpace(provider.JWKSURL) == "") {
+			// issuer 与 jwks_url 必须成对出现，否则无法完成 id_token 验签与来源校验。
+			errs = append(errs, fmt.Errorf("%s.issuer and jwks_url must be set together", path))
+		}
+		urls := map[string]string{
 			"auth_url":     provider.AuthURL,
 			"token_url":    provider.TokenURL,
-			"userinfo_url": provider.UserInfoURL,
 			"redirect_uri": provider.RedirectURI,
-		} {
+		}
+		if oidcEnabled {
+			urls["issuer"] = provider.Issuer
+			urls["jwks_url"] = provider.JWKSURL
+		} else {
+			urls["userinfo_url"] = provider.UserInfoURL
+		}
+		for field, raw := range urls {
 			if err := validateAbsoluteURL(raw, isProdLikeEnv(c.Env)); err != nil {
 				errs = append(errs, fmt.Errorf("%s.%s: %w", path, field, err))
+			}
+		}
+		if oidcEnabled {
+			if provider.JWKSTTL < time.Minute || provider.JWKSTTL > 24*time.Hour {
+				errs = append(errs, fmt.Errorf("%s.jwks_ttl must be in [1m, 24h]", path))
+			}
+			if provider.JWKSMinRefreshInterval < 5*time.Second ||
+				provider.JWKSMinRefreshInterval > provider.JWKSTTL {
+				errs = append(errs, fmt.Errorf("%s.jwks_min_refresh_interval must be in [5s, jwks_ttl]", path))
+			}
+			if provider.IDTokenLeeway < 0 || provider.IDTokenLeeway > 5*time.Minute {
+				errs = append(errs, fmt.Errorf("%s.id_token_leeway must be in [0, 5m]", path))
 			}
 		}
 	}

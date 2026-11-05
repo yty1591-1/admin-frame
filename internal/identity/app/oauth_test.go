@@ -451,3 +451,78 @@ func TestOAuthCallback(t *testing.T) {
 		requireAppCode(t, err, 40100)
 	})
 }
+
+// fakeOIDCProvider 记录 nonce 并模拟 IdP 的 nonce 校验。
+type fakeOIDCProvider struct {
+	fakeProvider
+	nonce              string
+	exchangedNonce     string
+	plainAuthCalled    bool
+	plainExchangeTaken bool
+}
+
+func (p *fakeOIDCProvider) OIDCEnabled() bool { return true }
+
+func (p *fakeOIDCProvider) AuthorizationURLWithNonce(state, codeVerifier, nonce string) (string, error) {
+	p.nonce = nonce
+	return "https://idp.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
+}
+
+func (p *fakeOIDCProvider) ExchangeWithNonce(_ context.Context, code, codeVerifier, nonce string) (app.OAuthIdentityInfo, error) {
+	if code == "" || codeVerifier == "" || nonce != p.nonce {
+		return app.OAuthIdentityInfo{}, apperr.Unauthorized("invalid oauth authorization")
+	}
+	p.exchangedNonce = nonce
+	return app.OAuthIdentityInfo{Subject: p.subject}, nil
+}
+
+func (p *fakeOIDCProvider) AuthorizationURL(state, codeVerifier string) (string, error) {
+	p.plainAuthCalled = true
+	return p.fakeProvider.AuthorizationURL(state, codeVerifier)
+}
+
+func (p *fakeOIDCProvider) Exchange(ctx context.Context, code, codeVerifier string) (app.OAuthIdentityInfo, error) {
+	p.plainExchangeTaken = true
+	return p.fakeProvider.Exchange(ctx, code, codeVerifier)
+}
+
+// TestOIDCAuthorizePropagatesNonce 验证服务在授权发起时生成 nonce、持久化并在回调中回传校验。
+func TestOIDCAuthorizePropagatesNonce(t *testing.T) {
+	ctx := context.Background()
+	base := newAuthFixture(t, domain.ChannelC)
+	provider := &fakeOIDCProvider{fakeProvider: fakeProvider{name: "oidc", subject: "sub-1"}}
+	svc, err := app.NewOAuthService(app.OAuthServiceConfig{
+		Providers:     map[string]app.OAuthProvider{"oidc": provider},
+		States:        cache.NewMemoryOAuthStateStore(base.clock),
+		Identities:    persistence.NewMemoryOAuthIdentityRepository(),
+		Accounts:      base.accounts,
+		IDs:           base.ids,
+		Auth:          base.svc,
+		AutoProvision: true,
+		StateTTL:      10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("new oauth service: %v", err)
+	}
+
+	authorized, err := svc.Authorize(ctx, "oidc")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if provider.nonce == "" || !strings.Contains(authorized.AuthorizeURL, "nonce="+provider.nonce) {
+		t.Fatalf("nonce not propagated: nonce=%q url=%q", provider.nonce, authorized.AuthorizeURL)
+	}
+	if provider.plainAuthCalled {
+		t.Fatal("OIDC provider must use AuthorizationURLWithNonce")
+	}
+
+	if _, err := svc.Callback(ctx, app.OAuthCallbackInput{Provider: "oidc", Code: "code-1", State: authorized.State}); err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if provider.exchangedNonce != provider.nonce {
+		t.Fatalf("callback nonce = %q, want %q", provider.exchangedNonce, provider.nonce)
+	}
+	if provider.plainExchangeTaken {
+		t.Fatal("OIDC provider must use ExchangeWithNonce")
+	}
+}

@@ -472,12 +472,15 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
-### 7.3 SSO / OIDC 预留
+### 7.3 OIDC（已实现，SAML / SCIM / M2M 待交付）
 
-- 定义 `OIDCProvider` 接口：`AuthURL(state, nonce, codeChallenge)`、`Exchange(code, verifier)`、`VerifyIDToken`。
-- 流程固定：state + nonce + PKCE；state 存 Redis（TTL 10 分钟，一次性）。
+- `identity.oauth.providers[]` 同时配置 `issuer` 与 `jwks_url` 即启用 OIDC；两项必须成对出现，否则启动期校验失败。
+- 流程固定：state + nonce + PKCE（S256）。nonce 由服务生成并写入一次性 state（TTL 10 分钟），回调时回传校验；缺失或与 id_token 不一致统一返回 `40100`。
+- id_token 校验：仅接受 `RS256`；校验签名（JWKS，支持 `kid` 未知时限频强制刷新以完成密钥轮换）、`iss`、`aud`（默认 `client_id`）、`exp`/`iat`（默认 30s 时钟偏差）与 `nonce`。
+- 主体取自 id_token 的 `sub`；OIDC 模式下不允许回退到 userinfo，避免绕过签名校验。
+- 配置项：`audience`（默认 `client_id`）、`jwks_ttl`（默认 15m，范围 `[1m, 24h]`）、`jwks_min_refresh_interval`（默认 1m）、`id_token_leeway`（默认 30s）。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
-- `T8` 只交付接口、配置与禁用态路由；具体 IdP 适配待组织选定后另立任务，不阻塞 `ENT-01` 关闭。
+- 仍待交付：SAML 2.0、SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。
 
 ---
 
