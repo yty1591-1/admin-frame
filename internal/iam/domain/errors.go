@@ -80,6 +80,20 @@ var (
 	ErrTemplateNotActive = errors.New("role template not active")
 	// ErrInvalidMenu 菜单 / 路由资源字段非法。
 	ErrInvalidMenu = errors.New("invalid menu")
+	// ErrInvalidCertificationCampaign 访问复核活动字段非法：租户组合、名称、到期时间或范围不合法。
+	ErrInvalidCertificationCampaign = errors.New("invalid certification campaign")
+	// ErrInvalidCertificationTask 复核任务字段非法。
+	ErrInvalidCertificationTask = errors.New("invalid certification task")
+	// ErrInvalidCertificationStatus 复核活动 / 任务状态非法或迁移不被允许。
+	ErrInvalidCertificationStatus = errors.New("invalid certification status")
+	// ErrInvalidCertificationTenant 复核活动端别与商户组合非法：A 端不得带商户，B 端必须带商户。
+	ErrInvalidCertificationTenant = errors.New("invalid certification tenant")
+	// ErrCertificationNotActive 复核活动未激活或已关闭，不能裁决。
+	ErrCertificationNotActive = errors.New("certification campaign is not active")
+	// ErrCertificationNotPending 复核任务已处理，不能再次裁决。
+	ErrCertificationNotPending = errors.New("certification task is not pending")
+	// ErrCertificationFingerprintMismatch 绑定指纹与生成任务时不一致（并发变更）。
+	ErrCertificationFingerprintMismatch = errors.New("certification binding fingerprint mismatch")
 )
 
 // errInvalid 构造参数错误（HTTP 400 / 业务码 40000）。

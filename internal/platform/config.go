@@ -925,6 +925,24 @@ type IAMConfig struct {
 	Approval IAMApprovalConfig `yaml:"approval"`
 	// Constraints RBAC2 约束（互斥 / 基数 / 前置）的落库行为。
 	Constraints IAMConstraintsConfig `yaml:"constraints"`
+	// Certification 访问复核（P1-7）开关；默认开启、默认不自动回收。
+	Certification IAMCertificationConfig `yaml:"certification"`
+}
+
+// IAMCertificationConfig 是访问复核（Access Certification）运行参数。
+//
+// Enabled 使用指针以区分「未配置」与「显式 false」：默认开启，
+// 需要下线功能时必须能显式关闭（否则 handler 仍会注册复核路由）。
+type IAMCertificationConfig struct {
+	// Enabled 是否启用访问复核 API 与到期扫描；默认 true。
+	Enabled *bool `yaml:"enabled"`
+	// AutoRevoke 到期后是否自动回收绑定；默认 false，只标记 expired。
+	AutoRevoke bool `yaml:"auto_revoke"`
+}
+
+// IsEnabled 返回是否启用访问复核；未配置时按默认开启。
+func (c IAMCertificationConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // IAMConstraintsConfig 是 RBAC2 约束的落库行为配置。
@@ -1723,6 +1741,10 @@ func (c *Config) applyIAMDefaults() {
 	if c.IAM.Limits.MaxCustomRolesPerMerchant == 0 {
 		c.IAM.Limits.MaxCustomRolesPerMerchant = 50
 	}
+	if c.IAM.Certification.Enabled == nil {
+		enabled := true
+		c.IAM.Certification.Enabled = &enabled
+	}
 }
 
 // normalize 在环境变量覆盖后、Validate 前补齐跨字段派生值。
@@ -2295,6 +2317,11 @@ func (c *Config) validateIAM() []error {
 	}
 	if isProdLikeEnv(c.Env) && mode == IAMModeEnforce && !c.Async.Enabled {
 		errs = append(errs, errors.New("async.enabled must be true when iam.mode=enforce in prod/staging"))
+	}
+	// 自动回收必须以显式启用的访问复核为前提，否则到期扫描不会运行，
+	// 配置看似生效却永远不回收，属于静默失效。
+	if c.IAM.Certification.AutoRevoke && !c.IAM.Certification.IsEnabled() {
+		errs = append(errs, errors.New("iam.certification.auto_revoke requires iam.certification.enabled=true"))
 	}
 	errs = append(errs, c.validateAsync()...)
 	return errs

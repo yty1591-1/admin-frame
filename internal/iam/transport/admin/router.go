@@ -132,6 +132,29 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 
 	// 当前主体可见菜单：菜单裁剪只影响入口展示，鉴权仍由各接口权限点负责。
 	mux.Handle("GET /admin/v1/iam/me/menus", authMW(http.HandlerFunc(h.Menus)))
+
+	// 访问复核（P1-7）：功能未启用（iam.certification.enabled=false）时不注册路由，
+	// 避免暴露「存在但永远 50000」的端点。读取 / 管理 / 裁决拆成三个权限点。
+	if h.Certification() != nil {
+		mux.Handle("GET /admin/v1/iam/certifications",
+			authMW(perm(string(iam.PermCertificationRead))(http.HandlerFunc(h.ListCertificationCampaigns))))
+		mux.Handle("POST /admin/v1/iam/certifications",
+			authMW(perm(string(iam.PermCertificationWrite))(http.HandlerFunc(h.CreateCertificationCampaign))))
+		mux.Handle("GET /admin/v1/iam/certifications/{id}",
+			authMW(perm(string(iam.PermCertificationRead))(http.HandlerFunc(h.GetCertificationCampaign))))
+		mux.Handle("POST /admin/v1/iam/certifications/{id}/activate",
+			authMW(perm(string(iam.PermCertificationWrite))(http.HandlerFunc(h.ActivateCertificationCampaign))))
+		mux.Handle("GET /admin/v1/iam/certifications/{id}/tasks",
+			authMW(perm(string(iam.PermCertificationRead))(http.HandlerFunc(h.ListCertificationTasks))))
+		mux.Handle("POST /admin/v1/iam/certifications/{id}/tasks/{taskId}/decision",
+			authMW(perm(string(iam.PermCertificationDecide))(http.HandlerFunc(h.DecideCertificationTask))))
+		mux.Handle("POST /admin/v1/iam/certifications/{id}/close",
+			authMW(perm(string(iam.PermCertificationWrite))(http.HandlerFunc(h.CloseCertificationCampaign))))
+		mux.Handle("POST /admin/v1/iam/certifications/{id}/auto-expire",
+			authMW(perm(string(iam.PermCertificationWrite))(http.HandlerFunc(h.AutoExpireCertificationCampaign))))
+		mux.Handle("GET /admin/v1/iam/certifications/{id}/export",
+			authMW(perm(string(iam.PermCertificationRead))(http.HandlerFunc(h.ExportCertificationEvidence))))
+	}
 }
 
 // NewRouter 注册 IAM 管理端路由并挂接鉴权与权限中间件（测试用）。

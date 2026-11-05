@@ -415,6 +415,30 @@ var entries = []Entry{
 		Sort:        335,
 		Description: "创建 / 变更 / 启停 / 删除特性开关（featureflag.* 审计）；kill switch 秒级生效，变更全部留痕。",
 	},
+	{
+		Code:        iam.PermCertificationRead,
+		Name:        "查看访问复核",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        345,
+		Description: "查看访问复核活动、任务清单并导出证据（CSV / JSON）；不包含裁决与回收。",
+	},
+	{
+		Code:        iam.PermCertificationWrite,
+		Name:        "管理访问复核",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        355,
+		Description: "创建 / 激活 / 关闭复核活动并生成任务清单；激活幂等，不覆盖已裁决任务。",
+	},
+	{
+		Code:        iam.PermCertificationDecide,
+		Name:        "裁决复核任务",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        365,
+		Description: "确认保留或驳回回收复核任务；驳回前二次校验绑定指纹，与 write 分离以落实职责分离。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。

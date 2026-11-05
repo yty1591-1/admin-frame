@@ -104,6 +104,9 @@ type fixture struct {
 	sodViolations     *persistence.MemorySodViolationRepository
 	roleConstraints   *persistence.MemoryRoleConstraintRepository
 	constraints       *app.ConstraintGuard
+	certCampaigns     *persistence.MemoryCertificationCampaignRepository
+	certTasks         *persistence.MemoryCertificationTaskRepository
+	certRevoker       *capturedCertRevoker
 	recorder          *capturedRecorder
 	invalidator       *capturedInvalidator
 	uow               app.UnitOfWork
@@ -114,6 +117,31 @@ type fixture struct {
 	querySvc          *app.QueryService
 	templateSvc       *app.TemplateService
 	changeSvc         *app.ChangeRequestService
+	certSvc           *app.CertificationService
+	certSvcAutoRevoke *app.CertificationService
+}
+
+// capturedCertRevoker 记录复核回收调用；用于断言「指纹不一致时不得回收」。
+type capturedCertRevoker struct {
+	mu       sync.Mutex
+	bindings []string
+	err      error
+}
+
+func (r *capturedCertRevoker) Revoke(_ context.Context, bindingID, _, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.bindings = append(r.bindings, bindingID)
+	return nil
+}
+
+func (r *capturedCertRevoker) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.bindings)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -164,6 +192,9 @@ func buildFixture(t *testing.T, uow app.UnitOfWork, mode app.ConstraintMode) *fi
 		sodViolations:   sodViolations,
 		roleConstraints: roleConstraints,
 		constraints:     guard,
+		certCampaigns:   persistence.NewMemoryCertificationCampaignRepository(),
+		certTasks:       persistence.NewMemoryCertificationTaskRepository(),
+		certRevoker:     &capturedCertRevoker{},
 		uow:             uow,
 	}
 	ids := &seqIDs{}
@@ -254,6 +285,44 @@ func buildFixture(t *testing.T, uow app.UnitOfWork, mode app.ConstraintMode) *fi
 	})
 	if err != nil {
 		t.Fatalf("NewChangeRequestService: %v", err)
+	}
+	f.certSvc, err = app.NewCertificationService(app.CertificationServiceConfig{
+		Campaigns:  f.certCampaigns,
+		Tasks:      f.certTasks,
+		Bindings:   bindings,
+		Roles:      roles,
+		Revoker:    f.certRevoker,
+		Recorder:   f.recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits: app.CertificationLimits{
+			RequireReason:   true,
+			AllowBizChannel: true,
+			AutoRevoke:      false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCertificationService: %v", err)
+	}
+	f.certSvcAutoRevoke, err = app.NewCertificationService(app.CertificationServiceConfig{
+		Campaigns:  f.certCampaigns,
+		Tasks:      f.certTasks,
+		Bindings:   bindings,
+		Roles:      roles,
+		Revoker:    f.certRevoker,
+		Recorder:   f.recorder,
+		UnitOfWork: uow,
+		IDs:        &seqIDs{},
+		Audit:      app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits: app.CertificationLimits{
+			RequireReason:   true,
+			AllowBizChannel: true,
+			AutoRevoke:      true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCertificationService(auto revoke): %v", err)
 	}
 	return f
 }

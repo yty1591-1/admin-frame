@@ -65,6 +65,12 @@ const (
 	PermBreakglassRequest PermissionCode = "iam:breakglass:request"
 	// PermBreakglassApprove 审批破玻璃申请。
 	PermBreakglassApprove PermissionCode = "iam:breakglass:approve"
+	// PermCertificationRead 查看访问复核活动、任务与证据导出（A 端专属）。
+	PermCertificationRead PermissionCode = "iam:certification:read"
+	// PermCertificationWrite 创建 / 激活 / 关闭访问复核活动并生成任务清单（A 端专属）。
+	PermCertificationWrite PermissionCode = "iam:certification:write"
+	// PermCertificationDecide 裁决复核任务（确认保留 / 驳回回收）；与 write 分离以落实职责分离。
+	PermCertificationDecide PermissionCode = "iam:certification:decide"
 
 	// PermOrderRead 查询订单。
 	//

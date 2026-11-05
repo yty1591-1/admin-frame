@@ -39,6 +39,7 @@
 | `rbac.breakglass` | A | 破玻璃申请 / 审批 / 生效 / 撤销 | 权限 | 180d | active |
 | `rbac.menu_change` | A | 菜单 / 路由资源创建、更新、停用 | 权限 | 180d | active |
 | `rbac.sod_change` | A/B | 互斥角色组（RBAC2）创建、更新、启停、删除 | 权限 | 180d | active |
+| `rbac.certification` | A | 访问复核活动创建 / 激活 / 关闭、任务裁决与证据导出 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
 | `data.export` | A/B | 数据导出（含 PII 须记范围摘要）；同步 `GET /admin/v1/audit/events/export`、异步任务完成与下载（`attrs.mode=async` / `async-download`）均记录导出人、时间窗、条数、过滤条件名称与 `export_id` | 导出 | 365d | active |
 | `audit.query` | A | 审计事件查询；`GET /admin/v1/audit/events` 每次查询记录操作者、时间窗、命中条数与过滤条件名称 | 权限 | 180d | active |

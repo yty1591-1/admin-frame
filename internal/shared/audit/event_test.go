@@ -107,6 +107,7 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionRBACBreakglass:      true,
 		audit.ActionRBACMenuChange:      true,
 		audit.ActionRBACSodChange:       true,
+		audit.ActionRBACCertification:   true,
 		audit.ActionConfigChange:        true,
 		audit.ActionDataExport:          true,
 		audit.ActionDataQueryScope:      true,

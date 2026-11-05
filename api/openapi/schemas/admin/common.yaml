@@ -36,6 +36,24 @@ components:
         type: string
         minLength: 1
 
+    CertificationCampaignID:
+      name: id
+      in: path
+      required: true
+      description: 访问复核活动 ID
+      schema:
+        type: string
+        minLength: 1
+
+    CertificationTaskID:
+      name: taskId
+      in: path
+      required: true
+      description: 访问复核任务 ID
+      schema:
+        type: string
+        minLength: 1
+
     SubjectTypePath:
       name: subject_type
       in: path

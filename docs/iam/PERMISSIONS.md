@@ -69,6 +69,9 @@
 | `notification:write` | admin | 否 | 活跃 | 代发通知（notification.send 审计）、DLQ 死信补偿重放（notification.dlq.replay 审计）与模板注册 / 停用 |
 | `featureflag:read` | admin | 否 | 活跃 | 查询特性开关列表、灰度规则与遗留 flag 台账（永久 / 即将到期 / 已过期分组） |
 | `featureflag:write` | admin | 否 | 活跃 | 创建 / 变更 / 启停 / 删除特性开关（featureflag.* 审计）；kill switch 秒级生效，变更全部留痕 |
+| `iam:certification:read` | admin | 否 | 活跃 | 查看访问复核活动、任务清单并导出证据（CSV / JSON）；不包含裁决与回收 |
+| `iam:certification:write` | admin | 否 | 活跃 | 创建 / 激活 / 关闭复核活动并生成任务清单；激活幂等，不覆盖已裁决任务 |
+| `iam:certification:decide` | admin | 否 | 活跃 | 确认保留或驳回回收复核任务；驳回前二次校验绑定指纹，与 write 分离以落实职责分离 |
 
 > `order:*` / `file:*` 为历史遗留权限点：目录条目与常量保留以解释既有授权与审计，
 > 状态统一为 `deprecated`（随目录种子 `migrations/000003_seed_iam_baseline.up.sql` 写入）。

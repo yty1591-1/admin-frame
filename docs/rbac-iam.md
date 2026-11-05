@@ -1311,11 +1311,15 @@ JOIN role_chain c ON c.id = s.role_id;
 - 生产由 worker 将 Outbox 投递到审计存储 / SIEM；`SlogEmitter` 仅用于 local/demo（AUD 例外）。
 - 保留期 ≥ 180 天；权限变更历史不可被业务进程 UPDATE / DELETE（AUD-06）。
 
-### 10.3 访问复核
+### 10.3 访问复核（Access Certification）
 
-- 每季度导出 A 端高权限角色（含 `iam:*`、`data:export`、`config:*`）及绑定，由安全 Owner 复核。
-- 离职 / 转岗：解绑 + 过期时间兜底；复核结果归档到审计存储。
-- 破玻璃使用后 24h 内必须提交复盘说明。
+- 复核以 **Campaign** 组织：创建时指定端别、商户（B 端）、角色范围与截止时间；`activate` 时从当前有效绑定生成待复核任务，按 `(campaign_id, subject_id, role_id)` 幂等去重，重复激活不产生重复待办。
+- 任务责任人默认为活动创建者；管理员通过 `iam:certification:read/write/decide` 三个权限点分别承担查看、发起与裁决，裁决与发起可分配给不同角色以满足职责分离。
+- 裁决只允许 `confirm`（保留）与 `revoke`（回收），原因必填；重复提交相同裁决幂等成功，相反裁决返回冲突。
+- **超期回收**：截止时间后可将 `iam.certification.auto_revoke` 打开（默认关闭）执行自动回收；回收前按绑定的 subject/channel/merchant/role/expiresAt/revoked 指纹做二次校验，与生成任务时不一致则任务置 `skipped`（死信）且绝不回收，等待人工处理。
+- **证据导出**：`GET /admin/v1/iam/certifications/{id}/export?format=csv|json` 输出任务级完整字段（活动、主体、角色、绑定、责任人、状态、裁决、原因、裁决人、时间），用于等保 / SOC 2 周期性归档。
+- 所有创建、激活、裁决、自动动作与导出均写 `rbac.certification` 审计，并与业务写入同事务；审计失败则操作回滚。
+- 周期触发由 SRE 配置定时调用 `auto-expire` 端点（可重入），服务本身不内置调度器；季度复核、离职 / 转岗解绑与破玻璃 24h 复盘要求不变。
 
 ---
 

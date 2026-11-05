@@ -307,6 +307,32 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("iam breakglass service: %w", err)
 	}
 
+	// 访问复核（P1-7）：默认开启；显式关闭时 Certification=nil，Handler 不注册复核路由。
+	var certificationSvc *app.CertificationService
+	if cfg.IAM.Certification.IsEnabled() {
+		campaigns, tasks := buildCertificationRepositories(deps)
+		certificationSvc, err = app.NewCertificationService(app.CertificationServiceConfig{
+			Campaigns:  campaigns,
+			Tasks:      tasks,
+			Bindings:   bindings,
+			Roles:      roles,
+			Revoker:    bindingCertificationRevoker{svc: bindingSvc},
+			Recorder:   recorder,
+			UnitOfWork: uow,
+			IDs:        ids,
+			Audit:      auditMeta,
+			Limits: app.CertificationLimits{
+				RequireReason:   cfg.IAM.Security.RequireReason,
+				AllowBizChannel: true,
+				AutoRevoke:      cfg.IAM.Certification.AutoRevoke,
+			},
+			Logger: deps.Logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("iam certification service: %w", err)
+		}
+	}
+
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Roles:           roleSvc,
 		Bindings:        bindingSvc,
@@ -318,6 +344,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		MenuAdmin:       menuAdminSvc,
 		SodGroups:       sodGroupSvc,
 		RoleConstraints: roleConstraintSvc,
+		Certification:   certificationSvc,
 		Channel:         domain.Channel(cfg.Channel),
 		RequireApproval: cfg.IAM.Approval.Enabled,
 	})
@@ -396,6 +423,32 @@ func BuildRepositories(deps *platform.Deps) (
 		persistence.NewSQLRoleTemplateRepository(sqlDB),
 		persistence.NewSQLSnapshotRepository(sqlDB),
 		nil
+}
+
+// bindingCertificationRevoker 把访问复核的回收动作适配到 BindingService.Unbind。
+//
+// 复用既有解绑用例，确保软撤销、约束校验、快照失效与 rbac.binding_change 审计
+// 都走同一条链路；复核侧只额外记录 rbac.certification 审计。
+type bindingCertificationRevoker struct {
+	svc *app.BindingService
+}
+
+// Revoke 回收绑定；MerchantID 留空，因为调用前已校验绑定与活动商户一致。
+func (r bindingCertificationRevoker) Revoke(ctx context.Context, bindingID, actor, reason string) error {
+	return r.svc.Unbind(ctx, app.UnbindCommand{ID: bindingID, Actor: actor, Reason: reason})
+}
+
+// buildCertificationRepositories 装配访问复核仓储；内存与 SQL 语义保持一致。
+func buildCertificationRepositories(deps *platform.Deps) (
+	domain.CertificationCampaignRepository, domain.CertificationTaskRepository,
+) {
+	if deps.Database == nil {
+		return persistence.NewMemoryCertificationCampaignRepository(),
+			persistence.NewMemoryCertificationTaskRepository()
+	}
+	sqlDB := deps.Database.SQL()
+	return persistence.NewSQLCertificationCampaignRepository(sqlDB),
+		persistence.NewSQLCertificationTaskRepository(sqlDB)
 }
 
 // buildConstraintRepositories 装配 RBAC2 约束仓储（互斥组 / 前置角色）。

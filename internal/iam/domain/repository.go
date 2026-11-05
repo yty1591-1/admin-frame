@@ -81,6 +81,66 @@ type BindingRepository interface {
 	ListByRole(ctx context.Context, roleID string) ([]*Binding, error)
 }
 
+// CertificationCampaignRepository 是访问复核活动的持久化端口。
+//
+// 约定与角色仓储一致：未找到返回 NotFound；Save 使用 expectedVersion 做乐观锁；
+// 列表查询必须带端别与商户条件，B 端不得读取其他商户的活动。
+type CertificationCampaignRepository interface {
+	// Save 创建（expectedVersion=0）或更新活动。
+	Save(ctx context.Context, campaign *CertificationCampaign, expectedVersion int64) error
+	// FindByID 按主键加载活动。
+	FindByID(ctx context.Context, id string) (*CertificationCampaign, error)
+	// List 按条件分页列举活动，按创建时间倒序。
+	List(ctx context.Context, filter CertificationCampaignFilter) ([]*CertificationCampaign, error)
+	// Count 返回满足条件的活动总数。
+	Count(ctx context.Context, filter CertificationCampaignFilter) (int, error)
+}
+
+// CertificationCampaignFilter 是复核活动列表过滤条件。
+type CertificationCampaignFilter struct {
+	// Channel 端别过滤；空表示不过滤（仅内部查询允许）。
+	Channel Channel
+	// MerchantID 商户过滤；B 端必填。
+	MerchantID string
+	// Status 状态过滤；空表示全部。
+	Status CertificationStatus
+	// Limit 分页大小，上限 100（API-05）。
+	Limit int
+	// Offset 偏移量。
+	Offset int
+}
+
+// CertificationTaskRepository 是访问复核任务的持久化端口。
+//
+// SaveAll 必须按 (campaign_id, subject_id, role_id) 幂等：重复生成清单不得
+// 覆盖已裁决的任务；唯一冲突时保留原主键与原有状态。
+type CertificationTaskRepository interface {
+	// SaveAll 幂等批量写入任务；重复键保留既有任务。
+	SaveAll(ctx context.Context, tasks []*CertificationTask) error
+	// FindByID 按主键加载任务。
+	FindByID(ctx context.Context, id string) (*CertificationTask, error)
+	// ListByCampaign 返回活动下全部任务（按创建时间、主键升序），供导出与过期扫描。
+	ListByCampaign(ctx context.Context, campaignID string) ([]*CertificationTask, error)
+	// ListPage 按活动与状态分页列举任务。
+	ListPage(ctx context.Context, filter CertificationTaskFilter) ([]*CertificationTask, error)
+	// CountByCampaign 返回活动下的任务总数，用于同步 TaskCount 与分页 total。
+	CountByCampaign(ctx context.Context, campaignID string) (int, error)
+	// Save 更新任务；expectedVersion 必须与当前版本一致。
+	Save(ctx context.Context, task *CertificationTask, expectedVersion int64) error
+}
+
+// CertificationTaskFilter 是复核任务列表过滤条件。
+type CertificationTaskFilter struct {
+	// CampaignID 活动 ID，必填。
+	CampaignID string
+	// Status 任务状态过滤；空表示全部。
+	Status CertificationTaskStatus
+	// Limit 分页大小，上限 100（API-05）。
+	Limit int
+	// Offset 偏移量。
+	Offset int
+}
+
 // SubjectQuery 是主体查询条件，同时用于绑定列表与快照加载。
 //
 // MerchantID 在 B 端必填：空串不代表「全部商户」，

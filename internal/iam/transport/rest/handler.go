@@ -40,7 +40,9 @@ type HandlerConfig struct {
 	SodGroups *app.SodGroupService
 	// RoleConstraints 角色约束用例（RBAC2 基数 + 前置角色）；为空时相关端点返回 50000。
 	RoleConstraints *app.RoleConstraintService
-	Channel         domain.Channel
+	// Certification 访问复核用例；为空时不注册复核路由（iam.certification.enabled=false）。
+	Certification *app.CertificationService
+	Channel       domain.Channel
 	// RequireApproval 为 true 时拒绝角色 / 绑定的直写端点，强制走审批单
 	// （iam.approval.enabled）。
 	RequireApproval bool
@@ -58,6 +60,7 @@ type Handler struct {
 	menuAdmin       *app.MenuAdminService
 	sodGroups       *app.SodGroupService
 	roleConstraints *app.RoleConstraintService
+	certification   *app.CertificationService
 	channel         domain.Channel
 	requireApproval bool
 }
@@ -84,10 +87,14 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		menuAdmin:       cfg.MenuAdmin,
 		sodGroups:       cfg.SodGroups,
 		roleConstraints: cfg.RoleConstraints,
+		certification:   cfg.Certification,
 		channel:         cfg.Channel,
 		requireApproval: cfg.RequireApproval,
 	}, nil
 }
+
+// Certification 返回访问复核用例；为 nil 表示功能未启用，路由不注册。
+func (h *Handler) Certification() *app.CertificationService { return h.certification }
 
 // rejectDirectWrite 在「高风险直写强制转审批」开启时写出 40900 并返回 true。
 //

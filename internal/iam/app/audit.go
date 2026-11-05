@@ -22,6 +22,8 @@ const (
 	ResourceTypeRoleTemplate = "iam_role_template"
 	// ResourceTypeSodGroup 互斥角色组（RBAC2）的定义与变更。
 	ResourceTypeSodGroup = "iam_sod_group"
+	// ResourceTypeCertification 访问复核活动 / 任务 / 导出。
+	ResourceTypeCertification = "iam_certification"
 )
 
 // 审计属性键，保持稳定便于 SIEM 检索。

@@ -1,0 +1,221 @@
+components:
+  schemas:
+    CertificationCampaignStatus:
+      type: string
+      enum: [draft, active, closed]
+      description: 复核活动状态
+
+    CertificationTaskStatus:
+      type: string
+      enum: [pending, confirmed, revoked, expired, skipped]
+      description: 复核任务状态；skipped 表示回收前二次校验失败的死信
+
+    CertificationDecision:
+      type: string
+      enum: [confirm, revoke]
+      description: confirm=保留，revoke=驳回并回收
+
+    CertificationCampaign:
+      type: object
+      required:
+        - id
+        - name
+        - channel
+        - status
+        - due_at
+        - created_by
+        - created_at
+        - version
+        - task_count
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        channel:
+          type: string
+          enum: [admin, biz]
+        merchant_id:
+          type: string
+          description: B 端商户；A 端为空
+        role_ids:
+          type: array
+          items:
+            type: string
+          description: 复核角色范围；空表示全部角色
+        privileged_only:
+          type: boolean
+          description: 是否只生成高危角色（iam:* / data:export / config:*）的绑定
+        status:
+          $ref: "#/components/schemas/CertificationCampaignStatus"
+        due_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+          format: int64
+        task_count:
+          type: integer
+
+    CertificationTask:
+      type: object
+      required:
+        - id
+        - campaign_id
+        - subject_type
+        - subject_id
+        - role_id
+        - binding_id
+        - binding_fingerprint
+        - status
+        - created_at
+        - version
+      properties:
+        id:
+          type: string
+        campaign_id:
+          type: string
+        subject_type:
+          type: string
+        subject_id:
+          type: string
+        merchant_id:
+          type: string
+        role_id:
+          type: string
+        binding_id:
+          type: string
+        binding_fingerprint:
+          type: string
+          description: 生成任务时的绑定指纹；自动回收前再次比对
+        reviewer_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/CertificationTaskStatus"
+        decision:
+          type: string
+          description: 裁决值；未裁决时为空
+        reason:
+          type: string
+        decided_by:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+
+    CreateCertificationCampaignRequest:
+      type: object
+      required: [name, due_at]
+      properties:
+        channel:
+          type: string
+          enum: [admin, biz]
+          description: 省略时使用端点端别
+        name:
+          type: string
+          minLength: 1
+        role_ids:
+          type: array
+          items:
+            type: string
+        privileged_only:
+          type: boolean
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+
+    DecideCertificationTaskRequest:
+      type: object
+      required: [decision, reason]
+      properties:
+        decision:
+          $ref: "#/components/schemas/CertificationDecision"
+        reason:
+          type: string
+          minLength: 1
+
+    CloseCertificationCampaignRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+
+    CertificationCampaignListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertificationCampaign"
+        total:
+          type: integer
+
+    CertificationTaskListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertificationTask"
+        total:
+          type: integer
+
+    CertificationAutoExpireData:
+      type: object
+      required: [affected]
+      properties:
+        affected:
+          type: integer
+
+    CertificationEvidenceRecord:
+      type: object
+      properties:
+        campaign_id:
+          type: string
+        campaign_name:
+          type: string
+        task_id:
+          type: string
+        subject_id:
+          type: string
+        role_id:
+          type: string
+        binding_id:
+          type: string
+        reviewer_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/CertificationTaskStatus"
+        decision:
+          type: string
+        reason:
+          type: string
+        decided_by:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time

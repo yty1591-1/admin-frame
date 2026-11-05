@@ -39,11 +39,13 @@ const (
 	ActionRBACBreakglass      = "rbac.breakglass"
 	ActionRBACMenuChange      = "rbac.menu_change"
 	ActionRBACSodChange       = "rbac.sod_change"
-	ActionConfigChange        = "config.change"
-	ActionDataExport          = "data.export"
-	ActionDataQueryScope      = "data.query_scope"
-	ActionPaymentCapture      = "payment.capture"
-	ActionPaymentRefund       = "payment.refund"
+	// ActionRBACCertification 访问复核：创建 / 激活 / 关闭活动、裁决任务与证据导出。
+	ActionRBACCertification = "rbac.certification"
+	ActionConfigChange      = "config.change"
+	ActionDataExport        = "data.export"
+	ActionDataQueryScope    = "data.query_scope"
+	ActionPaymentCapture    = "payment.capture"
+	ActionPaymentRefund     = "payment.refund"
 	// ActionAuditQuery 审计事件查询（ENT-04）；记录查询范围摘要，不记过滤结果原文。
 	ActionAuditQuery = "audit.query"
 	// ActionAuditExport 审计事件导出（ENT-04）；含导出范围、条数与操作者。
@@ -92,6 +94,7 @@ func KnownActions() []string {
 		ActionRBACBreakglass,
 		ActionRBACMenuChange,
 		ActionRBACSodChange,
+		ActionRBACCertification,
 		ActionConfigChange,
 		ActionDataExport,
 		ActionDataQueryScope,

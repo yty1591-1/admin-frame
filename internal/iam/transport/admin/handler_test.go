@@ -22,6 +22,11 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 )
 
+// noopCertRevoker 让路由测试无需真实绑定服务即可装配复核路由。
+type noopCertRevoker struct{}
+
+func (noopCertRevoker) Revoke(context.Context, string, string, string) error { return nil }
+
 type seqIDs struct {
 	mu sync.Mutex
 	n  int64
@@ -141,12 +146,28 @@ func newRouterWithApproval(t *testing.T, requireApproval bool) *router {
 	if err != nil {
 		t.Fatal(err)
 	}
+	certificationSvc, err := app.NewCertificationService(app.CertificationServiceConfig{
+		Campaigns:  persistence.NewMemoryCertificationCampaignRepository(),
+		Tasks:      persistence.NewMemoryCertificationTaskRepository(),
+		Bindings:   bindings,
+		Roles:      roles,
+		Revoker:    noopCertRevoker{},
+		Recorder:   recorder{},
+		UnitOfWork: app.NoopUnitOfWork{},
+		IDs:        ids,
+		Audit:      app.AuditMeta{Service: "test", ActorType: "staff"},
+		Limits:     app.CertificationLimits{RequireReason: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Roles: roleSvc, Bindings: bindingSvc, Query: querySvc,
 		Changes:         newChangeService(t, roleSvc, bindingSvc, ids),
 		Menus:           menuSvc,
 		MenuAdmin:       menuAdminSvc,
 		Templates:       templateSvc,
+		Certification:   certificationSvc,
 		Channel:         domain.ChannelAdmin,
 		RequireApproval: requireApproval,
 	})

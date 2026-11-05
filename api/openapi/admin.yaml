@@ -189,6 +189,22 @@ paths:
     $ref: './paths/admin/iam-change-requests.yaml#/admin-v1-iam-change-requests-by-id-cancel'
   /admin/v1/iam/change-requests/{id}/apply:
     $ref: './paths/admin/iam-change-requests.yaml#/admin-v1-iam-change-requests-by-id-apply'
+  /admin/v1/iam/certifications:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications'
+  /admin/v1/iam/certifications/{id}:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id'
+  /admin/v1/iam/certifications/{id}/activate:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-activate'
+  /admin/v1/iam/certifications/{id}/tasks:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-tasks'
+  /admin/v1/iam/certifications/{id}/tasks/{taskId}/decision:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-tasks-by-taskId-decision'
+  /admin/v1/iam/certifications/{id}/close:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-close'
+  /admin/v1/iam/certifications/{id}/auto-expire:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-auto-expire'
+  /admin/v1/iam/certifications/{id}/export:
+    $ref: './paths/admin/iam-certifications.yaml#/admin-v1-iam-certifications-by-id-export'
   /admin/v1/iam/sod-groups:
     $ref: './paths/admin/iam-sod-groups.yaml#/admin-v1-iam-sod-groups'
   /admin/v1/iam/sod-groups/preflight:
