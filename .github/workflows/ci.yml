@@ -124,6 +124,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -132,6 +134,9 @@ jobs:
           cache: true
 
       - name: Test with race + coverage + gates
+        env:
+          # 变更行覆盖率门禁（P1-5）；只在 PR 事件提供基线。
+          GIT_BASE_REF: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/run-tests.sh
 
       - name: Upload coverage artifact

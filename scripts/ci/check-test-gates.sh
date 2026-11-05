@@ -220,6 +220,12 @@ for f in .workflow/PRPipeline.yml .workflow/MasterPipeline.yml .workflow/BranchP
   fi
 done
 
+# P1-5：IAM 分层覆盖率（含 MySQL 集成测试的间接覆盖）。
+echo "==> TEST-07: IAM layered coverage gates (P1-5)"
+if ! bash scripts/ci/check-iam-coverage.sh; then
+  FAIL=1
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "test gates failed (TESTING_STANDARDS)" >&2
   exit 1
