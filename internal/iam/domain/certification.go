@@ -192,7 +192,7 @@ func NewCertificationCampaign(p NewCertificationCampaignParams) (*CertificationC
 // Activate 把草稿置为进行中。
 //
 // 重复激活幂等成功；已关闭活动不可重新激活，避免关闭后的裁决语义被推翻。
-func (c *CertificationCampaign) Activate(now time.Time) error {
+func (c *CertificationCampaign) Activate(_ time.Time) error {
 	if err := c.Status.Validate(); err != nil {
 		return err
 	}

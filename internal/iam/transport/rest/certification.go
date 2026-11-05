@@ -311,6 +311,7 @@ func (h *Handler) ExportCertificationEvidence(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="certification-`+r.PathValue("id")+`.`+strings.ToLower(format)+`"`)
 	w.WriteHeader(http.StatusOK)
+	//nolint:gosec // G705: payload 是服务端生成的 CSV/JSON 导出内容，Content-Type 固定且以附件下载，不经 HTML 渲染。
 	_, _ = w.Write(payload)
 }
 

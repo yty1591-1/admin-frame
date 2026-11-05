@@ -183,9 +183,7 @@ func validateCertificationCampaignFilter(filter domain.CertificationCampaignFilt
 }
 
 // certificationCampaignFilterClause 生成 List / Count 的过滤子句。
-func certificationCampaignFilterClause(filter domain.CertificationCampaignFilter) (string, []any) {
-	clause := ""
-	var args []any
+func certificationCampaignFilterClause(filter domain.CertificationCampaignFilter) (clause string, args []any) {
 	if filter.Channel != "" {
 		clause += ` AND channel = ?`
 		args = append(args, string(filter.Channel))

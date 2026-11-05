@@ -611,7 +611,7 @@ var evidenceColumns = []string{
 // ExportEvidence 导出活动全量证据（CSV / JSON）。
 func (s *CertificationService) ExportEvidence(
 	ctx context.Context, campaignID string, scope CertificationScope, format, actor string,
-) ([]byte, string, error) {
+) (payload []byte, contentType string, err error) {
 	campaign, err := s.GetCampaign(ctx, campaignID, scope)
 	if err != nil {
 		return nil, "", err
@@ -646,8 +646,6 @@ func (s *CertificationService) ExportEvidence(
 		})
 	}
 
-	var payload []byte
-	contentType := "text/csv; charset=utf-8"
 	if format == "json" {
 		payload, err = json.Marshal(records)
 		if err != nil {
@@ -820,7 +818,7 @@ func (s *CertificationService) scopedCampaignFilter(
 }
 
 // encodeEvidenceCSV 使用标准库 csv 输出稳定列序。
-func encodeEvidenceCSV(records []EvidenceRecord) ([]byte, string, error) {
+func encodeEvidenceCSV(records []EvidenceRecord) (payload []byte, contentType string, err error) {
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
 	if err := writer.Write(evidenceColumns); err != nil {
