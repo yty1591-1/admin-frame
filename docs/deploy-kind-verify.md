@@ -245,6 +245,7 @@ not ready. status: Failed
 | `unsupported iam.mode: false` | values 里裸 `off` 被 YAML 1.1 解析成布尔；写成 `"off"` |
 | 冒烟连不上 8081 | 容器端口是 8080 |
 | c-api / worker CrashLoopBackOff，日志含 `NOTIFICATION_CALLBACK_SECRET` / `NOTIFICATION_BLACKLIST_SALT` | 通知运行时装配期 fail closed；`values-kind.yaml` 已从 Secret `admin-frame-notification` 注入两个变量，步骤 4 必须创建该 Secret（2026-11-05 实测） |
+| `ctr: open D:\tmp\... no such file`（Windows） | Windows 版 Docker 把 `/tmp/x.tar` 解析成 `D:\tmp`；`docker save -o` 用 `C:/...` 绝对路径，且 `docker cp`/`docker exec` 的容器内路径要加 `MSYS_NO_PATHCONV=1` 防止 Git Bash 改写 |
 
 ## 本轮发现
 

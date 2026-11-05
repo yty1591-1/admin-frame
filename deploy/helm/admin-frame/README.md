@@ -68,6 +68,7 @@ helm upgrade --install admin-frame deploy/helm/admin-frame \
 | 监控 | `serviceMonitor.enabled=true` 需要 Prometheus Operator CRD；规则见 `deploy/observability/prometheus` |
 | 网络 | `networkPolicy.enabled=true` 默认拒绝，放行 Ingress→API:8080 与 DNS/DB/Redis/OTel 出站 |
 | 配置生效 | Pod 模板带 `checksum/config` 注解，值为该 workload 渲染配置的 SHA-256；ConfigMap 内容变化会改变校验和并触发滚动重启。K8s 不会因为挂载的 ConfigMap 更新而自行重建 Pod，只看 `helm upgrade` 的 `deployed` 状态不足以确认进程已读到新配置（2026-11-05 实测） |
+| OIDC 端点 | `env=staging/prod` 启动期强制 `auth_url` / `token_url` / `redirect_uri` / `issuer` / `jwks_url` 全部为 HTTPS，无回环地址例外。本地演练用自签 CA + `SSL_CERT_FILE` 让容器信任 IdP，并用固定 hostname（如 `KC_HOSTNAME`）保证 id_token 的 `iss` 与 `issuer` 完全一致 |
 
 ## 4. 需要预先创建的 Secret
 
@@ -77,8 +78,9 @@ helm upgrade --install admin-frame deploy/helm/admin-frame \
 | `admin-frame-redis` | `password` | `ADMIN_FRAME_REDIS_PASSWORD` |
 | `admin-frame-jwt` | `public.pem` | RS256 公钥，挂载到 `/etc/admin-frame/jwt` |
 | `admin-frame-storage` | `access_key` / `secret_key` | 对象存储凭证 |
-| `admin-frame-identity` | `mfa_secret_key` | 启用身份域时必填（32 字节） |
+| `admin-frame-identity` | `hash_key` / `mfa_secret_key` | 身份域主密钥（各 32 字节）；`identitySecrets.enabled=true` 时注入 |
 | `admin-frame-notification` | `callback_secret` / `blacklist_salt` | c-api 回调验签（≥32 字节）与 worker 黑名单 HMAC 盐；两者缺失会在装配期直接拒绝启动 |
+| `admin-frame-oauth` | `client_secret` | C 端 OAuth provider 的客户端密钥，由 `provider.client_secret_env` 指定的环境变量读取 |
 
 密钥由 External Secrets / Vault / 云 Secrets Manager 同步，禁止 `--set` 明文传入。
 
