@@ -269,6 +269,46 @@ func TestSnapshotCacheNegativeTTL(t *testing.T) {
 	}
 }
 
+// TestSnapshotCacheInvalidationGuard 验证撤权墓碑期间拒绝回填，墓碑过期后恢复缓存。
+func TestSnapshotCacheInvalidationGuard(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC)}
+	l1 := newMemory(t, clock, 8)
+	l2 := newMemory(t, clock, 8)
+	cache, err := iampcache.NewSnapshotCache(iampcache.Config{
+		L1: l1, L2: l2, L1TTL: 3 * time.Second, L2TTL: 5 * time.Minute, NegativeTTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := "k"
+	if err := cache.Set(ctx, key, testSnapshot()); err != nil {
+		t.Fatalf("warm set: %v", err)
+	}
+	// 撤权：先写墓碑再删值。
+	if err := cache.Delete(ctx, key); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	// 在途回源（读取发生在撤权之前）在撤权后回填，必须被墓碑拦下。
+	if err := cache.Set(ctx, key, testSnapshot()); err != nil {
+		t.Fatalf("guarded set: %v", err)
+	}
+	if _, _, err := cache.Get(ctx, key); !errors.Is(err, pkgcache.ErrMiss) {
+		t.Fatalf("stale snapshot must not be backfilled during guard, err=%v", err)
+	}
+	if _, err := l2.Get(ctx, key); !errors.Is(err, pkgcache.ErrMiss) {
+		t.Fatalf("L2 must stay empty during guard, err=%v", err)
+	}
+	// 墓碑过期后恢复回填。
+	clock.Advance(iampcache.DefaultInvalidateGuard + time.Second)
+	if err := cache.Set(ctx, key, testSnapshot()); err != nil {
+		t.Fatalf("set after guard: %v", err)
+	}
+	if _, layer, err := cache.Get(ctx, key); err != nil || layer != iampcache.LayerL1 {
+		t.Fatalf("get after guard layer=%v err=%v", layer, err)
+	}
+}
+
 // TestSnapshotCacheSoftFailAndDelete 验证 L2 读错误降级、删除失败可观测。
 func TestSnapshotCacheSoftFailAndDelete(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC)}

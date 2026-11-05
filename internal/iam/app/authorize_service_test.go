@@ -263,6 +263,61 @@ func TestAuthorizeServiceSingleflight(t *testing.T) {
 	}
 }
 
+// TestAuthorizeServiceRevocationBlocksInflightBackfill 验证撤权期间的在途回源不会回填旧快照。
+func TestAuthorizeServiceRevocationBlocksInflightBackfill(t *testing.T) {
+	cache := newCache(t)
+	key, err := iampcache.SubjectKey("test", "biz", "m-1", "merchant_staff", "u-1")
+	if err != nil {
+		t.Fatalf("subject key: %v", err)
+	}
+	loading := make(chan struct{})
+	revoked := make(chan struct{})
+	fresh := &domain.SubjectSnapshot{
+		Channel: domain.ChannelBiz, SubjectType: domain.SubjectMerchantStaff,
+		SubjectID: "u-1", MerchantID: "m-1",
+	}
+	repo := &fakeRepository{}
+	repo.load = func(context.Context, domain.SubjectQuery) (*domain.SubjectSnapshot, error) {
+		select {
+		case <-loading:
+			// 第二次回源：返回撤权后的新状态。
+			return fresh, nil
+		default:
+			// 第一次回源：模拟读取发生在撤权之前，但结果在撤权之后才返回。
+			close(loading)
+			<-revoked
+			return bizSnapshot(), nil
+		}
+	}
+	service := newService(t, repo, func(cfg *app.AuthorizeConfig) { cfg.Cache = cache })
+
+	done := make(chan error, 1)
+	go func() {
+		_, loadErr := service.LoadSnapshot(context.Background(), bizPrincipal())
+		done <- loadErr
+	}()
+	<-loading
+	// 撤权：写墓碑并删除两级缓存。
+	if err := cache.Delete(context.Background(), key); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	close(revoked)
+	if err := <-done; err != nil {
+		t.Fatalf("inflight load: %v", err)
+	}
+	if _, _, err := cache.Get(context.Background(), key); !stderrors.Is(err, pkgcache.ErrMiss) {
+		t.Fatalf("revoked subject must not be cached, err=%v", err)
+	}
+	// 后续请求必须看到撤权后的新状态，而不是旧快照。
+	got, err := service.LoadSnapshot(context.Background(), bizPrincipal())
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if len(got.Permissions) != 0 {
+		t.Fatalf("permissions=%v want empty after revocation", got.Permissions)
+	}
+}
+
 // TestAuthorizeServiceCacheWriteFailureDoesNotFailRequest 验证缓存写失败不阻断鉴权。
 func TestAuthorizeServiceCacheWriteFailureDoesNotFailRequest(t *testing.T) {
 	repo := &fakeRepository{load: func(context.Context, domain.SubjectQuery) (*domain.SubjectSnapshot, error) {

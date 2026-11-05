@@ -21,6 +21,16 @@ import (
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
 )
 
+const (
+	// DefaultInvalidateGuard 是撤权墓碑的存活时间。
+	//
+	// 必须覆盖「DB 回源 + 写缓存」的最长在途耗时，否则在途的旧快照仍可能在撤权后回填。
+	// 回源超时默认 300ms，3s 留有一个数量级余量。
+	DefaultInvalidateGuard = 3 * time.Second
+	// invalidatedSuffix 是撤权墓碑 key 的后缀，与快照 key 同域但不参与解码。
+	invalidatedSuffix = ":invalidated"
+)
+
 // Layer 标识缓存层或回源来源，用于指标标签。
 type Layer string
 
@@ -72,6 +82,8 @@ type Config struct {
 	L2TTL time.Duration
 	// NegativeTTL 空快照过期时间（默认 30s），防止异常主体打穿到 DB。
 	NegativeTTL time.Duration
+	// InvalidateGuard 撤权墓碑存活时间；≤0 使用 DefaultInvalidateGuard。
+	InvalidateGuard time.Duration
 	// Observer 可选观测器。
 	Observer Observer
 }
@@ -83,6 +95,7 @@ type SnapshotCache struct {
 	l1TTL       time.Duration
 	l2TTL       time.Duration
 	negativeTTL time.Duration
+	guardTTL    time.Duration
 	observer    Observer
 }
 
@@ -101,12 +114,17 @@ func NewSnapshotCache(cfg Config) (*SnapshotCache, error) {
 	if observer == nil {
 		observer = NopObserver{}
 	}
+	guardTTL := cfg.InvalidateGuard
+	if guardTTL <= 0 {
+		guardTTL = DefaultInvalidateGuard
+	}
 	return &SnapshotCache{
 		l1:          cfg.L1,
 		l2:          cfg.L2,
 		l1TTL:       cfg.L1TTL,
 		l2TTL:       cfg.L2TTL,
 		negativeTTL: cfg.NegativeTTL,
+		guardTTL:    guardTTL,
 		observer:    observer,
 	}, nil
 }
@@ -183,6 +201,10 @@ func (c *SnapshotCache) backfillL1(ctx context.Context, key string, raw []byte) 
 
 // Set 写入 L1 与 L2；空快照使用 negative_ttl 缩短缓存时间。
 //
+// 撤权墓碑（Delete 写入，存活 InvalidateGuard）存在时拒绝回填：
+// 回源期间发生的撤权意味着本次快照可能早于最新授权状态，写入即形成最长 L2 TTL 的脏数据。
+// 写前与写后各检查一次墓碑：写前拦掉绝大多数竞态，写后清理「检查与写入之间发生撤权」的残余。
+//
 // 返回错误供调用方记录 / 告警，但鉴权路径不得因缓存写失败而拒绝请求。
 func (c *SnapshotCache) Set(ctx context.Context, key string, snapshot authz.Snapshot) error {
 	if err := c.ready(); err != nil {
@@ -190,6 +212,9 @@ func (c *SnapshotCache) Set(ctx context.Context, key string, snapshot authz.Snap
 	}
 	if key == "" {
 		return fmt.Errorf("%w: cache key is required", ErrInvalidConfig)
+	}
+	if c.invalidated(ctx, key) {
+		return nil
 	}
 	raw, err := Encode(snapshot)
 	if err != nil {
@@ -212,6 +237,12 @@ func (c *SnapshotCache) Set(ctx context.Context, key string, snapshot authz.Snap
 			}
 		}
 	}
+	if c.invalidated(ctx, key) {
+		// 撤权在本次回填期间发生：刚写入的快照可能已过期，立即清除两层。
+		if err := c.deleteLayers(ctx, key); err != nil {
+			c.observer.OnInvalidateFailure(LayerL2)
+		}
+	}
 	return first
 }
 
@@ -223,7 +254,11 @@ func (c *SnapshotCache) ttls(snapshot authz.Snapshot) (l1TTL, l2TTL time.Duratio
 	return c.l1TTL, c.l2TTL
 }
 
-// Delete 删除 L1 与 L2；删除失败必须可观测，且不阻断调用方。
+// Delete 删除 L1 与 L2，并写入存活 InvalidateGuard 的撤权墓碑。
+//
+// 必须先写墓碑再删值：墓碑是「禁止回填」的标记，顺序相反会留下
+// 「删值后、写墓碑前」的窗口，在途的旧回源结果就能把脏数据写回 L2。
+// 删除失败必须可观测，且不阻断调用方。
 func (c *SnapshotCache) Delete(ctx context.Context, key string) error {
 	if err := c.ready(); err != nil {
 		return err
@@ -231,6 +266,55 @@ func (c *SnapshotCache) Delete(ctx context.Context, key string) error {
 	if key == "" {
 		return nil
 	}
+	markerErr := c.markInvalidated(ctx, key)
+	if deleteErr := c.deleteLayers(ctx, key); deleteErr != nil {
+		return deleteErr
+	}
+	return markerErr
+}
+
+// markInvalidated 在两层写撤权墓碑；L2 是跨实例事实来源，写失败必须上报。
+func (c *SnapshotCache) markInvalidated(ctx context.Context, key string) error {
+	marker := key + invalidatedSuffix
+	var first error
+	if c.l1 != nil {
+		if err := c.l1.Set(ctx, marker, []byte("1"), c.guardTTL); err != nil {
+			c.observer.OnInvalidateFailure(LayerL1)
+			first = err
+		}
+	}
+	if c.l2 != nil {
+		if err := c.l2.Set(ctx, marker, []byte("1"), c.guardTTL); err != nil {
+			c.observer.OnInvalidateFailure(LayerL2)
+			if first == nil {
+				first = err
+			}
+		}
+	}
+	return first
+}
+
+// invalidated 报告 key 是否处于撤权保护期。
+//
+// 读错误按「无墓碑」处理：撤权标记不可用时不能让鉴权失败（fail-open 到回源），
+// 由 L1 / L2 自身的 TTL 兜底。
+func (c *SnapshotCache) invalidated(ctx context.Context, key string) bool {
+	marker := key + invalidatedSuffix
+	if c.l1 != nil {
+		if _, err := c.l1.Get(ctx, marker); err == nil {
+			return true
+		}
+	}
+	if c.l2 != nil {
+		if _, err := c.l2.Get(ctx, marker); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// deleteLayers 只删除两层的值，不写墓碑；供失效与回填后清理复用。
+func (c *SnapshotCache) deleteLayers(ctx context.Context, key string) error {
 	var first error
 	if c.l1 != nil {
 		if err := c.l1.Delete(ctx, key); err != nil {
