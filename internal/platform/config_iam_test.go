@@ -36,8 +36,22 @@ func iamBaseConfig() *platform.Config {
 				MaxBindingsPerSubject:     50,
 				MaxCustomRolesPerMerchant: 50,
 			},
+			Approval: platform.IAMApprovalConfig{Enabled: true},
 		},
 	}
+}
+
+// prodIdempotencyConfig 补齐生产 A/B 端强制项：幂等开启且缺键即拒绝。
+func prodIdempotencyConfig(cfg *platform.Config) *platform.Config {
+	cfg.Idempotency = platform.IdempotencyConfig{
+		Enabled:      true,
+		Driver:       platform.IdempotencyDriverRedis,
+		Header:       "Idempotency-Key",
+		TTL:          24 * time.Hour,
+		Required:     true,
+		MaxBodyBytes: 1 << 20,
+	}
+	return cfg
 }
 
 func TestValidateIAMDefaultsAndRules(t *testing.T) {
@@ -120,6 +134,7 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodRedis.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodRedis.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodRedis.Async.Enabled = true
+	prodIdempotencyConfig(prodRedis)
 	if err := prodRedis.Validate(); err != nil {
 		t.Fatalf("prod redis enforce: %v", err)
 	}
@@ -159,6 +174,7 @@ func TestValidateIAMEnforceRequiresAsync(t *testing.T) {
 	prodWithAsync.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	prodWithAsync.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodWithAsync.Async.Enabled = true
+	prodIdempotencyConfig(prodWithAsync)
 	if err := prodWithAsync.Validate(); err != nil {
 		t.Fatalf("prod enforce with async: %v", err)
 	}
@@ -317,8 +333,64 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodSQL.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodSQL.Async.Enabled = true
 	prodSQL.IAM.Approval.Enabled = true
+	prodIdempotencyConfig(prodSQL)
 	if err := prodSQL.Validate(); err != nil {
 		t.Fatalf("prod mysql approval: %v", err)
+	}
+}
+
+// TestValidateProdHardeningSwitches 验证 P1-3：生产 A/B 端三开关不可降级。
+func TestValidateProdHardeningSwitches(t *testing.T) {
+	shadow := prodBaseConfig()
+	shadow.IAM.Mode = platform.IAMModeShadow
+	if err := shadow.Validate(); err == nil || !strings.Contains(err.Error(), "iam.mode must be enforce") {
+		t.Fatalf("err=%v want enforce requirement", err)
+	}
+
+	noApproval := prodBaseConfig()
+	noApproval.IAM.Approval.Enabled = false
+	if err := noApproval.Validate(); err == nil || !strings.Contains(err.Error(), "iam.approval.enabled must be true") {
+		t.Fatalf("err=%v want approval requirement", err)
+	}
+
+	noIdempotency := prodBaseConfig()
+	noIdempotency.Idempotency.Enabled = false
+	if err := noIdempotency.Validate(); err == nil || !strings.Contains(err.Error(), "idempotency.enabled must be true") {
+		t.Fatalf("err=%v want idempotency enable requirement", err)
+	}
+
+	optionalKey := prodBaseConfig()
+	optionalKey.Idempotency.Required = false
+	if err := optionalKey.Validate(); err == nil || !strings.Contains(err.Error(), "idempotency.required must be true") {
+		t.Fatalf("err=%v want idempotency required requirement", err)
+	}
+}
+
+// TestValidateRejectsPublishedSampleSecrets 验证 P1-1：生产拒绝仓库已公开的演练密钥。
+func TestValidateRejectsPublishedSampleSecrets(t *testing.T) {
+	hashKey := prodBaseConfig()
+	hashKey.Identity.HashKey = "7a1ec0f4290851c052cee9fb3b972bc5a8c14297c65e4301bb320b3e6f426454"
+	if err := hashKey.Validate(); err == nil || !strings.Contains(err.Error(), "published sample secret") {
+		t.Fatalf("err=%v want sample hash key rejection", err)
+	}
+
+	dsn := prodBaseConfig()
+	dsn.DB.DSN = "root:root@tcp(localhost:3306)/admin_frame?parseTime=true&loc=UTC"
+	if err := dsn.Validate(); err == nil || !strings.Contains(err.Error(), "published local rehearsal DSN") {
+		t.Fatalf("err=%v want sample DSN rejection", err)
+	}
+
+	mfaKey := prodBaseConfig()
+	mfaKey.Identity.MFA.SecretKey = "a0c1663bfcdb9f923a4d7171709b6b0d36ab2298053a36f4c26cf7a3b5c17c8a"
+	if err := mfaKey.Validate(); err == nil || !strings.Contains(err.Error(), "published sample secret") {
+		t.Fatalf("err=%v want sample mfa key rejection", err)
+	}
+
+	// 非生产环境不受该限制，本地演练仍可使用样例值。
+	local := iamBaseConfig()
+	local.Identity.HashKey = "7a1ec0f4290851c052cee9fb3b972bc5a8c14297c65e4301bb320b3e6f426454"
+	if err := local.Validate(); err != nil {
+		t.Fatalf("local sample secret: %v", err)
 	}
 }
 

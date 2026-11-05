@@ -9,7 +9,7 @@ idempotency:
   driver: redis # memory | redis
   header: Idempotency-Key # 幂等键请求头；非空
   ttl: 24h # 幂等记录保留期，> 0
-  required: false # true 时缺幂等键的写请求会被直接拒绝
+  required: true # true 时缺幂等键的写请求会被直接拒绝（prod A/B 端启动强制）
   max_body_bytes: 1048576 # 参与去重比对的最大请求体（字节）
 
 # 请求限流：prod/staging 启用时必须 redis；fail_closed 在 Redis 故障时拒绝新请求。

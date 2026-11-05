@@ -19,6 +19,7 @@ func prodBaseConfig() *platform.Config {
 	cfg.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
 	cfg.Async.Enabled = true
 	cfg.ID = prodIDConfig()
+	prodIdempotencyConfig(cfg)
 	return cfg
 }
 
@@ -63,6 +64,7 @@ func TestValidateIDRules(t *testing.T) {
 	worker.ID = platform.IDConfig{}
 	worker.IAM.Mode = platform.IAMModeOff
 	worker.IAM.Cache.Driver = platform.IAMCacheDriverMemory
+	worker.IAM.Approval.Enabled = false
 	if err := worker.Validate(); err != nil {
 		t.Fatalf("worker prod config without node_id: %v", err)
 	}
@@ -80,6 +82,7 @@ func TestValidateIdempotencyRules(t *testing.T) {
 	prodRedis := prodBaseConfig()
 	prodRedis.Idempotency = platform.IdempotencyConfig{
 		Enabled: true, Driver: platform.IdempotencyDriverRedis, Header: "Idempotency-Key", TTL: 24 * time.Hour,
+		Required: true,
 	}
 	if err := prodRedis.Validate(); err != nil {
 		t.Fatalf("prod redis idempotency: %v", err)

@@ -63,6 +63,7 @@ func mfaProdConfig() *platform.Config {
 	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	cfg.IAM.Cache.Driver = platform.IAMCacheDriverRedis
 	cfg.Async.Enabled = true
+	prodIdempotencyConfig(cfg)
 	return cfg
 }
 

@@ -116,6 +116,26 @@ check_empty_field "configs/prod/modules/auth.yaml.example" "secret"
 check_empty_field "configs/prod/modules/identity.yaml.example" "hash_key"
 check_empty_field "configs/prod/modules/identity.yaml.example" "secret_key"
 
+echo "==> ENT-07: local prod-*.yaml must not reuse published samples"
+# configs/prod-<role>.yaml 不入库，但常被开发者当作「生产配置」复制使用。
+# 若存在则扫描仓库内已公开的演练密钥与本地 DSN，避免把样例值带进真实部署。
+shopt -s nullglob
+for file in configs/prod-*.yaml; do
+  for sample in \
+    "7a1ec0f4290851c052cee9fb3b972bc5a8c14297c65e4301bb320b3e6f426454" \
+    "a0c1663bfcdb9f923a4d7171709b6b0d36ab2298053a36f4c26cf7a3b5c17c8a" \
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" \
+    "ca24256120caa7c42ccaa14f43aa56c8a3d72b4b3cd2ac88b51ed2492101d753" \
+    "fd51b4775c2cc81269accb4e1c511c7f4393d159927c95c8" \
+    "AFPRODMNFN5QQZBGXY" \
+    "878d6f395e595e146fd395418bfe4d9cdf0a596cda8ecb88f85b4d95de402c77" \
+    "root:root@tcp(localhost:3306)"; do
+    if grep -qF "${sample}" "${file}"; then
+      fail "${file} 含仓库已公开的演练密钥 / 本地 DSN；生产必须由密钥托管注入"
+    fi
+  done
+done
+
 if [[ ${FAIL} -ne 0 ]]; then
   echo "FAILED: ENT-07 密钥托管门禁未通过" >&2
   exit 1
