@@ -67,6 +67,7 @@ helm upgrade --install admin-frame deploy/helm/admin-frame \
 | 迁移 | `migrate.enabled=true` 时由 Hook Job 执行 `migrate -action up`，镜像内含 `/app/migrations` |
 | 监控 | `serviceMonitor.enabled=true` 需要 Prometheus Operator CRD；规则见 `deploy/observability/prometheus` |
 | 网络 | `networkPolicy.enabled=true` 默认拒绝，放行 Ingress→API:8080 与 DNS/DB/Redis/OTel 出站 |
+| 配置生效 | Pod 模板带 `checksum/config` 注解，值为该 workload 渲染配置的 SHA-256；ConfigMap 内容变化会改变校验和并触发滚动重启。K8s 不会因为挂载的 ConfigMap 更新而自行重建 Pod，只看 `helm upgrade` 的 `deployed` 状态不足以确认进程已读到新配置（2026-11-05 实测） |
 
 ## 4. 需要预先创建的 Secret
 

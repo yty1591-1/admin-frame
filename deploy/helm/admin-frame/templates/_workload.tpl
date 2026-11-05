@@ -33,10 +33,13 @@ spec:
         {{- with $root.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $root.Values.podAnnotations }}
       annotations:
+        # ConfigMap 内容变化时必须滚动 Pod：K8s 不会因挂载的 ConfigMap 更新而重建 Pod，
+        # 否则 helm upgrade 显示 deployed，进程却仍在读旧配置（2026-11-05 OIDC issuer 演练实测）。
+        checksum/config: {{ include "admin-frame.appConfig" (dict "root" $root "key" $key) | sha256sum | quote }}
+        {{- with $root.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "admin-frame.serviceAccountName" $root }}
       {{- with $root.Values.imagePullSecrets }}
