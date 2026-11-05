@@ -270,7 +270,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("iam template service: %w", err)
 	}
 
-	applicator, err := app.NewChangeApplicator(roleSvc, bindingSvc, sodGroupSvc, roleConstraintSvc)
+	applicator, err := app.NewChangeApplicator(roleSvc, bindingSvc, sodGroupSvc, roleConstraintSvc, templateSvc)
 	if err != nil {
 		return nil, fmt.Errorf("iam change applicator: %w", err)
 	}

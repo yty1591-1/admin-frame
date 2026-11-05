@@ -100,6 +100,18 @@ const (
 	ChangeActionSodGroupDelete ChangeAction = "sod_group_delete"
 	// ChangeActionRoleConstraintUpdate 修改角色 RBAC2 约束（基数 + 前置角色）。
 	ChangeActionRoleConstraintUpdate ChangeAction = "role_constraint_update"
+	// ChangeActionRoleTemplateCreate 创建角色模板基线。
+	ChangeActionRoleTemplateCreate ChangeAction = "role_template_create"
+	// ChangeActionRoleTemplateUpdate 修改模板名称 / 说明 / 启停。
+	ChangeActionRoleTemplateUpdate ChangeAction = "role_template_update"
+	// ChangeActionRoleTemplateDelete 软删角色模板。
+	ChangeActionRoleTemplateDelete ChangeAction = "role_template_delete"
+	// ChangeActionRoleTemplatePermissionReplace 全量替换模板权限基线。
+	ChangeActionRoleTemplatePermissionReplace ChangeAction = "role_template_permission_replace"
+	// ChangeActionRoleTemplateInstantiate 按模板创建角色实例。
+	ChangeActionRoleTemplateInstantiate ChangeAction = "role_template_instantiate"
+	// ChangeActionRoleTemplateSync 把模板基线同步到漂移实例。
+	ChangeActionRoleTemplateSync ChangeAction = "role_template_sync"
 )
 
 // ChangeTargetType 是审批单指向的目标聚合类型，与 iam_change_request.target_type 一致。
@@ -114,6 +126,8 @@ const (
 	ChangeTargetIAMBreakglass ChangeTargetType = "iam_breakglass"
 	// ChangeTargetIAMSodGroup 互斥角色组（RBAC2）。
 	ChangeTargetIAMSodGroup ChangeTargetType = "iam_sod_group"
+	// ChangeTargetIAMRoleTemplate 角色模板基线。
+	ChangeTargetIAMRoleTemplate ChangeTargetType = "iam_role_template"
 )
 
 // TargetType 返回动作对应的目标类型；未知动作返回 40000。
@@ -129,6 +143,10 @@ func (a ChangeAction) TargetType() (ChangeTargetType, error) {
 		return ChangeTargetIAMBreakglass, nil
 	case ChangeActionSodGroupCreate, ChangeActionSodGroupUpdate, ChangeActionSodGroupDelete:
 		return ChangeTargetIAMSodGroup, nil
+	case ChangeActionRoleTemplateCreate, ChangeActionRoleTemplateUpdate,
+		ChangeActionRoleTemplateDelete, ChangeActionRoleTemplatePermissionReplace,
+		ChangeActionRoleTemplateInstantiate, ChangeActionRoleTemplateSync:
+		return ChangeTargetIAMRoleTemplate, nil
 	default:
 		return "", errInvalid(ErrInvalidChangeAction, "change action %q is not supported", string(a))
 	}
@@ -142,7 +160,8 @@ func (a ChangeAction) allowsEmptyTarget() bool {
 	switch a {
 	case ChangeActionRoleCreate, ChangeActionRoleClone,
 		ChangeActionBindingCreate, ChangeActionBreakglassRequest,
-		ChangeActionSodGroupCreate:
+		ChangeActionSodGroupCreate, ChangeActionRoleTemplateCreate,
+		ChangeActionRoleTemplateInstantiate:
 		return true
 	default:
 		return false

@@ -60,6 +60,42 @@ func TestApprovalRequiredRejectsDirectWrites(t *testing.T) {
 			method: http.MethodDelete,
 			path:   "/admin/v1/iam/bindings/1",
 		},
+		{
+			name:   "role_template_create",
+			method: http.MethodPost,
+			path:   "/admin/v1/iam/role-templates",
+			body:   json.RawMessage(`{"channel":"admin","code":"tpl","name":"tpl"}`),
+		},
+		{
+			name:   "role_template_update",
+			method: http.MethodPatch,
+			path:   "/admin/v1/iam/role-templates/1",
+			body:   json.RawMessage(`{"name":"x","version":1}`),
+		},
+		{
+			name:   "role_template_permission_replace",
+			method: http.MethodPut,
+			path:   "/admin/v1/iam/role-templates/1/permissions",
+			body:   json.RawMessage(`{"permissions":[],"version":1}`),
+		},
+		{
+			name:   "role_template_delete",
+			method: http.MethodDelete,
+			path:   "/admin/v1/iam/role-templates/1",
+			body:   json.RawMessage(`{"version":1}`),
+		},
+		{
+			name:   "role_template_sync",
+			method: http.MethodPost,
+			path:   "/admin/v1/iam/role-templates/1/sync",
+			body:   json.RawMessage(`{"reason":"sync"}`),
+		},
+		{
+			name:   "role_template_instantiate",
+			method: http.MethodPost,
+			path:   "/admin/v1/iam/role-templates/1/instantiate",
+			body:   json.RawMessage(`{"code":"reader","name":"reader"}`),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,8 +109,15 @@ func TestApprovalRequiredRejectsDirectWrites(t *testing.T) {
 		})
 	}
 
+	// dry-run 只预览漂移，不改变授权，因此不受审批开关拦截。
+	rec, env := rt.do(t, http.MethodPost, "/admin/v1/iam/role-templates/1/sync",
+		json.RawMessage(`{"dry_run":true,"reason":"preview"}`), nil)
+	if env.Code == apperr.CodeConflict {
+		t.Fatalf("dry-run must not require approval: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
 	// 拦截在用例之前生效：没有任何角色被写入。
-	rec, env := rt.do(t, http.MethodGet, "/admin/v1/iam/roles", nil, nil)
+	rec, env = rt.do(t, http.MethodGet, "/admin/v1/iam/roles", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
 	}

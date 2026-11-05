@@ -142,6 +142,9 @@ func (h *Handler) CreateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateCreate) {
+		return
+	}
 	var req CreateRoleTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -200,6 +203,9 @@ func (h *Handler) UpdateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateUpdate) {
+		return
+	}
 	var req UpdateRoleTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.FromError(w, err, traceID)
@@ -235,6 +241,9 @@ func (h *Handler) ReplaceRoleTemplatePermissions(w http.ResponseWriter, r *http.
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplatePermissionReplace) {
 		return
 	}
 	var req ReplaceTemplatePermissionsRequest
@@ -280,6 +289,9 @@ func (h *Handler) DeleteRoleTemplate(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateDelete) {
 		return
 	}
 	var req DeleteRoleRequest
@@ -338,6 +350,10 @@ func (h *Handler) SyncRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.FromError(w, err, traceID)
 		return
 	}
+	// dry-run 只做漂移预览，不改变授权；只有真实同步才强制走审批。
+	if !req.DryRun && h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateSync) {
+		return
+	}
 	drift, err := h.templates.SyncTemplate(r.Context(), app.SyncTemplateCommand{
 		TemplateID: r.PathValue("id"),
 		Actor:      principal.SubjectID,
@@ -361,6 +377,9 @@ func (h *Handler) InstantiateRoleTemplate(w http.ResponseWriter, r *http.Request
 	principal, err := h.principal(r)
 	if err != nil {
 		httpx.FromError(w, err, traceID)
+		return
+	}
+	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateInstantiate) {
 		return
 	}
 	var req InstantiateTemplateRequest

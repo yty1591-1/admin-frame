@@ -484,24 +484,25 @@ type RoleChangeApplicator struct {
 	bindings        *BindingService
 	sodGroups       *SodGroupService
 	roleConstraints *RoleConstraintService
+	templates       *TemplateService
 }
 
 // NewRoleChangeApplicator 构造角色 / 绑定审批执行器（不含互斥组与约束能力，兼容既有装配）。
 func NewRoleChangeApplicator(roles *RoleService, bindings *BindingService) (*RoleChangeApplicator, error) {
-	return NewChangeApplicator(roles, bindings, nil, nil)
+	return NewChangeApplicator(roles, bindings, nil, nil, nil)
 }
 
-// NewChangeApplicator 构造覆盖角色 / 绑定 / 互斥组 / 角色约束的审批执行器。
+// NewChangeApplicator 构造覆盖角色 / 绑定 / 互斥组 / 角色约束 / 角色模板的审批执行器。
 func NewChangeApplicator(
 	roles *RoleService, bindings *BindingService, sodGroups *SodGroupService,
-	roleConstraints *RoleConstraintService,
+	roleConstraints *RoleConstraintService, templates *TemplateService,
 ) (*RoleChangeApplicator, error) {
 	if roles == nil || bindings == nil {
 		return nil, apperr.Internal("iam role and binding services are required for approval", nil)
 	}
 	return &RoleChangeApplicator{
 		roles: roles, bindings: bindings,
-		sodGroups: sodGroups, roleConstraints: roleConstraints,
+		sodGroups: sodGroups, roleConstraints: roleConstraints, templates: templates,
 	}, nil
 }
 
@@ -563,6 +564,43 @@ type sodGroupUpdatePayload struct {
 	MaxActiveRoles *int      `json:"max_active_roles"`
 	RoleIDs        *[]string `json:"role_ids"`
 	Status         *string   `json:"status"`
+}
+
+// roleTemplateCreatePayload 是 role_template_create 动作的载荷。
+//
+// channel 只允许 admin / biz：A 端可定义两端模板，B 端只能定义本端模板。
+type roleTemplateCreatePayload struct {
+	Channel     string             `json:"channel"`
+	Code        string             `json:"code"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Permissions []string           `json:"permissions"`
+	DataScopes  []dataScopePayload `json:"data_scopes"`
+}
+
+// roleTemplateUpdatePayload 是 role_template_update 动作的载荷；nil 表示不修改。
+type roleTemplateUpdatePayload struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Status      *string `json:"status"`
+}
+
+// roleTemplatePermissionReplacePayload 是 role_template_permission_replace 动作的载荷。
+type roleTemplatePermissionReplacePayload struct {
+	Permissions []string            `json:"permissions"`
+	DataScopes  *[]dataScopePayload `json:"data_scopes"`
+}
+
+// roleTemplateInstantiatePayload 是 role_template_instantiate 动作的载荷。
+//
+// 模板 ID 放在载荷而不是 target_id：新建类动作的 target_id 留给应用后回填的角色 ID，
+// 审计才能从审批单追到实际落库的角色。
+type roleTemplateInstantiatePayload struct {
+	TemplateID string `json:"template_id"`
+	Channel    string `json:"channel"`
+	Scope      string `json:"scope_type"`
+	Code       string `json:"code"`
+	Name       string `json:"name"`
 }
 
 // breakglassRequestPayload 是 breakglass_request 动作的载荷。
@@ -641,6 +679,18 @@ func (a *RoleChangeApplicator) Apply(ctx context.Context, request *domain.Change
 		return "", a.applySodGroupUpdate(ctx, request, actor)
 	case domain.ChangeActionSodGroupDelete:
 		return "", a.applySodGroupDelete(ctx, request, actor)
+	case domain.ChangeActionRoleTemplateCreate:
+		return a.applyRoleTemplateCreate(ctx, request, actor)
+	case domain.ChangeActionRoleTemplateUpdate:
+		return "", a.applyRoleTemplateUpdate(ctx, request, actor)
+	case domain.ChangeActionRoleTemplateDelete:
+		return "", a.applyRoleTemplateDelete(ctx, request, actor)
+	case domain.ChangeActionRoleTemplatePermissionReplace:
+		return "", a.applyRoleTemplatePermissionReplace(ctx, request, actor)
+	case domain.ChangeActionRoleTemplateInstantiate:
+		return a.applyRoleTemplateInstantiate(ctx, request, actor)
+	case domain.ChangeActionRoleTemplateSync:
+		return "", a.applyRoleTemplateSync(ctx, request, actor)
 	default:
 		return "", apperr.Internal("unsupported change action "+string(request.Action), nil)
 	}
@@ -988,6 +1038,238 @@ func (a *RoleChangeApplicator) applySodGroupDelete(
 		Actor:      actor,
 		Reason:     request.Reason,
 	})
+}
+
+// applyRoleTemplateCreate 创建模板基线并返回新模板 ID。
+func (a *RoleChangeApplicator) applyRoleTemplateCreate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) (string, error) {
+	if a.templates == nil {
+		return "", apperr.Internal("role template applicator is not configured", nil)
+	}
+	var payload roleTemplateCreatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return "", err
+	}
+	channel, err := templateChannelForChange(request, payload.Channel)
+	if err != nil {
+		return "", err
+	}
+	permissions, err := permissionCodesFromStrings(payload.Permissions)
+	if err != nil {
+		return "", err
+	}
+	scopes, err := dataScopesFromPayload(payload.DataScopes)
+	if err != nil {
+		return "", err
+	}
+	template, err := a.templates.CreateTemplate(ctx, CreateTemplateCommand{
+		Channel:     channel,
+		Code:        payload.Code,
+		Name:        payload.Name,
+		Description: payload.Description,
+		Permissions: permissions,
+		DataScopes:  scopes,
+		Actor:       actor,
+	})
+	if err != nil {
+		return "", err
+	}
+	return template.ID, nil
+}
+
+// applyRoleTemplateUpdate 应用模板名称 / 说明 / 启停变更。
+func (a *RoleChangeApplicator) applyRoleTemplateUpdate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.templates == nil {
+		return apperr.Internal("role template applicator is not configured", nil)
+	}
+	var payload roleTemplateUpdatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return err
+	}
+	if payload.Name == nil && payload.Description == nil && payload.Status == nil {
+		return apperr.BadRequest("no fields to update")
+	}
+	template, err := a.loadTemplateForChange(ctx, request)
+	if err != nil {
+		return err
+	}
+	_, err = a.templates.UpdateTemplate(ctx, UpdateTemplateCommand{
+		ID:          template.ID,
+		Name:        payload.Name,
+		Description: payload.Description,
+		Status:      payload.Status,
+		Version:     template.Version,
+		Actor:       actor,
+	})
+	return err
+}
+
+// applyRoleTemplateDelete 软删模板。
+func (a *RoleChangeApplicator) applyRoleTemplateDelete(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.templates == nil {
+		return apperr.Internal("role template applicator is not configured", nil)
+	}
+	template, err := a.loadTemplateForChange(ctx, request)
+	if err != nil {
+		return err
+	}
+	return a.templates.DeleteTemplate(ctx, DeleteTemplateCommand{
+		ID:      template.ID,
+		Version: template.Version,
+		Actor:   actor,
+		Reason:  request.Reason,
+	})
+}
+
+// applyRoleTemplatePermissionReplace 全量替换模板权限与（可选）数据范围。
+func (a *RoleChangeApplicator) applyRoleTemplatePermissionReplace(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.templates == nil {
+		return apperr.Internal("role template applicator is not configured", nil)
+	}
+	var payload roleTemplatePermissionReplacePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return err
+	}
+	permissions, err := permissionCodesFromStrings(payload.Permissions)
+	if err != nil {
+		return err
+	}
+	template, err := a.loadTemplateForChange(ctx, request)
+	if err != nil {
+		return err
+	}
+	var scopes *[]domain.DataScope
+	if payload.DataScopes != nil {
+		converted, convertErr := dataScopesFromPayload(*payload.DataScopes)
+		if convertErr != nil {
+			return convertErr
+		}
+		scopes = &converted
+	}
+	_, err = a.templates.ReplaceTemplatePermissions(ctx, ReplaceTemplatePermissionsCommand{
+		ID:          template.ID,
+		Permissions: permissions,
+		DataScopes:  scopes,
+		Version:     template.Version,
+		Actor:       actor,
+	})
+	return err
+}
+
+// applyRoleTemplateInstantiate 按模板创建角色实例并返回新角色 ID。
+func (a *RoleChangeApplicator) applyRoleTemplateInstantiate(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) (string, error) {
+	if a.templates == nil {
+		return "", apperr.Internal("role template applicator is not configured", nil)
+	}
+	var payload roleTemplateInstantiatePayload
+	if err := decodeChangePayload(request, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.TemplateID) == "" {
+		return "", apperr.BadRequest("template_id is required")
+	}
+	channel, err := templateChannelForChange(request, payload.Channel)
+	if err != nil {
+		return "", err
+	}
+	// 先按请求作用域加载模板：B 端不能借审批单实例化它端模板。
+	template, err := a.loadTemplateForInstantiate(ctx, request, payload.TemplateID)
+	if err != nil {
+		return "", err
+	}
+	if template.Channel != channel {
+		return "", apperr.BadRequest("role template channel does not match request channel")
+	}
+	scope := domain.RoleScopeType(strings.TrimSpace(payload.Scope))
+	merchantID := request.MerchantID
+	if channel == domain.ChannelBiz {
+		if scope != "" && scope != domain.RoleScopeMerchant {
+			return "", apperr.BadRequest("channel biz may only instantiate merchant roles")
+		}
+		scope = domain.RoleScopeMerchant
+	} else if scope == "" {
+		scope = domain.RoleScopePlatform
+	}
+	role, err := a.templates.Instantiate(ctx, InstantiateTemplateCommand{
+		TemplateID: template.ID,
+		Channel:    channel,
+		Scope:      scope,
+		MerchantID: merchantID,
+		Code:       payload.Code,
+		Name:       payload.Name,
+		Actor:      actor,
+		Reason:     request.Reason,
+	})
+	if err != nil {
+		return "", err
+	}
+	return role.ID, nil
+}
+
+// applyRoleTemplateSync 把模板基线同步到全部漂移实例；审批已通过，不允许 dry-run。
+func (a *RoleChangeApplicator) applyRoleTemplateSync(
+	ctx context.Context, request *domain.ChangeRequest, actor string,
+) error {
+	if a.templates == nil {
+		return apperr.Internal("role template applicator is not configured", nil)
+	}
+	template, err := a.loadTemplateForChange(ctx, request)
+	if err != nil {
+		return err
+	}
+	_, err = a.templates.SyncTemplate(ctx, SyncTemplateCommand{
+		TemplateID: template.ID,
+		Actor:      actor,
+		Reason:     request.Reason,
+	})
+	return err
+}
+
+// loadTemplateForChange 按审批单作用域加载目标模板：B 端只能命中本端模板。
+func (a *RoleChangeApplicator) loadTemplateForChange(
+	ctx context.Context, request *domain.ChangeRequest,
+) (*domain.RoleTemplate, error) {
+	return a.loadTemplateForInstantiate(ctx, request, request.TargetID)
+}
+
+// loadTemplateForInstantiate 按指定模板 ID 加载并校验端别可见性。
+func (a *RoleChangeApplicator) loadTemplateForInstantiate(
+	ctx context.Context, request *domain.ChangeRequest, templateID string,
+) (*domain.RoleTemplate, error) {
+	visibility := domain.Channel("")
+	if request.Channel == domain.ChannelBiz {
+		visibility = domain.ChannelBiz
+	}
+	return a.templates.GetTemplate(ctx, templateID, visibility)
+}
+
+// templateChannelForChange 解析模板动作的端别。
+//
+// B 端审批单只能作用于本端模板；A 端可维护两端模板，缺省为本端（admin）。
+func templateChannelForChange(request *domain.ChangeRequest, requested string) (domain.Channel, error) {
+	channel := domain.Channel(strings.TrimSpace(requested))
+	if request.Channel == domain.ChannelBiz {
+		if channel != "" && channel != domain.ChannelBiz {
+			return "", apperr.Forbidden("channel biz may only operate on biz role templates")
+		}
+		return domain.ChannelBiz, nil
+	}
+	if channel == "" {
+		channel = domain.ChannelAdmin
+	}
+	if channel != domain.ChannelAdmin && channel != domain.ChannelBiz {
+		return "", apperr.BadRequest("role template channel is invalid")
+	}
+	return channel, nil
 }
 
 // RevokeBreakglass 解绑破玻璃绑定；不存在时按幂等成功处理。

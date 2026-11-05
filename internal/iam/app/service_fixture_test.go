@@ -239,7 +239,9 @@ func buildFixture(t *testing.T, uow app.UnitOfWork, mode app.ConstraintMode) *fi
 	if err != nil {
 		t.Fatalf("NewTemplateService: %v", err)
 	}
-	applicator, err := app.NewChangeApplicator(f.roleSvc, f.bindingSvc, f.sodSvc, f.roleConstraintSvc)
+	applicator, err := app.NewChangeApplicator(
+		f.roleSvc, f.bindingSvc, f.sodSvc, f.roleConstraintSvc, f.templateSvc,
+	)
 	if err != nil {
 		t.Fatalf("NewRoleChangeApplicator: %v", err)
 	}
