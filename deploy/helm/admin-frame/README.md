@@ -77,6 +77,7 @@ helm upgrade --install admin-frame deploy/helm/admin-frame \
 | `admin-frame-jwt` | `public.pem` | RS256 公钥，挂载到 `/etc/admin-frame/jwt` |
 | `admin-frame-storage` | `access_key` / `secret_key` | 对象存储凭证 |
 | `admin-frame-identity` | `mfa_secret_key` | 启用身份域时必填（32 字节） |
+| `admin-frame-notification` | `callback_secret` / `blacklist_salt` | c-api 回调验签（≥32 字节）与 worker 黑名单 HMAC 盐；两者缺失会在装配期直接拒绝启动 |
 
 密钥由 External Secrets / Vault / 云 Secrets Manager 同步，禁止 `--set` 明文传入。
 

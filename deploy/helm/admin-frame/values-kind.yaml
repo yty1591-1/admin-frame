@@ -74,6 +74,19 @@ env:
         name: admin-frame-redis
         key: password
         optional: true
+  # NT-07 / 通知黑名单：c-api 回调验签密钥（>=32 字节）与 worker 黑名单盐
+  # 都是启动期 fail-closed 校验项，缺失会直接 CrashLoopBackOff。
+  # 仅本机 kind 演练用，值来自 Secret admin-frame-notification（见部署文档）。
+  - name: ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: callback_secret
+  - name: ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: blacklist_salt
 
 workloads:
   admin:

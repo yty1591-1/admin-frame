@@ -130,6 +130,8 @@
 | `ADMIN_FRAME_ASYNC_BROKER_URL` | `async.broker.url` | **是** | `async.driver=nats` 时必填；可含账号口令，禁止写入 yaml；prod/staging 必须 `tls://`/`wss://` |
 | `ALIYUN_SMS_ACCESS_KEY_ID` / `ALIYUN_SMS_ACCESS_KEY_SECRET` | 短信驱动凭证 | **是** | 无 `ADMIN_FRAME_` 前缀，由驱动直接读取 |
 | `<PROVIDER>_OAUTH_CLIENT_SECRET` | `identity.oauth.providers[].client_secret_env` | **是** | 配置只写变量名，值由 Secret 注入 |
+| `ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET` | 通知回调验签（装配期读取） | **是** | ≥32 字节，c-api 注册供应商回调端点前校验 |
+| `ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT` | 通知黑名单 HMAC（装配期读取） | **是** | 非空；worker 构造黑名单哈希器前校验，空值可离线枚举 |
 
 密钥注入方式：Kubernetes Secret / External Secrets / Vault / 云 Secrets Manager。禁止写入镜像、仓库或 ConfigMap 明文。
 

@@ -116,6 +116,18 @@ env:
         name: admin-frame-identity
         key: mfa_secret_key
         optional: true
+  # 通知运行时装配期 fail closed：c-api 回调验签密钥（>=32 字节）与 worker 黑名单盐。
+  # 密钥由外部密钥管理同步到 Secret，禁止写入 values 明文。
+  - name: ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: callback_secret
+  - name: ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: blacklist_salt
 
 workloads:
   admin:

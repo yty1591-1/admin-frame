@@ -77,7 +77,8 @@ openssl rsa -in /tmp/jwt.key -pubout -out /tmp/jwt.pub
 kubectl -n admin-frame create secret generic admin-frame-jwt --from-file=public.pem=/tmp/jwt.pub
 ```
 
-MySQL / Redis 与两个 Secret：
+MySQL / Redis 与三个 Secret（`admin-frame-notification` 的两个值仅供本机 kind 演练，
+禁止用于任何非本地环境；staging / prod 必须由外部密钥管理注入）：
 
 ```yaml
 apiVersion: v1
@@ -90,6 +91,15 @@ apiVersion: v1
 kind: Secret
 metadata: {name: admin-frame-redis, namespace: admin-frame}
 stringData: {password: ""}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: admin-frame-notification, namespace: admin-frame}
+stringData:
+  # c-api 回调验签要求 >=32 字节；worker 黑名单盐只要求非空。
+  # 二者缺失会在启动期 fail closed（2026-11-05 kind 实测为 CrashLoopBackOff）。
+  callback_secret: "kind-local-callback-secret-0123456789abcdef"
+  blacklist_salt: "kind-local-blacklist-salt"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -234,6 +244,7 @@ not ready. status: Failed
 | `cannot reuse a name that is still in use` | 上次失败的 release 未清理；`helm uninstall <name>` 后重装 |
 | `unsupported iam.mode: false` | values 里裸 `off` 被 YAML 1.1 解析成布尔；写成 `"off"` |
 | 冒烟连不上 8081 | 容器端口是 8080 |
+| c-api / worker CrashLoopBackOff，日志含 `NOTIFICATION_CALLBACK_SECRET` / `NOTIFICATION_BLACKLIST_SALT` | 通知运行时装配期 fail closed；`values-kind.yaml` 已从 Secret `admin-frame-notification` 注入两个变量，步骤 4 必须创建该 Secret（2026-11-05 实测） |
 
 ## 本轮发现
 
