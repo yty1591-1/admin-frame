@@ -2,6 +2,7 @@ package idempotency
 
 import (
 	"bytes"
+	stderrors "errors"
 	"io"
 	"net/http"
 	"strings"
@@ -11,6 +12,9 @@ import (
 )
 
 const defaultMaxBody = 1 << 20 // 1 MiB
+
+// DegradedHeader 标记本次写请求在幂等存储不可用时被降级放行（P1-4）。
+const DegradedHeader = "X-Idempotency-Degraded"
 
 // Config 配置幂等 HTTP 中间件。
 type Config struct {
@@ -30,6 +34,9 @@ type Config struct {
 	Scope func(*http.Request) string
 	// OnError 解析/冲突/存储错误时的响应；nil 时写纯文本 HTTP 状态。
 	OnError func(w http.ResponseWriter, r *http.Request, err error)
+	// DegradeOnError 为 true 时，幂等存储不可用仍放行请求，并写入 DegradedHeader（P1-4）。
+	// 只对存储不可用生效；缺键 / 键非法 / 指纹冲突仍按原策略拒绝。
+	DegradeOnError bool
 }
 
 func (c Config) normalize() Config {
@@ -65,11 +72,6 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if cfg.Store == nil {
-				writeErr(cfg, w, r, ErrStoreUnavailable)
-				return
-			}
-
 			clientKey := strings.TrimSpace(r.Header.Get(cfg.Header))
 			if clientKey == "" {
 				if cfg.Required {
@@ -81,6 +83,10 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 			}
 			if err := ValidateKey(clientKey); err != nil {
 				writeErr(cfg, w, r, err)
+				return
+			}
+			if cfg.Store == nil {
+				degradeOrFail(cfg, w, r, next, ErrStoreUnavailable)
 				return
 			}
 
@@ -99,7 +105,7 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 
 			rec, created, err := cfg.Store.Begin(r.Context(), storeKey, fp, cfg.TTL)
 			if err != nil {
-				writeErr(cfg, w, r, err)
+				degradeOrFail(cfg, w, r, next, err)
 				return
 			}
 			if !created {
@@ -130,6 +136,12 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 			}
 			if cerr := cfg.Store.Complete(r.Context(), storeKey, fp, status, capture.Header(), capture.buf.Bytes(), cfg.TTL); cerr != nil {
 				_ = cfg.Store.Release(r.Context(), storeKey, fp)
+				if cfg.DegradeOnError && stderrors.Is(cerr, ErrStoreUnavailable) {
+					// 业务已执行成功，不能因回写失败把 2xx 改写成 5xx；放行原响应并标记。
+					capture.Header().Set(DegradedHeader, "true")
+					capture.flush()
+					return
+				}
 				writeErr(cfg, w, r, cerr)
 				return
 			}
@@ -162,4 +174,14 @@ func writeErr(cfg Config, w http.ResponseWriter, r *http.Request, err error) {
 	}
 	code := errors.HTTPStatusOf(err)
 	http.Error(w, err.Error(), code)
+}
+
+// degradeOrFail 在存储不可用且开启降级时放行并打标记，否则沿用错误响应。
+func degradeOrFail(cfg Config, w http.ResponseWriter, r *http.Request, next http.Handler, err error) {
+	if cfg.DegradeOnError && stderrors.Is(err, ErrStoreUnavailable) {
+		w.Header().Set(DegradedHeader, "true")
+		next.ServeHTTP(w, r)
+		return
+	}
+	writeErr(cfg, w, r, err)
 }

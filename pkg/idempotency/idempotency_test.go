@@ -292,3 +292,60 @@ func TestCompositeKey(t *testing.T) {
 		t.Fatalf("got=%s", got)
 	}
 }
+
+// unavailableStore 模拟 Redis 不可用的幂等存储。
+type unavailableStore struct{}
+
+func (unavailableStore) Begin(context.Context, string, string, time.Duration) (idempotency.Record, bool, error) {
+	return idempotency.Record{}, false, idempotency.ErrStoreUnavailable
+}
+
+func (unavailableStore) Complete(context.Context, string, string, int, http.Header, []byte, time.Duration) error {
+	return idempotency.ErrStoreUnavailable
+}
+
+func (unavailableStore) Release(context.Context, string, string) error {
+	return idempotency.ErrStoreUnavailable
+}
+
+// TestMiddlewareDegradesWhenStoreUnavailable 验证 P1-4：存储故障降级放行并打标记。
+func TestMiddlewareDegradesWhenStoreUnavailable(t *testing.T) {
+	var ran bool
+	h := idempotency.Middleware(idempotency.Config{
+		Store:          unavailableStore{},
+		Required:       true,
+		Header:         idempotency.Header,
+		DegradeOnError: true,
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		ran = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("{}"))
+	req.Header.Set(idempotency.Header, "k1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if !ran || rr.Code != http.StatusCreated {
+		t.Fatalf("ran=%v status=%d want 201", ran, rr.Code)
+	}
+	if rr.Header().Get(idempotency.DegradedHeader) != "true" {
+		t.Fatalf("missing %s header", idempotency.DegradedHeader)
+	}
+}
+
+// TestMiddlewareDegradeKeepsMissingKeyRejected 验证降级不放松幂等键契约。
+func TestMiddlewareDegradeKeepsMissingKeyRejected(t *testing.T) {
+	h := idempotency.Middleware(idempotency.Config{
+		Store:          unavailableStore{},
+		Required:       true,
+		Header:         idempotency.Header,
+		DegradeOnError: true,
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("{}")))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 for missing key", rr.Code)
+	}
+}

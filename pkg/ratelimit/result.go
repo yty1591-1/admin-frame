@@ -18,6 +18,9 @@ type Result struct {
 	// RetryAfter 为建议等待时长（拒绝时 >0；放行时通常为 0）。
 	// 可映射为 HTTP Retry-After（秒，向上取整由调用方负责）。
 	RetryAfter time.Duration
+	// Degraded 为 true 表示本次判定来自降级路径（共享存储不可用），
+	// 放行但不具备跨副本精确配额；调用方应记录告警指标。
+	Degraded bool
 }
 
 // Err 在 Allowed 时返回 nil，否则返回 ErrLimited。

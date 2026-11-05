@@ -735,6 +735,9 @@ type IdempotencyConfig struct {
 	Required bool `yaml:"required"`
 	// MaxBodyBytes 参与指纹与缓存的请求体上限，默认 1 MiB。
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// DegradeOnError 幂等存储不可用时是否放行并标记（P1-4）；
+	// 默认 false（失败关闭），生产建议 true 以避免 Redis 单点放大为全站写不可用。
+	DegradeOnError bool `yaml:"degrade_on_error"`
 }
 
 // 限流驱动与失败策略。
@@ -1016,6 +1019,9 @@ type RateLimitConfig struct {
 	Burst int `yaml:"burst"`
 	// IdleTTL 空闲桶回收阈值；0 时使用 10m。
 	IdleTTL time.Duration `yaml:"idle_ttl"`
+	// DegradeOnFailure fail_closed 下 Redis 连续故障后是否进入宽松降级窗口；
+	// 降级放行会带 Degraded 标记，供告警而不是静默失效（P1-4）。
+	DegradeOnFailure bool `yaml:"degrade_on_failure"`
 }
 
 // CORSConfig 跨域配置；生产须显式 allow_origins，禁止反射任意 Origin。

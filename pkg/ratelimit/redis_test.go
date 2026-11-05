@@ -111,3 +111,30 @@ func TestRedisKeyedFailureMode(t *testing.T) {
 		t.Fatalf("fail_closed must reject when redis is down: %+v", result)
 	}
 }
+
+// TestRedisKeyedDegradesAfterConsecutiveFailures 验证 P1-4：连续故障后熔断降级。
+func TestRedisKeyedDegradesAfterConsecutiveFailures(t *testing.T) {
+	keyed, server := newRedisKeyed(t, ratelimit.RedisKeyedConfig{
+		RPS:              1,
+		Burst:            1,
+		FailureMode:      ratelimit.RedisFailureClosed,
+		DegradeOnFailure: true,
+		DegradeAfter:     3,
+		DegradeCooldown:  time.Minute,
+	})
+	server.Close()
+
+	// 前两次仍失败关闭，第三次起进入降级窗口：放行并带 Degraded 标记。
+	for i := 1; i <= 5; i++ {
+		result := keyed.Allow("channel")
+		if i < 3 {
+			if result.Allowed {
+				t.Fatalf("iteration %d must stay fail_closed before threshold: %+v", i, result)
+			}
+			continue
+		}
+		if !result.Allowed || !result.Degraded {
+			t.Fatalf("iteration %d must degrade and allow: %+v", i, result)
+		}
+	}
+}

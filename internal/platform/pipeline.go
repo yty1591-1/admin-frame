@@ -148,10 +148,11 @@ func newRateLimit(
 		buckets = keyed
 	case RateLimitDriverRedis:
 		shared, err := ratelimit.NewRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
-			RPS:         cfg.RPS,
-			Burst:       cfg.Burst,
-			IdleTTL:     cfg.IdleTTL,
-			FailureMode: cfg.FailureMode,
+			RPS:              cfg.RPS,
+			Burst:            cfg.Burst,
+			IdleTTL:          cfg.IdleTTL,
+			FailureMode:      cfg.FailureMode,
+			DegradeOnFailure: cfg.DegradeOnFailure,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("platform: redis rate limiter: %w", err)
@@ -191,11 +192,12 @@ func newIdempotency(cfg IdempotencyConfig, redisClient *redis.Client) (middlewar
 		return nil, fmt.Errorf("platform: unsupported idempotency.driver %q", cfg.Driver)
 	}
 	return idempotency.Middleware(idempotency.Config{
-		Store:        store,
-		TTL:          cfg.TTL,
-		Header:       cfg.Header,
-		Required:     cfg.Required,
-		MaxBodyBytes: cfg.MaxBodyBytes,
+		Store:          store,
+		TTL:            cfg.TTL,
+		Header:         cfg.Header,
+		Required:       cfg.Required,
+		MaxBodyBytes:   cfg.MaxBodyBytes,
+		DegradeOnError: cfg.DegradeOnError,
 		OnError: func(w http.ResponseWriter, r *http.Request, err error) {
 			httpx.FromError(w, err, httpx.TraceIDFromContext(r.Context()))
 		},

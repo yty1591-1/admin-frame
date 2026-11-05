@@ -33,6 +33,10 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			res := allow(cfg, r)
 			if res.Allowed {
+				if res.Degraded {
+					// 共享存储故障期间的放行必须可观测：网关/前端据此告警而不是静默。
+					w.Header().Set("X-RateLimit-Degraded", "true")
+				}
 				next.ServeHTTP(w, r)
 				return
 			}

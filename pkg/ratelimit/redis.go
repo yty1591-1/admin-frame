@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -33,6 +34,13 @@ type RedisKeyedConfig struct {
 	FailureMode string
 	// KeyPrefix 键域段；空则 ratelimit:。
 	KeyPrefix string
+	// DegradeOnFailure 为 true 时，fail_closed 模式在 Redis 连续失败达到阈值后
+	// 进入宽松降级窗口：放行请求并返回 Degraded=true，避免共享存储故障放大为全站不可用（P1-4）。
+	DegradeOnFailure bool
+	// DegradeAfter 触发降级的连续失败次数；<=0 时 5。
+	DegradeAfter int
+	// DegradeCooldown 降级窗口；<=0 时 30s；窗口结束后重新探测 Redis。
+	DegradeCooldown time.Duration
 }
 
 // RedisKeyed 是基于 Redis 的按 key 分桶令牌桶（多副本共享配额）。
@@ -40,12 +48,19 @@ type RedisKeyedConfig struct {
 // 令牌补充与扣减在同一 Lua 脚本内完成，使用 Redis 服务端 TIME，
 // 避免各副本本地时钟偏差影响配额。
 type RedisKeyed struct {
-	client      *redis.Client
-	rps         float64
-	burst       int
-	idleTTL     time.Duration
-	failureMode string
-	keyPrefix   string
+	client           *redis.Client
+	rps              float64
+	burst            int
+	idleTTL          time.Duration
+	failureMode      string
+	keyPrefix        string
+	degradeOnFailure bool
+	degradeAfter     int
+	degradeCooldown  time.Duration
+
+	mu            sync.Mutex
+	failures      int
+	degradedUntil time.Time
 }
 
 // NewRedisKeyed 构造 Redis 限流注册表；客户端未配置或参数非法时返回错误。
@@ -71,13 +86,24 @@ func NewRedisKeyed(client *redis.Client, cfg RedisKeyedConfig) (*RedisKeyed, err
 	if prefix == "" {
 		prefix = defaultRedisKeyPrefix
 	}
+	after := cfg.DegradeAfter
+	if after <= 0 {
+		after = 5
+	}
+	cooldown := cfg.DegradeCooldown
+	if cooldown <= 0 {
+		cooldown = 30 * time.Second
+	}
 	return &RedisKeyed{
-		client:      client,
-		rps:         cfg.RPS,
-		burst:       cfg.Burst,
-		idleTTL:     ttl,
-		failureMode: mode,
-		keyPrefix:   prefix,
+		client:           client,
+		rps:              cfg.RPS,
+		burst:            cfg.Burst,
+		idleTTL:          ttl,
+		failureMode:      mode,
+		keyPrefix:        prefix,
+		degradeOnFailure: cfg.DegradeOnFailure,
+		degradeAfter:     after,
+		degradeCooldown:  cooldown,
 	}, nil
 }
 
@@ -115,6 +141,7 @@ func (r *RedisKeyed) AllowNWithParams(key string, rps float64, burst, n int) Res
 	if !ok || len(values) < 3 {
 		return r.onFailure()
 	}
+	r.onSuccess()
 	return decodeTokenBucket(values)
 }
 
@@ -131,11 +158,39 @@ func decodeTokenBucket(values []any) Result {
 	return out
 }
 
+// onSuccess 在 Redis 恢复后清零失败计数并退出降级窗口。
+func (r *RedisKeyed) onSuccess() {
+	if r == nil || !r.degradeOnFailure {
+		return
+	}
+	r.mu.Lock()
+	r.failures = 0
+	r.degradedUntil = time.Time{}
+	r.mu.Unlock()
+}
+
+// onFailure 按 failure_mode 处理 Redis 故障；开启降级时在连续失败后
+// 进入宽松窗口，返回 Degraded 标记而不是直接拒绝。
 func (r *RedisKeyed) onFailure() Result {
-	if r != nil && r.failureMode == RedisFailureClosed {
+	if r == nil || r.failureMode != RedisFailureClosed {
+		return Result{Allowed: true}
+	}
+	if !r.degradeOnFailure {
 		return Result{Allowed: false, RetryAfter: time.Second}
 	}
-	return Result{Allowed: true}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if now.Before(r.degradedUntil) {
+		return Result{Allowed: true, Degraded: true}
+	}
+	r.failures++
+	if r.failures >= r.degradeAfter {
+		r.failures = 0
+		r.degradedUntil = now.Add(r.degradeCooldown)
+		return Result{Allowed: true, Degraded: true}
+	}
+	return Result{Allowed: false, RetryAfter: time.Second}
 }
 
 var tokenBucketScript = goredis.NewScript(`
