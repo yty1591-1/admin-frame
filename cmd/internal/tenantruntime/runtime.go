@@ -238,19 +238,26 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	if err != nil {
 		return store{}, nil, fmt.Errorf("tenant repository: %w", err)
 	}
+	// 先构造仓储集合，避免在多返回值里跨行写复合字面量——
+	// 该写法在不同 gofmt 版本下缩进判定不一致（CI 与本地会互相打架）。
+	st := store{
+		tenants:     mysqlRepo,
+		members:     mysqlRepo,
+		quotas:      mysqlRepo,
+		plans:       mysqlRepo,
+		invitations: mysqlRepo,
+		approvals:   mysqlRepo,
+	}
 	// 生产优先走 Outbox：审计与业务写入同事务，Relay 负责重试与死信。
 	// 异步未启用时退回直写审计表 + 结构化日志（本地 / 单进程模式）。
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo,
-				invitations: mysqlRepo, approvals: mysqlRepo},
-			audit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
+		return st, audit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
 	}
 	// 双出口：审计表供查询 / 取证，结构化日志供排障；任一失败不影响另一出口。
-	return store{tenants: mysqlRepo, members: mysqlRepo, quotas: mysqlRepo, plans: mysqlRepo,
-			invitations: mysqlRepo, approvals: mysqlRepo}, audit.MultiEmitter{
-			audit.SQLEmitter{DB: deps.Database.SQL()},
-			audit.SlogEmitter{Log: deps.Logger},
-		}, nil
+	return st, audit.MultiEmitter{
+		audit.SQLEmitter{DB: deps.Database.SQL()},
+		audit.SlogEmitter{Log: deps.Logger},
+	}, nil
 }
 
 // membershipChecker 把租户成员仓储适配成 identity 需要的成员关系端口（T-22）。
