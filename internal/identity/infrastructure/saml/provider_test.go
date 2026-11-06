@@ -171,7 +171,7 @@ func decodeSAMLRequest(t *testing.T, encoded string) string {
 		t.Fatalf("decode saml request: %v", err)
 	}
 	reader := flate.NewReader(bytes.NewReader(raw))
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	out, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("inflate saml request: %v", err)

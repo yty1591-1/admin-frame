@@ -35,8 +35,10 @@ type xmlEncDigest struct {
 	newHash   func() hash.Hash
 }
 
+// Algorithm 返回该 digest 对应的 XML Encryption 算法 URI。
 func (d xmlEncDigest) Algorithm() string { return d.algorithm }
 
+// Hash 返回标准库哈希构造函数，满足 xmlenc.DigestMethod 接口。
 func (d xmlEncDigest) Hash() hash.Hash { return d.newHash() }
 
 // KeyPair 是 SP 的证书与私钥。
