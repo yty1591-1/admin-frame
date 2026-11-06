@@ -168,11 +168,19 @@ func (c SecretsConfig) providerNames() []string {
 }
 
 // effectiveEnvPrefix 返回生效的环境变量前缀。
+//
+// EnvProvider 直接拼接前缀与密钥名（不做分隔符处理），因此这里必须补上
+// 结尾下划线：默认的 ADMIN_FRAME 要变成 ADMIN_FRAME_，否则会生成
+// ADMIN_FRAMEDB_DSN 这类无法命中的变量名。
 func (c SecretsConfig) effectiveEnvPrefix() string {
-	if prefix := strings.TrimSpace(c.Env.Prefix); prefix != "" {
-		return prefix
+	prefix := strings.TrimSpace(c.Env.Prefix)
+	if prefix == "" {
+		prefix = envPrefix
 	}
-	return envPrefix
+	if !strings.HasSuffix(prefix, "_") {
+		prefix += "_"
+	}
+	return prefix
 }
 
 // buildSecretProvider 按来源顺序构造 Provider；无来源时返回 (nil, nil)。

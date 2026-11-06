@@ -51,6 +51,28 @@ func TestSecretsDisabledKeepsEnvInjection(t *testing.T) {
 	}
 }
 
+// TestSecretsEnvProviderUsesDefaultPrefix 验证默认 env 前缀带分隔符：
+// identity_hash_key 必须命中 ADMIN_FRAME_IDENTITY_HASH_KEY，
+// 而不是前缀与密钥名粘连的变量名。
+func TestSecretsEnvProviderUsesDefaultPrefix(t *testing.T) {
+	hashKey := strings.Repeat("ab", 32)
+	t.Setenv("ADMIN_FRAME_IDENTITY_HASH_KEY", hashKey)
+
+	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n    secret: \"" + strings.Repeat("s", 32) + "\"\n" +
+		"db:\n  driver: memory\n" +
+		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
+		"identity:\n  enabled: true\n" +
+		"secrets:\n  providers: [env]\n"
+	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-env-prefix.yaml", yaml))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Identity.HashKey != hashKey {
+		t.Fatalf("identity.hash_key 未命中 ADMIN_FRAME_ 前缀变量")
+	}
+}
+
 // TestSecretsFileOverridesConfig 验证托管源覆盖配置文件明文：
 // file 命中即成为唯一真相，配置里写的旧值必须被替换。
 func TestSecretsFileOverridesConfig(t *testing.T) {
