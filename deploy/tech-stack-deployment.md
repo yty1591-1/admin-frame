@@ -166,16 +166,16 @@
    - 使用 [image.yml](../.github/workflows/image.yml) 产出多架构镜像（含 `migrate`）；标签只用 `sha-*` / semver，禁止 `latest`。
    - 镜像以非 root（uid 10001）运行，`CGO_ENABLED=0`，含 `ca-certificates` 与 `tzdata`；`migrations/` 已内置于镜像 `/app/migrations`。
 2. **准备配置**
-   - 以 `configs/<service>.yaml.example` 为模板生成各环境配置，挂载到容器 `/app/configs/<service>.yaml`。
-   - 容器内只有 `.example`，不挂载真实配置文件时进程会因找不到配置而退出。
+   - 以 `configs/prod/<service>.yaml.example` 为模板生成各环境配置；Helm Chart 把渲染结果写入 ConfigMap，挂载到容器 `/etc/admin-frame/config.yaml`，并由 `args: ["-config", "/etc/admin-frame/config.yaml"]` 显式传入。
+   - 镜像内置的是 `.example` 样例，不挂载真实配置文件时进程会因找不到配置而退出；密钥走 `secretKeyRef` 注入环境变量，不写入 ConfigMap。
 3. **执行迁移（独立 Job）**
-   - K8s 推荐使用 Helm Chart 的 `migrate.enabled=true`（post-install/post-upgrade Hook），发布命令必须带 `--atomic --wait`；失败自动回滚。
+   - K8s 使用 Helm Chart 的 `migrate.enabled=true`（`pre-install,pre-upgrade` Hook，权重 `-20 → -10 → 0`），迁移 Job 先于 API 创建；发布命令必须带 `--atomic --wait`，失败自动回滚。
    - 手工执行时先 `-action status` 与 `-action up -dry-run` 查看计划，再 `-action up`。
    - 使用迁移专用账号与 `ADMIN_FRAME_DB_DSN`；严禁 API 进程自动迁移。
-4. **启动 worker**
-   - 生产 `iam.mode=enforce` 要求 `async.enabled=true` 且 API 不投递，`worker` 必须先于 API 就绪，避免 Outbox 积压。
+4. **启动 worker**（运维建议，非编排保证）
+   - 生产 `iam.mode=enforce` 要求 `async.enabled=true` 且 API 不投递，`worker` 宜先于 API 就绪，避免 Outbox 积压；Chart 模板未声明 worker → API 的启动依赖。
 5. **滚动发布 API**
-   - 顺序：`worker` → `admin-api` / `biz-api` / `c-api`；每端 `maxUnavailable=0`、`maxSurge=1`。
+   - 建议顺序：`worker` → `admin-api` / `biz-api` / `c-api`；Deployment 由模板渲染 `maxUnavailable=0`、`maxSurge=1`，StatefulSet 使用 `podManagementPolicy: Parallel`。
 6. **发布后验证**
    - `/healthz` 返回 200；`/readyz` 在 DB、Redis、对象存储可用后返回 200。
    - 执行登录 / 刷新 / 登出冒烟；确认审计事件进入 Outbox 并由 worker 投递。
