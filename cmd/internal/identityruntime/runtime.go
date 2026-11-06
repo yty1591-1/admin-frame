@@ -45,6 +45,9 @@ const loginIPLimiterKeyPrefix = "identity:login:ip:"
 // oauthLimiterKeyPrefix 是 OAuth authorize / callback 限流键前缀（IDN-P2-05）。
 const oauthLimiterKeyPrefix = "identity:oauth:"
 
+// samlLimiterKeyPrefix 是 SAML authorize / acs 限流键前缀。
+const samlLimiterKeyPrefix = "identity:saml:"
+
 // platformAdminBootstrapTimeout 是启动期管理员引导的硬上限，避免数据库异常拖住启动。
 const platformAdminBootstrapTimeout = 10 * time.Second
 
@@ -922,6 +925,12 @@ func buildLoginIPLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLi
 func buildOAuthLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.OAuth.RateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, oauthLimiterKeyPrefix, "oauth")
+}
+
+// buildSAMLLimiter 构造 SAML authorize / acs 的 IP 级与全局限流器。
+func buildSAMLLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+	rate := cfg.Identity.SAML.RateLimit
+	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, samlLimiterKeyPrefix, "saml")
 }
 
 // buildRefreshLimiter 构造 refresh / logout 的 IP + 主体双维度限流器（SEC-04）。

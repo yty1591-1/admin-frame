@@ -99,6 +99,8 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionAuthSMS:             true,
 		audit.ActionAuthOAuthAuthorize:  true,
 		audit.ActionAuthOAuthCallback:   true,
+		audit.ActionAuthSAMLAuthorize:   true,
+		audit.ActionAuthSAMLCallback:    true,
 		audit.ActionAuthRateLimited:     true,
 		audit.ActionAuthSessionEvicted:  true,
 		audit.ActionAuthTenantSwitch:    true,

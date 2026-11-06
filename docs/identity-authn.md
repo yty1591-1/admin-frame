@@ -472,7 +472,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
-### 7.3 OIDC（已实现并通过 staging 真实 Keycloak 验收，SAML / SCIM / M2M 待交付）
+### 7.3 OIDC（已实现并通过 staging 真实 Keycloak 验收，SCIM / M2M 待交付）
 
 - `identity.oauth.providers[]` 的每个 provider 必须显式 `oidc_enabled: true` 才启用 OIDC；默认关闭。
   - 开启时 `issuer` 与 `jwks_url` 必填且必须成对出现，`userinfo_url` 可省略；
@@ -500,7 +500,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 验收用例：`TestOIDCEndToEndAuthorizationCodeFlow`（授权码 + PKCE + nonce 全链路、授权码重放与 nonce 不匹配拒绝）、`TestJWKSRetainsCacheWhenRefreshFails`（故障期保留旧公钥、未知 kid 失败关闭）、`TestOIDCRequiresExplicitFlag`（显式开关）。
 - 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
-- 仍待交付：SAML 2.0、SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。
+- 仍待交付：SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。SAML 2.0 SP 见 §8.2.1（已实现）。
 
 ---
 
@@ -528,6 +528,23 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - provider 未配置时不注册路由；state 无效、provider 不匹配、授权码被拒与未映射身份统一返回 `40100`，IdP 故障返回 `50300`。
 - 账号映射表 `identity_oauth_identity`，`UNIQUE(provider, provider_subject)`。
 - 自动建号受 `identity.oauth.auto_provision` 控制，默认关闭；建号主体为 `subject = "oauth:<provider>:" + sha256(provider_subject)`，避免第三方主体含 PII 或超长。
+
+### 8.2.1 SAML 2.0（SP-initiated，已实现）
+
+- 能力边界：仅支持 SP-initiated SSO 与 HTTP-POST binding；不支持 IdP-initiated、SLO、Artifact binding 与多 IdP 单点登出联动。
+- 依赖 `github.com/crewjam/saml`；SP active / next 双密钥支持轮换，metadata 同时发布两张签名 / 解密证书。
+- 流程：
+  1. `POST /c/v1/auth/saml/{provider}/authorize`：生成 128bit state 与 AuthnRequest ID，AuthnRequest 以 HTTP-Redirect 返回；state 复用 OAuth state store（TTL `identity.saml.request_ttl`，默认 10 分钟，一次性）。
+  2. IdP 鉴权后以表单 POST `SAMLResponse` + `RelayState` 到 `POST /c/v1/auth/saml/acs`；仅接受 `application/x-www-form-urlencoded`，请求体上限 512KB。
+  3. 校验：必须为加密断言（`EncryptedAssertion`），签名覆盖断言本体；校验 `InResponseTo`（必须与 state 记录的 AuthnRequest ID 一致）、`Issuer`、`Audience` = SP entityID、`Destination`、`NotBefore` / `NotOnOrAfter` / 断言总生命周期（默认 ≤ 5 分钟，时钟偏差默认 2 分钟）。
+  4. 断言 ID 在 Redis 以 `saml:replay:<provider>:<sha256(assertion_id)>` 去重（TTL = `assertion_ttl + clock_skew`），冲突返回 `40100`；Redis 不可用失败关闭（`50300`）。
+  5. 主体取断言 `Subject.NameID`（格式限定 persistent / transient / unspecified），映射 `(saml:<provider>, subject)` → 账号；未映射时按 `identity.saml.auto_provision` 决定拒绝或建号（默认拒绝）。
+  6. 成功后签发一次性 ticket（默认 60 秒，单次消费），以 `303` 跳转 `login_redirect_url?ticket=...`；令牌不进入浏览器地址栏。
+  7. 前端 `POST /c/v1/auth/saml/exchange` 用 ticket 换取访问 / 刷新令牌；ticket 过期、已消费或不存在统一 `40100`。
+- `GET /c/v1/auth/saml/metadata`：返回 SP 元数据（`application/samlmetadata+xml`），供 IdP 登记 entityID、ACS 与证书。
+- 错误码：断言 / state 无效、重放、未映射主体统一 `40100`；`SAMLResponse` 或 `RelayState` 缺失 `40000`；请求体超限 `413`；Content-Type 不符 `415`；IdP 元数据不可达 `50300`；限流 `42900`；provider 未配置 `40400`。
+- 可观测性：`identity_saml_authorize_total{provider,result,reason}`、`identity_saml_acs_total{provider,result,reason}`、`identity_saml_acs_duration_seconds{provider,result}`；reason 与 OAuth 共用 `ok|oauth_invalid|oauth_not_configured|unavailable|rate_limited|internal`。
+- 安全约束：ACS 日志与审计禁止出现 `SAMLResponse` 原文、断言 ID 原文与 NameID；只记录 provider 与粗粒度原因。SP 私钥仅从密钥托管注入（`identity_saml_sp_private_key` / `identity_saml_sp_private_key_next`），prod / staging 禁止明文 YAML。
 
 ### 8.3 限流与防刷
 
@@ -693,6 +710,29 @@ identity:
       failure_mode: fail_closed
     providers: []              # [{name, client_id, client_secret_env, auth_url, token_url, userinfo_url, redirect_uri, scopes, subject_field,
                                #   oidc_enabled(默认 false), issuer, jwks_url, audience, jwks_ttl, jwks_min_refresh_interval, id_token_leeway}]
+  saml:                        # 仅 C 端；默认关闭，关闭时不注册任何 SAML 路由
+    enabled: false
+    entity_id: ""              # SP 实体标识，绝对 URL
+    acs_url: ""                # 必须为 https://<c 域名>/c/v1/auth/saml/acs
+    login_redirect_url: ""     # ACS 成功后跳转的前端登录页，绝对 URL
+    certificate_pem: ""        # SP 证书（可公开）
+    private_key: ""            # 生产由 identity_saml_sp_private_key 注入，禁止明文 YAML
+    certificate_next_pem: ""   # 轮换证书；与 private_key_next 成对出现
+    private_key_next: ""       # 生产由 identity_saml_sp_private_key_next 注入
+    auto_provision: false      # 未映射主体默认拒绝建号
+    timeout: 5s                # [1s, 30s]
+    metadata_ttl: 15m          # [1m, 24h]
+    metadata_min_refresh: 1m   # [5s, metadata_ttl]
+    clock_skew: 2m             # 上限 5m
+    assertion_ttl: 5m          # 上限 15m
+    request_ttl: 10m           # 上限 15m
+    replay_ttl: 10m            # >= assertion_ttl + clock_skew
+    ticket_ttl: 60s            # [30s, 5m]
+    rate_limit:                # authorize / acs 全局限流
+      rps: 1
+      burst: 5
+      failure_mode: fail_closed
+    providers: []              # [{name, idp_entity_id, metadata_url 或 metadata_xml（二选一）}]
 ```
 
 ### 10.2 校验规则
@@ -707,6 +747,10 @@ identity:
 | OIDC 开关 | `providers[].oidc_enabled` 默认 `false`；开启时 `issuer` 与 `jwks_url` 必填且成对；关闭时填写 `issuer` / `jwks_url` 视为配置错误 |
 | OIDC 缓存 | `jwks_ttl ∈ [1m, 24h]`（默认 15m）；`jwks_min_refresh_interval ∈ [5s, jwks_ttl]`（默认 1m）；`id_token_leeway ∈ [0, 5m]`（默认 30s） |
 | 短信熔断 | `sms.breaker_failures ≥ 0`（0=5）；`sms.breaker_timeout ∈ [1s, 10m]`，0 取默认 60s |
+| SAML 开关 | `saml.enabled=false` 时不得配置 `providers` / `private_key`；启用时仅允许 `channel=c`，`entity_id` / `acs_url` / `login_redirect_url` 必填且为绝对 URL，`acs_url` 路径必须为 `/c/v1/auth/saml/acs` |
+| SAML 密钥 | `certificate_pem` 与 `private_key` 必填、PEM 编码、配对且 RSA ≥ 2048、证书未过期；`certificate_next_pem` / `private_key_next` 必须成对且不得与当前证书相同 |
+| SAML 时长 | `timeout ∈ [1s, 30s]`；`metadata_ttl ∈ [1m, 24h]`；`metadata_min_refresh ∈ [5s, metadata_ttl]`；`clock_skew ≤ 5m`；`assertion_ttl` / `request_ttl ≤ 15m`；`replay_ttl ≥ assertion_ttl + clock_skew`；`ticket_ttl ∈ [30s, 5m]` |
+| SAML IdP | `providers[].name` 唯一且匹配 `^[a-z][a-z0-9_-]{1,31}$`；`idp_entity_id` 必填；`metadata_url` 与 `metadata_xml` 必须且只能二选一，`metadata_url` 为绝对 URL |
 | 持久化 | prod/staging 且 `identity.enabled=true` 时 `db.driver` 不得为 `memory`；运行时 `db.driver` 非 memory 但无数据库连接直接启动失败，禁止回退内存仓储 |
 | 审计出口 | prod/staging 且 `identity.enabled=true` 时 `async.enabled=true`（审计写入 Outbox）；启动日志输出 `identity audit sink`（`outbox` / `slog`） |
 | 撤销陈旧度 | `revocation.state_ttl ∈ [1s, 60s]`；未配置时取 `min(access_ttl+1m, 60s)`，禁止超过 60s |
@@ -714,7 +758,7 @@ identity:
 | 生产强制 | `auth.mode=jwt`；`identity.enabled=true`；`revocation.driver=redis`；`revocation.failure_mode=fail_closed`；A 端 `mfa.admin_required=true` |
 | 限流 | `login_rate_limit.failure_mode` 仅 `fail_closed` / `fail_open`，prod/staging 强制 `fail_closed`；`sms.daily_budget ≥ 0` |
 | 可信代理 | `http.trusted_proxies` 每项必须是合法 CIDR；为空表示不解析 XFF |
-| 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空（C 端无可用登录方式） |
+| 生产禁止 | `auth.mode=demo`；`failure_mode=fail_open`；`sms.enabled=false` 且 `oauth.providers` 为空且 `saml.providers` 为空（C 端无可用登录方式）；`saml.rate_limit.failure_mode=fail_open` |
 | MFA 端别 | 仅 `channel=admin` 支持；`channel=biz` 设置 `mfa.admin_required=true` 启动失败；`channel=c` 忽略该配置 |
 | 密钥 | `secret_key` 不得写入示例配置；`admin_required=true` 时 `secret_key` 或 `keys` 至少一个；密钥须为 32 字节（raw / hex / base64 / base64url）；`keys` 非空时 `active_key_id` 必填且必须命中；生产由环境变量注入，ENT-07 接入密钥托管后再切换 |
 | 摘要密钥 | prod/staging **强制** `identity.hash_key`（32 字节，同编码规则）；`hash_key_id` 仅 `[A-Za-z0-9_-]` 且 ≤ 16 字节，缺省 `v1`；`previous_hash_keys[].id` 不得重复且不得与 active 相同；配置历史密钥但缺主密钥启动失败；示例配置中的 `hash_key` 必须为空 |
@@ -745,6 +789,8 @@ identity:
 | `auth.mfa.disabled` | MFA 解绑 | `actor_id` | 同时递增 `token_version` 并撤销全部会话 |
 | `auth.account.locked` | 达到失败阈值 | `actor_id`、`channel` | 由系统触发 |
 | `auth.account.disabled` | 管理员停用账号 | 操作人 + 目标账号 | 同时撤销会话 |
+| `auth.saml.authorize` | SAML 授权发起（AuthnRequest / state 已签发） | `actor_type=anonymous`、`attrs.provider`、`trace_id` | 失败关闭；不记录 AuthnRequest ID 原文 |
+| `auth.saml.callback` | SAML ACS 断言校验结果 | 成功：账号 + `attrs.provider`；失败：`reason` 粗粒度分类 | 不记录 `SAMLResponse`、断言 ID 与 NameID |
 
 ### 11.2 落库与一致性
 
@@ -793,6 +839,10 @@ identity:
 | C | `DELETE /c/v1/auth/account` | Bearer | 用户自助注销（软删） |
 | C | `POST /c/v1/auth/oauth/{provider}/authorize` | 无 | 发起授权，返回 state 与授权地址 |
 | C | `POST /c/v1/auth/oauth/{provider}/callback` | 无 | 授权码回调 |
+| C | `POST /c/v1/auth/saml/{provider}/authorize` | 无 | 发起 SAML 授权，返回 IdP 跳转地址 |
+| C | `POST /c/v1/auth/saml/acs` | 无（凭 RelayState） | IdP 表单回传断言，成功后 303 跳前端 |
+| C | `POST /c/v1/auth/saml/exchange` | 无（凭一次性 ticket） | 换取访问 / 刷新令牌 |
+| C | `GET /c/v1/auth/saml/metadata` | 无 | SP 元数据 XML |
 
 ### 12.2 请求 / 响应约束
 
@@ -801,6 +851,7 @@ identity:
 - 登录响应：`access_token`、`refresh_token`、`token_type=Bearer`、`expires_in`；需 MFA 时只返回 `mfa_required` 与 `mfa_ticket`。
 - 错误信封沿用 `httpx` 统一格式；登录失败统一 `40100`，不区分账号不存在 / 密码错误。
 - 强制绑定 MFA：登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`；该票据只能调用 `mfa/setup` 与 `mfa/verify`，绑定成功后直接返回 `TokenPair`（§7.2.1）。
+- SAML ACS 只接受 `application/x-www-form-urlencoded`（否则 `415`），请求体上限 512KB（否则 `413`）；`SAMLResponse` / `RelayState` 缺失为 `40000`，校验失败统一 `40100`；成功后 `303` 跳转，响应体为空，令牌只经 exchange 下发。
 - 认证端点必须声明 `Idempotency-Key` 可选策略（写接口），刷新与登出按幂等语义处理。
 - 禁止缓存（`IDN-P2-03`）：所有认证、账号与 `/me` 端点由路由层统一追加 `Cache-Control: no-store, no-cache, must-revalidate, private`、`Pragma: no-cache`、`Expires: 0`、`Vary: Authorization`（`pkg/httpx.NoStoreMiddleware`）；登录 / 刷新 / MFA setup 的敏感载荷禁止经浏览器或共享缓存复用。
 

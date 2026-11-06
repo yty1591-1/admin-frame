@@ -42,6 +42,9 @@ type Metrics struct {
 	smsProviderAlert      *prometheus.CounterVec
 	oauthCallbackTotal    *prometheus.CounterVec
 	oauthJWKSRefreshTotal *prometheus.CounterVec
+	samlAuthorizeTotal    *prometheus.CounterVec
+	samlACSTotal          *prometheus.CounterVec
+	samlACSDuration       *prometheus.HistogramVec
 	revocationStoreError  *prometheus.CounterVec
 	stateWriteErrors      *prometheus.CounterVec
 	l1Hits                *prometheus.CounterVec
@@ -58,6 +61,7 @@ var (
 	_ app.Metrics                 = (*Metrics)(nil)
 	_ app.RevocationObserver      = (*Metrics)(nil)
 	_ app.RevocationCacheObserver = (*Metrics)(nil)
+	_ app.SAMLMetrics             = (*Metrics)(nil)
 )
 
 // CleanupMetrics 是清理任务的独立指标集，供 worker 进程单独注册（OPS-02）。
@@ -233,6 +237,19 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Name: "identity_oauth_jwks_refresh_total",
 			Help: "OIDC 公钥集刷新次数；result=success|failure。失败时会保留上一份可用缓存。",
 		}, []string{"provider", "result"}),
+		samlAuthorizeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_saml_authorize_total",
+			Help: "SAML 授权发起次数；result=success|failure，reason 为粗粒度失败原因。",
+		}, []string{"provider", "result", "reason"}),
+		samlACSTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_saml_acs_total",
+			Help: "SAML ACS 断言校验次数；result=success|failure，reason 为粗粒度失败原因。",
+		}, []string{"provider", "result", "reason"}),
+		samlACSDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "identity_saml_acs_duration_seconds",
+			Help:    "SAML ACS 耗时（秒），含 state 消费、验签与解密。",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10},
+		}, []string{"provider", "result"}),
 		revocationStoreError: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "identity_revocation_store_errors_total",
 			Help: "撤销存储 / 回源失败次数；op=account_load|session_load|token_load。",
@@ -259,6 +276,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		m.refreshTotal, m.refreshDuration, m.mfaVerifyDuration, m.stepUpDuration,
 		m.oauthCallbackDuration, m.tokenReuseTotal, m.sessionRevokeTotal, m.smsSendTotal,
 		m.smsProviderAlert, m.mfaRecoveryUsed, m.oauthCallbackTotal, m.oauthJWKSRefreshTotal,
+		m.samlAuthorizeTotal, m.samlACSTotal, m.samlACSDuration,
 		m.revocationStoreError,
 		m.stateWriteErrors, m.l1Hits, m.redisCalls, m.dbRefetches,
 	} {
@@ -311,6 +329,7 @@ func (m *Metrics) preinit() {
 		m.smsSendTotal.WithLabelValues(result)
 		m.oauthCallbackDuration.WithLabelValues("unknown", result)
 		m.oauthJWKSRefreshTotal.WithLabelValues("unknown", result)
+		m.samlACSDuration.WithLabelValues("unknown", result)
 	}
 	// OAuth 回调成功与各失败原因均预创建，保证告警表达式在无回调时也能取到 0。
 	m.oauthCallbackTotal.WithLabelValues("unknown", app.MetricResultSuccess, app.MetricReasonOK)
@@ -322,6 +341,19 @@ func (m *Metrics) preinit() {
 		app.MetricReasonInternal,
 	} {
 		m.oauthCallbackTotal.WithLabelValues("unknown", app.MetricResultFailure, reason)
+	}
+	// SAML 授权 / ACS 同样预创建成功与失败原因。
+	m.samlAuthorizeTotal.WithLabelValues("unknown", app.MetricResultSuccess, app.MetricReasonOK)
+	m.samlACSTotal.WithLabelValues("unknown", app.MetricResultSuccess, app.MetricReasonOK)
+	for _, reason := range []string{
+		app.MetricReasonOAuthInvalid,
+		app.MetricReasonOAuthNotConfigured,
+		app.MetricReasonUnavailable,
+		app.MetricReasonRateLimited,
+		app.MetricReasonInternal,
+	} {
+		m.samlAuthorizeTotal.WithLabelValues("unknown", app.MetricResultFailure, reason)
+		m.samlACSTotal.WithLabelValues("unknown", app.MetricResultFailure, reason)
 	}
 	for _, op := range []string{"set", "delete", "session_set", "session_delete"} {
 		m.stateWriteErrors.WithLabelValues(op)
@@ -581,6 +613,35 @@ func (m *Metrics) ObserveOAuthCallback(_ context.Context, provider, result, reas
 		reason = app.MetricReasonInternal
 	}
 	m.oauthCallbackTotal.WithLabelValues(provider, result, reason).Inc()
+}
+
+// ObserveSAMLAuthorize 实现 app.SAMLMetrics。
+func (m *Metrics) ObserveSAMLAuthorize(_ context.Context, provider, result, reason string) {
+	if m == nil {
+		return
+	}
+	if provider == "" {
+		provider = "unknown"
+	}
+	if reason == "" {
+		reason = app.MetricReasonInternal
+	}
+	m.samlAuthorizeTotal.WithLabelValues(provider, result, reason).Inc()
+}
+
+// ObserveSAMLACS 实现 app.SAMLMetrics。
+func (m *Metrics) ObserveSAMLACS(_ context.Context, provider, result, reason string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	if provider == "" {
+		provider = "unknown"
+	}
+	if reason == "" {
+		reason = app.MetricReasonInternal
+	}
+	m.samlACSTotal.WithLabelValues(provider, result, reason).Inc()
+	m.samlACSDuration.WithLabelValues(provider, result).Observe(duration.Seconds())
 }
 
 // ObserveJWKSRefresh 实现 app.Metrics；provider 为空时归入 unknown。

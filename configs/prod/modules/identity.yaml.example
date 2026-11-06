@@ -7,6 +7,8 @@
 # 首个管理员由 A 端 admin-api 启动引导幂等创建；首次登录强制改密，再完成 MFA 绑定。
 # 各端差异：A 端 mfa.admin_required=true；B/C 端覆盖为 false；worker 不加载本模块。
 # sms / oauth 仅 C 端支持，声明在 c 服务文件。
+# saml 同样仅 C 端支持；默认关闭，启用时私钥由密钥托管注入
+# （identity_saml_sp_private_key / identity_saml_sp_private_key_next），禁止写入明文。
 identity:
   enabled: true
   access_ttl: 15m # [5m, 1h]
@@ -73,6 +75,30 @@ identity:
   subject:
     active_key_id: "" # keys 非空时为当前加密密钥 id
     keys: [] # PII AES-256 密钥环（id + 32B key）；登录端点启用时必填
+  # SAML 2.0 SP-initiated SSO（仅 C 端）；默认关闭，关闭时不注册任何 SAML 路由。
+  saml:
+    enabled: false
+    entity_id: "" # SP 实体标识，绝对 URL
+    acs_url: "" # 必须为 https://<c 域名>/c/v1/auth/saml/acs
+    login_redirect_url: "" # ACS 成功后跳转的前端登录页，绝对 URL
+    certificate_pem: "" # SP 证书（可公开）；启用时必填
+    private_key: "" # ADMIN_FRAME_IDENTITY_SAML_SP_PRIVATE_KEY（PEM）
+    certificate_next_pem: "" # 轮换证书；与 private_key_next 成对出现
+    private_key_next: "" # ADMIN_FRAME_IDENTITY_SAML_SP_PRIVATE_KEY_NEXT
+    auto_provision: false # 未映射主体不自动建号（失败关闭）
+    timeout: 5s # IdP 元数据拉取超时，[1s, 30s]
+    metadata_ttl: 15m # IdP 元数据缓存，[1m, 24h]
+    metadata_min_refresh: 1m # 未知签名证书强刷间隔，[5s, metadata_ttl]
+    clock_skew: 2m # 断言时间偏差，上限 5m
+    assertion_ttl: 5m # 断言最大生命周期，上限 15m
+    request_ttl: 10m # AuthnRequest / state 有效期，上限 15m
+    replay_ttl: 10m # 断言 ID 去重窗口，必须 >= assertion_ttl + clock_skew
+    ticket_ttl: 60s # 一次性兑换票据，[30s, 5m]
+    rate_limit:
+      rps: 1 # authorize / acs 全局限流；0 使用默认 1
+      burst: 5 # 0 使用默认 5
+      failure_mode: fail_closed # prod/staging 强制 fail_closed
+    providers: [] # name / idp_entity_id / metadata_url 或 metadata_xml（二选一）
   hash_key: "" # ADMIN_FRAME_IDENTITY_HASH_KEY（32B）
   hash_key_id: v1 # 摘要 key id；仅字母 / 数字 / 下划线 / 短横线
   previous_hash_keys: [] # 轮换期历史摘要密钥（id + 32B key），仅双读

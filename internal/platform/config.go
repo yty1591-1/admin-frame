@@ -1,8 +1,11 @@
 package platform
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -235,6 +238,8 @@ type IdentityConfig struct {
 	SMS IdentitySMSConfig `yaml:"sms"`
 	// OAuth C 端第三方授权参数。
 	OAuth IdentityOAuthConfig `yaml:"oauth"`
+	// SAML C 端 SAML 2.0 SP-initiated SSO 参数。
+	SAML IdentitySAMLConfig `yaml:"saml"`
 	// Consumer C 端账号自助操作参数。
 	Consumer IdentityConsumerConfig `yaml:"consumer"`
 	// Subject 账号登录主体的 PII 加密 / 索引参数（IDN-GAP-P1-06）。
@@ -394,6 +399,61 @@ type IdentityOAuthProviderConfig struct {
 	JWKSMinRefreshInterval time.Duration `yaml:"jwks_min_refresh_interval"`
 	// IDTokenLeeway id_token 时间字段时钟偏差容忍；0 使用 30s，范围 [0, 5m]。
 	IDTokenLeeway time.Duration `yaml:"id_token_leeway"`
+}
+
+// IdentitySAMLConfig 是 C 端 SAML 2.0 SP-initiated SSO 参数（docs/identity-authn.md §8.3 / §10）。
+type IdentitySAMLConfig struct {
+	// Enabled 是否启用 SAML 登录；关闭时不注册任何 SAML 路由。
+	Enabled bool `yaml:"enabled"`
+	// EntityID SP 实体标识，写入 AuthnRequest 与元数据。
+	EntityID string `yaml:"entity_id"`
+	// ACSURL IdP 回传断言的绝对地址，路径必须为 /c/v1/auth/saml/acs。
+	ACSURL string `yaml:"acs_url"`
+	// LoginRedirectURL ACS 成功后的前端登录页绝对地址；禁止用户输入参与拼接。
+	LoginRedirectURL string `yaml:"login_redirect_url"`
+	// CertificatePEM SP 签名 / 解密证书（可公开）。
+	CertificatePEM string `yaml:"certificate_pem"`
+	// PrivateKey PEM 私钥；生产由密钥托管注入，禁止写入明文 YAML。
+	PrivateKey string `yaml:"private_key"`
+	// CertificateNextPEM / PrivateKeyNextPEM 轮换用下一把密钥；必须成对出现。
+	CertificateNextPEM string `yaml:"certificate_next_pem"`
+	PrivateKeyNextPEM  string `yaml:"private_key_next"`
+	// AutoProvision 未映射主体是否自动建号；默认关闭（失败关闭）。
+	AutoProvision bool `yaml:"auto_provision"`
+	// Timeout 单次 IdP 元数据拉取超时；0 表示默认 5s。
+	Timeout time.Duration `yaml:"timeout"`
+	// MetadataTTL IdP 元数据缓存时长；0 表示默认 15m。
+	MetadataTTL time.Duration `yaml:"metadata_ttl"`
+	// MetadataMinRefresh 未知签名证书触发强刷的最小间隔；0 表示默认 1m。
+	MetadataMinRefresh time.Duration `yaml:"metadata_min_refresh"`
+	// ClockSkew 断言时间条件允许的时钟偏差；0 表示默认 2m，上限 5m。
+	ClockSkew time.Duration `yaml:"clock_skew"`
+	// AssertionTTL 单条断言最大生命周期；0 表示默认 5m，上限 15m。
+	AssertionTTL time.Duration `yaml:"assertion_ttl"`
+	// RequestTTL AuthnRequest / state 有效期；0 表示默认 10m，上限 15m。
+	RequestTTL time.Duration `yaml:"request_ttl"`
+	// ReplayTTL 断言 ID 去重窗口；必须覆盖 AssertionTTL + ClockSkew。
+	ReplayTTL time.Duration `yaml:"replay_ttl"`
+	// TicketTTL 一次性兑换票据有效期；0 表示默认 60s，范围 [30s, 5m]。
+	TicketTTL time.Duration `yaml:"ticket_ttl"`
+	// RateLimit authorize / acs 的限流参数（与 OAuth 同语义）。
+	RateLimit IdentityLoginRateLimitConfig `yaml:"rate_limit"`
+	// Providers 已配置的 IdP；为空且 enabled=true 时启动失败。
+	Providers []IdentitySAMLProviderConfig `yaml:"providers"`
+}
+
+// IdentitySAMLProviderConfig 是单个 SAML IdP 参数。
+//
+// metadata_url 与 metadata_xml 二选一，二者同时提供视为配置错误。
+type IdentitySAMLProviderConfig struct {
+	// Name 提供方名，写入路由与映射表；小写字母开头，允许 [a-z0-9_-]。
+	Name string `yaml:"name"`
+	// IDPEntityID IdP 实体标识；metadata 中的 entityID 必须与之一致。
+	IDPEntityID string `yaml:"idp_entity_id"`
+	// MetadataURL IdP 元数据地址；与 MetadataXML 二选一。
+	MetadataURL string `yaml:"metadata_url"`
+	// MetadataXML 内联 IdP 元数据；与 MetadataURL 二选一。
+	MetadataXML string `yaml:"metadata_xml"`
 }
 
 // identityDefaultMFAIssuer 与 internal/identity/app.DefaultMFAIssuer 保持一致。
@@ -1263,6 +1323,13 @@ func (c Config) LogValue() slog.Value {
 				slog.Int("providers", len(c.Identity.OAuth.Providers)),
 				slog.Any("provider_names", oauthProviderNames(c.Identity.OAuth.Providers)),
 			),
+			slog.Group("saml",
+				slog.Bool("enabled", c.Identity.SAML.Enabled),
+				slog.Bool("auto_provision", c.Identity.SAML.AutoProvision),
+				slog.Int("providers", len(c.Identity.SAML.Providers)),
+				slog.Bool("private_key_configured", strings.TrimSpace(c.Identity.SAML.PrivateKey) != ""),
+				slog.Bool("next_key_configured", strings.TrimSpace(c.Identity.SAML.CertificateNextPEM) != ""),
+			),
 		),
 	)
 }
@@ -1664,6 +1731,45 @@ func (c *Config) applyIdentityDefaults() {
 		if provider.IDTokenLeeway == 0 {
 			provider.IDTokenLeeway = 30 * time.Second
 		}
+	}
+	c.applySAMLDefaults()
+}
+
+// applySAMLDefaults 填充 SAML 默认值；replay_ttl 依赖已填充的断言有效期与时钟偏差。
+func (c *Config) applySAMLDefaults() {
+	samlCfg := &c.Identity.SAML
+	if samlCfg.Timeout == 0 {
+		samlCfg.Timeout = 5 * time.Second
+	}
+	if samlCfg.MetadataTTL == 0 {
+		samlCfg.MetadataTTL = 15 * time.Minute
+	}
+	if samlCfg.MetadataMinRefresh == 0 {
+		samlCfg.MetadataMinRefresh = time.Minute
+	}
+	if samlCfg.ClockSkew == 0 {
+		samlCfg.ClockSkew = 2 * time.Minute
+	}
+	if samlCfg.AssertionTTL == 0 {
+		samlCfg.AssertionTTL = 5 * time.Minute
+	}
+	if samlCfg.RequestTTL == 0 {
+		samlCfg.RequestTTL = 10 * time.Minute
+	}
+	if samlCfg.TicketTTL == 0 {
+		samlCfg.TicketTTL = time.Minute
+	}
+	if samlCfg.ReplayTTL == 0 {
+		samlCfg.ReplayTTL = samlCfg.AssertionTTL + samlCfg.ClockSkew
+	}
+	if samlCfg.RateLimit.RPS == 0 {
+		samlCfg.RateLimit.RPS = 1
+	}
+	if samlCfg.RateLimit.Burst == 0 {
+		samlCfg.RateLimit.Burst = 5
+	}
+	if samlCfg.RateLimit.FailureMode == "" {
+		samlCfg.RateLimit.FailureMode = RateLimitFailureClosed
 	}
 }
 
@@ -2611,6 +2717,7 @@ func (c *Config) validateIdentity() []error {
 	}
 	errs = append(errs, c.validateIdentitySMS()...)
 	errs = append(errs, c.validateIdentityOAuth()...)
+	errs = append(errs, c.validateIdentitySAML()...)
 	return errs
 }
 
@@ -2824,8 +2931,9 @@ func (c *Config) validateIdentityOAuth() []error {
 		errs = append(errs, errors.New("identity.oauth.providers is only supported on channel=c"))
 	}
 	if c.Channel == "c" && isProdLikeEnv(c.Env) &&
-		!c.Identity.SMS.Enabled && len(providers) == 0 {
-		errs = append(errs, errors.New("channel=c requires identity.sms.enabled or at least one identity.oauth.providers in prod/staging"))
+		!c.Identity.SMS.Enabled && len(providers) == 0 &&
+		(!c.Identity.SAML.Enabled || len(c.Identity.SAML.Providers) == 0) {
+		errs = append(errs, errors.New("channel=c requires identity.sms.enabled, at least one identity.oauth.providers, or identity.saml providers in prod/staging"))
 	}
 	if len(providers) > 0 {
 		rate := c.Identity.OAuth.RateLimit
@@ -2917,6 +3025,200 @@ func (c *Config) validateIdentityOAuth() []error {
 		}
 	}
 	return errs
+}
+
+// identitySAMLACSPath 是 ACS 端点固定路径；acs_url 的路径必须与之完全一致。
+const identitySAMLACSPath = "/c/v1/auth/saml/acs"
+
+// validateIdentitySAML 校验 SAML 参数（docs/identity-authn.md §8.3 / §10）。
+//
+// 零值时长按默认值处理，便于直接构造 Config 的单测路径；显式配置时校验范围。
+func (c *Config) validateIdentitySAML() []error {
+	samlCfg := c.Identity.SAML
+	providers := samlCfg.Providers
+	var errs []error
+
+	if !samlCfg.Enabled {
+		if len(providers) > 0 {
+			errs = append(errs, errors.New("identity.saml.providers requires identity.saml.enabled=true"))
+		}
+		if strings.TrimSpace(samlCfg.PrivateKey) != "" {
+			errs = append(errs, errors.New("identity.saml.private_key requires identity.saml.enabled=true"))
+		}
+		return errs
+	}
+	if c.Channel != "c" {
+		errs = append(errs, errors.New("identity.saml is only supported on channel=c"))
+	}
+
+	prod := isProdLikeEnv(c.Env)
+	if strings.TrimSpace(samlCfg.EntityID) == "" {
+		errs = append(errs, errors.New("identity.saml.entity_id is required"))
+	} else if err := validateAbsoluteURL(samlCfg.EntityID, prod); err != nil {
+		errs = append(errs, fmt.Errorf("identity.saml.entity_id: %w", err))
+	}
+	if strings.TrimSpace(samlCfg.ACSURL) == "" {
+		errs = append(errs, errors.New("identity.saml.acs_url is required"))
+	} else if err := validateAbsoluteURL(samlCfg.ACSURL, prod); err != nil {
+		errs = append(errs, fmt.Errorf("identity.saml.acs_url: %w", err))
+	} else if parsed, parseErr := url.Parse(strings.TrimSpace(samlCfg.ACSURL)); parseErr == nil &&
+		parsed.Path != identitySAMLACSPath {
+		errs = append(errs, fmt.Errorf("identity.saml.acs_url path must be %s", identitySAMLACSPath))
+	}
+	if strings.TrimSpace(samlCfg.LoginRedirectURL) == "" {
+		errs = append(errs, errors.New("identity.saml.login_redirect_url is required"))
+	} else if err := validateAbsoluteURL(samlCfg.LoginRedirectURL, prod); err != nil {
+		errs = append(errs, fmt.Errorf("identity.saml.login_redirect_url: %w", err))
+	}
+
+	// 私钥在 prod 由托管源注入；样例与配置文件留空，运行时仍强校验密钥可用性。
+	if _, _, keyErr := parseSAMLKeyPair(samlCfg.CertificatePEM, samlCfg.PrivateKey); keyErr != nil {
+		errs = append(errs, fmt.Errorf("identity.saml.certificate_pem/private_key: %w", keyErr))
+	}
+	nextCert := strings.TrimSpace(samlCfg.CertificateNextPEM)
+	nextKey := strings.TrimSpace(samlCfg.PrivateKeyNextPEM)
+	if nextCert != "" || nextKey != "" {
+		if nextCert == "" || nextKey == "" {
+			errs = append(errs, errors.New("identity.saml.certificate_next_pem and private_key_next must be set together"))
+		} else if _, _, nextErr := parseSAMLKeyPair(nextCert, nextKey); nextErr != nil {
+			errs = append(errs, fmt.Errorf("identity.saml.certificate_next_pem/private_key_next: %w", nextErr))
+		} else if nextCert == strings.TrimSpace(samlCfg.CertificatePEM) {
+			errs = append(errs, errors.New("identity.saml.certificate_next_pem must differ from certificate_pem"))
+		}
+	}
+
+	skew := effectiveSAMLDuration(samlCfg.ClockSkew, 2*time.Minute)
+	assertionTTL := effectiveSAMLDuration(samlCfg.AssertionTTL, 5*time.Minute)
+	requestTTL := effectiveSAMLDuration(samlCfg.RequestTTL, 10*time.Minute)
+	replayTTL := samlCfg.ReplayTTL
+	if replayTTL == 0 {
+		replayTTL = assertionTTL + skew
+	}
+	ticketTTL := effectiveSAMLDuration(samlCfg.TicketTTL, time.Minute)
+	if skew > 5*time.Minute {
+		errs = append(errs, errors.New("identity.saml.clock_skew must be in (0, 5m]"))
+	}
+	if assertionTTL > 15*time.Minute {
+		errs = append(errs, errors.New("identity.saml.assertion_ttl must be in (0, 15m]"))
+	}
+	if requestTTL > 15*time.Minute {
+		errs = append(errs, errors.New("identity.saml.request_ttl must be in (0, 15m]"))
+	}
+	if replayTTL < assertionTTL+skew {
+		errs = append(errs, errors.New("identity.saml.replay_ttl must be >= assertion_ttl + clock_skew"))
+	}
+	if ticketTTL < 30*time.Second || ticketTTL > 5*time.Minute {
+		errs = append(errs, errors.New("identity.saml.ticket_ttl must be in [30s, 5m]"))
+	}
+	if samlCfg.Timeout != 0 && (samlCfg.Timeout < time.Second || samlCfg.Timeout > 30*time.Second) {
+		errs = append(errs, errors.New("identity.saml.timeout must be in [1s, 30s]"))
+	}
+	if samlCfg.MetadataTTL != 0 && (samlCfg.MetadataTTL < time.Minute || samlCfg.MetadataTTL > 24*time.Hour) {
+		errs = append(errs, errors.New("identity.saml.metadata_ttl must be in [1m, 24h]"))
+	}
+	if samlCfg.MetadataMinRefresh != 0 && (samlCfg.MetadataMinRefresh < 5*time.Second ||
+		samlCfg.MetadataMinRefresh > effectiveSAMLDuration(samlCfg.MetadataTTL, 15*time.Minute)) {
+		errs = append(errs, errors.New("identity.saml.metadata_min_refresh must be in [5s, metadata_ttl]"))
+	}
+	rate := samlCfg.RateLimit
+	if rate.RPS < 0 {
+		errs = append(errs, errors.New("identity.saml.rate_limit.rps must be >= 0"))
+	}
+	if rate.Burst < 0 {
+		errs = append(errs, errors.New("identity.saml.rate_limit.burst must be >= 0"))
+	}
+	switch rate.FailureMode {
+	case "", RateLimitFailureClosed, RateLimitFailureOpen:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported identity.saml.rate_limit.failure_mode: %s", rate.FailureMode))
+	}
+	if prod && rate.FailureMode == RateLimitFailureOpen {
+		errs = append(errs, errors.New("identity.saml.rate_limit.failure_mode must be fail_closed in prod/staging"))
+	}
+
+	if len(providers) == 0 {
+		errs = append(errs, errors.New("identity.saml.providers is required when identity.saml.enabled=true"))
+	}
+	seen := make(map[string]struct{}, len(providers))
+	for i, provider := range providers {
+		path := fmt.Sprintf("identity.saml.providers[%d]", i)
+		name := strings.TrimSpace(provider.Name)
+		if !isOAuthProviderName(name) {
+			errs = append(errs, fmt.Errorf("%s.name must match ^[a-z][a-z0-9_-]{1,31}$", path))
+		} else if _, dup := seen[name]; dup {
+			errs = append(errs, fmt.Errorf("%s.name %q is duplicated", path, name))
+		}
+		seen[name] = struct{}{}
+		metadataURL := strings.TrimSpace(provider.MetadataURL)
+		metadataXML := strings.TrimSpace(provider.MetadataXML)
+		if metadataURL == "" && metadataXML == "" {
+			errs = append(errs, fmt.Errorf("%s requires one of metadata_url or metadata_xml", path))
+		}
+		if metadataURL != "" && metadataXML != "" {
+			errs = append(errs, fmt.Errorf("%s must not set both metadata_url and metadata_xml", path))
+		}
+		if metadataURL != "" {
+			if err := validateAbsoluteURL(metadataURL, prod); err != nil {
+				errs = append(errs, fmt.Errorf("%s.metadata_url: %w", path, err))
+			}
+		}
+		if strings.TrimSpace(provider.IDPEntityID) == "" {
+			errs = append(errs, fmt.Errorf("%s.idp_entity_id is required", path))
+		}
+	}
+	return errs
+}
+
+// effectiveSAMLDuration 返回生效时长：零值使用默认值。
+func effectiveSAMLDuration(value, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+// parseSAMLKeyPair 解析并校验 SP 证书 / 私钥：配对、RSA ≥ 2048、证书未过期。
+func parseSAMLKeyPair(certPEM, keyPEM string) (*x509.Certificate, *rsa.PrivateKey, error) {
+	if strings.TrimSpace(certPEM) == "" || strings.TrimSpace(keyPEM) == "" {
+		return nil, nil, errors.New("certificate and private key are required")
+	}
+	certBlock, _ := pem.Decode([]byte(certPEM))
+	if certBlock == nil {
+		return nil, nil, errors.New("certificate must be PEM encoded")
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	keyBlock, _ := pem.Decode([]byte(keyPEM))
+	if keyBlock == nil {
+		return nil, nil, errors.New("private key must be PEM encoded")
+	}
+	var key *rsa.PrivateKey
+	if parsed, parseErr := x509.ParsePKCS1PrivateKey(keyBlock.Bytes); parseErr == nil {
+		key = parsed
+	} else {
+		parsedPKCS8, parseErr8 := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+		if parseErr8 != nil {
+			return nil, nil, errors.New("private key must be PKCS#1 or PKCS#8 RSA")
+		}
+		rsaKey, ok := parsedPKCS8.(*rsa.PrivateKey)
+		if !ok {
+			return nil, nil, errors.New("private key must be RSA")
+		}
+		key = rsaKey
+	}
+	if key.N.BitLen() < 2048 {
+		return nil, nil, errors.New("private key must be RSA >= 2048 bits")
+	}
+	public, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok || public.N.Cmp(key.N) != 0 || public.E != key.E {
+		return nil, nil, errors.New("certificate does not match private key")
+	}
+	if time.Now().After(cert.NotAfter) {
+		return nil, nil, fmt.Errorf("certificate expired at %s", cert.NotAfter.UTC().Format(time.RFC3339))
+	}
+	return cert, key, nil
 }
 
 // isOAuthProviderName 校验 provider 名：小写字母开头，允许 [a-z0-9_-]，长度 2-32。

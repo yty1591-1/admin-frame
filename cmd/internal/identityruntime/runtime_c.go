@@ -11,6 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	identityoauth "github.com/admin-frame/admin-frame/internal/identity/infrastructure/oauth"
+	identitysaml "github.com/admin-frame/admin-frame/internal/identity/infrastructure/saml"
 	identitysms "github.com/admin-frame/admin-frame/internal/identity/infrastructure/sms"
 	identityobs "github.com/admin-frame/admin-frame/internal/identity/observability"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
@@ -52,19 +53,25 @@ func buildChannelC(
 	if err != nil {
 		return nil, err
 	}
+	samlService, err := buildSAMLService(deps, cfg, accounts, identities, authSvc, hasher, observer)
+	if err != nil {
+		return nil, err
+	}
 
 	var providers []string
 	if oauthService != nil {
 		providers = oauthService.ProviderNames()
 	}
 	handler, err := identityc.NewHandler(identityc.HandlerConfig{
-		Rest:      restHandler,
-		SMS:       smsService,
-		OAuth:     oauthService,
-		Auth:      authSvc,
-		Providers: providers,
-		ClientIP:  deps.ClientIP,
-		Hasher:    hasher,
+		Rest:            restHandler,
+		SMS:             smsService,
+		OAuth:           oauthService,
+		SAML:            samlService,
+		SAMLRedirectURL: cfg.Identity.SAML.LoginRedirectURL,
+		Auth:            authSvc,
+		Providers:       providers,
+		ClientIP:        deps.ClientIP,
+		Hasher:          hasher,
 	})
 	if err != nil {
 		return nil, err
@@ -291,6 +298,99 @@ func buildOAuthService(
 	})
 	if err != nil {
 		return nil, apperr.Internal("identity oauth service", err)
+	}
+	return service, nil
+}
+
+// buildSAMLService 构造 SAML 登录服务；identity.saml.enabled=false 时返回 nil。
+//
+// 启动期完成 IdP 元数据加载与 SP 密钥配对校验，任何失败都阻断启动（失败关闭）。
+func buildSAMLService(
+	deps *platform.Deps,
+	cfg *platform.Config,
+	accounts domain.AccountRepository,
+	identities domain.OAuthIdentityRepository,
+	authSvc *app.AuthService,
+	hasher *crypto.Hasher,
+	observer *identityobs.Metrics,
+) (*app.SAMLService, error) {
+	samlCfg := cfg.Identity.SAML
+	if !samlCfg.Enabled {
+		return nil, nil
+	}
+	spCfg := identitysaml.SPConfig{
+		EntityID:        samlCfg.EntityID,
+		AcsURL:          samlCfg.ACSURL,
+		CertificatePEM:  samlCfg.CertificatePEM,
+		PrivateKeyPEM:   samlCfg.PrivateKey,
+		CertificateNext: samlCfg.CertificateNextPEM,
+		PrivateKeyNext:  samlCfg.PrivateKeyNextPEM,
+	}
+	providers := make(map[string]app.SAMLProvider, len(samlCfg.Providers))
+	for _, providerCfg := range samlCfg.Providers {
+		provider, err := identitysaml.NewProvider(context.Background(), identitysaml.Config{
+			Name:         providerCfg.Name,
+			IDPEntityID:  providerCfg.IDPEntityID,
+			MetadataURL:  providerCfg.MetadataURL,
+			MetadataXML:  providerCfg.MetadataXML,
+			MetadataTTL:  samlCfg.MetadataTTL,
+			MinRefresh:   samlCfg.MetadataMinRefresh,
+			Timeout:      samlCfg.Timeout,
+			ClockSkew:    samlCfg.ClockSkew,
+			AssertionTTL: samlCfg.AssertionTTL,
+			SP:           spCfg,
+		})
+		if err != nil {
+			return nil, apperr.Internal("identity saml provider "+providerCfg.Name, err)
+		}
+		providers[providerCfg.Name] = provider
+	}
+	spMetadata, err := identitysaml.SPMetadataXML(spCfg)
+	if err != nil {
+		return nil, apperr.Internal("identity saml sp metadata", err)
+	}
+
+	var states app.OAuthStateStore
+	var replay app.SAMLReplayStore
+	var tickets app.SAMLTicketStore
+	if deps.Redis != nil {
+		client := deps.Redis.Cache()
+		states = identitycache.NewRedisOAuthStateStore(client)
+		replay = identitycache.NewRedisSAMLReplayStore(client)
+		tickets = identitycache.NewRedisSAMLTicketStore(client)
+	} else {
+		states = identitycache.NewMemoryOAuthStateStore(nil)
+		replay = identitycache.NewMemorySAMLReplayStore(nil)
+		tickets = identitycache.NewMemorySAMLTicketStore(nil)
+	}
+	limiter, err := buildSAMLLimiter(cfg, deps)
+	if err != nil {
+		return nil, err
+	}
+	var samlMetrics app.SAMLMetrics
+	if observer != nil {
+		samlMetrics = observer
+	}
+	service, err := app.NewSAMLService(app.SAMLServiceConfig{
+		Providers:     providers,
+		States:        states,
+		Identities:    identities,
+		Accounts:      accounts,
+		IDs:           deps.IDs,
+		Auth:          authSvc,
+		Hasher:        hasher,
+		AutoProvision: samlCfg.AutoProvision,
+		StateTTL:      samlCfg.RequestTTL,
+		ReplayTTL:     samlCfg.ReplayTTL,
+		TicketTTL:     samlCfg.TicketTTL,
+		Replay:        replay,
+		Tickets:       tickets,
+		Metrics:       samlMetrics,
+		Limiter:       limiter,
+		SPMetadataXML: spMetadata,
+	})
+	if err != nil {
+		return nil, apperr.Internal("identity saml service", err)
 	}
 	return service, nil
 }

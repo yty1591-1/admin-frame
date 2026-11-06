@@ -61,6 +61,8 @@ type OAuthState struct {
 	Nonce string
 	// AccountID 非空表示绑定流程：回调只能落到该账号（BIZ-02）。
 	AccountID string
+	// RequestID 是 SAML AuthnRequest 的 ID；OAuth 流程为空。
+	RequestID string
 }
 
 // OAuthBindingView 是账号已绑定的外部身份视图；不含外部主体原文。
@@ -614,114 +616,19 @@ func (s *OAuthService) CompleteBinding(
 
 // resolveAccount 返回外部身份对应账号；未映射时按 auto_provision 决定是否建号。
 func (s *OAuthService) resolveAccount(ctx context.Context, provider, subject, traceID string) (*domain.Account, error) {
-	identity, err := s.identities.FindByProviderSubject(ctx, provider, subject)
-	if err == nil {
-		account, loadErr := s.accounts.FindByID(ctx, identity.AccountID)
-		if loadErr != nil {
-			if errors.Is(loadErr, apperr.ErrNotFound) {
-				return nil, oauthInvalid()
-			}
-			return nil, apperr.Internal("load account failed", loadErr)
-		}
-		return account, nil
-	}
-	if !errors.Is(err, apperr.ErrNotFound) {
-		return nil, apperr.Unavailable("oauth identity store unavailable")
-	}
-	if !s.autoProvision {
-		// D4：失败关闭，不自动建号。
-		return nil, oauthInvalid()
-	}
-	return s.provisionAccount(ctx, provider, subject, traceID)
+	return s.resolver().resolve(ctx, provider, subject, traceID)
 }
 
-// provisionAccount 在同一事务内自动建号、写外部身份映射与 account.created 审计。
-//
-// 审计与账号写入必须原子：避免「账号已建、审计丢失」（IDN-P2-02）。
-func (s *OAuthService) provisionAccount(ctx context.Context, provider, subject, traceID string) (*domain.Account, error) {
-	var account *domain.Account
-	if err := s.auth.runTx(ctx, func(txCtx context.Context) error {
-		created := true
-		accountID, err := s.ids.NextString()
-		if err != nil {
-			return apperr.Internal("generate account id failed", err)
-		}
-		provisioned, err := domain.NewAccount(domain.NewAccountParams{
-			ID:      accountID,
-			Channel: domain.ChannelC,
-			Subject: OAuthSubjectRef(s.hasher, provider, subject),
-		})
-		if err != nil {
-			return apperr.Internal("build account failed", err)
-		}
-		if err := s.accounts.Save(txCtx, provisioned, 0); err != nil {
-			if errors.Is(err, apperr.ErrConflict) {
-				// 并发建号：以已存在的账号为准，避免同一外部身份产生两个账号。
-				existing, loadErr := s.accounts.FindBySubject(txCtx, domain.ChannelC, "", provisioned.Subject)
-				if loadErr != nil {
-					return apperr.Internal("load account failed", loadErr)
-				}
-				created = false
-				account = existing
-			} else {
-				return apperr.Internal("save account failed", err)
-			}
-		} else {
-			account = provisioned
-		}
-
-		identityID, err := s.ids.NextString()
-		if err != nil {
-			return apperr.Internal("generate oauth identity id failed", err)
-		}
-		identity, err := domain.NewOAuthIdentity(domain.NewOAuthIdentityParams{
-			ID:              identityID,
-			AccountID:       account.ID,
-			Provider:        provider,
-			ProviderSubject: subject,
-		})
-		if err != nil {
-			return apperr.Internal("build oauth identity failed", err)
-		}
-		if err := s.identities.Save(txCtx, identity); err != nil {
-			if !errors.Is(err, apperr.ErrConflict) {
-				return apperr.Unavailable("oauth identity store unavailable")
-			}
-			// REL-07：并发回调可能已写入映射。回查并复用已存在账号，避免 503 与孤儿账号。
-			existing, findErr := s.identities.FindByProviderSubject(txCtx, provider, subject)
-			if findErr != nil {
-				return apperr.Unavailable("oauth identity store unavailable")
-			}
-			existingAccount, loadErr := s.accounts.FindByID(txCtx, existing.AccountID)
-			if loadErr != nil {
-				return apperr.Internal("load mapped account failed", loadErr)
-			}
-			if created && account != nil && account.ID != existingAccount.ID {
-				// 本次新建但未建立映射：软删，避免留下可登录的孤儿账号。
-				expectedVersion := account.Version
-				if deleteErr := account.Delete(s.auth.clock.Now().UTC()); deleteErr != nil {
-					return deleteErr
-				}
-				if saveErr := s.accounts.Save(txCtx, account, expectedVersion); saveErr != nil {
-					return apperr.Internal("remove orphan account failed", saveErr)
-				}
-			}
-			account = existingAccount
-			return nil
-		}
-		if created {
-			// 只记录 provider 名，不写外部主体原文。
-			if err := s.auth.emitAuditAs(txCtx, "system", audit.ActionAuthAccountCreated,
-				account.ID, account.MerchantID, "account", account.ID, audit.OutcomeSuccess, "",
-				traceID, map[string]string{"provider": provider}); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return nil, err
+// resolver 把 OAuth 依赖打包，复用 OAuth / SAML 的账号解析逻辑。
+func (s *OAuthService) resolver() externalAccountResolver {
+	return externalAccountResolver{
+		identities:    s.identities,
+		accounts:      s.accounts,
+		ids:           s.ids,
+		auth:          s.auth,
+		hasher:        s.hasher,
+		autoProvision: s.autoProvision,
 	}
-	return account, nil
 }
 
 // checkRateLimit 同时检查全局限流与单 IP 限流；任一超限返回 42900。

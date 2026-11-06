@@ -255,6 +255,158 @@ c-v1-auth-oauth-by-provider-callback:
       "503":
         $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
 
+c-v1-auth-saml-by-provider-authorize:
+  post:
+    tags: [auth]
+    summary: 发起 SAML 授权
+    description: |
+      生成一次性 state 与 AuthnRequest（HTTP-Redirect binding），返回 IdP 跳转地址。
+      provider 未配置时路由不存在（404）；state 有效期由 `identity.saml.request_ttl` 控制。
+    operationId: cAuthSAMLAuthorize
+    security: []
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        description: 已配置的 SAML 提供方名称
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/OAuthAuthorizeResult"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-saml-acs:
+  post:
+    tags: [auth]
+    summary: SAML ACS 断言消费端点
+    description: |
+      IdP 以浏览器表单 POST 回传 `SAMLResponse` 与 `RelayState`。仅接受
+      `application/x-www-form-urlencoded`，请求体上限 512KB。
+      验签、时间条件、Audience、解密与断言 ID 去重全部通过后签发一次性 ticket，
+      并以 303 跳转至 `login_redirect_url?ticket=...`；令牌不会出现在浏览器地址栏。
+    operationId: cAuthSAMLACS
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            required: [SAMLResponse, RelayState]
+            additionalProperties: false
+            properties:
+              SAMLResponse:
+                type: string
+                minLength: 1
+                description: Base64 编码的 SAML Response
+              RelayState:
+                type: string
+                minLength: 1
+                maxLength: 1024
+                description: authorize 下发的一次性 state
+    responses:
+      "303":
+        description: 校验通过，跳转前端登录页并携带 ticket
+        headers:
+          Location:
+            description: "`login_redirect_url?ticket=...`"
+            schema:
+              type: string
+              format: uri
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "413":
+        description: 请求体超过 512KB
+      "415":
+        description: Content-Type 必须为 application/x-www-form-urlencoded
+      "429":
+        $ref: "../../components.yaml#/components/responses/TooManyRequests"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-saml-exchange:
+  post:
+    tags: [auth]
+    summary: 用一次性 ticket 换取令牌
+    description: |
+      ticket 由 ACS 成功后跳转参数下发，有效期默认 60 秒且只能消费一次。
+      过期、已消费或不存在统一返回 40100；存储故障返回 50300。
+    operationId: cAuthSAMLExchange
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ticket]
+            additionalProperties: false
+            properties:
+              ticket:
+                type: string
+                minLength: 1
+                description: ACS 跳转下发的 ticket
+    responses:
+      "200":
+        description: 令牌对
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../components.yaml#/components/schemas/TokenPair"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "500":
+        $ref: "../../components.yaml#/components/responses/InternalError"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
+c-v1-auth-saml-metadata:
+  get:
+    tags: [auth]
+    summary: SP 元数据
+    description: |
+      返回本系统 SP 元数据（entityID / ACS / 签名与解密证书），供 IdP 侧登记。
+      响应为 `application/samlmetadata+xml`；SAML 未启用时返回 50300。
+    operationId: cAuthSAMLMetadata
+    security: []
+    responses:
+      "200":
+        description: SP 元数据 XML
+        content:
+          application/samlmetadata+xml:
+            schema:
+              type: string
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"
+
 c-v1-auth-refresh:
   post:
     tags: [auth]

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Consumer API (C)
-  version: 4.3.0
+  version: 4.4.0
   description: |
     C 端用户（App / 小程序 / H5）。字段最小化；禁止运营内部字段。
     破坏性变更须提升本文件 `info.version` 的 **major**（见 `docs/API_STANDARDS.md`）。
@@ -14,6 +14,7 @@ info:
     4.1.0：新增 `GET/PATCH /c/v1/me`（C 端个人中心资料，纯增量）。
     4.2.0：新增外部身份绑定 / 解绑端点（`/c/v1/me/bindings`、`/c/v1/auth/bindings/{provider}/*`）。
     4.3.0：OAuth-only 账号注销要求最近登录在再认证窗口内（8.4 R-8.4-04）。
+    4.4.0：新增 SAML 2.0 SP-initiated SSO（authorize / ACS / exchange / metadata，纯增量）。
 servers:
   - url: http://localhost:8083
     description: 本地直连（make run-c）
@@ -51,6 +52,14 @@ paths:
     $ref: './paths/c/auth.yaml#/c-v1-auth-oauth-by-provider-authorize'
   /c/v1/auth/oauth/{provider}/callback:
     $ref: './paths/c/auth.yaml#/c-v1-auth-oauth-by-provider-callback'
+  /c/v1/auth/saml/{provider}/authorize:
+    $ref: './paths/c/auth.yaml#/c-v1-auth-saml-by-provider-authorize'
+  /c/v1/auth/saml/acs:
+    $ref: './paths/c/auth.yaml#/c-v1-auth-saml-acs'
+  /c/v1/auth/saml/exchange:
+    $ref: './paths/c/auth.yaml#/c-v1-auth-saml-exchange'
+  /c/v1/auth/saml/metadata:
+    $ref: './paths/c/auth.yaml#/c-v1-auth-saml-metadata'
   /c/v1/auth/refresh:
     $ref: './paths/c/auth.yaml#/c-v1-auth-refresh'
   /c/v1/auth/logout:

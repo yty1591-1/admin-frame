@@ -32,6 +32,8 @@
 | `auth.sms.send` | C | 短信验证码发送成功 / 失败；`resource_id` 为手机号摘要，不含明文 | 认证 | 180d | active |
 | `auth.oauth.authorize` | C | OAuth 授权发起（state 已签发）；只记 provider，不含外部主体 | 认证 | 180d | active |
 | `auth.oauth.callback` | C | OAuth 回调结果；只记 provider 与粗粒度原因，不含授权码 / 令牌 | 认证 | 180d | active |
+| `auth.saml.authorize` | C | SAML 授权发起（AuthnRequest / state 已签发）；只记 provider，不含主体 | 认证 | 180d | active |
+| `auth.saml.callback` | C | SAML ACS 断言校验结果；只记 provider 与粗粒度原因，不含断言原文 | 认证 | 180d | active |
 | `auth.rate_limited` | A/B/C | 登录 / 短信触发限流；`resource_id` 为账号或手机号摘要 | 认证 | 180d | active |
 | `auth.session.evicted` | A/B/C | 超出单账号设备上限，最久未使用的设备被淘汰（同时撤销该设备） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |

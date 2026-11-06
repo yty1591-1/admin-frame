@@ -31,6 +31,8 @@ const (
 	ActionAuthSMS             = "auth.sms.send"
 	ActionAuthOAuthAuthorize  = "auth.oauth.authorize"
 	ActionAuthOAuthCallback   = "auth.oauth.callback"
+	ActionAuthSAMLAuthorize   = "auth.saml.authorize"
+	ActionAuthSAMLCallback    = "auth.saml.callback"
 	ActionAuthRateLimited     = "auth.rate_limited"
 	ActionAuthSessionEvicted  = "auth.session.evicted"
 	ActionAuthTenantSwitch    = "auth.tenant_switch"
@@ -86,6 +88,8 @@ func KnownActions() []string {
 		ActionAuthSMS,
 		ActionAuthOAuthAuthorize,
 		ActionAuthOAuthCallback,
+		ActionAuthSAMLAuthorize,
+		ActionAuthSAMLCallback,
 		ActionAuthRateLimited,
 		ActionAuthSessionEvicted,
 		ActionAuthTenantSwitch,

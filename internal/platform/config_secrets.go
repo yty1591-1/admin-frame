@@ -28,6 +28,10 @@ const (
 	SecretIdentityHashKey = "identity_hash_key"
 	// SecretIdentityMFASecretKey TOTP 密钥的 AES-GCM 加密密钥。
 	SecretIdentityMFASecretKey = "identity_mfa_secret_key"
+	// SecretIdentitySAMLSPPrivateKey SAML SP 当前解密/签名私钥。
+	SecretIdentitySAMLSPPrivateKey = "identity_saml_sp_private_key"
+	// SecretIdentitySAMLSPPrivateKeyNext SAML SP 轮换私钥。
+	SecretIdentitySAMLSPPrivateKeyNext = "identity_saml_sp_private_key_next"
 	// SecretRedisPassword Redis 访问口令（哨兵 / 集群模式必填其一）。
 	SecretRedisPassword = "redis_password"
 	// SecretStorageS3AccessKey 对象存储 AK。
@@ -232,6 +236,8 @@ func secretTargets() []secretTarget {
 		{SecretAuthJWTSecrets, func(c *Config, v string) { c.Auth.JWT.Secrets = splitSecretList(v) }},
 		{SecretIdentityHashKey, func(c *Config, v string) { c.Identity.HashKey = v }},
 		{SecretIdentityMFASecretKey, func(c *Config, v string) { c.Identity.MFA.SecretKey = v }},
+		{SecretIdentitySAMLSPPrivateKey, func(c *Config, v string) { c.Identity.SAML.PrivateKey = v }},
+		{SecretIdentitySAMLSPPrivateKeyNext, func(c *Config, v string) { c.Identity.SAML.PrivateKeyNextPEM = v }},
 		{SecretRedisPassword, func(c *Config, v string) { c.Redis.Password = v }},
 		{SecretStorageS3AccessKey, func(c *Config, v string) { c.Storage.S3.AccessKey = v }},
 		{SecretStorageS3SecretKey, func(c *Config, v string) { c.Storage.S3.SecretKey = v }},

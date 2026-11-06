@@ -43,4 +43,12 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 		mux.Handle("POST /c/v1/auth/oauth/{provider}/authorize", secure(http.HandlerFunc(h.OAuthAuthorize)))
 		mux.Handle("POST /c/v1/auth/oauth/{provider}/callback", secure(http.HandlerFunc(h.OAuthCallback)))
 	}
+	if h.saml != nil {
+		// ACS 使用 512KB 独立上限（handler 内 MaxBytesReader），不能套用 16KB AuthBodyLimit；
+		// metadata 面向 IdP 公开读取，同样不加认证请求体限制。
+		mux.Handle("POST /c/v1/auth/saml/{provider}/authorize", secure(http.HandlerFunc(h.SAMLAuthorize)))
+		mux.Handle("POST /c/v1/auth/saml/acs", pkghttpx.NoStoreMiddleware(http.HandlerFunc(h.SAMLACS)))
+		mux.Handle("POST /c/v1/auth/saml/exchange", secure(http.HandlerFunc(h.SAMLExchange)))
+		mux.Handle("GET /c/v1/auth/saml/metadata", pkghttpx.NoStoreMiddleware(http.HandlerFunc(h.SAMLMetadata)))
+	}
 }

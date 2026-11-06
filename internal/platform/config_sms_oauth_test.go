@@ -286,7 +286,7 @@ func TestValidateOAuthRules(t *testing.T) {
 				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
 				cfg.Identity.SMS.Enabled = false
 			},
-			want: "channel=c requires identity.sms.enabled or at least one identity.oauth.providers",
+			want: "channel=c requires identity.sms.enabled, at least one identity.oauth.providers, or identity.saml providers",
 		},
 		{
 			name: "invalid provider name",

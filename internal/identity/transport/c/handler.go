@@ -24,6 +24,10 @@ type HandlerConfig struct {
 	SMS *app.SMSLoginService
 	// OAuth OAuth 登录服务；未配置 provider 时为 nil。
 	OAuth *app.OAuthService
+	// SAML SAML 登录服务；未启用时为 nil，SAML 路由不注册。
+	SAML *app.SAMLService
+	// SAMLRedirectURL 是 ACS 成功后的前端登录页绝对地址；SAML 启用时必填。
+	SAMLRedirectURL string
 	// Auth 认证用例服务；用于自助注销等与短信无关的 C 端操作。
 	Auth *app.AuthService
 	// Providers 已配置的 provider，用于路由裁剪。
@@ -36,13 +40,15 @@ type HandlerConfig struct {
 
 // Handler 处理 C 端认证 HTTP 请求。
 type Handler struct {
-	rest       *rest.Handler
-	sms        *app.SMSLoginService
-	oauth      *app.OAuthService
-	auth       *app.AuthService
-	providers  []string
-	ipResolver *pkghttpx.ClientIPResolver
-	hasher     *crypto.Hasher
+	rest            *rest.Handler
+	sms             *app.SMSLoginService
+	oauth           *app.OAuthService
+	saml            *app.SAMLService
+	samlRedirectURL string
+	auth            *app.AuthService
+	providers       []string
+	ipResolver      *pkghttpx.ClientIPResolver
+	hasher          *crypto.Hasher
 }
 
 // NewHandler 构造 C 端认证 Handler。
@@ -58,6 +64,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	}
 	return &Handler{
 		rest: cfg.Rest, sms: cfg.SMS, oauth: cfg.OAuth, auth: cfg.Auth,
+		saml: cfg.SAML, samlRedirectURL: strings.TrimSpace(cfg.SAMLRedirectURL),
 		providers: providers, ipResolver: cfg.ClientIP, hasher: cfg.Hasher,
 	}, nil
 }
