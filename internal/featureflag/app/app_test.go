@@ -284,7 +284,9 @@ func itoa(v int) string {
 func TestFlagServiceLifecycle(t *testing.T) {
 	repos := memory.NewMemoryRepository()
 	emitter := &recordEmitter{}
-	svc, err := app.NewFlagService(repos, emitter, nil, app.Options{Service: "admin-api"}, app.FlagServiceOptions{})
+	svc, err := app.NewFlagService(repos, emitter, nil, app.Options{Service: "admin-api"}, app.FlagServiceOptions{
+		Now: func() time.Time { return nowFixed },
+	})
 	if err != nil {
 		t.Fatalf("NewFlagService: %v", err)
 	}
