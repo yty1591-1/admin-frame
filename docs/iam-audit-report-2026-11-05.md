@@ -111,7 +111,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | 审批覆盖 | 角色/绑定/约束/SoD 已覆盖 | **角色模板创建/更新/删除/权限替换/实例化/同步未覆盖**（见 P0-1） |
 | 幂等 | 中间件与 Redis 存储已实现 | 生产 `required: false`，漏传即失去保护（见 P1-2） |
 | 降级 | IAM 快照 Redis 读失败转 DB 回源 | 平台限流/幂等 fail-closed，Redis 故障时请求在 IAM 之前被拒绝（见 P1-4） |
-| 身份联邦 | OIDC 授权码 + PKCE 已实现，并在 staging 用真实 Keycloak 完成冒烟 | SAML 2.0、SCIM、M2M 待交付；JWKS 轮换演练待执行（见 P1-6） |
+| 身份联邦 | OIDC 授权码 + PKCE 已实现并在 staging 用真实 Keycloak 完成冒烟；SAML 2.0 SP-initiated 已实现，2026-11-06 在 staging 用真实 Keycloak 完成联调验收 | SCIM、M2M 待交付；JWKS 轮换演练待执行（见 P1-6） |
 | 访问复核 | Campaign/Task/Decision 领域、清单生成、决策回收、证据导出已实现 | 季度复核演练、证据归档与责任人规则待完成（见 P1-7） |
 | 配置治理 | 生产样例已提供 | 启动期未强制 enforce/approval；样例内含明文密钥（见 P1-1、P1-3） |
 
@@ -232,13 +232,13 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | P1-6 | 企业身份能力缺口 | OIDC 仅预留（[docs/identity-authn.md](./identity-authn.md)）；仓库无 OIDC/SAML/SCIM 实现；无机器身份 | 企业 SSO 接入、自动化开通、服务间调用 | 分阶段实现 OIDC（授权码 + PKCE）→ SAML → SCIM 用户/组同步；M2M 采用 client credentials + 短令牌 | 至少一种 IdP 端到端接入；服务账号可审计轮换 |
 | P1-7 | 访问复核无工具化 | [docs/rbac-iam.md](./rbac-iam.md#L1314-L1318) 仅为人工导出流程 | 等保/SOC2 周期性复核证据 | 增加认证周期任务：生成待复核清单、责任人确认、超期自动回收或升级；复核结果写审计 | 认证周期可执行、可导出、有留痕 |
 
-> **修复状态（2026-11-05）**：P1-1～P1-3 已修复；P1-4 已完成应用侧熔断降级，部署侧（托管 Redis/集群、IAM 快照回源限流）待完成；P1-5 门禁已生效，app（≥75%）与 transport/rest（≥60%）的长尾覆盖率目标已达成；P1-6 的 OIDC 阶段已在 staging 用真实 Keycloak 完成端到端冒烟，SAML/SCIM/M2M 待交付；P1-7 工具链已实现，季度复核演练与证据归档待完成。
+> **修复状态（2026-11-05）**：P1-1～P1-3 已修复；P1-4 已完成应用侧熔断降级，部署侧（托管 Redis/集群、IAM 快照回源限流）待完成；P1-5 门禁已生效，app（≥75%）与 transport/rest（≥60%）的长尾覆盖率目标已达成；P1-6 的 OIDC 与 SAML 阶段已在 staging 用真实 Keycloak 完成端到端验收，SCIM/M2M 待交付；P1-7 工具链已实现，季度复核演练与证据归档待完成。
 > - P1-1：`validateSampleCredentials` 在 `env=prod` 拒绝仓库已公开的演练密钥与本地 root DSN；`check-secret-provider.sh` 增加 `configs/prod-*.yaml` 扫描。
 > - P1-2：`configs/modules/platform.yaml` 与生产样例改为 `idempotency.required: true`；缺键仍返回 400 `ErrMissingKey`。
 > - P1-3：生产 A/B 端启动硬校验 `iam.mode=enforce`、`iam.approval.enabled=true`、`idempotency.enabled/required=true`。
 > - P1-4：限流新增连续故障熔断降级（`X-RateLimit-Degraded`），幂等存储不可用时可配置放行并标记（`X-Idempotency-Degraded`）；仍建议生产使用托管 Redis/集群。
 > - P1-5：`check-iam-coverage.sh` 以 `-coverpkg` 合并 IAM 全包与 MySQL 集成测试，按包设门槛（domain 80、app 75、catalog 60、cache 75、persistence 50、menuview 90、observability 45、rest 60、admin/biz 90、total 69）；`check-iam-diff-coverage.sh` 校验 PR 变更行 ≥70%；新增角色克隆/删除、绑定解绑、模板增改删、互斥组增改删审批执行用例，以及 rest 包内 SOD/模板/约束/菜单/审批撤销 HTTP 用例。实测（含 MySQL 集成测试）domain 85.6%、app 76.5%、catalog 63.6%、cache 79.6%、persistence 57.3%、menuview 100%、observability 49.0%、rest 63.5%、total 69.9%。
-> - P1-6：OIDC 授权码 + PKCE、JWKS 缓存/轮换、显式开关与可观测性已落地；2026-11-05 在 staging 用真实 Keycloak 完成冒烟。JWKS 轮换演练步骤见 [identity-authn.md](./identity-authn.md#L493-L499)；SAML/SCIM/M2M 未交付。
+> - P1-6：OIDC 授权码 + PKCE、JWKS 缓存/轮换、显式开关与可观测性已落地；2026-11-05 在 staging 用真实 Keycloak 完成冒烟。SAML 2.0 SP-initiated 已实现，2026-11-06 在 staging（kind `af-verify`）用真实 Keycloak 26.7.4 完成加密断言 + 签名全链路（authorize → 登录 → ACS 303 → exchange → /me）及负向用例（state 重放、篡改断言、ticket 二次兑换、未知 provider、错误 Content-Type、缺参）。验收中发现并修复：crewjam v0.5.1 未注册 XML Encryption 1.1 的 `rsa-oaep`（RSA-OAEP-256）与 `xmlenc#sha256` digest；Keycloak 加密算法需选 `AES-256-CBC`（不支持 AES-256-GCM）。SCIM/M2M 未交付。
 > - P1-7：Campaign/Task/Decision 领域与用例、清单生成、决策回收、证据导出已实现；待完成一次季度复核演练与证据归档。
 
 ### 6.3 P2（规模化/合规优化）
@@ -273,7 +273,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 |------|------|------|
 | 生产全量上线 | **不通过** | P0 未关闭 |
 | staging 灰度 | **有条件通过** | 关闭 P0-1/P0-2；P1-1～P1-4 完成；灰度期监控撤销时延与 503 率 |
-| 企业客户接入 | **不通过** | OIDC 已通过 staging 真实验收；另需 SAML/SCIM/M2M 与 P1-7 季度复核演练完成 |
+| 企业客户接入 | **不通过** | OIDC 与 SAML 已通过 staging 真实验收；另需 SCIM/M2M 与 P1-7 季度复核演练完成 |
 
 ### 7.3 已确认通过的关键项
 

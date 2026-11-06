@@ -545,6 +545,12 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 错误码：断言 / state 无效、重放、未映射主体统一 `40100`；`SAMLResponse` 或 `RelayState` 缺失 `40000`；请求体超限 `413`；Content-Type 不符 `415`；IdP 元数据不可达 `50300`；限流 `42900`；provider 未配置 `40400`。
 - 可观测性：`identity_saml_authorize_total{provider,result,reason}`、`identity_saml_acs_total{provider,result,reason}`、`identity_saml_acs_duration_seconds{provider,result}`；reason 与 OAuth 共用 `ok|oauth_invalid|oauth_not_configured|unavailable|rate_limited|internal`。
 - 安全约束：ACS 日志与审计禁止出现 `SAMLResponse` 原文、断言 ID 原文与 NameID；只记录 provider 与粗粒度原因。SP 私钥仅从密钥托管注入（`identity_saml_sp_private_key` / `identity_saml_sp_private_key_next`），prod / staging 禁止明文 YAML。
+- 验收记录（2026-11-06，kind 集群 `af-verify` 等价 staging，真实 Keycloak 26.7.4）：
+  - 正向链路（加密断言 + 签名）：`authorize` 200 → Keycloak 登录页 → ACS 303 返回一次性 ticket → `exchange` 200（`expires_in=900`）→ `GET /c/v1/me` 200。令牌头 `kid=saml-verify`、`aud=c`、`iss=admin-frame`；账号主体 `oauth:saml:keycloak:v1:<sha256>`；`identity_oauth_identity` 写入 `provider=saml:keycloak`。
+  - Redis 证据：`saml:ticket:used:<ticket>` 与 `saml:replay:keycloak:<sha256(assertion_id)>` 均按预期生成；指标 `identity_saml_acs_total{result="success"}`、`identity_saml_authorize_total{result="success"}` 递增。
+  - 负向用例：state 重放 / 篡改断言 / ticket 二次兑换 / 无效 ticket 均 `401` + `40100`；未知 provider `404` + `40400`；JSON Content-Type `415`；缺少 `SAMLResponse` 或 `RelayState` `400` + `40000`；c-api 日志中无 `SAMLResponse`、NameID、SP 私钥原文。
+  - IdP 兼容：Keycloak 26 默认使用 XML Encryption 1.1（`rsa-oaep` = RSA-OAEP-256，`DigestMethod` 为 `http://www.w3.org/2001/04/xmlenc#sha256`），crewjam v0.5.1 未注册这两项；SP 侧已补注册（见 `internal/identity/infrastructure/saml/keys.go`），否则解密失败并统一返回 `40100`。IdP 加密算法需选择 `AES-256-CBC` 等 CBC 模式，AES-256-GCM 不受支持。
+  - 已知观察（非缺陷）：无效 ticket 兑换会在 Redis 留下 `saml:ticket:used:<ticket>` 标记（TTL 5 分钟），仅产生少量键空间噪声，不影响一次性语义。
 
 ### 8.3 限流与防刷
 
