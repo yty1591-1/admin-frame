@@ -420,6 +420,9 @@ type IdentitySAMLConfig struct {
 	PrivateKeyNextPEM  string `yaml:"private_key_next"`
 	// AutoProvision 未映射主体是否自动建号；默认关闭（失败关闭）。
 	AutoProvision bool `yaml:"auto_provision"`
+	// NameIDFormat AuthnRequest 请求的 NameID 格式：persistent（默认）/ transient / unspecified。
+	// 不使用 transient：每次登录主体都会变化，auto_provision 会重复建号。
+	NameIDFormat string `yaml:"name_id_format"`
 	// Timeout 单次 IdP 元数据拉取超时；0 表示默认 5s。
 	Timeout time.Duration `yaml:"timeout"`
 	// MetadataTTL IdP 元数据缓存时长；0 表示默认 15m。

@@ -28,6 +28,8 @@ type SPConfig struct {
 	PrivateKeyPEM   string
 	CertificateNext string
 	PrivateKeyNext  string
+	// NameIDFormat AuthnRequest 请求的 NameID 格式；空值按 persistent 处理。
+	NameIDFormat string
 }
 
 // Config 是单个 IdP 提供方配置。
@@ -72,6 +74,10 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	if entityID == "" {
 		return nil, errors.New("saml: sp entity_id is required")
 	}
+	nameIDFormat, err := ParseNameIDFormat(cfg.SP.NameIDFormat)
+	if err != nil {
+		return nil, err
+	}
 	primary, err := ParseKeyPair(cfg.SP.CertificatePEM, cfg.SP.PrivateKeyPEM)
 	if err != nil {
 		return nil, err
@@ -95,7 +101,7 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	sp := newServiceProvider(entityID, acsURL, primary)
+	sp := newServiceProvider(entityID, acsURL, primary, nameIDFormat)
 	if _, err := metadata.Get(ctx); err != nil {
 		return nil, err
 	}
@@ -120,18 +126,34 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		provider.spNext = newServiceProvider(entityID, acsURL, next)
+		provider.spNext = newServiceProvider(entityID, acsURL, next, nameIDFormat)
 	}
 	return provider, nil
 }
 
+// ParseNameIDFormat 把配置值规整为 crewjam 常量；空值默认 persistent。
+// 不使用 transient：它每次登录都会换主体，会导致 auto_provision 每次新建账号。
+func ParseNameIDFormat(raw string) (crewjam.NameIDFormat, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "persistent":
+		return crewjam.PersistentNameIDFormat, nil
+	case "transient":
+		return crewjam.TransientNameIDFormat, nil
+	case "unspecified":
+		return crewjam.UnspecifiedNameIDFormat, nil
+	default:
+		return "", fmt.Errorf("saml: invalid name_id_format %q (want persistent, transient or unspecified)", raw)
+	}
+}
+
 // newServiceProvider 构造 crewjam SP；显式关闭 IdP-initiated。
-func newServiceProvider(entityID string, acsURL *url.URL, keys KeyPair) *crewjam.ServiceProvider {
+func newServiceProvider(entityID string, acsURL *url.URL, keys KeyPair, nameIDFormat crewjam.NameIDFormat) *crewjam.ServiceProvider {
 	return &crewjam.ServiceProvider{
 		EntityID:          entityID,
 		AcsURL:            *acsURL,
 		Key:               keys.Key,
 		Certificate:       keys.Certificate,
+		AuthnNameIDFormat: nameIDFormat,
 		AllowIDPInitiated: false,
 		// MetadataURL 仅用于元数据生成时的 entityID 兜底，这里显式留空。
 		MetadataURL: url.URL{},
@@ -256,7 +278,11 @@ func SPMetadataXML(cfg SPConfig) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sp := newServiceProvider(strings.TrimSpace(cfg.EntityID), acsURL, primary)
+	nameIDFormat, err := ParseNameIDFormat(cfg.NameIDFormat)
+	if err != nil {
+		return nil, err
+	}
+	sp := newServiceProvider(strings.TrimSpace(cfg.EntityID), acsURL, primary, nameIDFormat)
 	descriptor := sp.Metadata()
 	if nextPEM := strings.TrimSpace(cfg.CertificateNext); nextPEM != "" {
 		nextCerts, nextErr := ParseCertificates(nextPEM)

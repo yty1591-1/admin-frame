@@ -1,6 +1,8 @@
 package saml
 
 import (
+	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -8,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net/url"
 	"strings"
@@ -70,6 +73,12 @@ func testIDPMetadata(t *testing.T, entityID string) string {
 // testProvider 构造指向内联元数据的 Provider。
 func testProvider(t *testing.T) *Provider {
 	t.Helper()
+	return testProviderNameID(t, "")
+}
+
+// testProviderNameID 构造指定 NameID 格式的 Provider。
+func testProviderNameID(t *testing.T, nameIDFormat string) *Provider {
+	t.Helper()
 	certPEM, keyPEM, _ := testSPKeys(t)
 	provider, err := NewProvider(context.Background(), Config{
 		Name:         "test",
@@ -84,6 +93,7 @@ func testProvider(t *testing.T) *Provider {
 			AcsURL:         "https://sp.example.com/c/v1/auth/saml/acs",
 			CertificatePEM: certPEM,
 			PrivateKeyPEM:  keyPEM,
+			NameIDFormat:   nameIDFormat,
 		},
 	})
 	if err != nil {
@@ -150,6 +160,62 @@ func TestAuthorizationURLBindsRequestID(t *testing.T) {
 	}
 	if parsed.Query().Get("SAMLRequest") == "" {
 		t.Fatalf("saml request missing: %s", raw)
+	}
+}
+
+// decodeSAMLRequest 解压 HTTP-Redirect 形式的 AuthnRequest。
+func decodeSAMLRequest(t *testing.T, encoded string) string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode saml request: %v", err)
+	}
+	reader := flate.NewReader(bytes.NewReader(raw))
+	defer reader.Close()
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("inflate saml request: %v", err)
+	}
+	return string(out)
+}
+
+// TestAuthorizationURLNameIDPolicy 校验 NameIDPolicy 与配置一致；未配置时默认 persistent。
+func TestAuthorizationURLNameIDPolicy(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		format string
+		want   string
+	}{
+		{name: "default", format: "", want: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"},
+		{name: "transient", format: "transient", want: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider := testProviderNameID(t, tc.format)
+			raw, err := provider.AuthorizationURL("_request-1", "state-1")
+			if err != nil {
+				t.Fatalf("authorization url: %v", err)
+			}
+			parsed, err := url.Parse(raw)
+			if err != nil {
+				t.Fatalf("parse url: %v", err)
+			}
+			xml := decodeSAMLRequest(t, parsed.Query().Get("SAMLRequest"))
+			if !strings.Contains(xml, tc.want) {
+				t.Fatalf("name id policy %q missing: %s", tc.want, xml)
+			}
+		})
+	}
+}
+
+// TestParseNameIDFormatRejectsUnknown 校验非法取值失败关闭。
+func TestParseNameIDFormatRejectsUnknown(t *testing.T) {
+	t.Parallel()
+	if _, err := ParseNameIDFormat("email"); err == nil {
+		t.Fatalf("expected error for unsupported name_id_format")
 	}
 }
 

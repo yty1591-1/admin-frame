@@ -325,6 +325,7 @@ func buildSAMLService(
 		PrivateKeyPEM:   samlCfg.PrivateKey,
 		CertificateNext: samlCfg.CertificateNextPEM,
 		PrivateKeyNext:  samlCfg.PrivateKeyNextPEM,
+		NameIDFormat:    samlCfg.NameIDFormat,
 	}
 	providers := make(map[string]app.SAMLProvider, len(samlCfg.Providers))
 	for _, providerCfg := range samlCfg.Providers {
