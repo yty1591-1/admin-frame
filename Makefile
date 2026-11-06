@@ -298,9 +298,9 @@ ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-laye
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
 
-# DEP-04：与 CI 对齐；不依赖全局安装 govulncheck。
+# DEP-04：与 CI 对齐；受控例外见 deps/vuln-allowlist.txt。
 vuln:
-	$(GOVULNCHECK) ./...
+	@GOVULNCHECK='$(GOVULNCHECK)' bash scripts/ci/check-vuln.sh
 
 # 本地镜像 tag:local（非生产）。版本可通过 VERSION/COMMIT/BUILD_TIME 覆盖。
 VERSION ?= local

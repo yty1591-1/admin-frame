@@ -1,0 +1,5 @@
+# DEPENDENCY_STANDARDS §5 / CI_STANDARDS §10.3：govulncheck 受控例外。
+# 格式：<OSV 编号> <到期日 YYYY-MM-DD> <ADR 编号>
+# 到期后 scripts/ci/check-vuln.sh 自动失败；移除例外须同时更新 ADR 与 PR 说明。
+# 只允许登记「上游无修复版本」且已写明缓解措施的条目。
+GO-2026-6909 2027-05-01 ADR-0010

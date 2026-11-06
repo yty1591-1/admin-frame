@@ -185,7 +185,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: govulncheck
-        run: govulncheck ./...
+        run: bash scripts/ci/check-vuln.sh
 
       - name: Dependency standards (replace + licenses)
         run: bash scripts/ci/check-deps.sh

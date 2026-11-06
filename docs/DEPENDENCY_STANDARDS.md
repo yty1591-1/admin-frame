@@ -57,6 +57,7 @@
 ## 5. 漏洞与更新节奏
 
 - **高危**：`govulncheck` 失败即阻断；缓解须升级依赖或官方 workaround，并在 MR/ADR 记录 CVE。  
+- **无修复版本**：按 `CI_STANDARDS` §10.3 提交 ADR，并把 OSV 编号与到期日登记到 [`deps/vuln-allowlist.txt`](../deps/vuln-allowlist.txt)；[`scripts/ci/check-vuln.sh`](../scripts/ci/check-vuln.sh) 只放行已登记且未过期的编号，到期或未登记一律阻断。  
 - **镜像侧漏洞**：发版镜像流水线的 Trivy（`image` job）按 **二进制/OS 实际内容**扫描，与 `govulncheck` 的**源码可达性**判定口径不同：
   - `govulncheck` 只报「从本仓库代码可调用到」的漏洞；间接依赖里未被调用到的路径不报。
   - Trivy 报二进制中**所有**已收录漏洞（含未触达路径），因此可能出现在 `vuln` job 全绿后 `image` job 仍失败的情况。

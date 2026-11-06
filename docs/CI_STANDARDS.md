@@ -300,6 +300,7 @@ make ci
 | `.github/workflows/image.yml` | 发版镜像构建 / 推送 / Trivy 扫描（§3.5） |
 | `.workflow/*.yml` | Gitee Go 强制执行 |
 | `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
+| `scripts/ci/check-vuln.sh` | `vuln` job：govulncheck + `deps/vuln-allowlist.txt` 受控例外（带到期日） |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
