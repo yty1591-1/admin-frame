@@ -246,6 +246,9 @@ not ready. status: Failed
 | 冒烟连不上 8081 | 容器端口是 8080 |
 | c-api / worker CrashLoopBackOff，日志含 `NOTIFICATION_CALLBACK_SECRET` / `NOTIFICATION_BLACKLIST_SALT` | 通知运行时装配期 fail closed；`values-kind.yaml` 已从 Secret `admin-frame-notification` 注入两个变量，步骤 4 必须创建该 Secret（2026-11-05 实测） |
 | `ctr: open D:\tmp\... no such file`（Windows） | Windows 版 Docker 把 `/tmp/x.tar` 解析成 `D:\tmp`；`docker save -o` 用 `C:/...` 绝对路径，且 `docker cp`/`docker exec` 的容器内路径要加 `MSYS_NO_PATHCONV=1` 防止 Git Bash 改写 |
+| 冒烟返回 502 / `upstream connect failed` | 本机设了 `HTTP_PROXY`/`HTTPS_PROXY` 却没有 `NO_PROXY` 时，curl 会把 `127.0.0.1` 请求送进代理。跑冒烟前设 `NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost`；CI 的 Linux runner 无此代理（2026-11-06 实测） |
+| 端口转发忽然不通、`healthz` 变 502 | `kubectl port-forward` 绑定的是 Pod，Pod 因升级/驱逐重建后转发即断开。看 `netstat -ano \| grep :18080` 是否有 LISTENING，没有就重新执行 port-forward；长期驻留建议用 Service + Ingress 或固定端口的 LoadBalancer |
+| `make test-integration` 全包报 `127.0.0.1:3306 ... actively refused` | Windows Docker Desktop 的主机端口转发比 compose healthcheck 晚几秒生效。`run-integration-tests.sh` 已加入 3306/6379/9000 的主机侧 TCP 等待；若手动起栈，等 `python -c "socket.create_connection(('127.0.0.1',3306))"` 成功再跑测试 |
 
 ## 本轮发现
 
