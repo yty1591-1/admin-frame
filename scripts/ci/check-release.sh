@@ -130,6 +130,43 @@ else
   done
 fi
 
+echo "==> RELS-15: tag builds publish GitHub Release assets"
+# workflow artifact 只留 90 天：SBOM / 制品若不进 Release，发版后无据可查。
+if grep -qE '^[[:space:]]+contents:[[:space:]]*write' "${IMG_WF}"; then
+  echo "    OK: contents: write"
+else
+  echo "ERROR: ${IMG_WF} 缺 'contents: write'，无法创建 Release（RELS-15）" >&2
+  FAIL=1
+fi
+if grep -qE 'gh release (create|upload)' "${IMG_WF}"; then
+  echo "    OK: gh release wired"
+else
+  echo "ERROR: ${IMG_WF} 未创建 GitHub Release（RELS-15）" >&2
+  FAIL=1
+fi
+# 只在 tag 上产出：主干 push 的 sha- 产物进 Release 会让正式版无从分辨。
+if grep -qF 'refs/tags/v' "${IMG_WF}"; then
+  echo "    OK: release gated on tag"
+else
+  echo "ERROR: ${IMG_WF} 的 Release 必须只在 v* tag 上产出（RELS-15）" >&2
+  FAIL=1
+fi
+for asset in 'SHA256SUMS' 'images.json' '.tar.gz' '.cdx.json'; do
+  if grep -qF -- "${asset}" "${IMG_WF}"; then
+    echo "    OK: asset ${asset}"
+  else
+    echo "ERROR: Release 资产缺 ${asset}（RELS-15）" >&2
+    FAIL=1
+  fi
+done
+# configs/prod/.env 是演练凭据，整目录复制会把凭据随制品外发（SEC-01）。
+if grep -qE 'cp[[:space:]]+-r[[:space:]]+configs([[:space:]]|$)' "${IMG_WF}"; then
+  echo "ERROR: bundle 不得整目录复制 configs（含 .env 演练凭据，SEC-01）" >&2
+  FAIL=1
+else
+  echo "    OK: bundle only ships config examples"
+fi
+
 echo "==> RELS-07: release checklist present"
 if [[ -f docs/release/CHECKLIST.md ]]; then
   echo "    OK: docs/release/CHECKLIST.md"

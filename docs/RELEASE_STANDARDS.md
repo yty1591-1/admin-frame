@@ -5,7 +5,7 @@
 > **适用范围**：本仓库镜像构建、版本暴露、生产发布与回滚  
 > **关联**：架构 §十八；迁移顺序见 `DATA_STANDARDS.md`；探针见 `OBSERVABILITY_STANDARDS.md`  
 > **执行方式**：`check-release.sh` + 发布 Checklist + Review  
-> **最后更新**：2026-10-21（发版镜像流水线 `image` 落地：多架构构建 + 推送 + Trivy 扫描）  
+> **最后更新**：2026-11-07（RELS-15：`v*` tag 产出 GitHub Release 资产；前次 2026-10-21：发版镜像流水线落地）  
 > **变更方式**：修改本规范须同步更新 `Dockerfile`、`scripts/ci/check-release.sh`、`docs/release/` 与架构 §十八，经架构 Owner Review
 
 ---
@@ -36,6 +36,7 @@
 | RELS-12 | 失败必须可自动回滚：`rollback` job 卸载金丝雀并把生产回退到上一 revision；人工命令固化在 runbook | `release.yml` + `runbooks/release-rollback.md` |
 | RELS-13 | 每个发版镜像必须产出 **CycloneDX SBOM**（按 digest，随镜像 artifact 上传），并以 `cosign attest` 附加到同一 digest；SBOM 缺失视同发布失败 | `image.yml` + `check-sbom.sh`（SB-02/03/05） |
 | RELS-14 | 部署前必须验签：签名身份须为**本仓库 `image.yml` 的 keyless 身份**、issuer 为 GitHub Actions，且同一 digest 上有 CycloneDX SBOM attestation；任一不满足即中止发布，不得 `continue-on-error` 或 `\|\| true` | `verify-supply-chain.sh` + `release.yml` + `check-sbom.sh`（SB-07/08/09/10） |
+| RELS-15 | `v*` tag 必须产出 **GitHub Release**，资产固定为：二进制 bundle（`admin-frame-<version>-linux-<arch>.tar.gz`，amd64/arm64）、各 cmd 的 CycloneDX SBOM、`images.json`（镜像→digest）、`SHA256SUMS`；任一缺失视同发版失败 | `image.yml` + `check-release.sh` |
 
 ---
 
@@ -155,6 +156,24 @@ docker build --target admin-api \
 - **为什么 digest 不够**：digest 只证明「内容没变」，不证明「内容来自本仓库的流水线」。有 registry 写权限的人（或凭据泄漏）推一个同 tag 的新 digest，`digests` 阶段照样能解析出合法 `sha256:`，冒烟也不会失败——验签是唯一能拦住这条路径的环节。
 - **验证边界**：keyless 链路依赖 GitHub OIDC，本地无法复现。签名/验签/attestation 的等价演练见 `scripts/ci/supply-chain-rehearsal.sh`（本地 registry + 本地密钥对，11 项断言），细节与挂账见 [`release/supply-chain.md`](./release/supply-chain.md)。
 
+### 6.1 Release 资产（RELS-15）
+
+`image.yml` 在 `v*` tag 上除推送镜像外，还必须创建 GitHub Release，资产固定为：
+
+| 资产 | 内容 | 用途 |
+|---|---|---|
+| `admin-frame-<version>-linux-{amd64,arm64}.tar.gz` | 5 个静态二进制（`CGO_ENABLED=0`，ldflags 与 Dockerfile 同源）+ `configs/**/*.example` + `migrations/` | 无容器运行时可直接取包核对/演练；**不含** `configs/prod/.env`（演练凭据不外发，SEC-01） |
+| `sbom-<cmd>.cdx.json` | 每个镜像按 digest 生成的 CycloneDX SBOM | 让 SBOM 在 workflow artifact 90 天过期后仍可追溯（RELS-13 的长期留存） |
+| `images.json` | `version` / `commit` / `build_time` / `images`（每个 cmd 的 `<registry>/<owner>/<cmd>@sha256:…`） | 部署清单与运行中实例 `/version` 的核对基准（RELS-04） |
+| `SHA256SUMS` | 上述所有资产的 sha256 | 离线校验制品未被替换 |
+
+约束：
+
+- 只在 tag 上产出。主干 push 的 `sha-` 镜像是可丢弃产物，进 Release 页会让「哪个是正式版」变模糊；
+- digest 从 registry 解析（`docker buildx imagetools inspect`）而非复用构建步骤输出：Release 里写的必须是**已推送**的那个 digest；
+- 同一 tag 重推时用 `gh release upload --clobber` 更新资产，不新建同名 Release；
+- 发布说明由 `gh release create --generate-notes` 生成，不手写、不编造条目。
+
 ---
 
 ## 7. MUST NOT
@@ -167,6 +186,7 @@ docker build --target admin-api \
 - 用「金丝雀零错误」作为放量依据而不校验其是否真的接到流量。  
 - 部署未通过验签的镜像，或用 `continue-on-error` / `|| true` / `--insecure-ignore-tlog` 让验签「软失败」。  
 - 只在 tag 上签名，或为「签名成功」而放宽 `--certificate-identity-regexp`（`.*` 等于不校验来源）。
+- 只在 workflow artifact 里留 SBOM / 制品而不发布 Release 资产（90 天后无据可查，RELS-15）。
 
 ---
 
@@ -185,6 +205,7 @@ make ci
 | GitHub / Gitee | job `arch` 内跑 `check-release.sh` + `check-sbom.sh` |
 | 发版镜像 | GitHub `image` 流水线（push main / `v*` tag；buildx 多架构 + Trivy + SBOM + cosign 签名） |
 | 发版 | `docs/release/CHECKLIST.md`；部署前 `verify` job 验签 |
+| 发布资产 | GitHub `image` 流水线的 `release` job（tag `v*`；二进制 bundle + SBOM + `images.json` + `SHA256SUMS`） |
 | 供应链演练 | `bash scripts/ci/supply-chain-rehearsal.sh`（手动，需 docker） |
 | MR | PR 模板「发布自检」 |
 

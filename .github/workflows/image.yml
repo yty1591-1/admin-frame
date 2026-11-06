@@ -5,6 +5,9 @@
 # 产物：<registry>/<owner>/<cmd>:<version>，多架构 linux/amd64 + linux/arm64，推后 Trivy 扫描。
 # 供应链（ENT-19 / RELEASE_STANDARDS §6）：按 **digest** 生成 CycloneDX SBOM 并上传 artifact，
 # 用 cosign keyless 对 digest 签名、把 SBOM 作为 attestation 附加到 digest 上。
+# 发布资产（RELS-15）：`v*` tag 额外产出 GitHub Release——5 个二进制的 linux/amd64+arm64
+# bundle、各 cmd 的 CycloneDX SBOM、images.json（镜像→digest）与 SHA256SUMS。
+# workflow artifact 只留 90 天，Release 资产才是发版后仍可追溯的凭据。
 # 发布流水线在部署前验签（scripts/ci/verify-supply-chain.sh），验不过不部署。
 # 注册表：默认 GHCR（GITHUB_TOKEN 推送）；私有仓库可设 Repository variable
 #         IMAGE_REGISTRY，并另外注入推送凭据。
@@ -170,3 +173,161 @@ jobs:
           set -euo pipefail
           # attestation 挂到 digest 上（OCI referrer），发布侧用 verify-attestation 取回。
           cosign attest --yes --type cyclonedx --predicate "${SBOM}" "${IMAGE}@${DIGEST}"
+
+  # RELS-15：只读镜像的人也能核对一次发版——bundle 可直接运行，images.json 给出
+  # 镜像→digest 的对应关系，SBOM 与 SHA256SUMS 让制品在本地可校验。
+  # 不在主干 push 上产出：sha- 镜像是可丢弃产物，进 Release 页只会让「哪个是正式版」变模糊。
+  release:
+    name: release assets (${{ github.ref_name }})
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # 创建/更新 GitHub Release 需要写权限；其余权限保持最小集。
+      contents: write
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # gh --generate-notes 依赖 tag 历史，浅克隆拿不到上一个 tag。
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve release version
+        id: ver
+        run: |
+          set -euo pipefail
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary bundles (linux/amd64, linux/arm64)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          COMMIT: ${{ steps.ver.outputs.commit }}
+          BUILD_TIME: ${{ steps.ver.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          # 与 Dockerfile 同一套 ldflags：bundle 里的 /version 输出必须能对上发版号。
+          LD="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            bundle="admin-frame-${VERSION}-linux-${arch}"
+            work="dist/${bundle}"
+            mkdir -p "${work}"
+            for cmd in admin-api biz-api c-api worker migrate; do
+              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build \
+                -ldflags "${LD}" -o "${work}/${cmd}" "./cmd/${cmd}"
+            done
+            # 只带 *.example：configs/prod/.env 里是演练凭据，不能随制品外发（SEC-01）。
+            mkdir -p "${work}/configs"
+            while IFS= read -r file; do
+              mkdir -p "${work}/configs/$(dirname "${file}")"
+              cp "configs/${file}" "${work}/configs/${file}"
+            done < <(cd configs && find . -type f -name '*.example' | sort)
+            cp -r migrations "${work}/migrations"
+            tar -C dist -czf "dist/${bundle}.tar.gz" "${bundle}"
+            rm -rf "${work}"
+          done
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sbom-*
+          merge-multiple: true
+          path: dist
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image digests
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          : > dist/digests.txt
+          for cmd in admin-api biz-api c-api worker migrate; do
+            image="${REGISTRY}/${owner}/${cmd}:${VERSION}"
+            digest=""
+            for attempt in 1 2 3 4 5; do
+              digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')"
+              if printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+                break
+              fi
+              echo "    ${image} 尚未就绪（第 ${attempt}/5 次），10s 后重试"
+              sleep 10
+            done
+            if ! printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::${image} 的 digest 不可用：'${digest}'（Release 必须给出可核对的不可变引用）"
+              exit 1
+            fi
+            printf '%s %s\n' "${cmd}" "${digest}" >> dist/digests.txt
+          done
+
+      - name: Write images manifest
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          COMMIT: ${{ steps.ver.outputs.commit }}
+          BUILD_TIME: ${{ steps.ver.outputs.build_time }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "{"
+            printf '  "version": "%s",\n' "${VERSION}"
+            printf '  "commit": "%s",\n' "${COMMIT}"
+            printf '  "build_time": "%s",\n' "${BUILD_TIME}"
+            echo '  "images": {'
+            first=1
+            while read -r cmd digest; do
+              [[ "${first}" -eq 1 ]] || echo ","
+              first=0
+              printf '    "%s": "%s/%s/%s@%s"' "${cmd}" "${REGISTRY}" "${owner}" "${cmd}" "${digest}"
+            done < dist/digests.txt
+            echo ""
+            echo "  }"
+            echo "}"
+          } > dist/images.json
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz ./*.cdx.json ./images.json > SHA256SUMS
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 重复推送同一 tag 时更新资产而不是报错；--clobber 让资产内容与本次构建一致。
+          assets=()
+          for f in dist/*.tar.gz dist/*.cdx.json dist/images.json dist/SHA256SUMS; do
+            assets+=("${f}")
+          done
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${assets[@]}" --clobber
+          else
+            gh release create "${TAG}" \
+              --title "${TAG}" \
+              --generate-notes \
+              "${assets[@]}"
+          fi

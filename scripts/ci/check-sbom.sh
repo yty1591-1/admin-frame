@@ -36,8 +36,11 @@ ok() { echo "    OK: $*"; }
 
 # code_has <file> <ere>：只在非注释行里匹配（workflow 文件头注释常引用关键字）
 code_has() {
-  # `--` 必需：模式可能以 '--predicate' 这类选项形态开头，否则 grep 会把它当参数解析。
-  grep -vE '^[[:space:]]*#' "$1" 2>/dev/null | grep -qE -- "$2"
+  # 不能写成 `... | grep -qE`：pipefail 下 grep -q 命中即退出，上游 grep 收到 SIGPIPE(141)，
+  # 整条 pipeline 非 0，命中的行反而被判为「不存在」（与本文件 SB-09 里记的是同一个坑）。
+  local body
+  body="$(grep -vE '^[[:space:]]*#' "$1" 2>/dev/null || true)"
+  [[ -n "${body}" ]] && grep -qE -- "$2" <<<"${body}"
 }
 
 # code_line <file> <ere>：返回命中行号（跳过注释行），无命中返回空

@@ -9,6 +9,7 @@
 - [ ] 镜像 tag：________
 - [ ] 镜像由 GitHub `Image` 流水线产出（push main / `v*` tag），非本机手工构建
 - [ ] 镜像 digest：`sha256:________`（已记录）
+- [ ] GitHub Release（`v*` tag）已生成：二进制 bundle、`sbom-<cmd>.cdx.json`、`images.json`、`SHA256SUMS` 齐全（RELS-15）
 - [ ] SBOM：`sbom-<cmd>` artifact 已生成并可下载（CycloneDX），且 attestation 挂在**同一 digest** 上
 - [ ] 验签：`Release` 流水线 `verify` job 通过（keyless 身份 = 本仓库 `image.yml`），无 `continue-on-error`
 - [ ] git commit：________
