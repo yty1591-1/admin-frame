@@ -50,6 +50,27 @@ trap cleanup EXIT
 echo "==> docker compose up: mysql / redis / minio"
 docker compose -f "${COMPOSE_FILE}" up -d --wait --wait-timeout 120 mysql redis minio
 
+# compose 的 healthcheck 只证明「容器内」就绪。Windows Docker Desktop 的主机端口
+# 转发会晚几秒生效，测试进程连的是 127.0.0.1，此时会拿到 connection refused
+# （2026-11-06 实测：Healthy 之后立刻 go test，9 个包全部报 3306 拒绝连接）。
+# 显式等主机侧 TCP 可连再继续；Linux 第一次探测即成功，不影响 CI。
+wait_host_port() {
+  local port="$1" attempt
+  for attempt in $(seq 1 30); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+      echo "    OK: 127.0.0.1:${port} reachable"
+      return 0
+    fi
+    sleep 1
+  done
+  # 探测手段本身可能在某些 shell 下不可用（非 bash 或缺 net-redirections）。
+  # 这时不该把「探测不到」误判成「依赖没起来」：给警告并交给 go test 给出真实错误。
+  echo "WARN: 127.0.0.1:${port} not reachable after 30s (host forwarding or /dev/tcp unsupported)" >&2
+}
+
+echo "==> wait for host-side port forwarding"
+for port in 3306 6379 9000; do wait_host_port "${port}"; done
+
 echo "==> create test bucket"
 docker compose -f "${COMPOSE_FILE}" run --rm minio-init
 
