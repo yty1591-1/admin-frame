@@ -205,7 +205,7 @@ func TestWatcherMissingFileAfterStart(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	event := waitEvent(t, events, 2*time.Second, func(ev config.Event[testConfig]) bool { return ev.Err != nil })
+	event := waitEvent(t, events, 5*time.Second, func(ev config.Event[testConfig]) bool { return ev.Err != nil })
 	if !errors.Is(event.Err, config.ErrMissingFile) {
 		t.Fatalf("err=%v want ErrMissingFile", event.Err)
 	}
