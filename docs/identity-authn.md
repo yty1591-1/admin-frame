@@ -551,6 +551,20 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   - 负向用例：state 重放 / 篡改断言 / ticket 二次兑换 / 无效 ticket 均 `401` + `40100`；未知 provider `404` + `40400`；JSON Content-Type `415`；缺少 `SAMLResponse` 或 `RelayState` `400` + `40000`；c-api 日志中无 `SAMLResponse`、NameID、SP 私钥原文。
   - IdP 兼容：Keycloak 26 默认使用 XML Encryption 1.1（`rsa-oaep` = RSA-OAEP-256，`DigestMethod` 为 `http://www.w3.org/2001/04/xmlenc#sha256`），crewjam v0.5.1 未注册这两项；SP 侧已补注册（见 `internal/identity/infrastructure/saml/keys.go`），否则解密失败并统一返回 `40100`。IdP 加密算法需选择 `AES-256-CBC` 等 CBC 模式，AES-256-GCM 不受支持。
   - 已知观察（非缺陷）：无效 ticket 兑换会在 Redis 留下 `saml:ticket:used:<ticket>` 标记（TTL 5 分钟），仅产生少量键空间噪声，不影响一次性语义。
+- 密钥轮换演练（2026-11-06，同一 Kind 集群，SP 同时配置 active 与 next 双密钥）：
+  - 元数据：`GET /c/v1/auth/saml/metadata` 返回 2 个 `use="encryption"` KeyDescriptor（active 在前、next 在后），与 Secret 中 `identity_saml_sp_private_key` / `identity_saml_sp_private_key_next` 一一对应；当前未发布 `use="signing"` 用途（SP 未启用独立签名证书）。
+  - 基线（IdP `saml.encryption.certificate` = active）：authorize 200 → Keycloak 登录 → ACS 303 → exchange 200 → `/c/v1/me` 200，令牌头 `kid=rotate`（演练 overlay 的签名 key id）。
+  - 切 next：IdP 加密证书改为 next 后 ACS 仍 303、exchange 200。取该次 `SAMLResponse` 的 `EncryptedKey`，以 `rsa-oaep`（MGF1-SHA256）解 RSA 密文得到 32 字节 AES-256 CEK：`next.key` 解出，`active.key` 解密失败，证明命中的是 `spNext` 回退分支（`internal/identity/infrastructure/saml/provider.go` 仅在存在 `EncryptedAssertion` 且 active 解析失败时重试）。
+  - 切回 active：旧证书加密的断言继续通过，验证轮换回滚路径。
+  - 指标与数据：`identity_saml_acs_total{provider="keycloak",result="success",reason="ok"}=5`，`identity_saml_acs_duration_seconds` 5 次全部落在 ≤ 50ms 桶（累计 0.146s）；`identity_oauth_identity` 中 `provider=saml:keycloak` 共 6 行；Redis 生成对应 `saml:replay:<provider>:*` 与 `saml:ticket:used:*`。
+  - IdP 侧接入前提（演练中确认，需写入接入检查表）：
+    1. `saml.force.post.binding` 必须为 `true`（Keycloak 默认）。置为 `false` 且 AuthnRequest 携带 `ProtocolBinding=HTTP-POST` 时，Keycloak 以 `invalid_redirect_uri` 拒绝（400）。
+    2. AuthnRequest 的 `Destination` 必须与 `KC_HOSTNAME` 完全一致；不一致时 Keycloak 返回 `Invalid Request`（400）。缺失 `Destination` 虽可通过，但不符合规范，不得作为接入方案。
+    3. SP 的 AuthnRequest 现在显式请求 `persistent`（`identity.saml.name_id_format`，默认值），同一 IdP 用户的 NameID 稳定；若显式配置为 `transient`，IdP 未强制名称格式（`saml_force_name_id_format=false`）时每次登录 NameID 会变化，`auto_provision` 将重复建号。
+    4. 静态 IdP 元数据下，IdP **签名**证书轮换仍需同步更新 SP 侧 `providers[].metadata_xml` 并重部署；本次演练只覆盖 SP 加密证书轮换。
+  - NameID 稳定性复测（2026-11-06，同一集群，`name_id_format: persistent`）：同一 Keycloak 用户 `saml-verify` 连续两次完整登录，均 `authorize` 200 → 登录页 200 → ACS 303 → `exchange` 200（`expires_in=900`），两次 JWT `sub` 均为 `377034981391740928`；`identity_oauth_identity` 中 `provider=saml:keycloak` 保持 7 行未新增，证明同一 IdP 主体复用同一账号与绑定。
+  - 对照证据（修复前，AuthnNameIDFormat 为空走 crewjam 默认 `transient`）：09:06–09:08 的 5 次登录各生成不同 `account_id`（如 `377020840564240384` / `377020933841367040` / `377020992939110400`），`auto_provision` 每次重复建号。修复后 `ParseNameIDFormat` 对空值默认 persistent，AuthnRequest 的 `NameIDPolicy` 携带 `urn:oasis:names:tc:SAML:2.0:nameid-format:persistent`。
+  - 环境已回滚（2026-11-06）：历史 revision 17 已超出保留窗口，改用基线 `values-kind.yaml` 重新 upgrade 恢复（`c-api:verify`、identity 关闭），当前 release 为 revision 34；临时 Secret `admin-frame-saml` / `admin-frame-jwt-signing` 已删除，`/readyz` 200、`/c/v1/auth/saml/metadata` 404（功能随配置关闭）。
 
 ### 8.3 限流与防刷
 
@@ -726,6 +740,7 @@ identity:
     certificate_next_pem: ""   # 轮换证书；与 private_key_next 成对出现
     private_key_next: ""       # 生产由 identity_saml_sp_private_key_next 注入
     auto_provision: false      # 未映射主体默认拒绝建号
+    name_id_format: persistent # persistent（默认）/ transient / unspecified；transient 会导致每次登录换主体
     timeout: 5s                # [1s, 30s]
     metadata_ttl: 15m          # [1m, 24h]
     metadata_min_refresh: 1m   # [5s, metadata_ttl]
@@ -757,6 +772,7 @@ identity:
 | SAML 密钥 | `certificate_pem` 与 `private_key` 必填、PEM 编码、配对且 RSA ≥ 2048、证书未过期；`certificate_next_pem` / `private_key_next` 必须成对且不得与当前证书相同 |
 | SAML 时长 | `timeout ∈ [1s, 30s]`；`metadata_ttl ∈ [1m, 24h]`；`metadata_min_refresh ∈ [5s, metadata_ttl]`；`clock_skew ≤ 5m`；`assertion_ttl` / `request_ttl ≤ 15m`；`replay_ttl ≥ assertion_ttl + clock_skew`；`ticket_ttl ∈ [30s, 5m]` |
 | SAML IdP | `providers[].name` 唯一且匹配 `^[a-z][a-z0-9_-]{1,31}$`；`idp_entity_id` 必填；`metadata_url` 与 `metadata_xml` 必须且只能二选一，`metadata_url` 为绝对 URL |
+| SAML NameID | `name_id_format` 仅 `persistent`（默认）/ `transient` / `unspecified`，其他值启动失败（`saml: invalid name_id_format`） |
 | 持久化 | prod/staging 且 `identity.enabled=true` 时 `db.driver` 不得为 `memory`；运行时 `db.driver` 非 memory 但无数据库连接直接启动失败，禁止回退内存仓储 |
 | 审计出口 | prod/staging 且 `identity.enabled=true` 时 `async.enabled=true`（审计写入 Outbox）；启动日志输出 `identity audit sink`（`outbox` / `slog`） |
 | 撤销陈旧度 | `revocation.state_ttl ∈ [1s, 60s]`；未配置时取 `min(access_ttl+1m, 60s)`，禁止超过 60s |

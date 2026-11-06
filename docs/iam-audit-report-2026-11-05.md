@@ -111,7 +111,7 @@ IAM 模块已具备企业级 RBAC 的核心骨架：RBAC1 角色继承、RBAC2 �
 | 审批覆盖 | 角色/绑定/约束/SoD 已覆盖 | **角色模板创建/更新/删除/权限替换/实例化/同步未覆盖**（见 P0-1） |
 | 幂等 | 中间件与 Redis 存储已实现 | 生产 `required: false`，漏传即失去保护（见 P1-2） |
 | 降级 | IAM 快照 Redis 读失败转 DB 回源 | 平台限流/幂等 fail-closed，Redis 故障时请求在 IAM 之前被拒绝（见 P1-4） |
-| 身份联邦 | OIDC 授权码 + PKCE 已实现并在 staging 用真实 Keycloak 完成冒烟；SAML 2.0 SP-initiated 已实现，2026-11-06 在 staging 用真实 Keycloak 完成联调验收 | SCIM、M2M 待交付；JWKS 轮换演练待执行（见 P1-6） |
+| 身份联邦 | OIDC 授权码 + PKCE 已实现并在 staging 用真实 Keycloak 完成冒烟；SAML 2.0 SP-initiated 已实现，2026-11-06 在 staging 用真实 Keycloak 完成联调验收与 SP 双证书轮换演练（active→next→回滚，均通过） | SCIM、M2M 待交付；JWKS 轮换演练待执行（见 P1-6） |
 | 访问复核 | Campaign/Task/Decision 领域、清单生成、决策回收、证据导出已实现 | 季度复核演练、证据归档与责任人规则待完成（见 P1-7） |
 | 配置治理 | 生产样例已提供 | 启动期未强制 enforce/approval；样例内含明文密钥（见 P1-1、P1-3） |
 
