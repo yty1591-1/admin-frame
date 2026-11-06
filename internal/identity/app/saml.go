@@ -260,7 +260,10 @@ func (s *SAMLService) ACS(ctx context.Context, in SAMLACSInput) (ticket string, 
 		return "", limitErr
 	}
 	state := strings.TrimSpace(in.RelayState)
-	if state == "" || len(state) > maxSAMLRelayStateBytes {
+	if strings.TrimSpace(in.SAMLResponse) == "" || state == "" {
+		return "", apperr.BadRequest("saml response and relay state are required")
+	}
+	if len(state) > maxSAMLRelayStateBytes {
 		return "", samlInvalid()
 	}
 	saved, err := s.states.Consume(ctx, state)

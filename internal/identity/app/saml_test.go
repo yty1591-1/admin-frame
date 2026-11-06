@@ -222,6 +222,20 @@ func TestSAMLACSRejectsUnknownState(t *testing.T) {
 	}
 }
 
+// TestSAMLACSRejectsMissingParameters 校验缺少 SAMLResponse / RelayState 返回 40000。
+func TestSAMLACSRejectsMissingParameters(t *testing.T) {
+	t.Parallel()
+	f := newSAMLFixture(t, false, nil)
+	_, err := f.svc.ACS(context.Background(), app.SAMLACSInput{SAMLResponse: "signed-assertion"})
+	if !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("expected bad request for missing relay state, got %v", err)
+	}
+	_, err = f.svc.ACS(context.Background(), app.SAMLACSInput{RelayState: "state"})
+	if !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("expected bad request for missing saml response, got %v", err)
+	}
+}
+
 // TestSAMLExchangeConsumesTicketOnce 校验 ticket 一次性并签发令牌。
 func TestSAMLExchangeConsumesTicketOnce(t *testing.T) {
 	t.Parallel()
