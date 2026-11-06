@@ -3,12 +3,41 @@ package saml
 
 import (
 	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // 兼容 XML Encryption 1.0 的 sha1 digest
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"hash"
 	"time"
+
+	"github.com/crewjam/saml/xmlenc"
 )
+
+// crewjam v0.5.1 只注册了 XML Encryption 1.0 的 rsa-oaep-mgf1p 解密器与
+// xmldsig 命名空间的 digest，而 Keycloak 26 默认用 XML Encryption 1.1：
+// - 加密算法为 rsa-oaep（RSA-OAEP-256）
+// - DigestMethod 为 http://www.w3.org/2001/04/xmlenc#sha256
+// 不补齐注册会导致 ParseXMLResponse 返回 "Authentication failed"。
+// AES-256-GCM 仍不受支持，IdP 侧需选择 AES-256-CBC 等 CBC 算法。
+func init() {
+	xmlenc.RegisterDecrypter(xmlenc.OAEP_SHA256())
+	xmlenc.RegisterDigestMethod(xmlEncDigest{algorithm: "http://www.w3.org/2001/04/xmlenc#sha1", newHash: sha1.New})
+	xmlenc.RegisterDigestMethod(xmlEncDigest{algorithm: "http://www.w3.org/2001/04/xmlenc#sha256", newHash: sha256.New})
+	xmlenc.RegisterDigestMethod(xmlEncDigest{algorithm: "http://www.w3.org/2001/04/xmlenc#sha512", newHash: sha512.New})
+}
+
+// xmlEncDigest 让 xmlenc# 命名空间的 digest 复用标准库哈希实现。
+type xmlEncDigest struct {
+	algorithm string
+	newHash   func() hash.Hash
+}
+
+func (d xmlEncDigest) Algorithm() string { return d.algorithm }
+
+func (d xmlEncDigest) Hash() hash.Hash { return d.newHash() }
 
 // KeyPair 是 SP 的证书与私钥。
 type KeyPair struct {
