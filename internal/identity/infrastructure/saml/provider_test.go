@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	crewjam "github.com/crewjam/saml"
 )
 
 var (
@@ -216,6 +218,22 @@ func TestParseNameIDFormatRejectsUnknown(t *testing.T) {
 	t.Parallel()
 	if _, err := ParseNameIDFormat("email"); err == nil {
 		t.Fatalf("expected error for unsupported name_id_format")
+	}
+}
+
+// TestCheckNameIDFormat 校验配置 persistent 时拒绝 transient 断言。
+func TestCheckNameIDFormat(t *testing.T) {
+	t.Parallel()
+	provider := &Provider{nameIDFormat: crewjam.PersistentNameIDFormat}
+	if err := provider.checkNameIDFormat(string(crewjam.TransientNameIDFormat)); err == nil {
+		t.Fatalf("expected error for transient nameid")
+	}
+	if err := provider.checkNameIDFormat(string(crewjam.PersistentNameIDFormat)); err != nil {
+		t.Fatalf("unexpected error for persistent nameid: %v", err)
+	}
+	// 未声明 Format 的 IdP 返回空值，按 unspecified 放行。
+	if err := provider.checkNameIDFormat(""); err != nil {
+		t.Fatalf("unexpected error for empty nameid format: %v", err)
 	}
 }
 

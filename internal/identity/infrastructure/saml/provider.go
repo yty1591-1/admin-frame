@@ -55,6 +55,8 @@ type Provider struct {
 	metadata     *MetadataSource
 	clockSkew    time.Duration
 	assertionTTL time.Duration
+	// nameIDFormat SP 在 AuthnRequest 中请求的 NameID 格式；用于拒绝 IdP 返回 transient。
+	nameIDFormat crewjam.NameIDFormat
 
 	// parseMu 串行化解析：IDPMetadata 会在刷新时替换，避免并发读写竞态。
 	parseMu sync.Mutex
@@ -120,6 +122,7 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		metadata:     metadata,
 		clockSkew:    clockSkew,
 		assertionTTL: assertionTTL,
+		nameIDFormat: nameIDFormat,
 	}
 	if strings.TrimSpace(cfg.SP.CertificateNext) != "" && strings.TrimSpace(cfg.SP.PrivateKeyNext) != "" {
 		next, nextErr := ParseKeyPair(cfg.SP.CertificateNext, cfg.SP.PrivateKeyNext)
@@ -228,11 +231,25 @@ func (p *Provider) ParseResponse(ctx context.Context, samlResponse, expectedRequ
 	if subject == "" || assertionID == "" {
 		return identityapp.SAMLIdentity{}, apperr.Unauthorized("invalid saml assertion")
 	}
+	if err := p.checkNameIDFormat(assertion.Subject.NameID.Format); err != nil {
+		return identityapp.SAMLIdentity{}, apperr.Unauthorized("invalid saml assertion")
+	}
 	return identityapp.SAMLIdentity{
 		Subject:     subject,
 		AssertionID: assertionID,
 		Issuer:      strings.TrimSpace(assertion.Issuer.Value),
 	}, nil
+}
+
+// checkNameIDFormat 拒绝 IdP 在 SP 请求 persistent 时返回 transient。
+//
+// transient 每次登录都会换主体，会触发 auto_provision 重复建号；
+// crewjam 对 NameID 命名空间不敏感（GO-2026-6909），这里按格式做最小兜底。
+func (p *Provider) checkNameIDFormat(format string) error {
+	if p.nameIDFormat == crewjam.PersistentNameIDFormat && format == string(crewjam.TransientNameIDFormat) {
+		return errors.New("saml: idp returned transient nameid while persistent was requested")
+	}
+	return nil
 }
 
 // validateTimes 在库校验之外追加有效期上限与时钟偏差策略。
