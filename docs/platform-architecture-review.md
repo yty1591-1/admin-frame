@@ -57,7 +57,7 @@
 
 ### P0-1 配置层单文件巨石
 
-**证据**：[config.go](../internal/platform/config.go) 3375 行，内含 47 个 `*Config` 结构体，同时承担 schema 定义、默认值、归一化、校验、敏感字段脱敏、密钥解码、SAML 证书解析。
+**证据**：[config.go](../internal/platform/config/config.go) 3375 行，内含 47 个 `*Config` 结构体，同时承担 schema 定义、默认值、归一化、校验、敏感字段脱敏、密钥解码、SAML 证书解析。
 
 单一文件内并存六类职责：
 
@@ -100,13 +100,13 @@
 
 ### P1-4 业务语义端口定义在平台层，绕过门禁
 
-**证据**：`TenantGuard`（[tenantguard.go](../internal/platform/tenantguard.go#L16)）、`TenantMembership`（L29）、`QuotaGuard`（[quotaguard.go](../internal/platform/quotaguard.go#L18)）定义在 platform，实现位于 `cmd/internal/tenantruntime` 与 `internal/tenant/app`。
+**证据**：`TenantGuard`（[tenantguard.go](../internal/platform/httpserver/guards.go)）、`TenantMembership`（L29）、`QuotaGuard`（[quotaguard.go](../internal/platform/httpserver/guards.go)）定义在 platform，实现位于 `cmd/internal/tenantruntime` 与 `internal/tenant/app`。
 
 **影响**：ENT-09 / ENT-14 的判定语义（租户状态、成员关系、API 配额）以「端口」形式固化在平台层，平台层事实上定义了租户域契约；而 `check-layering.sh` 的 LAYER-02 只检查 import，**不检查平台层是否定义了业务语义**，因此这类违规不会被门禁发现。
 
 ### P1-5 配置对象承载隐藏可变状态
 
-**证据**：`Config.secretErr` 未导出字段（[config.go](../internal/platform/config.go#L66-L70)），注释说明原因是「Loader 的 Normalize 钩子无法返回错误」，错误在 `Validate` 阶段汇总。
+**证据**：`Config.secretErr` 未导出字段（[config.go](../internal/platform/config/config.go)），注释说明原因是「Loader 的 Normalize 钩子无法返回错误」，错误在 `Validate` 阶段汇总。
 
 **影响**：配置对象变成「可携带错误的状态机」，`LoadConfig` 成功返回后对象内部仍可能持有待汇报错误；并发复用或部分字段访问时错误语义不清。根因是 `pkg/config` 的钩子签名不支持返回 error，属于「用隐状态弥补依赖库缺陷」。
 
@@ -134,11 +134,11 @@
 
 | 项 | 证据 |
 |---|---|
-| 生命周期与优雅关闭 | [server.go](../internal/platform/server.go#L40-L92)：先 `Listen` 再打日志，`signal.NotifyContext` + `Shutdown` 超时可配 |
+| 生命周期与优雅关闭 | [server.go](../internal/platform/httpserver/server.go)：先 `Listen` 再打日志，`signal.NotifyContext` + `Shutdown` 超时可配 |
 | 资源释放确定性 | [bootstrap.go](../internal/platform/bootstrap.go#L150-L189) 全部 `defer` 关闭，错误经命名返回值汇总，无 `os.Exit` |
-| 中间件下沉 pkg | [middleware.go](../internal/platform/middleware.go#L13-L41) 仅做配置映射与委托；[pipeline.go](../internal/platform/pipeline.go#L58-L104) 明确固定顺序 |
+| 中间件下沉 pkg | [middleware.go](../internal/platform/httpserver/middleware.go) 仅做配置映射与委托；[pipeline.go](../internal/platform/httpserver/pipeline.go) 明确固定顺序 |
 | 能力装配收敛 | `Deps` 只暴露平台能力（配置/日志/指标/追踪/存储/DB/Redis/ID/守卫/健康检查），未暴露 repo/bus |
-| 基础设施适配薄 | [database.go](../internal/platform/database.go#L54-L87)、`logger.go`（16 行）、`tracing.go`（24 行）均为纯映射 |
+| 基础设施适配薄 | [infra.go](../internal/platform/infra.go#L248-L281)（`OpenDatabase` / `OpenRedis` 纯映射）、`observability/logger.go`（16 行）均为纯映射 |
 | 门禁可执行 | `make check-layering` 已在 `make ci` 中，LAYER-01～06 有实际拦截力 |
 
 ---

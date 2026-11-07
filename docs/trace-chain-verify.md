@@ -94,7 +94,7 @@ error: listen tcp 0.0.0.0:8888: listen: address already in use
 
 - 新增 `tracing.RoutePatternMiddleware()`，**放在中间件链最内层**（紧贴 mux），
   匹配完成后直接把 Pattern 写回当前 span 的名称与 `http.route`。
-- `internal/platform/pipeline.go` 末尾注册；`pkg/tracing/route_test.go` 同时锁定正例
+- `internal/platform/httpserver/pipeline.go` 末尾注册；`pkg/tracing/route_test.go` 同时锁定正例
   （名字为 `GET /admin/v1/audit/events`）与反例（不加中间件时确为 `GET unknown`），
   避免以后有人「顺手删掉这个看起来没用的中间件」。
 

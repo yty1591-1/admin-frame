@@ -858,8 +858,8 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - 发布与本地事务：优先 Transactional Outbox，避免「库已写、事件未发」。
 - 事件载荷含必要的 `merchant_id` / `user_id`，供消费者做隔离与幂等键。
 - 生产/消费抽象：事件信封在 `pkg/mq`；事务性 Outbox / Relay / 消费路由 / 去重 / DLQ 在 `pkg/outbox`；
-  平台由 `internal/platform/async.go` 的 `AsyncRuntime` 装配，生产环境由 `cmd/worker` 独占投递
-  （`async.outbox.publish_in_api=false`）。`async.driver=nats` 时 `internal/platform/async_nats.go` 的
+  平台由 `internal/platform/async` 的 `Runtime` 装配（平台根提供 `NewAsyncRuntime` 装配入口），生产环境由 `cmd/worker` 独占投递
+  （`async.outbox.publish_in_api=false`）。`async.driver=nats` 时 `internal/platform/async` 的
   JetStream 适配器在 Relay 中把事件发布到外部 broker（含 MsgId 去重与 DLQ subject）；默认仍为 `async.driver=db`。
 
 ---

@@ -176,12 +176,12 @@
 - ~~限流为进程内令牌桶~~：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`rate_limit.driver=redis` 时两副本共享配额。
 - ~~IAM Outbox 发布器只在 API 进程内~~：ENT-03 起统一为平台事务性 Outbox（`async_outbox`），
   `async.outbox.publish_in_api=false` 时仅 `cmd/worker` 的 `AsyncRuntime` 投递，IAM 指标由 Observer 映射。
-- ~~`pkg/idempotency` 无统一装配点~~：`internal/platform/pipeline.go` 在写方法前统一挂载，Redis Store 支持跨副本回放。
+- ~~`pkg/idempotency` 无统一装配点~~：`internal/platform/httpserver/pipeline.go` 在写方法前统一挂载，Redis Store 支持跨副本回放。
 
 **落地证据**
 
-- ID：`internal/platform/id.go`、`internal/platform/config.go`（`validateID`）、`platform.Deps.IDs`。
-- 幂等：`pkg/idempotency/redis.go`、`internal/platform/pipeline.go`（`newIdempotency`）。
+- ID：`internal/platform/id.go`、`internal/platform/config/config.go`（`validateID`）、`platform.Deps.IDs`。
+- 幂等：`pkg/idempotency/redis.go`、`internal/platform/httpserver/pipeline.go`（`newIdempotency`）。
 - 限流：`pkg/ratelimit/redis.go`、`pkg/middleware/ratelimit.go`（`Buckets` 接口）。
 - Outbox：`internal/platform/async.go`（`AsyncRuntime`）、`pkg/outbox`、`cmd/internal/iamruntime/runtime.go`（`RegisterAsync`）、`cmd/worker/main.go`。
 - 用例：`tests/integration/multiinstance/multiinstance_test.go`；门禁：`scripts/ci/check-idempotency.sh`。
@@ -369,7 +369,7 @@
 
 **现状证据**
 
-- 配置仅支持 `configs/*.yaml` + `ADMIN_FRAME_*` 环境变量；`internal/platform/config.go` 已做脱敏，但无 KMS / Vault 适配。
+- 配置仅支持 `configs/*.yaml` + `ADMIN_FRAME_*` 环境变量；`internal/platform/config/config.go` 已做脱敏，但无 KMS / Vault 适配。
 - `internal/security` 支持多公钥 / 多密钥（`jwt_keys_test.go`），但无轮换流程、无 `kid` 选取策略文档。
 - DB DSN、对象存储密钥、JWT 密钥均以静态配置注入；无动态凭据。
 
@@ -442,7 +442,7 @@
 | `ENT-11` | 特性开关与灰度缺失 | `ARCHITECTURE.md` §17.3 要求 feature flag；全仓无实现，配置为静态 | Flag 服务（DB / 配置），支持 channel / tenant / 百分比灰度、审计与到期清理 | 灰度可秒级开关；关闭即回退；无长期遗留 flag |
 | `ENT-12` | IAM 数据范围无业务侧消费契约 | IAM 已建模 `all` / `merchant` / `self` / `merchant_set`；`Principal` 无 scope 字段，未来业务域无统一接入方式 | 数据范围注入 context；平台提供查询 / 写入强制助手；A 端跨租户查询审计 | 未来业务域接入即有隔离；跨租户读写被拒绝；有越权自动化用例 |
 | `ENT-13` | 外部依赖韧性与第三方集成框架 | `pkg/circuitbreaker` / `retry` / `httpclient` 已具备，但 `internal/` 无引用；无统一依赖注册与超时策略 | 依赖注册表（超时 / 重试 / 熔断 / 舱壁）；第三方回调验签 + 幂等 + 状态机模板 | 下游故障快速失败且可观测；重复回调不重复处理；依赖指标可见 |
-| `ENT-14` | 分布式限流与租户配额 | `internal/platform/pipeline.go:101-121` 为进程内令牌桶；无套餐 / 配额管理 | 网关或 Redis 全局限流；按 channel / tenant / user / 接口分键；配额管理与 429 指标 | 多副本共享配额；超限统一 `42900`；配额变更可审计 |
+| `ENT-14` | 分布式限流与租户配额 | `internal/platform/httpserver/pipeline.go:101-121` 为进程内令牌桶；无套餐 / 配额管理 | 网关或 Redis 全局限流；按 channel / tenant / user / 接口分键；配额管理与 429 指标 | 多副本共享配额；超限统一 `42900`；配额变更可审计 |
 | `ENT-15` | 数据生命周期与隐私合规 | 无 PII 分类、保留、导出、删除、同意记录；审计仅保留主体 ID | 数据分类分级、保留策略、DSAR 导出 / 删除、法务保留、脱敏与最小化 | 删除请求可验证执行；保留任务生效；导出经审批并审计 |
 | `ENT-16` | 测试基础设施不完整 | `tests/` 仅 `tests/integration/iam/` 三个 MySQL 用例；无 `tests/e2e/`；`pkg/testkit` 待做（`pkg-roadmap.md:122`） | 集成矩阵（MySQL / Redis / MinIO）、三端 E2E、契约测试、负载测试基线 | CI 跑真实依赖集成；E2E 覆盖登录 → 核心写路径 → 查询；压测基线登记 |
 | `ENT-17` | 发布自动化与迁移门禁不足 | 有镜像构建与 Trivy，无 CD、无金丝雀 / 蓝绿、无迁移 Job 编排 | staging → prod 审批发布；迁移前置检查；金丝雀指标；自动 / 一键回滚 | 发布可重复；迁移失败阻断；金丝雀异常自动回滚 |

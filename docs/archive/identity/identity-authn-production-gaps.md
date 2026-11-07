@@ -1,6 +1,6 @@
 # 身份域生产级缺陷与整改建议（internal/identity）
 
-> **范围**：`internal/identity`（domain / app / infrastructure / transport）及其装配（`cmd/internal/identityruntime`）、配置校验（`internal/platform/config.go`）与相关迁移。
+> **范围**：`internal/identity`（domain / app / infrastructure / transport）及其装配（`cmd/internal/identityruntime`）、配置校验（`internal/platform/config/config.go`）与相关迁移。
 > **审查方式**：静态代码审查（未执行压测与故障注入）。
 > **审查日期**：2026-10-29。
 > **基线**：当前 `main` 工作区；行号可能在后续提交中漂移，定位以文件与函数名为准。
@@ -72,7 +72,7 @@
 - 模拟 Redis `SET` 失败：业务返回成功，旧令牌在 ≤60s 内被拒绝（通过 `DEL` 或 TTL），并产生告警指标。
 - `go test ./internal/identity/... ./tests/integration/identity/...` 通过，新增用例在缓存预热场景下不依赖 sleep。
 
-**涉及变更**：`app/revocation.go`、`app/auth_service.go`、`app/mfa.go`、`infrastructure/cache/revocation_redis.go`、`internal/platform/config.go`、`docs/identity-authn.md`、集成测试。
+**涉及变更**：`app/revocation.go`、`app/auth_service.go`、`app/mfa.go`、`infrastructure/cache/revocation_redis.go`、`internal/platform/config/config.go`、`docs/identity-authn.md`、集成测试。
 
 ---
 
@@ -159,7 +159,7 @@
 
 **现状（证据）**
 
-- prod/staging 对 `channel != c` 强制 `identity.mfa.admin_required=true`：[config.go](../../../internal/platform/config.go#L1496-L1509)。
+- prod/staging 对 `channel != c` 强制 `identity.mfa.admin_required=true`：[config.go](../../../internal/platform/config/config.go)。
 - `mfaChallenge` 只要 `s.channel != admin` 就直接返回 `mfaGateNotRequired`：[mfa.go](../../../internal/identity/app/mfa.go#L289-L301)。
 - `SetupMFA` / `VerifyMFA` 对非 admin 直接返回 40000：[mfa.go](../../../internal/identity/app/mfa.go#L79-L82)、[mfa.go](../../../internal/identity/app/mfa.go#L191-L197)。
 - B 端路由没有注册任何 MFA 端点：[router.go](../../../internal/identity/transport/biz/router.go#L16-L28)。
@@ -190,7 +190,7 @@
 - 配置单测覆盖 admin/biz/c 三种端别与 `admin_required` 组合。
 - `make check-authn` 或等价门禁能阻止“B 端强制 MFA 但未实现”的配置。
 
-**涉及变更**：`internal/platform/config.go`、`app/mfa.go`、`app/auth_service.go`、`transport/biz/router.go`、OpenAPI、配置示例、文档。
+**涉及变更**：`internal/platform/config/config.go`、`app/mfa.go`、`app/auth_service.go`、`transport/biz/router.go`、OpenAPI、配置示例、文档。
 
 ---
 
@@ -203,7 +203,7 @@
 - 每次刷新都创建新的 `identity_session` 行：[auth_service.go](../../../internal/identity/app/auth_service.go#L826-L857)；旧行只标记 `rotated`，不删除。
 - `ListByAccount` 返回账号全部会话，按创建时间倒序，无分页、无 family 聚合：[mysql_session.go](../../../internal/identity/infrastructure/persistence/mysql_session.go#L184-L210)。
 - `Session` 与 `sessionDTO` 没有 IP/UA 字段：[session.go](../../../internal/identity/domain/session.go#L81-L108)、[handler.go](../../../internal/identity/transport/rest/handler.go#L361-L371)；文档却要求会话列表返回 IP/UA 摘要：[identity-authn.md](../.././identity-authn.md#L326-L328)。
-- `identity.session.max_per_account` 只出现在配置与校验中：[config.go](../../../internal/platform/config.go#L195-L196)、[config.go](../../../internal/platform/config.go#L920-L921)、[config.go](../../../internal/platform/config.go#L1462-L1464)，运行时无任何引用。
+- `identity.session.max_per_account` 只出现在配置与校验中：[config.go](../../../internal/platform/config/config.go)、[config.go](../../../internal/platform/config/config.go)、[config.go](../../../internal/platform/config/config.go)，运行时无任何引用。
 - 迁移注释预留了“过期清理任务扫描”索引：[000001_create_identity_tables.up.sql](../../../migrations/000001_create_identity_tables.up.sql#L69-L70)、[000001_create_identity_tables.up.sql](../../../migrations/000001_create_identity_tables.up.sql#L99-L102)，但 worker 只运行 async relay：[main.go](../../../cmd/worker/main.go#L66-L92)，仓库内没有清理任务。
 
 **影响**
@@ -323,7 +323,7 @@
 - `rest/clientIP` 与 `c/clientIP` 无条件取 `X-Forwarded-For` 第一段；没有可信代理解析：[handler.go](../../../internal/identity/transport/rest/handler.go#L429-L438)、[handler.go](../../../internal/identity/transport/c/handler.go#L193-L201)。
 - 无 XFF 时直接返回带端口的 `RemoteAddr` 作为 IP 摘要输入；同一 IP 每个新 TCP 连接端口不同，限流 key 随之变化。
 - 登录限流器使用进程内 `ratelimit.NewKeyed`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L285-L299)，没有 Redis 驱动；多副本按副本数放大，重启清零。
-- 平台级 `rate_limit` 默认关闭，且同样信任 XFF 首段：[pipeline.go](../../../internal/platform/pipeline.go#L220-L231)。
+- 平台级 `rate_limit` 默认关闭，且同样信任 XFF 首段：[pipeline.go](../../../internal/platform/httpserver/pipeline.go)。
 
 **影响**
 
@@ -483,9 +483,9 @@
 
 **现状（证据）**
 
-- `validateIdentity` 不要求持久化数据库；`db.driver=memory` 在生产仅被 IAM 审批/async 条件间接限制：[config.go](../../../internal/platform/config.go#L1441-L1516)、[config.go](../../../internal/platform/config.go#L1186-L1198)。
+- `validateIdentity` 不要求持久化数据库；`db.driver=memory` 在生产仅被 IAM 审批/async 条件间接限制：[config.go](../../../internal/platform/config/config.go)、[config.go](../../../internal/platform/config/config.go)。
 - `identityruntime.buildRepositories` 在 `deps.Database == nil` 时返回内存仓储：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L220-L239)。
-- `IdentityConfig` 没有 `password` 字段：[config.go](../../../internal/platform/config.go#L76-L97)，运行时固定使用 `app.DefaultPasswordPolicy()`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L79-L86)；但文档示例包含 `identity.password`：[identity-authn.md](../.././identity-authn.md#L640-L643)。
+- `IdentityConfig` 没有 `password` 字段：[config.go](../../../internal/platform/config/config.go)，运行时固定使用 `app.DefaultPasswordPolicy()`：[runtime.go](../../../cmd/internal/identityruntime/runtime.go#L79-L86)；但文档示例包含 `identity.password`：[identity-authn.md](../.././identity-authn.md#L640-L643)。
 - `identity.session.max_per_account` 被校验但未使用（见 IDN-P1-01）。
 - `configs/admin.yaml.example`、`configs/biz.yaml.example` 没有 `mfa` 段，生产开启 identity 需要人工补全。
 
@@ -511,7 +511,7 @@
 - `max_per_account` 要么生效，要么配置被拒绝。
 - 示例配置可直接通过 `Validate()`（除密钥占位）。
 
-**涉及变更**：`internal/platform/config.go`、`cmd/internal/identityruntime/runtime.go`、配置示例、文档、配置测试。
+**涉及变更**：`internal/platform/config/config.go`、`cmd/internal/identityruntime/runtime.go`、配置示例、文档、配置测试。
 
 ---
 
@@ -759,4 +759,4 @@
 
 ---
 
-**文档维护**：本文件随 `internal/identity` 与 `internal/platform/config.go` 变更同步更新；新增缺陷使用 `IDN-P<级别>-<序号>` 编号，关闭后在条目末尾标注“已修复（提交/版本）”，不要删除历史记录。
+**文档维护**：本文件随 `internal/identity` 与 `internal/platform/config/config.go` 变更同步更新；新增缺陷使用 `IDN-P<级别>-<序号>` 编号，关闭后在条目末尾标注“已修复（提交/版本）”，不要删除历史记录。

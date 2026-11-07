@@ -126,7 +126,7 @@
 
 **R-03（P2，因子扩展）**
 
-- `internal/platform/config.go` 新增 `identity.mfa.factors`；空值等价 `totp`，未知或重复条目在启动期失败。
+- `internal/platform/config/config.go` 新增 `identity.mfa.factors`；空值等价 `totp`，未知或重复条目在启动期失败。
 - `AuthServiceConfig.MFAFactors` 运行期白名单；`SetupMFA` 在 totp 未启用时失败关闭，保留 `MFAFactor` 扩展位；
   `runtime.go` 新增 `identityMFAFactors` 装配。
 

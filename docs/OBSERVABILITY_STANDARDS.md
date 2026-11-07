@@ -153,7 +153,7 @@ make ci
 |-------------|------|
 | `pkg/logger` | OBS-01：结构化 slog、字段字典、ContextHandler / WithTraceID |
 | `internal/platform/logger.go` | 进程配置 → `pkg/logger` 薄封装 |
-| `internal/platform/middleware.go` | RequestID / AccessLog |
+| `internal/platform/httpserver/middleware.go` | RequestID / AccessLog |
 | `internal/platform/endpoints.go` | MountHealth / MountVersion / MountMetrics |
 | `pkg/health` | 存活/就绪实现 |
 | `pkg/metrics` | Prometheus Registry、HTTP RED、build_info |

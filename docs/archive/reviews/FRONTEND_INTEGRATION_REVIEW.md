@@ -112,7 +112,7 @@
 | `Accept-Language` | 请求 | 前端已注入 `preferences.app.locale`，后端当前不消费，保留 |
 | `X-Request-ID` | 双向 | 后端 `pkg/middleware/request_id.go` 入站即用、响应回写，并作为信封 `trace_id` |
 | `traceparent` | 双向 | W3C 追踪，浏览器侧可选，`pkg/tracing` 已支持 |
-| `Retry-After` | 响应 | 仅 429 场景（`internal/platform/pipeline.go:157-162`） |
+| `Retry-After` | 响应 | 仅 429 场景（`internal/platform/httpserver/pipeline.go:157-162`） |
 
 CORS 默认放行 `Authorization`、`Content-Type`、`X-Request-ID`（`pkg/middleware/cors.go:16`），跨域部署时只需补 `AllowOrigins`。
 
@@ -502,7 +502,7 @@ export async function logoutApi() {
 
 ### FEINT-11 429 未消费 Retry-After
 
-- **后端**：限流响应为 HTTP 429 + `Retry-After: <秒>` + `42900` 信封（`internal/platform/pipeline.go:157-162`）；登录、MFA 校验、短信发送均有限流保护。
+- **后端**：限流响应为 HTTP 429 + `Retry-After: <秒>` + `42900` 信封（`internal/platform/httpserver/pipeline.go:157-162`）；登录、MFA 校验、短信发送均有限流保护。
 - **前端**：当前仅弹通用错误，用户会连续重试，进一步延长封禁。
 - **方案**：登录 / MFA 校验 / 短信等敏感按钮在 429 时进入倒计时禁用态：
 
@@ -543,7 +543,7 @@ startCountdown(retryAfter, '尝试过于频繁，请 %s 秒后重试');
 
 | 环境 | `auth.mode` | `identity.enabled` | `iam.mode` | 前端能否真实登录 | 权限判定 |
 |---|---|---|---|---|---|
-| local（`configs/*.yaml`） | `demo` | 未声明 → 默认 `false`（`internal/platform/config.go:73-78`） | 未声明 → 默认 `off`（`config.go:1043-1050`） | **不能**：`/auth/`* 路由未注册（`cmd/admin-api/register.go:21-23`） | 静态权限表（`internal/security/authz.go:127-129`） |
+| local（`configs/*.yaml`） | `demo` | 未声明 → 默认 `false`（`internal/platform/config/config.go:73-78`） | 未声明 → 默认 `off`（`config.go:1043-1050`） | **不能**：`/auth/`* 路由未注册（`cmd/admin-api/register.go:21-23`） | 静态权限表（`internal/security/authz.go:127-129`） |
 | dev（`values-dev.yaml`） | `demo` | `false` | `off` | **不能**，同上 | 静态权限表 |
 | staging | `jwt` | 需显式开启 | `shadow` | 可以 | 快照判定 + shadow 差异观测（不改变结果） |
 | prod | `jwt` | 需显式开启 | `enforce` | 可以 | 快照强制判定 |

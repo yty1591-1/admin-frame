@@ -491,7 +491,7 @@ tests/integration/identity                    PASS
 - `internal/iam/catalog/catalog.go`
 - `cmd/identity-maintenance/main.go`
 - `cmd/internal/identityruntime/runtime.go`
-- `internal/platform/config.go`
+- `internal/platform/config/config.go`
 
 ### 迁移
 

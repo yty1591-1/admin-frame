@@ -53,7 +53,7 @@
 | 任务 | 问题摘要 | 严重级 | 违反条款 | 现状证据 |
 |---|---|---|---|---|
 | PLAT-01 | `defer` + `os.Exit` 导致 `stores.Close()` 被跳过 | P0 | REL-02、Go 语义 | `cmd/admin-api/main.go:83-91`（biz/c 同构） |
-| PLAT-02 | `http.Server` 只设 `ReadHeaderTimeout`，无 `ErrorLog`/`BaseContext` | P0 | REL-02、OBS-01 | `internal/platform/server.go:16-21` |
+| PLAT-02 | `http.Server` 只设 `ReadHeaderTimeout`，无 `ErrorLog`/`BaseContext` | P0 | REL-02、OBS-01 | `internal/platform/httpserver/server.go:16-21` |
 | PLAT-03 | `log.format` 未校验 → `logger.Must` panic；配置含明文密钥且无脱敏 | P0 | CFG-03/05、SEC-05 | `config.go:194-198`、`logger.go:11-19` |
 | PLAT-04 | 无真实鉴权路径，`demo_mode=false` 直接拒绝启动 | P0 | SEC-04、CFG-05 | `middleware.go:67-74` |
 | PLAT-05 | `defaultRBAC` 在 platform 内硬编码角色与 `order:*` / `file:*` 权限点 | P0 | ARCH §5.6 | `middleware.go:18-26` |
@@ -181,7 +181,7 @@ http:
 
 **变更文件**
 
-- `internal/platform/server.go`、`internal/platform/config.go`
+- `internal/platform/httpserver/server.go`、`internal/platform/config/config.go`
 - `configs/*.yaml.example`、`docs/CONFIG_STANDARDS.md` §4 变量表
 
 **验收标准**
@@ -218,7 +218,7 @@ http:
 
 **变更文件**
 
-- `internal/platform/config.go`、`internal/platform/logger.go`、`internal/platform/config_test.go`
+- `internal/platform/config/config.go`、`internal/platform/logger.go`、`internal/platform/config_test.go`
 
 **验收标准**
 
@@ -277,7 +277,7 @@ auth:
 **变更文件**
 
 - `internal/security/{authn_demo.go,authn_jwt.go,authz.go,doc.go}`（新增）
-- `internal/platform/middleware.go`、`internal/platform/config.go`
+- `internal/platform/httpserver/middleware.go`、`internal/platform/config/config.go`
 - `configs/*.yaml.example`、`docs/SECURITY_STANDARDS.md`、`docs/CONFIG_STANDARDS.md`
 
 **验收标准**
@@ -299,7 +299,7 @@ auth:
 
 **现状**
 
-`internal/platform/middleware.go:18-26` 的 `defaultRBAC` 硬编码 `admin`、`merchant_staff`、`ops` 与 `order:read`、`file:write` 等权限点，违反 `ARCHITECTURE.md:400`。
+`internal/platform/httpserver/middleware.go:18-26` 的 `defaultRBAC` 硬编码 `admin`、`merchant_staff`、`ops` 与 `order:read`、`file:write` 等权限点，违反 `ARCHITECTURE.md:400`。
 
 **整改动作**
 
@@ -318,7 +318,7 @@ func (a *Authorizer) Require(perm string) func(http.Handler) http.Handler
 
 **变更文件**
 
-- `internal/platform/middleware.go`
+- `internal/platform/httpserver/middleware.go`
 - `internal/security/authz.go`（新增）
 - `internal/order/*`、`internal/files/*`（权限点常量）
 - `cmd/*/main.go`（注入 checker）
@@ -387,7 +387,7 @@ func Register(mux *http.ServeMux, h *Handler, authMW func(http.Handler) http.Han
 
 **整改动作**
 
-1. `internal/platform/pipeline.go` 新增：
+1. `internal/platform/httpserver/pipeline.go` 新增：
 
 ```go
 type PipelineConfig struct {
@@ -414,7 +414,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → Timeout → BodyLi
 
 **变更文件**
 
-- `internal/platform/pipeline.go`（新增）、`internal/platform/config.go`
+- `internal/platform/httpserver/pipeline.go`（新增）、`internal/platform/config/config.go`
 - `cmd/*/main.go`、`configs/*.yaml.example`
 - `docs/RELIABILITY_STANDARDS.md`（补充实现位置）、`docs/CONFIG_STANDARDS.md`
 
@@ -425,7 +425,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → Timeout → BodyLi
 - [ ] AC-PLAT-07-3：`TestPipelineTimeout`：处理器阻塞超过 `http.timeout` 时按配置返回超时码，且不 panic。
 - [ ] AC-PLAT-07-4：`TestPipelineBodyLimit`：超限请求返回 413 或 `apperr` 稳定码。
 - [ ] AC-PLAT-07-5：三端 `main.go` 均通过 `NewPipeline` 装配，不再手写中间件序列。
-- [ ] AC-PLAT-07-6：`make check-reliability` 通过；`docs/RELIABILITY_STANDARDS.md` §11 工具表补充 `internal/platform/pipeline.go`。
+- [ ] AC-PLAT-07-6：`make check-reliability` 通过；`docs/RELIABILITY_STANDARDS.md` §11 工具表补充 `internal/platform/httpserver/pipeline.go`。
 
 **门禁**：`make check-reliability`、单测、三端冒烟。
 
@@ -814,7 +814,7 @@ curl -s localhost:8081/version
 |---|---|---|---|---|
 | 2026-10-20 | 计划创建 | — | — | 基于当前 `main`（`95846ff`）现状盘点 |
 | 2026-10-20 | PLAT-01 | 已完成 | 本地 | `cmd/*` 统一 `run() error`，`os.Exit` 仅在 `main`；`platform.Run` 负责资源释放 |
-| 2026-10-20 | PLAT-02 | 已完成 | 本地 | `internal/platform/server.go`：Timeouts/MaxHeaderBytes/ErrorLog/BaseContext；先 `net.Listen` 后打印 listening |
+| 2026-10-20 | PLAT-02 | 已完成 | 本地 | `internal/platform/httpserver/server.go`：Timeouts/MaxHeaderBytes/ErrorLog/BaseContext；先 `net.Listen` 后打印 listening |
 | 2026-10-20 | PLAT-03 | 已完成 | 本地 | `log.format` 校验；`errors.Join` 聚合；`Config/DBConfig/StorageConfig.LogValue` 脱敏；新增 `http.*` 校验 |
 | 2026-10-20 | PLAT-04 | 已完成 | 本地 | 新增 `internal/security`：DemoAuth + JWT（HS256/RS256、iss/aud/exp/leeway、channel 声明校验）；`auth.mode=demo\|jwt` 为唯一开关，已移除 `demo_mode` 兼容 |
 | 2026-10-20 | PLAT-05 | 已完成 | 本地 | 删除 `defaultRBAC`/`RequirePermission`；`security.Authorizer` 由 cmd 注入 `rbac.Checker` |

@@ -103,7 +103,7 @@
 | 问题描述 | 刷新、登出无应用层限流；biz/c 生产 overlay 未启用全局 rate_limit（`rest/handler.go`、`values-identity-enabled.yaml`）。 |
 | 影响范围 | 匿名可写端点；DB 查询放大与异常流量。 |
 | 复现条件 | 高频提交 refresh / logout。 |
-| 关联模块 | `transport/rest/handler.go`、`cmd/internal/identityruntime/runtime.go`、`internal/platform/config.go`、overlay 配置。 |
+| 关联模块 | `transport/rest/handler.go`、`cmd/internal/identityruntime/runtime.go`、`internal/platform/config/config.go`、overlay 配置。 |
 | 责任角色 | identity 后端（主责）；平台运维（生产 overlay）；测试（限流回归）。 |
 | 里程碑 | M1 单测；M2 配置校验；M3 回归。 |
 | 修复方案 | 对 refresh / logout 增加按 IP 与令牌前缀的限流；biz/c 生产 overlay 显式启用 `rate_limit` 并指定 fail_closed。 |
@@ -145,7 +145,7 @@
 | 问题描述 | 短信全局日预算默认 0 表示不限制，生产校验未强制预算（`config.go`、`sms_login.go`）。 |
 | 影响范围 | 短信成本攻击面、供应商余额。 |
 | 复现条件 | 分布式号码池绕过单手机号 / IP 限额持续发送。 |
-| 关联模块 | `internal/platform/config.go`、`internal/identity/app/sms_login.go`、SMS 配置。 |
+| 关联模块 | `internal/platform/config/config.go`、`internal/identity/app/sms_login.go`、SMS 配置。 |
 | 责任角色 | identity 后端（主责）；平台运维（预算与告警）；测试（配置校验回归）。 |
 | 里程碑 | M1 单测；M2 配置校验；M3 回归。 |
 | 修复方案 | 生产环境强制 `daily_budget > 0`；预算耗尽返回 42900 并告警；接入供应商余额告警（复用现有 breaker 基础）。 |

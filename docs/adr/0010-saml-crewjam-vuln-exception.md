@@ -26,7 +26,7 @@ Vulnerability #1: GO-2026-6909
 2. **门禁改造而非放宽扫描**：新增 [`scripts/ci/check-vuln.sh`](../../scripts/ci/check-vuln.sh)，`make vuln` 与 `.github/workflows/ci.yml` 的 job 统一调用它。脚本只放行「白名单内 + 代码可达」的 OSV 编号；白名单外、到期日非法或已过期一律失败；`govulncheck` 自身异常（非 0/3 退出码）同样失败。
 3. **同步代码侧缓解**（降低实际可利用性，不依赖例外放行）：
    - 畸形断言解析失败统一返回 `40100`，不进入业务逻辑；
-   - 进程级 panic 由 `internal/platform/pipeline.go` 的 `Recover` 中间件兜底，单请求不会击穿进程；
+   - 进程级 panic 由 `internal/platform/httpserver/pipeline.go` 的 `Recover` 中间件兜底，单请求不会击穿进程；
    - 断言必须通过 IdP 证书验签，外部无法伪造 `NameID`；
    - SP 侧新增格式校验：请求 `persistent` 时若 IdP 返回 `transient` 直接拒绝（`Provider.checkNameIDFormat`），避免重复建号与主体漂移。
 

@@ -1360,7 +1360,7 @@ DO $$ BEGIN RAISE EXCEPTION 'IRREVERSIBLE: ADR-0021'; END $$;
 | [`pkg/migrate/`](../pkg/migrate) | 迁移引擎（加载、切分、历史、锁、执行） |
 | [`cmd/migrate/`](../cmd/migrate) | CLI 入口，注册 pgx / mysql 驱动 |
 | [`migrations/`](../migrations) | 迁移 SQL 文件 |
-| [`internal/platform/config.go`](../internal/platform/config.go) | `LoadDBConfig`：复用 `db.driver` / `db.dsn` 与环境变量 |
+| [`internal/platform/config/config.go`](../internal/platform/config/config.go) | `LoadDBConfig`：复用 `db.driver` / `db.dsn` 与环境变量 |
 | [`pkg/db/`](../pkg/db) | 连接池、Ping、`RedactDSN` |
 | [`scripts/ci/check-migrations.sh`](../scripts/ci/check-migrations.sh) | DATA-01/02/03 门禁 |
 | [`docs/DATA_STANDARDS.md`](./DATA_STANDARDS.md) | 迁移硬约束与备份要求 |

@@ -1,7 +1,7 @@
 # 租户域企业级评审与分批开发计划（ENT-09）
 
 > **文档性质**：L3 活跃计划（评审结论 + 分批任务）。未关闭条目的范围与验收对合入有约束力。  
-> **评审对象**：`internal/tenant`（4243 行）、`migrations/000008`～`000011`、`api/openapi/{paths,schemas}/admin/tenant.yaml`、`cmd/internal/tenantruntime`、`internal/platform/tenantguard.go`、`docs/adr/0006`。  
+> **评审对象**：`internal/tenant`（4243 行）、`migrations/000008`～`000011`、`api/openapi/{paths,schemas}/admin/tenant.yaml`、`cmd/internal/tenantruntime`、`internal/platform/httpserver/guards.go`、`docs/adr/0006`。  
 > **评审日期**：2026-11-03  
 > **当前结论**：**不满足企业级租户模块要求**；作为「主数据 + 状态机」垂直切片质量合格，但缺入驻审核、套餐、邀请、租户自助与 IAM 联动，且有 3 个已复现的 P0 缺陷。  
 > **状态**：**B1 已完成；B2 进行中（T-05/T-06 已完成）**，B3/B4 未开始。执行记录见 [§6.2](#62-b1-实施记录2026-11-03) / [§6.3](#63-b2-实施记录2026-11-032)。
@@ -253,7 +253,7 @@
 | #     | 位置                                                                   | 问题                                                        | 建议                                                  |
 | ----- | -------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------- |
 | P2-11 | `internal/tenant/app/guard.go:68,164-183`                            | 全部 B 端请求共用一把 `sync.Mutex`；map 无容量上限、过期项只在被再次访问时删除         | 改 `RWMutex`；加容量上限 + 定期清扫（或引入 LRU）                   |
-| P2-12 | `internal/platform/tenantguard.go:43-46`                             | `merchant_id` 为空直接放行（fail-open）。B 端令牌若缺商户声明会静默绕过全部租户校验    | B 端默认拒绝无商户令牌，配置开关保留迁移期例外                            |
+| P2-12 | `internal/platform/httpserver/guards.go:43-46`                             | `merchant_id` 为空直接放行（fail-open）。B 端令牌若缺商户声明会静默绕过全部租户校验    | B 端默认拒绝无商户令牌，配置开关保留迁移期例外                            |
 | P2-13 | `internal/tenant/app/service.go:166`                                 | `status_reason` 每次迁移被覆盖；`resume` 时空串会抹掉停用原因               | 保留停用原因（独立列 `suspend_reason`），或 `resume` 时不覆盖        |
 | P2-14 | `internal/tenant/infrastructure/persistence/mysql_tenant.go:184-187` | `LIKE` 转义未声明 `ESCAPE`，依赖服务端未开启 `NO_BACKSLASH_ESCAPES`     | 显式追加 `ESCAPE '\\'`（SQL 字面量），并在配置文档标注 sql_mode 要求    |
 | P2-15 | `transport/rest/handler_member.go:32,129`                            | 成员/配额列表 `total = len(items)`，无分页无上限                       | 加分页参数与上限；成员列表默认 50                                  |
@@ -456,7 +456,7 @@ nil 撤销器可停用、审计含 revoked_sessions）。全仓测试与 lint �
 | `internal/identity/app/tenant_check.go` | 新增 `TenantStatusChecker` 端口（`Verify` 签名与 platform.TenantGuard 结构化一致，tenant Guard 天然满足）与共享钩子 `checkTenantForProvision`（T-10） |
 | `internal/identity/app/auth_service.go` | `AuthServiceConfig.TenantCheck` 注入；`probeLogin` 在商户规范化后、限流前校验租户（T-08）：403 拒绝（与 API 守卫同文案，防探测）、503 失败关闭；`loginFailureReason` 增 `tenant_denied` 映射 |
 | `internal/platform/bootstrap.go` | **装配顺序调整**：守卫先于 identity 构造（登录校验要在 identity 装配期读到守卫；守卫只依赖数据库，无反向依赖）；`WithTenantGuard` 传 requireMerchant（biz 通道 true，T-09） |
-| `internal/platform/tenantguard.go` | `WithTenantGuard` 增加第三参 requireMerchant：B 端缺 `merchant_id` 的已认证令牌 → 403 且守卫不被调用；A/C 端不受影响 |
+| `internal/platform/httpserver/guards.go` | `WithTenantGuard` 增加第三参 requireMerchant：B 端缺 `merchant_id` 的已认证令牌 → 403 且守卫不被调用；A/C 端不受影响 |
 
 **T-09 不留配置逃生门的理由**：守卫与回填迁移（000010）同批上线，不存在
 「存量合法但缺商户」的 B 端令牌——登录侧本就强制 B 端带商户，缺商户只能来自

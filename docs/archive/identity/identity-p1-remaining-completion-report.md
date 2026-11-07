@@ -32,7 +32,7 @@
   - `identity_revocation_l1_hit_total{kind}`；
   - `identity_revocation_redis_calls_total{op}`；
   - `identity_revocation_db_refetch_total{kind}`。
-- [config.go](../../../internal/platform/config.go)：新增 `identity.revocation.local_cache_ttl`（0→1s，负数关闭）与 `local_cache_capacity`（0→4096，上限 100000），并加入生产校验。
+- [config.go](../../../internal/platform/config/config.go)：新增 `identity.revocation.local_cache_ttl`（0→1s，负数关闭）与 `local_cache_capacity`（0→4096，上限 100000），并加入生产校验。
 - [runtime.go](../../../cmd/internal/identityruntime/runtime.go)：Redis 存储统一包一层 L1，Checker 与 Invalidator 共享同一实例，保证本副本撤销立即可见。
 
 ### 2.2 验证
@@ -69,7 +69,7 @@ go test ./internal/identity/infrastructure/cache/...   PASS
   4. 任一步失败整体回滚。
 - [memory_session.go](../../../internal/identity/infrastructure/persistence/memory_session.go)：内存实现模拟同一语义，供单测与本地运行。
 - [session_cleanup.go](../../../internal/identity/app/session_cleanup.go)：默认「归档 + 删除」，并按 `ArchiveRetention` 清理归档；`ArchiveRetention <= 0` 回退到只删不归档。
-- [config.go](../../../internal/platform/config.go)：新增 `identity.retention.archive_days`（0→365，负数关闭归档），校验 `archive_days >= session_days`。
+- [config.go](../../../internal/platform/config/config.go)：新增 `identity.retention.archive_days`（0→365，负数关闭归档），校验 `archive_days >= session_days`。
 
 ### 3.2 验证
 
@@ -111,7 +111,7 @@ go test ./internal/identity/infrastructure/persistence/... PASS
   - `FindByID` / `List` 读取后用密文回填明文；
   - `BackfillSubjectProtection` 按批回填缺失行，可重复执行。
 - [account.go](../../../internal/identity/domain/account.go)：新增 `SubjectIndex` / `SubjectCiphertext` 字段（仅持久化层维护）。
-- [config.go](../../../internal/platform/config.go)：新增 `identity.subject.keys` / `active_key_id` / `legacy_key`，并校验 active key 存在。
+- [config.go](../../../internal/platform/config/config.go)：新增 `identity.subject.keys` / `active_key_id` / `legacy_key`，并校验 active key 存在。
 - `cmd/identity-maintenance/main.go`（文件已被后续基线合并删除）：回填命令，复用 `identity.hash_key` 与 `identity.subject.keys`。
 
 ### 4.3 验证

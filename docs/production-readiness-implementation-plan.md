@@ -191,7 +191,7 @@ ENT-04 审计持久化 ──► ENT-15 数据生命周期（DSAR 与保留策�
 
 每条新增能力必须完成以下五件事，缺一不可：
 
-1. 在 `internal/platform/config.go` 增加结构体字段与默认值。
+1. 在 `internal/platform/config/config.go` 增加结构体字段与默认值。
 2. 在 `Validate` 中校验枚举、范围、必填与生产强制项，使用 `errors.Join` 聚合。
 3. 支持 `ADMIN_FRAME_<SECTION>_<KEY>` 环境变量覆盖。
 4. 更新 `configs/*.yaml.example`，**不得**写入明文密钥。
@@ -427,7 +427,7 @@ rate_limit:
 **落地说明（2026-10-22）**
 
 - T1/T2：`internal/platform/id.go` 从 `id.node_id` 或 StatefulSet ordinal 解析 NodeID，`platform.Deps.IDs` 统一注入；`iamruntime` 与 IAM 用例删除固定 `NodeID: 1`，缺生成器直接失败关闭。prod/staging 非 worker 未显式配置或使用 statefulset 时启动失败。
-- T3：`pkg/idempotency.RedisStore` 以 Lua 原子完成 `Begin/Complete/Release`；`internal/platform/pipeline.go` 在 `RateLimit → Idempotency → Handler` 挂载，`40900` 冲突 / `40901` 处理中 / `50300` 存储不可用由 `httpx.FromError` 统一信封。
+- T3：`pkg/idempotency.RedisStore` 以 Lua 原子完成 `Begin/Complete/Release`；`internal/platform/httpserver/pipeline.go` 在 `RateLimit → Idempotency → Handler` 挂载，`40900` 冲突 / `40901` 处理中 / `50300` 存储不可用由 `httpx.FromError` 统一信封。
 - T4：`Idempotency-Key` 已在 `api/openapi/components.yaml` 定义；平台级挂载覆盖三端写路由。逐 operation 标注延后，避免未经客户端协调的强制头升级。
 - T5/T6：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`failure_mode` 默认 `fail_open`；分键支持 `channel / channel_user / channel_tenant_user / client`，超限继续 `42900` + `Retry-After`。
 - T7：ENT-03 已改为平台统一异步基础设施（`async.*`）：`async.outbox.publish_in_api` 控制 API 侧是否内嵌 Relay，默认由 `cmd/worker` 的 `AsyncRuntime` 投递，退出时等待循环收敛；IAM 审计写入 `async_outbox`，指标通过 `AuditTopicObserver` 映射。
@@ -1117,8 +1117,8 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | `internal/featureflag/**` | 新增 | ENT-11 |
 | `internal/platform/secrets/**` | 新增 | ENT-07 |
 | `internal/platform/async.go` | 新增 | ENT-03 |
-| `internal/platform/pipeline.go` | 变更 | ENT-02（幂等 / 分布式限流） |
-| `internal/platform/config.go` | 变更 | 全部 |
+| `internal/platform/httpserver/pipeline.go` | 变更 | ENT-02（幂等 / 分布式限流） |
+| `internal/platform/config/config.go` | 变更 | 全部 |
 | `internal/security/**` | 变更 | ENT-01（撤销检查、kid） |
 | `internal/shared/auth/principal.go` | 变更 | ENT-12（scope） |
 | `pkg/outbox/**` | 新增 | ENT-03 |

@@ -24,7 +24,7 @@
 |----|------|------|
 | REL-01 | 所有外部 I/O（HTTP/RPC/SDK）必须使用带 deadline 的 `context`；禁止无超时的 `http.DefaultClient` / `http.Get` / `http.Post` 用于业务路径；出站 HTTP 优先 `pkg/httpclient` | `check-reliability.sh` + Review |
 | REL-02 | 进程优雅关闭超时可配置（`shutdown_timeout`）；`platform.ListenAndServe` 必须尊重该超时，并在绑定端口成功后才输出 listening 日志 | 代码 + CFG |
-| REL-02b | HTTP Server 必须显式配置 `ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout` / `MaxHeaderBytes`；`ErrorLog` 接入 slog，`BaseContext` 继承进程 ctx | `internal/platform/server.go` + 单测 |
+| REL-02b | HTTP Server 必须显式配置 `ReadHeaderTimeout` / `ReadTimeout` / `WriteTimeout` / `IdleTimeout` / `MaxHeaderBytes`；`ErrorLog` 接入 slog，`BaseContext` 继承进程 ctx | `internal/platform/httpserver/server.go` + 单测 |
 | REL-03 | 重试仅针对幂等或明确可安全重试的错误；指数退避 + 抖动 + **有上限**；禁止热循环空转 | Review |
 | REL-04 | C 端创建类写操作与支付回调等必须幂等（`Idempotency-Key` 或业务唯一键）；消费者至少一次投递下须幂等 | API-11 + 单测 + Review |
 | REL-05 | 限流超限返回稳定业务码 **`42900`**（HTTP 429）；按端配置：C 最严、B 按商户、A 适中 | `apperr` + OpenAPI + Review |
@@ -172,6 +172,6 @@ make ci
 | `pkg/ratelimit` | REL-05：令牌桶 / 滑动窗口原语；`ErrLimited` |
 | `pkg/errors` | `Retryable` / `RetryableOf` 默认可重试判定 |
 | `api/openapi/components.yaml` | ErrorCode 枚举 |
-| `internal/platform/server.go` | 优雅关闭超时 |
+| `internal/platform/httpserver/server.go` | 优雅关闭超时 |
 | `scripts/ci/check-reliability.sh` | REL-01/05 |
 | 本文件 | 规范正文 |

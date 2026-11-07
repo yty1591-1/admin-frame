@@ -66,7 +66,7 @@
 | 运维 | `readyz` 只绑定 DB，Redis 抖动不批量摘流 | `cmd/internal/identityruntime/runtime.go:592-605` |
 | 运维 | 身份域告警规则 + Dashboard + Runbook + SLO 文档 | `deploy/observability/prometheus/rules/identity.yaml`、`docs/runbooks/identity-auth-failure.md`、`docs/identity-slo.md` |
 | 数据 | 清理索引、归档表、多租户唯一键、权限拆分迁移 | `migrations/000008`~`000012` |
-| 配置 | 生产强制项校验：DB 非 memory、async 必开、revocation fail_closed、hash_key、A 端 MFA 必开 | `internal/platform/config.go:1795-1991` |
+| 配置 | 生产强制项校验：DB 非 memory、async 必开、revocation fail_closed、hash_key、A 端 MFA 必开 | `internal/platform/config/config.go:1795-1991` |
 
 ---
 
@@ -98,7 +98,7 @@
 | PERF-03 | 查询必须有界；历史数据增长不得放大关键路径 | 每次刷新新增一行 `identity_session`（`auth_service.go:1491-1505`）；撤销链路 `ListByFamily` 加载整链全部历史（`:1643`、`infrastructure/persistence/mysql_session.go:370-395`）；在线保留 30 天（默认） | 15 分钟刷新一次的单设备 30 天约 2,880 行；每次登出/撤销都要全量加载并逐条构造快照，时延与内存随会话年龄线性增长 | P1 | 撤销时只取 `active/rotated` 的会话主键（UPDATE 前后各一次有界查询），或由 UPDATE 返回受影响 ID；同时评估缩短 rotated 保留期与同链压缩策略 |
 | PERF-04 | 单账号活跃设备上限必须严格生效 | `evictFamilies` 以 `limit=0` 拉取设备（`auth_service.go:1407`），SQL 仓储把 `limit<=0` 归一为 20（`mysql_session.go:332-334`） | 活跃设备超过 20 时，只能看到最新 20 台；计算出的淘汰数不足，最终活跃设备可超过 `max_per_account` | P2 | 分页循环直到 `len(families) <= max-1`；或先 `COUNT(*)` 再按需淘汰 |
 | PERF-05 | 限流默认值必须匹配真实网络拓扑 | 身份域 overlay 将登录限流设为 1 rps / burst 5（`deploy/helm/admin-frame/values-identity-enabled.yaml:55-58`），账号级与 IP 级使用同一组参数（`auth_service.go:465-468`） | 同一出口 NAT 下大量员工共享 1 rps 的 IP 桶，正常登录会被 429；账号级桶在携带 IP 时退化为“账号+IP”，可被换 IP 绕过 | P2 | 拆分账号级（严格）与 IP 级（更宽松，如 20-50 rps）配置；对共享出口提供可信代理/网段白名单策略 |
-| PERF-06 | 外部 IdP 调用必须有超时、熔断与合理配额 | OAuth 固定 10s 超时（`infrastructure/oauth/oauth2.go:22`、`:69-72`），无熔断/重试；全局 authorize/callback 默认 1 rps、burst 5（`internal/platform/config.go:1260-1267`） | IdP 抖动时回调请求长时间占用协程；全局 1 rps 会让正常规模的 C 端登录直接 429 | P2 | 超时下沉到 3-5s 且可配置；增加 provider 级熔断与失败率告警；按业务规模调整默认配额 |
+| PERF-06 | 外部 IdP 调用必须有超时、熔断与合理配额 | OAuth 固定 10s 超时（`infrastructure/oauth/oauth2.go:22`、`:69-72`），无熔断/重试；全局 authorize/callback 默认 1 rps、burst 5（`internal/platform/config/config.go:1260-1267`） | IdP 抖动时回调请求长时间占用协程；全局 1 rps 会让正常规模的 C 端登录直接 429 | P2 | 超时下沉到 3-5s 且可配置；增加 provider 级熔断与失败率告警；按业务规模调整默认配额 |
 | PERF-07 | 列表查询不得依赖全表/大范围扫描 | 关键词使用前置通配符 `LIKE %kw%`，总数统计以 `LIMIT 10000` 截断（`mysql_account.go:217-231`） | 每次账号列表请求最多扫描 1 万行；账号规模上升后管理端列表成为慢查询热点 | P2 | 改为前缀匹配/独立搜索索引（如 ngram/ES）；或提供“精确主体查询 + 默认无关键词分页”双模式 |
 | PERF-08 | 容量指标必须可量化 | 已认证请求至少 1 次 Redis（jti）且不缓存；账号/会话 L1 默认 1s（`cached_revocation.go:60-105`） | 该成本属于设计取舍，但缺少“活跃会话数 / 登录 QPS / Redis 调用量”容量指标，HPA 只能按 CPU | P2 | 增加活跃会话 gauge、Redis 调用速率、DB 回源速率面板，作为容量评审与 HPA 辅助信号 |
 
@@ -238,8 +238,8 @@
 - `internal/identity/transport/admin/router.go:82-104`：高风险路由强制幂等键。
 - `api/openapi/components.yaml:28-36`：幂等头仅定义未引用。
 - `api/openapi/paths/biz/auth.yaml:5-7` vs `app/auth_service.go:454-461`：B 端 merchant_id 契约漂移。
-- `internal/platform/config.go:1132-1134`：全局请求体默认 32MiB。
-- `internal/platform/config.go:188-189`、`:1260-1267`：短信预算与 OAuth 限流默认值。
+- `internal/platform/config/config.go:1132-1134`：全局请求体默认 32MiB。
+- `internal/platform/config/config.go:188-189`、`:1260-1267`：短信预算与 OAuth 限流默认值。
 - `migrations/000001:19`、`:148`；`000009:14-16`；`000011:5-9`：PII 明文与 S4/S5 状态。
 - `cmd/internal/identityruntime/runtime.go:227-236`、`:301-309`、`:339`、`:592-605`：审计出口、清理启动、就绪探针。
 - `deploy/helm/admin-frame/values-prod.yaml:167-168`：worker 双副本。
