@@ -2,7 +2,7 @@
 
 ## Context
 
-`docs/platform-architecture-review.md` 的结论是：`internal/platform` 运行时可靠性达标，但配置层（`config.go` 3228 行、47 个域结构体）和装配层（`bootstrap.go` 386 行 `Run` + 5 个回调）违反 ARCHITECTURE §5.6（PLAT-15）与 S-11；域配置与租户/配额端口滞留平台层（P0-2、P1-4）。本次按报告第六节执行阶段 1～3：
+`docs/archive/reviews/platform-architecture-review.md` 的结论是：`internal/platform` 运行时可靠性达标，但配置层（`config.go` 3228 行、47 个域结构体）和装配层（`bootstrap.go` 386 行 `Run` + 5 个回调）违反 ARCHITECTURE §5.6（PLAT-15）与 S-11；域配置与租户/配额端口滞留平台层（P0-2、P1-4）。本次按报告第六节执行阶段 1～3：
 
 - 阶段 1：拆文件（`config` 按域拆分、`Run` 拆为命名步骤），不改导出符号；
 - 阶段 2：拆包（`config`/`observability`/`httpserver`/`authn`/`async`/`storage`），顶层保留别名与薄封装，`cmd/*` 零改动；
@@ -79,7 +79,7 @@ internal/platform/
    - `cmd/internal/tenantruntime`：`NewGuard` / `NewQuotaGuard` 改为返回中间件（内部直接调用 `tenantapp.Guard.Verify` / 配额执行器）；`InjectMembership` 改为写入通用函数字段 `Deps.IsTenantMember func(ctx, tenantID, subjectID string) (bool, error)`（identityruntime 适配层改用该函数，不再依赖平台命名接口）；
    - `cmd/biz-api/main.go` 适配新 `Options`。
 4. 显式装配顺序：`Run` 各步骤返回前置条件错误（例如 `buildAuthN` 要求 `deps.Config`、`deps.Logger` 已就绪），移除「注释约定」。
-5. 门禁：`LAYER_SEMANTIC_BASELINE` 清空；`PLATFORM_MAX_FILES` 保持 5；回写 `docs/platform-architecture-review.md` 状态表。
+5. 门禁：`LAYER_SEMANTIC_BASELINE` 清空；`PLATFORM_MAX_FILES` 保持 5；回写 `docs/archive/reviews/platform-architecture-review.md` 状态表。
 
 ## 关键文件
 

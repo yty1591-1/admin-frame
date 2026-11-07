@@ -48,4 +48,4 @@
 - [ALERTS.md](./ALERTS.md)
 - [DATA_STANDARDS.md](../DATA_STANDARDS.md)
 - [CONFIG_STANDARDS.md](../CONFIG_STANDARDS.md)
-- 故障注入演练记录：[alert-drill-ent06.md](../alert-drill-ent06.md)
+- 故障注入演练记录：[alert-drill-ent06.md](../archive/verify/alert-drill-ent06.md)

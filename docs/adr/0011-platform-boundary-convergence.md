@@ -2,11 +2,11 @@
 
 - 状态：Accepted
 - 日期：2026-11-07
-- 关联：[ARCHITECTURE §5.6](../ARCHITECTURE.md)、[架构评审报告](../platform-architecture-review.md)、[check-layering.sh](../../scripts/ci/check-layering.sh)
+- 关联：[ARCHITECTURE §5.6](../ARCHITECTURE.md)、[架构评审报告](../archive/reviews/platform-architecture-review.md)、[check-layering.sh](../../scripts/ci/check-layering.sh)
 
 ## 背景
 
-[架构评审报告](../platform-architecture-review.md) 指出 `internal/platform` 存在三类边界问题：
+[架构评审报告](../archive/reviews/platform-architecture-review.md) 指出 `internal/platform` 存在三类边界问题：
 
 1. **P0-1**：`config.go` 超过 3000 行，47 个域结构体集中在同一文件，新增配置必改平台层。
 2. **P0-2 / P1-4**：域配置结构体与租户状态 / 成员关系 / API 配额端口定义在平台层，平台事实上承担了业务语义。

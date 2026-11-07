@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-11-04
-- 关联：[`../feature-flag-plan.md`](../feature-flag-plan.md)（ENT-11 规划）、[ADR-0007](0007-tenant-member-iam-binding.md)（消费方定义端口先例）、[ADR-0008](0008-notification-event-driven.md)（唯一例外先例的固化方式）
+- 关联：[`../feature-flag-plan.md`](../archive/plans/feature-flag-plan.md)（ENT-11 规划）、[ADR-0007](0007-tenant-member-iam-binding.md)（消费方定义端口先例）、[ADR-0008](0008-notification-event-driven.md)（唯一例外先例的固化方式）
 
 ## 背景
 

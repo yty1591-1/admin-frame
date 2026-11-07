@@ -274,7 +274,7 @@
 
 - [x] `AC-ENT-04-1`：角色 / 绑定 / 破玻璃 / 登录 / 导出事件可查询，过滤条件正确
       （`tests/integration/audit/query_test.go` 覆盖 action / actor / 时间窗过滤与分页总量；
-      `docs/audit-export-verify.md` 记录 `action=auth.login` 查询 total=7 与导出 CSV 行数一致）。
+      `docs/archive/verify/audit-export-verify.md` 记录 `action=auth.login` 查询 total=7 与导出 CSV 行数一致）。
 - [x] `AC-ENT-04-2`：保存期限与归档任务生效；到期数据可验证清理
       （`audit.retention.archive_prefix` 开启后每批「先归档到对象存储、再按 ID 删除」，
       归档失败即中止且一行不删；`TestAuditRetentionArchivesThenDeletes` 验证 12 行分 3 批归档、
@@ -350,14 +350,14 @@
 - [x] `AC-ENT-06-1`：每条 `ALERTS.md` 告警都有规则文件与 runbook 链接（`make check-alerts` 通过）。
 - [x] `AC-ENT-06-2`：staging 注入故障（5xx / DB 池耗尽 / Outbox 积压）可触发对应告警
       （2026-11-02 kind 真集群实测：`API5xxRateHigh` / `DBPoolExhaustion` / `AsyncOutboxBacklog` 均实触发；
-      记录见 [alert-drill-ent06.md](./alert-drill-ent06.md)）。
+      记录见 [alert-drill-ent06.md](./archive/verify/alert-drill-ent06.md)）。
 - [x] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标
       （2026-11-03 kind 真集群实测：37 个面板查询错误 0、空数据 0；记录见
-      [observability-dashboard-verify.md](./observability-dashboard-verify.md)）。
+      [observability-dashboard-verify.md](./archive/verify/observability-dashboard-verify.md)）。
 - [x] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖
       （2026-11-03 kind 真集群实测：`GET /admin/v1/audit/events` → `sql.conn.query`
       `db.system=mysql` 且带语句，父子链完整；做法为 `pkg/db.OpenTraced` 用 otelsql 包装驱动，
-      记录见 [trace-chain-verify.md](./trace-chain-verify.md)）。
+      记录见 [trace-chain-verify.md](./archive/verify/trace-chain-verify.md)）。
       外部 HTTP 依赖 span 由 `pkg/httpclient` 埋点提供，本轮请求未触发外部调用，
       该分支在 staging 待补一次真实调用。
 

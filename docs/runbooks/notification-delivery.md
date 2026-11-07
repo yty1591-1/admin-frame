@@ -57,7 +57,7 @@
 ## 相关链接
 
 - `docs/adr/0008-notification-event-driven.md`（编排与补偿语义）
-- `docs/notification-center-plan.md`（能力清单与验收标准）
+- `docs/archive/plans/notification-center-plan.md`（能力清单与验收标准）
 - `docs/runbooks/async-dlq.md`（死信重放操作）
 - `docs/runbooks/identity-sms-balance.md`（验证码渠道余额）
 - 指标：`notify_send_total` / `notify_delivery_active` / `notify_rate_limited_total` / `notify_request_total`

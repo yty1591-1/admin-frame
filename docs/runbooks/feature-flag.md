@@ -1,6 +1,6 @@
 # Runbook：特性开关与灰度（feature-flag）
 
-> 关联：[`../feature-flag-plan.md`](../feature-flag-plan.md)、[`adr/0009-featureflag-inprocess-evaluation.md`](../adr/0009-featureflag-inprocess-evaluation.md)、[`RUNBOOK_STANDARDS.md`](../RUNBOOK_STANDARDS.md)。
+> 关联：[`../feature-flag-plan.md`](../archive/plans/feature-flag-plan.md)、[`adr/0009-featureflag-inprocess-evaluation.md`](../adr/0009-featureflag-inprocess-evaluation.md)、[`RUNBOOK_STANDARDS.md`](../RUNBOOK_STANDARDS.md)。
 
 ## 症状与告警
 
@@ -38,6 +38,6 @@
 
 ## 相关链接
 
-- 规划：[`../feature-flag-plan.md`](../feature-flag-plan.md)
+- 规划：[`../feature-flag-plan.md`](../archive/plans/feature-flag-plan.md)
 - 决策：[`../adr/0009-featureflag-inprocess-evaluation.md`](../adr/0009-featureflag-inprocess-evaluation.md)
 - 门禁：`make check-featureflag`（key 命名 / 审计对账 / 幽灵 key / 到期治理）

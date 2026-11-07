@@ -1,5 +1,7 @@
 # 审计导出与到期归档验证记录（ENT-04 T5/T6）
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`AUDIT_STANDARDS.md`](../../AUDIT_STANDARDS.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 日期：2026-11-03　环境：本地 MySQL 8.0 + MinIO（`docker-compose.integration.yml`）+ 本地进程（admin-api / worker）
 
 本记录覆盖 `AC-ENT-04-1`～`AC-ENT-04-4`，并列出本轮**只有真跑才暴露**的缺陷。

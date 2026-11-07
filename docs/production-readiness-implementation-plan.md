@@ -533,7 +533,7 @@ audit:
 **验收与门禁**
 
 - `AC-ENT-04-1`～`AC-ENT-04-4` 全部通过；角色 / 绑定 / 破玻璃 / 登录 / 导出事件可查询。
-  实测记录见 [`audit-export-verify.md`](./audit-export-verify.md)：HTTP 202→轮询→下载 7 行与库内 `COUNT(*)` 对账一致，
+  实测记录见 [`audit-export-verify.md`](./archive/verify/audit-export-verify.md)：HTTP 202→轮询→下载 7 行与库内 `COUNT(*)` 对账一致，
   12 行到期数据分 3 批归档后删除、归档对象行数 = 删除行数。
 - `make check-audit` 扩展为「事件目录 ↔ 代码 ↔ 查询契约」一致性检查：
   `audit_export_check.py`（路由 ↔ OpenAPI ↔ 状态枚举三向比对）与
@@ -628,7 +628,7 @@ deploy/helm/admin-frame/
 T6 已完成（2026-11-02，kind 真集群 + 单体 Prometheus v3.1.0，规则与仓库同源）：
 三类注入全部实触发 —— `API5xxRateHigh`（5xx 比率 0.99）、`DBPoolExhaustion`（in_use/max=6/6）、
 `AsyncOutboxBacklog`（pending=1200），且故障撤销后告警均自动退回 inactive。
-演练记录与复现脚本：[alert-drill-ent06.md](./alert-drill-ent06.md)、
+演练记录与复现脚本：[alert-drill-ent06.md](./archive/verify/alert-drill-ent06.md)、
 `scripts/observability/alert-drill.sh`（`5xx` / `db-pool` / `outbox` 三个子命令）。
 本轮同时修掉两个 P1：DB 池打满时 `/metrics` 采集阻塞导致**告警自噬**（`db_pool_*` 指标消失、
 `DBPoolExhaustion` 永远不响），以及 `db.max_open_conns` 配置项缺失（池大小无法按环境调整）。
@@ -639,7 +639,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 （看板指标名必须在代码/规则里有定义，已并入 `check-observability.sh`）。
 本轮修掉三个看板相关缺陷：IAM 快照缓存观测器未接线（缓存面板恒空）、shadow 模式不记录
 鉴权决策（决策面板恒空）、RED 看板 5xx 比率在无错误时是空面板。
-记录见 [observability-dashboard-verify.md](./observability-dashboard-verify.md)。
+记录见 [observability-dashboard-verify.md](./archive/verify/observability-dashboard-verify.md)。
 
 `AC-ENT-06-4`（trace 追到 DB）已完成（2026-11-03，kind + Jaeger 1.57 + Collector Contrib 0.104.0）：
 一次 `GET /admin/v1/audit/events` 的 trace 为 `GET /admin/v1/audit/events` → `sql.conn.query`
@@ -648,7 +648,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 入口 span 名与 `http.route`）、`scripts/observability/{install-kind-otel.sh,check-trace-chain.py}`。
 本轮同时修掉两个「配置写了但从没被执行」的缺陷：Collector 的 `retry:` 非法键、telemetry 端口双绑，
 两者都会让 Collector 起不来——即整条 trace 链路默认是断的。
-记录见 [trace-chain-verify.md](./trace-chain-verify.md)。
+记录见 [trace-chain-verify.md](./archive/verify/trace-chain-verify.md)。
 
 **前置依赖**：`ENT-05`（ServiceMonitor / 部署位置）、`ENT-02/03`（限流与积压指标）。
 
@@ -996,7 +996,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-07 | P0 | Wave 2 | 完成（2026-11-03：T1～T4 全部交付。T3 生产实现以 **Vault HTTP API** 落地，零新增依赖，故不触发 DEP-06 评审——`internal/platform/secrets/vault.go` 自动探测 KV v1/v2，支持单对象（一次请求取全部密钥）与逐键（`<prefix>/<name>` + `value_field`）两种布局，带 TTL 缓存、5s 超时、自定义 CA、令牌文件注入；403 / 5xx / 解析失败一律**硬错误**，`Chain` 只在 `ErrNotFound` 时回落，单对象整体缺失也 fail fast。`secrets.vault.*` 已接入配置，prod 禁显式令牌；`check-secret-provider` 增 8 条断言（含「禁止引入 Vault SDK」与 fail-fast 用例存在性）。**未做**：云 KMS 适配（T7 字段加密需真实云环境时再评估）、不停机轮换演练待 staging） | 密钥托管 + 不停机轮换演练 |
 | ENT-08 | P0 | Wave 2 | 完成（2026-11-02）——T1～T6 全部落地：`backup.sh` 加 `--source-data=2` 记录快照位点并写 `<备份>.pos` sidecar（随备份上对象存储，缺失即失败）；`restore.sh` 实现 `PITR_STOP_POS`（字节精确）/ `PITR_STOP_DATETIME`（秒级）两种截断，支持跨 binlog 文件回放，全部参数在覆盖目标库前预检；G1 binlog 归档（5 分钟 CronJob + db-ops 镜像）已端到端验证。PITR 实测：误删未被重放、备份后增量全部找回，27 表结构一致。**生产剩余为配置项而非开发项**：填 `BINLOG_S3_URI`、账号授 `REPLICATION SLAVE` + `RELOAD` + `REPLICATION CLIENT` | 备份 + PITR 恢复演练 + RPO/RTO |
 | ENT-09 | P1 | Wave 3 | 完成（2026-11-05，审核流补齐）——T1～T6 交付：`internal/tenant` 四层 + `tenant` / `tenant_member` / `tenant_quota` 三表（迁移 000008 / 000011）+ 权限点 `tenant:read` / `tenant:write`；状态机 `pending → active → suspended → terminated`（终止终态、`version` 乐观锁、停用/终止强制原因）；A 端 11 个端点（租户 / 成员 / 配额）+ `admin.yaml` 7.2.0；成员停用代替删除、最后一名 owner 受保护、配额 `-1` 不限（执行归 ENT-14）；**B 端停用生效**由 `app.Guard` + `platform.WithTenantGuard` 承担（30s 缓存，fail closed），`000010` 回填存量商户。runbook：[tenant-suspend.md](./runbooks/tenant-suspend.md)；决策：[ADR-0006](./adr/0006-tenant-as-isolation-boundary.md)。**后续归属**：终止数据处置 → ENT-15（已完成 2026-11-04：PurgeService + tenant.data_purge 审计）；数据范围强制 → ENT-12（已完成 2026-11-04）；**配额执行（42900）已完成（ENT-14，2026-11-04：席位 T-13 内联 + api.rps 令牌桶 QuotaEnforcer）**；**审核流（2026-11-05 补齐）**：`tenant_approval` append-only 事件表（迁移 000023）+ 四个端点（`GET/POST /tenants/{id}/approval`、`.../approve`、`.../reject`）+ `tenant:approve` 权限（迁移 000024）；`pending → active` 在事务内要求「最新审批为 approved 且 ≥1 名在册 owner」，提交人不得审批自己的申请（违反留 failure 审计）；驳回必填原因、可重提且历史保留；门禁 `check-tenant` 增 TN-04（审批前置存在且先于 owner 校验、路由/权限/文档一致）。退出数据处置由 ENT-15 完成（2026-11-04）。**ENT-09 验收缺口全部关闭**。整改见 [tenant-enterprise-review.md](./tenant-enterprise-review.md)（B1 修复 3 个 P0；B2（审计 Outbox + 会话撤销 + 登录链路）与 B3 全部完成——T-11 元数据 / T-12 开通前置 / T-13 席位 / T-14 邀请流 / T-15 条件更新 / T-22 current_tenant / T-24 套餐，契约 admin 7.6.0 + biz 6.0.0；B4 治理完成——T-16 指标、T-17 域门禁 check-tenant（已入 make ci）、T-19 状态与 ADR 更正、T-20 runbook、T-23 数据生命周期；T-18 IAM 联动已完成（ADR-0007：成员变更同事务同步商户级模板角色绑定，迁移 000015 存量回填）） | 租户生命周期与 IAM / 令牌联动 |
-| ENT-10 | P1 | Wave 3 | **主体完成（2026-11-04，NT-01～NT-10 十个任务包全部落地）**——`internal/notification` 五层 + 迁移 000016～000019（五表 / 邀请模板种子 / 权限点 / 回执索引）；编排管道（幂等续跑 → 过期 → 黑名单偏好 fail closed → 频控 → 熔断发送 → 主备降级 → 单调收敛，预算 6/4/2）；失败 `retry.Permanent` 进 DLQ 保留载荷，Replay 补偿；租户邀请邮件端到端接入（ADR-0007 事务内 fail closed）；回执回调公网端点（HMAC + nonce，密钥缺失拒启）；API 面 admin 8.0.0 / biz 6.1.0 + 权限 `notification:read/write`；`check-notification` 门禁入 make ci；ADR-0008 + runbook；DirectSender 同步旁路受控门面（identity 热路径不迁移，例外固化 ADR-0008 §3）。决策与遗留：[ADR-0008](./adr/0008-notification-event-driven.md)、[notification-center-plan.md](./notification-center-plan.md)（v1.2）。**遗留**：MySQL 集成用例（归 ENT-16）、生产渠道驱动装配（依赖渠道凭据，配置项非开发项） | 通知 / Webhook 投递编排与状态 |
+| ENT-10 | P1 | Wave 3 | **主体完成（2026-11-04，NT-01～NT-10 十个任务包全部落地）**——`internal/notification` 五层 + 迁移 000016～000019（五表 / 邀请模板种子 / 权限点 / 回执索引）；编排管道（幂等续跑 → 过期 → 黑名单偏好 fail closed → 频控 → 熔断发送 → 主备降级 → 单调收敛，预算 6/4/2）；失败 `retry.Permanent` 进 DLQ 保留载荷，Replay 补偿；租户邀请邮件端到端接入（ADR-0007 事务内 fail closed）；回执回调公网端点（HMAC + nonce，密钥缺失拒启）；API 面 admin 8.0.0 / biz 6.1.0 + 权限 `notification:read/write`；`check-notification` 门禁入 make ci；ADR-0008 + runbook；DirectSender 同步旁路受控门面（identity 热路径不迁移，例外固化 ADR-0008 §3）。决策与遗留：[ADR-0008](./adr/0008-notification-event-driven.md)、[notification-center-plan.md](./archive/plans/notification-center-plan.md)（v1.2）。**遗留**：MySQL 集成用例（归 ENT-16）、生产渠道驱动装配（依赖渠道凭据，配置项非开发项） | 通知 / Webhook 投递编排与状态 |
 | ENT-11 | P1 | Wave 3 | **主体完成（2026-11-04，FF-01～FF-08 全部落地）**——`internal/featureflag` 五层：域模型（key 正则 / 治理状态机 enabled→disabled→expired 终态 / permanent 与 expires_at 二选一）；评估引擎（kill switch 无条件优先 → 规则按序 → default 回退；SHA-256 万分比稳定分桶，同主体稳定、上调只增不减、subject 缺失 fail closed；属性测试锁定单调性与均匀性）；两级 TTL 缓存（kill switch 5s / 规则 30s，判据「秒级开关」）；管理面 CRUD + 乐观锁 + `featureflag.*` 六动作审计（Outbox 优先 fail closed）；到期治理任务（worker 周期扫描 + 元审计）；API admin 8.1.0 + 权限 `featureflag:read/write`（000021 四处同步）；`check-featureflag.sh` 门禁入 make ci（key 命名 / EVENTS 对账 / 幽灵 key / 到期断言）；ADR-0009（进程内评估 + TTL，不引外部平台）+ runbook；首个调用方 = 租户邀请邮件灰度开关（消费方端口 + noop 注入，evaluator 未注入沿用 ENT-10 语义）。**遗留清账**：MySQL 集成用例已补（2026-11-04，`tests/integration/featureflag`：规则往返 / CAS / 治理落库 / ListExpired 扫描） | 特性开关与灰度可运营 |
 | ENT-12 | P1 | Wave 3 | 完成（2026-11-04）——`internal/shared/authz` 补齐执行原语：`ScopeWhere`（范围 → SQL 谓词，`Clause` 生成 `IN` 片段）、`Snapshot.EnforceMerchant`、`EnforceFromContext`（快照缺失放行，RequirePermission 兜底），越界统一 `ErrScopeDenied` → 40300；业务接线：租户域全部写用例经 `mutableTenant` 汇聚点强制 + 成员/配额/邀请三个读路径，通知 transport（查询/代发目标租户）接线；仓储强制过滤：通知域两实现对空租户键 fail closed + SQL 钉死 `tenant_id = ?`。越权自动化用例三处（authz 单测 / 租户 app 越权读写 / 通知 handler 403）；`make check-authz` 入 make ci（AZ-01～04 四项对账）。决策记录：rbac-iam.md §4.4 第 7 条（self 范围 v1 租户维度执行）。**后续归属**：iam / audit 等其余域的仓储织入随各自域演进逐批接入（原语已就绪） | 数据范围在业务查询 / 写入强制 |
 | ENT-13 | P1 | Wave 3 | 完成（2026-11-04）——`internal/platform/dependency` 依赖注册表：`Spec{Name, Timeout, Retry, Breaker}` 装配期登记（名全局唯一、低基数指标标签），`Caller.Do` 执行链 = 超时兜底（5s 默认）→ 熔断快速失败（`pkg/circuitbreaker`，业务拒绝类错误经 `IsSuccessful` 不计入）→ 受控重试（`pkg/retry`，对齐 REL-03 只重试显式 Retryable 错误 + `Permanent` 终止非幂等）；指标 `dependency_call_total{name,result: ok/error/breaker_open}` + `dependency_retry_total`（bootstrap 构造注入 `Deps.Dependencies`）。回调模板三件套固化到 RELIABILITY_STANDARDS §5.1（验签 / 幂等吸收 / 状态机单调，参照实现 = notification callback）；`check-resilience.sh` 门禁入 make ci（RS-01 注册表接线 / RS-02 回调三件套 / RS-03 裸出站 HTTP 扫描，白名单 oauth+Vault 已端口化）。测试：注册表 6 用例（重复登记 / 未登记快速失败 / 结果三分类观测 / 业务错误不熔断 / 重试+Permanent / 超时强制） | 依赖韧性接线 + 回调幂等模板 |

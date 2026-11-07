@@ -1,5 +1,7 @@
 # ENT-06 T6：告警故障注入演练（AC-ENT-06-2）
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`runbooks/ALERTS.md`](../../runbooks/ALERTS.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 ## 1. 目的与验收对应
 
 `ALERTS.md` 里的告警必须有真实指标支撑。本演练在 kind 真集群上注入三类故障，

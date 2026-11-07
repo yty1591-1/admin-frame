@@ -1,9 +1,11 @@
 # internal/platform 架构评审报告
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 > **状态**：评审完成（v0.1，2026-11-07）＋ 整改完成并回写度量（v0.2，2026-11-07）
 > **定位**：只评审 `internal/platform` 的结构、职责边界与装配方式；业务域实现、`pkg/` 库质量不在范围内
 > **适用范围**：`internal/platform/`（含 `dependency/`、`secrets/` 子包）及其被 `cmd/*` 的使用方式
-> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)（§3.3、§5.6、§6.1）、[CODE_STYLE.md](./CODE_STYLE.md)（S-11）、[CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md)、[scripts/ci/check-layering.sh](../scripts/ci/check-layering.sh)
+> **关联**：[ARCHITECTURE.md](../../ARCHITECTURE.md)（§3.3、§5.6、§6.1）、[CODE_STYLE.md](../../CODE_STYLE.md)（S-11）、[CONFIG_STANDARDS.md](../../CONFIG_STANDARDS.md)、[scripts/ci/check-layering.sh](../../../scripts/ci/check-layering.sh)
 > **最后更新**：2026-11-07
 > **变更方式**：整改完成后须回写本文状态表，并同步下调 `check-layering.sh` 中的拆分基线；基线只减不增
 > **目标读者**：技术负责人、后端工程师、架构 Reviewer、SRE
@@ -57,7 +59,7 @@
 
 ### P0-1 配置层单文件巨石
 
-**证据**：[config.go](../internal/platform/config/config.go) 3375 行，内含 47 个 `*Config` 结构体，同时承担 schema 定义、默认值、归一化、校验、敏感字段脱敏、密钥解码、SAML 证书解析。
+**证据**：[config.go](../../../internal/platform/config/config.go) 3375 行，内含 47 个 `*Config` 结构体，同时承担 schema 定义、默认值、归一化、校验、敏感字段脱敏、密钥解码、SAML 证书解析。
 
 单一文件内并存六类职责：
 
@@ -88,7 +90,7 @@
 
 ### P0-3 装配顺序隐式、god function
 
-**证据**：[bootstrap.go](../internal/platform/bootstrap.go#L115-L349) 的 `Run` 为 235 行（文件 416 行），`Options` 5 个回调（`NewSessionValidator` / `NewTenantGuard` / `NewQuotaGuard` / `NewAuthorizer` / `Register`），`Deps` 18 个字段。顺序约束全部写在注释里：`Async` 必须先于 identity 运行时（L231）、`NewTenantGuard` 必须先于 identity（L242）、`NewSessionValidator` 必须先于 `NewAuthMW`（L264）、配额守卫必须包在租户守卫内层（L287）。
+**证据**：[bootstrap.go](../../../internal/platform/bootstrap.go#L115-L349) 的 `Run` 为 235 行（文件 416 行），`Options` 5 个回调（`NewSessionValidator` / `NewTenantGuard` / `NewQuotaGuard` / `NewAuthorizer` / `Register`），`Deps` 18 个字段。顺序约束全部写在注释里：`Async` 必须先于 identity 运行时（L231）、`NewTenantGuard` 必须先于 identity（L242）、`NewSessionValidator` 必须先于 `NewAuthMW`（L264）、配额守卫必须包在租户守卫内层（L287）。
 
 **影响**：
 
@@ -100,19 +102,19 @@
 
 ### P1-4 业务语义端口定义在平台层，绕过门禁
 
-**证据**：`TenantGuard`（[tenantguard.go](../internal/platform/httpserver/guards.go)）、`TenantMembership`（L29）、`QuotaGuard`（[quotaguard.go](../internal/platform/httpserver/guards.go)）定义在 platform，实现位于 `cmd/internal/tenantruntime` 与 `internal/tenant/app`。
+**证据**：`TenantGuard`（[tenantguard.go](../../../internal/platform/httpserver/guards.go)）、`TenantMembership`（L29）、`QuotaGuard`（[quotaguard.go](../../../internal/platform/httpserver/guards.go)）定义在 platform，实现位于 `cmd/internal/tenantruntime` 与 `internal/tenant/app`。
 
 **影响**：ENT-09 / ENT-14 的判定语义（租户状态、成员关系、API 配额）以「端口」形式固化在平台层，平台层事实上定义了租户域契约；而 `check-layering.sh` 的 LAYER-02 只检查 import，**不检查平台层是否定义了业务语义**，因此这类违规不会被门禁发现。
 
 ### P1-5 配置对象承载隐藏可变状态
 
-**证据**：`Config.secretErr` 未导出字段（[config.go](../internal/platform/config/config.go)），注释说明原因是「Loader 的 Normalize 钩子无法返回错误」，错误在 `Validate` 阶段汇总。
+**证据**：`Config.secretErr` 未导出字段（[config.go](../../../internal/platform/config/config.go)），注释说明原因是「Loader 的 Normalize 钩子无法返回错误」，错误在 `Validate` 阶段汇总。
 
 **影响**：配置对象变成「可携带错误的状态机」，`LoadConfig` 成功返回后对象内部仍可能持有待汇报错误；并发复用或部分字段访问时错误语义不清。根因是 `pkg/config` 的钩子签名不支持返回 error，属于「用隐状态弥补依赖库缺陷」。
 
 ### P1-6 同名 `httpx` 双包，调用方需二选一
 
-**证据**：[internal/shared/apiresp/response.go](../internal/shared/apiresp/response.go) 与 [pkg/httpx/envelope.go](../pkg/httpx/envelope.go) 曾同为 `package httpx`；[pipeline.go](../internal/platform/httpserver/pipeline.go#L11-L20) 同时 import 二者（`httpx` + `pkghttpx`），`middleware.go` 与 `pipeline.go` 内混用。
+**证据**：[internal/shared/apiresp/response.go](../../../internal/shared/apiresp/response.go) 与 [pkg/httpx/envelope.go](../../../pkg/httpx/envelope.go) 曾同为 `package httpx`；[pipeline.go](../../../internal/platform/httpserver/pipeline.go#L11-L20) 同时 import 二者（`httpx` + `pkghttpx`），`middleware.go` 与 `pipeline.go` 内混用。
 
 **影响**：两个包名相同、职责重叠（信封写入 vs apperr 适配），新代码容易选错入口；错误映射策略实际分散在三处（`apperr`、`pkg/errors`、`pkg/httpx`）。
 
@@ -134,11 +136,11 @@
 
 | 项 | 证据 |
 |---|---|
-| 生命周期与优雅关闭 | [server.go](../internal/platform/httpserver/server.go)：先 `Listen` 再打日志，`signal.NotifyContext` + `Shutdown` 超时可配 |
-| 资源释放确定性 | [bootstrap.go](../internal/platform/bootstrap.go#L150-L189) 全部 `defer` 关闭，错误经命名返回值汇总，无 `os.Exit` |
-| 中间件下沉 pkg | [middleware.go](../internal/platform/httpserver/middleware.go) 仅做配置映射与委托；[pipeline.go](../internal/platform/httpserver/pipeline.go) 明确固定顺序 |
+| 生命周期与优雅关闭 | [server.go](../../../internal/platform/httpserver/server.go)：先 `Listen` 再打日志，`signal.NotifyContext` + `Shutdown` 超时可配 |
+| 资源释放确定性 | [bootstrap.go](../../../internal/platform/bootstrap.go#L150-L189) 全部 `defer` 关闭，错误经命名返回值汇总，无 `os.Exit` |
+| 中间件下沉 pkg | [middleware.go](../../../internal/platform/httpserver/middleware.go) 仅做配置映射与委托；[pipeline.go](../../../internal/platform/httpserver/pipeline.go) 明确固定顺序 |
 | 能力装配收敛 | `Deps` 只暴露平台能力（配置/日志/指标/追踪/存储/DB/Redis/ID/守卫/健康检查），未暴露 repo/bus |
-| 基础设施适配薄 | [infra.go](../internal/platform/infra.go#L248-L281)（`OpenDatabase` / `OpenRedis` 纯映射）、`observability/logger.go`（16 行）均为纯映射 |
+| 基础设施适配薄 | [infra.go](../../../internal/platform/infra.go#L248-L281)（`OpenDatabase` / `OpenRedis` 纯映射）、`observability/logger.go`（16 行）均为纯映射 |
 | 门禁可执行 | `make check-layering` 已在 `make ci` 中，LAYER-01～06 有实际拦截力 |
 
 ---
@@ -204,7 +206,7 @@ internal/tenant/config/     # 处置时间线/配额
 
 ## 七、门禁补齐（本次已落地）
 
-[check-layering.sh](../scripts/ci/check-layering.sh) 新增三条规则，使 PLAT-15 从文档条款变为可执行门禁：
+[check-layering.sh](../../../scripts/ci/check-layering.sh) 新增三条规则，使 PLAT-15 从文档条款变为可执行门禁：
 
 | 规则 | 检查内容 | 失败条件 |
 |---|---|---|
@@ -273,6 +275,6 @@ internal/tenant/config/     # 处置时间线/配额
 | G3 分层门禁覆盖不全 | 完成 | LAYER-08 改为递归遍历全部子包（阈值 500 行，基线为空）；`async_nats.go`(622)、`secrets/vault.go`(619) 已拆分；`.golangci.yml` 增加 depguard 四条规则（LAYER-01/03/04/10），已用探针文件证伪拦截生效 |
 | G5 数据范围字面值靠注释同步 | 完成 | `internal/iam/domain/scope_contract.go` 在 `init` 中断言 `DataScopeType` 与 `shared/authz` 常量逐字一致，漂移即启动失败 / 测试失败 |
 
-同时补充：[ARCHITECTURE.md](./ARCHITECTURE.md) §3.4 新增选层决策表（pkg / shared / platform / 域），消除「近义两层」的选层歧义（差距 G4）。
+同时补充：[ARCHITECTURE.md](../../ARCHITECTURE.md) §3.4 新增选层决策表（pkg / shared / platform / 域），消除「近义两层」的选层歧义（差距 G4）。
 
 残留（未在本批处理）：`configs/` 仅 `prod/` 一套样板，环境差异见 CONFIG_STANDARDS 的环境矩阵（差距 G8，已在文档层面关闭）。差距 G7 已完成：`platform/aliases.go` 兼容层删除，`cmd` 侧改为直接 import 子包，`PLATFORM_MAX_FILES` 降至 4。

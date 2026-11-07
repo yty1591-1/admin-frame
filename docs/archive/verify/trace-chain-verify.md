@@ -1,5 +1,7 @@
 # 链路验证：入口 → DB（ENT-06 AC-ENT-06-4）
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`OBSERVABILITY_STANDARDS.md`](../../OBSERVABILITY_STANDARDS.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 > **结论**：达成。kind 集群上实测一次 `GET /admin/v1/audit/events` 的 trace 为
 > `GET /admin/v1/audit/events` → `sql.conn.query`（`db.system=mysql`，带 SQL 语句），
 > 父子关系正确、可从入口追到 DB。

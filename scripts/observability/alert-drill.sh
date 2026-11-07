@@ -4,7 +4,7 @@
 # 目的：验证 deploy/observability/prometheus/rules 下的规则能被真实指标触发
 # （AC-ENT-06-2：5xx / DB 池耗尽 / Outbox 积压三类故障可触发对应告警）。
 #
-# 前置（见 docs/alert-drill-ent06.md）：
+# 前置（见 docs/archive/verify/alert-drill-ent06.md）：
 #   - kind 集群 af-verify，admin-frame 已部署（values-kind.yaml，auth.mode=demo）
 #   - 单体 Prometheus 在 monitoring 命名空间（scripts/observability/install-kind-prometheus.sh）
 #   - MySQL / Redis 在 admin-frame 命名空间

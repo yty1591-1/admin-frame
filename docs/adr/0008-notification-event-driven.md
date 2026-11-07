@@ -1,7 +1,7 @@
 # ADR-0008：通知中心事件驱动编排（业务域只写 Outbox）
 
 日期：2026-11-04　状态：已接受
-关联：ADR-0006（租户即隔离边界）、ENT-10、`docs/notification-center-plan.md`、`docs/notification-channels.md`（渠道驱动 M4）
+关联：ADR-0006（租户即隔离边界）、ENT-10、`docs/archive/plans/notification-center-plan.md`、`docs/notification-channels.md`（渠道驱动 M4）
 
 ## 背景
 

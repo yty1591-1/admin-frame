@@ -2,7 +2,7 @@
 
 ## Context
 
-阶段 1～3（commit `924bd4c`）已完成平台基础子包拆分、`bootstrap.Run` 显式装配与守卫端口下沉。剩余四项架构债务按 `docs/platform-architecture-review.md` 第十节执行：
+阶段 1～3（commit `924bd4c`）已完成平台基础子包拆分、`bootstrap.Run` 显式装配与守卫端口下沉。剩余四项架构债务按 `docs/archive/reviews/platform-architecture-review.md` 第十节执行：
 
 1. `pkg/httpx` 与 `internal/shared/httpx` 同名双包，调用方需二选一，契约易混。
 2. `Config.secretErr` 用隐状态弥补 `pkg/config.Normalize` 钩子不支持返回错误，密钥解析失败被延后到 `Validate` 才暴露。
@@ -22,7 +22,7 @@
 1. `git mv internal/shared/httpx internal/shared/apiresp`；四个文件（`doc.go`、`response.go`、`trace.go`、`response_test.go`）包声明改为 `apiresp` / `apiresp_test`，doc 改为说明「apperr → 统一响应信封适配层，原语见 pkg/httpx」。
 2. 全仓 Go 文件替换 import 路径 `internal/shared/httpx` → `internal/shared/apiresp`，并把引用该包的文件中标识符 `httpx.` → `apiresp.`。必须用带边界的替换（负向断言），避免误伤 `pkghttpx.` / `sharedhttpx.`；`notification`、`featureflag` 两处显式别名 `sharedhttpx` 一并去掉。
 3. 代表性调用点：[pipeline.go](file:///d:/MyDocument/admin-frame/internal/platform/httpserver/pipeline.go)、[identity c handler](file:///d:/MyDocument/admin-frame/internal/identity/transport/c/handler.go)、[iam handler](file:///d:/MyDocument/admin-frame/internal/iam/transport/rest/handler.go)。
-4. 更新文档引用：`docs/API_STANDARDS.md`、`docs/pkg-roadmap.md`、`docs/rbac-iam.md`、`docs/platform-architecture-review.md`（仅替换路径，不改语义）。
+4. 更新文档引用：`docs/API_STANDARDS.md`、`docs/pkg-roadmap.md`、`docs/rbac-iam.md`、`docs/archive/reviews/platform-architecture-review.md`（仅替换路径，不改语义）。
 
 验证：`go build ./...`、`go test ./internal/shared/apiresp ./internal/platform/httpserver ./internal/identity/... ./internal/iam/...`、`bash scripts/ci/check-layering.sh`。
 
@@ -130,7 +130,7 @@
 ### 4.5 测试与文档
 
 - 域相关配置测试按归属拆分：`config_identity*` / `config_mfa` / `config_saml` / `config_sms_oauth` → `internal/identity/config`；`config_iam*` → `internal/iam/config`；`config_audit*` → `internal/audit/config`；`config_secrets` / `config_multiinstance` / 核心段 → `internal/platform/config`。
-- 更新 `docs/adr/0011-platform-boundary-convergence.md` 与 `docs/platform-architecture-review.md` 第十节状态表。
+- 更新 `docs/adr/0011-platform-boundary-convergence.md` 与 `docs/archive/reviews/platform-architecture-review.md` 第十节状态表。
 
 ---
 

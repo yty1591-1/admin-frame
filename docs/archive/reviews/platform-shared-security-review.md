@@ -1,9 +1,11 @@
 # platform / shared / security 三目录结构与工程规范评审
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 > **状态**：评审完成（v1.0，2026-11-07）＋ P1 差距整改完成（v1.1，2026-11-07，见第四节）
 > **范围**：`internal/platform/`、`internal/shared/`、`internal/security/`（含其子包）
 > **方法**：仅基于仓库现有目录、源码与门禁脚本实测；不假设未出现的技术栈
-> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)、[platform-architecture-review.md](./platform-architecture-review.md)、[scripts/ci/check-layering.sh](../scripts/ci/check-layering.sh)
+> **关联**：[ARCHITECTURE.md](../../ARCHITECTURE.md)、[platform-architecture-review.md](./platform-architecture-review.md)、[scripts/ci/check-layering.sh](../../../scripts/ci/check-layering.sh)
 
 ---
 
@@ -122,7 +124,7 @@ internal/<业务域>/{domain,app,infrastructure,transport}
 | 可维护性 | **达标** | 拆包已完成、兼容层已删除；`cmd` 直接 import `platform/<subpkg>`，平台根只保留装配入口 |
 | 可测试性 | **达标** | 测试代码 5639 行 ≈ 生产代码 69%；`security` 测试行数（1276）超过生产行数（1067）；三目录均有 `testsupport_test.go` / `testhelpers_test.go`；`go test -race` + coverprofile |
 | 配置与环境隔离 | **基本达标** | 密钥不落配置文件，走 env/file/Vault 链；有 `config_redaction_test.go` 校验启动日志不泄密；`auth.mode=demo` 在 `env=prod` 时启动即失败；**但** `configs/` 仅有 `prod/` 一套样板，无 dev/staging 目录 |
-| 文档及部署就绪度 | **基本达标** | 20 份硬约束专文 + ADR + runbook + `deploy/helm` + 三套 values + 迁移 Job + `make ci` 40+ 检查；**但** `docs/platform-architecture-review.md` 仍描述拆包前状态，未回写 |
+| 文档及部署就绪度 | **基本达标** | 20 份硬约束专文 + ADR + runbook + `deploy/helm` + 三套 values + 迁移 Job + `make ci` 40+ 检查；**但** `docs/archive/reviews/platform-architecture-review.md` 仍描述拆包前状态，未回写 |
 
 ### 逐项说明（只在需要证据时展开）
 
@@ -155,7 +157,7 @@ internal/<业务域>/{domain,app,infrastructure,transport}
 | **G3** | 分层门禁覆盖不全 | `check-layering.sh` 的 LAYER-07/08 只遍历 `internal/platform/*.go`（根包），子包不受约束；实际 `async/async_nats.go` 622 行、`secrets/vault.go` 619 行均 > 500 行阈值却通过 | 门禁给"绿"的假安全感，子包可无痛膨胀回巨石 | LAYER-08 改为递归遍历（`find ${PLATFORM_DIR} -name '*.go'`）；`.golangci.yml` 增加 depguard 规则，把六条分层规则编译期化 |
 | **G4** | 近义命名与薄适配层双份维护 | `shared/apiresp`(74 行，转发 + 别名 `pkg/httpx`)、`shared/apperr`(227 行，在 `pkg/errors` 上挂数字码)、`pkg/rbac`↔`shared/authz`+`security/authz`、`pkg/config`↔`platform/config` | 新人选层成本高；同一个语义有两处定义，改一处漏一处即漂移 | 在 `docs/ARCHITECTURE.md` 增"选层决策表"（何时写 `pkg`、何时写 `shared`）；给 `apiresp` 加契约测试锁定 `Envelope` JSON 字段与 `pkg/httpx` 一致 |
 | **G5** | 跨层字面值靠注释同步 | `shared/authz` 的 `ScopeAll/Merchant/Self/MerchantSet` 与 `internal/iam/domain.DataScopeType` 靠注释约定"不得改名" | 改名时无编译期报错，鉴权范围静默失效——安全影响 | 在 `iam/domain` 侧加 `var _ = [1]struct{}{}[authz.ScopeAll - ScopeAll]` 式编译期断言，或以代码生成从单一来源产出两侧常量 |
-| **G6** | 架构文档滞后于代码 | `docs/platform-architecture-review.md` 仍写"21 个非测试文件、`config.go` 3375 行、评审未整改"；实际已拆为 5 文件、`config.go` 50 行，基线同步下调至 5（commit 924bd4c / 3921abe，2026-11-07） | 评审结论失真，后续决策基于过期事实 | 回写该文状态表与度量表；在 CI 增加"基线与文档一致"检查（`PLATFORM_MAX_FILES` 与文档数字比对） |
+| **G6** | 架构文档滞后于代码 | `docs/archive/reviews/platform-architecture-review.md` 仍写"21 个非测试文件、`config.go` 3375 行、评审未整改"；实际已拆为 5 文件、`config.go` 50 行，基线同步下调至 5（commit 924bd4c / 3921abe，2026-11-07） | 评审结论失真，后续决策基于过期事实 | 回写该文状态表与度量表；在 CI 增加"基线与文档一致"检查（`PLATFORM_MAX_FILES` 与文档数字比对） |
 | **G7** | 兼容层未定下线窗口 | `platform/aliases.go` 157 行别名；`cmd` 中 124 处 `platform.X` 引用 | 拆包收益被过渡层稀释，两个入口并存 | 明确"下个 minor 版本移除别名"，把 `cmd` 直接 import 子包；移除后 `PLATFORM_MAX_FILES` 可再降至 4 |
 | **G8** | 环境样板单一 | `configs/` 下只有 `prod/`（admin/biz/c/worker + modules/*.yaml.example + env.example） | 新人搭本地环境需自行推导 env 覆盖矩阵 | 增 `configs/dev/`、`configs/staging/` 模板，或在 `docs/CONFIG_STANDARDS.md` 补"环境差异矩阵" |
 

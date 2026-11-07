@@ -1,5 +1,7 @@
 # 看板与可观测性验证（ENT-06 AC-ENT-06-3）
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`OBSERVABILITY_STANDARDS.md`](../../OBSERVABILITY_STANDARDS.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 看板 JSON 入库后从未在真集群验证过：面板能打开，但里面的 PromQL 可能引用了不存在的指标、
 写错的标签，或者对应指标根本没被写入过——运维看到的是**空面板**，而不是「这个指标不存在」。
 

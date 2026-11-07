@@ -1,8 +1,10 @@
 # ENT-10 通知中心（投递编排）领域规划
 
+> **归档**：本文件已于 2026-11-07 归档，只读不再维护；现行结论以 [`adr/0008-notification-event-driven.md`](../../adr/0008-notification-event-driven.md) 为准，归档索引见 [`archive/README.md`](../README.md)。
+
 > **状态**：主体完成 v1.3（NT-01～NT-10 全部落地；MySQL 集成用例已补（2026-11-04，`tests/integration/notification`，ENT-16 切片）；仅余生产渠道驱动装配——依赖渠道凭据配置）
 > **实施记录**：迁移 000016（五表）/ 000017（邀请邮件模板）/ 000018（权限点）/ 000019（回执对账索引）；`internal/notification` 五层 + transport（admin/biz/callback）齐备；worker 消费与 c-api 回执已装配；租户邀请邮件端到端接入；OpenAPI admin 8.0.0 / biz 6.1.0
-> **关联**：[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md)（ENT-10）、[`notification-channels.md`](./notification-channels.md)（渠道驱动，M4 即本文）、[`adr/0008-notification-event-driven.md`](./adr/0008-notification-event-driven.md)（编排决策）、[`runbooks/notification-delivery.md`](./runbooks/notification-delivery.md)（故障处置）
+> **关联**：[`production-readiness-implementation-plan.md`](../../production-readiness-implementation-plan.md)（ENT-10）、[`notification-channels.md`](../../notification-channels.md)（渠道驱动，M4 即本文）、[`adr/0008-notification-event-driven.md`](../../adr/0008-notification-event-driven.md)（编排决策）、[`runbooks/notification-delivery.md`](../../runbooks/notification-delivery.md)（故障处置）
 > **规划日期**：2026-11-04
 > **目标读者**：后端 / 平台装配 / 安全 Review / SRE
 
