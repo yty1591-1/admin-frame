@@ -101,7 +101,7 @@ type AuthConfig struct {
 	JWT security.JWTConfig `yaml:"jwt"`
 }
 
-// effectiveMode 返回生效的鉴权模式。
+// EffectiveMode 返回生效的鉴权模式。
 //
 // 未显式声明 mode 时的回退规则：
 //   - prod / staging → jwt（缺少 JWT 配置会直接启动失败，绝不静默回退 demo）；

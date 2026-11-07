@@ -26,10 +26,10 @@ func redactDSN(dsn string) string {
 	return maskedValue
 }
 
-// isProdEnv 报告环境是否为生产。
 // IsProdEnv 报告是否为生产环境，供平台装配层复用同一判定。
 func IsProdEnv(env string) bool { return isProdEnv(env) }
 
+// isProdEnv 报告环境是否为生产。
 func isProdEnv(env string) bool {
 	return strings.EqualFold(strings.TrimSpace(env), "prod")
 }

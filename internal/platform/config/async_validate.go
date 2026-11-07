@@ -100,8 +100,7 @@ func (c *Config) validateAsyncBroker() []error {
 	return errs
 }
 
-// validNATSStreamName 校验 JetStream 流名称（NATS 不允许点号与通配符）。
-// ValidNATSStreamName 报告是否为合法的 JetStream stream 名。
+// ValidNATSStreamName 报告是否为合法的 JetStream stream 名（NATS 不允许点号与通配符）。
 func ValidNATSStreamName(name string) bool { return validNATSStreamName(name) }
 
 func validNATSStreamName(name string) bool {
@@ -118,8 +117,7 @@ func validNATSStreamName(name string) bool {
 	return true
 }
 
-// validNATSSubjectRoot 校验主题前缀：允许点号分层，但禁止通配符、空白与空层。
-// ValidNATSSubjectRoot 报告是否为合法的 subject 前缀。
+// ValidNATSSubjectRoot 报告是否为合法的 subject 前缀（允许点号分层，禁止通配符、空白与空层）。
 func ValidNATSSubjectRoot(prefix string) bool { return validNATSSubjectRoot(prefix) }
 
 func validNATSSubjectRoot(prefix string) bool {
