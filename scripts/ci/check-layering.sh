@@ -7,7 +7,12 @@
 #   3. security 不依赖 platform，也不依赖业务域；
 #   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）；
 #   5. iam/domain 不依赖 app/transport/infrastructure/platform；
-#   6. iam/transport 不依赖 iam/infrastructure。
+#   6. iam/transport 不依赖 iam/infrastructure；
+#   7. platform 单包非测试文件数与单文件行数不超过拆分基线（LAYER-07/08，PLAT-15）；
+#   8. platform 不得新增业务语义端口（Tenant / Quota / Merchant 相关 interface，
+#      LAYER-09，PLAT-15 / ARCHITECTURE §5.6「不承载业务语义」）。
+#
+# 基线只减不增：每次完成拆分后必须同步下调基线值，禁止以扩容基线的方式放行。
 #
 # 业务域目录动态发现（internal/*，排除 platform/security/shared），
 # 新增业务域时无需改脚本。
@@ -24,6 +29,19 @@ fail_with() {
   echo "ERROR: $1" >&2
   FAIL=1
 }
+
+# PLAT-15 拆分基线（ARCHITECTURE §5.6）。
+#
+# 阶段 1/2 已拆出 config / observability / httpserver / authn / async / storage
+# 子包；阶段 3 将守卫端口下沉到业务域，根包仅剩装配与兼容转发文件（5 个）。
+# 基线只减不增，禁止上调。
+PLATFORM_DIR="internal/platform"
+PLATFORM_MAX_FILES=5
+PLATFORM_MAX_FILE_LINES=500
+# 已登记的超限文件（拆分完成后必须从本数组删除）。
+LAYER_LINE_BASELINE=()
+# 已登记的业务语义端口（下沉到业务域后必须从本数组删除）。
+LAYER_SEMANTIC_BASELINE=()
 
 DOMAINS_RE=""
 for d in internal/*/; do
@@ -97,8 +115,62 @@ else
   echo "    OK: iam/transport has no infrastructure import"
 fi
 
+echo "==> LAYER-07: platform package size (PLAT-15)"
+platform_files=0
+for f in "${PLATFORM_DIR}"/*.go; do
+  [[ -f "${f}" ]] || continue
+  [[ "${f}" == *_test.go ]] && continue
+  platform_files=$((platform_files + 1))
+done
+if [[ "${platform_files}" -gt "${PLATFORM_MAX_FILES}" ]]; then
+  fail_with "platform has ${platform_files} non-test files, baseline ${PLATFORM_MAX_FILES} (PLAT-15: split the package)"
+else
+  echo "    OK: platform non-test files ${platform_files}/${PLATFORM_MAX_FILES}"
+fi
+
+echo "==> LAYER-08: platform file size (PLAT-15)"
+for f in "${PLATFORM_DIR}"/*.go; do
+  [[ -f "${f}" ]] || continue
+  [[ "${f}" == *_test.go ]] && continue
+  lines=$(awk 'END { print NR }' "${f}")
+  [[ "${lines}" -le "${PLATFORM_MAX_FILE_LINES}" ]] && continue
+  base_name="$(basename "${f}")"
+  registered=0
+  for b in "${LAYER_LINE_BASELINE[@]}"; do
+    [[ "${base_name}" == "${b}" ]] && registered=1
+  done
+  if [[ "${registered}" -eq 0 ]]; then
+    fail_with "${f} has ${lines} lines > ${PLATFORM_MAX_FILE_LINES} (PLAT-15: split the file)"
+  else
+    echo "    BASELINE: ${base_name} ${lines} lines (must leave the baseline after split)"
+  fi
+done
+
+echo "==> LAYER-09: platform must not define business-semantic ports (PLAT-15)"
+semantic_matches=$(grep -RHo --include='*.go' --exclude='*_test.go' -E \
+  "^type ([A-Za-z]*(Tenant|Quota|Merchant)[A-Za-z]*) interface" \
+  "${PLATFORM_DIR}" 2>/dev/null || true)
+if [[ -z "${semantic_matches}" ]]; then
+  echo "    OK: no business-semantic port in platform"
+else
+  while IFS= read -r match; do
+    [[ -z "${match}" ]] && continue
+    name="${match##*:type }"
+    name="${name%% *}"
+    registered=0
+    for b in "${LAYER_SEMANTIC_BASELINE[@]}"; do
+      [[ "${name}" == "${b}" ]] && registered=1
+    done
+    if [[ "${registered}" -eq 0 ]]; then
+      fail_with "platform defines business-semantic port ${name} (PLAT-15: move it to the owning domain)"
+    else
+      echo "    BASELINE: ${name} (must move to the owning domain)"
+    fi
+  done <<< "${semantic_matches}"
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
-  echo "layering check failed (PLAT-12 / ARCHITECTURE §6.1)" >&2
+  echo "layering check failed (PLAT-12 / PLAT-15 / ARCHITECTURE §6.1)" >&2
   exit 1
 fi
 echo "OK: layering"

@@ -307,15 +307,15 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 
 	// T-08/T-10：平台守卫先于身份运行时构造（bootstrap 顺序保证），
-	// B 端登录与账号开通据此校验租户是否在服务期；A/C 端守卫为 nil，跳过校验。
+	// B 端登录与账号开通据此校验租户是否在服务期；A/C 端未注入，跳过校验。
 	var tenantCheck app.TenantStatusChecker
-	if deps.TenantGuard != nil {
-		tenantCheck = deps.TenantGuard
+	if deps.VerifyTenant != nil {
+		tenantCheck = tenantStatusAdapter{verify: deps.VerifyTenant}
 	}
 	// T-22：成员关系查询（租户域适配注入 Deps）；nil 时切换端点拒绝（fail-closed）。
 	var membership app.MembershipChecker
-	if deps.TenantMembership != nil {
-		membership = membershipAdapter{deps.TenantMembership}
+	if deps.IsTenantMember != nil {
+		membership = membershipAdapter{deps.IsTenantMember}
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
@@ -1006,13 +1006,24 @@ func registerHealth(deps *platform.Deps) {
 	}
 }
 
-// membershipAdapter 把 platform.TenantMembership 适配成 identity 的
+// tenantStatusAdapter 把平台注入的通用判定函数适配成 identity 的
+// TenantStatusChecker 端口（T-08/T-10）；平台不再定义租户语义接口。
+type tenantStatusAdapter struct {
+	verify func(ctx context.Context, merchantID string) (bool, error)
+}
+
+// Verify 实现 identity 的 TenantStatusChecker 端口。
+func (a tenantStatusAdapter) Verify(ctx context.Context, merchantID string) (bool, error) {
+	return a.verify(ctx, merchantID)
+}
+
+// membershipAdapter 把平台注入的通用成员判定函数适配成 identity 的
 // MembershipChecker 端口（T-22）；两接口方法签名一致，仅包边界转换。
 type membershipAdapter struct {
-	inner platform.TenantMembership
+	inner func(ctx context.Context, tenantID, subjectID string) (bool, error)
 }
 
 // IsMember 实现 identity 的 MembershipChecker 端口。
 func (a membershipAdapter) IsMember(ctx context.Context, tenantID, subjectID string) (bool, error) {
-	return a.inner.IsMember(ctx, tenantID, subjectID)
+	return a.inner(ctx, tenantID, subjectID)
 }

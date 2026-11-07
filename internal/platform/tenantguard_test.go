@@ -56,7 +56,7 @@ func decodeCode(t *testing.T, recorder *httptest.ResponseRecorder) int {
 // TestWithTenantGuardAllowsServableTenant 验证放行路径不改变响应。
 func TestWithTenantGuardAllowsServableTenant(t *testing.T) {
 	guard := &stubGuard{allow: true}
-	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard.Verify, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -71,7 +71,7 @@ func TestWithTenantGuardAllowsServableTenant(t *testing.T) {
 
 // TestWithTenantGuardDeniesSuspendedTenant 验证拒绝返回 403 与统一错误码。
 func TestWithTenantGuardDeniesSuspendedTenant(t *testing.T) {
-	handler := platform.WithTenantGuard(identityMW, &stubGuard{allow: false}, false)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, (&stubGuard{allow: false}).Verify, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -86,7 +86,7 @@ func TestWithTenantGuardDeniesSuspendedTenant(t *testing.T) {
 
 // TestWithTenantGuardFailsClosedOnError 验证判定失败返回 503 而不是放行 / 403。
 func TestWithTenantGuardFailsClosedOnError(t *testing.T) {
-	handler := platform.WithTenantGuard(identityMW, &stubGuard{err: errors.New("db down")}, false)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, (&stubGuard{err: errors.New("db down")}).Verify, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -103,7 +103,7 @@ func TestWithTenantGuardFailsClosedOnError(t *testing.T) {
 // 未认证请求都不触发守卫。
 func TestWithTenantGuardSkipsNonTenantRequests(t *testing.T) {
 	guard := &stubGuard{allow: false}
-	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard.Verify, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest(""))
@@ -140,7 +140,7 @@ func identityMW(next http.Handler) http.Handler { return next }
 // 旧实现 merchant_id 为空直接放行：签发缺陷会让令牌静默绕过全部租户校验。
 func TestWithTenantGuardRejectsMissingMerchantOnBiz(t *testing.T) {
 	guard := &stubGuard{allow: true}
-	handler := platform.WithTenantGuard(identityMW, guard, true)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard.Verify, true)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest(""))
@@ -169,7 +169,7 @@ func TestWithTenantGuardRejectsMissingMerchantOnBiz(t *testing.T) {
 // TestWithTenantGuardAllowsMissingMerchantOffBiz 验证 A/C 端空商户仍放行。
 func TestWithTenantGuardAllowsMissingMerchantOffBiz(t *testing.T) {
 	guard := &stubGuard{allow: true}
-	handler := platform.WithTenantGuard(identityMW, guard, false)(okHandler())
+	handler := platform.WithTenantGuard(identityMW, guard.Verify, false)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest(""))

@@ -29,11 +29,11 @@ for sym in "type Provider interface" "func NewResolver" "func NewEnvProvider" "f
 done
 
 echo "==> ENT-07: provider wired into startup path"
-if ! grep -q "applySecrets" internal/platform/config_secrets.go; then
-  fail "internal/platform/config_secrets.go 未实现 applySecrets（Provider 未接入配置解析）"
+if ! grep -q "applySecrets" internal/platform/config/secrets.go; then
+  fail "internal/platform/config/secrets.go 未实现 applySecrets（Provider 未接入配置解析）"
 fi
-if ! grep -q "c.resolveSecrets()" internal/platform/config.go; then
-  fail "internal/platform/config.go 的 normalize 未调用 resolveSecrets（Provider 不会被启动路径执行）"
+if ! grep -q "c.resolveSecrets()" internal/platform/config/defaults.go; then
+  fail "internal/platform/config/defaults.go 的 normalize 未调用 resolveSecrets（Provider 不会被启动路径执行）"
 fi
 
 echo "==> ENT-07: vault production provider (T3)"
@@ -50,8 +50,8 @@ else
     fail "internal/platform/secrets 引入了 Vault SDK；新增强制依赖须先走 DEP-06 依赖评审"
   fi
 fi
-if ! grep -qF "SecretProviderVault" internal/platform/config_secrets.go; then
-  fail "internal/platform/config_secrets.go 未注册 vault 来源（生产实现无法被配置启用）"
+if ! grep -qF "SecretProviderVault" internal/platform/config/secrets.go; then
+  fail "internal/platform/config/secrets.go 未注册 vault 来源（生产实现无法被配置启用）"
 fi
 
 echo "==> ENT-07: provider failure must fail fast"

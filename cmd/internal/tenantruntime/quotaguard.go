@@ -3,18 +3,43 @@ package tenantruntime
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 )
 
-// NewQuotaGuard 构造 B 端 API 配额守卫（platform.QuotaGuard 实现，ENT-14）。
+// AuthGuards 按显式顺序返回 B 端鉴权守卫：租户状态 → API 配额。
+//
+// 顺序即装配契约：已停用租户在租户状态守卫就被 403，不应再消耗配额判定。
+// 内存模式（单进程形态）两者均不启用，返回 nil（与旧构造器同口径）。
+func AuthGuards(deps *platform.Deps) ([]func(http.Handler) http.Handler, error) {
+	tenantMW, err := NewGuard(deps)
+	if err != nil {
+		return nil, fmt.Errorf("tenant guard: %w", err)
+	}
+	if tenantMW == nil {
+		return nil, nil
+	}
+	quotaMW, err := NewQuotaGuard(deps)
+	if err != nil {
+		return nil, fmt.Errorf("quota guard: %w", err)
+	}
+	guards := []func(http.Handler) http.Handler{tenantMW}
+	if quotaMW != nil {
+		guards = append(guards, quotaMW)
+	}
+	return guards, nil
+}
+
+// NewQuotaGuard 构造 B 端 API 配额守卫中间件（ENT-14）。
 //
 // 内存模式（db.driver=memory）返回 nil 表示不启用——与 NewGuard 同口径，
 // 单进程形态没有「多副本共享配额」的语义前提。生产与集成环境配置了
 // Redis 则走共享令牌桶（键级参数扣减），否则进程内执行（单副本正确）。
-func NewQuotaGuard(deps *platform.Deps) (platform.QuotaGuard, error) {
+func NewQuotaGuard(deps *platform.Deps) (func(http.Handler) http.Handler, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil, nil
 	}
@@ -39,7 +64,8 @@ func NewQuotaGuard(deps *platform.Deps) (platform.QuotaGuard, error) {
 	if err != nil {
 		return nil, fmt.Errorf("quota enforcer: %w", err)
 	}
-	return quotaGuardAdapter{enforcer: enforcer}, nil
+	adapter := quotaGuardAdapter{enforcer: enforcer}
+	return httpserver.QuotaGuardMiddleware(adapter.AllowRequest), nil
 }
 
 // redisQuotaBackend 把 RedisKeyed 的键级参数执行适配为 QuotaBackend。
@@ -52,13 +78,13 @@ func (b redisQuotaBackend) AllowN(key string, rps float64, burst, n int) ratelim
 	return b.inner.AllowNWithParams(key, rps, burst, n)
 }
 
-// quotaGuardAdapter 把执行器适配为 platform.QuotaGuard 的极简语义：
+// quotaGuardAdapter 把执行器适配为平台中间件需要的极简函数语义：
 // 每请求扣减 1 次，重试等待秒数向上取整。
 type quotaGuardAdapter struct {
 	enforcer *app.QuotaEnforcer
 }
 
-// AllowRequest 实现 platform.QuotaGuard。
+// AllowRequest 实现配额的每请求判定（由平台中间件调用）。
 func (g quotaGuardAdapter) AllowRequest(ctx context.Context, tenantID string) (int, error) {
 	result, err := g.enforcer.Allow(ctx, tenantID, app.ResourceAPIRPS, "", 1)
 	if err != nil {

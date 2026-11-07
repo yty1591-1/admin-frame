@@ -113,7 +113,7 @@ if [[ "${FAIL}" -eq 0 ]]; then
 fi
 
 echo "==> ENT-03: async driver must reject unimplemented brokers"
-CONFIG="internal/platform/config.go"
+CONFIG="internal/platform/config/async_validate.go"
 if ! grep -q 'AsyncDriverDB' "${CONFIG}"; then
   echo "ERROR: ${CONFIG} must define AsyncDriverDB" >&2
   FAIL=1
@@ -131,7 +131,7 @@ else
 fi
 
 echo "==> ENT-03: async metrics must be registered"
-METRICS="internal/platform/async_metrics.go"
+METRICS="internal/platform/async/async_metrics.go"
 for metric in async_outbox_delivery_total async_outbox_pending async_outbox_lag_seconds async_dlq_depth async_broker_publish_total async_broker_consume_total; do
   if ! grep -q "${metric}" "${METRICS}"; then
     echo "ERROR: ${METRICS} missing metric ${metric}" >&2

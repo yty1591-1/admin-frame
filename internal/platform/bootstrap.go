@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/platform/dependency"
 	dependencyobservability "github.com/admin-frame/admin-frame/internal/platform/dependency/observability"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
+	"github.com/admin-frame/admin-frame/internal/platform/lifecycle"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -44,17 +45,16 @@ type Deps struct {
 	AuthMW func(http.Handler) http.Handler
 	// RequirePermission 是权限中间件工厂，由 cmd 注入的 Authorizer 提供。
 	RequirePermission auth.PermissionMiddleware
-	// TenantGuard 是租户状态守卫（ENT-09）；nil 表示本端不做租户校验。
-	TenantGuard TenantGuard
-	// QuotaGuard 是租户 API 配额守卫（ENT-14）；nil 表示本端不执行配额。
-	QuotaGuard QuotaGuard
+	// VerifyTenant 判定商户当前是否可服务（ENT-09），由 cmd 装配期写入；
+	// nil 表示本端不做租户校验。平台只保存通用函数签名，不定义业务语义端口。
+	VerifyTenant func(ctx context.Context, merchantID string) (bool, error)
+	// IsTenantMember 判定主体是否为租户在册成员（ENT-09 T-22）；
+	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
+	IsTenantMember func(ctx context.Context, tenantID, subjectID string) (bool, error)
 	// Dependencies 是外部依赖注册表（ENT-13）：出站依赖（第三方 HTTP API
 	// 等）在装配期按名登记超时 / 重试 / 熔断，运行期经 Caller.Do 执行并
 	// 出指标。nil 仅出现在单测形态。
 	Dependencies *dependency.Registry
-	// TenantMembership 判定主体是否为租户在册成员（ENT-09 T-22 切换端点）；
-	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
-	TenantMembership TenantMembership
 	// Health 用于 Register 阶段追加就绪检查（如仓储 ping）。
 	Health *health.Handler
 	// ClientIP 是可信代理解析器；nil 表示不信任任何代理头。
@@ -69,6 +69,10 @@ type Deps struct {
 	// 业务域通过 Async.Register 声明 topic 与 handler；API 进程仅在
 	// async.outbox.publish_in_api=true 时启动 Relay。
 	Async *AsyncRuntime
+
+	// authGuards 是 buildGuards 产出的鉴权链守卫（按声明顺序）；
+	// 由 buildAuthN 读取并插入 AuthMW 内层。不导出：顺序只由 Run 编排。
+	authGuards []func(http.Handler) http.Handler
 }
 
 // SessionValidator 是撤销检查的最小接口，方法签名与 security.RevocationChecker 一致。
@@ -88,16 +92,12 @@ type Options struct {
 	//
 	// 该回调在 AuthMW 构造前调用，使登录态校验能立即读取撤销状态。
 	NewSessionValidator func(*Deps) (SessionValidator, error)
-	// NewTenantGuard 构造租户状态守卫；返回 nil 表示本端不启用（A 端 / C 端）。
+	// NewAuthGuards 构造鉴权链守卫（租户状态 / API 配额等）；返回 nil 表示不启用。
 	//
-	// 在 AuthMW 组装前调用：守卫是鉴权链的一环，必须与 AuthMW 一起装配，
-	// 否则「认证已通过但租户已停用」的请求会漏到业务处理器。
-	NewTenantGuard func(*Deps) (TenantGuard, error)
-	// NewQuotaGuard 构造租户 API 配额守卫（ENT-14）；返回 nil 表示本端不执行。
-	//
-	// 与 NewTenantGuard 同一批组装：配额守卫包在租户状态守卫内层，
-	// 已停用租户不应再消耗配额判定。
-	NewQuotaGuard func(*Deps) (QuotaGuard, error)
+	// 在 AuthMW 组装前调用，返回值按数组顺序插入 AuthMW 内层：
+	// auth → guards[0] → guards[1] → handler。顺序即显式装配契约，
+	// 不再由平台层推断（已停用租户应先于配额判定被拒绝）。
+	NewAuthGuards func(*Deps) ([]func(http.Handler) http.Handler, error)
 	// NewAuthorizer 构造权限校验器；返回 nil 或 nil 函数时默认拒绝所有权限点（fail-closed）。
 	//
 	// 参数为已装配的平台能力（配置 / 数据库 / Redis / 指标 / 健康检查），
@@ -107,25 +107,94 @@ type Options struct {
 	Register func(*Deps, *http.ServeMux) error
 }
 
+// infraState 是 prepareInfra 产出的进程级基础设施。
+type infraState struct {
+	cfg        *Config
+	logger     *slog.Logger
+	nodeID     int64
+	build      BuildInfo
+	metrics    *metrics.Metrics
+	tracer     *tracing.Provider
+	stores     *StorageSet
+	database   *db.DB
+	redis      *redis.Client
+	health     *health.Handler
+	clientIP   *pkghttpx.ClientIPResolver
+	background *lifecycle.Tasks
+	deps       *Deps
+}
+
 // Run 完成一次完整的进程装配与运行：配置 → 日志 → 指标 → 追踪 → 存储 →
 // 鉴权 → 请求链路 → 探针 → 监听 → 优雅关闭 → 资源释放。
 //
 // 任一阶段失败返回 error，由 cmd 决定退出码；本函数不使用 log.Fatal / os.Exit，
 // 保证 defer 清理一定执行（REL-02）。
+//
+// 步骤顺序即装配契约：每步只依赖前序步骤写入 infraState / Deps 的能力，
+// 顺序变更会改变运行期语义（见各步骤注释）。
 func Run(ctx context.Context, opts Options) (err error) {
 	if opts.Register == nil {
 		return errors.New("platform: Options.Register is required")
 	}
+
+	// 步骤 1：基础设施。失败时内部已完成的部分由 infraState.close 回收。
+	infra, err := prepareInfra(ctx, opts)
+	if err != nil {
+		return err
+	}
+	defer infra.close(&err)
+
+	// 步骤 2：异步运行时。必须先于身份运行时：身份域审计写入依赖 deps.Async。
+	if err := buildAsync(infra.deps); err != nil {
+		return err
+	}
+	// 步骤 3：鉴权守卫（租户状态 / 配额）。必须先于身份运行时：登录 / 开通需要读到
+	// deps.VerifyTenant。
+	if err := buildGuards(infra.deps, opts); err != nil {
+		return err
+	}
+	// 步骤 4：鉴权链。撤销检查必须先于 AuthMW；守卫按声明顺序包在 AuthMW 内层。
+	if err := buildAuthN(infra.deps, opts); err != nil {
+		return err
+	}
+	// 步骤 5：权限校验器。
+	if err := buildAuthorizer(infra.deps, opts); err != nil {
+		return err
+	}
+	// 步骤 6：路由与请求链路。
+	handler, err := buildRouter(infra.deps, opts, infra.build)
+	if err != nil {
+		return err
+	}
+	// 步骤 7：启动后台任务并监听，直到 ctx 取消或收到退出信号。
+	return serve(ctx, infra, handler)
+}
+
+// prepareInfra 构造进程级基础设施（配置、日志、指标、追踪、存储、数据库、
+// Redis、健康检查、依赖注册表），并建立 deps 骨架。
+func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err error) {
+	st := &infraState{background: lifecycle.NewTasks()}
+	infra = st
+	deferredCleanup := func() {
+		if err != nil {
+			st.close(&err)
+		}
+	}
+	defer deferredCleanup()
+
 	cfg, err := LoadConfig(opts.ConfigPath)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
+	infra.cfg = cfg
 	logger := NewLogger(cfg)
+	infra.logger = logger
 
 	ids, nodeID, err := NewIDGenerator(cfg.ID)
 	if err != nil {
-		return fmt.Errorf("id generator: %w", err)
+		return nil, fmt.Errorf("id generator: %w", err)
 	}
+	infra.nodeID = nodeID
 
 	met, err := metrics.New(metrics.Options{
 		Service: cfg.Service,
@@ -133,60 +202,44 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Env:     cfg.Env,
 	})
 	if err != nil {
-		return fmt.Errorf("metrics: %w", err)
+		return nil, fmt.Errorf("metrics: %w", err)
 	}
+	infra.metrics = met
 	build := opts.Build
 	if build.Service == "" {
 		build.Service = cfg.Service
 	}
+	infra.build = build
 	if err := met.RegisterBuildInfo(build.Version, build.Commit, build.BuildTime); err != nil {
-		return fmt.Errorf("metrics build info: %w", err)
+		return nil, fmt.Errorf("metrics build info: %w", err)
 	}
 
 	tp, err := tracing.Init(ctx, cfg.TracingOptions(build.Version))
 	if err != nil {
-		return fmt.Errorf("tracing: %w", err)
+		return nil, fmt.Errorf("tracing: %w", err)
 	}
-	defer func() {
-		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if shutdownErr := tp.Shutdown(shCtx); shutdownErr != nil && err == nil {
-			err = fmt.Errorf("tracing shutdown: %w", shutdownErr)
-		}
-	}()
+	infra.tracer = tp
 
 	stores, err := OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
-		return fmt.Errorf("storage: %w", err)
+		return nil, fmt.Errorf("storage: %w", err)
 	}
-	defer func() {
-		if closeErr := stores.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("storage close: %w", closeErr)
-		}
-	}()
+	infra.stores = stores
 
 	database, err := OpenDatabase(ctx, cfg.DB, tp.TracerProvider())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() {
-		if closeErr := database.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("db close: %w", closeErr)
-		}
-	}()
+	infra.database = database
 	if err := RegisterDBMetrics(met.RegistererWithoutChannel(), database); err != nil {
-		return fmt.Errorf("db metrics: %w", err)
+		return nil, fmt.Errorf("db metrics: %w", err)
 	}
 
 	redisClient, err := OpenRedis(ctx, cfg.Redis)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() {
-		if closeErr := redisClient.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("redis close: %w", closeErr)
-		}
-	}()
+	infra.redis = redisClient
 
 	hh := health.New()
 	registerStorageChecks(hh, stores)
@@ -196,13 +249,14 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if redisClient != nil {
 		hh.Register("redis", redisClient.Checker())
 	}
+	infra.health = hh
 
 	clientIPResolver, err := pkghttpx.NewClientIPResolver(cfg.HTTP.TrustedProxies)
 	if err != nil {
-		return fmt.Errorf("trusted proxies: %w", err)
+		return nil, fmt.Errorf("trusted proxies: %w", err)
 	}
+	infra.clientIP = clientIPResolver
 
-	background := &backgroundTasks{}
 	deps := &Deps{
 		Config:     cfg,
 		Logger:     logger,
@@ -214,7 +268,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 		IDs:        ids,
 		ClientIP:   clientIPResolver,
 		Health:     hh,
-		Background: background.add,
+		Background: infra.background.Add,
 	}
 	// ENT-13：外部依赖注册表——出站依赖统一登记（超时 / 重试 / 熔断 +
 	// dependency_* 指标）；指标缺失时 Observer 为 noop（app 层归一）。
@@ -222,47 +276,88 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if met != nil {
 		obs, obsErr := dependencyobservability.NewMetrics(met.RegistererWithoutChannel())
 		if obsErr != nil {
-			return fmt.Errorf("dependency observability: %w", obsErr)
+			return nil, fmt.Errorf("dependency observability: %w", obsErr)
 		}
 		depObserver = obs
 	}
 	deps.Dependencies = dependency.NewRegistry(depObserver)
+	infra.deps = deps
 
-	// 异步运行时必须先于身份运行时构造：身份域启用时审计写入 identity.audit Outbox，
-	// 装配期需要可见 deps.Async（禁用时为空操作）。
+	return infra, nil
+}
+
+// close 按资源注册逆序释放；错误只在首个失败时写入 err，避免覆盖主错误。
+func (s *infraState) close(err *error) {
+	if s.redis != nil {
+		if closeErr := s.redis.Close(); closeErr != nil && *err == nil {
+			*err = fmt.Errorf("redis close: %w", closeErr)
+		}
+	}
+	if s.database != nil {
+		if closeErr := s.database.Close(); closeErr != nil && *err == nil {
+			*err = fmt.Errorf("db close: %w", closeErr)
+		}
+	}
+	if s.stores != nil {
+		if closeErr := s.stores.Close(); closeErr != nil && *err == nil {
+			*err = fmt.Errorf("storage close: %w", closeErr)
+		}
+	}
+	if s.tracer != nil {
+		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := s.tracer.Shutdown(shCtx); closeErr != nil && *err == nil {
+			*err = fmt.Errorf("tracing shutdown: %w", closeErr)
+		}
+	}
+}
+
+// buildAsync 构造通用异步运行时；必须先于身份运行时装配。
+func buildAsync(deps *Deps) error {
+	if deps.Config == nil {
+		return errors.New("platform: buildAsync requires config")
+	}
 	asyncRuntime, err := NewAsyncRuntime(deps)
 	if err != nil {
 		return fmt.Errorf("async runtime: %w", err)
 	}
 	deps.Async = asyncRuntime
 	if asyncRuntime != nil && asyncRuntime.PublishInAPI() {
-		background.add(asyncRuntime.Run)
+		deps.Background(asyncRuntime.Run)
 	}
+	return nil
+}
 
-	// 租户守卫先于身份运行时构造：登录（T-08）与账号开通（T-10）都要在
-	// identity 装配期读到守卫；守卫自身只依赖数据库，不反向依赖身份域。
-	if opts.NewTenantGuard != nil {
-		guard, guardErr := opts.NewTenantGuard(deps)
-		if guardErr != nil {
-			return fmt.Errorf("tenant guard: %w", guardErr)
-		}
-		if guard != nil {
-			deps.TenantGuard = guard
-		}
+// buildGuards 构造鉴权链守卫（租户状态 / API 配额等）；必须先于身份运行时装配。
+//
+// 守卫构造期会写入 deps.VerifyTenant 等通用函数字段，供 identityruntime 在
+// NewSessionValidator 阶段读取（登录 / 开通据此校验租户是否在服务期）。
+func buildGuards(deps *Deps, opts Options) error {
+	if deps.Config == nil {
+		return errors.New("platform: buildGuards requires config")
 	}
-	// ENT-14：API 配额守卫与租户状态守卫同批组装（中间件链内层）。
-	if opts.NewQuotaGuard != nil {
-		quota, quotaErr := opts.NewQuotaGuard(deps)
-		if quotaErr != nil {
-			return fmt.Errorf("quota guard: %w", quotaErr)
-		}
-		if quota != nil {
-			deps.QuotaGuard = quota
-		}
+	if opts.NewAuthGuards == nil {
+		return nil
 	}
+	guards, err := opts.NewAuthGuards(deps)
+	if err != nil {
+		return fmt.Errorf("auth guards: %w", err)
+	}
+	deps.authGuards = guards
+	return nil
+}
 
-	// 撤销检查必须在 AuthMW 构造前注入（docs/identity-authn.md §13.2）：
-	// 身份运行时同时持有仓储与撤销存储，登录态校验才能立即读取撤销状态。
+// buildAuthN 组装鉴权中间件：撤销检查 → AuthMW → 守卫链（顺序由 buildGuards 决定）。
+//
+// 撤销检查必须在 AuthMW 前注入（docs/identity-authn.md §13.2）；
+// 守卫包在 AuthMW 内层：鉴权先写入 Principal，守卫再读 merchant_id。
+func buildAuthN(deps *Deps, opts Options) error {
+	if deps.Config == nil {
+		return errors.New("platform: buildAuthN requires config")
+	}
+	if deps.Logger == nil {
+		return errors.New("platform: buildAuthN requires logger")
+	}
 	var authOpts []security.JWTAuthOption
 	if opts.NewSessionValidator != nil {
 		validator, validatorErr := opts.NewSessionValidator(deps)
@@ -274,24 +369,21 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}
 
+	cfg := deps.Config
 	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	// 守卫包在鉴权中间件内层：鉴权先写入 Principal，守卫再读 merchant_id。
-	// B 端令牌必须携带商户：缺失即签发缺陷，fail-closed（T-09）；
-	// A/C 端平台级请求没有商户，直接放行。
-	if deps.TenantGuard != nil {
-		requireMerchant := deps.Config.Channel == "biz"
-		authMW = WithTenantGuard(authMW, deps.TenantGuard, requireMerchant)
-		// ENT-14：API 配额守卫包在租户状态守卫内层——已停用租户
-		// 在上一环就被 403，不应再消耗配额判定。
-		if deps.QuotaGuard != nil {
-			authMW = WithQuotaGuard(authMW, deps.QuotaGuard)
-		}
-	}
-	deps.AuthMW = authMW
+	// 守卫顺序即装配声明：guards[0]（租户状态）先于 guards[1]（配额）执行。
+	deps.AuthMW = httpserver.AfterAuth(authMW, deps.authGuards...)
+	return nil
+}
 
+// buildAuthorizer 构造权限校验器；未注入时默认拒绝所有权限点（fail-closed）。
+func buildAuthorizer(deps *Deps, opts Options) error {
+	if deps.Config == nil {
+		return errors.New("platform: buildAuthorizer requires config")
+	}
 	authorizer := security.NewAuthorizer(nil)
 	if opts.NewAuthorizer != nil {
 		built, buildErr := opts.NewAuthorizer(deps)
@@ -303,16 +395,24 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}
 	deps.RequirePermission = authorizer.Require
+	return nil
+}
 
+// buildRouter 注册业务路由、探针端点与入口请求链路。
+func buildRouter(deps *Deps, opts Options, build BuildInfo) (http.Handler, error) {
+	cfg := deps.Config
+	if cfg == nil {
+		return nil, errors.New("platform: buildRouter requires config")
+	}
 	api := http.NewServeMux()
 	if err := opts.Register(deps, api); err != nil {
-		return fmt.Errorf("register routes: %w", err)
+		return nil, fmt.Errorf("register routes: %w", err)
 	}
 
 	root := http.NewServeMux()
-	MountHealth(root, hh)
+	MountHealth(root, deps.Health)
 	MountVersion(root, build)
-	MountMetrics(root, met.Handler())
+	MountMetrics(root, deps.Metrics.Handler())
 	root.Handle("/", api)
 
 	pipeline, err := NewPipeline(PipelineConfig{
@@ -323,75 +423,33 @@ func Run(ctx context.Context, opts Options) (err error) {
 		Idempotency:    cfg.Idempotency,
 		CORS:           cfg.CORS,
 	}, PipelineDeps{
-		Logger:   logger,
-		Metrics:  met,
-		Tracer:   tp,
-		Redis:    redisClient,
-		ClientIP: clientIPResolver,
+		Logger:   deps.Logger,
+		Metrics:  deps.Metrics,
+		Tracer:   deps.Tracer,
+		Redis:    deps.Redis,
+		ClientIP: deps.ClientIP,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return pipeline(root), nil
+}
 
-	tasks := background.list()
-	stopBackground := startBackground(ctx, tasks, logger)
+// serve 启动后台任务并监听，直到 ctx 取消或收到退出信号。
+func serve(ctx context.Context, infra *infraState, handler http.Handler) error {
+	tasks := infra.background.List()
+	stopBackground := lifecycle.Start(ctx, tasks, infra.logger)
 	defer stopBackground()
 
-	logger.Info("process starting",
-		"service", cfg.Service,
-		"channel", cfg.Channel,
-		"env", cfg.Env,
-		"version", build.Version,
-		"node_id", nodeID,
+	infra.logger.Info("process starting",
+		"service", infra.cfg.Service,
+		"channel", infra.cfg.Channel,
+		"env", infra.cfg.Env,
+		"version", infra.build.Version,
+		"node_id", infra.nodeID,
 		"background_tasks", len(tasks),
 	)
-	return ListenAndServe(ctx, cfg, pipeline(root), logger)
-}
-
-// backgroundTasks 收集装配期注册的后台任务；启动后不再接受注册。
-type backgroundTasks struct {
-	mu    sync.Mutex
-	tasks []func(context.Context) error
-}
-
-func (b *backgroundTasks) add(task func(context.Context) error) {
-	if task == nil {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.tasks = append(b.tasks, task)
-}
-
-func (b *backgroundTasks) list() []func(context.Context) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]func(context.Context) error(nil), b.tasks...)
-}
-
-// startBackground 启动进程级后台任务，返回 stop：取消并等待全部退出。
-//
-// 任务错误只记录日志：后台任务失败不能把已经正常关闭的进程变成启动失败，
-// 但必须可观测（日志 + 对应业务指标），否则 outbox 停摆会静默丢审计。
-func startBackground(ctx context.Context, tasks []func(context.Context) error, logger *slog.Logger) func() {
-	bgCtx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	for _, task := range tasks {
-		if task == nil {
-			continue
-		}
-		wg.Add(1)
-		go func(task func(context.Context) error) {
-			defer wg.Done()
-			if err := task(bgCtx); err != nil && bgCtx.Err() == nil {
-				logger.Error("background task stopped", "err", err)
-			}
-		}(task)
-	}
-	return func() {
-		cancel()
-		wg.Wait()
-	}
+	return ListenAndServe(ctx, infra.cfg, handler, infra.logger)
 }
 
 // registerStorageChecks 为默认桶与命名桶注册就绪探测。

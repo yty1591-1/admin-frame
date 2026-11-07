@@ -59,11 +59,10 @@ func run(configPath string) error {
 	return platform.Run(context.Background(), platform.Options{
 		ConfigPath: configPath,
 		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
-		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09）。
-		// 守卫在 AuthMW 组装前注入，成为鉴权链的一环。
-		NewTenantGuard: tenantruntime.NewGuard,
-		// ENT-14：API 配额执行（统一 42900）——包在租户状态守卫内层。
-		NewQuotaGuard: tenantruntime.NewQuotaGuard,
+		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09），
+		// 并执行 API 配额（ENT-14）。守卫顺序由 tenantruntime 显式声明：
+		// 租户状态 → 配额，均包在 AuthMW 内层。
+		NewAuthGuards: tenantruntime.AuthGuards,
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

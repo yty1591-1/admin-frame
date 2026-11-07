@@ -9,7 +9,7 @@ import (
 // TenantStatusChecker 判定 B 端商户当前是否在服务期（ENT-09 T-08/T-10）。
 //
 // 由租户域实现（tenant/app.Guard 结构化满足本接口），identity 不 import 租户域。
-// 语义与 platform.TenantGuard 一致：
+// 语义与 tenant/app.GuardPort 一致：
 //   - (true, nil)      → 放行；
 //   - (false, nil)     → 明确拒绝（停用 / 终止 / 未登记）；
 //   - (false, err!=nil) → 无法判定（仓储故障），调用方必须 503 失败关闭。

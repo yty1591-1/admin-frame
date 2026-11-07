@@ -143,7 +143,7 @@ func (g *Guard) observe(entry guardEntry) {
 	g.observer.GuardDecision("allow")
 }
 
-// Verify 实现 platform.TenantGuard：把判定结果收敛为「放行 / 拒绝 / 无法判定」。
+// Verify 实现 GuardPort：把判定结果收敛为「放行 / 拒绝 / 无法判定」。
 //
 // 与 Check 的区别只在错误形态：Check 保留具体原因供调用方区分，Verify 按中间件
 // 契约把「明确拒绝」与「判定失败」分开——后者必须 503 而不是 403，
