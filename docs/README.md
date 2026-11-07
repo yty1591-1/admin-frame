@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-02（分层整理：硬约束 / 设计说明 / 活跃计划 / 归档，`docs/archive/` 收纳 20 份已闭环过程文档）
+> **最后整理**：2026-11-07（归档 8 份已闭环文档：4 份验证记录、2 份平台评审、2 份已实施计划；`docs/archive/` 合计 28 份）
 
 ---
 
@@ -25,7 +25,7 @@
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | §1–§20 | `check-layering` / `check-transport` / 架构 Review |
 | [CODE_STYLE.md](./CODE_STYLE.md) | S-01～S-12 | `make fmt-check` + golangci-lint |
 | [COMMENT_STANDARDS.md](./COMMENT_STANDARDS.md) | C-01～C-10 | golangci-lint（godot / revive） |
-| [CI_STANDARDS.md](./CI_STANDARDS.md) | CI-01～CI-14 | `make ci` |
+| [CI_STANDARDS.md](./CI_STANDARDS.md) | CI-01～CI-15 | `make ci` |
 | [SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md) | SEC-01～SEC-14 | `make secrets` / `make lint` / `check-debug` |
 | [API_STANDARDS.md](./API_STANDARDS.md) | API-01～API-12 | `check-openapi`（oasdiff） |
 | [TESTING_STANDARDS.md](./TESTING_STANDARDS.md) | TEST-01～TEST-08 | `make test-ci` / `check-test-gates` |
@@ -68,6 +68,8 @@
 | [notification-channels.md](./notification-channels.md) | 短信 / 邮件 / 推送渠道契约与驱动 |
 | [storage-s3-oss.md](./storage-s3-oss.md) | 对象存储多云驱动选型 |
 | [migration-guide.md](./migration-guide.md) | `pkg/migrate` / `cmd/migrate` 使用与故障处置 |
+| [data-inventory.md](./data-inventory.md) | 数据资产清单、PII 分类分级与删除边界（ENT-15 登记） |
+| [tenant-data-lifecycle.md](./tenant-data-lifecycle.md) | 租户数据保留期、导出窗口与硬删除边界 |
 | [pkg-roadmap.md](./pkg-roadmap.md) | `pkg/` 公共能力包规划与落地状态 |
 
 ### 3.2 活跃计划（有未关闭条目）
@@ -75,10 +77,11 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
-| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：Wave 2 已全部关闭（`ENT-05`～`ENT-08`）；`ENT-09` 主体完成但存在验收缺口（见下条）；`ENT-10`～`ENT-24` 待做 |
+| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足），`ENT-25` 暂缓 |
 | [tenant-enterprise-review.md](./tenant-enterprise-review.md) | 评审完成 v1.2 | 租户域企业级差距与分批开发计划：**B1、B2 已完成；B3 进行中（套餐模型 + 开通前置已落地，契约 7.3.0）**；B4 未开始；D-01～D-05 已定 |
+| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 立项评审稿 v1.0（待评审） | IAM 覆盖率门禁（P1-5）、OIDC/SAML/SCIM（P1-6）、访问复核（P1-7）：里程碑自 2026-11-30 起，尚未启动 |
 
-> 这三份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次）已全部闭环，位于 [`archive/`](./archive/)。
+> 这四份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关）已全部闭环，位于 [`archive/`](./archive/)。
 
 ---
 
@@ -120,9 +123,12 @@ docs/
 ├── storage-s3-oss.md          # 对象存储（L2）
 ├── migration-guide.md         # 迁移使用指南（L2）
 ├── deploy-kind-verify.md      # 用 kind 验证 Helm Chart：部署 / 冒烟 / 回滚（L2）
-├── audit-export-verify.md     # 审计异步导出 / 到期归档实测记录（L2）
+├── data-inventory.md          # 数据资产清单与 PII 分类分级（L2）
+├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-*.md  # 活跃计划（L3）
+├── tenant-enterprise-review.md # 租户域差距评审与分批计划（L3）
+├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 立项评审稿（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）
@@ -130,7 +136,9 @@ docs/
     ├── README.md
     ├── identity/              # identity 差距评审 → 批次台账 → 完成报告全链路
     ├── platform/              # platform 整改计划、IAM 权限模型改造清单
-    └── reviews/               # 前端对接与架构/交互评审
+    ├── reviews/               # 前端对接/架构评审、platform 架构与三目录边界评审
+    ├── verify/                # 一次性验证与演练记录（ENT-04 / ENT-06）
+    └── plans/                 # 已实施领域计划（通知中心、特性开关）
 ```
 
 ---
