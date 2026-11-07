@@ -254,7 +254,7 @@ func buildOAuthService(
 			return nil, apperr.Internal(
 				"identity oauth provider "+providerCfg.Name+": client secret env "+secretEnv+" is empty", nil)
 		}
-		provider, err := identityoauth.NewOAuth2Provider(identityoauth.Config{
+		oauthCfg := identityoauth.Config{
 			Name:                   providerCfg.Name,
 			ClientID:               providerCfg.ClientID,
 			ClientSecret:           secret,
@@ -273,7 +273,21 @@ func buildOAuthService(
 			JWKSMinRefreshInterval: providerCfg.JWKSMinRefreshInterval,
 			Leeway:                 providerCfg.IDTokenLeeway,
 			Metrics:                metrics,
-		})
+		}
+		// 出站客户端经依赖注册表构造：与 SAML / SMS 同口径（超时默认 5s、
+		// 依赖指标统一）；token / userinfo 为写操作语义，重试保持关闭，
+		// 熔断仍由域级 breaker 负责。
+		if deps.Dependencies != nil {
+			caller, depErr := deps.Dependencies.HTTP(dependency.Spec{
+				Name:    "identity:oauth:" + providerCfg.Name,
+				Timeout: cfg.Identity.OAuth.Timeout,
+			}, httpclient.Config{DisableRetry: true})
+			if depErr != nil {
+				return nil, apperr.Internal("identity oauth dependency "+providerCfg.Name, depErr)
+			}
+			oauthCfg.HTTPClient = caller.HTTP()
+		}
+		provider, err := identityoauth.NewOAuth2Provider(oauthCfg)
 		if err != nil {
 			return nil, apperr.Internal("identity oauth provider "+providerCfg.Name, err)
 		}
