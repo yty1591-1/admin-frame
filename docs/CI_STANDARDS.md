@@ -36,6 +36,7 @@
 | CI-12 | 禁止在 CI 中使用生产密钥 / 生产数据源；测试仅用 fixture 或 ephemeral | Review + 本规范 |
 | CI-13 | 工具与镜像版本**钉扎**；禁止无说明的浮动 `latest` | 流水线 YAML |
 | CI-14 | Job/阶段必须有超时或平台默认超时；禁止无限跑 | 流水线配置 |
+| CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -302,6 +303,7 @@ make ci
 | `scripts/ci/gitee-job.sh` | Gitee 与本地可复用的 job 实现 |
 | `scripts/ci/check-vuln.sh` | `vuln` job：govulncheck + `deps/vuln-allowlist.txt` 受控例外（带到期日） |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
+| `scripts/ci/check-ci-paths.sh` | CI-15 |
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
 | `scripts/ci/check-deps.sh` | DEP-01/03/05 |

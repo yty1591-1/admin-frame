@@ -12,6 +12,7 @@ PYTHON ?= python3
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
 	check-migrations check-reliability check-observability \
+	check-ci-paths \
 	check-git check-release check-sbom check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
         check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal
@@ -155,6 +156,10 @@ check-reliability:
 check-observability:
 	bash scripts/ci/check-observability.sh
 
+# CI-15：门禁脚本引用的仓库内路径必须存在（防文件搬家后门禁指针失效）。
+check-ci-paths:
+	bash scripts/ci/check-ci-paths.sh
+
 # GIT-05/06：PR 模板与 commitlint 配置。
 check-git:
 	bash scripts/ci/check-git.sh
@@ -293,7 +298,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up
