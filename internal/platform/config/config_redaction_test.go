@@ -162,7 +162,7 @@ func TestValidateAuthModes(t *testing.T) {
 
 // TestValidateStorageNestedBuckets 验证命名桶内不允许再次声明 buckets（防止配置歧义）。
 func TestValidateStorageNestedBuckets(t *testing.T) {
-	cfg := platformstorage.StorageConfig{
+	cfg := platformstorage.Config{
 		Driver: "memory",
 		Buckets: map[string]platformstorage.BucketConfig{
 			"public": {
@@ -178,22 +178,22 @@ func TestValidateStorageNestedBuckets(t *testing.T) {
 	}
 }
 
-// TestStorageConfigMapping 校验 StorageConfig → pkg/storage.Config 的字段映射完整。
+// TestStorageConfigMapping 校验 Config → pkg/storage.Config 的字段映射完整。
 func TestStorageConfigMapping(t *testing.T) {
 	// 字段数量漂移守卫：storage.Config 增删字段时必须同步更新映射与断言（PLAT-09）。
 	const wantStorageFields = 10
 	if n := reflect.TypeOf(storage.Config{}).NumField(); n != wantStorageFields {
-		t.Fatalf("storage.Config has %d fields (want %d); update StorageConfig mapping and this test", n, wantStorageFields)
+		t.Fatalf("storage.Config has %d fields (want %d); update Config mapping and this test", n, wantStorageFields)
 	}
-	srcType := reflect.TypeOf(platformstorage.StorageConfig{})
+	srcType := reflect.TypeOf(platformstorage.Config{})
 	for i := 0; i < reflect.TypeOf(storage.Config{}).NumField(); i++ {
 		name := reflect.TypeOf(storage.Config{}).Field(i).Name
 		if _, ok := srcType.FieldByName(name); !ok {
-			t.Fatalf("platformstorage.StorageConfig missing field %q required by storage.Config", name)
+			t.Fatalf("platformstorage.Config missing field %q required by storage.Config", name)
 		}
 	}
 
-	cfg := platformstorage.StorageConfig{
+	cfg := platformstorage.Config{
 		Driver:         "s3",
 		KeyPrefix:      "admin/",
 		MaxObjectBytes: 1024,

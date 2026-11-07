@@ -8,14 +8,14 @@ import (
 )
 
 func TestValidateStorageProdForbidsMemory(t *testing.T) {
-	err := platformstorage.ValidateStorage("prod", platformstorage.StorageConfig{Driver: "memory"})
+	err := platformstorage.ValidateStorage("prod", platformstorage.Config{Driver: "memory"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestOpenStorageMemoryDefault(t *testing.T) {
-	store, err := platformstorage.OpenStorage(context.Background(), platformstorage.StorageConfig{})
+	store, err := platformstorage.OpenStorage(context.Background(), platformstorage.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestOpenStorageMemoryDefault(t *testing.T) {
 }
 
 func TestValidateStorageLocalNeedsRoot(t *testing.T) {
-	err := platformstorage.ValidateStorage("local", platformstorage.StorageConfig{Driver: "local"})
+	err := platformstorage.ValidateStorage("local", platformstorage.Config{Driver: "local"})
 	if err == nil {
 		t.Fatal("expected root required")
 	}

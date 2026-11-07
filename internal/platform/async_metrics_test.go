@@ -14,11 +14,11 @@ import (
 
 func TestAsyncMetricsDeliveryCounter(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platformasync.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}
-	if _, err := platformasync.NewAsyncMetrics(registry); err == nil {
+	if _, err := platformasync.NewMetrics(registry); err == nil {
 		t.Fatal("duplicate registration should fail")
 	}
 
@@ -52,7 +52,7 @@ func TestAsyncMetricsDeliveryCounter(t *testing.T) {
 
 func TestAsyncMetricsGauges(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platformasync.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestAsyncMetricsGauges(t *testing.T) {
 
 func TestAsyncMetricsGaugesFailureExposesZero(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platformasync.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}

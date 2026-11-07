@@ -10,7 +10,7 @@ import (
 )
 
 func TestOpenStorageSetNamedBuckets(t *testing.T) {
-	set, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
+	set, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.Config{
 		Driver:    "memory",
 		KeyPrefix: "default/",
 		Buckets: map[string]platformstorage.BucketConfig{
@@ -63,7 +63,7 @@ func TestOpenStorageSetNamedBuckets(t *testing.T) {
 }
 
 func TestOpenStorageSetRejectsDefaultName(t *testing.T) {
-	_, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
+	_, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.Config{
 		Driver: "memory",
 		Buckets: map[string]platformstorage.BucketConfig{
 			"default": {Driver: "memory"},
@@ -75,7 +75,7 @@ func TestOpenStorageSetRejectsDefaultName(t *testing.T) {
 }
 
 func TestValidateStorageNamedBucket(t *testing.T) {
-	err := platformstorage.ValidateStorage("prod", platformstorage.StorageConfig{
+	err := platformstorage.ValidateStorage("prod", platformstorage.Config{
 		Driver: "s3",
 		S3:     storage.S3Config{Bucket: "a", Region: "us-east-1"},
 		Buckets: map[string]platformstorage.BucketConfig{

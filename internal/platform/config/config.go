@@ -28,23 +28,23 @@ const (
 // ADMIN_FRAME_LOG_LEVEL（pkg/config.BindEnv）。新增字段无需再改环境变量代码。
 type Config struct {
 	// Env 部署环境：local / dev / test / staging / prod（可空，表示未声明）。
-	Env             string                        `yaml:"env"`
-	Service         string                        `yaml:"service"`
-	Channel         string                        `yaml:"channel"`
-	Addr            string                        `yaml:"addr"`
-	ShutdownTimeout time.Duration                 `yaml:"shutdown_timeout"`
-	HTTP            HTTPConfig                    `yaml:"http"`
-	Log             LogConfig                     `yaml:"log"`
-	Auth            AuthConfig                    `yaml:"auth"`
-	DB              DBConfig                      `yaml:"db"`
-	Redis           RedisConfig                   `yaml:"redis"`
-	Storage         platformstorage.StorageConfig `yaml:"storage"`
-	Worker          WorkerConfig                  `yaml:"worker"`
-	Tracing         TracingConfig                 `yaml:"tracing"`
-	ID              IDConfig                      `yaml:"id"`
-	Idempotency     IdempotencyConfig             `yaml:"idempotency"`
-	RateLimit       RateLimitConfig               `yaml:"rate_limit"`
-	Async           AsyncConfig                   `yaml:"async"`
-	CORS            CORSConfig                    `yaml:"cors"`
-	Secrets         SecretsConfig                 `yaml:"secrets"`
+	Env             string                 `yaml:"env"`
+	Service         string                 `yaml:"service"`
+	Channel         string                 `yaml:"channel"`
+	Addr            string                 `yaml:"addr"`
+	ShutdownTimeout time.Duration          `yaml:"shutdown_timeout"`
+	HTTP            HTTPConfig             `yaml:"http"`
+	Log             LogConfig              `yaml:"log"`
+	Auth            AuthConfig             `yaml:"auth"`
+	DB              DBConfig               `yaml:"db"`
+	Redis           RedisConfig            `yaml:"redis"`
+	Storage         platformstorage.Config `yaml:"storage"`
+	Worker          WorkerConfig           `yaml:"worker"`
+	Tracing         TracingConfig          `yaml:"tracing"`
+	ID              IDConfig               `yaml:"id"`
+	Idempotency     IdempotencyConfig      `yaml:"idempotency"`
+	RateLimit       RateLimitConfig        `yaml:"rate_limit"`
+	Async           AsyncConfig            `yaml:"async"`
+	CORS            CORSConfig             `yaml:"cors"`
+	Secrets         SecretsConfig          `yaml:"secrets"`
 }

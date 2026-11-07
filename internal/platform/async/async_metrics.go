@@ -20,23 +20,23 @@ const asyncStatsTimeout = 2 * time.Second
 // 只触发一次查询，DB 慢时 /metrics 响应不会叠加成 N 倍超时。
 const asyncStatsCacheTTL = 2 * time.Second
 
-// AsyncMetrics 是平台级异步基础设施指标集（ENT-03）。
+// Metrics 是平台级异步基础设施指标集（ENT-03）。
 //
 // 与 IAM 自有指标的关系：`async_*` 描述通用 Relay，IAM 审计投递仍由
 // `iam_outbox_*` 暴露，两者共享同一 Registry。
-type AsyncMetrics struct {
+type Metrics struct {
 	delivery      *prometheus.CounterVec
 	brokerPublish *prometheus.CounterVec
 	brokerConsume *prometheus.CounterVec
 	registerer    prometheus.Registerer
 }
 
-// NewAsyncMetrics 创建并注册 async_* 指标；重复注册视为装配错误（fail-fast）。
-func NewAsyncMetrics(registerer prometheus.Registerer) (*AsyncMetrics, error) {
+// NewMetrics 创建并注册 async_* 指标；重复注册视为装配错误（fail-fast）。
+func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	if registerer == nil {
 		return nil, fmt.Errorf("async metrics: registerer is required")
 	}
-	m := &AsyncMetrics{
+	m := &Metrics{
 		registerer: registerer,
 		delivery: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "async_outbox_delivery_total",
@@ -70,7 +70,7 @@ func NewAsyncMetrics(registerer prometheus.Registerer) (*AsyncMetrics, error) {
 }
 
 // OnOutboxDelivered 实现 outbox.Observer。
-func (m *AsyncMetrics) OnOutboxDelivered(_ context.Context, _, result string) {
+func (m *Metrics) OnOutboxDelivered(_ context.Context, _, result string) {
 	if m == nil {
 		return
 	}
@@ -81,7 +81,7 @@ func (m *AsyncMetrics) OnOutboxDelivered(_ context.Context, _, result string) {
 }
 
 // OnBrokerPublish 实现 BrokerObserver。
-func (m *AsyncMetrics) OnBrokerPublish(_ context.Context, result string) {
+func (m *Metrics) OnBrokerPublish(_ context.Context, result string) {
 	if m == nil {
 		return
 	}
@@ -92,7 +92,7 @@ func (m *AsyncMetrics) OnBrokerPublish(_ context.Context, result string) {
 }
 
 // OnBrokerConsume 实现 BrokerObserver。
-func (m *AsyncMetrics) OnBrokerConsume(_ context.Context, result string) {
+func (m *Metrics) OnBrokerConsume(_ context.Context, result string) {
 	if m == nil {
 		return
 	}
@@ -111,7 +111,7 @@ func (m *AsyncMetrics) OnBrokerConsume(_ context.Context, result string) {
 // 周期只付一次查询超时，而不是三次；否则 /metrics 响应会慢到超过 Prometheus 的
 // scrape_timeout，导致该进程**全部**指标丢失，连 db_pool_* 也一起消失
 // （ENT-06 T6 实测：DB 池耗尽时 DBPoolExhaustion 反而无法触发）。
-func (m *AsyncMetrics) RegisterGauges(stats func(context.Context) (outbox.Stats, error)) error {
+func (m *Metrics) RegisterGauges(stats func(context.Context) (outbox.Stats, error)) error {
 	if m == nil || m.registerer == nil {
 		return fmt.Errorf("async metrics: metrics is not initialized")
 	}
@@ -172,4 +172,4 @@ func nonNegative(value int) float64 {
 }
 
 // 编译期断言：指标集必须满足 Relay 观测端口。
-var _ outbox.Observer = (*AsyncMetrics)(nil)
+var _ outbox.Observer = (*Metrics)(nil)

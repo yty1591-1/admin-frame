@@ -13,7 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
-// RuntimeDeps 是 AsyncRuntime 装配所需的平台能力。
+// RuntimeDeps 是 Runtime 装配所需的平台能力。
 //
 // 使用局部依赖结构，避免 async 子包反向依赖 platform 根包造成循环。
 type RuntimeDeps struct {
@@ -23,14 +23,14 @@ type RuntimeDeps struct {
 	Metrics  *metrics.Metrics
 }
 
-// AsyncRuntime 是平台级通用异步基础设施的进程内装配（ENT-03）。
+// Runtime 是平台级通用异步基础设施的进程内装配（ENT-03）。
 //
 // 职责边界：
 //   - 构造 Store / Deduper / Router（不 import 任何业务域）；
 //   - 业务域通过 Register 声明 topic 与 handler；
 //   - Run 启动 Relay 直到 ctx 取消，等待在途 handler 收敛；
 //   - driver=nats 时额外把每条事件发布到 JetStream（Outbox 仍是事实源）。
-type AsyncRuntime struct {
+type Runtime struct {
 	cfg      *config.Config
 	logger   *slog.Logger
 	store    outbox.Store
@@ -40,10 +40,10 @@ type AsyncRuntime struct {
 	broker   mq.Broker
 }
 
-// NewAsyncRuntime 按 async 配置装配通用异步组件；未启用时返回 (nil, nil)。
+// NewRuntime 按 async 配置装配通用异步组件；未启用时返回 (nil, nil)。
 //
 // async.enabled=true 要求持久化数据库：内存 Outbox 不跨进程，不能承载 worker 投递。
-func NewAsyncRuntime(deps RuntimeDeps) (*AsyncRuntime, error) {
+func NewRuntime(deps RuntimeDeps) (*Runtime, error) {
 	if deps.Config == nil {
 		return nil, fmt.Errorf("async runtime: deps is required")
 	}
@@ -62,7 +62,7 @@ func NewAsyncRuntime(deps RuntimeDeps) (*AsyncRuntime, error) {
 		logger = slog.Default()
 	}
 	store := NewAsyncStore(deps.Database)
-	rt := &AsyncRuntime{
+	rt := &Runtime{
 		cfg:     cfg,
 		logger:  logger,
 		store:   store,
@@ -71,15 +71,15 @@ func NewAsyncRuntime(deps RuntimeDeps) (*AsyncRuntime, error) {
 	}
 	var brokerObserver BrokerObserver
 	if deps.Metrics != nil {
-		metrics, err := NewAsyncMetrics(deps.Metrics.RegistererWithoutChannel())
+		asyncMetrics, err := NewMetrics(deps.Metrics.RegistererWithoutChannel())
 		if err != nil {
 			return nil, err
 		}
-		if err := metrics.RegisterGauges(store.Stats); err != nil {
+		if err := asyncMetrics.RegisterGauges(store.Stats); err != nil {
 			return nil, err
 		}
-		rt.observer = metrics
-		brokerObserver = metrics
+		rt.observer = asyncMetrics
+		brokerObserver = asyncMetrics
 	}
 	if cfg.Async.Driver == config.AsyncDriverNATS {
 		broker, err := NewNATSBroker(NATSBrokerOptions{
@@ -120,7 +120,7 @@ func NewAsyncDeduper(database *db.DB) outbox.Deduper {
 }
 
 // Store 返回通用 Outbox Store，供业务域在同一事务内写入事件。
-func (r *AsyncRuntime) Store() outbox.Store {
+func (r *Runtime) Store() outbox.Store {
 	if r == nil {
 		return nil
 	}
@@ -130,7 +130,7 @@ func (r *AsyncRuntime) Store() outbox.Store {
 // AddObserver 组合额外的投递观察者（业务域保留自有指标）。
 //
 // 必须在 Run 之前调用；后注册的观察者与平台指标各自收到同一份回调。
-func (r *AsyncRuntime) AddObserver(observer outbox.Observer) {
+func (r *Runtime) AddObserver(observer outbox.Observer) {
 	if r == nil || observer == nil {
 		return
 	}
@@ -146,12 +146,12 @@ func (r *AsyncRuntime) AddObserver(observer outbox.Observer) {
 }
 
 // PublishInAPI 报告 API 进程是否应启动 Relay（生产由 worker 独占）。
-func (r *AsyncRuntime) PublishInAPI() bool {
+func (r *Runtime) PublishInAPI() bool {
 	return r != nil && r.cfg.Async.Outbox.PublishInAPI
 }
 
 // Broker 返回外部消息驱动；driver=db 时为 nil。
-func (r *AsyncRuntime) Broker() mq.Broker {
+func (r *Runtime) Broker() mq.Broker {
 	if r == nil {
 		return nil
 	}
@@ -162,7 +162,7 @@ func (r *AsyncRuntime) Broker() mq.Broker {
 //
 // 消费幂等记录按 topic 隔离：同一事件被不同 topic 消费互不影响；
 // 重复投递由 async_consumed 收敛，handler 仍需保证自身业务幂等。
-func (r *AsyncRuntime) Register(topic string, handler outbox.Handler) error {
+func (r *Runtime) Register(topic string, handler outbox.Handler) error {
 	if r == nil {
 		return fmt.Errorf("async runtime is not enabled")
 	}
@@ -180,7 +180,7 @@ func (r *AsyncRuntime) Register(topic string, handler outbox.Handler) error {
 }
 
 // Run 启动 Relay 并阻塞至 ctx 取消；返回后在途 handler 已收敛。
-func (r *AsyncRuntime) Run(ctx context.Context) error {
+func (r *Runtime) Run(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
@@ -226,7 +226,7 @@ func (r *AsyncRuntime) Run(ctx context.Context) error {
 //
 // 顺序为先发布后本地：发布失败由 Outbox 重试；发布成功但本地失败会重复发布，
 // 消费方按 EventID / IdempotencyKey 幂等收敛（at-least-once）。
-func (r *AsyncRuntime) handlerChain() outbox.Handler {
+func (r *Runtime) handlerChain() outbox.Handler {
 	handler := r.limitedHandler()
 	if r.broker == nil {
 		return handler
@@ -242,7 +242,7 @@ func (r *AsyncRuntime) handlerChain() outbox.Handler {
 }
 
 // limitedHandler 用 async.consumer.concurrency 限制并发执行的 handler 数。
-func (r *AsyncRuntime) limitedHandler() outbox.Handler {
+func (r *Runtime) limitedHandler() outbox.Handler {
 	limit := r.cfg.Async.Consumer.Concurrency
 	if limit <= 0 {
 		limit = 4

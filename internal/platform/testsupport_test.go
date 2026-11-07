@@ -45,7 +45,7 @@ func iamBaseConfig() *platformconfig.Config {
 		Auth:    platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "admin"},
 		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
 		DB:      platformconfig.DBConfig{Driver: "memory"},
-		Storage: platformstorage.StorageConfig{Driver: "memory"},
+		Storage: platformstorage.Config{Driver: "memory"},
 		HTTP:    platformconfig.HTTPConfig{Timeout: 30 * time.Second},
 	}
 }

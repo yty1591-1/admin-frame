@@ -40,7 +40,7 @@ func cBaseConfig() *appconfig.Config {
 			Auth:    cJWTConfig(),
 			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
 			DB:      platformconfig.DBConfig{Driver: "memory"},
-			Storage: platformstorage.StorageConfig{Driver: "memory"},
+			Storage: platformstorage.Config{Driver: "memory"},
 			HTTP:    platformconfig.HTTPConfig{Timeout: 30 * time.Second},
 			Redis:   platformconfig.RedisConfig{Addr: "127.0.0.1:6379"},
 		},

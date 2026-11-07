@@ -9,14 +9,14 @@ import (
 	storagepkg "github.com/admin-frame/admin-frame/pkg/storage"
 )
 
-// StorageSet 同进程多桶：Default 为 yaml 顶层 storage；named 来自 storagepkg.buckets。
-type StorageSet struct {
+// Set 同进程多桶：Default 为 yaml 顶层 storage；named 来自 storagepkg.buckets。
+type Set struct {
 	Default storagepkg.Store
 	named   map[string]storagepkg.Store
 }
 
 // Get 按名取 Store；"" / "default" 返回 Default。
-func (s *StorageSet) Get(name string) (storagepkg.Store, bool) {
+func (s *Set) Get(name string) (storagepkg.Store, bool) {
 	if s == nil || s.Default == nil {
 		return nil, false
 	}
@@ -29,7 +29,7 @@ func (s *StorageSet) Get(name string) (storagepkg.Store, bool) {
 }
 
 // MustGet 同 Get；不存在时 panic（仅装配期使用）。
-func (s *StorageSet) MustGet(name string) storagepkg.Store {
+func (s *Set) MustGet(name string) storagepkg.Store {
 	st, ok := s.Get(name)
 	if !ok {
 		panic("platform: storage bucket not found: " + name)
@@ -38,7 +38,7 @@ func (s *StorageSet) MustGet(name string) storagepkg.Store {
 }
 
 // Names 返回命名桶名（不含 default），已排序。
-func (s *StorageSet) Names() []string {
+func (s *Set) Names() []string {
 	if s == nil || len(s.named) == 0 {
 		return nil
 	}
@@ -51,7 +51,7 @@ func (s *StorageSet) Names() []string {
 }
 
 // Close 关闭 Default 与全部命名桶，返回首个错误。
-func (s *StorageSet) Close() error {
+func (s *Set) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (s *StorageSet) Close() error {
 }
 
 // ReadyAll 对 Default + 命名桶做就绪探测；任一失败即返回。
-func (s *StorageSet) ReadyAll(ctx context.Context) error {
+func (s *Set) ReadyAll(ctx context.Context) error {
 	if s == nil || s.Default == nil {
 		return storagepkg.ErrClosed
 	}
@@ -89,16 +89,16 @@ func (s *StorageSet) ReadyAll(ctx context.Context) error {
 
 // OpenStorageSet 打开默认桶与 storagepkg.buckets 命名桶。
 //
-// 命名桶复用 StorageConfig（类型别名），字段映射只经 ToStorageConfig 一处，
+// 命名桶复用 Config（类型别名），字段映射只经 ToStorageConfig 一处，
 // 避免新增字段时多处漏改；命名桶内的 buckets 段不被支持。
-func OpenStorageSet(ctx context.Context, cfg StorageConfig) (*StorageSet, error) {
+func OpenStorageSet(ctx context.Context, cfg Config) (*Set, error) {
 	primary := cfg
 	primary.Buckets = nil
 	def, err := OpenStorage(ctx, primary)
 	if err != nil {
 		return nil, err
 	}
-	set := &StorageSet{
+	set := &Set{
 		Default: def,
 		named:   make(map[string]storagepkg.Store, len(cfg.Buckets)),
 	}

@@ -11,8 +11,8 @@ import (
 	storagepkg "github.com/admin-frame/admin-frame/pkg/storage"
 )
 
-// StorageConfig 对象存储装配配置（规划 M3/M5；密钥走环境变量）。
-type StorageConfig struct {
+// Config 对象存储装配配置（规划 M3/M5；密钥走环境变量）。
+type Config struct {
 	Driver         string        `yaml:"driver"`
 	KeyPrefix      string        `yaml:"key_prefix"`
 	MaxObjectBytes int64         `yaml:"max_object_bytes"`
@@ -30,19 +30,19 @@ type StorageConfig struct {
 
 	// Buckets 命名附加桶（公有静态 / 私有附件等）；键不可为 default。
 	// 命名桶内不允许再次声明 buckets（ValidateStorage 会拒绝）。
-	Buckets map[string]StorageConfig `yaml:"buckets"`
+	Buckets map[string]Config `yaml:"buckets"`
 }
 
 // BucketConfig 是命名桶配置的类型别名。
 //
 // 与顶层 storage 完全同形，只是语义上位于 storagepkg.buckets.<name>；
 // 复用同一类型可保证字段映射只有一份实现，新增字段不会漏改（PLAT-09）。
-type BucketConfig = StorageConfig
+type BucketConfig = Config
 
 // LogValue 实现 slog.LogValuer：只输出非敏感字段。
 //
 // 各云厂商的 access_key / secret_key / session_token 不进入日志（SEC-05）。
-func (c StorageConfig) LogValue() slog.Value {
+func (c Config) LogValue() slog.Value {
 	names := make([]string, 0, len(c.Buckets))
 	for name := range c.Buckets {
 		names = append(names, name)
@@ -60,7 +60,7 @@ func (c StorageConfig) LogValue() slog.Value {
 // ToStorageConfig 转为 pkg/storagepkg.Config。
 //
 // 只映射连接参数；Buckets / Lifecycle 由 OpenStorageSet 单独处理。
-func (c StorageConfig) ToStorageConfig() storagepkg.Config {
+func (c Config) ToStorageConfig() storagepkg.Config {
 	return storagepkg.Config{
 		Driver:         c.Driver,
 		KeyPrefix:      c.KeyPrefix,
@@ -77,7 +77,7 @@ func (c StorageConfig) ToStorageConfig() storagepkg.Config {
 
 // OpenStorage 按配置打开默认对象存储；driver 空则 memory。
 // 忽略 Buckets / Lifecycle 写入（多桶与生命周期用 OpenStorageSet）。
-func OpenStorage(ctx context.Context, cfg StorageConfig) (storagepkg.Store, error) {
+func OpenStorage(ctx context.Context, cfg Config) (storagepkg.Store, error) {
 	if strings.TrimSpace(cfg.Driver) == "" {
 		cfg.Driver = "memory"
 	}
@@ -85,7 +85,7 @@ func OpenStorage(ctx context.Context, cfg StorageConfig) (storagepkg.Store, erro
 }
 
 // ValidateStorage 校验存储配置与环境互斥（prod 禁止 memory）。
-func ValidateStorage(env string, cfg StorageConfig) error {
+func ValidateStorage(env string, cfg Config) error {
 	if err := validateOneStorage(env, "storage", cfg.Driver, cfg.Local.Root, cfg.Lifecycle); err != nil {
 		return err
 	}

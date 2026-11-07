@@ -38,11 +38,11 @@ func (c *Config) ApplyDefaults() {
 // Normalize 补齐平台段派生值、归一化 IAM 模式，并在同一次 Provider 解析中
 // 回写平台与身份域密钥。
 func (c *Config) Normalize() error {
-	if err := c.Config.NormalizeCore(); err != nil {
+	if err := c.NormalizeCore(); err != nil {
 		return err
 	}
 	c.IAM.Normalize()
-	return c.Config.ResolveSecretsWithTargets(c.domainSecretTargets())
+	return c.ResolveSecretsWithTargets(c.domainSecretTargets())
 }
 
 // domainSecretTargets 返回域配置的密钥回写目标。
@@ -60,11 +60,13 @@ func (c *Config) domainSecretTargets() []platformconfig.SecretTarget {
 
 // Validate 聚合平台段与全部域配置的错误，保持启动期一次性列出所有问题。
 func (c *Config) Validate() error {
-	errs := c.Config.ValidateErrors(c.IAM.Mode)
-	errs = append(errs, c.IAM.Validate(c.Env, c.Channel, c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled))
-	errs = append(errs, c.Identity.Validate(c.Env, c.Channel, c.Auth.EffectiveMode(c.Env), c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled))
-	errs = append(errs, c.Audit.Validate(c.Env, c.DB.Driver, c.Storage.Driver))
-	errs = append(errs, c.Tenant.Validate())
+	errs := c.ValidateErrors(c.IAM.Mode)
+	errs = append(errs,
+		c.IAM.Validate(c.Env, c.Channel, c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled),
+		c.Identity.Validate(c.Env, c.Channel, c.Auth.EffectiveMode(c.Env), c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled),
+		c.Audit.Validate(c.Env, c.DB.Driver, c.Storage.Driver),
+		c.Tenant.Validate(),
+	)
 	return errors.Join(errs...)
 }
 
