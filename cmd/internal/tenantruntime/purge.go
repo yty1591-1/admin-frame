@@ -12,6 +12,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	tenantapp "github.com/admin-frame/admin-frame/internal/tenant/app"
+	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	tenantpersistence "github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
 )
@@ -25,7 +26,7 @@ type manifestRepo = domain.ExportManifestRepository
 // IAM 商户数据 → identity 商户数据；审计事件流不在任何边界（处置证据）。
 // 数据库缺失（纯内存最小形态）只挂租户内存边界；导出证据缺失的租户一律
 // 跳过并告警——绝不裸删。
-func buildPurgeService(deps *platform.Deps, tenants domain.Repository) (*tenantapp.PurgeService, error) {
+func buildPurgeService(deps *platform.Deps, tenants domain.Repository, tenantCfg tenantconfig.TenantConfig) (*tenantapp.PurgeService, error) {
 	if deps == nil || deps.Config == nil || tenants == nil {
 		return nil, nil
 	}
@@ -71,9 +72,9 @@ func buildPurgeService(deps *platform.Deps, tenants domain.Repository) (*tenanta
 	}
 	opts := tenantapp.PurgeOptions{
 		Service:    deps.Config.Service,
-		HoldDays:   deps.Config.Tenant.Retention.HoldDays,
-		ExportDays: deps.Config.Tenant.Retention.ExportDays,
-		BatchSize:  deps.Config.Tenant.Retention.PurgeBatchSize,
+		HoldDays:   tenantCfg.Retention.HoldDays,
+		ExportDays: tenantCfg.Retention.ExportDays,
+		BatchSize:  tenantCfg.Retention.PurgeBatchSize,
 	}
 	svc, err := tenantapp.NewPurgeService(tenants, manifests, evidence, boundaries, purgeEmitter(deps), nil, opts)
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	identitybootstrap "github.com/admin-frame/admin-frame/internal/identity/bootstrap"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
@@ -54,6 +55,15 @@ const platformAdminBootstrapTimeout = 10 * time.Second
 // refreshLimiterKeyPrefix 是 refresh / logout 端点限流键前缀（SEC-04）。
 const refreshLimiterKeyPrefix = "identity:refresh:"
 
+// configView 把平台段配置与身份域配置组合为只读视图，供装配期各构造器使用。
+//
+// 平台 Config 不再内聚业务域配置，装配层显式接收域配置；嵌入 *platform.Config
+// 保留对 channel / db / auth 等平台字段的直接访问，避免大范围改签名。
+type configView struct {
+	*platform.Config
+	Identity identityconfig.IdentityConfig
+}
+
 // Runtime 是身份域在本进程内的唯一实例集合。
 type Runtime struct {
 	// Checker 供 platform 注入 JWT 撤销检查；identity.enabled=false 时为 nil。
@@ -67,11 +77,11 @@ type Runtime struct {
 }
 
 // New 按配置装配身份域；identity.enabled=false 时返回空运行时（保持只验签）。
-func New(deps *platform.Deps) (*Runtime, error) {
+func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (*Runtime, error) {
 	if deps == nil || deps.Config == nil {
 		return nil, apperr.Internal("identity runtime requires platform deps", nil)
 	}
-	cfg := deps.Config
+	cfg := configView{Config: deps.Config, Identity: identityCfg}
 	if !cfg.Identity.Enabled {
 		return &Runtime{}, nil
 	}
@@ -112,7 +122,7 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	if err := ensurePlatformAdmin(deps, channel, subjectProtector); err != nil {
 		return nil, err
 	}
-	revocation, err := buildRevocationStore(deps)
+	revocation, err := buildRevocationStore(deps, identityCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +477,7 @@ func (h *CleanupHandle) Stop(ctx context.Context) error {
 // 内存仓储（deps.Database=nil）不做清理：重启即丢数据，无需保留期。
 //
 // 返回句柄用于优雅停机：Stop 会先停止 ticker，再等待当前批次完成（REL-08）。
-func StartCleanup(ctx context.Context, deps *platform.Deps) (*CleanupHandle, error) {
+func StartCleanup(ctx context.Context, deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (*CleanupHandle, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil, nil
 	}
@@ -475,7 +485,7 @@ func StartCleanup(ctx context.Context, deps *platform.Deps) (*CleanupHandle, err
 	if err != nil {
 		return nil, err
 	}
-	retention := deps.Config.Identity.Retention
+	retention := identityCfg.Retention
 	policy := app.RetentionPolicy{
 		SessionRetention:      time.Duration(retention.SessionDays) * 24 * time.Hour,
 		LoginAttemptRetention: time.Duration(retention.LoginAttemptDays) * 24 * time.Hour,
@@ -626,7 +636,7 @@ func runCleanupOnce(
 //
 // 配置校验只能证明「配置写了生产值」，无法证明装配期真的拿到了数据库 / Redis / Outbox；
 // 这里按实际 deps 断言，检测到回退立即失败并打印明确日志，禁止静默降级。
-func assertNoMemoryFallback(deps *platform.Deps, cfg *platform.Config) error {
+func assertNoMemoryFallback(deps *platform.Deps, cfg configView) error {
 	env := strings.TrimSpace(cfg.Env)
 	prodLike := strings.EqualFold(env, "prod") || strings.EqualFold(env, "staging")
 	if !prodLike {
@@ -701,7 +711,7 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 }
 
 // passwordPolicyFromConfig 将配置密码策略映射为应用层策略；零值字段保留默认值。
-func passwordPolicyFromConfig(cfg *platform.Config) app.PasswordPolicy {
+func passwordPolicyFromConfig(cfg configView) app.PasswordPolicy {
 	policy := app.DefaultPasswordPolicy()
 	if cfg.Identity.Password.MinLength > 0 {
 		policy.MinLength = cfg.Identity.Password.MinLength
@@ -716,7 +726,7 @@ func passwordPolicyFromConfig(cfg *platform.Config) app.PasswordPolicy {
 }
 
 // identityMFAChannels 解析允许 MFA 的端别；空配置默认仅 admin（BIZ-03）。
-func identityMFAChannels(cfg *platform.Config) map[domain.Channel]bool {
+func identityMFAChannels(cfg configView) map[domain.Channel]bool {
 	channels := make(map[domain.Channel]bool, len(cfg.Identity.MFA.Channels))
 	for _, name := range cfg.Identity.MFA.Channels {
 		switch strings.ToLower(strings.TrimSpace(name)) {
@@ -735,7 +745,7 @@ func identityMFAChannels(cfg *platform.Config) map[domain.Channel]bool {
 // identityMFAFactors 解析允许启用的因子白名单；空配置默认仅 totp（BIZ-03）。
 //
 // 配置校验期已拒绝未实现因子，这里再做一次映射，保证运行期只会看到已实现能力。
-func identityMFAFactors(cfg *platform.Config) []app.MFAFactor {
+func identityMFAFactors(cfg configView) []app.MFAFactor {
 	factors := make([]app.MFAFactor, 0, len(cfg.Identity.MFA.Factors))
 	for _, name := range cfg.Identity.MFA.Factors {
 		if strings.EqualFold(strings.TrimSpace(name), string(app.MFAFactorTOTP)) {
@@ -752,7 +762,7 @@ func identityMFAFactors(cfg *platform.Config) []app.MFAFactor {
 //
 // 覆盖项在配置校验期已保证只会收紧；未命中或参数非法时返回零值，由 AuthService
 // 回退全局策略。
-func passwordPolicyResolver(cfg *platform.Config) func(merchantID string) app.PasswordPolicy {
+func passwordPolicyResolver(cfg configView) func(merchantID string) app.PasswordPolicy {
 	overrides := make(map[string]app.PasswordPolicy, len(cfg.Identity.Password.TenantOverrides))
 	global := passwordPolicyFromConfig(cfg)
 	for _, override := range cfg.Identity.Password.TenantOverrides {
@@ -812,7 +822,7 @@ func ensurePlatformAdmin(deps *platform.Deps, channel domain.Channel, protector 
 }
 
 // buildHasher 解析 PII 摘要密钥；未配置时返回 nil（仅本地/tests 回退无盐算法）。
-func buildHasher(cfg *platform.Config) (*crypto.Hasher, error) {
+func buildHasher(cfg configView) (*crypto.Hasher, error) {
 	active, keys, err := cfg.Identity.DecodeHashKeys()
 	if err != nil {
 		return nil, fmt.Errorf("identity hash keys: %w", err)
@@ -831,7 +841,7 @@ func buildHasher(cfg *platform.Config) (*crypto.Hasher, error) {
 //
 // subject_index 复用 identity.hash_key，subject_ciphertext 使用独立 PII 密钥环；
 // 只配置加密密钥却缺少 hash_key 时直接失败，避免写出无法按索引查找的账号。
-func buildSubjectProtector(cfg *platform.Config, hasher *crypto.Hasher) (persistence.SubjectProtector, error) {
+func buildSubjectProtector(cfg configView, hasher *crypto.Hasher) (persistence.SubjectProtector, error) {
 	keys, err := cfg.Identity.Subject.DecodeKeys()
 	if err != nil {
 		return nil, fmt.Errorf("identity subject keys: %w", err)
@@ -853,7 +863,7 @@ func buildSubjectProtector(cfg *platform.Config, hasher *crypto.Hasher) (persist
 // buildMFACipher 解析 MFA 密钥环；未配置时返回 nil（MFA 端点失败关闭）。
 //
 // 仅配置 secret_key 时沿用单密钥；配置 keys 时启用按 key id 轮换，secret_key 作为旧密文回退。
-func buildMFACipher(cfg *platform.Config) (app.MFASecretCipher, error) {
+func buildMFACipher(cfg configView) (app.MFASecretCipher, error) {
 	legacyKey, err := cfg.Identity.MFA.DecodeSecretKey()
 	if err != nil {
 		return nil, fmt.Errorf("identity mfa secret key: %w", err)
@@ -893,10 +903,10 @@ func buildMFATicketStore(deps *platform.Deps) (app.MFATicketStore, error) {
 }
 
 // buildRevocationStore 构造撤销存储；当前配置仅允许 redis（跨副本生效）。
-func buildRevocationStore(deps *platform.Deps) (app.RevocationStore, error) {
-	cfg := deps.Config.Identity.Revocation
+func buildRevocationStore(deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (app.RevocationStore, error) {
+	cfg := identityCfg.Revocation
 	switch cfg.Driver {
-	case platform.IdentityRevocationDriverRedis:
+	case identityconfig.IdentityRevocationDriverRedis:
 		if deps.Redis == nil {
 			return nil, apperr.Internal("identity revocation driver=redis but redis is not configured", nil)
 		}
@@ -910,31 +920,31 @@ func buildRevocationStore(deps *platform.Deps) (app.RevocationStore, error) {
 //
 // 有 Redis 时使用跨副本共享的令牌桶（生产 fail_closed）；未配置 Redis 时退化为进程内
 // 实现，仅适用于单副本 / 本地调试（多副本会按副本数放大配额）。
-func buildLoginLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+func buildLoginLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.LoginRateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, loginLimiterKeyPrefix, "login")
 }
 
 // buildLoginIPLimiter 构造 IP 级登录限流器，使用独立配额（PERF-05）。
-func buildLoginIPLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+func buildLoginIPLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.LoginRateLimit
 	return buildKeyedLimiter(deps, rate.IPRPS, rate.IPBurst, rate.FailureMode, loginIPLimiterKeyPrefix, "login-ip")
 }
 
 // buildOAuthLimiter 构造 authorize / callback 的 IP 级与全局限流器（IDN-P2-05）。
-func buildOAuthLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+func buildOAuthLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.OAuth.RateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, oauthLimiterKeyPrefix, "oauth")
 }
 
 // buildSAMLLimiter 构造 SAML authorize / acs 的 IP 级与全局限流器。
-func buildSAMLLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+func buildSAMLLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.SAML.RateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, samlLimiterKeyPrefix, "saml")
 }
 
 // buildRefreshLimiter 构造 refresh / logout 的 IP + 主体双维度限流器（SEC-04）。
-func buildRefreshLimiter(cfg *platform.Config, deps *platform.Deps) (app.LoginLimiter, error) {
+func buildRefreshLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.RefreshRateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, refreshLimiterKeyPrefix, "refresh")
 }

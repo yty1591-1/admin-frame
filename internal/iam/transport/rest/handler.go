@@ -14,9 +14,9 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -103,12 +103,12 @@ func (h *Handler) rejectDirectWrite(w http.ResponseWriter, r *http.Request, acti
 	if !h.requireApproval {
 		return false
 	}
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	base := "/admin/v1/iam"
 	if h.channel == domain.ChannelBiz {
 		base = "/biz/v1/iam"
 	}
-	httpx.FromError(w, apperr.Conflict(
+	apiresp.FromError(w, apperr.Conflict(
 		"high-risk change requires approval: submit action="+string(action)+" via POST "+base+"/change-requests",
 	), traceID)
 	return true
@@ -116,7 +116,7 @@ func (h *Handler) rejectDirectWrite(w http.ResponseWriter, r *http.Request, acti
 
 // ListPermissions GET /iam/permissions
 func (h *Handler) ListPermissions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	filter := app.PermissionFilter{
 		Channel: domain.Channel(strings.TrimSpace(r.URL.Query().Get("channel"))),
 		Keyword: r.URL.Query().Get("keyword"),
@@ -130,7 +130,7 @@ func (h *Handler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	offset, limit := page.Offset(), page.Limit()
@@ -145,20 +145,20 @@ func (h *Handler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range entries[offset:end] {
 		items = append(items, toPermissionDTO(entry))
 	}
-	httpx.OK(w, PermissionListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, PermissionListResponse{Items: items, Total: total}, traceID)
 }
 
 // ListRoles GET /iam/roles
 func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -173,7 +173,7 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	if h.channel == domain.ChannelBiz {
 		// B 端只能查看本商户角色，merchant_id 只从 Principal 取。
 		if principal.MerchantID == "" {
-			httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+			apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 			return
 		}
 		filter.Channel = domain.ChannelBiz
@@ -181,27 +181,27 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	roles, err := h.query.ListRoles(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	total, err := h.query.CountRoles(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]*RoleDTO, 0, len(roles))
 	for _, role := range roles {
 		items = append(items, toRoleDTO(role))
 	}
-	httpx.OK(w, RoleListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, RoleListResponse{Items: items, Total: total}, traceID)
 }
 
 // CreateRole POST /iam/roles
 func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleCreate) {
@@ -209,12 +209,12 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreateRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel := h.effectiveChannel(req.Channel)
 	if channel == "" {
-		httpx.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
 		return
 	}
 	merchantID := principal.MerchantID
@@ -223,7 +223,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes, err := toDataScopes(req.DataScopes)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	role, err := h.roles.CreateRole(r.Context(), app.CreateRoleCommand{
@@ -239,36 +239,36 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		Actor:       principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleDTO(role), traceID)
+	apiresp.OK(w, toRoleDTO(role), traceID)
 }
 
 // GetRole GET /iam/roles/{id}
 func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	detail, err := h.query.GetRole(r.Context(), r.PathValue("id"), h.channel, h.merchantScope(principal))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	dto := toRoleDTO(detail.Role)
 	dto.BindingCount = detail.BindingCount
-	httpx.OK(w, dto, traceID)
+	apiresp.OK(w, dto, traceID)
 }
 
 // UpdateRole PATCH /iam/roles/{id}
 func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleUpdate) {
@@ -276,12 +276,12 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var req UpdateRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	role, err := h.roles.UpdateRole(r.Context(), app.UpdateRoleCommand{
@@ -295,18 +295,18 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		Reason:      req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleDTO(role), traceID)
+	apiresp.OK(w, toRoleDTO(role), traceID)
 }
 
 // ReplacePermissions PUT /iam/roles/{id}/permissions
 func (h *Handler) ReplacePermissions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRolePermissionReplace) {
@@ -314,19 +314,19 @@ func (h *Handler) ReplacePermissions(w http.ResponseWriter, r *http.Request) {
 	}
 	var req ReplacePermissionsRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var scopes *[]domain.DataScope
 	if req.DataScopes != nil {
 		converted, convErr := toDataScopes(*req.DataScopes)
 		if convErr != nil {
-			httpx.FromError(w, convErr, traceID)
+			apiresp.FromError(w, convErr, traceID)
 			return
 		}
 		scopes = &converted
@@ -340,11 +340,11 @@ func (h *Handler) ReplacePermissions(w http.ResponseWriter, r *http.Request) {
 		Reason:      req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	dto := toRoleDTO(role)
-	httpx.OK(w, ReplacePermissionsResponse{
+	apiresp.OK(w, ReplacePermissionsResponse{
 		Role:    dto,
 		Added:   permissionCodeStrings(change.Added),
 		Removed: permissionCodeStrings(change.Removed),
@@ -353,10 +353,10 @@ func (h *Handler) ReplacePermissions(w http.ResponseWriter, r *http.Request) {
 
 // CloneRole POST /iam/roles/{id}/clone
 func (h *Handler) CloneRole(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleClone) {
@@ -364,7 +364,7 @@ func (h *Handler) CloneRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CloneRoleRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	role, err := h.roles.CloneRole(r.Context(), app.CloneRoleCommand{
@@ -374,18 +374,18 @@ func (h *Handler) CloneRole(w http.ResponseWriter, r *http.Request) {
 		Actor:    principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleDTO(role), traceID)
+	apiresp.OK(w, toRoleDTO(role), traceID)
 }
 
 // DeleteRole DELETE /iam/roles/{id}
 func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleDelete) {
@@ -395,13 +395,13 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	// DELETE 允许空 body（version 由 If-Match 提供）。
 	if r.ContentLength > 0 {
 		if err := decodeJSON(r, &req); err != nil {
-			httpx.FromError(w, err, traceID)
+			apiresp.FromError(w, err, traceID)
 			return
 		}
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.roles.DeleteRole(r.Context(), app.DeleteRoleCommand{
@@ -410,18 +410,18 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		Actor:   principal.SubjectID,
 		Reason:  req.Reason,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
+	apiresp.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
 }
 
 // ListBindings GET /iam/bindings?subject_type=&subject_id=&role_id=
 func (h *Handler) ListBindings(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -432,13 +432,13 @@ func (h *Handler) ListBindings(w http.ResponseWriter, r *http.Request) {
 	} else {
 		subjectQuery, buildErr := h.subjectQuery(query.Get("subject_type"), query.Get("subject_id"), principal)
 		if buildErr != nil {
-			httpx.FromError(w, buildErr, traceID)
+			apiresp.FromError(w, buildErr, traceID)
 			return
 		}
 		bindings, err = h.query.ListBindings(r.Context(), subjectQuery)
 	}
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]*BindingDTO, 0, len(bindings))
@@ -448,15 +448,15 @@ func (h *Handler) ListBindings(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, toBindingDTO(binding))
 	}
-	httpx.OK(w, BindingListResponse{Items: items, Total: len(items)}, traceID)
+	apiresp.OK(w, BindingListResponse{Items: items, Total: len(items)}, traceID)
 }
 
 // CreateBinding POST /iam/bindings
 func (h *Handler) CreateBinding(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionBindingCreate) {
@@ -464,11 +464,11 @@ func (h *Handler) CreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreateBindingRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if strings.TrimSpace(req.RoleID) == "" {
-		httpx.FromError(w, apperr.BadRequest("role_id is required"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("role_id is required"), traceID)
 		return
 	}
 	binding, err := h.bindings.Bind(r.Context(), app.BindCommand{
@@ -482,18 +482,18 @@ func (h *Handler) CreateBinding(w http.ResponseWriter, r *http.Request) {
 		Reason:      req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toBindingDTO(binding), traceID)
+	apiresp.OK(w, toBindingDTO(binding), traceID)
 }
 
 // DeleteBinding DELETE /iam/bindings/{id}
 func (h *Handler) DeleteBinding(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionBindingDelete) {
@@ -502,7 +502,7 @@ func (h *Handler) DeleteBinding(w http.ResponseWriter, r *http.Request) {
 	var req UnbindRequest
 	if r.ContentLength > 0 {
 		if err := decodeJSON(r, &req); err != nil {
-			httpx.FromError(w, err, traceID)
+			apiresp.FromError(w, err, traceID)
 			return
 		}
 	}
@@ -512,39 +512,39 @@ func (h *Handler) DeleteBinding(w http.ResponseWriter, r *http.Request) {
 		Actor:      principal.SubjectID,
 		Reason:     req.Reason,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
+	apiresp.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
 }
 
 // SubjectPermissions GET /iam/subjects/{subject_type}/{subject_id}/permissions
 func (h *Handler) SubjectPermissions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	subjectQuery, err := h.subjectQuery(r.PathValue("subject_type"), r.PathValue("subject_id"), principal)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	snapshot, err := h.query.SubjectSnapshot(r.Context(), subjectQuery)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toSubjectPermissionsResponse(snapshot), traceID)
+	apiresp.OK(w, toSubjectPermissionsResponse(snapshot), traceID)
 }
 
 // MePermissions GET /iam/me/permissions
 func (h *Handler) MePermissions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	subjectType := domain.SubjectStaff
@@ -558,28 +558,28 @@ func (h *Handler) MePermissions(w http.ResponseWriter, r *http.Request) {
 		MerchantID:  h.merchantScope(principal),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toSubjectPermissionsResponse(snapshot), traceID)
+	apiresp.OK(w, toSubjectPermissionsResponse(snapshot), traceID)
 }
 
 // Authorize POST /iam/authorize
 func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req AuthorizeRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	subjectQuery, err := h.subjectQuery(req.SubjectType, req.SubjectID, principal)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	result, err := h.query.Simulate(r.Context(), app.SimulateQuery{
@@ -590,7 +590,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		Permission:  iam.PermissionCode(strings.TrimSpace(req.Permission)),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	resp := AuthorizeResponse{
@@ -603,7 +603,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		scope := toDataScopeDTO(*result.DataScope)
 		resp.DataScope = &scope
 	}
-	httpx.OK(w, resp, traceID)
+	apiresp.OK(w, resp, traceID)
 }
 
 // principal 读取认证主体；缺失时返回 40100。

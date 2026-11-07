@@ -9,9 +9,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 )
 
@@ -126,8 +126,8 @@ func permission(permMW auth.PermissionMiddleware, code string) func(http.Handler
 func idempotent(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-			httpx.FromError(w, apperr.BadRequest("Idempotency-Key header is required"),
-				httpx.TraceIDFromContext(r.Context()))
+			apiresp.FromError(w, apperr.BadRequest("Idempotency-Key header is required"),
+				apiresp.TraceIDFromContext(r.Context()))
 			return
 		}
 		next.ServeHTTP(w, r)

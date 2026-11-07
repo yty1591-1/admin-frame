@@ -15,9 +15,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -126,15 +126,15 @@ func (h *Handler) changeScope(r *http.Request) (auth.Principal, app.ChangeScope,
 // 列表入口（A 端复核 / B 端待办）：默认按申请时间倒序，可按 status / action /
 // requested_by 过滤。端别与商户强制来自作用域，query 中的 channel / merchant_id 被忽略。
 func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	_, scope, err := h.changeScope(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -147,12 +147,12 @@ func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	requests, err := h.changes.List(r.Context(), scope, filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	total, err := h.changes.Count(r.Context(), scope, filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	includeMerchant := h.channel != domain.ChannelBiz
@@ -160,25 +160,25 @@ func (h *Handler) ListChangeRequests(w http.ResponseWriter, r *http.Request) {
 	for _, request := range requests {
 		items = append(items, toChangeRequestDTO(request, includeMerchant))
 	}
-	httpx.OK(w, ChangeRequestListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, ChangeRequestListResponse{Items: items, Total: total}, traceID)
 }
 
 // CreateChangeRequest POST /iam/change-requests
 func (h *Handler) CreateChangeRequest(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, scope, err := h.changeScope(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req CreateChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel := h.effectiveChannel(req.Channel)
 	if channel == "" {
-		httpx.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
 		return
 	}
 	request, err := h.changes.Create(r.Context(), app.CreateChangeRequestCommand{
@@ -191,10 +191,10 @@ func (h *Handler) CreateChangeRequest(w http.ResponseWriter, r *http.Request) {
 		Actor:      principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
+	apiresp.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // ApproveChangeRequest POST /iam/change-requests/{id}/approve
@@ -209,46 +209,46 @@ func (h *Handler) RejectChangeRequest(w http.ResponseWriter, r *http.Request) {
 
 // CancelChangeRequest POST /iam/change-requests/{id}/cancel
 func (h *Handler) CancelChangeRequest(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, scope, err := h.changeScope(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req DecideChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := h.changes.Cancel(r.Context(), r.PathValue("id"), version, principal.SubjectID, scope)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
+	apiresp.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // ApplyChangeRequest POST /iam/change-requests/{id}/apply
 func (h *Handler) ApplyChangeRequest(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, scope, err := h.changeScope(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req DecideChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := h.changes.Apply(r.Context(), app.ApplyChangeRequestCommand{
@@ -258,35 +258,35 @@ func (h *Handler) ApplyChangeRequest(w http.ResponseWriter, r *http.Request) {
 		Scope:   scope,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
+	apiresp.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }
 
 // decideChangeRequest 抽取通过 / 拒绝的公共解析逻辑。
 func (h *Handler) decideChangeRequest(w http.ResponseWriter, r *http.Request,
 	decide func(context.Context, string, int64, string, string, app.ChangeScope) (*domain.ChangeRequest, error)) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, scope, err := h.changeScope(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req DecideChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := decide(r.Context(), r.PathValue("id"), version, principal.SubjectID, req.Reason, scope)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
+	apiresp.OK(w, toChangeRequestDTO(request, h.channel != domain.ChannelBiz), traceID)
 }

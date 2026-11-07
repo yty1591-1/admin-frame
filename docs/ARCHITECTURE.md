@@ -913,6 +913,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 - 来源：`configs/<cmd>.yaml.example` + 环境变量（`ADMIN_FRAME_*`）+（可选）配置中心。
 - 优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须 ADR 并更新专文）。
 - 各 cmd **独立监听地址/端口**与限流等段；DB/Redis 等共享连接参数可通过公共配置段或环境变量复用，由 `platform` 统一加载。
+- 平台段（`internal/platform/config`）只承载进程级基础设施；`identity` / `iam` / `audit` / `tenant` 配置由各域包自持类型、默认值与校验，`cmd/internal/appconfig` 负责组合加载与聚合校验。
 - 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项（含 `env=prod` ⇒ `auth.mode != demo`），失败则拒绝启动。
 - 禁止业务代码硬编码地址、超时、功能开关。
 

@@ -523,11 +523,12 @@ func TestLoadNormalizeRunsAfterEnv(t *testing.T) {
 		Files:     []string{path},
 		EnvPrefix: "APP",
 		LookupEnv: envLookup(map[string]string{"APP_CHANNEL": "env"}),
-		Normalize: func(c *normalizeProbe) {
+		Normalize: func(c *normalizeProbe) error {
 			if c.Channel != "env" {
 				t.Errorf("normalize saw channel=%q, want env override applied", c.Channel)
 			}
 			c.Derived = c.Channel + "-derived"
+			return nil
 		},
 		Validate: func(c *normalizeProbe) error {
 			if c.Derived != "env-derived" {
@@ -545,6 +546,26 @@ func TestLoadNormalizeRunsAfterEnv(t *testing.T) {
 	}
 	if cfg.Derived != "env-derived" {
 		t.Fatalf("derived=%q", cfg.Derived)
+	}
+}
+
+func TestLoadNormalizeErrorAborts(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "app.yaml", "channel: file\n")
+	sentinel := errors.New("normalize failed")
+	loader, err := config.NewLoader(config.Options[normalizeProbe]{
+		Files:     []string{path},
+		Normalize: func(c *normalizeProbe) error { return sentinel },
+		Validate: func(c *normalizeProbe) error {
+			t.Error("validate must not run after normalize failure")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("new loader: %v", err)
+	}
+	if _, err := loader.Load(); !errors.Is(err, config.ErrInvalidConfig) || !errors.Is(err, sentinel) {
+		t.Fatalf("err=%v want ErrInvalidConfig and normalize sentinel", err)
 	}
 }
 

@@ -51,8 +51,9 @@ type Options[T any] struct {
 	// Normalize 在环境变量覆盖之后、Validate 之前执行；可为 nil。
 	//
 	// 用于跨字段派生默认值（例如由 channel 推导 expected_channel），
-	// 保证环境变量改写前置字段后，派生值仍然一致；不要在此做 IO。
-	Normalize func(*T)
+	// 保证环境变量改写前置字段后，派生值仍然一致；返回错误则整体加载失败，
+	// 用于把无法延后的依赖解析（如密钥读取）纳入启动错误链。
+	Normalize func(*T) error
 	// Validate 在环境变量覆盖后执行；返回非 nil 则整体加载失败（CFG-03）。
 	//
 	// 为 nil 时，若 T 实现了 Validatable 则自动调用其 Validate；
@@ -150,7 +151,9 @@ func (l *Loader[T]) Load() (cfg *T, err error) {
 		}
 	}
 	if l.opts.Normalize != nil {
-		l.opts.Normalize(&value)
+		if err := l.opts.Normalize(&value); err != nil {
+			return nil, normalizeError(err)
+		}
 	}
 	if err := l.validate(&value); err != nil {
 		return nil, err

@@ -850,7 +850,7 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 ### 7.1 通用约定
 
 - 路径前缀：A 端 `/admin/v1/iam/...`，B 端 `/biz/v1/iam/...`；C 端不提供（API-06）。
-- 统一信封、分页、`trace_id`：`internal/shared/httpx`（API-03）。
+- 统一信封、分页、`trace_id`：`internal/shared/apiresp`（API-03）。
 - 列表 `page` / `page_size`，上限 100；排序字段白名单（API-05）。
 - 写操作：
   - `POST` 创建 / 绑定 / 审批；`PUT` 全量替换角色权限；`PATCH` 局部更新；`DELETE` 解绑 / 软删角色。

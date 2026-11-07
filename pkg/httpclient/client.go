@@ -24,6 +24,7 @@ func New(cfg Config) (*Client, error) {
 			policy:        cfg.Retry,
 			nonIdempotent: cfg.RetryNonIdempotent,
 			retryStatuses: cfg.RetryStatusCodes,
+			observer:      cfg.Observer,
 		}
 	}
 	if !cfg.DisableTracing {

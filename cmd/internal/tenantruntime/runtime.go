@@ -17,6 +17,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
+	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
 	tenantobservability "github.com/admin-frame/admin-frame/internal/tenant/observability"
@@ -58,7 +59,7 @@ func (r *Runtime) SetFeatureEvaluator(evaluator app.FeatureEvaluator) {
 }
 
 // New 构造租户运行时（A 端管理能力）。
-func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
+func New(deps *platform.Deps, revoker app.SessionRevoker, tenantCfg tenantconfig.TenantConfig) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.IDs == nil {
 		return &Runtime{}, nil
 	}
@@ -157,7 +158,7 @@ func New(deps *platform.Deps, revoker app.SessionRevoker) (*Runtime, error) {
 	}
 	// ENT-15：租户数据处置任务（D-05 第三段）——装配失败不阻断主流程
 	// （处置是周期任务，装配异常由日志跟进），但记录错误便于排查。
-	if _, perr := buildPurgeService(deps, repo); perr != nil {
+	if _, perr := buildPurgeService(deps, repo, tenantCfg); perr != nil {
 		deps.Logger.Warn("tenant purge service unavailable", "error", perr)
 	}
 	return &Runtime{Handler: handler, invitationService: invitationService}, nil

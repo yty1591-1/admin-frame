@@ -10,11 +10,33 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 )
+
+// iamTestConfig 返回 IAM 运行时测试用的域配置（shadow + memory 缓存）。
+func iamTestConfig() iamconfig.IAMConfig {
+	return iamconfig.IAMConfig{
+		Mode:        iamconfig.IAMModeShadow,
+		LoadTimeout: 300 * time.Millisecond,
+		Cache: iamconfig.IAMCacheConfig{
+			Driver:      iamconfig.IAMCacheDriverMemory,
+			L1TTL:       3 * time.Second,
+			L2TTL:       5 * time.Minute,
+			NegativeTTL: 30 * time.Second,
+			KeyPrefix:   "iam",
+		},
+		Limits: iamconfig.IAMLimitsConfig{
+			MaxRolesPerSubject:        20,
+			MaxPermissionsPerRole:     200,
+			MaxBindingsPerSubject:     50,
+			MaxCustomRolesPerMerchant: 50,
+		},
+	}
+}
 
 // newDeps 构造不依赖外部服务的装配参数（db.driver=memory 或 SkipPing 的 mysql）。
 func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platform.Deps {
@@ -36,23 +58,6 @@ func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platf
 			Service: "admin-api",
 			Channel: "admin",
 			Async:   async,
-			IAM: platform.IAMConfig{
-				Mode:        platform.IAMModeShadow,
-				LoadTimeout: 300 * time.Millisecond,
-				Cache: platform.IAMCacheConfig{
-					Driver:      platform.IAMCacheDriverMemory,
-					L1TTL:       3 * time.Second,
-					L2TTL:       5 * time.Minute,
-					NegativeTTL: 30 * time.Second,
-					KeyPrefix:   "iam",
-				},
-				Limits: platform.IAMLimitsConfig{
-					MaxRolesPerSubject:        20,
-					MaxPermissionsPerRole:     200,
-					MaxBindingsPerSubject:     50,
-					MaxCustomRolesPerMerchant: 50,
-				},
-			},
 		},
 		Logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		Metrics: met,
@@ -85,7 +90,7 @@ func TestRuntimeWithoutAsyncKeepsSlogRecorder(t *testing.T) {
 	if deps.Async != nil {
 		t.Fatal("async runtime must be nil when disabled")
 	}
-	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
+	if _, err := iamruntime.New(deps, iamTestConfig(), iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
 	if err := iamruntime.RegisterAsync(deps); err != nil {
@@ -114,7 +119,7 @@ func TestRuntimeAsyncRegistersIAMHandlers(t *testing.T) {
 	if deps.Async == nil {
 		t.Fatal("async runtime must be assembled when enabled")
 	}
-	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
+	if _, err := iamruntime.New(deps, iamTestConfig(), iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
 }
@@ -137,7 +142,7 @@ func TestRuntimeAsyncGaugesRegistered(t *testing.T) {
 			RetryBackoff:      platform.AsyncBackoffExponential,
 		},
 	}, true)
-	if _, err := iamruntime.New(deps, iamruntime.Options{}); err != nil {
+	if _, err := iamruntime.New(deps, iamTestConfig(), iamruntime.Options{}); err != nil {
 		t.Fatalf("iamruntime.New: %v", err)
 	}
 

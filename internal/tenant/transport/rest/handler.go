@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
@@ -79,15 +79,15 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 
 // Create 处理 POST /admin/v1/tenants。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body createRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	tenant, err := h.service.Create(r.Context(), app.CreateInput{
@@ -98,22 +98,22 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Actor:          actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, 0, "ok", toResponse(tenant), traceID)
+	apiresp.JSON(w, http.StatusCreated, 0, "ok", toResponse(tenant), traceID)
 }
 
 // List 处理 GET /admin/v1/tenants。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.ParseWith(r, h.pageCfg)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -124,14 +124,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		Offset:  page.Offset(),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]tenantResponse, 0, len(result.Items))
 	for _, tenant := range result.Items {
 		items = append(items, toResponse(tenant))
 	}
-	httpx.OK(w, listResponse{
+	apiresp.OK(w, listResponse{
 		Items:    items,
 		Total:    result.Total,
 		Page:     page.Page,
@@ -141,19 +141,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get 处理 GET /admin/v1/tenants/{id}。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	tenant, err := h.service.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// T-15：详情响应带 ETag，客户端直接用于后续 If-Match。
 	setETag(w, tenant.Version)
-	httpx.OK(w, toResponse(tenant), traceID)
+	apiresp.OK(w, toResponse(tenant), traceID)
 }
 
 // Update 处理 PATCH /admin/v1/tenants/{id}（T-11：改名与元数据）。
@@ -161,20 +161,20 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // 用指针区分「未提供」与「显式清空」：JSON 里缺字段 → nil（不变），
 // 显式 null 或空串 → 清空。编码不可变，请求体里不提供该字段。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body updateTenantRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	expected, err := expectedVersionFrom(r, body.ExpectedVersion)
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	tenant, err := h.service.UpdateProfile(r.Context(), app.UpdateProfileInput{
@@ -190,11 +190,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		Actor:           actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	setETag(w, tenant.Version)
-	httpx.OK(w, toResponse(tenant), traceID)
+	apiresp.OK(w, toResponse(tenant), traceID)
 }
 
 // Activate 处理 POST /admin/v1/tenants/{id}/activate。
@@ -219,23 +219,23 @@ func (h *Handler) Terminate(w http.ResponseWriter, r *http.Request) {
 
 // transition 是四个迁移动作的共同实现：解析可选原因并调用用例。
 func (h *Handler) transition(w http.ResponseWriter, r *http.Request, target domain.Status) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// 原因可选请求体：无 body 视为空原因，由状态机决定是否接受。
 	var body transitionRequest
 	if err := decodeOptionalJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	// T-15 条件更新：If-Match 头优先，body.expected_version 其次（二者同时
 	// 提供时必须一致——只取其一反而会掩盖调用方的歧义）。
 	expected, err := expectedVersionFrom(r, body.ExpectedVersion)
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	tenant, err := h.service.Transition(r.Context(), app.TransitionInput{
@@ -246,11 +246,11 @@ func (h *Handler) transition(w http.ResponseWriter, r *http.Request, target doma
 		Actor:           actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	setETag(w, tenant.Version)
-	httpx.OK(w, toResponse(tenant), traceID)
+	apiresp.OK(w, toResponse(tenant), traceID)
 }
 
 // expectedVersionFrom 解析 If-Match 头与 body 期望版本（T-15）。
@@ -303,7 +303,7 @@ func (h *Handler) actor(r *http.Request) (app.Actor, error) {
 		ActorType:  "user",
 		Channel:    string(principal.Channel),
 		MerchantID: principal.MerchantID,
-		TraceID:    httpx.TraceIDFromContext(r.Context()),
+		TraceID:    apiresp.TraceIDFromContext(r.Context()),
 	}, nil
 }
 

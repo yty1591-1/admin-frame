@@ -5,8 +5,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // MenuMetaDTO 是前端路由 meta，字段名与 vben 后端菜单契约一致。
@@ -37,14 +37,14 @@ type MenuTreeNodeDTO struct {
 // 菜单只决定前端入口是否可见，接口安全边界仍是权限点中间件；
 // 本端点仅需认证，不额外要求权限点。
 func (h *Handler) Menus(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menus == nil {
-		httpx.FromError(w, apperr.Internal("iam menus are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menus are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	subjectType := domain.SubjectStaff
@@ -58,10 +58,10 @@ func (h *Handler) Menus(w http.ResponseWriter, r *http.Request) {
 		MerchantID:  h.merchantScope(principal),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuTreeDTOs(nodes), traceID)
+	apiresp.OK(w, toMenuTreeDTOs(nodes), traceID)
 }
 
 // toMenuTreeDTOs 递归转换菜单树。

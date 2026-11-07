@@ -52,6 +52,14 @@ func validationError(err error) error {
 		pkgerrors.Wrap(err, "config validation failed").WithCode(pkgerrors.CodeInvalidArgument))
 }
 
+// normalizeError 包装 Normalize 阶段的失败，保留原始错误链。
+//
+// 归一化可能触发依赖解析（如密钥读取），失败属于启动期不可用而非参数错误，
+// 因此只挂共同哨兵，不改写底层语义码。
+func normalizeError(err error) error {
+	return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+}
+
 // envError 构造环境变量绑定错误；只输出变量名与字段路径，不输出取值。
 func envError(key, reason string) error {
 	return configError(ErrEnvOverride,

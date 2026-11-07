@@ -4,10 +4,10 @@ import (
 	stderrors "errors"
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/authz"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
 
@@ -294,23 +294,23 @@ func snapshotMatches(snapshot authz.Snapshot, p auth.Principal) bool {
 
 // writeUnauthenticated 写 401 信封。
 func writeUnauthenticated(w http.ResponseWriter, r *http.Request) {
-	httpx.FromError(w, apperr.Unauthorized("unauthorized"), httpx.TraceIDFromContext(r.Context()))
+	apiresp.FromError(w, apperr.Unauthorized("unauthorized"), apiresp.TraceIDFromContext(r.Context()))
 }
 
 // writeDenied 写 403 信封。
 func writeDenied(w http.ResponseWriter, r *http.Request) {
-	httpx.FromError(w, apperr.Forbidden("permission denied"), httpx.TraceIDFromContext(r.Context()))
+	apiresp.FromError(w, apperr.Forbidden("permission denied"), apiresp.TraceIDFromContext(r.Context()))
 }
 
 // writeLoadError 把 loader 错误映射为响应：
 //   - 鉴权依赖不可用 → 503 / 50300（失败关闭，禁止放行）；
 //   - 已带 4xx 业务码的身份错误（如主体非法）→ 原样返回，避免把 401 变成 503。
 func writeLoadError(w http.ResponseWriter, r *http.Request, err error) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var appErr *apperr.AppError
 	if stderrors.As(err, &appErr) && appErr.Code >= 40000 && appErr.Code < 50000 {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.FromError(w, apperr.Unavailable("authorization service unavailable"), traceID)
+	apiresp.FromError(w, apperr.Unavailable("authorization service unavailable"), traceID)
 }

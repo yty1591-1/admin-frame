@@ -1,24 +1,25 @@
-package platform_test
+package appconfig_test
 
 import (
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 func TestLoadConfigAsyncDefaults(t *testing.T) {
 	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\n")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.Async.Enabled || cfg.Async.Outbox.PublishInAPI {
 		t.Fatalf("async should be disabled by default: %+v", cfg.Async)
 	}
-	if cfg.Async.Driver != platform.AsyncDriverDB {
-		t.Fatalf("async.driver = %q, want %q", cfg.Async.Driver, platform.AsyncDriverDB)
+	if cfg.Async.Driver != platformconfig.AsyncDriverDB {
+		t.Fatalf("async.driver = %q, want %q", cfg.Async.Driver, platformconfig.AsyncDriverDB)
 	}
 	if cfg.Async.Outbox.PollInterval != time.Second ||
 		cfg.Async.Outbox.BatchSize != 100 ||
@@ -29,7 +30,7 @@ func TestLoadConfigAsyncDefaults(t *testing.T) {
 	}
 	if cfg.Async.Consumer.Concurrency != 4 ||
 		cfg.Async.Consumer.VisibilityTimeout != time.Minute ||
-		cfg.Async.Consumer.RetryBackoff != platform.AsyncBackoffExponential {
+		cfg.Async.Consumer.RetryBackoff != platformconfig.AsyncBackoffExponential {
 		t.Fatalf("async.consumer defaults = %+v", cfg.Async.Consumer)
 	}
 }
@@ -42,52 +43,52 @@ func TestValidateAsyncRules(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		mutate func(*platform.Config)
+		mutate func(*appconfig.Config)
 		want   string
 	}{
 		{
 			name:   "unsupported driver",
-			mutate: func(c *platform.Config) { c.Async.Driver = "kafka" },
+			mutate: func(c *appconfig.Config) { c.Async.Driver = "kafka" },
 			want:   "async.driver",
 		},
 		{
 			name:   "poll interval too small",
-			mutate: func(c *platform.Config) { c.Async.Outbox.PollInterval = 10 * time.Millisecond },
+			mutate: func(c *appconfig.Config) { c.Async.Outbox.PollInterval = 10 * time.Millisecond },
 			want:   "async.outbox.poll_interval",
 		},
 		{
 			name:   "batch size too large",
-			mutate: func(c *platform.Config) { c.Async.Outbox.BatchSize = 501 },
+			mutate: func(c *appconfig.Config) { c.Async.Outbox.BatchSize = 501 },
 			want:   "async.outbox.batch_size",
 		},
 		{
 			name:   "lease too short",
-			mutate: func(c *platform.Config) { c.Async.Outbox.Lease = time.Second },
+			mutate: func(c *appconfig.Config) { c.Async.Outbox.Lease = time.Second },
 			want:   "async.outbox.lease",
 		},
 		{
 			name:   "max attempts too large",
-			mutate: func(c *platform.Config) { c.Async.Outbox.MaxAttempts = 21 },
+			mutate: func(c *appconfig.Config) { c.Async.Outbox.MaxAttempts = 21 },
 			want:   "async.outbox.max_attempts",
 		},
 		{
 			name:   "outbox concurrency too large",
-			mutate: func(c *platform.Config) { c.Async.Outbox.Concurrency = 17 },
+			mutate: func(c *appconfig.Config) { c.Async.Outbox.Concurrency = 17 },
 			want:   "async.outbox.concurrency",
 		},
 		{
 			name:   "consumer concurrency too large",
-			mutate: func(c *platform.Config) { c.Async.Consumer.Concurrency = 33 },
+			mutate: func(c *appconfig.Config) { c.Async.Consumer.Concurrency = 33 },
 			want:   "async.consumer.concurrency",
 		},
 		{
 			name:   "visibility timeout too long",
-			mutate: func(c *platform.Config) { c.Async.Consumer.VisibilityTimeout = time.Hour },
+			mutate: func(c *appconfig.Config) { c.Async.Consumer.VisibilityTimeout = time.Hour },
 			want:   "async.consumer.visibility_timeout",
 		},
 		{
 			name:   "unsupported retry backoff",
-			mutate: func(c *platform.Config) { c.Async.Consumer.RetryBackoff = "linear" },
+			mutate: func(c *appconfig.Config) { c.Async.Consumer.RetryBackoff = "linear" },
 			want:   "async.consumer.retry_backoff",
 		},
 	}
@@ -110,7 +111,7 @@ func TestValidateAsyncRequiresPersistentDB(t *testing.T) {
 	}
 
 	mysql := iamBaseConfig()
-	mysql.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	mysql.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	mysql.Async.Enabled = true
 	if err := mysql.Validate(); err != nil {
 		t.Fatalf("async with mysql: %v", err)
@@ -134,7 +135,7 @@ func TestValidateAsyncProductionPublishInAPI(t *testing.T) {
 	}
 
 	localInAPI := iamBaseConfig()
-	localInAPI.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	localInAPI.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 	localInAPI.Async.Enabled = true
 	localInAPI.Async.Outbox.PublishInAPI = true
 	if err := localInAPI.Validate(); err != nil {
@@ -147,8 +148,8 @@ func TestLoadConfigAsyncEnvOverride(t *testing.T) {
 		"db:\n  driver: mysql\n  dsn: \"iam:iam@tcp(127.0.0.1:3306)/iam\"\n")
 	t.Setenv("ADMIN_FRAME_ASYNC_ENABLED", "true")
 	t.Setenv("ADMIN_FRAME_ASYNC_OUTBOX_BATCH_SIZE", "50")
-	t.Setenv("ADMIN_FRAME_ASYNC_CONSUMER_RETRY_BACKOFF", platform.AsyncBackoffFixed)
-	cfg, err := platform.LoadConfig(path)
+	t.Setenv("ADMIN_FRAME_ASYNC_CONSUMER_RETRY_BACKOFF", platformconfig.AsyncBackoffFixed)
+	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestLoadConfigAsyncEnvOverride(t *testing.T) {
 	if cfg.Async.Outbox.BatchSize != 50 {
 		t.Fatalf("async.outbox.batch_size = %d, want 50", cfg.Async.Outbox.BatchSize)
 	}
-	if cfg.Async.Consumer.RetryBackoff != platform.AsyncBackoffFixed {
+	if cfg.Async.Consumer.RetryBackoff != platformconfig.AsyncBackoffFixed {
 		t.Fatalf("async.consumer.retry_backoff = %q, want fixed", cfg.Async.Consumer.RetryBackoff)
 	}
 }

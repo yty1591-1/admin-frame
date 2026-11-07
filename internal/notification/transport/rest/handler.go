@@ -14,10 +14,10 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/authz"
-	sharedhttpx "github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // HandlerConfig 是 Handler 装配参数。
@@ -116,16 +116,16 @@ func (h *Handler) actor(r *http.Request) (app.Actor, error) {
 		ActorType:  "user",
 		Channel:    string(principal.Channel),
 		MerchantID: principal.MerchantID,
-		TraceID:    sharedhttpx.TraceIDFromContext(r.Context()),
+		TraceID:    apiresp.TraceIDFromContext(r.Context()),
 	}, nil
 }
 
 // List 处理 GET /{admin,biz}/v1/notifications。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	tenant, err := h.tenantScope(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -138,67 +138,67 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items, total, err := h.queries.ListRequests(r.Context(), filter)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	out := make([]notificationResponse, 0, len(items))
 	for _, n := range items {
 		out = append(out, toNotificationResponse(n))
 	}
-	sharedhttpx.OK(w, listResponse{Items: out, Total: total, Limit: filter.Limit, Offset: filter.Offset}, traceID)
+	apiresp.OK(w, listResponse{Items: out, Total: total, Limit: filter.Limit, Offset: filter.Offset}, traceID)
 }
 
 // Get 处理 GET /{admin,biz}/v1/notifications/{id}。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	tenant, err := h.tenantScope(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	n, err := h.queries.GetRequest(r.Context(), tenant, r.PathValue("id"))
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, toNotificationResponse(n), traceID)
+	apiresp.OK(w, toNotificationResponse(n), traceID)
 }
 
 // Deliveries 处理 GET /{admin,biz}/v1/notifications/{id}/deliveries。
 func (h *Handler) Deliveries(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	tenant, err := h.tenantScope(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items, err := h.queries.ListDeliveries(r.Context(), tenant, r.PathValue("id"))
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	out := make([]deliveryResponse, 0, len(items))
 	for _, d := range items {
 		out = append(out, toDeliveryResponse(d))
 	}
-	sharedhttpx.OK(w, listResponse{Items: out, Total: len(out)}, traceID)
+	apiresp.OK(w, listResponse{Items: out, Total: len(out)}, traceID)
 }
 
 // Send 处理 POST /admin/v1/notifications（A 端代发）。
 func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body sendRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.send == nil {
-		sharedhttpx.FromError(w, apperr.Internal("send service is not available on this channel", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("send service is not available on this channel", nil), traceID)
 		return
 	}
 	tenant := strings.TrimSpace(body.TenantID)
@@ -207,7 +207,7 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 	// 代发目标租户同样受数据范围契约约束（ENT-12）。
 	if err := enforceDataScope(r.Context(), tenant); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	requestID, err := h.send.Send(r.Context(), app.SendInput{
@@ -224,22 +224,22 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 		Actor:       actor,
 	})
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.JSON(w, http.StatusAccepted, 0, "accepted", sendResponse{RequestID: requestID}, traceID)
+	apiresp.JSON(w, http.StatusAccepted, 0, "accepted", sendResponse{RequestID: requestID}, traceID)
 }
 
 // Replay 处理 POST /admin/v1/notifications/{id}/replay（A 端 DLQ 补偿）。
 func (h *Handler) Replay(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.replay == nil {
-		sharedhttpx.FromError(w, apperr.Internal("replay service is not available on this channel", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("replay service is not available on this channel", nil), traceID)
 		return
 	}
 	newID, err := h.replay.Replay(r.Context(), app.ReplayInput{
@@ -247,47 +247,47 @@ func (h *Handler) Replay(w http.ResponseWriter, r *http.Request) {
 		Actor:     actor,
 	})
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.JSON(w, http.StatusAccepted, 0, "accepted", sendResponse{RequestID: newID}, traceID)
+	apiresp.JSON(w, http.StatusAccepted, 0, "accepted", sendResponse{RequestID: newID}, traceID)
 }
 
 // ListTemplates 处理 GET /admin/v1/notification-templates?key=...
 func (h *Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
-		sharedhttpx.FromError(w, apperr.BadRequest("key is required"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("key is required"), traceID)
 		return
 	}
 	items, err := h.templates.List(r.Context(), key)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	out := make([]templateResponse, 0, len(items))
 	for _, t := range items {
 		out = append(out, toTemplateResponse(t))
 	}
-	sharedhttpx.OK(w, listResponse{Items: out, Total: len(out)}, traceID)
+	apiresp.OK(w, listResponse{Items: out, Total: len(out)}, traceID)
 }
 
 // UpsertTemplate 处理 POST /admin/v1/notification-templates。
 func (h *Handler) UpsertTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body templateUpsertRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	saved, err := h.templates.Upsert(r.Context(), app.UpsertTemplateInput{
@@ -299,31 +299,31 @@ func (h *Handler) UpsertTemplate(w http.ResponseWriter, r *http.Request) {
 		Actor:   actor,
 	})
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.JSON(w, http.StatusCreated, 0, "ok", toTemplateResponse(saved), traceID)
+	apiresp.JSON(w, http.StatusCreated, 0, "ok", toTemplateResponse(saved), traceID)
 }
 
 // SetTemplateEnabled 处理 PUT /admin/v1/notification-templates/status。
 func (h *Handler) SetTemplateEnabled(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body templateStatusRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.templates.SetEnabled(r.Context(), body.Key, domain.Channel(body.Channel),
 		body.Locale, body.Enabled, actor); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, map[string]string{"status": "ok"}, traceID)
+	apiresp.OK(w, map[string]string{"status": "ok"}, traceID)
 }
 
 // decodeJSON 解析必需请求体：空 body 视为错误。

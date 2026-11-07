@@ -1,0 +1,91 @@
+// Package appconfig 组合加载平台段与业务域配置。
+//
+// 平台根 internal/platform/config 只负责进程级基础设施配置（HTTP、DB、日志、
+// 异步运行时等）；Identity / IAM / Audit / Tenant 的配置结构与默认值、校验
+// 规则分别由各域包自持。本包是唯一把各段拼在一起的装配点，避免平台包反向
+// 依赖业务域，也让各 cmd 显式选择需要加载的域配置。
+package appconfig
+
+import (
+	"errors"
+
+	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
+	"github.com/admin-frame/admin-frame/pkg/config"
+)
+
+// Config 是进程完整配置：平台段内联展开，域配置按 yaml 顶层段各自挂载。
+type Config struct {
+	platformconfig.Config `yaml:",inline"`
+
+	Identity identityconfig.IdentityConfig `yaml:"identity"`
+	IAM      iamconfig.IAMConfig           `yaml:"iam"`
+	Audit    auditconfig.AuditConfig       `yaml:"audit"`
+	Tenant   tenantconfig.TenantConfig     `yaml:"tenant"`
+}
+
+// ApplyDefaults 依次填充平台段与各域默认值。
+func (c *Config) ApplyDefaults() {
+	c.Config.ApplyDefaults()
+	c.Identity.ApplyDefaults()
+	c.IAM.ApplyDefaults()
+	c.Audit.ApplyDefaults()
+}
+
+// Normalize 补齐平台段派生值、归一化 IAM 模式，并在同一次 Provider 解析中
+// 回写平台与身份域密钥。
+func (c *Config) Normalize() error {
+	if err := c.Config.NormalizeCore(); err != nil {
+		return err
+	}
+	c.IAM.Normalize()
+	return c.Config.ResolveSecretsWithTargets(c.domainSecretTargets())
+}
+
+// domainSecretTargets 返回域配置的密钥回写目标。
+//
+// 逻辑名常量仍定义在平台 config 包（密钥命名属于平台约定），域包不感知
+// secret provider 的存在。
+func (c *Config) domainSecretTargets() []platformconfig.SecretTarget {
+	return []platformconfig.SecretTarget{
+		{Name: platformconfig.SecretIdentityHashKey, Apply: func(v string) { c.Identity.HashKey = v }},
+		{Name: platformconfig.SecretIdentityMFASecretKey, Apply: func(v string) { c.Identity.MFA.SecretKey = v }},
+		{Name: platformconfig.SecretIdentitySAMLSPPrivateKey, Apply: func(v string) { c.Identity.SAML.PrivateKey = v }},
+		{Name: platformconfig.SecretIdentitySAMLSPPrivateKeyNext, Apply: func(v string) { c.Identity.SAML.PrivateKeyNextPEM = v }},
+	}
+}
+
+// Validate 聚合平台段与全部域配置的错误，保持启动期一次性列出所有问题。
+func (c *Config) Validate() error {
+	errs := c.Config.ValidateErrors(c.IAM.Mode)
+	errs = append(errs, c.IAM.Validate(c.Env, c.Channel, c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled))
+	errs = append(errs, c.Identity.Validate(c.Env, c.Channel, c.Auth.EffectiveMode(c.Env), c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled))
+	errs = append(errs, c.Audit.Validate(c.Env, c.DB.Driver, c.Storage.Driver))
+	errs = append(errs, c.Tenant.Validate())
+	return errors.Join(errs...)
+}
+
+// NewLoader 构造完整的进程配置加载器。
+func NewLoader(path string) (*config.Loader[Config], error) {
+	return config.NewLoader(config.Options[Config]{
+		Files:     []string{path},
+		EnvPrefix: platformconfig.EnvPrefix,
+		Defaults:  (*Config).ApplyDefaults,
+		Normalize: (*Config).Normalize,
+		Validate:  (*Config).Validate,
+	})
+}
+
+// Load 从 YAML 文件加载完整配置，应用默认值与环境变量覆盖后校验。
+//
+// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+func Load(path string) (*Config, error) {
+	loader, err := NewLoader(path)
+	if err != nil {
+		return nil, err
+	}
+	return loader.Load()
+}

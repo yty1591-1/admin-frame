@@ -86,6 +86,11 @@ type SessionValidator interface {
 type Options struct {
 	// ConfigPath 是 yaml 路径；环境变量可覆盖其中字段（CFG-04）。
 	ConfigPath string
+	// Config 是组合加载层已构建的完整配置（平台段 + 业务域）。
+	//
+	// 非空时不再读取 ConfigPath；cmd 通过 cmd/internal/appconfig 加载后传入，
+	// 平台只持有平台段，域配置由 cmd 闭包自行传递给各域 runtime。
+	Config *Config
 	// Build 是构建身份；Service 为空时取配置中的 service。
 	Build BuildInfo
 	// NewSessionValidator 构造撤销检查器；identity.enabled=false 时返回 nil。
@@ -182,9 +187,13 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 	}
 	defer deferredCleanup()
 
-	cfg, err := LoadConfig(opts.ConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+	cfg := opts.Config
+	if cfg == nil {
+		loaded, loadErr := LoadConfig(opts.ConfigPath)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load config: %w", loadErr)
+		}
+		cfg = loaded
 	}
 	infra.cfg = cfg
 	logger := NewLogger(cfg)

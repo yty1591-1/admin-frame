@@ -5,8 +5,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // RoleConstraintDTO 是角色 RBAC2 约束配置响应。
@@ -40,47 +40,47 @@ func toRoleConstraintDTO(view *app.RoleConstraintView) *RoleConstraintDTO {
 
 // GetRoleConstraints GET /iam/roles/{id}/constraints
 func (h *Handler) GetRoleConstraints(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.roleConstraints == nil {
-		httpx.FromError(w, apperr.Internal("role constraint service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("role constraint service is not configured", nil), traceID)
 		return
 	}
 	view, err := h.roleConstraints.Get(r.Context(), r.PathValue("id"), h.channel, h.merchantScope(principal))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleConstraintDTO(view), traceID)
+	apiresp.OK(w, toRoleConstraintDTO(view), traceID)
 }
 
 // UpdateRoleConstraints PUT /iam/roles/{id}/constraints
 func (h *Handler) UpdateRoleConstraints(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleConstraintUpdate) {
 		return
 	}
 	if h.roleConstraints == nil {
-		httpx.FromError(w, apperr.Internal("role constraint service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("role constraint service is not configured", nil), traceID)
 		return
 	}
 	var req UpdateRoleConstraintRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	view, err := h.roleConstraints.Update(r.Context(), app.UpdateRoleConstraintCommand{
@@ -94,8 +94,8 @@ func (h *Handler) UpdateRoleConstraints(w http.ResponseWriter, r *http.Request) 
 		Reason:          req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleConstraintDTO(view), traceID)
+	apiresp.OK(w, toRoleConstraintDTO(view), traceID)
 }

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/admin-frame/admin-frame/pkg/circuitbreaker"
 	pkgerrors "github.com/admin-frame/admin-frame/pkg/errors"
 	"github.com/admin-frame/admin-frame/pkg/retry"
 )
@@ -19,6 +20,7 @@ type retryTransport struct {
 	policy        retry.Policy
 	nonIdempotent bool
 	retryStatuses []int
+	observer      AttemptObserver
 }
 
 // RoundTrip 在可重试方法与错误/状态码下按策略重放请求。
@@ -30,7 +32,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, ErrNilRequest
 	}
 	if !t.allowsRetry(req.Method) {
-		return t.next.RoundTrip(req)
+		resp, err := t.next.RoundTrip(req)
+		t.observe(1, resp, err)
+		return resp, err
 	}
 	if err := ensureRewindable(req); err != nil {
 		return nil, err
@@ -39,9 +43,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	policy := t.policy
 	policy.RetryIf = t.isRetryable
 	var lastResp *http.Response
+	attempt := 0
 
 	err := retry.Do(req.Context(), policy, func(ctx context.Context) error {
-		attempt, err := cloneRequest(ctx, req)
+		attempt++
+		clone, err := cloneRequest(ctx, req)
 		if err != nil {
 			return retry.Permanent(err)
 		}
@@ -50,10 +56,15 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				return err
 			}
 		}
-		resp, err := t.next.RoundTrip(attempt)
+		resp, err := t.next.RoundTrip(clone)
+		t.observe(attempt, resp, err)
 		if err != nil {
 			closeResponse(lastResp)
 			lastResp = nil
+			// 熔断打开属于快速失败，不得再触发重试。
+			if stderrors.Is(err, circuitbreaker.ErrOpen) {
+				return retry.Permanent(err)
+			}
 			return mapNetError(err)
 		}
 		if statusRetryable(resp.StatusCode, t.retryStatuses) {
@@ -78,6 +89,17 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	closeResponse(lastResp)
 	return nil, err
+}
+
+func (t *retryTransport) observe(attempt int, resp *http.Response, err error) {
+	if t.observer == nil {
+		return
+	}
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	t.observer.AttemptObserved(attempt, status, err)
 }
 
 func (t *retryTransport) allowsRetry(method string) bool {

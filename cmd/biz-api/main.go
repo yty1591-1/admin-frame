@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 
+	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
@@ -40,6 +43,10 @@ func main() {
 // IAM 与身份域运行时各自在装配期构造一次：身份域的撤销检查器必须在 AuthMW
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
+	appCfg, err := appconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	var (
 		iamOnce     sync.Once
 		iamRT       *iamruntime.Runtime
@@ -49,16 +56,16 @@ func run(configPath string) error {
 		identityErr error
 	)
 	buildIAM := func(deps *platform.Deps) (*iamruntime.Runtime, error) {
-		iamOnce.Do(func() { iamRT, iamErr = newIAMRuntime(deps) })
+		iamOnce.Do(func() { iamRT, iamErr = newIAMRuntime(deps, appCfg.IAM) })
 		return iamRT, iamErr
 	}
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
-		identityOn.Do(func() { identityRT, identityErr = identityruntime.New(deps) })
+		identityOn.Do(func() { identityRT, identityErr = identityruntime.New(deps, appCfg.Identity) })
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{
-		ConfigPath: configPath,
-		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Config: &appCfg.Config,
+		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09），
 		// 并执行 API 配额（ENT-14）。守卫顺序由 tenantruntime 显式声明：
 		// 租户状态 → 配额，均包在 AuthMW 内层。
@@ -95,8 +102,8 @@ func run(configPath string) error {
 }
 
 // newIAMRuntime 装配 B 端 IAM，并注入 B 端静态回滚表。
-func newIAMRuntime(deps *platform.Deps) (*iamruntime.Runtime, error) {
-	return iamruntime.New(deps, iamruntime.Options{StaticChecker: staticChecker()})
+func newIAMRuntime(deps *platform.Deps, iamCfg iamconfig.IAMConfig) (*iamruntime.Runtime, error) {
+	return iamruntime.New(deps, iamCfg, iamruntime.Options{StaticChecker: staticChecker()})
 }
 
 // staticChecker 是 mode=off 的回滚表：当前不授予任何业务权限。

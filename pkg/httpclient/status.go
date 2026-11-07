@@ -14,6 +14,11 @@ var defaultRetryStatuses = []int{
 	http.StatusGatewayTimeout,     // 504
 }
 
+// DefaultRetryStatusCodes 返回默认可重试状态码副本。
+func DefaultRetryStatusCodes() []int {
+	return append([]int(nil), defaultRetryStatuses...)
+}
+
 // StatusError 表示耗尽重试后仍得到可重试类状态，或调用方主动检查非 2xx。
 type StatusError struct {
 	StatusCode int

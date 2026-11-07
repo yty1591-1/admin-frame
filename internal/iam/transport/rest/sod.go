@@ -8,8 +8,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -121,19 +121,19 @@ func toSodViolationDTOs(violations []domain.SodViolation) []*SodViolationDTO {
 
 // ListSodGroups GET /iam/sod-groups
 func (h *Handler) ListSodGroups(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -147,7 +147,7 @@ func (h *Handler) ListSodGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.channel == domain.ChannelBiz {
 		if principal.MerchantID == "" {
-			httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+			apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 			return
 		}
 		filter.Channel = domain.ChannelBiz
@@ -155,31 +155,31 @@ func (h *Handler) ListSodGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, err := h.sodGroups.List(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	total, err := h.sodGroups.Count(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]*SodGroupDTO, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, toSodGroupDTO(group))
 	}
-	httpx.OK(w, SodGroupListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, SodGroupListResponse{Items: items, Total: total}, traceID)
 }
 
 // CreateSodGroup POST /iam/sod-groups
 func (h *Handler) CreateSodGroup(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionSodGroupCreate) {
@@ -187,19 +187,19 @@ func (h *Handler) CreateSodGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreateSodGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel := h.effectiveChannel(req.Channel)
 	if channel == "" {
-		httpx.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
 		return
 	}
 	merchantID := principal.MerchantID
 	if channel == domain.ChannelAdmin {
 		merchantID = ""
 	} else if merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	group, err := h.sodGroups.Create(r.Context(), app.CreateSodGroupCommand{
@@ -214,47 +214,47 @@ func (h *Handler) CreateSodGroup(w http.ResponseWriter, r *http.Request) {
 		Reason:         req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toSodGroupDTO(group), traceID)
+	apiresp.OK(w, toSodGroupDTO(group), traceID)
 }
 
 // GetSodGroup GET /iam/sod-groups/{id}
 func (h *Handler) GetSodGroup(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	channel, merchantID := h.channel, h.merchantScope(principal)
 	if h.channel == domain.ChannelBiz && merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	group, err := h.sodGroups.Get(r.Context(), r.PathValue("id"), channel, merchantID)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toSodGroupDTO(group), traceID)
+	apiresp.OK(w, toSodGroupDTO(group), traceID)
 }
 
 // UpdateSodGroup PATCH /iam/sod-groups/{id}
 func (h *Handler) UpdateSodGroup(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionSodGroupUpdate) {
@@ -262,17 +262,17 @@ func (h *Handler) UpdateSodGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	var req UpdateSodGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel, merchantID := h.channel, h.merchantScope(principal)
 	if h.channel == domain.ChannelBiz && merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	group, err := h.sodGroups.Update(r.Context(), app.UpdateSodGroupCommand{
@@ -289,22 +289,22 @@ func (h *Handler) UpdateSodGroup(w http.ResponseWriter, r *http.Request) {
 		Reason:         req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toSodGroupDTO(group), traceID)
+	apiresp.OK(w, toSodGroupDTO(group), traceID)
 }
 
 // DeleteSodGroup DELETE /iam/sod-groups/{id}
 func (h *Handler) DeleteSodGroup(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionSodGroupDelete) {
@@ -312,17 +312,17 @@ func (h *Handler) DeleteSodGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	var req DeleteSodGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel, merchantID := h.channel, h.merchantScope(principal)
 	if h.channel == domain.ChannelBiz && merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	if err := h.sodGroups.Delete(r.Context(), app.DeleteSodGroupCommand{
@@ -333,74 +333,74 @@ func (h *Handler) DeleteSodGroup(w http.ResponseWriter, r *http.Request) {
 		Actor:      principal.SubjectID,
 		Reason:     req.Reason,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, map[string]string{"status": "deleted"}, traceID)
+	apiresp.OK(w, map[string]string{"status": "deleted"}, traceID)
 }
 
 // ListSodGroupViolations GET /iam/sod-groups/{id}/violations
 func (h *Handler) ListSodGroupViolations(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	limit := 0
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil {
-			httpx.FromError(w, apperr.BadRequest("limit must be an integer"), traceID)
+			apiresp.FromError(w, apperr.BadRequest("limit must be an integer"), traceID)
 			return
 		}
 		limit = parsed
 	}
 	channel, merchantID := h.channel, h.merchantScope(principal)
 	if h.channel == domain.ChannelBiz && merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	violations, err := h.sodGroups.ListViolations(r.Context(), r.PathValue("id"), channel, merchantID, limit)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := toSodViolationDTOs(violations)
-	httpx.OK(w, SodViolationListResponse{Items: items, Total: len(items)}, traceID)
+	apiresp.OK(w, SodViolationListResponse{Items: items, Total: len(items)}, traceID)
 }
 
 // PreflightSodGroup POST /iam/sod-groups/preflight
 func (h *Handler) PreflightSodGroup(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.sodGroups == nil {
-		httpx.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam sod group service is not configured", nil), traceID)
 		return
 	}
 	var req PreflightSodGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel, merchantID := h.channel, h.merchantScope(principal)
 	if h.channel == domain.ChannelBiz && merchantID == "" {
-		httpx.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
+		apiresp.FromError(w, apperr.Forbidden("merchant id is required"), traceID)
 		return
 	}
 	violations, err := h.sodGroups.Preflight(r.Context(), channel, merchantID, req.RoleIDs, req.MaxActiveRoles, 0)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := toSodViolationDTOs(violations)
-	httpx.OK(w, SodViolationListResponse{Items: items, Total: len(items)}, traceID)
+	apiresp.OK(w, SodViolationListResponse{Items: items, Total: len(items)}, traceID)
 }

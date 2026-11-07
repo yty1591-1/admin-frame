@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -44,6 +45,9 @@ type Config struct {
 	ClockSkew    time.Duration
 	AssertionTTL time.Duration
 	SP           SPConfig
+	// HTTPClient 可选：由装配层注入经依赖注册表构造的客户端；
+	// nil 时按 Timeout 自建。
+	HTTPClient *http.Client
 }
 
 // Provider 实现 app.SAMLProvider；持有 active / next 两套 SP 以支持密钥轮换。
@@ -88,9 +92,13 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	client, err := httpclient.New(httpclient.Config{Timeout: timeout})
-	if err != nil {
-		return nil, fmt.Errorf("saml: metadata http client: %w", err)
+	client := cfg.HTTPClient
+	if client == nil {
+		built, err := httpclient.New(httpclient.Config{Timeout: timeout})
+		if err != nil {
+			return nil, fmt.Errorf("saml: metadata http client: %w", err)
+		}
+		client = built.HTTP()
 	}
 	metadata, err := NewMetadataSource(ctx, MetadataConfig{
 		URL:        cfg.MetadataURL,
@@ -99,7 +107,7 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		Timeout:    timeout,
 		TTL:        cfg.MetadataTTL,
 		MinRefresh: cfg.MinRefresh,
-	}, client.HTTP())
+	}, client)
 	if err != nil {
 		return nil, err
 	}

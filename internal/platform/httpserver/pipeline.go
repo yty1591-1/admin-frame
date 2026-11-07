@@ -9,8 +9,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/platform/config"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 	"github.com/admin-frame/admin-frame/pkg/idempotency"
@@ -109,9 +109,9 @@ func NewPipeline(cfg PipelineConfig, deps PipelineDeps) (func(http.Handler) http
 func bodyLimit(limit int64) middleware.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			traceID := httpx.TraceIDFromContext(r.Context())
+			traceID := apiresp.TraceIDFromContext(r.Context())
 			if r.ContentLength > limit {
-				httpx.FromError(w, apperr.BadRequest("request body too large"), traceID)
+				apiresp.FromError(w, apperr.BadRequest("request body too large"), traceID)
 				return
 			}
 			if r.Body != nil {
@@ -170,7 +170,7 @@ func newRateLimit(
 			if result.RetryAfter > 0 {
 				w.Header().Set("Retry-After", middleware.RetryAfterSeconds(result.RetryAfter))
 			}
-			httpx.FromError(w, apperr.TooManyRequests("too many requests"), httpx.TraceIDFromContext(r.Context()))
+			apiresp.FromError(w, apperr.TooManyRequests("too many requests"), apiresp.TraceIDFromContext(r.Context()))
 		},
 	}), nil
 }
@@ -201,7 +201,7 @@ func newIdempotency(cfg config.IdempotencyConfig, redisClient *redis.Client) (mi
 		MaxBodyBytes:   cfg.MaxBodyBytes,
 		DegradeOnError: cfg.DegradeOnError,
 		OnError: func(w http.ResponseWriter, r *http.Request, err error) {
-			httpx.FromError(w, err, httpx.TraceIDFromContext(r.Context()))
+			apiresp.FromError(w, err, apiresp.TraceIDFromContext(r.Context()))
 		},
 	}), nil
 }

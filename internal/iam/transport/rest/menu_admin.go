@@ -8,8 +8,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -100,14 +100,14 @@ type MenuStatusRequest struct {
 
 // ListMenus GET /admin/v1/iam/menus
 func (h *Handler) ListMenus(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -120,46 +120,46 @@ func (h *Handler) ListMenus(w http.ResponseWriter, r *http.Request) {
 		Offset:     page.Offset(),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]*MenuAdminDTO, 0, len(menus))
 	for _, menu := range menus {
 		items = append(items, toMenuAdminDTO(menu))
 	}
-	httpx.OK(w, MenuAdminListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, MenuAdminListResponse{Items: items, Total: total}, traceID)
 }
 
 // GetMenu GET /admin/v1/iam/menus/{id}
 func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	menu, err := h.menuAdmin.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminDTO(menu), traceID)
+	apiresp.OK(w, toMenuAdminDTO(menu), traceID)
 }
 
 // CreateMenu POST /admin/v1/iam/menus
 func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req CreateMenuRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	menu, err := h.menuAdmin.CreateMenu(r.Context(), app.CreateMenuCommand{
@@ -182,32 +182,32 @@ func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
 		Actor:          principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminDTO(menu), traceID)
+	apiresp.OK(w, toMenuAdminDTO(menu), traceID)
 }
 
 // UpdateMenu PATCH /admin/v1/iam/menus/{id}
 func (h *Handler) UpdateMenu(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req UpdateMenuRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	fields := domain.MenuUpdateParams{
@@ -240,36 +240,36 @@ func (h *Handler) UpdateMenu(w http.ResponseWriter, r *http.Request) {
 		Reason:  req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminDTO(menu), traceID)
+	apiresp.OK(w, toMenuAdminDTO(menu), traceID)
 }
 
 // DisableMenu DELETE /admin/v1/iam/menus/{id}
 //
 // 语义是停用而不是物理删除：保留审计与父子引用，恢复走 enable。
 func (h *Handler) DisableMenu(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req MenuStatusRequest
 	if r.ContentLength > 0 {
 		if err := decodeJSON(r, &req); err != nil {
-			httpx.FromError(w, err, traceID)
+			apiresp.FromError(w, err, traceID)
 			return
 		}
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	menu, err := h.menuAdmin.DisableMenu(r.Context(), app.DisableMenuCommand{
@@ -279,32 +279,32 @@ func (h *Handler) DisableMenu(w http.ResponseWriter, r *http.Request) {
 		Reason:  req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminDTO(menu), traceID)
+	apiresp.OK(w, toMenuAdminDTO(menu), traceID)
 }
 
 // EnableMenu POST /admin/v1/iam/menus/{id}/enable
 func (h *Handler) EnableMenu(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req MenuStatusRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	menu, err := h.menuAdmin.EnableMenu(r.Context(), app.EnableMenuCommand{
@@ -314,42 +314,42 @@ func (h *Handler) EnableMenu(w http.ResponseWriter, r *http.Request) {
 		Reason:  req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminDTO(menu), traceID)
+	apiresp.OK(w, toMenuAdminDTO(menu), traceID)
 }
 
 // MenuTree GET /admin/v1/iam/menus/tree
 func (h *Handler) MenuTree(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	query := r.URL.Query()
 	includeDisabled := strings.EqualFold(strings.TrimSpace(query.Get("include_disabled")), "true")
 	nodes, err := h.menuAdmin.Tree(r.Context(), menuChannel(query.Get("channel")), includeDisabled)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMenuAdminTreeDTOs(nodes), traceID)
+	apiresp.OK(w, toMenuAdminTreeDTOs(nodes), traceID)
 }
 
 // MenuComponents GET /admin/v1/iam/menus/components
 func (h *Handler) MenuComponents(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.menuAdmin == nil {
-		httpx.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam menu admin is not configured", nil), traceID)
 		return
 	}
 	components, err := h.menuAdmin.Components(menuChannel(r.URL.Query().Get("channel")))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, components, traceID)
+	apiresp.OK(w, components, traceID)
 }
 
 // menuChannel 把查询 / 请求体中的端别归一为 admin；缺省也按 admin 处理。

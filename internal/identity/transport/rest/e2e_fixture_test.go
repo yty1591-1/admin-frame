@@ -22,9 +22,9 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	securecrypto "github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
@@ -395,7 +395,7 @@ func requireStatus(t *testing.T, recorder *httptest.ResponseRecorder, want int) 
 // envelopeCode 解析统一错误信封中的业务码。
 func envelopeCode(t *testing.T, recorder *httptest.ResponseRecorder) int {
 	t.Helper()
-	var envelope httpx.Envelope
+	var envelope apiresp.Envelope
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode envelope from %q: %v", recorder.Body.String(), err)
 	}

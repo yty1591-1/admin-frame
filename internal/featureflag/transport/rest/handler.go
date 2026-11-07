@@ -13,9 +13,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/featureflag/app"
 	"github.com/admin-frame/admin-frame/internal/featureflag/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	sharedhttpx "github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // Handler 是 flag 管理 Handler。
@@ -101,13 +101,13 @@ func actor(r *http.Request) (app.Actor, error) {
 		ActorType:  "user",
 		Channel:    string(principal.Channel),
 		MerchantID: principal.MerchantID,
-		TraceID:    sharedhttpx.TraceIDFromContext(r.Context()),
+		TraceID:    apiresp.TraceIDFromContext(r.Context()),
 	}, nil
 }
 
 // List 处理 GET /admin/v1/feature-flags?state=&limit=&offset=。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	query := r.URL.Query()
 	limit := 20
 	if v, err := strconv.Atoi(query.Get("limit")); err == nil && v > 0 {
@@ -119,25 +119,25 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	flags, total, err := h.flags.List(r.Context(), strings.TrimSpace(query.Get("state")), limit, offset)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]flagResponse, 0, len(flags))
 	for _, f := range flags {
 		items = append(items, toView(f))
 	}
-	sharedhttpx.OK(w, listResponse{Items: items, Total: total, Limit: limit, Offset: offset}, traceID)
+	apiresp.OK(w, listResponse{Items: items, Total: total, Limit: limit, Offset: offset}, traceID)
 }
 
 // Get 处理 GET /admin/v1/feature-flags/{key}。
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	flag, err := h.flags.Get(r.Context(), r.PathValue("key"))
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, toView(flag), traceID)
+	apiresp.OK(w, toView(flag), traceID)
 }
 
 type createRequest struct {
@@ -151,20 +151,20 @@ type createRequest struct {
 
 // Create 处理 POST /admin/v1/feature-flags。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body createRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	rules, err := rulesFromView(body.Rules)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var expiresAt time.Time
@@ -177,10 +177,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt, Actor: actor,
 	})
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.JSON(w, http.StatusCreated, 0, "created", toView(flag), traceID)
+	apiresp.JSON(w, http.StatusCreated, 0, "created", toView(flag), traceID)
 }
 
 type updateRequest struct {
@@ -193,15 +193,15 @@ type updateRequest struct {
 
 // Update 处理 PATCH /admin/v1/feature-flags/{key}。
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body updateRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	in := app.UpdateInput{Key: r.PathValue("key"), ExpectedVersion: body.ExpectedVersion, Actor: actor}
@@ -211,7 +211,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Rules != nil {
 		rules, rerr := rulesFromView(*body.Rules)
 		if rerr != nil {
-			sharedhttpx.FromError(w, rerr, traceID)
+			apiresp.FromError(w, rerr, traceID)
 			return
 		}
 		in.Rules = &rules
@@ -224,10 +224,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	flag, err := h.flags.Update(r.Context(), in)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, toView(flag), traceID)
+	apiresp.OK(w, toView(flag), traceID)
 }
 
 type statusRequest struct {
@@ -237,43 +237,43 @@ type statusRequest struct {
 
 // SetStatus 处理 POST /admin/v1/feature-flags/{key}/status（kill switch 入口）。
 func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body statusRequest
 	if err := decodeJSON(r, &body); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	target := domain.FlagStatus(strings.TrimSpace(body.Target))
 	if target != domain.StatusEnabled && target != domain.StatusDisabled {
-		sharedhttpx.FromError(w, apperr.BadRequest("target must be enabled or disabled"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("target must be enabled or disabled"), traceID)
 		return
 	}
 	flag, err := h.flags.SetStatus(r.Context(), r.PathValue("key"), target, body.ExpectedVersion, actor)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, toView(flag), traceID)
+	apiresp.OK(w, toView(flag), traceID)
 }
 
 // Delete 处理 DELETE /admin/v1/feature-flags/{key}。
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	traceID := sharedhttpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actor(r)
 	if err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.flags.Delete(r.Context(), r.PathValue("key"), actor); err != nil {
-		sharedhttpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	sharedhttpx.OK(w, map[string]string{"status": "deleted"}, traceID)
+	apiresp.OK(w, map[string]string{"status": "deleted"}, traceID)
 }
 
 // rulesFromView 视图 → 领域规则。

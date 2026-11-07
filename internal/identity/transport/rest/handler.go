@@ -19,9 +19,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
@@ -74,10 +74,10 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 // A/B 端密码登录。账号不存在、密码错误、停用与锁定统一返回 40100；A 端可能返回
 // MFA 挑战或强制改密中间态，这些中间态均不包含业务令牌。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var req loginRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	result, err := h.auth.Login(r.Context(), app.LoginInput{
@@ -90,7 +90,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		TraceID:    traceID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	writeLoginResult(w, traceID, result)
@@ -100,16 +100,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func writeLoginResult(w http.ResponseWriter, traceID string, result app.LoginResult) {
 	switch {
 	case result.PasswordChangeRequired:
-		httpx.OK(w, passwordChangeRequiredResponse{
+		apiresp.OK(w, passwordChangeRequiredResponse{
 			PasswordChangeRequired: true,
 			PasswordChangeTicket:   result.PasswordChangeTicket,
 		}, traceID)
 	case result.MFABindingRequired:
-		httpx.OK(w, mfaBindingResponse{MFABindingRequired: true, MFASetupTicket: result.MFASetupTicket}, traceID)
+		apiresp.OK(w, mfaBindingResponse{MFABindingRequired: true, MFASetupTicket: result.MFASetupTicket}, traceID)
 	case result.MFARequired:
-		httpx.OK(w, mfaChallengeResponse{MFARequired: true, MFATicket: result.MFATicket}, traceID)
+		apiresp.OK(w, mfaChallengeResponse{MFARequired: true, MFATicket: result.MFATicket}, traceID)
 	default:
-		httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
+		apiresp.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 	}
 }
 
@@ -117,20 +117,20 @@ func writeLoginResult(w http.ResponseWriter, traceID string, result app.LoginRes
 //
 // 仅需认证，不额外要求权限点；角色与权限由 IAM 的 /iam/me/permissions 提供。
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	view, err := h.auth.Me(r.Context(), actor)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// HasPassword / PhoneBound / PasswordUpdatedAt / MustChangePassword 供安全设置页
 	// 展示真实状态，避免前端出现虚构的绑定信息。
-	httpx.OK(w, meResponseFrom(view), traceID)
+	apiresp.OK(w, meResponseFrom(view), traceID)
 }
 
 // UpdateMe PATCH /admin/v1/me
@@ -138,20 +138,20 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 // 只允许改展示昵称：字段缺失按 400 处理，传空串表示清除（前端回退登录主体）。
 // 不要求额外权限点，与 GET /me 同级；成功直接返回更新后的完整资料。
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req updateMeRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// 用指针区分「未传字段」与「显式清空」：前者是客户端缺陷，后者是合法操作。
 	if req.DisplayName == nil {
-		httpx.FromError(w, apperr.BadRequest("display_name is required"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("display_name is required"), traceID)
 		return
 	}
 	actor.TraceID = traceID
@@ -160,10 +160,10 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		DisplayName:  *req.DisplayName,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, meResponseFrom(view), traceID)
+	apiresp.OK(w, meResponseFrom(view), traceID)
 }
 
 // SetupMFA POST /admin/v1/auth/mfa/setup
@@ -171,10 +171,10 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 // 两种入口：Bearer（已登录绑定）或请求体中的 mfa_setup_ticket（登录前强制绑定）。
 // 返回 TOTP 密钥与恢复码，仅本次响应可见；已绑定时返回 40900。
 func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var req mfaSetupRequest
 	if err := DecodeOptionalJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var actor app.SessionActor
@@ -182,7 +182,7 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 		var actorErr error
 		actor, actorErr = actorFrom(r)
 		if actorErr != nil {
-			httpx.FromError(w, actorErr, traceID)
+			apiresp.FromError(w, actorErr, traceID)
 			return
 		}
 	}
@@ -193,10 +193,10 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 		TraceID:     traceID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, mfaSetupResponse{
+	apiresp.OK(w, mfaSetupResponse{
 		Secret:        result.Secret,
 		OTPAuthURI:    result.OTPAuthURI,
 		RecoveryCodes: result.RecoveryCodes,
@@ -208,10 +208,10 @@ func (h *Handler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 // 三种模式：mfa_ticket 完成两步登录；mfa_setup_ticket 完成强制绑定并签发令牌；
 // 两者都不带时凭 Authorization 完成已登录账号的绑定确认（204）。
 func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var req mfaVerifyRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var actor app.SessionActor
@@ -219,7 +219,7 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		var actorErr error
 		actor, actorErr = actorFrom(r)
 		if actorErr != nil {
-			httpx.FromError(w, actorErr, traceID)
+			apiresp.FromError(w, actorErr, traceID)
 			return
 		}
 	}
@@ -234,33 +234,33 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		TraceID:     traceID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if result.BindingConfirmed {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	httpx.OK(w, tokenResponseFrom(result.TokenPair), traceID)
+	apiresp.OK(w, tokenResponseFrom(result.TokenPair), traceID)
 }
 
 // DisableMFA POST /admin/v1/auth/mfa/disable
 //
 // 校验动态码或恢复码后解绑，并撤销该账号全部会话。
 func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req mfaDisableRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.auth.DisableMFA(r.Context(), actor, req.Code); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -271,10 +271,10 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 // 两种入口：Bearer 自助改密（校验旧密码，204）；或凭 password_change_ticket
 // 完成管理员重置后的强制改密（直接返回 TokenPair 或 MFA 中间态）。
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var req changePasswordRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if strings.TrimSpace(req.PasswordChangeTicket) != "" {
@@ -287,7 +287,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			TraceID:     traceID,
 		})
 		if err != nil {
-			httpx.FromError(w, err, traceID)
+			apiresp.FromError(w, err, traceID)
 			return
 		}
 		writeLoginResult(w, traceID, result)
@@ -295,7 +295,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.accounts.ChangePassword(r.Context(), app.ChangePasswordInput{
@@ -303,7 +303,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -355,15 +355,15 @@ func (h *Handler) accountOperation(
 	r *http.Request,
 	apply func(context.Context, app.AccountOperationInput) error,
 ) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req accountActionRequest
 	if err := DecodeOptionalJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := apply(r.Context(), app.AccountOperationInput{
@@ -372,7 +372,7 @@ func (h *Handler) accountOperation(
 		Reason:          req.Reason,
 		MFACode:         req.MFACode,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -383,15 +383,15 @@ func (h *Handler) accountOperation(
 // 需要 identity:account:read。分页列出本端账号（created_at 倒序），支持状态与
 // 主体关键词筛选；软删账号同样返回并带 deleted_at。
 func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -404,14 +404,14 @@ func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 		Offset:       page.Offset(),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	out := make([]accountDTO, 0, len(items))
 	for _, item := range items {
 		out = append(out, accountDTOFrom(item))
 	}
-	httpx.OK(w, accountListResponse{Items: out, Total: total}, traceID)
+	apiresp.OK(w, accountListResponse{Items: out, Total: total}, traceID)
 }
 
 // GetAccount GET /admin/v1/auth/accounts/{id}
@@ -419,18 +419,18 @@ func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 // 需要 identity:account:read。返回账号状态、锁定到期、凭据与 MFA 状态；
 // 软删账号同样可查，便于恢复。
 func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	detail, err := h.accounts.Get(r.Context(), actor, r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, accountDetailDTO{
+	apiresp.OK(w, accountDetailDTO{
 		accountDTO:         accountDTOFrom(detail.AccountSummary),
 		MFAEnabled:         detail.MFAEnabled,
 		MustChangePassword: detail.MustChangePassword,
@@ -444,15 +444,15 @@ func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
 // 需要 identity:account:write。按 duration_minutes 主动锁定（默认锁定策略），
 // 递增 token_version 并撤销全部会话；已锁定账号幂等返回 204。
 func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req accountLockRequest
 	if err := DecodeOptionalJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.accounts.Lock(r.Context(), app.LockAccountInput{
@@ -464,7 +464,7 @@ func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
 		},
 		Duration: time.Duration(req.DurationMinutes) * time.Minute,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -474,15 +474,15 @@ func (h *Handler) LockAccount(w http.ResponseWriter, r *http.Request) {
 //
 // 返回一次性临时口令；响应不得缓存（no-store 由后续安全头统一补齐）。
 func (h *Handler) ResetAccountPassword(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req accountActionRequest
 	if err := DecodeOptionalJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	temporary, err := h.accounts.ResetPassword(r.Context(), app.AccountOperationInput{
@@ -492,10 +492,10 @@ func (h *Handler) ResetAccountPassword(w http.ResponseWriter, r *http.Request) {
 		MFACode:         req.MFACode,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, resetPasswordResponse{TemporaryPassword: temporary}, traceID)
+	apiresp.OK(w, resetPasswordResponse{TemporaryPassword: temporary}, traceID)
 }
 
 // DeleteAccount DELETE /admin/v1/auth/accounts/{id}
@@ -523,23 +523,23 @@ func (h *Handler) RestoreAccount(w http.ResponseWriter, r *http.Request) {
 // 需要 identity:account:read。按设备（family）分页列出目标账号会话，管理员视角 current 恒为 false；
 // 只返回设备画像，不返回 IP / UA 原文或摘要。
 func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	cursor, limit, err := sessionListQuery(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := h.accounts.ListTargetSessions(r.Context(), actor, r.PathValue("id"), cursor, limit)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, sessionListResponseFrom(page), traceID)
+	apiresp.OK(w, sessionListResponseFrom(page), traceID)
 }
 
 // RevokeAccountSession DELETE /admin/v1/auth/accounts/{id}/sessions/{sid}
@@ -548,15 +548,15 @@ func (h *Handler) ListAccountSessions(w http.ResponseWriter, r *http.Request) {
 // 使该设备已签发的 Access Token 在 ≤60s 内失效。他人会话与不存在统一 404。
 // 请求体可选，携带 mfa_code 用于特权操作二次认证。
 func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req accountActionRequest
 	if err := DecodeOptionalJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.accounts.RevokeTargetSession(r.Context(), app.AccountOperationInput{
@@ -565,7 +565,7 @@ func (h *Handler) RevokeAccountSession(w http.ResponseWriter, r *http.Request) {
 		Reason:          req.Reason,
 		MFACode:         req.MFACode,
 	}, r.PathValue("sid")); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -586,15 +586,15 @@ func (h *Handler) RevokeAccountSessions(w http.ResponseWriter, r *http.Request) 
 // 凭一次性刷新令牌轮换并签发新令牌；已轮换令牌再次出现视为重放，
 // 撤销整条会话链并返回 40100。
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	var req refreshRequest
 	if err := DecodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if retryAfter, err := h.checkEndpointLimit(r, "refresh", req.RefreshToken); err != nil {
 		setRetryAfter(w, retryAfter)
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	pair, err := h.auth.Refresh(r.Context(), app.RefreshInput{
@@ -603,29 +603,29 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		Device:       h.clientDevice(r),
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, tokenResponseFrom(pair), traceID)
+	apiresp.OK(w, tokenResponseFrom(pair), traceID)
 }
 
 // Logout POST /{channel}/v1/auth/logout
 //
 // 撤销当前会话并把当前 Access Token 的 jti 加入黑名单；幂等，重复登出返回 204。
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if retryAfter, err := h.checkEndpointLimit(r, "logout", actor.AccountID); err != nil {
 		setRetryAfter(w, retryAfter)
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.auth.Logout(r.Context(), actor); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -635,14 +635,14 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 //
 // 递增 token_version 并撤销账号全部会话；旧 Access Token 在 ≤60s 内失效。
 func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.auth.LogoutAll(r.Context(), actor); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -652,15 +652,15 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 //
 // 按设备（family）分页列出本账号会话；只返回状态、时间与设备画像（不含 IP / UA 原文）。
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	cursor, limit, err := sessionListQuery(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := h.auth.ListSessions(r.Context(), app.SessionListInput{
@@ -669,10 +669,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		Limit:        limit,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, sessionListResponseFrom(page), traceID)
+	apiresp.OK(w, sessionListResponseFrom(page), traceID)
 }
 
 // sessionListQuery 解析设备会话分页参数。
@@ -718,14 +718,14 @@ func sessionListResponseFrom(page app.SessionPage) sessionListResponse {
 // 撤销本账号指定会话；他人会话与不存在统一返回 404，避免横向枚举。
 // 被撤销会话的 Access Token 在 ≤60s 内失效；撤销当前会话时同时拉黑当前 jti。
 func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.auth.RevokeSession(r.Context(), actor, r.PathValue("id")); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1070,7 +1070,7 @@ func actorFrom(r *http.Request) (app.SessionActor, error) {
 		TokenID:        p.TokenID,
 		TokenExpiresAt: p.TokenExpiresAt,
 		MerchantID:     p.MerchantID,
-		TraceID:        httpx.TraceIDFromContext(r.Context()),
+		TraceID:        apiresp.TraceIDFromContext(r.Context()),
 	}, nil
 }
 

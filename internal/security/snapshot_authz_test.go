@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/security"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/internal/shared/authz"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
 
@@ -56,9 +56,9 @@ func serveWith(t *testing.T, principal auth.Principal, mw func(http.Handler) htt
 }
 
 // envelopeOf 解析错误信封。
-func envelopeOf(t *testing.T, rec *httptest.ResponseRecorder) httpx.Envelope {
+func envelopeOf(t *testing.T, rec *httptest.ResponseRecorder) apiresp.Envelope {
 	t.Helper()
-	var env httpx.Envelope
+	var env apiresp.Envelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode envelope %q: %v", rec.Body.String(), err)
 	}

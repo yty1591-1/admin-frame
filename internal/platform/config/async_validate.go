@@ -7,8 +7,12 @@ import (
 	"time"
 )
 
+// iamModeEnforceValue 是 iam.mode=enforce 的取值；平台段不依赖 IAM 域包，
+// 组合加载层把 iam.mode 显式传入，跨段规则仍能生效。
+const iamModeEnforceValue = "enforce"
+
 // validateAsync 校验异步运行时配置；未启用时只校验显式越界值。
-func (c *Config) validateAsync() []error {
+func (c *Config) validateAsync(iamMode string) []error {
 	var errs []error
 	switch c.Async.Driver {
 	case "", AsyncDriverDB:
@@ -55,7 +59,7 @@ func (c *Config) validateAsync() []error {
 	if c.Async.Enabled && c.DB.Driver == "memory" {
 		errs = append(errs, errors.New("async.enabled requires a persistent db.driver"))
 	}
-	if isProdLikeEnv(c.Env) && c.IAM.Mode == IAMModeEnforce && c.Async.Enabled && c.Async.Outbox.PublishInAPI {
+	if isProdLikeEnv(c.Env) && iamMode == iamModeEnforceValue && c.Async.Enabled && c.Async.Outbox.PublishInAPI {
 		errs = append(errs, errors.New("async.outbox.publish_in_api must be false in prod/staging with iam.mode=enforce"))
 	}
 	return errs

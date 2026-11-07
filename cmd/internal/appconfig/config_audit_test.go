@@ -1,11 +1,12 @@
-package platform_test
+package appconfig_test
 
 import (
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
 )
 
 // auditBaseConfig 是审计用例的公共头部；每个用例自行拼接 db 段与 audit 段，
@@ -23,10 +24,10 @@ func memoryBlock() string {
 }
 
 // loadAuditConfig 写入并加载配置，走真实「defaults → Validate」路径。
-func loadAuditConfig(t *testing.T, yaml string) (*platform.Config, error) {
+func loadAuditConfig(t *testing.T, yaml string) (*appconfig.Config, error) {
 	t.Helper()
 	path := writeConfig(t, "audit.yaml", auditBaseConfig+yaml)
-	return platform.LoadConfig(path)
+	return appconfig.Load(path)
 }
 
 // TestAuditDefaults 验证审计默认值：落库、180 天保留、31 天查询窗口、24h 清理。
@@ -35,11 +36,11 @@ func TestAuditDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if got := cfg.Audit.EffectiveStore(cfg.DB.Driver); got != platform.AuditStoreDB {
-		t.Fatalf("EffectiveStore = %q, want %q", got, platform.AuditStoreDB)
+	if got := cfg.Audit.EffectiveStore(cfg.DB.Driver); got != auditconfig.AuditStoreDB {
+		t.Fatalf("EffectiveStore = %q, want %q", got, auditconfig.AuditStoreDB)
 	}
-	if cfg.Audit.RetentionDays != platform.AuditMinRetentionDays {
-		t.Fatalf("RetentionDays = %d, want %d", cfg.Audit.RetentionDays, platform.AuditMinRetentionDays)
+	if cfg.Audit.RetentionDays != auditconfig.AuditMinRetentionDays {
+		t.Fatalf("RetentionDays = %d, want %d", cfg.Audit.RetentionDays, auditconfig.AuditMinRetentionDays)
 	}
 	if cfg.Audit.Query.MaxRangeDays != 31 {
 		t.Fatalf("Query.MaxRangeDays = %d, want 31", cfg.Audit.Query.MaxRangeDays)
@@ -58,7 +59,7 @@ func TestAuditStoreResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() memory+auto error = %v", err)
 	}
-	if got := cfg.Audit.EffectiveStore(cfg.DB.Driver); got != platform.AuditStoreLog {
+	if got := cfg.Audit.EffectiveStore(cfg.DB.Driver); got != auditconfig.AuditStoreLog {
 		t.Fatalf("EffectiveStore = %q, want log for memory db", got)
 	}
 

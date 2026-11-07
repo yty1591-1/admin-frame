@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
@@ -24,21 +25,21 @@ import (
 // rt 由 NewAuthorizer 阶段构造并复用：IAM 管理端与鉴权中间件必须看到同一份
 // 角色 / 绑定数据，否则本地内存模式下会出现「刚授权的角色不生效」。
 // identityRT 用于注册身份域（登录 / 刷新 / 登出 / 会话管理）路由。
-func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, identityRT *identityruntime.Runtime) error {
+func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
 	if rt != nil && rt.Handler != nil {
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	if identityRT != nil && identityRT.Handler != nil {
 		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
-	auditRT, err := auditruntime.New(deps)
+	auditRT, err := auditruntime.New(deps, appCfg.Audit)
 	if err != nil {
 		return err
 	}
 	if auditRT != nil && auditRT.Handler != nil {
 		auditadmin.Register(mux, auditRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
-	tenantRT, err := tenantruntime.New(deps, tenantSessionRevoker(identityRT))
+	tenantRT, err := tenantruntime.New(deps, tenantSessionRevoker(identityRT), appCfg.Tenant)
 	if err != nil {
 		return err
 	}

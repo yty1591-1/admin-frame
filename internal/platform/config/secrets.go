@@ -228,27 +228,27 @@ func buildSecretProvider(cfg SecretsConfig) (secrets.Provider, error) {
 	return secrets.NewChain(providers...)
 }
 
-// secretTarget 描述一个逻辑密钥最终写入的配置位置。
-type secretTarget struct {
-	name  string
-	apply func(*Config, string)
+// SecretTarget 描述一个逻辑密钥最终写入的配置位置。
+//
+// 域配置不再聚合在 platform.Config 中，组合加载层通过 Apply 回写域字段；
+// 平台段的目标由 (*Config).secretTargets 内建。
+type SecretTarget struct {
+	Name  string
+	Apply func(string)
 }
 
-// secretTargets 返回密钥逻辑名到配置字段的映射表。
+// secretTargets 返回平台段密钥逻辑名到配置字段的映射表。
 //
-// 新增密钥只需在此加一行；解析、覆盖与校验逻辑不需要改动。
-func secretTargets() []secretTarget {
-	return []secretTarget{
-		{SecretDBDSN, func(c *Config, v string) { c.DB.DSN = v }},
-		{SecretAuthJWTSecret, func(c *Config, v string) { c.Auth.JWT.Secret = v }},
-		{SecretAuthJWTSecrets, func(c *Config, v string) { c.Auth.JWT.Secrets = splitSecretList(v) }},
-		{SecretIdentityHashKey, func(c *Config, v string) { c.Identity.HashKey = v }},
-		{SecretIdentityMFASecretKey, func(c *Config, v string) { c.Identity.MFA.SecretKey = v }},
-		{SecretIdentitySAMLSPPrivateKey, func(c *Config, v string) { c.Identity.SAML.PrivateKey = v }},
-		{SecretIdentitySAMLSPPrivateKeyNext, func(c *Config, v string) { c.Identity.SAML.PrivateKeyNextPEM = v }},
-		{SecretRedisPassword, func(c *Config, v string) { c.Redis.Password = v }},
-		{SecretStorageS3AccessKey, func(c *Config, v string) { c.Storage.S3.AccessKey = v }},
-		{SecretStorageS3SecretKey, func(c *Config, v string) { c.Storage.S3.SecretKey = v }},
+// 新增平台密钥只需在此加一行；解析、覆盖与校验逻辑不需要改动。
+// 域密钥（如 identity_*）由组合加载层传入附加目标，避免平台反向依赖业务域。
+func (c *Config) secretTargets() []SecretTarget {
+	return []SecretTarget{
+		{SecretDBDSN, func(v string) { c.DB.DSN = v }},
+		{SecretAuthJWTSecret, func(v string) { c.Auth.JWT.Secret = v }},
+		{SecretAuthJWTSecrets, func(v string) { c.Auth.JWT.Secrets = splitSecretList(v) }},
+		{SecretRedisPassword, func(v string) { c.Redis.Password = v }},
+		{SecretStorageS3AccessKey, func(v string) { c.Storage.S3.AccessKey = v }},
+		{SecretStorageS3SecretKey, func(v string) { c.Storage.S3.SecretKey = v }},
 	}
 }
 
@@ -266,6 +266,8 @@ func splitSecretList(value string) []string {
 
 // applySecrets 用 Provider 解析密钥并回写配置。
 //
+// extra 是组合加载层传入的域配置目标；平台段目标始终先解析，保持既有错误顺序。
+//
 // 语义：
 //   - 未配置 providers → 直接返回，保持既有环境变量注入路径不变；
 //   - 命中 → 覆盖配置文件 / 环境变量的值，使托管源成为唯一真相；
@@ -273,7 +275,7 @@ func splitSecretList(value string) []string {
 //     避免在配置层重复实现一套「哪些字段必填」的判断。
 //
 // 错误只包含密钥逻辑名，不含取值（SEC-05）。
-func (c *Config) applySecrets(ctx context.Context) error {
+func (c *Config) applySecrets(ctx context.Context, extra []SecretTarget) error {
 	provider, err := buildSecretProvider(c.Secrets)
 	if err != nil {
 		return err
@@ -286,18 +288,19 @@ func (c *Config) applySecrets(ctx context.Context) error {
 		_ = provider.Close()
 	}()
 
-	for _, target := range secretTargets() {
-		value, getErr := provider.Get(ctx, target.name)
+	targets := append(c.secretTargets(), extra...)
+	for _, target := range targets {
+		value, getErr := provider.Get(ctx, target.Name)
 		if getErr != nil {
 			if errors.Is(getErr, secrets.ErrNotFound) {
 				continue
 			}
-			return fmt.Errorf("secrets: read %s: %w", target.name, getErr)
+			return fmt.Errorf("secrets: read %s: %w", target.Name, getErr)
 		}
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("secrets: %s resolved to empty value", target.name)
+			return fmt.Errorf("secrets: %s resolved to empty value", target.Name)
 		}
-		target.apply(c, value)
+		target.Apply(value)
 	}
 	return nil
 }
@@ -329,14 +332,22 @@ func (c SecretsConfig) resolveOne(name string) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-// resolveSecrets 是 normalize 阶段的入口：带超时执行解析并暂存错误。
+// resolveSecrets 是 normalize 阶段的入口：带超时执行解析并返回错误。
 //
-// Loader 的 Normalize 钩子不返回错误，故把结果暂存到 Config.secretErr，
-// 由 Validate 汇总进启动错误；这样密钥缺失仍然能在启动期阻断进程。
-func (c *Config) resolveSecrets() {
+// 错误直接作为 Loader 的 normalize 错误上报，在启动期阻断进程；
+// 不再暂存到配置对象，避免加载成功后对象仍携带未汇报错误。
+func (c *Config) resolveSecrets() error {
+	return c.ResolveSecretsWithTargets(nil)
+}
+
+// ResolveSecretsWithTargets 在启动期解析平台段与附加域目标密钥。
+//
+// 组合加载层（cmd/internal/appconfig）调用本方法，把 Identity/IAM 等域的密钥
+// 与平台密钥放在同一次 Provider 解析中，保持「托管源是唯一真相」的语义。
+func (c *Config) ResolveSecretsWithTargets(extra []SecretTarget) error {
 	ctx, cancel := context.WithTimeout(context.Background(), secretResolveTimeout)
 	defer cancel()
-	c.secretErr = c.applySecrets(ctx)
+	return c.applySecrets(ctx, extra)
 }
 
 // validateSecrets 校验密钥来源配置的合法性与生产约束（ENT-07）。
@@ -348,7 +359,7 @@ func (c *Config) resolveSecrets() {
 //   - prod 下不得仅以 env 作为来源，除非显式开启 allow_env_fallback（迁移期）。
 //
 // vault 的结构性校验（地址、path/prefix 二选一、令牌是否存在）由
-// secrets.NewVaultProvider 在构造期完成，错误经 normalize 阶段汇入 secretErr；
+// secrets.NewVaultProvider 在构造期完成，错误由 normalize 阶段直接返回；
 // 此处只承担「运行环境相关的策略判断」，避免同一问题报两遍。
 //
 // 不强制 prod 必须声明 providers：未声明时保持「环境变量注入」的既有行为，

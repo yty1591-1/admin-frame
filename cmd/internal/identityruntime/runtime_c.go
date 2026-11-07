@@ -3,11 +3,13 @@ package identityruntime
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	identityoauth "github.com/admin-frame/admin-frame/internal/identity/infrastructure/oauth"
@@ -17,9 +19,11 @@ import (
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/dependency"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/pkg/circuitbreaker"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
+	"github.com/admin-frame/admin-frame/pkg/httpclient"
 	pkgsms "github.com/admin-frame/admin-frame/pkg/sms"
 )
 
@@ -35,7 +39,7 @@ const (
 // 未配置 provider 时不注册 OAuth 路由。所有外部依赖缺失一律启动失败（D8）。
 func buildChannelC(
 	deps *platform.Deps,
-	cfg *platform.Config,
+	cfg configView,
 	accounts domain.AccountRepository,
 	identities domain.OAuthIdentityRepository,
 	guard *app.LoginGuard,
@@ -82,7 +86,7 @@ func buildChannelC(
 // buildSMSLoginService 构造短信登录服务；identity.sms.enabled=false 时返回 nil。
 func buildSMSLoginService(
 	deps *platform.Deps,
-	cfg *platform.Config,
+	cfg configView,
 	accounts domain.AccountRepository,
 	guard *app.LoginGuard,
 	authSvc *app.AuthService,
@@ -172,7 +176,7 @@ func buildSMSCodeStores(deps *platform.Deps, quotaLocation *time.Location) (app.
 // buildSMSBreaker 按配置构造供应商熔断器（IDN-P2-05）。
 //
 // 永久拒绝（模板/签名非法、号码非法）不视为供应商故障，不触发熔断。
-func buildSMSBreaker(cfg platform.IdentitySMSConfig, logger *slog.Logger) (*circuitbreaker.Breaker, error) {
+func buildSMSBreaker(cfg identityconfig.IdentitySMSConfig, logger *slog.Logger) (*circuitbreaker.Breaker, error) {
 	failures := cfg.BreakerFailures
 	if failures <= 0 {
 		failures = 5
@@ -217,7 +221,7 @@ func buildSMSAlertSink(deps *platform.Deps, metrics app.Metrics) identitysms.Ale
 // buildOAuthService 构造 OAuth 登录服务；未配置 provider 时返回 nil。
 func buildOAuthService(
 	deps *platform.Deps,
-	cfg *platform.Config,
+	cfg configView,
 	accounts domain.AccountRepository,
 	identities domain.OAuthIdentityRepository,
 	authSvc *app.AuthService,
@@ -307,7 +311,7 @@ func buildOAuthService(
 // 启动期完成 IdP 元数据加载与 SP 密钥配对校验，任何失败都阻断启动（失败关闭）。
 func buildSAMLService(
 	deps *platform.Deps,
-	cfg *platform.Config,
+	cfg configView,
 	accounts domain.AccountRepository,
 	identities domain.OAuthIdentityRepository,
 	authSvc *app.AuthService,
@@ -329,6 +333,17 @@ func buildSAMLService(
 	}
 	providers := make(map[string]app.SAMLProvider, len(samlCfg.Providers))
 	for _, providerCfg := range samlCfg.Providers {
+		var httpClient *http.Client
+		if deps.Dependencies != nil {
+			caller, err := deps.Dependencies.HTTP(dependency.Spec{
+				Name:    "identity:saml:" + providerCfg.Name,
+				Timeout: samlCfg.Timeout,
+			}, httpclient.Config{})
+			if err != nil {
+				return nil, apperr.Internal("identity saml dependency "+providerCfg.Name, err)
+			}
+			httpClient = caller.HTTP()
+		}
 		provider, err := identitysaml.NewProvider(context.Background(), identitysaml.Config{
 			Name:         providerCfg.Name,
 			IDPEntityID:  providerCfg.IDPEntityID,
@@ -340,6 +355,7 @@ func buildSAMLService(
 			ClockSkew:    samlCfg.ClockSkew,
 			AssertionTTL: samlCfg.AssertionTTL,
 			SP:           spCfg,
+			HTTPClient:   httpClient,
 		})
 		if err != nil {
 			return nil, apperr.Internal("identity saml provider "+providerCfg.Name, err)

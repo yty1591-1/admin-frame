@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 )
 
 // discardLogger 避免测试期间访问日志污染输出。
@@ -154,7 +154,7 @@ func TestPipelineRequestID(t *testing.T) {
 	}
 	h := pipeline(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(httpx.TraceIDFromContext(r.Context())))
+		_, _ = w.Write([]byte(apiresp.TraceIDFromContext(r.Context())))
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)

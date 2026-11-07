@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 
+	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 
@@ -38,18 +40,22 @@ func main() {
 // 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
 // （NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
+	appCfg, err := appconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	var (
 		identityOnce sync.Once
 		identityRT   *identityruntime.Runtime
 		identityErr  error
 	)
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
-		identityOnce.Do(func() { identityRT, identityErr = identityruntime.New(deps) })
+		identityOnce.Do(func() { identityRT, identityErr = identityruntime.New(deps, appCfg.Identity) })
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{
-		ConfigPath: configPath,
-		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Config: &appCfg.Config,
+		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

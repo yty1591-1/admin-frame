@@ -1,4 +1,4 @@
-package platform_test
+package appconfig_test
 
 import (
 	"crypto/rand"
@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 var (
@@ -48,18 +50,18 @@ func samlTestKeys(t *testing.T) (certPEM, keyPEM string) {
 }
 
 // enableSAML 用测试密钥与内联 IdP 元数据填充最小 SAML 配置。
-func enableSAML(t *testing.T, cfg *platform.Config) {
+func enableSAML(t *testing.T, cfg *appconfig.Config) {
 	t.Helper()
 	certPEM, keyPEM := samlTestKeys(t)
-	cfg.Identity.SAML = platform.IdentitySAMLConfig{
+	cfg.Identity.SAML = identityconfig.IdentitySAMLConfig{
 		Enabled:          true,
 		EntityID:         "https://c.example.com/saml/metadata",
 		ACSURL:           "https://c.example.com/c/v1/auth/saml/acs",
 		LoginRedirectURL: "https://c.example.com/login",
 		CertificatePEM:   certPEM,
 		PrivateKey:       keyPEM,
-		RateLimit:        platform.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5, FailureMode: platform.RateLimitFailureClosed},
-		Providers: []platform.IdentitySAMLProviderConfig{
+		RateLimit:        identityconfig.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5, FailureMode: platformconfig.RateLimitFailureClosed},
+		Providers: []identityconfig.IdentitySAMLProviderConfig{
 			{
 				Name:        "okta",
 				IDPEntityID: "https://idp.example.com/metadata",
@@ -73,19 +75,19 @@ func enableSAML(t *testing.T, cfg *platform.Config) {
 func TestValidateSAMLRules(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(cfg *platform.Config)
+		mutate func(cfg *appconfig.Config)
 		want   string
 	}{
 		{
 			name: "disabled with providers",
-			mutate: func(cfg *platform.Config) {
-				cfg.Identity.SAML.Providers = []platform.IdentitySAMLProviderConfig{{Name: "okta"}}
+			mutate: func(cfg *appconfig.Config) {
+				cfg.Identity.SAML.Providers = []identityconfig.IdentitySAMLProviderConfig{{Name: "okta"}}
 			},
 			want: "requires identity.saml.enabled=true",
 		},
 		{
 			name: "saml on biz channel",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Channel = "biz"
 				cfg.Auth.ExpectedChannel = "biz"
 				enableSAML(t, cfg)
@@ -94,7 +96,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "missing entity id",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.EntityID = ""
 			},
@@ -102,7 +104,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "acs path mismatch",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.ACSURL = "https://c.example.com/c/v1/auth/saml/other"
 			},
@@ -110,7 +112,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "next cert without key",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.CertificateNextPEM = cfg.Identity.SAML.CertificatePEM
 			},
@@ -118,7 +120,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "request ttl too long",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.RequestTTL = 20 * time.Minute
 			},
@@ -126,7 +128,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "ticket ttl too short",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.TicketTTL = 10 * time.Second
 			},
@@ -134,7 +136,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "replay ttl too short",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.ReplayTTL = time.Minute
 			},
@@ -142,7 +144,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "provider without metadata",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.Providers[0].MetadataURL = ""
 			},
@@ -150,7 +152,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "provider with both metadata sources",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.Providers[0].MetadataXML = "<metadata/>"
 			},
@@ -158,7 +160,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "duplicate provider name",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.Providers = append(cfg.Identity.SAML.Providers, cfg.Identity.SAML.Providers[0])
 			},
@@ -166,7 +168,7 @@ func TestValidateSAMLRules(t *testing.T) {
 		},
 		{
 			name: "no providers when enabled",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				enableSAML(t, cfg)
 				cfg.Identity.SAML.Providers = nil
 			},
@@ -200,7 +202,7 @@ func TestValidateSAMLProdSatisfiesLoginMethods(t *testing.T) {
 func TestValidateSAMLFailOpenRejectedInProd(t *testing.T) {
 	cfg := cProdConfig()
 	enableSAML(t, cfg)
-	cfg.Identity.SAML.RateLimit.FailureMode = platform.RateLimitFailureOpen
+	cfg.Identity.SAML.RateLimit.FailureMode = platformconfig.RateLimitFailureOpen
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "identity.saml.rate_limit.failure_mode must be fail_closed") {
 		t.Fatalf("err=%v", err)

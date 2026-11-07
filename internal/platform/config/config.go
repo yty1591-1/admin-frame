@@ -6,7 +6,10 @@ import (
 	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 )
 
-const envPrefix = "ADMIN_FRAME"
+// EnvPrefix 是配置环境变量前缀；组合加载层（cmd/internal/appconfig）复用它绑定域配置。
+const EnvPrefix = "ADMIN_FRAME"
+
+const envPrefix = EnvPrefix
 
 // maskedValue 是日志中敏感字段的占位符（SECURITY_STANDARDS SEC-05）。
 const maskedValue = "***"
@@ -43,15 +46,5 @@ type Config struct {
 	RateLimit       RateLimitConfig               `yaml:"rate_limit"`
 	Async           AsyncConfig                   `yaml:"async"`
 	CORS            CORSConfig                    `yaml:"cors"`
-	IAM             IAMConfig                     `yaml:"iam"`
-	Identity        IdentityConfig                `yaml:"identity"`
-	Audit           AuditConfig                   `yaml:"audit"`
-	Tenant          TenantConfig                  `yaml:"tenant"`
 	Secrets         SecretsConfig                 `yaml:"secrets"`
-
-	// secretErr 暂存 normalize 阶段的密钥解析错误。
-	//
-	// Loader 的 Normalize 钩子无法返回错误，因此把结果记录在此，由 Validate
-	// 汇总进启动错误。不导出、不参与 yaml / 环境变量绑定。
-	secretErr error
 }

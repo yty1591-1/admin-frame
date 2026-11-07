@@ -58,6 +58,9 @@ type Config struct {
 	// RetryStatusCodes 额外视为可重试的状态码；nil 时用默认集合。
 	RetryStatusCodes []int
 
+	// Observer 每次尝试结果的观测回调；nil 时不做记录。
+	Observer AttemptObserver
+
 	// Tracer 出站 CLIENT span；nil 时 otel.Tracer("http.client")。
 	Tracer trace.Tracer
 	// Propagator 上下文传播；nil 时用全局。
@@ -120,6 +123,15 @@ func (c Config) Validate() error {
 		return fmt.Errorf("%w: Timeout must be > 0", ErrInvalidConfig)
 	}
 	return nil
+}
+
+// TransportOrDefault 返回显式 Transport 或按本配置构建的安全默认 Transport。
+//
+// 供需要在 Transport 链上叠加装饰器（如熔断、指标）的调用方复用同一套
+// 连接池与超时默认值，避免绕过本包直接使用 http.DefaultTransport。
+func (c Config) TransportOrDefault() http.RoundTripper {
+	c.applyDefaults()
+	return c.buildTransport()
 }
 
 func (c Config) buildTransport() http.RoundTripper {

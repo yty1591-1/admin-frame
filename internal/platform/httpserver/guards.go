@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // TenantGuardMiddleware 在鉴权之后校验租户状态（ENT-09）。
@@ -38,8 +38,8 @@ func TenantGuardMiddleware(verify func(ctx context.Context, merchantID string) (
 			effectiveTenant := principal.CurrentTenant()
 			if effectiveTenant == "" {
 				if requireMerchant {
-					traceID := httpx.TraceIDFromContext(r.Context())
-					httpx.FromError(w, apperr.Forbidden("merchant context is required"), traceID)
+					traceID := apiresp.TraceIDFromContext(r.Context())
+					apiresp.FromError(w, apperr.Forbidden("merchant context is required"), traceID)
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -47,15 +47,15 @@ func TenantGuardMiddleware(verify func(ctx context.Context, merchantID string) (
 			}
 
 			allow, err := verify(r.Context(), effectiveTenant)
-			traceID := httpx.TraceIDFromContext(r.Context())
+			traceID := apiresp.TraceIDFromContext(r.Context())
 			switch {
 			case err != nil:
 				// 无法判定 → 503 失败关闭；错误只含商户 ID，不含业务数据。
-				httpx.FromError(w, apperr.Unavailable("tenant status unavailable"), traceID)
+				apiresp.FromError(w, apperr.Unavailable("tenant status unavailable"), traceID)
 				return
 			case !allow:
 				// 统一文案：不区分「未登记」与「已停用」，避免探测租户是否存在。
-				httpx.FromError(w, apperr.Forbidden("tenant is not available"), traceID)
+				apiresp.FromError(w, apperr.Forbidden("tenant is not available"), traceID)
 				return
 			default:
 				next.ServeHTTP(w, r)
@@ -92,9 +92,9 @@ func QuotaGuardMiddleware(allow func(ctx context.Context, tenantID string) (retr
 				return
 			}
 			if retryAfter > 0 {
-				traceID := httpx.TraceIDFromContext(r.Context())
+				traceID := apiresp.TraceIDFromContext(r.Context())
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-				httpx.FromError(w, apperr.TooManyRequests("api quota exhausted"), traceID)
+				apiresp.FromError(w, apperr.TooManyRequests("api quota exhausted"), traceID)
 				return
 			}
 			next.ServeHTTP(w, r)

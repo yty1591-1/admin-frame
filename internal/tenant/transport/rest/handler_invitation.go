@@ -3,8 +3,8 @@ package rest
 import (
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
@@ -12,27 +12,27 @@ import (
 
 // ListInvitations 处理 GET /admin/v1/tenants/{id}/invitations。
 func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.ParseWith(r, h.pageCfg)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	invitations, total, err := h.invitations.List(r.Context(), r.PathValue("id"),
 		r.URL.Query().Get("status"), page.Limit(), page.Offset())
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]invitationResponse, 0, len(invitations))
 	for _, invitation := range invitations {
 		items = append(items, toInvitationResponse(invitation))
 	}
-	httpx.OK(w, invitationListResponse{
+	apiresp.OK(w, invitationListResponse{
 		Items:    items,
 		Total:    total,
 		Page:     page.Page,
@@ -45,15 +45,15 @@ func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 // 明文 token 只在本次响应返回一次（库里仅存摘要）；ENT-10 就绪前由
 // 运营线下转交——这是「只落库不发送」的明确阶段语义。
 func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body createInvitationRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	invitation, token, err := h.invitations.Create(r.Context(), app.CreateInvitationInput{
@@ -63,10 +63,10 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 		Actor:    actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, 0, "ok", invitationWithTokenResponse{
+	apiresp.JSON(w, http.StatusCreated, 0, "ok", invitationWithTokenResponse{
 		invitationResponse: toInvitationResponse(invitation),
 		Token:              token,
 	}, traceID)
@@ -76,15 +76,15 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 //
 // 凭据是 token 本身（摘要查找，不暴露 invitation_id）；重复接受幂等返回 200。
 func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body acceptInvitationRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	result, err := h.invitations.Accept(r.Context(), app.AcceptInvitationInput{
@@ -93,10 +93,10 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		Actor:     actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, 0, "ok", invitationAcceptResponse{
+	apiresp.JSON(w, http.StatusOK, 0, "ok", invitationAcceptResponse{
 		Member:     toMemberResponse(result.Member),
 		Invitation: toInvitationResponse(result.Invitation),
 		Idempotent: result.Idempotent,
@@ -105,15 +105,15 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 
 // RevokeInvitation 处理 POST /admin/v1/tenants/{id}/invitations/{invitation_id}/revoke。
 func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body revokeInvitationRequest
 	if err := decodeOptionalJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	invitation, err := h.invitations.Revoke(r.Context(), app.RevokeInvitationInput{
@@ -123,20 +123,20 @@ func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 		Actor:        actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toInvitationResponse(invitation), traceID)
+	apiresp.OK(w, toInvitationResponse(invitation), traceID)
 }
 
 // ResendInvitation 处理 POST /admin/v1/tenants/{id}/invitations/{invitation_id}/resend。
 //
 // 旧 token 立即失效（摘要被覆盖），新 token 在本次响应返回。
 func (h *Handler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	invitation, token, err := h.invitations.Resend(r.Context(), app.ResendInvitationInput{
@@ -145,10 +145,10 @@ func (h *Handler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
 		Actor:        actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, 0, "ok", invitationWithTokenResponse{
+	apiresp.JSON(w, http.StatusOK, 0, "ok", invitationWithTokenResponse{
 		invitationResponse: toInvitationResponse(invitation),
 		Token:              token,
 	}, traceID)

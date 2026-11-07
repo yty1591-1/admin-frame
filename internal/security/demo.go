@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/errors"
 )
 
@@ -21,19 +21,19 @@ import (
 func NewDemoAuth(expected auth.Channel) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			traceID := httpx.TraceIDFromContext(r.Context())
+			traceID := apiresp.TraceIDFromContext(r.Context())
 			token, ok := bearerToken(r)
 			if !ok {
-				httpx.FromError(w, apperr.Unauthorized("missing bearer token"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("missing bearer token"), traceID)
 				return
 			}
 			p, err := parseDemoToken(token)
 			if err != nil {
-				httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("invalid token"), traceID)
 				return
 			}
 			if p.Channel != expected {
-				httpx.FromError(w, apperr.Unauthorized("channel mismatch"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("channel mismatch"), traceID)
 				return
 			}
 			p.RequestID = traceID

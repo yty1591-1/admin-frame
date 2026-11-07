@@ -4,6 +4,7 @@ package main
 import (
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/internal/iam"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
@@ -12,8 +13,8 @@ import (
 type iamRuntime = iamruntime.Runtime
 
 // newIAMRuntime 装配 A 端 IAM，并注入 A 端静态回滚表。
-func newIAMRuntime(deps *platform.Deps) (*iamRuntime, error) {
-	return iamruntime.New(deps, iamruntime.Options{StaticChecker: staticChecker()})
+func newIAMRuntime(deps *platform.Deps, iamCfg iamconfig.IAMConfig) (*iamRuntime, error) {
+	return iamruntime.New(deps, iamCfg, iamruntime.Options{StaticChecker: staticChecker()})
 }
 
 // staticChecker 是 mode=off 的回滚表：admin 为超级角色，ops 持有平台只读权限。

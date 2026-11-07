@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 
+	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -39,6 +41,10 @@ func main() {
 // IAM 与身份域运行时各自在装配期构造一次：身份域的撤销检查器必须在 AuthMW
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
+	appCfg, err := appconfig.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	var (
 		iamOnce     sync.Once
 		iamRT       *iamRuntime
@@ -48,7 +54,7 @@ func run(configPath string) error {
 		identityErr error
 	)
 	buildIAM := func(deps *platform.Deps) (*iamRuntime, error) {
-		iamOnce.Do(func() { iamRT, iamErr = newIAMRuntime(deps) })
+		iamOnce.Do(func() { iamRT, iamErr = newIAMRuntime(deps, appCfg.IAM) })
 		return iamRT, iamErr
 	}
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
@@ -58,13 +64,13 @@ func run(configPath string) error {
 				identityErr = mErr
 				return
 			}
-			identityRT, identityErr = identityruntime.New(deps)
+			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity)
 		})
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{
-		ConfigPath: configPath,
-		Build:      platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Config: &appCfg.Config,
+		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {
@@ -91,7 +97,7 @@ func run(configPath string) error {
 			if err != nil {
 				return err
 			}
-			return registerRoutes(deps, mux, built, identityBuilt)
+			return registerRoutes(deps, mux, built, identityBuilt, appCfg)
 		},
 	})
 }

@@ -1,4 +1,4 @@
-package platform_test
+package config_test
 
 import (
 	"os"
@@ -7,18 +7,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // baseDBPoolConfig 返回一份仅 db 段可变的最小合法配置。
-func baseDBPoolConfig(db platform.DBConfig) *platform.Config {
-	return &platform.Config{
+func baseDBPoolConfig(db platformconfig.DBConfig) *platformconfig.Config {
+	return &platformconfig.Config{
 		Service: "admin-api",
 		Channel: "admin",
 		Addr:    ":8080",
-		Auth:    platform.AuthConfig{ExpectedChannel: "admin"},
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "admin"},
 		DB:      db,
-		Log:     platform.LogConfig{Level: "info", Format: "json"},
+		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
 	}
 }
 
@@ -30,42 +30,42 @@ func TestValidateDBPoolParams(t *testing.T) {
 	const dsn = "root:root@tcp(localhost:3306)/admin_frame?parseTime=true"
 	cases := []struct {
 		name    string
-		pool    platform.DBConfig
+		pool    platformconfig.DBConfig
 		wantErr string
 	}{
 		{
 			name: "defaults_zero",
-			pool: platform.DBConfig{Driver: "mysql", DSN: dsn},
+			pool: platformconfig.DBConfig{Driver: "mysql", DSN: dsn},
 		},
 		{
 			name: "explicit_valid",
-			pool: platform.DBConfig{
+			pool: platformconfig.DBConfig{
 				Driver: "mysql", DSN: dsn,
 				MaxOpenConns: 10, MaxIdleConns: 5, ConnMaxLifetime: 10 * time.Minute,
 			},
 		},
 		{
 			name: "idle_equals_open",
-			pool: platform.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: 8, MaxIdleConns: 8},
+			pool: platformconfig.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: 8, MaxIdleConns: 8},
 		},
 		{
 			name:    "negative_open",
-			pool:    platform.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: -1},
+			pool:    platformconfig.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: -1},
 			wantErr: "db.max_open_conns must not be negative",
 		},
 		{
 			name:    "negative_idle",
-			pool:    platform.DBConfig{Driver: "mysql", DSN: dsn, MaxIdleConns: -2},
+			pool:    platformconfig.DBConfig{Driver: "mysql", DSN: dsn, MaxIdleConns: -2},
 			wantErr: "db.max_idle_conns must not be negative",
 		},
 		{
 			name:    "negative_lifetime",
-			pool:    platform.DBConfig{Driver: "mysql", DSN: dsn, ConnMaxLifetime: -time.Second},
+			pool:    platformconfig.DBConfig{Driver: "mysql", DSN: dsn, ConnMaxLifetime: -time.Second},
 			wantErr: "db.conn_max_lifetime must not be negative",
 		},
 		{
 			name:    "idle_exceeds_open",
-			pool:    platform.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: 4, MaxIdleConns: 9},
+			pool:    platformconfig.DBConfig{Driver: "mysql", DSN: dsn, MaxOpenConns: 4, MaxIdleConns: 9},
 			wantErr: "db.max_idle_conns (9) must not exceed db.max_open_conns (4)",
 		},
 	}
@@ -111,7 +111,7 @@ log:
 		t.Fatal(err)
 	}
 
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ log:
 	t.Setenv("ADMIN_FRAME_DB_MAX_OPEN_CONNS", "12")
 	t.Setenv("ADMIN_FRAME_DB_MAX_IDLE_CONNS", "4")
 
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestLoadDBConfigKeepsPoolParams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := platform.LoadDBConfig(path)
+	got, err := platformconfig.LoadDBConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}

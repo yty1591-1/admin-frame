@@ -6,7 +6,7 @@
 > **关联**：架构 §十七；密钥见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
 > **执行方式**：`Validate()` 单测 + 配置样例门禁 + gitleaks + Review
 > **最后更新**：2026-10-20
-> **变更方式**：修改本规范须同步更新 `internal/platform/config.go`、`scripts/ci/check-config.sh`、`configs/*.example` 与架构 §十七，经架构 Owner Review
+> **变更方式**：修改本规范须同步更新 `internal/platform/config`、`internal/{identity,iam,audit,tenant}/config`、`cmd/internal/appconfig`、`scripts/ci/check-config.sh`、`configs/*.example` 与架构 §十七，经架构 Owner Review
 
 ---
 
@@ -184,7 +184,9 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 
 ## 5. Validate 基线
 
-`platform.Config.Validate()` 至少校验（错误经 `errors.Join` 聚合，一次列出全部问题）：
+`cmd/internal/appconfig.Config.Validate()` 聚合平台段与各域配置，错误经 `errors.Join` 聚合，一次列出全部问题。平台段由 `internal/platform/config` 校验，域段由各域包 `Validate` 自持：
+
+组合校验至少覆盖（平台段与各域 `Validate` 分别负责其中一部分）：
 
 - `service`、`channel`、`addr` 非空
 - `channel` ∈ {admin, biz, c, worker}
@@ -212,8 +214,9 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 
 鉴权装配另见 SEC-04：`auth.mode` 未显式配置时按环境回退，生产（prod/staging）必须有可用的 JWT 配置。
 
-**日志脱敏**：`Config.LogValue` / `DBConfig.LogValue` / `StorageConfig.LogValue` 提供
+**日志脱敏**：`platform.Config.LogValue` / `DBConfig.LogValue` / `StorageConfig.LogValue` 提供
 `slog.LogValuer`，DSN 只保留 scheme，JWT 密钥与云厂商 AK/SK 输出为 `***`。
+域配置段不再内联进平台快照，需记录域配置时由各域提供脱敏摘要，禁止直接输出结构体。
 禁止用 `%+v` / `json.Marshal(cfg)` 直接打印配置。
 
 ---
@@ -279,7 +282,9 @@ make ci
 |-------------|------|
 | `configs/*.yaml.example` | 入库样例 |
 | `.gitignore`（`configs/*.yaml`） | CFG-02 |
-| `internal/platform/config.go` | 业务字段 / 默认值 / `normalize` / `Validate`；加载委托 `pkg/config` |
+| `internal/platform/config` | 平台段字段 / 默认值 / `normalize` / 校验；加载委托 `pkg/config` |
+| `internal/{identity,iam,audit,tenant}/config` | 各域字段、默认值与校验规则自持 |
+| `cmd/internal/appconfig` | 组合加载：平台段内联 + 域段挂载，编排默认值、密钥回写与聚合校验 |
 | `pkg/config` | 通用 Loader / 严格 YAML / env 绑定 / 热更新 `Watcher` |
 | `scripts/ci/check-config.sh` | CFG-01/02/06 |
 | gitleaks | 密钥扫描 |

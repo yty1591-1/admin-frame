@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	iampcache "github.com/admin-frame/admin-frame/internal/iam/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
@@ -35,6 +36,12 @@ import (
 // 授权了已经过期的意图。
 const defaultApprovalTTL = 72 * time.Hour
 
+// configView 把平台段配置与 IAM 域配置组合为只读视图，供装配期各构造器使用。
+type configView struct {
+	*platform.Config
+	IAM iamconfig.IAMConfig
+}
+
 // Runtime 是 IAM 在本进程内的唯一实例集合。
 type Runtime struct {
 	// Authorizer 供 platform 构造权限中间件。
@@ -53,8 +60,11 @@ type Options struct {
 // New 按配置装配 IAM：仓储 → 缓存 → 用例 → 鉴权器。
 //
 // mode=off 时仍装配管理端（便于影子期先建角色与绑定），但鉴权保持静态表。
-func New(deps *platform.Deps, opts Options) (*Runtime, error) {
-	cfg := deps.Config
+func New(deps *platform.Deps, iamCfg iamconfig.IAMConfig, opts Options) (*Runtime, error) {
+	if deps == nil || deps.Config == nil {
+		return nil, apperr.Internal("iam runtime requires platform deps", nil)
+	}
+	cfg := configView{Config: deps.Config, IAM: iamCfg}
 	mode, err := security.ParseMode(cfg.IAM.Mode)
 	if err != nil {
 		return nil, err
@@ -90,7 +100,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 	// 快照缓存必须带上观测器：否则 iam_authz_cache_total 恒为空，
 	// 看板「快照缓存命中」面板永远没有数据（ENT-06 T6 实测）。
-	snapshotCache, err := buildSnapshotCache(deps, iamMetrics)
+	snapshotCache, err := buildSnapshotCache(deps, iamCfg, iamMetrics)
 	if err != nil {
 		return nil, err
 	}
@@ -553,13 +563,13 @@ func registerHealth(deps *platform.Deps) {
 // buildSnapshotCache 装配 L1（进程内）+ 可选 L2（Redis）。
 //
 // observer 为 nil 时退化为 NopObserver（缓存指标不可观测）；生产必须传入指标观测器。
-func buildSnapshotCache(deps *platform.Deps, observer iampcache.Observer) (*iampcache.SnapshotCache, error) {
-	cfg := deps.Config.IAM.Cache
+func buildSnapshotCache(deps *platform.Deps, iamCfg iamconfig.IAMConfig, observer iampcache.Observer) (*iampcache.SnapshotCache, error) {
+	cfg := iamCfg.Cache
 	var l2 pkgcache.Store
 	if deps.Redis != nil {
 		l2 = iampcache.NewRedisStore(deps.Redis.Cache())
 	}
-	if cfg.Driver == platform.IAMCacheDriverRedis && l2 == nil {
+	if cfg.Driver == iamconfig.IAMCacheDriverRedis && l2 == nil {
 		return nil, apperr.Internal("iam cache driver=redis but redis is not configured", nil)
 	}
 	layers := iampcache.Config{
@@ -573,7 +583,7 @@ func buildSnapshotCache(deps *platform.Deps, observer iampcache.Observer) (*iamp
 		// （ENT-06 T6 实测）。
 		Observer: observer,
 	}
-	if cfg.Driver == platform.IAMCacheDriverMemory {
+	if cfg.Driver == iamconfig.IAMCacheDriverMemory {
 		layers.L2 = nil
 	}
 	return iampcache.NewSnapshotCache(layers)

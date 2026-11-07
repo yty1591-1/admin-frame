@@ -1,4 +1,4 @@
-package platform_test
+package config_test
 
 import (
 	"errors"
@@ -8,19 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
 func TestValidateRejectsProdAuthModeDemo(t *testing.T) {
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Env:     "prod",
 		Service: "c-api",
 		Channel: "c",
 		Addr:    ":8083",
-		Auth:    platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "c"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		Log:     platform.LogConfig{Level: "info"},
+		Auth:    platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "c"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		Log:     platformconfig.LogConfig{Level: "info"},
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected error for prod + auth.mode=demo")
@@ -28,13 +28,13 @@ func TestValidateRejectsProdAuthModeDemo(t *testing.T) {
 }
 
 func TestValidateChannelMismatch(t *testing.T) {
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Service: "c-api",
 		Channel: "c",
 		Addr:    ":8083",
-		Auth:    platform.AuthConfig{ExpectedChannel: "admin"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		Log:     platform.LogConfig{Level: "info"},
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "admin"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		Log:     platformconfig.LogConfig{Level: "info"},
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected channel mismatch error")
@@ -67,7 +67,7 @@ log:
 	t.Setenv("ADMIN_FRAME_LOG_LEVEL", "warn")
 	t.Setenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT", "30s")
 
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestLoadDBConfig(t *testing.T) {
 	t.Setenv("ADMIN_FRAME_DB_DRIVER", "postgres")
 	t.Setenv("ADMIN_FRAME_DB_DSN", "env-dsn")
 
-	got, err := platform.LoadDBConfig(path)
+	got, err := platformconfig.LoadDBConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestLoadDBConfig(t *testing.T) {
 func TestLoadDBConfigEmptyPath(t *testing.T) {
 	t.Setenv("ADMIN_FRAME_DB_DRIVER", "mysql")
 	t.Setenv("ADMIN_FRAME_DB_DSN", "env-only")
-	got, err := platform.LoadDBConfig("")
+	got, err := platformconfig.LoadDBConfig("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ log:
 	}
 	t.Setenv("ADMIN_FRAME_ENV", "prod")
 	t.Setenv("ADMIN_FRAME_AUTH_MODE", "demo")
-	if _, err := platform.LoadConfig(path); err == nil {
+	if _, err := platformconfig.LoadConfig(path); err == nil {
 		t.Fatal("expected validate failure")
 	}
 }
@@ -145,7 +145,7 @@ func TestLoadConfigRejectsLegacyDemoModeField(t *testing.T) {
 		"channel: c\n"+
 		"auth:\n"+
 		"  demo_mode: true\n")
-	_, err := platform.LoadConfig(path)
+	_, err := platformconfig.LoadConfig(path)
 	if !errors.Is(err, config.ErrUnknownField) {
 		t.Fatalf("err=%v want ErrUnknownField", err)
 	}
@@ -170,7 +170,7 @@ const minimalConfig = "service: c-api\n" +
 
 func TestLoadConfigAppliesDefaults(t *testing.T) {
 	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\n")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 
 func TestLoadConfigRejectsUnknownField(t *testing.T) {
 	path := writeConfig(t, "typo.yaml", minimalConfig+"adrr: \":9999\"\n")
-	_, err := platform.LoadConfig(path)
+	_, err := platformconfig.LoadConfig(path)
 	if !errors.Is(err, config.ErrUnknownField) {
 		t.Fatalf("err=%v want ErrUnknownField", err)
 	}
@@ -205,7 +205,7 @@ func TestLoadConfigRejectsUnknownField(t *testing.T) {
 func TestLoadConfigRejectsInvalidEnvValue(t *testing.T) {
 	path := writeConfig(t, "c.yaml", minimalConfig)
 	t.Setenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT", "15")
-	_, err := platform.LoadConfig(path)
+	_, err := platformconfig.LoadConfig(path)
 	if !errors.Is(err, config.ErrEnvOverride) {
 		t.Fatalf("err=%v want ErrEnvOverride", err)
 	}
@@ -217,7 +217,7 @@ func TestLoadConfigRejectsInvalidEnvValue(t *testing.T) {
 func TestLoadConfigDerivesExpectedChannelAfterEnvOverride(t *testing.T) {
 	path := writeConfig(t, "c.yaml", minimalConfig)
 	t.Setenv("ADMIN_FRAME_CHANNEL", "admin")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestLoadConfigStorageSecretEnv(t *testing.T) {
 	path := writeConfig(t, "c.yaml", minimalConfig)
 	t.Setenv("ADMIN_FRAME_STORAGE_S3_ACCESS_KEY", "canonical-ak")
 	t.Setenv("ADMIN_FRAME_STORAGE_S3_SECRET_KEY", "canonical-sk")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestLoadConfigTypedEnvKinds(t *testing.T) {
 	t.Setenv("ADMIN_FRAME_WORKER_POLL_INTERVAL", "250ms")
 	t.Setenv("ADMIN_FRAME_TRACING_ENABLED", "off")
 	t.Setenv("ADMIN_FRAME_TRACING_SAMPLE_RATIO", "0.5")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestLoadDBConfigIgnoresServiceFields(t *testing.T) {
 		"  driver: s3\n")
 	t.Setenv("ADMIN_FRAME_DB_DRIVER", "")
 	t.Setenv("ADMIN_FRAME_DB_DSN", "")
-	cfg, err := platform.LoadDBConfig(path)
+	cfg, err := platformconfig.LoadDBConfig(path)
 	if err != nil {
 		t.Fatalf("load db config: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestLoadDBConfigIgnoresServiceFields(t *testing.T) {
 }
 
 func TestLoadDBConfigMissingFile(t *testing.T) {
-	_, err := platform.LoadDBConfig(filepath.Join(t.TempDir(), "absent.yaml"))
+	_, err := platformconfig.LoadDBConfig(filepath.Join(t.TempDir(), "absent.yaml"))
 	if !errors.Is(err, config.ErrMissingFile) {
 		t.Fatalf("err=%v want ErrMissingFile", err)
 	}

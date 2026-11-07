@@ -1,15 +1,16 @@
-package platform_test
+package config_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 )
 
@@ -22,15 +23,15 @@ func TestConfigLogValueRedactsSecrets(t *testing.T) {
 		sessionToken = "session-token"
 	)
 	jwtSecret := testJWTSecret('j')
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Env:     "prod",
 		Service: "c-api",
 		Channel: "c",
 		Addr:    ":8083",
-		Auth: platform.AuthConfig{
+		Auth: platformconfig.AuthConfig{
 			Mode: "jwt",
 		},
-		DB: platform.DBConfig{Driver: "postgres", DSN: dsnSecret},
+		DB: platformconfig.DBConfig{Driver: "postgres", DSN: dsnSecret},
 	}
 	cfg.Auth.JWT.Secret = jwtSecret
 	cfg.Storage.S3.AccessKey = storageAK
@@ -57,13 +58,13 @@ func TestConfigLogValueRedactsSecrets(t *testing.T) {
 
 // TestValidateAggregatesErrors 验证校验错误一次性聚合而非遇到首个错误就返回。
 func TestValidateAggregatesErrors(t *testing.T) {
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Service: "",
 		Channel: "not-a-channel",
 		Addr:    "",
-		Auth:    platform.AuthConfig{ExpectedChannel: "c"},
-		Log:     platform.LogConfig{Level: "verbose", Format: "yaml"},
-		DB:      platform.DBConfig{Driver: "oracle"},
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "c"},
+		Log:     platformconfig.LogConfig{Level: "verbose", Format: "yaml"},
+		DB:      platformconfig.DBConfig{Driver: "oracle"},
 	}
 	err := cfg.Validate()
 	if err == nil {
@@ -82,14 +83,14 @@ func TestValidateAggregatesErrors(t *testing.T) {
 
 // TestValidateLogFormat 验证非法格式与 prod+text 均在启动前拦截。
 func TestValidateLogFormat(t *testing.T) {
-	base := func() *platform.Config {
-		return &platform.Config{
+	base := func() *platformconfig.Config {
+		return &platformconfig.Config{
 			Service: "c-api",
 			Channel: "c",
 			Addr:    ":8083",
-			Auth:    platform.AuthConfig{ExpectedChannel: "c", Mode: platform.AuthModeDemo},
-			Log:     platform.LogConfig{Level: "info", Format: "json"},
-			DB:      platform.DBConfig{Driver: "memory"},
+			Auth:    platformconfig.AuthConfig{ExpectedChannel: "c", Mode: platformconfig.AuthModeDemo},
+			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+			DB:      platformconfig.DBConfig{Driver: "memory"},
 		}
 	}
 
@@ -110,22 +111,22 @@ func TestValidateLogFormat(t *testing.T) {
 // TestLoadConfigRejectsInvalidLogFormat 验证非法格式在加载阶段失败而非 panic（CFG-03）。
 func TestLoadConfigRejectsInvalidLogFormat(t *testing.T) {
 	path := writeConfig(t, "bad-log.yaml", "service: c-api\nchannel: c\nlog:\n  format: xml\n")
-	if _, err := platform.LoadConfig(path); err == nil || !strings.Contains(err.Error(), "unsupported log.format") {
+	if _, err := platformconfig.LoadConfig(path); err == nil || !strings.Contains(err.Error(), "unsupported log.format") {
 		t.Fatalf("err=%v want unsupported log.format", err)
 	}
 }
 
 // TestValidateHTTPProduction 验证生产必须配置请求超时。
 func TestValidateHTTPProduction(t *testing.T) {
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Env:     "prod",
 		Service: "c-api",
 		Channel: "c",
 		Addr:    ":8083",
-		Auth:    platform.AuthConfig{ExpectedChannel: "c", Mode: platform.AuthModeDemo},
-		Log:     platform.LogConfig{Level: "info", Format: "json"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		HTTP:    platform.HTTPConfig{Timeout: 0},
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "c", Mode: platformconfig.AuthModeDemo},
+		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		HTTP:    platformconfig.HTTPConfig{Timeout: 0},
 	}
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "http.timeout") {
@@ -135,16 +136,16 @@ func TestValidateHTTPProduction(t *testing.T) {
 
 // TestValidateAuthModes 验证 demo/prod 互斥与 jwt 缺配置失败。
 func TestValidateAuthModes(t *testing.T) {
-	base := func() *platform.Config {
-		return &platform.Config{
+	base := func() *platformconfig.Config {
+		return &platformconfig.Config{
 			Env:     "prod",
 			Service: "c-api",
 			Channel: "c",
 			Addr:    ":8083",
-			Auth:    platform.AuthConfig{ExpectedChannel: "c", Mode: platform.AuthModeDemo},
-			Log:     platform.LogConfig{Level: "info", Format: "json"},
-			DB:      platform.DBConfig{Driver: "memory"},
-			HTTP:    platform.HTTPConfig{Timeout: 30e9},
+			Auth:    platformconfig.AuthConfig{ExpectedChannel: "c", Mode: platformconfig.AuthModeDemo},
+			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+			DB:      platformconfig.DBConfig{Driver: "memory"},
+			HTTP:    platformconfig.HTTPConfig{Timeout: 30e9},
 		}
 	}
 	if err := base().Validate(); err == nil || !strings.Contains(err.Error(), "auth.mode=demo is forbidden") {
@@ -152,7 +153,7 @@ func TestValidateAuthModes(t *testing.T) {
 	}
 
 	jwt := base()
-	jwt.Auth.Mode = platform.AuthModeJWT
+	jwt.Auth.Mode = platformconfig.AuthModeJWT
 	err := jwt.Validate()
 	if err == nil || !strings.Contains(err.Error(), "auth.jwt.issuer is required") {
 		t.Fatalf("err=%v want jwt issuer rejection", err)
@@ -161,18 +162,18 @@ func TestValidateAuthModes(t *testing.T) {
 
 // TestValidateStorageNestedBuckets 验证命名桶内不允许再次声明 buckets（防止配置歧义）。
 func TestValidateStorageNestedBuckets(t *testing.T) {
-	cfg := platform.StorageConfig{
+	cfg := platformstorage.StorageConfig{
 		Driver: "memory",
-		Buckets: map[string]platform.BucketConfig{
+		Buckets: map[string]platformstorage.BucketConfig{
 			"public": {
 				Driver: "memory",
-				Buckets: map[string]platform.BucketConfig{
+				Buckets: map[string]platformstorage.BucketConfig{
 					"nested": {Driver: "memory"},
 				},
 			},
 		},
 	}
-	if err := platform.ValidateStorage("local", cfg); err == nil || !strings.Contains(err.Error(), "nested buckets") {
+	if err := platformstorage.ValidateStorage("local", cfg); err == nil || !strings.Contains(err.Error(), "nested buckets") {
 		t.Fatalf("err=%v want nested buckets rejection", err)
 	}
 }
@@ -184,15 +185,15 @@ func TestStorageConfigMapping(t *testing.T) {
 	if n := reflect.TypeOf(storage.Config{}).NumField(); n != wantStorageFields {
 		t.Fatalf("storage.Config has %d fields (want %d); update StorageConfig mapping and this test", n, wantStorageFields)
 	}
-	srcType := reflect.TypeOf(platform.StorageConfig{})
+	srcType := reflect.TypeOf(platformstorage.StorageConfig{})
 	for i := 0; i < reflect.TypeOf(storage.Config{}).NumField(); i++ {
 		name := reflect.TypeOf(storage.Config{}).Field(i).Name
 		if _, ok := srcType.FieldByName(name); !ok {
-			t.Fatalf("platform.StorageConfig missing field %q required by storage.Config", name)
+			t.Fatalf("platformstorage.StorageConfig missing field %q required by storage.Config", name)
 		}
 	}
 
-	cfg := platform.StorageConfig{
+	cfg := platformstorage.StorageConfig{
 		Driver:         "s3",
 		KeyPrefix:      "admin/",
 		MaxObjectBytes: 1024,
@@ -223,38 +224,9 @@ func TestStorageConfigMapping(t *testing.T) {
 	}
 }
 
-// TestLoadConfigExampleFiles 逐一加载仓库内示例配置，保证模块 include 与结构体同步。
-//
-// 示例为 prod 基线，密钥通过环境变量注入，使其与真实启动走同一条严格解码与校验路径。
-func TestLoadConfigExampleFiles(t *testing.T) {
-	t.Setenv("ADMIN_FRAME_AUTH_JWT_SECRET", "0123456789abcdef0123456789abcdef")
-	t.Setenv("ADMIN_FRAME_DB_DSN", "user:pass@tcp(localhost:3306)/db?parseTime=true&loc=UTC")
-	t.Setenv("ADMIN_FRAME_REDIS_ADDR", "localhost:6379")
-	t.Setenv("ADMIN_FRAME_IDENTITY_HASH_KEY", strings.Repeat("a", 64))
-	t.Setenv("ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY", strings.Repeat("b", 32))
-	t.Setenv("ADMIN_FRAME_STORAGE_S3_ACCESS_KEY", "access")
-	t.Setenv("ADMIN_FRAME_STORAGE_S3_SECRET_KEY", "secret")
-	t.Setenv("ADMIN_FRAME_IDENTITY_SMS_DAILY_BUDGET", "100")
-
-	files, err := filepath.Glob("../../configs/prod/*.yaml.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) == 0 {
-		t.Fatal("no example configs found")
-	}
-	for _, file := range files {
-		t.Run(filepath.Base(file), func(t *testing.T) {
-			if _, err := platform.LoadConfig(file); err != nil {
-				t.Fatalf("load %s: %v", file, err)
-			}
-		})
-	}
-}
-
 // TestBuildInfoJSON 保证 /version 字段名稳定（OBS-04）。
 func TestBuildInfoJSON(t *testing.T) {
-	out, err := json.Marshal(platform.BuildInfo{Service: "c-api", Version: "v1"})
+	out, err := json.Marshal(httpserver.BuildInfo{Service: "c-api", Version: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}

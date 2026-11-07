@@ -1,4 +1,4 @@
-package platform_test
+package appconfig_test
 
 import (
 	"bytes"
@@ -9,43 +9,46 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // mfaRawKey 是 32 字节 TOTP 主密钥（仅测试用假密钥）。
 const mfaRawKey = "0123456789abcdef0123456789abcdef"
 
 // mfaBaseConfig 返回启用身份域且 MFA 配置合法的本地配置。
-func mfaBaseConfig() *platform.Config {
+func mfaBaseConfig() *appconfig.Config {
 	cfg := iamBaseConfig()
 	cfg.Auth = prodJWTConfig()
-	cfg.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
-	cfg.Identity = platform.IdentityConfig{
+	cfg.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
+	cfg.Identity = identityconfig.IdentityConfig{
 		Enabled:    true,
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 168 * time.Hour,
-		Session: platform.IdentitySessionConfig{
+		Session: identityconfig.IdentitySessionConfig{
 			IdleTimeout:   72 * time.Hour,
 			MaxPerAccount: 10,
 		},
-		Retention: platform.IdentityRetentionConfig{
+		Retention: identityconfig.IdentityRetentionConfig{
 			SessionDays:      30,
 			LoginAttemptDays: 180,
 			CleanupInterval:  time.Hour,
 		},
-		Revocation: platform.IdentityRevocationConfig{
-			Driver:      platform.IdentityRevocationDriverRedis,
-			FailureMode: platform.RateLimitFailureClosed,
+		Revocation: identityconfig.IdentityRevocationConfig{
+			Driver:      identityconfig.IdentityRevocationDriverRedis,
+			FailureMode: platformconfig.RateLimitFailureClosed,
 		},
-		Lockout: platform.IdentityLockoutConfig{
+		Lockout: identityconfig.IdentityLockoutConfig{
 			MaxFailures: 5,
 			Window:      15 * time.Minute,
 			Duration:    15 * time.Minute,
 		},
-		LoginRateLimit: platform.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5},
+		LoginRateLimit: identityconfig.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5},
 		HashKey:        mfaRawKey,
 		HashKeyID:      "v1",
-		MFA: platform.IdentityMFAConfig{
+		MFA: identityconfig.IdentityMFAConfig{
 			AdminRequired: true,
 			Issuer:        "AdminFrame",
 			SecretKey:     mfaRawKey,
@@ -55,13 +58,13 @@ func mfaBaseConfig() *platform.Config {
 }
 
 // mfaProdConfig 返回满足生产约束的 MFA 配置。
-func mfaProdConfig() *platform.Config {
+func mfaProdConfig() *appconfig.Config {
 	cfg := mfaBaseConfig()
 	cfg.Env = "prod"
 	cfg.ID = prodIDConfig()
 	cfg.Storage.Driver = "s3"
-	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	cfg.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	cfg.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
 	cfg.Async.Enabled = true
 	prodIdempotencyConfig(cfg)
 	return cfg
@@ -87,7 +90,7 @@ func TestDecodeMFASecretKey(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			key, err := platform.IdentityMFAConfig{SecretKey: tc.value}.DecodeSecretKey()
+			key, err := identityconfig.IdentityMFAConfig{SecretKey: tc.value}.DecodeSecretKey()
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "32-byte key") {
 					t.Fatalf("err = %v, want 32-byte key rejection", err)
@@ -125,7 +128,7 @@ func TestValidateMFARequiresAdminMFAInProduction(t *testing.T) {
 }
 
 // mfaBizConfig 返回启用身份域的 B 端配置（MFA 不参与）。
-func mfaBizConfig() *platform.Config {
+func mfaBizConfig() *appconfig.Config {
 	cfg := mfaBaseConfig()
 	cfg.Channel = "biz"
 	cfg.Auth = prodJWTConfig()
@@ -157,7 +160,7 @@ func TestValidateMFAAdminOnly(t *testing.T) {
 	invalidProd.Env = "prod"
 	invalidProd.ID = prodIDConfig()
 	invalidProd.Storage.Driver = "s3"
-	invalidProd.DB = platform.DBConfig{Driver: "mysql", DSN: "biz:biz@tcp(127.0.0.1:3306)/biz"}
+	invalidProd.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "biz:biz@tcp(127.0.0.1:3306)/biz"}
 	invalidProd.Identity.MFA.AdminRequired = true
 	invalidProd.Identity.MFA.SecretKey = mfaRawKey
 	if err := invalidProd.Validate(); err == nil ||
@@ -189,7 +192,7 @@ func TestValidateHashKey(t *testing.T) {
 
 	previousWithoutActive := mfaBizConfig()
 	previousWithoutActive.Identity.HashKey = ""
-	previousWithoutActive.Identity.PreviousHashKeys = []platform.IdentityHashKeyConfig{
+	previousWithoutActive.Identity.PreviousHashKeys = []identityconfig.IdentityHashKeyConfig{
 		{ID: "v0", Key: mfaRawKey},
 	}
 	if err := previousWithoutActive.Validate(); err == nil ||
@@ -200,7 +203,7 @@ func TestValidateHashKey(t *testing.T) {
 	valid := mfaBizConfig()
 	valid.Identity.HashKey = mfaRawKey
 	valid.Identity.HashKeyID = "v2"
-	valid.Identity.PreviousHashKeys = []platform.IdentityHashKeyConfig{{ID: "v1", Key: mfaRawKey}}
+	valid.Identity.PreviousHashKeys = []identityconfig.IdentityHashKeyConfig{{ID: "v1", Key: mfaRawKey}}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid hash keys rejected: %v", err)
 	}
@@ -243,14 +246,14 @@ func TestValidateTrustedProxiesAndLoginRateLimit(t *testing.T) {
 	}
 
 	prodOpen := mfaProdConfig()
-	prodOpen.Identity.LoginRateLimit.FailureMode = platform.RateLimitFailureOpen
+	prodOpen.Identity.LoginRateLimit.FailureMode = platformconfig.RateLimitFailureOpen
 	if err := prodOpen.Validate(); err == nil ||
 		!strings.Contains(err.Error(), "identity.login_rate_limit.failure_mode must be fail_closed") {
 		t.Fatalf("err=%v want prod fail_open rejection", err)
 	}
 
 	localOpen := mfaBizConfig()
-	localOpen.Identity.LoginRateLimit.FailureMode = platform.RateLimitFailureOpen
+	localOpen.Identity.LoginRateLimit.FailureMode = platformconfig.RateLimitFailureOpen
 	if err := localOpen.Validate(); err != nil {
 		t.Fatalf("local fail_open rejected: %v", err)
 	}
@@ -310,14 +313,14 @@ func TestValidateMFATOTPAndTemporaryPassword(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		mutate func(*platform.Config)
+		mutate func(*appconfig.Config)
 		want   string
 	}{
-		{"digits", func(c *platform.Config) { c.Identity.MFA.TOTPDigits = 7 }, "totp_digits must be 6 or 8"},
-		{"step", func(c *platform.Config) { c.Identity.MFA.TOTPStep = 10 * time.Second }, "totp_step must be in [15s, 120s]"},
-		{"window", func(c *platform.Config) { c.Identity.MFA.TOTPWindow = 3 }, "totp_window must be in [0, 2]"},
-		{"recovery", func(c *platform.Config) { c.Identity.MFA.RecoveryCodeCount = 4 }, "recovery_code_count must be in [5, 20]"},
-		{"temporary", func(c *platform.Config) { c.Identity.Password.TemporaryLength = 12 }, "temporary_length must be in [16, 32]"},
+		{"digits", func(c *appconfig.Config) { c.Identity.MFA.TOTPDigits = 7 }, "totp_digits must be 6 or 8"},
+		{"step", func(c *appconfig.Config) { c.Identity.MFA.TOTPStep = 10 * time.Second }, "totp_step must be in [15s, 120s]"},
+		{"window", func(c *appconfig.Config) { c.Identity.MFA.TOTPWindow = 3 }, "totp_window must be in [0, 2]"},
+		{"recovery", func(c *appconfig.Config) { c.Identity.MFA.RecoveryCodeCount = 4 }, "recovery_code_count must be in [5, 20]"},
+		{"temporary", func(c *appconfig.Config) { c.Identity.Password.TemporaryLength = 12 }, "temporary_length must be in [16, 32]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -399,27 +402,27 @@ func TestValidateRevocationTokenGraceAndConsumerWindow(t *testing.T) {
 
 // TestValidateTenantPasswordOverrides 验证租户策略只能收紧（BIZ-04）。
 func TestValidateTenantPasswordOverrides(t *testing.T) {
-	add := func(cfg *platform.Config, override platform.IdentityPasswordTenantOverride) {
+	add := func(cfg *appconfig.Config, override identityconfig.IdentityPasswordTenantOverride) {
 		cfg.Identity.Password.TenantOverrides = append(cfg.Identity.Password.TenantOverrides, override)
 	}
 	valid := mfaBaseConfig()
-	add(valid, platform.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16, MaxLength: 64})
+	add(valid, identityconfig.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16, MaxLength: 64})
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid override: %v", err)
 	}
 	relaxed := mfaBaseConfig()
-	add(relaxed, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 8})
+	add(relaxed, identityconfig.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 8})
 	if err := relaxed.Validate(); err == nil || !strings.Contains(err.Error(), "min_length must be >= global") {
 		t.Fatalf("relaxed min error = %v", err)
 	}
 	tooLong := mfaBaseConfig()
-	add(tooLong, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MaxLength: 256})
+	add(tooLong, identityconfig.IdentityPasswordTenantOverride{MerchantID: "acct-1", MaxLength: 256})
 	if err := tooLong.Validate(); err == nil || !strings.Contains(err.Error(), "max_length must be within") {
 		t.Fatalf("too long max error = %v", err)
 	}
 	dup := mfaBaseConfig()
-	add(dup, platform.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 16})
-	add(dup, platform.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16})
+	add(dup, identityconfig.IdentityPasswordTenantOverride{MerchantID: "acct-1", MinLength: 16})
+	add(dup, identityconfig.IdentityPasswordTenantOverride{MerchantID: "ACCT-1", MinLength: 16})
 	if err := dup.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate merchant_id") {
 		t.Fatalf("duplicate error = %v", err)
 	}
@@ -460,15 +463,17 @@ func TestConfigLogValueHidesMFASecretKey(t *testing.T) {
 	if strings.Contains(out, secret) {
 		t.Fatalf("log output leaks mfa secret: %s", out)
 	}
-	if !strings.Contains(out, "secret_key_configured") {
-		t.Fatalf("expected secret_key_configured flag: %s", out)
+	// 域配置不再内联进平台段快照，LogValue 只输出平台字段；
+	// 这里额外确认身份域段整体未进入快照，避免将来误把原始结构写进日志。
+	if strings.Contains(out, "identity") {
+		t.Fatalf("aggregated log snapshot must not embed identity config: %s", out)
 	}
 }
 
 // TestValidateIdentityRequiresPersistentDB 验证生产身份域禁止内存仓储（IDN-P2-01）。
 func TestValidateIdentityRequiresPersistentDB(t *testing.T) {
 	memoryDB := mfaProdConfig()
-	memoryDB.DB = platform.DBConfig{Driver: "memory"}
+	memoryDB.DB = platformconfig.DBConfig{Driver: "memory"}
 	if err := memoryDB.Validate(); err == nil ||
 		!strings.Contains(err.Error(), "db.driver must not be memory when identity.enabled=true in prod/staging") {
 		t.Fatalf("err=%v want prod memory db rejection", err)

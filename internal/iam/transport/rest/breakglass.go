@@ -10,8 +10,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // BreakglassDTO 是破玻璃申请响应；载荷字段平铺，便于安全值班快速核对。
@@ -77,22 +77,22 @@ type breakglassRequestPayload struct {
 
 // RequestBreakglass POST /iam/breakglass
 func (h *Handler) RequestBreakglass(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if !h.adminOnly(w, traceID) {
 		return
 	}
 	if h.breakglass == nil {
-		httpx.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req CreateBreakglassRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := h.breakglass.Request(r.Context(), app.RequestBreakglassCommand{
@@ -103,37 +103,37 @@ func (h *Handler) RequestBreakglass(w http.ResponseWriter, r *http.Request) {
 		Actor:       principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toBreakglassDTO(request), traceID)
+	apiresp.OK(w, toBreakglassDTO(request), traceID)
 }
 
 // ApproveBreakglass POST /iam/breakglass/{id}/approve
 //
 // 审批通过并立即生效；重试已 approved 的单子会继续应用，已 applied 则幂等返回。
 func (h *Handler) ApproveBreakglass(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if !h.adminOnly(w, traceID) {
 		return
 	}
 	if h.breakglass == nil {
-		httpx.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req DecideChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := h.breakglass.Approve(r.Context(), app.ApproveBreakglassCommand{
@@ -142,45 +142,45 @@ func (h *Handler) ApproveBreakglass(w http.ResponseWriter, r *http.Request) {
 		Approver: principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toBreakglassDTO(request), traceID)
+	apiresp.OK(w, toBreakglassDTO(request), traceID)
 }
 
 // RevokeBreakglass POST /iam/breakglass/{id}/revoke
 //
 // 提前撤销已生效的限时绑定；version 必须与当前审批单一致，避免旧页面误撤新授权。
 func (h *Handler) RevokeBreakglass(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if !h.adminOnly(w, traceID) {
 		return
 	}
 	if h.breakglass == nil {
-		httpx.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam breakglass service is not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req DecideChangeRequestRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	request, err := h.breakglass.Revoke(r.Context(), r.PathValue("id"), version, principal.SubjectID)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toBreakglassDTO(request), traceID)
+	apiresp.OK(w, toBreakglassDTO(request), traceID)
 }
 
 // adminOnly 拒绝 B 端访问破玻璃端点。
@@ -190,7 +190,7 @@ func (h *Handler) RevokeBreakglass(w http.ResponseWriter, r *http.Request) {
 // 路由层直接 404，避免暴露端点存在性。
 func (h *Handler) adminOnly(w http.ResponseWriter, traceID string) bool {
 	if h.channel == domain.ChannelBiz {
-		httpx.FromError(w, apperr.NotFound("breakglass not found"), traceID)
+		apiresp.FromError(w, apperr.NotFound("breakglass not found"), traceID)
 		return false
 	}
 	return true

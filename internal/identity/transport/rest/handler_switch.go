@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/admin-frame/admin-frame/internal/identity/app"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 )
 
 // SwitchTenant 处理 POST /biz/v1/auth/tenant-switch（ENT-09 T-22）。
@@ -13,15 +13,15 @@ import (
 // access token（current_tenant 已更新）。refresh token 不变——
 // 切换租户不是重新认证。
 func (h *Handler) SwitchTenant(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := actorFrom(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body switchTenantRequest
 	if err := decodeStrictJSON(r, &body, false); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	result, err := h.auth.SwitchTenant(r.Context(), app.SwitchTenantInput{
@@ -30,10 +30,10 @@ func (h *Handler) SwitchTenant(w http.ResponseWriter, r *http.Request) {
 		TraceID:      traceID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, switchTenantResponse{
+	apiresp.OK(w, switchTenantResponse{
 		AccessToken:   result.AccessToken,
 		TokenType:     "Bearer",
 		ExpiresIn:     result.ExpiresIn,

@@ -1,51 +1,56 @@
-package platform_test
+package appconfig_test
 
 import (
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/internal/security"
 )
 
 // iamBaseConfig 返回可直接 Validate 的最小 IAM 配置（字段已按 applyDefaults 填充）。
-func iamBaseConfig() *platform.Config {
-	return &platform.Config{
-		Env:     "local",
-		Service: "admin-api",
-		Channel: "admin",
-		Addr:    ":8081",
-		Auth:    platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "admin"},
-		Log:     platform.LogConfig{Level: "info", Format: "json"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		Storage: platform.StorageConfig{Driver: "memory"},
-		HTTP:    platform.HTTPConfig{Timeout: 30 * time.Second},
-		IAM: platform.IAMConfig{
-			Mode:        platform.IAMModeEnforce,
+func iamBaseConfig() *appconfig.Config {
+	return &appconfig.Config{
+		Config: platformconfig.Config{
+			Env:     "local",
+			Service: "admin-api",
+			Channel: "admin",
+			Addr:    ":8081",
+			Auth:    platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "admin"},
+			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+			DB:      platformconfig.DBConfig{Driver: "memory"},
+			Storage: platformstorage.StorageConfig{Driver: "memory"},
+			HTTP:    platformconfig.HTTPConfig{Timeout: 30 * time.Second},
+		},
+		IAM: iamconfig.IAMConfig{
+			Mode:        iamconfig.IAMModeEnforce,
 			LoadTimeout: 300 * time.Millisecond,
-			Cache: platform.IAMCacheConfig{
-				Driver:      platform.IAMCacheDriverMemory,
+			Cache: iamconfig.IAMCacheConfig{
+				Driver:      iamconfig.IAMCacheDriverMemory,
 				L1TTL:       3 * time.Second,
 				L2TTL:       5 * time.Minute,
 				NegativeTTL: 30 * time.Second,
 			},
-			Limits: platform.IAMLimitsConfig{
+			Limits: iamconfig.IAMLimitsConfig{
 				MaxRolesPerSubject:        20,
 				MaxPermissionsPerRole:     200,
 				MaxBindingsPerSubject:     50,
 				MaxCustomRolesPerMerchant: 50,
 			},
-			Approval: platform.IAMApprovalConfig{Enabled: true},
+			Approval: iamconfig.IAMApprovalConfig{Enabled: true},
 		},
 	}
 }
 
 // prodIdempotencyConfig 补齐生产 A/B 端强制项：幂等开启且缺键即拒绝。
-func prodIdempotencyConfig(cfg *platform.Config) *platform.Config {
-	cfg.Idempotency = platform.IdempotencyConfig{
+func prodIdempotencyConfig(cfg *appconfig.Config) *appconfig.Config {
+	cfg.Idempotency = platformconfig.IdempotencyConfig{
 		Enabled:      true,
-		Driver:       platform.IdempotencyDriverRedis,
+		Driver:       platformconfig.IdempotencyDriverRedis,
 		Header:       "Idempotency-Key",
 		TTL:          24 * time.Hour,
 		Required:     true,
@@ -91,16 +96,16 @@ func TestValidateIAMDefaultsAndRules(t *testing.T) {
 	}
 
 	redisMissing := iamBaseConfig()
-	redisMissing.IAM.Cache.Driver = platform.IAMCacheDriverRedis
+	redisMissing.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
 	if err := redisMissing.Validate(); err == nil || !strings.Contains(err.Error(), "redis.addr is required") {
 		t.Fatalf("err=%v want redis.addr requirement", err)
 	}
 }
 
 // prodJWTConfig 返回可通过生产校验的最小 JWT 配置（仅测试用假密钥）。
-func prodJWTConfig() platform.AuthConfig {
-	return platform.AuthConfig{
-		Mode:            platform.AuthModeJWT,
+func prodJWTConfig() platformconfig.AuthConfig {
+	return platformconfig.AuthConfig{
+		Mode:            platformconfig.AuthModeJWT,
 		ExpectedChannel: "admin",
 		JWT: security.JWTConfig{
 			Alg:      "HS256",
@@ -112,9 +117,9 @@ func prodJWTConfig() platform.AuthConfig {
 }
 
 // prodIDConfig 返回满足生产必填项的最小 ID 配置。
-func prodIDConfig() platform.IDConfig {
+func prodIDConfig() platformconfig.IDConfig {
 	nodeID := int64(7)
-	return platform.IDConfig{NodeID: &nodeID}
+	return platformconfig.IDConfig{NodeID: &nodeID}
 }
 
 func TestValidateIAMProductionRules(t *testing.T) {
@@ -130,9 +135,9 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodRedis.Auth = prodJWTConfig()
 	prodRedis.ID = prodIDConfig()
 	prodRedis.Storage.Driver = "s3"
-	prodRedis.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prodRedis.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodRedis.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodRedis.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodRedis.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodRedis.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodRedis.Async.Enabled = true
 	prodIdempotencyConfig(prodRedis)
 	if err := prodRedis.Validate(); err != nil {
@@ -145,8 +150,8 @@ func TestValidateIAMProductionRules(t *testing.T) {
 	prodWildcard.ID = prodIDConfig()
 	prodWildcard.Storage.Driver = "s3"
 	prodWildcard.IAM.Security.AllowWildcard = true
-	prodWildcard.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodWildcard.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodWildcard.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodWildcard.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	if err := prodWildcard.Validate(); err == nil || !strings.Contains(err.Error(), "allow_wildcard") {
 		t.Fatalf("err=%v want prod wildcard rejection", err)
 	}
@@ -158,9 +163,9 @@ func TestValidateIAMEnforceRequiresAsync(t *testing.T) {
 	prodWithoutAsync.Auth = prodJWTConfig()
 	prodWithoutAsync.ID = prodIDConfig()
 	prodWithoutAsync.Storage.Driver = "s3"
-	prodWithoutAsync.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prodWithoutAsync.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodWithoutAsync.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodWithoutAsync.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodWithoutAsync.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodWithoutAsync.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	if err := prodWithoutAsync.Validate(); err == nil || !strings.Contains(err.Error(), "async.enabled must be true") {
 		t.Fatalf("err=%v want prod async requirement", err)
 	}
@@ -170,9 +175,9 @@ func TestValidateIAMEnforceRequiresAsync(t *testing.T) {
 	prodWithAsync.Auth = prodJWTConfig()
 	prodWithAsync.ID = prodIDConfig()
 	prodWithAsync.Storage.Driver = "s3"
-	prodWithAsync.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prodWithAsync.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodWithAsync.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodWithAsync.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodWithAsync.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodWithAsync.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodWithAsync.Async.Enabled = true
 	prodIdempotencyConfig(prodWithAsync)
 	if err := prodWithAsync.Validate(); err != nil {
@@ -181,22 +186,24 @@ func TestValidateIAMEnforceRequiresAsync(t *testing.T) {
 }
 
 func TestValidateIAMRejectsUnsupportedChannel(t *testing.T) {
-	cfg := &platform.Config{
-		Env:     "local",
-		Service: "c-api",
-		Channel: "c",
-		Addr:    ":8083",
-		Auth:    platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "c"},
-		Log:     platform.LogConfig{Level: "info", Format: "json"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		IAM: platform.IAMConfig{
-			Mode:        platform.IAMModeShadow,
+	cfg := &appconfig.Config{
+		Config: platformconfig.Config{
+			Env:     "local",
+			Service: "c-api",
+			Channel: "c",
+			Addr:    ":8083",
+			Auth:    platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "c"},
+			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+			DB:      platformconfig.DBConfig{Driver: "memory"},
+		},
+		IAM: iamconfig.IAMConfig{
+			Mode:        iamconfig.IAMModeShadow,
 			LoadTimeout: 300 * time.Millisecond,
-			Cache: platform.IAMCacheConfig{
-				Driver: platform.IAMCacheDriverMemory, L1TTL: 3 * time.Second,
+			Cache: iamconfig.IAMCacheConfig{
+				Driver: iamconfig.IAMCacheDriverMemory, L1TTL: 3 * time.Second,
 				L2TTL: 5 * time.Minute, NegativeTTL: 30 * time.Second,
 			},
-			Limits: platform.IAMLimitsConfig{
+			Limits: iamconfig.IAMLimitsConfig{
 				MaxRolesPerSubject: 20, MaxPermissionsPerRole: 200, MaxBindingsPerSubject: 50,
 			},
 		},
@@ -208,17 +215,17 @@ func TestValidateIAMRejectsUnsupportedChannel(t *testing.T) {
 
 func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\n")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.IAM.Mode != platform.IAMModeOff {
+	if cfg.IAM.Mode != iamconfig.IAMModeOff {
 		t.Fatalf("iam.mode = %q, want off", cfg.IAM.Mode)
 	}
 	if cfg.IAM.LoadTimeout != 300*time.Millisecond {
 		t.Fatalf("load_timeout = %s", cfg.IAM.LoadTimeout)
 	}
-	if cfg.IAM.Cache.Driver != platform.IAMCacheDriverMemory ||
+	if cfg.IAM.Cache.Driver != iamconfig.IAMCacheDriverMemory ||
 		cfg.IAM.Cache.L1TTL != 3*time.Second ||
 		cfg.IAM.Cache.L2TTL != 5*time.Minute ||
 		cfg.IAM.Cache.NegativeTTL != 30*time.Second {
@@ -227,25 +234,25 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 	if cfg.IAM.Limits.MaxRolesPerSubject != 20 || cfg.IAM.Limits.MaxPermissionsPerRole != 200 {
 		t.Fatalf("limit defaults = %+v", cfg.IAM.Limits)
 	}
-	if cfg.Async.Enabled || cfg.Async.Driver != platform.AsyncDriverDB ||
+	if cfg.Async.Enabled || cfg.Async.Driver != platformconfig.AsyncDriverDB ||
 		cfg.Async.Outbox.PollInterval != time.Second ||
 		cfg.Async.Outbox.BatchSize != 100 || cfg.Async.Outbox.MaxAttempts != 10 {
 		t.Fatalf("async defaults = %+v", cfg.Async)
 	}
 
 	t.Setenv("ADMIN_FRAME_IAM_MODE", "shadow")
-	cfg, err = platform.LoadConfig(path)
+	cfg, err = appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load with env: %v", err)
 	}
-	if cfg.IAM.Mode != platform.IAMModeShadow {
+	if cfg.IAM.Mode != iamconfig.IAMModeShadow {
 		t.Fatalf("iam.mode = %q, want shadow", cfg.IAM.Mode)
 	}
 }
 
 func TestValidateIAMBreakglassRules(t *testing.T) {
 	enabled := iamBaseConfig()
-	enabled.IAM.Breakglass = platform.IAMBreakglassConfig{
+	enabled.IAM.Breakglass = iamconfig.IAMBreakglassConfig{
 		Enabled:         true,
 		AllowedSubjects: []string{"1001"},
 	}
@@ -254,8 +261,8 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	}
 
 	shadow := iamBaseConfig()
-	shadow.IAM.Mode = platform.IAMModeShadow
-	shadow.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	shadow.IAM.Mode = iamconfig.IAMModeShadow
+	shadow.IAM.Breakglass = iamconfig.IAMBreakglassConfig{Enabled: true}
 	if err := shadow.Validate(); err == nil || !strings.Contains(err.Error(), "requires iam.mode=enforce") {
 		t.Fatalf("err=%v want breakglass enforce requirement", err)
 	}
@@ -263,7 +270,7 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	biz := iamBaseConfig()
 	biz.Channel = "biz"
 	biz.Auth.ExpectedChannel = "biz"
-	biz.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	biz.IAM.Breakglass = iamconfig.IAMBreakglassConfig{Enabled: true}
 	if err := biz.Validate(); err == nil || !strings.Contains(err.Error(), "channel=admin") {
 		t.Fatalf("err=%v want admin-only rejection", err)
 	}
@@ -272,17 +279,17 @@ func TestValidateIAMBreakglassRules(t *testing.T) {
 	prod.Env = "prod"
 	prod.Auth = prodJWTConfig()
 	prod.Storage.Driver = "s3"
-	prod.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prod.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prod.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prod.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prod.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prod.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	prod.Async.Enabled = true
-	prod.IAM.Breakglass = platform.IAMBreakglassConfig{Enabled: true}
+	prod.IAM.Breakglass = iamconfig.IAMBreakglassConfig{Enabled: true}
 	if err := prod.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_subjects") {
 		t.Fatalf("err=%v want prod allowlist requirement", err)
 	}
 
 	blank := iamBaseConfig()
-	blank.IAM.Breakglass = platform.IAMBreakglassConfig{
+	blank.IAM.Breakglass = iamconfig.IAMBreakglassConfig{
 		Enabled:         true,
 		AllowedSubjects: []string{"  "},
 	}
@@ -304,7 +311,7 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	cChannel.Service = "c-api"
 	cChannel.Channel = "c"
 	cChannel.Auth.ExpectedChannel = "c"
-	cChannel.IAM.Mode = platform.IAMModeOff
+	cChannel.IAM.Mode = iamconfig.IAMModeOff
 	cChannel.IAM.Approval.Enabled = true
 	if err := cChannel.Validate(); err == nil || !strings.Contains(err.Error(), "iam.approval.enabled is only supported") {
 		t.Fatalf("err=%v want channel rejection", err)
@@ -316,8 +323,8 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodMemory.Auth = prodJWTConfig()
 	prodMemory.ID = prodIDConfig()
 	prodMemory.Storage.Driver = "s3"
-	prodMemory.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodMemory.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodMemory.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodMemory.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodMemory.IAM.Approval.Enabled = true
 	if err := prodMemory.Validate(); err == nil || !strings.Contains(err.Error(), "persistent db.driver") {
 		t.Fatalf("err=%v want persistent db requirement", err)
@@ -328,9 +335,9 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 	prodSQL.Auth = prodJWTConfig()
 	prodSQL.ID = prodIDConfig()
 	prodSQL.Storage.Driver = "s3"
-	prodSQL.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
-	prodSQL.IAM.Cache.Driver = platform.IAMCacheDriverRedis
-	prodSQL.Redis = platform.RedisConfig{Addr: "127.0.0.1:6379"}
+	prodSQL.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+	prodSQL.IAM.Cache.Driver = iamconfig.IAMCacheDriverRedis
+	prodSQL.Redis = platformconfig.RedisConfig{Addr: "127.0.0.1:6379"}
 	prodSQL.Async.Enabled = true
 	prodSQL.IAM.Approval.Enabled = true
 	prodIdempotencyConfig(prodSQL)
@@ -342,7 +349,7 @@ func TestValidateIAMApprovalRules(t *testing.T) {
 // TestValidateProdHardeningSwitches 验证 P1-3：生产 A/B 端三开关不可降级。
 func TestValidateProdHardeningSwitches(t *testing.T) {
 	shadow := prodBaseConfig()
-	shadow.IAM.Mode = platform.IAMModeShadow
+	shadow.IAM.Mode = iamconfig.IAMModeShadow
 	if err := shadow.Validate(); err == nil || !strings.Contains(err.Error(), "iam.mode must be enforce") {
 		t.Fatalf("err=%v want enforce requirement", err)
 	}
@@ -395,7 +402,7 @@ func TestValidateRejectsPublishedSampleSecrets(t *testing.T) {
 }
 
 func TestRedisConfigRedaction(t *testing.T) {
-	cfg := platform.RedisConfig{Addr: "127.0.0.1:6379", Password: "p@ss", DB: 1}
+	cfg := platformconfig.RedisConfig{Addr: "127.0.0.1:6379", Password: "p@ss", DB: 1}
 	out := cfg.LogValue().String()
 	if strings.Contains(out, "p@ss") {
 		t.Fatalf("redis password leaked: %s", out)
@@ -406,7 +413,7 @@ func TestRedisConfigRedaction(t *testing.T) {
 	if cfg.Enabled() != true {
 		t.Fatal("redis with addr must be enabled")
 	}
-	if (platform.RedisConfig{}).Enabled() {
+	if (platformconfig.RedisConfig{}).Enabled() {
 		t.Fatal("empty redis must be disabled")
 	}
 }

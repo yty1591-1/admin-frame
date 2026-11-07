@@ -38,7 +38,7 @@
 
 | 包路径 | 用途 | 优先级 | 状态与装配备注 |
 |--------|------|--------|----------------|
-| `pkg/httpx` | 统一响应体、状态码映射 | P1 | 已完成；`internal/shared/httpx` 薄封装挂接 `apperr`，业务码映射留 shared |
+| `pkg/httpx` | 统一响应体、状态码映射 | P1 | 已完成；`internal/shared/apiresp` 薄封装挂接 `apperr`，业务码映射留 shared |
 | `pkg/middleware` | Chain / RequestID / Recover / Timeout / CORS / 限流 | P4 | 已完成；鉴权与装配留 platform |
 | `pkg/validator` | 入参校验、自定义 tag、i18n 错误消息 | P2 | 已完成；Handler `DecodeJSON` + Struct，映射 `40000` |
 | `pkg/pagination` | 分页 / 排序参数解析与默认值 | P2 | 已完成；列表 Handler 直接 `pagination.Parse` / `ParseParams` |

@@ -7,8 +7,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -91,14 +91,14 @@ type SyncTemplateResponse struct {
 
 // ListRoleTemplates GET /iam/role-templates
 func (h *Handler) ListRoleTemplates(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	page, err := pagination.Parse(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	query := r.URL.Query()
@@ -115,31 +115,31 @@ func (h *Handler) ListRoleTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	templates, err := h.templates.ListTemplates(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	total, err := h.templates.CountTemplates(r.Context(), filter)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]*RoleTemplateDTO, 0, len(templates))
 	for _, template := range templates {
 		items = append(items, toRoleTemplateDTO(template))
 	}
-	httpx.OK(w, RoleTemplateListResponse{Items: items, Total: total}, traceID)
+	apiresp.OK(w, RoleTemplateListResponse{Items: items, Total: total}, traceID)
 }
 
 // CreateRoleTemplate POST /iam/role-templates
 func (h *Handler) CreateRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateCreate) {
@@ -147,17 +147,17 @@ func (h *Handler) CreateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreateRoleTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel := h.templateChannel(req.Channel)
 	if channel == "" {
-		httpx.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
 		return
 	}
 	scopes, err := toDataScopes(req.DataScopes)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	template, err := h.templates.CreateTemplate(r.Context(), app.CreateTemplateCommand{
@@ -170,37 +170,37 @@ func (h *Handler) CreateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		Actor:       principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleTemplateDTO(template), traceID)
+	apiresp.OK(w, toRoleTemplateDTO(template), traceID)
 }
 
 // GetRoleTemplate GET /iam/role-templates/{id}
 func (h *Handler) GetRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	template, err := h.templates.GetTemplate(r.Context(), r.PathValue("id"), h.templateVisibilityChannel())
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleTemplateDTO(template), traceID)
+	apiresp.OK(w, toRoleTemplateDTO(template), traceID)
 }
 
 // UpdateRoleTemplate PATCH /iam/role-templates/{id}
 func (h *Handler) UpdateRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateUpdate) {
@@ -208,12 +208,12 @@ func (h *Handler) UpdateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	var req UpdateRoleTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	template, err := h.templates.UpdateTemplate(r.Context(), app.UpdateTemplateCommand{
@@ -225,22 +225,22 @@ func (h *Handler) UpdateRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		Actor:       principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleTemplateDTO(template), traceID)
+	apiresp.OK(w, toRoleTemplateDTO(template), traceID)
 }
 
 // ReplaceRoleTemplatePermissions PUT /iam/role-templates/{id}/permissions
 func (h *Handler) ReplaceRoleTemplatePermissions(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplatePermissionReplace) {
@@ -248,19 +248,19 @@ func (h *Handler) ReplaceRoleTemplatePermissions(w http.ResponseWriter, r *http.
 	}
 	var req ReplaceTemplatePermissionsRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var scopes *[]domain.DataScope
 	if req.DataScopes != nil {
 		converted, convErr := toDataScopes(*req.DataScopes)
 		if convErr != nil {
-			httpx.FromError(w, convErr, traceID)
+			apiresp.FromError(w, convErr, traceID)
 			return
 		}
 		scopes = &converted
@@ -273,22 +273,22 @@ func (h *Handler) ReplaceRoleTemplatePermissions(w http.ResponseWriter, r *http.
 		Actor:       principal.SubjectID,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleTemplateDTO(template), traceID)
+	apiresp.OK(w, toRoleTemplateDTO(template), traceID)
 }
 
 // DeleteRoleTemplate DELETE /iam/role-templates/{id}
 func (h *Handler) DeleteRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateDelete) {
@@ -297,13 +297,13 @@ func (h *Handler) DeleteRoleTemplate(w http.ResponseWriter, r *http.Request) {
 	var req DeleteRoleRequest
 	if r.ContentLength > 0 {
 		if err := decodeJSON(r, &req); err != nil {
-			httpx.FromError(w, err, traceID)
+			apiresp.FromError(w, err, traceID)
 			return
 		}
 	}
 	version, err := versionFrom(r, req.Version)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if err := h.templates.DeleteTemplate(r.Context(), app.DeleteTemplateCommand{
@@ -312,42 +312,42 @@ func (h *Handler) DeleteRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		Actor:   principal.SubjectID,
 		Reason:  req.Reason,
 	}); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
+	apiresp.OK(w, map[string]string{"id": r.PathValue("id")}, traceID)
 }
 
 // GetTemplateDrift GET /iam/role-templates/{id}/drift
 func (h *Handler) GetTemplateDrift(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	drift, err := h.templates.Drift(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, SyncTemplateResponse{Items: toTemplateDriftDTOs(drift), Total: len(drift)}, traceID)
+	apiresp.OK(w, SyncTemplateResponse{Items: toTemplateDriftDTOs(drift), Total: len(drift)}, traceID)
 }
 
 // SyncRoleTemplate POST /iam/role-templates/{id}/sync
 func (h *Handler) SyncRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var req SyncTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// dry-run 只做漂移预览，不改变授权；只有真实同步才强制走审批。
@@ -361,22 +361,22 @@ func (h *Handler) SyncRoleTemplate(w http.ResponseWriter, r *http.Request) {
 		DryRun:     req.DryRun,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, SyncTemplateResponse{Items: toTemplateDriftDTOs(drift), Total: len(drift)}, traceID)
+	apiresp.OK(w, SyncTemplateResponse{Items: toTemplateDriftDTOs(drift), Total: len(drift)}, traceID)
 }
 
 // InstantiateRoleTemplate POST /iam/role-templates/{id}/instantiate
 func (h *Handler) InstantiateRoleTemplate(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if h.templates == nil {
-		httpx.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
+		apiresp.FromError(w, apperr.Internal("iam role templates are not configured", nil), traceID)
 		return
 	}
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.rejectDirectWrite(w, r, domain.ChangeActionRoleTemplateInstantiate) {
@@ -384,12 +384,12 @@ func (h *Handler) InstantiateRoleTemplate(w http.ResponseWriter, r *http.Request
 	}
 	var req InstantiateTemplateRequest
 	if err := decodeJSON(r, &req); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	channel := h.effectiveChannel(req.Channel)
 	if channel == "" {
-		httpx.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("channel does not match this endpoint"), traceID)
 		return
 	}
 	scope := domain.RoleScopeType(strings.TrimSpace(req.ScopeType))
@@ -412,10 +412,10 @@ func (h *Handler) InstantiateRoleTemplate(w http.ResponseWriter, r *http.Request
 		Reason:     req.Reason,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toRoleDTO(role), traceID)
+	apiresp.OK(w, toRoleDTO(role), traceID)
 }
 
 // templateChannel 解析模板管理请求的端别。

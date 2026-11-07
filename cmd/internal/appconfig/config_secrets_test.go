@@ -1,4 +1,4 @@
-package platform_test
+package appconfig_test
 
 import (
 	"net/http"
@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // secretsBaseConfig 是密钥用例的公共头部：持久库 + 固定 JWT 基线。
@@ -42,7 +43,7 @@ func TestSecretsDisabledKeepsEnvInjection(t *testing.T) {
 	t.Setenv("ADMIN_FRAME_DB_DSN", dsn)
 
 	path := writeConfig(t, "secrets-off.yaml", secretsBaseConfig+"db:\n  driver: mysql\n")
-	cfg, err := platform.LoadConfig(path)
+	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -64,7 +65,7 @@ func TestSecretsEnvProviderUsesDefaultPrefix(t *testing.T) {
 		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
 		"identity:\n  enabled: true\n" +
 		"secrets:\n  providers: [env]\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-env-prefix.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-env-prefix.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -77,9 +78,9 @@ func TestSecretsEnvProviderUsesDefaultPrefix(t *testing.T) {
 // file 命中即成为唯一真相，配置里写的旧值必须被替换。
 func TestSecretsFileOverridesConfig(t *testing.T) {
 	dir := t.TempDir()
-	writeSecretFile(t, dir, platform.SecretDBDSN, "svc:from-file@tcp(db:3306)/app")
-	writeSecretFile(t, dir, platform.SecretAuthJWTSecret, strings.Repeat("k", 32))
-	writeSecretFile(t, dir, platform.SecretRedisPassword, "redis-from-file")
+	writeSecretFile(t, dir, platformconfig.SecretDBDSN, "svc:from-file@tcp(db:3306)/app")
+	writeSecretFile(t, dir, platformconfig.SecretAuthJWTSecret, strings.Repeat("k", 32))
+	writeSecretFile(t, dir, platformconfig.SecretRedisPassword, "redis-from-file")
 
 	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
 		"auth:\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
@@ -87,7 +88,7 @@ func TestSecretsFileOverridesConfig(t *testing.T) {
 		"db:\n  driver: mysql\n  dsn: \"svc:from-config@tcp(db:3306)/app\"\n" +
 		"redis:\n  addr: \"127.0.0.1:6379\"\n  password: \"redis-from-config\"\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-file.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-file.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -110,8 +111,8 @@ func TestSecretsOverridesIdentityKeys(t *testing.T) {
 	dir := t.TempDir()
 	hashKey := strings.Repeat("ab", 32) // hex 编码 32 字节
 	mfaKey := strings.Repeat("cd", 32)  // hex 编码 32 字节
-	writeSecretFile(t, dir, platform.SecretIdentityHashKey, hashKey)
-	writeSecretFile(t, dir, platform.SecretIdentityMFASecretKey, mfaKey)
+	writeSecretFile(t, dir, platformconfig.SecretIdentityHashKey, hashKey)
+	writeSecretFile(t, dir, platformconfig.SecretIdentityMFASecretKey, mfaKey)
 
 	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n    secret: \"" + strings.Repeat("s", 32) + "\"\n" +
@@ -119,7 +120,7 @@ func TestSecretsOverridesIdentityKeys(t *testing.T) {
 		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
 		"identity:\n  enabled: true\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-identity.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-identity.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -138,14 +139,14 @@ func TestSecretsOverridesIdentityKeys(t *testing.T) {
 // 「文件已挂载但配置仍要写明文」的矛盾。
 func TestSecretsFileSatisfiesRequiredFields(t *testing.T) {
 	dir := t.TempDir()
-	writeSecretFile(t, dir, platform.SecretDBDSN, "svc:file-only@tcp(db:3306)/app")
-	writeSecretFile(t, dir, platform.SecretAuthJWTSecret, strings.Repeat("k", 32))
+	writeSecretFile(t, dir, platformconfig.SecretDBDSN, "svc:file-only@tcp(db:3306)/app")
+	writeSecretFile(t, dir, platformconfig.SecretAuthJWTSecret, strings.Repeat("k", 32))
 
 	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
 		"db:\n  driver: mysql\n" + // dsn 故意留空
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-required.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-required.yaml", yaml))
 	if err != nil {
 		t.Fatalf("配置留空 + 托管源提供密钥应当可启动，err = %v", err)
 	}
@@ -161,12 +162,12 @@ func TestSecretsFileSatisfiesRequiredFields(t *testing.T) {
 // 缺文件不应清空配置，是否致命交由既有字段校验判断。
 func TestSecretsFileMissingKeepsConfiguredValue(t *testing.T) {
 	dir := t.TempDir()
-	writeSecretFile(t, dir, platform.SecretDBDSN, "svc:file@tcp(db:3306)/app")
+	writeSecretFile(t, dir, platformconfig.SecretDBDSN, "svc:file@tcp(db:3306)/app")
 
 	yaml := secretsBaseConfig +
 		"db:\n  driver: mysql\n  dsn: \"svc:config@tcp(db:3306)/app\"\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-miss.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-miss.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -178,12 +179,12 @@ func TestSecretsFileMissingKeepsConfiguredValue(t *testing.T) {
 // TestSecretsSplitsJWTRotationList 验证轮换期旧密钥列表按逗号切分并丢弃空白。
 func TestSecretsSplitsJWTRotationList(t *testing.T) {
 	dir := t.TempDir()
-	writeSecretFile(t, dir, platform.SecretAuthJWTSecrets, "old-1, ,old-2,")
+	writeSecretFile(t, dir, platformconfig.SecretAuthJWTSecrets, "old-1, ,old-2,")
 
 	yaml := secretsBaseConfig +
 		"db:\n  driver: memory\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-rot.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-rot.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -199,14 +200,14 @@ func TestSecretsSplitsJWTRotationList(t *testing.T) {
 // 用「错误文本是否包含该规则的关键词」判定，避免为了凑齐 prod 基线
 // 把用例写成与规则无关的字段堆砌。
 func TestSecretsProdRejectsEnvOnly(t *testing.T) {
-	prod := &platform.Config{Env: "prod"}
-	prod.Secrets.Providers = []string{platform.SecretProviderEnv}
+	prod := &appconfig.Config{Config: platformconfig.Config{Env: "prod"}}
+	prod.Secrets.Providers = []string{platformconfig.SecretProviderEnv}
 	if err := prod.Validate(); err == nil || !strings.Contains(err.Error(), "allow_env_fallback") {
 		t.Fatalf("prod + providers:[env] 应被拒绝并提示 allow_env_fallback，err = %v", err)
 	}
 
-	migrating := &platform.Config{Env: "prod"}
-	migrating.Secrets.Providers = []string{platform.SecretProviderEnv}
+	migrating := &appconfig.Config{Config: platformconfig.Config{Env: "prod"}}
+	migrating.Secrets.Providers = []string{platformconfig.SecretProviderEnv}
 	migrating.Secrets.AllowEnvFallback = true
 	if err := migrating.Validate(); err != nil && strings.Contains(err.Error(), "allow_env_fallback") {
 		t.Fatalf("显式开启迁移豁免后不应再报该规则，err = %v", err)
@@ -234,7 +235,7 @@ func TestSecretsVaultOverridesConfig(t *testing.T) {
 		"db:\n  driver: mysql\n  dsn: \"svc:from-config@tcp(db:3306)/app\"\n" +
 		"secrets:\n  providers: [vault]\n  vault:\n    address: \"" + server.URL + "\"\n" +
 		"    token: \"s.inline\"\n    path: \"admin-frame/prod\"\n"
-	cfg, err := platform.LoadConfig(writeConfig(t, "secrets-vault.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-vault.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
@@ -250,7 +251,7 @@ func TestSecretsVaultOverridesConfig(t *testing.T) {
 func TestSecretsVaultRequiresAddress(t *testing.T) {
 	yaml := secretsBaseConfig + "db:\n  driver: memory\n" +
 		"secrets:\n  providers: [vault]\n  vault:\n    path: \"admin-frame/prod\"\n"
-	_, err := platform.LoadConfig(writeConfig(t, "secrets-vault-noaddr.yaml", yaml))
+	_, err := appconfig.Load(writeConfig(t, "secrets-vault-noaddr.yaml", yaml))
 	if err == nil {
 		t.Fatalf("vault 缺地址应当被拒绝")
 	}
@@ -262,8 +263,8 @@ func TestSecretsVaultRequiresAddress(t *testing.T) {
 // TestSecretsVaultProdRejectsInlineToken 验证生产禁用显式令牌：
 // 配置里出现令牌等于没有托管（SEC-05），必须改由 token_file / token_env 注入。
 func TestSecretsVaultProdRejectsInlineToken(t *testing.T) {
-	cfg := &platform.Config{Env: "prod"}
-	cfg.Secrets.Providers = []string{platform.SecretProviderVault}
+	cfg := &appconfig.Config{Config: platformconfig.Config{Env: "prod"}}
+	cfg.Secrets.Providers = []string{platformconfig.SecretProviderVault}
 	cfg.Secrets.Vault.Address = "https://vault.internal:8200"
 	cfg.Secrets.Vault.Path = "admin-frame/prod"
 	cfg.Secrets.Vault.Token = "s.inline"
@@ -282,7 +283,7 @@ func TestSecretsVaultProdRejectsInlineToken(t *testing.T) {
 // TestSecretsFileRequiresDir 验证 file 来源必须给出目录。
 func TestSecretsFileRequiresDir(t *testing.T) {
 	yaml := secretsBaseConfig + "db:\n  driver: memory\n" + "secrets:\n  providers: [file]\n"
-	_, err := platform.LoadConfig(writeConfig(t, "secrets-nodir.yaml", yaml))
+	_, err := appconfig.Load(writeConfig(t, "secrets-nodir.yaml", yaml))
 	if err == nil {
 		t.Fatalf("file 来源缺 dir 应当被拒绝")
 	}
@@ -294,7 +295,7 @@ func TestSecretsFileRequiresDir(t *testing.T) {
 // TestSecretsUnknownProvider 验证未知来源被拒绝。
 func TestSecretsUnknownProvider(t *testing.T) {
 	yaml := secretsBaseConfig + "db:\n  driver: memory\n" + "secrets:\n  providers: [bogus]\n"
-	_, err := platform.LoadConfig(writeConfig(t, "secrets-unknown.yaml", yaml))
+	_, err := appconfig.Load(writeConfig(t, "secrets-unknown.yaml", yaml))
 	if err == nil {
 		t.Fatalf("未知 provider 应当被拒绝")
 	}
@@ -310,7 +311,7 @@ func TestSecretsProviderNameDedup(t *testing.T) {
 	yaml := secretsBaseConfig +
 		"db:\n  driver: memory\n" +
 		"secrets:\n  providers: [FILE, file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	if _, err := platform.LoadConfig(writeConfig(t, "secrets-dedup.yaml", yaml)); err != nil {
+	if _, err := appconfig.Load(writeConfig(t, "secrets-dedup.yaml", yaml)); err != nil {
 		t.Fatalf("大小写重复的来源应当归一后通过，实际 error = %v", err)
 	}
 }
@@ -319,11 +320,11 @@ func TestSecretsProviderNameDedup(t *testing.T) {
 // 否则会出现「服务端读文件、迁移仍读环境变量」的分裂。
 func TestLoadDBConfigUsesSecretProvider(t *testing.T) {
 	dir := t.TempDir()
-	writeSecretFile(t, dir, platform.SecretDBDSN, "migrate:from-file@tcp(db:3306)/app")
+	writeSecretFile(t, dir, platformconfig.SecretDBDSN, "migrate:from-file@tcp(db:3306)/app")
 
 	yaml := "db:\n  driver: mysql\n  dsn: \"migrate:from-config@tcp(db:3306)/app\"\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
-	cfg, err := platform.LoadDBConfig(writeConfig(t, "secrets-migrate.yaml", yaml))
+	cfg, err := platformconfig.LoadDBConfig(writeConfig(t, "secrets-migrate.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadDBConfig() error = %v", err)
 	}
@@ -344,7 +345,7 @@ func TestSecretsErrorSurfacesThroughValidate(t *testing.T) {
 	yaml := secretsBaseConfig +
 		"db:\n  driver: mysql\n  dsn: \"a:b@tcp(db:3306)/app\"\n" +
 		"secrets:\n  providers: [file]\n  file:\n    dir: \"" + blocker + "/sub\"\n"
-	_, err := platform.LoadConfig(writeConfig(t, "secrets-ioerr.yaml", yaml))
+	_, err := appconfig.Load(writeConfig(t, "secrets-ioerr.yaml", yaml))
 	if err == nil {
 		t.Fatalf("Provider 读取失败应当在启动期阻断")
 	}

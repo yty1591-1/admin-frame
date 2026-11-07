@@ -3,8 +3,8 @@ package rest
 import (
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 )
 
 // AuthBodyLimitBytes 是认证 / 账号处置路由的独立请求体上限（SEC-03）。
@@ -20,8 +20,8 @@ const AuthBodyLimitBytes int64 = 16 << 10
 func AuthBodyLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > AuthBodyLimitBytes {
-			httpx.FromError(w, apperr.BadRequest("request body too large"),
-				httpx.TraceIDFromContext(r.Context()))
+			apiresp.FromError(w, apperr.BadRequest("request body too large"),
+				apiresp.TraceIDFromContext(r.Context()))
 			return
 		}
 		if r.Body != nil {

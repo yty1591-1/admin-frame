@@ -14,10 +14,10 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/audit/app"
 	"github.com/admin-frame/admin-frame/internal/audit/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -73,36 +73,36 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 //
 // 时间窗必填（from / to，RFC3339）：无时间窗的审计查询会退化为全表扫描。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.ParseWith(r, h.pageCfg)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	filter, err := parseFilter(r, page.Limit(), page.Offset())
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	if err := filter.Validate(h.maxRange); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	result, err := h.query.List(r.Context(), filter, h.accessMeta(principal, traceID))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]EventDTO, 0, len(result.Items))
 	for _, event := range result.Items {
 		items = append(items, toEventDTO(event))
 	}
-	httpx.OK(w, ListResponse{Items: items, Total: result.Total}, traceID)
+	apiresp.OK(w, ListResponse{Items: items, Total: result.Total}, traceID)
 }
 
 // Export 处理 GET /admin/v1/audit/events/export，以 CSV 流式返回。
@@ -110,21 +110,21 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // 导出前先做全量校验（时间窗、范围、操作者），校验通过后才写响应头，
 // 避免把 JSON 错误写进 CSV 流。
 func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	// 导出由用例统一把 limit 收敛到 audit.export.max_rows，这里给 1 只为通过
 	// 「limit 必填」这一与查询共用的校验，不代表实际导出条数。
 	filter, err := parseFilter(r, 1, 0)
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	if err := filter.Validate(h.exportMaxRange); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	meta := h.accessMeta(principal, traceID)
@@ -134,7 +134,7 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if _, err := h.query.Export(r.Context(), filter, meta, w); err != nil {
 		// 已开始写响应流时无法改状态码；记录错误交由结构化日志与告警发现。
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 }
@@ -145,47 +145,47 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 // 「落任务行，由 worker 生成文件」。返回 202 + 任务状态，客户端轮询
 // /admin/v1/audit/exports/{id} 直到 status=succeeded 再下载。
 func (h *Handler) CreateExport(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.jobs == nil {
-		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		apiresp.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
 		return
 	}
 	filter, err := parseFilter(r, 1, 0)
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	job, err := h.jobs.Create(r.Context(), filter, h.accessMeta(principal, traceID))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusAccepted, 0, "accepted", toExportJobDTO(job), traceID)
+	apiresp.JSON(w, http.StatusAccepted, 0, "accepted", toExportJobDTO(job), traceID)
 }
 
 // GetExport 处理 GET /admin/v1/audit/exports/{id}，返回任务状态。
 func (h *Handler) GetExport(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.jobs == nil {
-		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		apiresp.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
 		return
 	}
 	job, err := h.jobs.Get(r.Context(), r.PathValue("id"), h.accessMeta(principal, traceID))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toExportJobDTO(job), traceID)
+	apiresp.OK(w, toExportJobDTO(job), traceID)
 }
 
 // DownloadExport 处理 GET /admin/v1/audit/exports/{id}/download，返回 CSV。
@@ -193,19 +193,19 @@ func (h *Handler) GetExport(w http.ResponseWriter, r *http.Request) {
 // 先取到完整字节再写响应头：任务未完成 / 已过期时仍能返回 JSON 错误，
 // 不会出现「已经写了 200 和 CSV 头，才在流中间报错」的半截文件。
 func (h *Handler) DownloadExport(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	principal, err := h.principal(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	if h.jobs == nil {
-		httpx.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
+		apiresp.FromError(w, apperr.Unavailable("async audit export is disabled"), traceID)
 		return
 	}
 	job, body, err := h.jobs.Open(r.Context(), r.PathValue("id"), h.accessMeta(principal, traceID))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

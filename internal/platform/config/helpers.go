@@ -6,15 +6,6 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
-// oauthProviderNames 返回 provider 名称列表，供日志输出（不含任何密钥）。
-func oauthProviderNames(providers []IdentityOAuthProviderConfig) []string {
-	names := make([]string, 0, len(providers))
-	for _, provider := range providers {
-		names = append(names, provider.Name)
-	}
-	return names
-}
-
 // maskIfSet 在取值非空时返回占位符，避免泄露“密钥是否存在”以外的信息。
 func maskIfSet(value string) string {
 	if strings.TrimSpace(value) == "" {

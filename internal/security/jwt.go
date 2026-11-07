@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 )
 
@@ -228,30 +228,30 @@ func NewJWTAuth(cfg JWTConfig, expected auth.Channel, opts ...JWTAuthOption) (fu
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			traceID := httpx.TraceIDFromContext(r.Context())
+			traceID := apiresp.TraceIDFromContext(r.Context())
 			token, ok := bearerToken(r)
 			if !ok {
-				httpx.FromError(w, apperr.Unauthorized("missing bearer token"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("missing bearer token"), traceID)
 				return
 			}
 			claims, err := mgr.Parse(token)
 			if err != nil {
 				// 不回显具体校验原因，避免给攻击者提供枚举信息（SEC-05）。
-				httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("invalid token"), traceID)
 				return
 			}
 			p, err := principalFromClaims(claims, expected)
 			if err != nil {
-				httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
+				apiresp.FromError(w, apperr.Unauthorized("invalid token"), traceID)
 				return
 			}
 			if options.checker != nil {
 				if err := options.checker.Check(r.Context(), claims); err != nil {
 					if errors.Is(err, apperr.ErrUnavailable) {
-						httpx.FromError(w, apperr.Unavailable("authentication dependency unavailable"), traceID)
+						apiresp.FromError(w, apperr.Unavailable("authentication dependency unavailable"), traceID)
 						return
 					}
-					httpx.FromError(w, apperr.Unauthorized("invalid token"), traceID)
+					apiresp.FromError(w, apperr.Unauthorized("invalid token"), traceID)
 					return
 				}
 			}

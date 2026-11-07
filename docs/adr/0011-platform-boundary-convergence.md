@@ -22,14 +22,15 @@
 | `internal/iam/config` | `IAM*` 类型、`Enabled` / `IsEnabled`、IAM 模式常量 |
 | `internal/audit/config` | `Audit*` 类型、`EffectiveStore`、保留期常量 |
 | `internal/tenant/config` | `Tenant*` 类型 |
-| `internal/platform/config` | 根 `Config` 聚合、加载 / 绑定、默认值、跨段编排校验、脱敏与密钥解析 |
+| `internal/platform/config` | 平台段 `Config`（HTTP / DB / 日志 / 异步 / 观测等）、加载 / 绑定、默认值、跨段编排校验、脱敏与密钥解析 |
+| `cmd/internal/appconfig` | 组合装配：平台段内联 + 各域顶层段挂载，统一默认值、归一化、密钥回写与聚合校验 |
 
-`platform/config.Config` 的字段名与结构保持不变，字段类型改为对应域包类型；默认值、归一化与跨域校验仍留在平台层（「加载 + 绑定 + 编排校验」是平台职责）。
+实现状态（2026-11-07）：`platform/config.Config` 只保留平台段；`Identity` / `IAM` / `Audit` / `Tenant` 段由 `cmd/internal/appconfig` 组合，默认值与校验规则在各域包内自持（`ApplyDefaults` / `Normalize` / `Validate`），平台层不再感知域字段。
 
 ### 2. `deps.Config` 迁移路径
 
-- **本版**：`cmd/*` 与域 runtime 继续通过 `deps.Config.Identity` 等字段读取配置；`platform` 顶层别名（`type IdentityConfig = identityconfig.IdentityConfig` 等）保留一个版本，避免一次性改动全部调用方。
-- **后续**：域 runtime 逐步自持其配置视图（构造参数或域级 `Config` 结构），`deps.Config` 只保留核心段；删除平台层域配置别名。迁移以域为单位分批完成，不做一次性破坏性切换。
+- **已完成（2026-11-07）**：`cmd/*` 与域 runtime 不再通过 `deps.Config.Identity` 等字段读取配置；Identity / IAM / Audit / Tenant 分别由 `identityruntime.New` / `iamruntime.New` / `auditruntime.New` / `tenantruntime.New` 的显式参数接收。`platform` 顶层域配置别名已删除。
+- 配置装配入口统一为 `cmd/internal/appconfig.Load`：平台段内联展开，域段按 yaml 顶层键挂载；密钥解析通过 `platformconfig.SecretTarget` 在同一次 Provider 解析中回写域字段，域包不依赖平台 secrets。
 - `AuditConfig.EffectiveStore` 等派生方法随域类型迁移；装配期决策（store 选择）由 `cmd` / 域 runtime 调用该方法得到，不在平台层内联。
 
 ### 3. 守卫端口下沉
@@ -56,11 +57,11 @@ prepareInfra → buildAsync → buildGuards → buildAuthN → buildAuthorizer �
 
 ## 兼容策略
 
-- 平台顶层 `aliases.go` 保留域配置类型别名与 `WithTenantGuard` / `WithQuotaGuard` 薄包装，兼容一个版本；`cmd/*` 在阶段 2 无编译改动。
+- 平台顶层 `aliases.go` 只保留平台核心别名；域配置类型别名与 `WithTenantGuard` / `WithQuotaGuard` 薄包装已随阶段 3 删除。
 - `check-layering.sh` 的 `LAYER_SEMANTIC_BASELINE` 清空，`PLATFORM_MAX_FILES` 下调到 5，基线只减不增。
 
 ## 后果
 
 - **正面**：域配置演进不再触碰平台层；平台层不再定义业务语义接口，LAYER-09 无基线；装配顺序变成代码结构而非注释。
-- **负面**：类型别名与函数包装带来一版间接层；`deps.Config` 仍是聚合对象，域配置完全自持需后续分批迁移。
-- **移除计划**：调用方完成域配置自持后，删除 `platform` 顶层域配置别名；守卫包装在确认无外部使用后删除，仅保留 `httpserver` 通用装配点。
+- **负面**：`cmd/internal/appconfig` 成为新的组合装配点，新增域配置需同时改域包与组合层。
+- **移除计划（已完成）**：调用方完成域配置自持后，已删除 `platform` 顶层域配置别名；守卫包装已删除，仅保留 `httpserver` 通用装配点。

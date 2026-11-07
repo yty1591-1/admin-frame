@@ -1,4 +1,4 @@
-package httpx_test
+package apiresp_test
 
 import (
 	"encoding/json"
@@ -7,16 +7,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	xerr "github.com/admin-frame/admin-frame/pkg/errors"
 )
 
 func TestFromErrorAppError(t *testing.T) {
 	rr := httptest.NewRecorder()
-	httpx.FromError(rr, apperr.NotFound("order missing"), "tid")
+	apiresp.FromError(rr, apperr.NotFound("order missing"), "tid")
 
-	var env httpx.Envelope
+	var env apiresp.Envelope
 	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +30,9 @@ func TestFromErrorAppError(t *testing.T) {
 
 func TestFromErrorSentinel(t *testing.T) {
 	rr := httptest.NewRecorder()
-	httpx.FromError(rr, apperr.ErrUnauthorized, "t")
+	apiresp.FromError(rr, apperr.ErrUnauthorized, "t")
 
-	var env httpx.Envelope
+	var env apiresp.Envelope
 	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +43,9 @@ func TestFromErrorSentinel(t *testing.T) {
 
 func TestFromErrorParsePageStyle(t *testing.T) {
 	rr := httptest.NewRecorder()
-	httpx.FromError(rr, xerr.InvalidArgument("page_size exceeds maximum of 100"), "t")
+	apiresp.FromError(rr, xerr.InvalidArgument("page_size exceeds maximum of 100"), "t")
 
-	var env httpx.Envelope
+	var env apiresp.Envelope
 	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +56,9 @@ func TestFromErrorParsePageStyle(t *testing.T) {
 
 func TestFromErrorInternalHidesDetail(t *testing.T) {
 	rr := httptest.NewRecorder()
-	httpx.FromError(rr, apperr.Internal("db dsn=secret", stderrors.New("boom")), "t")
+	apiresp.FromError(rr, apperr.Internal("db dsn=secret", stderrors.New("boom")), "t")
 
-	var env httpx.Envelope
+	var env apiresp.Envelope
 	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}

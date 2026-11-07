@@ -20,8 +20,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	pkgwebhook "github.com/admin-frame/admin-frame/pkg/webhook"
 )
 
@@ -70,19 +70,19 @@ func NewHandler(receipts *app.ReceiptService) (*Handler, error) {
 // 未知消息 ID 与重复回执都返回 200（对供应商语义是「已受理」，
 // 避免其重放风暴）；只有验签失败返回 401。
 func (h *Handler) Receipt(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.verifier.VerifyRequest(r.Context(), r); err != nil {
-		httpx.FromError(w, apperr.Unauthorized("invalid webhook signature"), traceID)
+		apiresp.FromError(w, apperr.Unauthorized("invalid webhook signature"), traceID)
 		return
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		httpx.FromError(w, apperr.BadRequest("invalid callback payload"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("invalid callback payload"), traceID)
 		return
 	}
 	var payload receiptPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		httpx.FromError(w, apperr.BadRequest("invalid callback payload"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("invalid callback payload"), traceID)
 		return
 	}
 	if err := h.receipts.Apply(r.Context(), app.ReceiptInput{
@@ -96,13 +96,13 @@ func (h *Handler) Receipt(w http.ResponseWriter, r *http.Request) {
 		// 避免其重放风暴）；载荷非法返回 400。
 		var appErr *apperr.AppError
 		if errors.As(err, &appErr) && appErr.NumericCode() == apperr.CodeNotFound {
-			httpx.OK(w, map[string]string{"status": "ignored"}, traceID)
+			apiresp.OK(w, map[string]string{"status": "ignored"}, traceID)
 			return
 		}
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, map[string]string{"status": "ok"}, traceID)
+	apiresp.OK(w, map[string]string{"status": "ok"}, traceID)
 }
 
 type receiptPayload struct {

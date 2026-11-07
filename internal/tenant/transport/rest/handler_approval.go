@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 )
@@ -39,17 +39,17 @@ type approvalResponse struct {
 
 // GetApproval 处理 GET /admin/v1/tenants/{id}/approval。
 func (h *Handler) GetApproval(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	view, err := h.service.GetApproval(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toApprovalResponse(view), traceID)
+	apiresp.OK(w, toApprovalResponse(view), traceID)
 }
 
 // SubmitApproval 处理 POST /admin/v1/tenants/{id}/approval（提交 / 重提）。
@@ -75,10 +75,10 @@ func (h *Handler) RejectApproval(w http.ResponseWriter, r *http.Request) {
 // handleApproval 收敛三个动作的解析与响应，避免三份重复代码各自漂移。
 func (h *Handler) handleApproval(w http.ResponseWriter, r *http.Request,
 	action func(context.Context, app.ApprovalInput) (app.ApprovalView, error), status int, requireBody bool) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body approvalRequest
@@ -87,7 +87,7 @@ func (h *Handler) handleApproval(w http.ResponseWriter, r *http.Request,
 		decode = decodeJSON
 	}
 	if err := decode(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	view, err := action(r.Context(), app.ApprovalInput{
@@ -96,10 +96,10 @@ func (h *Handler) handleApproval(w http.ResponseWriter, r *http.Request,
 		Actor:    actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, status, 0, "ok", toApprovalResponse(view), traceID)
+	apiresp.JSON(w, status, 0, "ok", toApprovalResponse(view), traceID)
 }
 
 // toApprovalResponse 把视图转为响应体；draft 时 latest 为 null。

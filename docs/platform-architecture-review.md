@@ -105,7 +105,7 @@
 
 ### P1-6 同名 `httpx` 双包，调用方需二选一
 
-**证据**：[internal/shared/httpx/response.go](../internal/shared/httpx/response.go) 与 [pkg/httpx/envelope.go](../pkg/httpx/envelope.go) 同为 `package httpx`；[pipeline.go](../internal/platform/pipeline.go#L11-L20) 同时 import 二者（`httpx` + `pkghttpx`），`middleware.go` 与 `pipeline.go` 内混用。
+**证据**：[internal/shared/apiresp/response.go](../internal/shared/apiresp/response.go) 与 [pkg/httpx/envelope.go](../pkg/httpx/envelope.go) 曾同为 `package httpx`；[pipeline.go](../internal/platform/httpserver/pipeline.go#L11-L20) 同时 import 二者（`httpx` + `pkghttpx`），`middleware.go` 与 `pipeline.go` 内混用。
 
 **影响**：两个包名相同、职责重叠（信封写入 vs apperr 适配），新代码容易选错入口；错误映射策略实际分散在三处（`apperr`、`pkg/errors`、`pkg/httpx`）。
 
@@ -224,7 +224,7 @@ internal/tenant/config/     # 处置时间线/配额
 | 域配置下沉是破坏性变更 | `cmd/*` 与各 runtime 均通过 `deps.Config.Xxx` 读取域配置 | 阶段 2 用类型别名保留路径一个版本；阶段 3 走 ADR 并提供迁移清单 |
 | 隐性顺序改显式会暴露历史时序假设 | 例如「配额守卫必须在租户守卫内层」 | 阶段 1 只做命名拆分，不改顺序；阶段 3 为每个顺序假设补一条单测 |
 | 门禁基线可能被后续 MR 上调 | 规范只写了「必须拆分」，没写「基线不可上调」 | 已在脚本头注释与本报告第七节明确「只减不增」，并在 review checklist 中核对 |
-| `httpx` 双包改名影响面 | `internal/shared/httpx` 被 transport 大量引用 | 独立小 MR 处理，改名后保留别名一个版本 |
+| `httpx` 双包改名影响面 | `internal/shared/httpx` 被 transport 大量引用 | 已更名为 `internal/shared/apiresp`，全量引用更新，无转发别名 |
 
 ---
 
@@ -244,11 +244,12 @@ internal/tenant/config/     # 处置时间线/配额
 | 项 | 状态 | 证据 |
 |---|---|---|
 | P0-1 `config.go` 巨石 | 完成 | 拆为 `internal/platform/config/` 18 个文件，单文件 ≤ 500 行；`LAYER_LINE_BASELINE` 已清空 |
-| P0-2 平台承载业务语义（配置） | 完成 | 域配置迁入 `internal/{identity,iam,audit,tenant}/config`；`platform/config` 只保留聚合、加载、默认值、编排校验 |
+| P0-2 平台承载业务语义（配置） | 完成 | 域配置迁入 `internal/{identity,iam,audit,tenant}/config` 并自持默认值/校验；`platform/config` 只保留平台段加载与校验，`cmd/internal/appconfig` 负责组合装配 |
 | P0-3 `Run` god function / 隐式顺序 | 完成 | `Run` 拆为 `prepareInfra → buildAsync → buildGuards → buildAuthN → buildAuthorizer → buildRouter → serve`；步骤内显式检查前置依赖 |
 | P1-4 业务语义端口在平台层 | 完成 | `GuardPort` / `MembershipPort` 下沉到 `internal/tenant/app`；平台只保留 `httpserver` 通用守卫中间件与 `AfterAuth`；`LAYER_SEMANTIC_BASELINE` 已清空 |
-| P1-5 `Config.secretErr` | 未处理 | 依赖 `pkg/config` 钩子签名改造，独立跟进 |
-| P1-6 `httpx` 双包 | 未处理 | 按第八节风险表，独立小 MR 处理 |
-| P2-7 / P2-8 | 部分 | 域判定方法随域配置迁移；依赖注册表重叠仍待专项 |
+| P1-5 `Config.secretErr` | 完成 | `pkg/config` 增加 `Normalize` 钩子并包装为 `ErrInvalidConfig`；`normalize` / `resolveSecrets` 直接返回 error，删除 `secretErr` 隐状态 |
+| P1-6 `httpx` 双包 | 完成 | `internal/shared/httpx` 更名 `internal/shared/apiresp`，全仓 33 处引用更新，无转发别名 |
+| P2-7 / P2-8 | 完成 | `platform/dependency` 拆为 `spec` / `registry` / `caller` / `breaker` / `http`，`Registry.HTTP` 复用 `pkg/httpclient` 重试并叠加熔断；配置测试按归属迁入域包与 `cmd/internal/appconfig` |
+| 域配置完全自持 | 完成 | `platform.Config` 移除 `Identity` / `IAM` / `Audit` / `Tenant` 字段；`cmd/internal/appconfig` 负责组合加载与编排校验；各域 runtime 显式接收域配置；平台顶层域配置别名已删除 |
 
-兼容性：`platform` 顶层保留域配置类型别名与 `WithTenantGuard` / `WithQuotaGuard` 薄包装一个版本；`cmd/*` 在阶段 2 无编译改动，阶段 3 仅 `biz-api` 的 `Options` 回调改为 `NewAuthGuards`。
+兼容性：本批为阶段 3 的破坏性切换，不再保留域配置类型别名；`platform` 顶层只保留核心段别名，`cmd/*` 统一经 `cmd/internal/appconfig` 装配，域 runtime 通过构造参数接收域配置。

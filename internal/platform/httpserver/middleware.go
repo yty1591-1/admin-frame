@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/pkg/middleware"
 )
 
@@ -25,7 +25,7 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 	return middleware.Recover(middleware.RecoverConfig{
 		Logger: log,
 		OnPanic: func(w http.ResponseWriter, r *http.Request, _ any) {
-			httpx.FromError(w, apperr.Internal("internal error", nil), httpx.TraceIDFromContext(r.Context()))
+			apiresp.FromError(w, apperr.Internal("internal error", nil), apiresp.TraceIDFromContext(r.Context()))
 		},
 	})
 }

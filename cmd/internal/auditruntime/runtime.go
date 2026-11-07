@@ -11,6 +11,7 @@ import (
 	"time"
 
 	auditapp "github.com/admin-frame/admin-frame/internal/audit/app"
+	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
 	"github.com/admin-frame/admin-frame/internal/audit/domain"
 	"github.com/admin-frame/admin-frame/internal/audit/infrastructure/persistence"
 	auditrest "github.com/admin-frame/admin-frame/internal/audit/transport/rest"
@@ -29,12 +30,12 @@ type Runtime struct {
 //
 // 未启用（audit.store=log 或数据库不可用）时返回空 Runtime 而非错误：
 // 审计查询是可选能力，不应因为它让只提供登录的进程无法启动。
-func New(deps *platform.Deps) (*Runtime, error) {
+func New(deps *platform.Deps, auditCfg auditconfig.AuditConfig) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return &Runtime{}, nil
 	}
 	cfg := deps.Config
-	if cfg.Audit.EffectiveStore(cfg.DB.Driver) != platform.AuditStoreDB {
+	if auditCfg.EffectiveStore(cfg.DB.Driver) != auditconfig.AuditStoreDB {
 		return &Runtime{}, nil
 	}
 
@@ -47,10 +48,10 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		audit.SlogEmitter{Log: deps.Logger},
 	}
 	opts := auditapp.QueryOptions{
-		MaxRange:       time.Duration(cfg.Audit.Query.MaxRangeDays) * 24 * time.Hour,
-		MaxPageSize:    cfg.Audit.Query.MaxPageSize,
-		ExportMaxRange: time.Duration(cfg.Audit.Export.MaxRangeDays) * 24 * time.Hour,
-		ExportMaxRows:  cfg.Audit.Export.MaxRows,
+		MaxRange:       time.Duration(auditCfg.Query.MaxRangeDays) * 24 * time.Hour,
+		MaxPageSize:    auditCfg.Query.MaxPageSize,
+		ExportMaxRange: time.Duration(auditCfg.Export.MaxRangeDays) * 24 * time.Hour,
+		ExportMaxRows:  auditCfg.Export.MaxRows,
 	}
 	service, err := auditapp.NewQueryService(reader, emitter, deps.IDs, opts, cfg.Service)
 	if err != nil {
@@ -58,8 +59,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 	}
 	// 异步导出：只有显式开启且对象存储可用时才装配；否则 Handler 的相关路由返回 503。
 	var jobs *auditapp.ExportJobService
-	if cfg.Audit.Export.Async {
-		jobs, err = newExportJobService(deps, reader, emitter)
+	if auditCfg.Export.Async {
+		jobs, err = newExportJobService(deps, auditCfg, reader, emitter)
 		if err != nil {
 			return nil, err
 		}
@@ -68,8 +69,8 @@ func New(deps *platform.Deps) (*Runtime, error) {
 		Query: service,
 		Jobs:  jobs,
 		QueryLimits: pagination.Config{
-			DefaultPageSize: cfg.Audit.Query.DefaultPageSize,
-			MaxPageSize:     cfg.Audit.Query.MaxPageSize,
+			DefaultPageSize: auditCfg.Query.DefaultPageSize,
+			MaxPageSize:     auditCfg.Query.MaxPageSize,
 		},
 		MaxRange:       opts.MaxRange,
 		ExportMaxRange: opts.ExportMaxRange,
@@ -90,12 +91,12 @@ type RetentionHandle struct {
 // StartRetention 启动审计到期清理任务；未启用落库或配置关闭时返回 nil。
 //
 // 与身份域清理一致：进程退出时通过 Stop 等待在途批次结束（REL-08）。
-func StartRetention(ctx context.Context, deps *platform.Deps) (*RetentionHandle, error) {
+func StartRetention(ctx context.Context, deps *platform.Deps, auditCfg auditconfig.AuditConfig) (*RetentionHandle, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil, nil
 	}
 	cfg := deps.Config
-	if cfg.Audit.EffectiveStore(cfg.DB.Driver) != platform.AuditStoreDB {
+	if auditCfg.EffectiveStore(cfg.DB.Driver) != auditconfig.AuditStoreDB {
 		return nil, nil
 	}
 	store, err := persistence.NewSQLRetentionStore(deps.Database.SQL(), "")
@@ -107,31 +108,31 @@ func StartRetention(ctx context.Context, deps *platform.Deps) (*RetentionHandle,
 		audit.SlogEmitter{Log: deps.Logger},
 	}
 	// 归档桶与导出桶一致：同属审计数据，生命周期与权限应统一治理。
-	archiver, err := newRetentionArchiver(deps)
+	archiver, err := newRetentionArchiver(deps, auditCfg)
 	if err != nil {
 		return nil, err
 	}
 	service, err := auditapp.NewRetentionService(store, archiver, emitter, deps.IDs, deps.Logger, auditapp.RetentionOptions{
-		RetentionDays: cfg.Audit.RetentionDays,
-		BatchSize:     cfg.Audit.Retention.BatchSize,
-		LegalHold:     cfg.Audit.LegalHold,
-		DryRun:        cfg.Audit.Retention.DryRun,
+		RetentionDays: auditCfg.RetentionDays,
+		BatchSize:     auditCfg.Retention.BatchSize,
+		LegalHold:     auditCfg.LegalHold,
+		DryRun:        auditCfg.Retention.DryRun,
 	}, cfg.Service)
 	if err != nil {
 		return nil, err
 	}
-	runner, err := auditapp.NewRunner(service, cfg.Audit.Retention.CleanupInterval, deps.Logger)
+	runner, err := auditapp.NewRunner(service, auditCfg.Retention.CleanupInterval, deps.Logger)
 	if err != nil {
 		return nil, err
 	}
 	runner.Start(ctx)
 	deps.Logger.Info("audit retention started",
-		"retention_days", cfg.Audit.RetentionDays,
-		"batch_size", cfg.Audit.Retention.BatchSize,
-		"interval", cfg.Audit.Retention.CleanupInterval.String(),
-		"dry_run", cfg.Audit.Retention.DryRun,
-		"legal_hold", cfg.Audit.LegalHold,
-		"archive_prefix", cfg.Audit.Retention.ArchivePrefix,
+		"retention_days", auditCfg.RetentionDays,
+		"batch_size", auditCfg.Retention.BatchSize,
+		"interval", auditCfg.Retention.CleanupInterval.String(),
+		"dry_run", auditCfg.Retention.DryRun,
+		"legal_hold", auditCfg.LegalHold,
+		"archive_prefix", auditCfg.Retention.ArchivePrefix,
 	)
 	return &RetentionHandle{runner: runner}, nil
 }
@@ -139,14 +140,14 @@ func StartRetention(ctx context.Context, deps *platform.Deps) (*RetentionHandle,
 // newRetentionArchiver 按 audit.retention.archive_prefix 构造归档器。
 //
 // 前缀非空但桶不可用时直接失败：静默回退成「只删不归档」正是 AUD-07 禁止的销毁路径。
-func newRetentionArchiver(deps *platform.Deps) (auditapp.RetentionArchiver, error) {
-	prefix := strings.TrimSpace(deps.Config.Audit.Retention.ArchivePrefix)
+func newRetentionArchiver(deps *platform.Deps, auditCfg auditconfig.AuditConfig) (auditapp.RetentionArchiver, error) {
+	prefix := strings.TrimSpace(auditCfg.Retention.ArchivePrefix)
 	if prefix == "" {
 		return nil, nil
 	}
-	objects, ok := deps.Storage.Get(deps.Config.Audit.Export.Bucket)
+	objects, ok := deps.Storage.Get(auditCfg.Export.Bucket)
 	if !ok || objects == nil {
-		return nil, fmt.Errorf("audit.retention.archive_prefix requires storage bucket %q", deps.Config.Audit.Export.Bucket)
+		return nil, fmt.Errorf("audit.retention.archive_prefix requires storage bucket %q", auditCfg.Export.Bucket)
 	}
 	return auditapp.ObjectArchiver{Objects: objects, Prefix: prefix}, nil
 }
@@ -165,6 +166,7 @@ func (h *RetentionHandle) Stop(ctx context.Context) error {
 // 静默回落到默认桶会让导出文件与业务附件混在一起，容量与权限都难治理。
 func newExportJobService(
 	deps *platform.Deps,
+	auditCfg auditconfig.AuditConfig,
 	reader domain.Reader,
 	emitter audit.Emitter,
 ) (*auditapp.ExportJobService, error) {
@@ -173,9 +175,9 @@ func newExportJobService(
 	if err != nil {
 		return nil, fmt.Errorf("audit export store: %w", err)
 	}
-	objects, ok := deps.Storage.Get(cfg.Audit.Export.Bucket)
+	objects, ok := deps.Storage.Get(auditCfg.Export.Bucket)
 	if !ok || objects == nil {
-		return nil, fmt.Errorf("audit.export.async requires storage bucket %q", cfg.Audit.Export.Bucket)
+		return nil, fmt.Errorf("audit.export.async requires storage bucket %q", auditCfg.Export.Bucket)
 	}
 	service, err := auditapp.NewExportJobService(auditapp.ExportJobConfig{
 		Store:   store,
@@ -184,11 +186,11 @@ func newExportJobService(
 		Emitter: emitter,
 		IDs:     deps.IDs,
 		Options: auditapp.ExportJobOptions{
-			MaxRange:     time.Duration(cfg.Audit.Export.MaxRangeDays) * 24 * time.Hour,
-			MaxRows:      cfg.Audit.Export.MaxRows,
-			TTL:          time.Duration(cfg.Audit.Export.TTLDays) * 24 * time.Hour,
-			RetryMax:     cfg.Audit.Export.RetryMax,
-			StaleTimeout: cfg.Audit.Export.StaleTimeout,
+			MaxRange:     time.Duration(auditCfg.Export.MaxRangeDays) * 24 * time.Hour,
+			MaxRows:      auditCfg.Export.MaxRows,
+			TTL:          time.Duration(auditCfg.Export.TTLDays) * 24 * time.Hour,
+			RetryMax:     auditCfg.Export.RetryMax,
+			StaleTimeout: auditCfg.Export.StaleTimeout,
 			ObjectPrefix: "audit/exports",
 		},
 		Service: cfg.Service,
@@ -209,12 +211,12 @@ type ExportHandle struct {
 //
 // 与保留期清理同宿主：API 进程不跑该循环，避免多副本重复执行同一任务
 // （任务层已有行锁抢占，这里再按进程角色收敛一次，减少无效轮询）。
-func StartExportRunner(ctx context.Context, deps *platform.Deps) (*ExportHandle, error) {
+func StartExportRunner(ctx context.Context, deps *platform.Deps, auditCfg auditconfig.AuditConfig) (*ExportHandle, error) {
 	if deps == nil || deps.Config == nil || deps.Database == nil {
 		return nil, nil
 	}
 	cfg := deps.Config
-	if !cfg.Audit.Export.Async || cfg.Audit.EffectiveStore(cfg.DB.Driver) != platform.AuditStoreDB {
+	if !auditCfg.Export.Async || auditCfg.EffectiveStore(cfg.DB.Driver) != auditconfig.AuditStoreDB {
 		return nil, nil
 	}
 	reader, err := persistence.NewSQLReader(deps.Database.SQL(), "")
@@ -225,21 +227,21 @@ func StartExportRunner(ctx context.Context, deps *platform.Deps) (*ExportHandle,
 		audit.SQLEmitter{DB: deps.Database.SQL()},
 		audit.SlogEmitter{Log: deps.Logger},
 	}
-	service, err := newExportJobService(deps, reader, emitter)
+	service, err := newExportJobService(deps, auditCfg, reader, emitter)
 	if err != nil {
 		return nil, err
 	}
-	runner, err := auditapp.NewExportRunner(service, cfg.Audit.Export.PollInterval,
+	runner, err := auditapp.NewExportRunner(service, auditCfg.Export.PollInterval,
 		time.Hour, 5, deps.Logger)
 	if err != nil {
 		return nil, err
 	}
 	runner.Start(ctx)
 	deps.Logger.Info("audit export runner started",
-		"poll_interval", cfg.Audit.Export.PollInterval.String(),
-		"ttl_days", cfg.Audit.Export.TTLDays,
-		"retry_max", cfg.Audit.Export.RetryMax,
-		"max_rows", cfg.Audit.Export.MaxRows,
+		"poll_interval", auditCfg.Export.PollInterval.String(),
+		"ttl_days", auditCfg.Export.TTLDays,
+		"retry_max", auditCfg.Export.RetryMax,
+		"max_rows", auditCfg.Export.MaxRows,
 	)
 	return &ExportHandle{runner: runner}, nil
 }

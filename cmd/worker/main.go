@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
@@ -49,10 +50,11 @@ func main() {
 // worker 是 Outbox Relay 的独占宿主：注册业务 topic handler 后运行 Relay；
 // -replay-dlq 模式只做死信重放后退出，不启动 Relay（见 docs/runbooks/async-dlq.md）。
 func run(configPath, replayDLQ string) error {
-	cfg, err := platform.LoadConfig(configPath)
+	appCfg, err := appconfig.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	cfg := &appCfg.Config
 	logger := platform.NewLogger(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -131,18 +133,18 @@ func run(configPath, replayDLQ string) error {
 	if err := notificationruntime.RegisterAsync(deps, notificationRT); err != nil {
 		return fmt.Errorf("register notification async handlers: %w", err)
 	}
-	cleanupHandle, err := identityruntime.StartCleanup(ctx, deps)
+	cleanupHandle, err := identityruntime.StartCleanup(ctx, deps, appCfg.Identity)
 	if err != nil {
 		return fmt.Errorf("identity cleanup: %w", err)
 	}
 	// 审计到期清理与身份域清理同宿主：worker 是唯一允许执行保留期删除的进程，
 	// API 进程不注册该任务，避免多副本重复删除（ENT-04 T6）。
-	auditRetention, err := auditruntime.StartRetention(ctx, deps)
+	auditRetention, err := auditruntime.StartRetention(ctx, deps, appCfg.Audit)
 	if err != nil {
 		return fmt.Errorf("audit retention: %w", err)
 	}
 	// 审计异步导出与保留期清理同宿主：文件最大、最耗时，不能放在 API 进程。
-	auditExports, err := auditruntime.StartExportRunner(ctx, deps)
+	auditExports, err := auditruntime.StartExportRunner(ctx, deps, appCfg.Audit)
 	if err != nil {
 		return fmt.Errorf("audit export runner: %w", err)
 	}

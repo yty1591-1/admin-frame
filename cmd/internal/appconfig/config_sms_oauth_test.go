@@ -1,4 +1,4 @@
-package platform_test
+package appconfig_test
 
 import (
 	"bytes"
@@ -7,14 +7,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/internal/security"
 )
 
 // cJWTConfig 返回 C 端 JWT 校验配置（仅测试用假密钥）。
-func cJWTConfig() platform.AuthConfig {
-	return platform.AuthConfig{
-		Mode:            platform.AuthModeJWT,
+func cJWTConfig() platformconfig.AuthConfig {
+	return platformconfig.AuthConfig{
+		Mode:            platformconfig.AuthModeJWT,
 		ExpectedChannel: "c",
 		JWT: security.JWTConfig{
 			Alg:      "HS256",
@@ -26,60 +30,62 @@ func cJWTConfig() platform.AuthConfig {
 }
 
 // cBaseConfig 返回可通过校验的最小 C 端配置（已启用短信验证码，driver=memory）。
-func cBaseConfig() *platform.Config {
-	return &platform.Config{
-		Env:     "local",
-		Service: "c-api",
-		Channel: "c",
-		Addr:    ":8083",
-		Auth:    cJWTConfig(),
-		Log:     platform.LogConfig{Level: "info", Format: "json"},
-		DB:      platform.DBConfig{Driver: "memory"},
-		Storage: platform.StorageConfig{Driver: "memory"},
-		HTTP:    platform.HTTPConfig{Timeout: 30 * time.Second},
-		Redis:   platform.RedisConfig{Addr: "127.0.0.1:6379"},
-		IAM: platform.IAMConfig{
-			Mode:        platform.IAMModeOff,
+func cBaseConfig() *appconfig.Config {
+	return &appconfig.Config{
+		Config: platformconfig.Config{
+			Env:     "local",
+			Service: "c-api",
+			Channel: "c",
+			Addr:    ":8083",
+			Auth:    cJWTConfig(),
+			Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+			DB:      platformconfig.DBConfig{Driver: "memory"},
+			Storage: platformstorage.StorageConfig{Driver: "memory"},
+			HTTP:    platformconfig.HTTPConfig{Timeout: 30 * time.Second},
+			Redis:   platformconfig.RedisConfig{Addr: "127.0.0.1:6379"},
+		},
+		IAM: iamconfig.IAMConfig{
+			Mode:        iamconfig.IAMModeOff,
 			LoadTimeout: 300 * time.Millisecond,
-			Cache: platform.IAMCacheConfig{
-				Driver:      platform.IAMCacheDriverMemory,
+			Cache: iamconfig.IAMCacheConfig{
+				Driver:      iamconfig.IAMCacheDriverMemory,
 				L1TTL:       3 * time.Second,
 				L2TTL:       5 * time.Minute,
 				NegativeTTL: 30 * time.Second,
 			},
-			Limits: platform.IAMLimitsConfig{
+			Limits: iamconfig.IAMLimitsConfig{
 				MaxRolesPerSubject:    20,
 				MaxPermissionsPerRole: 200,
 				MaxBindingsPerSubject: 50,
 			},
 		},
-		Identity: platform.IdentityConfig{
+		Identity: identityconfig.IdentityConfig{
 			Enabled:    true,
 			AccessTTL:  15 * time.Minute,
 			RefreshTTL: 168 * time.Hour,
-			Session: platform.IdentitySessionConfig{
+			Session: identityconfig.IdentitySessionConfig{
 				IdleTimeout:   72 * time.Hour,
 				MaxPerAccount: 10,
 			},
-			Retention: platform.IdentityRetentionConfig{
+			Retention: identityconfig.IdentityRetentionConfig{
 				SessionDays:      30,
 				LoginAttemptDays: 180,
 				CleanupInterval:  time.Hour,
 			},
-			Revocation: platform.IdentityRevocationConfig{
-				Driver:      platform.IdentityRevocationDriverRedis,
-				FailureMode: platform.RateLimitFailureClosed,
+			Revocation: identityconfig.IdentityRevocationConfig{
+				Driver:      identityconfig.IdentityRevocationDriverRedis,
+				FailureMode: platformconfig.RateLimitFailureClosed,
 			},
-			Lockout: platform.IdentityLockoutConfig{
+			Lockout: identityconfig.IdentityLockoutConfig{
 				MaxFailures: 5,
 				Window:      15 * time.Minute,
 				Duration:    15 * time.Minute,
 			},
-			LoginRateLimit: platform.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5},
-			MFA:            platform.IdentityMFAConfig{Issuer: "AdminFrame"},
-			SMS: platform.IdentitySMSConfig{
+			LoginRateLimit: identityconfig.IdentityLoginRateLimitConfig{RPS: 1, Burst: 5},
+			MFA:            identityconfig.IdentityMFAConfig{Issuer: "AdminFrame"},
+			SMS: identityconfig.IdentitySMSConfig{
 				Enabled:        true,
-				Driver:         platform.IdentitySMSDriverMemory,
+				Driver:         identityconfig.IdentitySMSDriverMemory,
 				TemplateID:     "SMS_123456",
 				CodeTTL:        5 * time.Minute,
 				MaxAttempts:    5,
@@ -92,15 +98,15 @@ func cBaseConfig() *platform.Config {
 }
 
 // cProdConfig 返回满足生产约束的 C 端配置（短信使用 aliyun 驱动）。
-func cProdConfig() *platform.Config {
+func cProdConfig() *appconfig.Config {
 	cfg := cBaseConfig()
 	cfg.Env = "prod"
 	cfg.Auth = cJWTConfig()
 	cfg.ID = prodIDConfig()
 	cfg.Storage.Driver = "s3"
-	cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+	cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
 	cfg.Async.Enabled = true
-	cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+	cfg.Identity.SMS.Driver = identityconfig.IdentitySMSDriverAliyun
 	cfg.Identity.SMS.DailyBudget = 1000
 	cfg.Identity.HashKey = "01234567890123456789012345678901"
 	cfg.Identity.HashKeyID = "v1"
@@ -108,8 +114,8 @@ func cProdConfig() *platform.Config {
 }
 
 // oauthProvider 返回满足校验的最小 OAuth 提供方配置。
-func oauthProvider(name string) platform.IdentityOAuthProviderConfig {
-	return platform.IdentityOAuthProviderConfig{ //nolint:gosec // G101: 测试用假凭证与环境变量名
+func oauthProvider(name string) identityconfig.IdentityOAuthProviderConfig {
+	return identityconfig.IdentityOAuthProviderConfig{ //nolint:gosec // G101: 测试用假凭证与环境变量名
 		Name:            name,
 		ClientID:        "client-id",
 		ClientSecretEnv: "OAUTH_CLIENT_SECRET",
@@ -122,7 +128,7 @@ func oauthProvider(name string) platform.IdentityOAuthProviderConfig {
 }
 
 // oauthOIDCProvider 返回满足 OIDC 校验的最小提供方配置（显式开启 oidc_enabled）。
-func oauthOIDCProvider(name string) platform.IdentityOAuthProviderConfig {
+func oauthOIDCProvider(name string) identityconfig.IdentityOAuthProviderConfig {
 	provider := oauthProvider(name)
 	provider.UserInfoURL = ""
 	provider.OIDCEnabled = true
@@ -145,14 +151,14 @@ func TestValidateCChannelBaseline(t *testing.T) {
 
 	oauthOnly := cProdConfig()
 	oauthOnly.Identity.SMS.Enabled = false
-	oauthOnly.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+	oauthOnly.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthProvider("github")}
 	if err := oauthOnly.Validate(); err != nil {
 		t.Fatalf("prod c config with oauth only: %v", err)
 	}
 
 	oidcOnly := cProdConfig()
 	oidcOnly.Identity.SMS.Enabled = false
-	oidcOnly.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthOIDCProvider("keycloak")}
+	oidcOnly.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthOIDCProvider("keycloak")}
 	if err := oidcOnly.Validate(); err != nil {
 		t.Fatalf("prod c config with oidc only: %v", err)
 	}
@@ -162,84 +168,84 @@ func TestValidateCChannelBaseline(t *testing.T) {
 func TestValidateSMSRules(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(cfg *platform.Config)
+		mutate func(cfg *appconfig.Config)
 		want   string
 	}{
 		{
 			name: "enabled on admin channel",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Channel = "admin"
 				cfg.Auth.ExpectedChannel = "admin"
-				cfg.IAM.Mode = platform.IAMModeEnforce
+				cfg.IAM.Mode = iamconfig.IAMModeEnforce
 			},
 			want: "identity.sms.enabled is only supported on channel=c",
 		},
 		{
 			name:   "unsupported driver",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.Driver = "twilio" },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.Driver = "twilio" },
 			want:   "unsupported identity.sms.driver",
 		},
 		{
 			name:   "missing template id",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.TemplateID = "  " },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.TemplateID = "  " },
 			want:   "identity.sms.template_id is required",
 		},
 		{
 			name:   "code ttl too long",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.CodeTTL = 16 * time.Minute },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.CodeTTL = 16 * time.Minute },
 			want:   "identity.sms.code_ttl must be in (0, 15m]",
 		},
 		{
 			name:   "max attempts out of range",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.MaxAttempts = 11 },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.MaxAttempts = 11 },
 			want:   "identity.sms.max_attempts must be in [1, 10]",
 		},
 		{
 			name:   "resend interval exceeds ttl",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.ResendInterval = 6 * time.Minute },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.ResendInterval = 6 * time.Minute },
 			want:   "identity.sms.resend_interval must be in (0, identity.sms.code_ttl]",
 		},
 		{
 			name:   "daily limit invalid",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.DailyPerPhone = 0 },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.DailyPerPhone = 0 },
 			want:   "identity.sms.daily_per_phone must be >= 1",
 		},
 		{
 			name:   "hourly ip limit invalid",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.HourlyPerIP = 0 },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.HourlyPerIP = 0 },
 			want:   "identity.sms.hourly_per_ip must be >= 1",
 		},
 		{
 			name:   "negative breaker failures",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.BreakerFailures = -1 },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.BreakerFailures = -1 },
 			want:   "identity.sms.breaker_failures must be >= 0",
 		},
 		{
 			name:   "breaker timeout too short",
-			mutate: func(cfg *platform.Config) { cfg.Identity.SMS.BreakerTimeout = 500 * time.Millisecond },
+			mutate: func(cfg *appconfig.Config) { cfg.Identity.SMS.BreakerTimeout = 500 * time.Millisecond },
 			want:   "identity.sms.breaker_timeout must be >= 1s",
 		},
 		{
 			name: "memory driver in prod",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Env = "prod"
 				cfg.Auth = cJWTConfig()
 				cfg.ID = prodIDConfig()
 				cfg.Storage.Driver = "s3"
-				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
-				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverMemory
+				cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = identityconfig.IdentitySMSDriverMemory
 			},
 			want: "identity.sms.driver must not be memory in prod/staging",
 		},
 		{
 			name: "missing daily budget in prod",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Env = "prod"
 				cfg.Auth = cJWTConfig()
 				cfg.ID = prodIDConfig()
 				cfg.Storage.Driver = "s3"
-				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
-				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+				cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = identityconfig.IdentitySMSDriverAliyun
 				cfg.Identity.HashKey = "01234567890123456789012345678901"
 				cfg.Identity.SMS.DailyBudget = 0
 			},
@@ -263,43 +269,43 @@ func TestValidateSMSRules(t *testing.T) {
 func TestValidateOAuthRules(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(cfg *platform.Config)
+		mutate func(cfg *appconfig.Config)
 		want   string
 	}{
 		{
 			name: "providers on admin channel",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Channel = "admin"
 				cfg.Auth.ExpectedChannel = "admin"
-				cfg.IAM.Mode = platform.IAMModeEnforce
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+				cfg.IAM.Mode = iamconfig.IAMModeEnforce
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthProvider("github")}
 			},
 			want: "identity.oauth.providers is only supported on channel=c",
 		},
 		{
 			name: "prod c without sms or oauth",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Env = "prod"
 				cfg.Auth = cJWTConfig()
 				cfg.ID = prodIDConfig()
 				cfg.Storage.Driver = "s3"
-				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
 				cfg.Identity.SMS.Enabled = false
 			},
 			want: "channel=c requires identity.sms.enabled, at least one identity.oauth.providers, or identity.saml providers",
 		},
 		{
 			name: "invalid provider name",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthProvider("GitHub")
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].name must match",
 		},
 		{
 			name: "duplicate provider name",
-			mutate: func(cfg *platform.Config) {
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{
+			mutate: func(cfg *appconfig.Config) {
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{
 					oauthProvider("github"),
 					oauthProvider("github"),
 				}
@@ -308,92 +314,92 @@ func TestValidateOAuthRules(t *testing.T) {
 		},
 		{
 			name: "missing client id",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthProvider("github")
 				provider.ClientID = " "
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].client_id is required",
 		},
 		{
 			name: "missing client secret env",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthProvider("github")
 				provider.ClientSecretEnv = ""
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].client_secret_env is required",
 		},
 		{
 			name: "missing redirect uri",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthProvider("github")
 				provider.RedirectURI = ""
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].redirect_uri is required",
 		},
 		{
 			name: "relative auth url",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthProvider("github")
 				provider.AuthURL = "/oauth/authorize"
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].auth_url",
 		},
 		{
 			name: "negative oauth rps",
-			mutate: func(cfg *platform.Config) {
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+			mutate: func(cfg *appconfig.Config) {
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthProvider("github")}
 				cfg.Identity.OAuth.RateLimit.RPS = -1
 			},
 			want: "identity.oauth.rate_limit.rps must be >= 0",
 		},
 		{
 			name: "oauth fail_open in prod",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Env = "prod"
 				cfg.Auth = cJWTConfig()
 				cfg.ID = prodIDConfig()
 				cfg.Storage.Driver = "s3"
-				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
-				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
-				cfg.Identity.OAuth.RateLimit.FailureMode = platform.RateLimitFailureOpen
+				cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = identityconfig.IdentitySMSDriverAliyun
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthProvider("github")}
+				cfg.Identity.OAuth.RateLimit.FailureMode = platformconfig.RateLimitFailureOpen
 			},
 			want: "identity.oauth.rate_limit.failure_mode must be fail_closed",
 		},
 		{
 			name: "http url in prod",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				cfg.Env = "prod"
 				cfg.Auth = cJWTConfig()
 				cfg.ID = prodIDConfig()
 				cfg.Storage.Driver = "s3"
-				cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
-				cfg.Identity.SMS.Driver = platform.IdentitySMSDriverAliyun
+				cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "c:c@tcp(127.0.0.1:3306)/c"}
+				cfg.Identity.SMS.Driver = identityconfig.IdentitySMSDriverAliyun
 				provider := oauthProvider("github")
 				provider.TokenURL = "http://idp.example.com/oauth/token"
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "identity.oauth.providers[0].token_url",
 		},
 		{
 			name: "oidc enabled without jwks",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthOIDCProvider("keycloak")
 				provider.JWKSURL = ""
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "issuer and jwks_url are required when oidc_enabled is true",
 		},
 		{
 			name: "oidc fields without explicit flag",
-			mutate: func(cfg *platform.Config) {
+			mutate: func(cfg *appconfig.Config) {
 				provider := oauthOIDCProvider("keycloak")
 				provider.OIDCEnabled = false
-				cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{provider}
+				cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{provider}
 			},
 			want: "issuer and jwks_url require oidc_enabled=true",
 		},
@@ -414,7 +420,7 @@ func TestValidateOAuthRules(t *testing.T) {
 // TestConfigLogValueHidesOAuthSecrets 验证日志快照只输出提供方名称，不泄露密钥。
 func TestConfigLogValueHidesOAuthSecrets(t *testing.T) {
 	cfg := cBaseConfig()
-	cfg.Identity.OAuth.Providers = []platform.IdentityOAuthProviderConfig{oauthProvider("github")}
+	cfg.Identity.OAuth.Providers = []identityconfig.IdentityOAuthProviderConfig{oauthProvider("github")}
 	cfg.Identity.OAuth.Providers[0].ClientSecretEnv = "OAUTH_SECRET_ENV_NAME"
 	secret := "super-secret-value"
 	t.Setenv("OAUTH_SECRET_ENV_NAME", secret)
@@ -427,7 +433,9 @@ func TestConfigLogValueHidesOAuthSecrets(t *testing.T) {
 	if strings.Contains(out, secret) {
 		t.Fatalf("log output leaks oauth client secret: %s", out)
 	}
-	if !strings.Contains(out, "provider_names") || !strings.Contains(out, "github") {
-		t.Fatalf("expected provider names in log output: %s", out)
+	// 域配置不再内联进平台段快照，LogValue 只输出平台字段；
+	// 这里额外确认身份域段整体未进入快照，避免将来误把原始结构写进日志。
+	if strings.Contains(out, "identity") || strings.Contains(out, "client_secret") {
+		t.Fatalf("aggregated log snapshot must not embed identity config: %s", out)
 	}
 }

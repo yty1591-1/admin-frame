@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/httpx"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
@@ -16,28 +16,28 @@ import (
 // 默认只返回在册成员；`include_disabled=true` 时一并返回已停用成员（离职回溯用）。
 // 分页（T-13）：`page` / `page_size` 与租户列表同一套上限配置，超限按上限收敛。
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	page, err := pagination.ParseWith(r, h.pageCfg)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	includeDisabled := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_disabled")), "true")
 	members, total, err := h.members.List(r.Context(), r.PathValue("id"), includeDisabled,
 		page.Limit(), page.Offset())
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]memberResponse, 0, len(members))
 	for _, member := range members {
 		items = append(items, toMemberResponse(member))
 	}
-	httpx.OK(w, memberListResponse{
+	apiresp.OK(w, memberListResponse{
 		Items:    items,
 		Total:    total,
 		Page:     page.Page,
@@ -47,15 +47,15 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 // AddMember 处理 POST /admin/v1/tenants/{id}/members。
 func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body addMemberRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	member, err := h.members.Add(r.Context(), app.AddMemberInput{
@@ -65,10 +65,10 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		Actor:     actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, 0, "ok", toMemberResponse(member), traceID)
+	apiresp.JSON(w, http.StatusCreated, 0, "ok", toMemberResponse(member), traceID)
 }
 
 // UpdateMember 处理 PATCH /admin/v1/tenants/{id}/members/{subject_id}。
@@ -79,15 +79,15 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 // 只调用一次用例：入参校验与写入在应用层合并为一次落库，
 // 避免「角色已改、状态非法」的半提交（旧实现分两次调用，第二步失败时第一步已生效）。
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body updateMemberRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 
@@ -109,46 +109,46 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 
 	member, err := h.members.Update(r.Context(), input)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toMemberResponse(member), traceID)
+	apiresp.OK(w, toMemberResponse(member), traceID)
 }
 
 // ListQuotas 处理 GET /admin/v1/tenants/{id}/quotas。
 func (h *Handler) ListQuotas(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	if _, err := h.actor(r); err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	quotas, err := h.quotas.List(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	items := make([]quotaResponse, 0, len(quotas))
 	for _, quota := range quotas {
 		items = append(items, toQuotaResponse(quota))
 	}
-	httpx.OK(w, quotaListResponse{Items: items, Total: len(items)}, traceID)
+	apiresp.OK(w, quotaListResponse{Items: items, Total: len(items)}, traceID)
 }
 
 // SetQuota 处理 PUT /admin/v1/tenants/{id}/quotas/{resource}。
 func (h *Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
-	traceID := httpx.TraceIDFromContext(r.Context())
+	traceID := apiresp.TraceIDFromContext(r.Context())
 	actor, err := h.actor(r)
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
 	var body setQuotaRequest
 	if err := decodeJSON(r, &body); err != nil {
-		httpx.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
 	if body.Limit == nil {
-		httpx.FromError(w, apperr.BadRequest("limit is required"), traceID)
+		apiresp.FromError(w, apperr.BadRequest("limit is required"), traceID)
 		return
 	}
 	quota, err := h.quotas.Set(r.Context(), app.SetQuotaInput{
@@ -158,10 +158,10 @@ func (h *Handler) SetQuota(w http.ResponseWriter, r *http.Request) {
 		Actor:    actor,
 	})
 	if err != nil {
-		httpx.FromError(w, err, traceID)
+		apiresp.FromError(w, err, traceID)
 		return
 	}
-	httpx.OK(w, toQuotaResponse(quota), traceID)
+	apiresp.OK(w, toQuotaResponse(quota), traceID)
 }
 
 // addMemberRequest 是添加成员请求体。

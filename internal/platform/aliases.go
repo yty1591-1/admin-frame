@@ -18,59 +18,30 @@ import (
 )
 
 // 配置类型别名（定义位于 internal/platform/config）。
+//
+// 域配置（Identity/IAM/Audit/Tenant）已下沉到各自 internal/<domain>/config 包，
+// 平台根不再转发，避免平台与应用层形成反向依赖。
 type (
-	Config                         = config.Config
-	AsyncBrokerConfig              = config.AsyncBrokerConfig
-	AsyncConfig                    = config.AsyncConfig
-	AsyncConsumerConfig            = config.AsyncConsumerConfig
-	AsyncOutboxConfig              = config.AsyncOutboxConfig
-	AuditConfig                    = config.AuditConfig
-	AuditExportConfig              = config.AuditExportConfig
-	AuditQueryConfig               = config.AuditQueryConfig
-	AuditRetentionConfig           = config.AuditRetentionConfig
-	AuthConfig                     = config.AuthConfig
-	CORSConfig                     = config.CORSConfig
-	DBConfig                       = config.DBConfig
-	HTTPConfig                     = config.HTTPConfig
-	IAMApprovalConfig              = config.IAMApprovalConfig
-	IAMBreakglassConfig            = config.IAMBreakglassConfig
-	IAMCacheConfig                 = config.IAMCacheConfig
-	IAMCertificationConfig         = config.IAMCertificationConfig
-	IAMConfig                      = config.IAMConfig
-	IAMConstraintsConfig           = config.IAMConstraintsConfig
-	IAMLimitsConfig                = config.IAMLimitsConfig
-	IAMSecurityConfig              = config.IAMSecurityConfig
-	IDConfig                       = config.IDConfig
-	IdempotencyConfig              = config.IdempotencyConfig
-	IdentityConfig                 = config.IdentityConfig
-	IdentityConsumerConfig         = config.IdentityConsumerConfig
-	IdentityHashKeyConfig          = config.IdentityHashKeyConfig
-	IdentityLockoutConfig          = config.IdentityLockoutConfig
-	IdentityLoginRateLimitConfig   = config.IdentityLoginRateLimitConfig
-	IdentityMFAConfig              = config.IdentityMFAConfig
-	IdentityMFAKeyConfig           = config.IdentityMFAKeyConfig
-	IdentityOAuthConfig            = config.IdentityOAuthConfig
-	IdentityOAuthProviderConfig    = config.IdentityOAuthProviderConfig
-	IdentityPasswordConfig         = config.IdentityPasswordConfig
-	IdentityPasswordTenantOverride = config.IdentityPasswordTenantOverride
-	IdentityRetentionConfig        = config.IdentityRetentionConfig
-	IdentityRevocationConfig       = config.IdentityRevocationConfig
-	IdentitySAMLConfig             = config.IdentitySAMLConfig
-	IdentitySAMLProviderConfig     = config.IdentitySAMLProviderConfig
-	IdentitySMSConfig              = config.IdentitySMSConfig
-	IdentitySessionConfig          = config.IdentitySessionConfig
-	IdentitySubjectConfig          = config.IdentitySubjectConfig
-	LogConfig                      = config.LogConfig
-	RateLimitConfig                = config.RateLimitConfig
-	RedisConfig                    = config.RedisConfig
-	SecretsConfig                  = config.SecretsConfig
-	SecretsEnvConfig               = config.SecretsEnvConfig
-	SecretsFileConfig              = config.SecretsFileConfig
-	SecretsVaultConfig             = config.SecretsVaultConfig
-	TenantConfig                   = config.TenantConfig
-	TenantRetentionConfig          = config.TenantRetentionConfig
-	TracingConfig                  = config.TracingConfig
-	WorkerConfig                   = config.WorkerConfig
+	Config              = config.Config
+	AsyncBrokerConfig   = config.AsyncBrokerConfig
+	AsyncConfig         = config.AsyncConfig
+	AsyncConsumerConfig = config.AsyncConsumerConfig
+	AsyncOutboxConfig   = config.AsyncOutboxConfig
+	AuthConfig          = config.AuthConfig
+	CORSConfig          = config.CORSConfig
+	DBConfig            = config.DBConfig
+	HTTPConfig          = config.HTTPConfig
+	IDConfig            = config.IDConfig
+	IdempotencyConfig   = config.IdempotencyConfig
+	LogConfig           = config.LogConfig
+	RateLimitConfig     = config.RateLimitConfig
+	RedisConfig         = config.RedisConfig
+	SecretsConfig       = config.SecretsConfig
+	SecretsEnvConfig    = config.SecretsEnvConfig
+	SecretsFileConfig   = config.SecretsFileConfig
+	SecretsVaultConfig  = config.SecretsVaultConfig
+	TracingConfig       = config.TracingConfig
+	WorkerConfig        = config.WorkerConfig
 )
 
 // 存储与 HTTP 服务类型别名（定义位于对应子包）。
@@ -93,26 +64,10 @@ const (
 	AsyncBackoffFixed                  = config.AsyncBackoffFixed
 	AsyncDriverDB                      = config.AsyncDriverDB
 	AsyncDriverNATS                    = config.AsyncDriverNATS
-	AuditMaxRetentionDays              = config.AuditMaxRetentionDays
-	AuditMinRetentionDays              = config.AuditMinRetentionDays
-	AuditStoreAuto                     = config.AuditStoreAuto
-	AuditStoreDB                       = config.AuditStoreDB
-	AuditStoreLog                      = config.AuditStoreLog
 	AuthModeDemo                       = config.AuthModeDemo
 	AuthModeJWT                        = config.AuthModeJWT
-	IAMCacheDriverMemory               = config.IAMCacheDriverMemory
-	IAMCacheDriverRedis                = config.IAMCacheDriverRedis
-	IAMConstraintsModeEnforce          = config.IAMConstraintsModeEnforce
-	IAMConstraintsModeOff              = config.IAMConstraintsModeOff
-	IAMConstraintsModeShadow           = config.IAMConstraintsModeShadow
-	IAMModeEnforce                     = config.IAMModeEnforce
-	IAMModeOff                         = config.IAMModeOff
-	IAMModeShadow                      = config.IAMModeShadow
 	IdempotencyDriverMemory            = config.IdempotencyDriverMemory
 	IdempotencyDriverRedis             = config.IdempotencyDriverRedis
-	IdentityRevocationDriverRedis      = config.IdentityRevocationDriverRedis
-	IdentitySMSDriverAliyun            = config.IdentitySMSDriverAliyun
-	IdentitySMSDriverMemory            = config.IdentitySMSDriverMemory
 	IDSourceConfig                     = config.IDSourceConfig
 	IDSourceEnv                        = config.IDSourceEnv
 	IDSourceStatefulSet                = config.IDSourceStatefulSet
