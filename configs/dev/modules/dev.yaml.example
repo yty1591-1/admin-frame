@@ -1,0 +1,70 @@
+# dev 环境覆盖：只声明与 prod 模块基线的差异键（CONFIG_STANDARDS CFG-07）。
+# 公共段仍引用 ../prod/modules/*，避免多套样板的 schema 漂移；
+# 本文件在 include 列表末尾加载，优先级高于 prod 模块，低于各端服务文件。
+#
+# dev 口径：可销毁数据、禁止生产凭据；MySQL 必需（async / audit 需要持久化），
+# Redis 可选（幂等、限流、IAM 缓存均退化为进程内实现）。
+
+log:
+  level: debug # dev 允许 debug；staging / prod 禁止长期开启
+  format: text # dev 允许 text；staging / prod 必须 json
+
+auth:
+  mode: jwt # 与 prod 同口径，避免用 demo 掩盖鉴权问题
+  jwt:
+    alg: HS256 # 本地单密钥，密钥走 ADMIN_FRAME_AUTH_JWT_SECRET
+    issuer: https://iam.dev.example.com
+    secret: "" # 禁止写入文件或仓库
+    public_key_file: "" # RS256 专用，dev 不使用
+
+redis:
+  addr: "" # 留空即不依赖 Redis；需要跨副本状态时填入本地实例
+  key_prefix: "admin-frame:dev:" # 与其他环境共用实例时的键隔离
+
+idempotency:
+  enabled: true
+  driver: memory # dev 允许 memory；staging / prod 必须 redis
+  required: false # 仅 prod A/B 端强制 true
+  degrade_on_error: true
+
+rate_limit:
+  enabled: true
+  driver: memory # dev 允许 memory；staging / prod 必须 redis
+  failure_mode: fail_open # 本地不因限流故障阻断调试
+  rps: 100
+  burst: 200
+
+async:
+  enabled: true
+  driver: db # 要求 db.driver != memory
+  outbox:
+    publish_in_api: true # dev 允许 API 侧自行投递，便于不起 worker；staging / prod 必须 false
+  consumer:
+    concurrency: 4
+
+audit:
+  store: db # 需要 db.driver=mysql；只做日志排查时改为 log
+
+storage:
+  driver: local # dev 允许 local / memory；staging / prod 必须对象存储
+  key_prefix: "dev/"
+  local:
+    root: "./tmp/storage" # 相对仓库根目录；已由 .gitignore 忽略
+    max_object_bytes: 0
+
+tracing:
+  enabled: false # 本地无 Collector；需要调试链路时改 true + exporter=stdout
+  exporter: none
+  endpoint: ""
+  insecure: true
+
+secrets:
+  providers: [env] # dev 只用环境变量，禁止生产凭据
+  allow_env_fallback: true
+  file:
+    dir: "" # 不使用文件托管源
+
+iam:
+  mode: shadow # dev 先影子观察；需要拦截时改 enforce
+  cache:
+    driver: memory # enforce + staging / prod 才强制 redis

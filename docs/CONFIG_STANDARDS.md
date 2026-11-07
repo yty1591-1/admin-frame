@@ -48,6 +48,11 @@
 | `configs/prod/modules/iam.yaml.example` | IAM 基线（enforce） |
 | `configs/prod/modules/identity.yaml.example` | 身份域基线 |
 | `configs/prod/{admin,biz,c,worker}.yaml.example` | 各端差异（service / channel / addr / audience / node_id / CORS 等） |
+| `configs/dev/{admin,biz,c,worker}.yaml.example` | dev 各端差异；公共段 include `../prod/modules/*` |
+| `configs/dev/modules/dev.yaml.example` | dev 环境覆盖（只列与 prod 的差异键） |
+| `configs/staging/{admin,biz,c,worker}.yaml.example` | staging 各端差异；公共段 include `../prod/modules/*` |
+| `configs/staging/modules/staging.yaml.example` | staging 环境覆盖（只列与 prod 的差异键） |
+| `configs/{prod,dev,staging}/env.example` | 各环境环境变量清单（值仅为占位符） |
 | `configs/prod-*.yaml`（本地） | 从对应 example 复制；**不入库**，include 路径改为 `prod/modules/...` |
 
 组合规则：
@@ -232,8 +237,10 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 
 ### 6.1 环境差异矩阵（照抄即可的最小覆盖）
 
-仓库只提交 `configs/prod/*.example` 一套样板：多份样例会与 schema 漂移（CFG-07 单一来源），
-且 dev/staging 的差异是**可枚举的少量键**，用下表 + `ADMIN_FRAME_*` 环境变量覆盖比复制整套 YAML 更不易腐化。
+公共段只有 `configs/prod/modules/*.example` 一份（CFG-07 单一来源）；dev / staging 各提交
+4 个服务差异文件 + 1 个环境覆盖模块，公共段统一 include `../prod/modules/*`，环境差异只落在
+覆盖模块与本端服务文件中。这样既避免整套复制导致的 schema 漂移，又能直接复制运行。
+密钥 / DSN 等运行时值仍由 `configs/<env>/env.example` 列出的环境变量注入。
 
 | 键 | local | dev / test | staging | prod |
 |---|---|---|---|---|
@@ -248,10 +255,16 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 | `async.enabled` | `false` | 可 `false` | `true` | `true`，且 `async.outbox.publish_in_api=false` |
 | `id.node_id` | 可省略 | 单实例可省略 | 多副本必填（或用 `statefulset`） | 同 staging |
 | `cors.allow_origins` | `http://localhost:*` | 显式域名 | 显式域名（禁止 `*`） | 显式域名（禁止 `*`） |
-| 密钥来源 | 环境变量随便填 | 环境变量（禁生产凭据） | Vault / KMS 隔离实例 | Vault / KMS |
+| 密钥来源 | 环境变量随便填 | 环境变量（禁生产凭据） | 隔离 Secret / 独立 Vault 实例（不复用 prod） | Vault / KMS |
 
-派生本地配置的做法：`cp -r configs/prod configs/local`，只改上表对应键并删除 `include:` 中的 `identity` 段
-（本地 identity 默认关闭），密钥仍走环境变量；`configs/**/*.yaml` 已被 `.gitignore` 忽略，只有 `*.yaml.example` 入库。
+派生配置的做法：
+
+- dev / staging：`cp configs/dev/admin.yaml.example configs/dev/admin.yaml`（其余端同理），
+  include 的相对路径保持不变即可运行；变量按 `configs/dev/env.example` 注入。
+- 若把单文件放到 `configs/` 根目录（如 `configs/dev-admin.yaml`），include 改为
+  `prod/modules/...` 与 `dev/modules/dev.yaml.example`。
+- local：`cp -r configs/prod configs/local` 后改上表对应键，并按需删除 `include:` 中的
+  `identity` 段；`configs/**/*.yaml` 已被 `.gitignore` 忽略，只有 `*.yaml.example` 入库。
 
 自检：`make check-config`（配置 schema 与禁止项）与 `go run ./cmd/admin-api -config configs/local/admin.yaml` 的启动校验。
 

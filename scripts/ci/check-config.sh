@@ -11,6 +11,14 @@ EXAMPLES=(
   configs/prod/biz.yaml.example
   configs/prod/c.yaml.example
   configs/prod/worker.yaml.example
+  configs/dev/admin.yaml.example
+  configs/dev/biz.yaml.example
+  configs/dev/c.yaml.example
+  configs/dev/worker.yaml.example
+  configs/staging/admin.yaml.example
+  configs/staging/biz.yaml.example
+  configs/staging/c.yaml.example
+  configs/staging/worker.yaml.example
 )
 MODULES=(
   configs/prod/modules/http.yaml.example
@@ -20,6 +28,9 @@ MODULES=(
   configs/prod/modules/infra.yaml.example
   configs/prod/modules/iam.yaml.example
   configs/prod/modules/identity.yaml.example
+  # dev / staging 只维护环境差异覆盖，公共段引用 prod 模块（CFG-07）。
+  configs/dev/modules/dev.yaml.example
+  configs/staging/modules/staging.yaml.example
 )
 FAIL=0
 

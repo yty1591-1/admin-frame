@@ -1,0 +1,72 @@
+# 异步 worker 开发环境配置示例（CONFIG_STANDARDS CFG-01/07）。
+# 公共段引用 ../prod/modules 基线，dev 差异集中在 modules/dev.yaml.example；
+# 本文件只声明 worker 差异（无外部 HTTP、关闭幂等/限流/IAM、Outbox 批量）。
+# 使用方式：cp configs/dev/worker.yaml.example configs/dev/worker.yaml
+# dev 允许 async.outbox.publish_in_api=true（见 modules/dev），因此 worker 可不常驻；
+# 需要验证异步链时再启动本进程。
+
+include:
+  - ../prod/modules/http.yaml.example
+  - ../prod/modules/log.yaml.example
+  - ../prod/modules/platform.yaml.example
+  - ../prod/modules/auth.yaml.example
+  - ../prod/modules/infra.yaml.example
+  - ../prod/modules/iam.yaml.example
+  - modules/dev.yaml.example
+
+env: dev
+service: worker
+channel: worker
+addr: ":8090" # 仅用于进程内调试 / 探针预留，不对外暴露
+shutdown_timeout: 30s
+
+http:
+  trusted_proxies: []
+
+auth:
+  expected_channel: worker
+  jwt:
+    audience: [worker]
+
+id:
+  node_id: 3 # 多副本时仍须唯一
+
+worker:
+  poll_interval: 5s
+
+# worker 不接收外部写请求，幂等与限流保持关闭。
+idempotency:
+  enabled: false
+  driver: memory
+
+rate_limit:
+  enabled: false
+  driver: memory
+  key: channel
+  failure_mode: fail_open
+  rps: 100
+  burst: 200
+
+async:
+  outbox:
+    batch_size: 200
+    concurrency: 4
+  consumer:
+    concurrency: 8
+
+# worker 不挂载 IAM：mode 必须 off。
+iam:
+  mode: off
+  cache:
+    driver: memory
+  approval:
+    enabled: false
+  constraints:
+    mode: off
+
+# worker 不提供认证 transport，identity.enabled 必须为 false。
+identity:
+  enabled: false
+
+storage:
+  key_prefix: "dev/worker/"

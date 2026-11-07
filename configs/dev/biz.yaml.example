@@ -1,0 +1,49 @@
+# B 端（biz-api）开发环境配置示例（CONFIG_STANDARDS CFG-01/07）。
+# 公共段引用 ../prod/modules 基线，dev 差异集中在 modules/dev.yaml.example；
+# 本文件只声明 B 端差异（channel/audience/CORS/node_id/限流分桶）。
+# 使用方式：cp configs/dev/biz.yaml.example configs/dev/biz.yaml
+
+include:
+  - ../prod/modules/http.yaml.example
+  - ../prod/modules/log.yaml.example
+  - ../prod/modules/platform.yaml.example
+  - ../prod/modules/auth.yaml.example
+  - ../prod/modules/infra.yaml.example
+  - ../prod/modules/iam.yaml.example
+  - ../prod/modules/identity.yaml.example
+  - modules/dev.yaml.example
+
+env: dev
+service: biz-api
+channel: biz
+addr: ":8082"
+shutdown_timeout: 20s
+
+auth:
+  expected_channel: biz # 必须与 channel 一致；B 端令牌不得被 A/C 端接受
+  jwt:
+    audience: [biz]
+
+id:
+  node_id: 1 # 多进程演练时逐进程唯一
+
+rate_limit:
+  key: channel_tenant_user # B 端按 商户+用户 分桶，避免跨商户争抢配额
+
+# dev baseline 关闭；开启时保持 mfa=false（仅 A 端支持 MFA）。
+identity:
+  enabled: false
+  mfa:
+    admin_required: false
+
+storage:
+  key_prefix: "dev/biz/"
+
+cors:
+  allow_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+  allow_headers: [Accept, Authorization, Content-Type, X-Request-ID, Idempotency-Key]
+  expose_headers: [X-Request-ID]
+  allow_credentials: true
+  max_age: 10m

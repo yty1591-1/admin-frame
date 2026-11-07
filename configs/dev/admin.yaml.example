@@ -1,0 +1,46 @@
+# A 端（admin-api）开发环境配置示例（CONFIG_STANDARDS CFG-01/07）。
+# 公共段引用 ../prod/modules 基线，dev 差异集中在 modules/dev.yaml.example；
+# 本文件只声明 A 端差异（service/channel/addr/audience/node_id/CORS）。
+# 使用方式：cp configs/dev/admin.yaml.example configs/dev/admin.yaml
+# 变量清单见 configs/dev/env.example；configs/**/*.yaml 不入库。
+
+include:
+  - ../prod/modules/http.yaml.example
+  - ../prod/modules/log.yaml.example
+  - ../prod/modules/platform.yaml.example
+  - ../prod/modules/auth.yaml.example
+  - ../prod/modules/infra.yaml.example
+  - ../prod/modules/iam.yaml.example
+  - ../prod/modules/identity.yaml.example
+  - modules/dev.yaml.example
+
+env: dev
+service: admin-api
+channel: admin
+addr: ":8081"
+shutdown_timeout: 20s
+
+auth:
+  expected_channel: admin # 必须与 channel 完全一致，防止跨端令牌串用
+  jwt:
+    audience: [admin]
+
+id:
+  node_id: 0 # 单实例可省略；多进程演练时必须逐进程唯一
+
+# dev baseline 关闭，保持「只验签」；开启前按 modules/identity 注入 hash_key。
+identity:
+  enabled: false
+
+storage:
+  key_prefix: "dev/admin/"
+
+# 本地前端联调来源；dev 允许 localhost，禁止把该值带到 staging / prod。
+cors:
+  allow_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+  allow_headers: [Accept, Authorization, Content-Type, X-Request-ID, Idempotency-Key]
+  expose_headers: [X-Request-ID]
+  allow_credentials: true
+  max_age: 10m
