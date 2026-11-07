@@ -63,6 +63,33 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 	if sqlDB == nil {
 		return errors.New("testdb: nil *sql.DB")
 	}
+	// go test 会并行执行多个包，而集成包共用同一个 MySQL 实例（CI 的 service 容器、
+	// 本地 docker compose）。runner.Up 有版本表保护，但随后的 EnsureAdmin 是「先查后插」，
+	// 两个包同时进入会撞 identity_account.PRIMARY（2026-11-07 在全新库上稳定复现：
+	// Duplicate entry '1900000000000000002'）。用 MySQL 命名锁把整个准备过程串行化。
+	//
+	// GET_LOCK 的锁归属连接而非会话池，必须显式取一条 *sql.Conn 持有到准备结束。
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("testdb: acquire lock connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	const lockName = "admin_frame_testdb_migrate"
+	var acquired sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 120)", lockName).Scan(&acquired); err != nil {
+		return fmt.Errorf("testdb: acquire migrate lock: %w", err)
+	}
+	if !acquired.Valid || acquired.Int64 != 1 {
+		return errors.New("testdb: acquire migrate lock: timeout waiting for another package")
+	}
+	defer func() {
+		// 释放不依赖调用方 ctx：Up 超时后 ctx 已取消，仍必须把锁还回去。
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, _ = conn.ExecContext(releaseCtx, "SELECT RELEASE_LOCK(?)", lockName)
+	}()
+
 	root, err := testkit.RepoRoot()
 	if err != nil {
 		return err
