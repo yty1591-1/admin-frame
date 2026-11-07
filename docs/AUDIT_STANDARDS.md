@@ -47,12 +47,26 @@
 
 ### 3.2 实现包
 
+契约层（只放类型、校验与端口，不依赖 `pkg/mq`、`pkg/outbox`、`pkg/db`）：
+
 ```text
 internal/shared/audit/
   event.go      # Event + Validate
   actions.go    # 与 EVENTS 对齐的常量
-  emitter.go    # Emitter / SlogEmitter
+  emitter.go    # Emitter 端口（仅接口）
 ```
+
+实现层（出口实现，由 cmd 在装配期选择注入）：
+
+```text
+internal/platform/audit/
+  emitter.go    # SlogEmitter（结构化日志出口）
+  sql.go        # SQLEmitter（追加写审计表）+ MultiEmitter（多出口顺序写）
+  outbox.go     # OutboxEmitter / OutboxHandler（事务内投递）
+```
+
+拆分理由：`shared/audit` 被 98 处引用，只消费 `Event` 的域不应被拖入 mq / outbox 等基础设施依赖；
+契约纯度由 `check-audit.sh` 的 AUD-03b 断言守护（`internal/shared/audit` 出现 `pkg/{mq,outbox,retry,db}` 即失败）。
 
 脚手架阶段允许 `SlogEmitter` 将事件写入结构化日志（`audit=true`）；生产须演进为独立存储或可靠投递（Outbox → 审计库 / SIEM），并补 ADR。
 
@@ -110,8 +124,8 @@ internal/shared/audit/
 ## 8. 本地与 CI
 
 ```bash
-make check-audit          # AUD-01/02/04 可自动项
-go test ./internal/shared/audit/...
+make check-audit          # AUD-01/02/04 + 契约纯度可自动项
+go test ./internal/shared/audit/... ./internal/platform/audit/...
 make ci
 ```
 
@@ -145,6 +159,7 @@ make ci
 |-------------|------|
 | `docs/audit/EVENTS.md` | 事件目录（AUD-01） |
 | `docs/audit/FIELDS.md` | 字段字典（AUD-02） |
-| `internal/shared/audit` | 事件模型与 Emitter（AUD-03/04） |
-| `scripts/ci/check-audit.sh` | 目录与基线抽检 |
+| `internal/shared/audit` | 事件模型、字段校验与 Emitter 端口（AUD-03/04） |
+| `internal/platform/audit` | 出口实现：Slog / SQL / Outbox / Multi |
+| `scripts/ci/check-audit.sh` | 目录、契约纯度与基线抽检 |
 | 本文件 | 规范正文 |

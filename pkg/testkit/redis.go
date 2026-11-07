@@ -14,7 +14,7 @@ import (
 func Redis(t *testing.T) *redis.Client {
 	t.Helper()
 	cfg := redis.Config{
-		Addr:      requireEnv(t, EnvRedisAddr),
+		Addr:      RequireEnv(t, EnvRedisAddr),
 		Password:  envValue(EnvRedisPassword),
 		KeyPrefix: "testkit",
 	}

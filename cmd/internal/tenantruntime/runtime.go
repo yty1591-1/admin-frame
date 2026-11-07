@@ -14,6 +14,7 @@ import (
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	iamapp "github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
@@ -172,12 +173,12 @@ func RegisterAsync(deps *platform.Deps) error {
 	if deps == nil || deps.Async == nil {
 		return nil
 	}
-	emitters := audit.MultiEmitter{}
+	emitters := platformaudit.MultiEmitter{}
 	if deps.Database != nil {
-		emitters = append(emitters, audit.SQLEmitter{DB: deps.Database.SQL()})
+		emitters = append(emitters, platformaudit.SQLEmitter{DB: deps.Database.SQL()})
 	}
-	emitters = append(emitters, audit.SlogEmitter{Log: deps.Logger})
-	if err := deps.Async.Register(app.TopicAudit, audit.OutboxHandler(emitters)); err != nil {
+	emitters = append(emitters, platformaudit.SlogEmitter{Log: deps.Logger})
+	if err := deps.Async.Register(app.TopicAudit, platformaudit.OutboxHandler(emitters)); err != nil {
 		return fmt.Errorf("tenant async handler %s: %w", app.TopicAudit, err)
 	}
 	return nil
@@ -243,7 +244,7 @@ type store struct {
 // 数据库可用时用 MySQL 仓储并把审计写入审计表；内存模式用内存仓储 +
 // 结构化日志审计，保证本地开发不需要起库就能走通生命周期。
 func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
-	emitter := audit.Emitter(audit.SlogEmitter{Log: deps.Logger})
+	emitter := audit.Emitter(platformaudit.SlogEmitter{Log: deps.Logger})
 	if deps.Database == nil {
 		memory := persistence.NewMemoryRepository()
 		return store{tenants: memory, members: memory, quotas: memory, plans: memory,
@@ -266,12 +267,12 @@ func buildDeps(deps *platform.Deps) (store, audit.Emitter, error) {
 	// 生产优先走 Outbox：审计与业务写入同事务，Relay 负责重试与死信。
 	// 异步未启用时退回直写审计表 + 结构化日志（本地 / 单进程模式）。
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return st, audit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
+		return st, platformaudit.OutboxEmitter{Topic: app.TopicAudit, Events: deps.Async.Store()}, nil
 	}
 	// 双出口：审计表供查询 / 取证，结构化日志供排障；任一失败不影响另一出口。
-	return st, audit.MultiEmitter{
-		audit.SQLEmitter{DB: deps.Database.SQL()},
-		audit.SlogEmitter{Log: deps.Logger},
+	return st, platformaudit.MultiEmitter{
+		platformaudit.SQLEmitter{DB: deps.Database.SQL()},
+		platformaudit.SlogEmitter{Log: deps.Logger},
 	}, nil
 }
 

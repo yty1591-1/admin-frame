@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	sharedaudit "github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/mq"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/retry"
@@ -31,10 +32,10 @@ type OutboxEmitter struct {
 }
 
 // 编译期断言：OutboxEmitter 必须满足审计端口。
-var _ Emitter = OutboxEmitter{}
+var _ sharedaudit.Emitter = OutboxEmitter{}
 
 // Emit 校验事件并写入 Outbox；复用审计事件 ID 作为 Outbox 主键，重复写入幂等。
-func (e OutboxEmitter) Emit(ctx context.Context, event Event) error {
+func (e OutboxEmitter) Emit(ctx context.Context, event sharedaudit.Event) error {
 	topic := strings.TrimSpace(e.Topic)
 	if topic == "" {
 		return apperr.Internal("audit outbox topic is not configured", nil)
@@ -77,7 +78,7 @@ func (e OutboxEmitter) Emit(ctx context.Context, event Event) error {
 //
 // 载荷不可解析 / 事件类型未知属于永久失败（毒消息），由 Relay 写入死信；
 // 下游出口失败按可重试错误处理，由 Relay 指数退避重试（event_id 幂等）。
-func OutboxHandler(emitter Emitter) outbox.Handler {
+func OutboxHandler(emitter sharedaudit.Emitter) outbox.Handler {
 	return func(ctx context.Context, event *outbox.Event) error {
 		if event == nil {
 			return retry.Permanent(fmt.Errorf("audit outbox: nil event"))
@@ -85,7 +86,7 @@ func OutboxHandler(emitter Emitter) outbox.Handler {
 		if event.EventType != EventTypeAudit {
 			return retry.Permanent(fmt.Errorf("audit outbox: unsupported event type %q", event.EventType))
 		}
-		var auditEvent Event
+		var auditEvent sharedaudit.Event
 		if err := json.Unmarshal(event.Payload, &auditEvent); err != nil {
 			return retry.Permanent(fmt.Errorf("audit outbox: decode payload: %w", err))
 		}

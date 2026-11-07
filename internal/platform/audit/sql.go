@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	sharedaudit "github.com/admin-frame/admin-frame/internal/shared/audit"
 )
 
 // DefaultAuditTable 是审计事件的默认落库表名。
@@ -20,10 +21,13 @@ const DefaultAuditTable = "audit_event"
 // MultiEmitter 按顺序把同一事件写入多个出口（如审计库 + 结构化日志）。
 //
 // 任一口失败即返回错误，由 Outbox Relay 重试；已成功的出口依赖事件 ID 幂等。
-type MultiEmitter []Emitter
+type MultiEmitter []sharedaudit.Emitter
+
+// 编译期断言：MultiEmitter 必须满足审计端口。
+var _ sharedaudit.Emitter = MultiEmitter{}
 
 // Emit 依次调用各出口。
-func (m MultiEmitter) Emit(ctx context.Context, event Event) error {
+func (m MultiEmitter) Emit(ctx context.Context, event sharedaudit.Event) error {
 	for _, emitter := range m {
 		if emitter == nil {
 			continue
@@ -46,8 +50,11 @@ type SQLEmitter struct {
 	Table string
 }
 
+// 编译期断言：SQLEmitter 必须满足审计端口。
+var _ sharedaudit.Emitter = SQLEmitter{}
+
 // Emit 校验并写入审计表；同一 event_id 重复写入视为成功。
-func (s SQLEmitter) Emit(ctx context.Context, event Event) error {
+func (s SQLEmitter) Emit(ctx context.Context, event sharedaudit.Event) error {
 	if s.DB == nil {
 		return apperr.Unavailable("audit database is not configured")
 	}

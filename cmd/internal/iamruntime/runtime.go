@@ -21,9 +21,10 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/observability"
 	"github.com/admin-frame/admin-frame/internal/iam/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
@@ -38,7 +39,7 @@ const defaultApprovalTTL = 72 * time.Hour
 
 // configView 把平台段配置与 IAM 域配置组合为只读视图，供装配期各构造器使用。
 type configView struct {
-	*platform.Config
+	*platformconfig.Config
 	IAM iamconfig.IAMConfig
 }
 
@@ -142,7 +143,7 @@ func New(deps *platform.Deps, iamCfg iamconfig.IAMConfig, opts Options) (*Runtim
 	}
 	// 审计出口：默认直接落结构化日志（local / demo）；
 	// async 启用后先写入通用 Outbox、再由 Relay 投递，进程崩溃不丢审计。
-	auditEmitter := audit.SlogEmitter{Log: deps.Logger}
+	auditEmitter := platformaudit.SlogEmitter{Log: deps.Logger}
 	recorder := observability.ChangeRecorder{
 		Inner:   app.SlogRecorder{Emitter: auditEmitter},
 		Metrics: iamMetrics,
@@ -493,7 +494,7 @@ func RegisterAsync(deps *platform.Deps) error {
 	if deps == nil || deps.Async == nil {
 		return nil
 	}
-	handler := app.AuditEventHandler(audit.SlogEmitter{Log: deps.Logger})
+	handler := app.AuditEventHandler(platformaudit.SlogEmitter{Log: deps.Logger})
 	for _, topic := range []string{app.TopicAudit, app.TopicCache} {
 		if err := deps.Async.Register(topic, handler); err != nil {
 			return fmt.Errorf("iam async handler %s: %w", topic, err)

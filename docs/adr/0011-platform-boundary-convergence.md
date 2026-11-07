@@ -57,8 +57,8 @@ prepareInfra → buildAsync → buildGuards → buildAuthN → buildAuthorizer �
 
 ## 兼容策略
 
-- 平台顶层 `aliases.go` 只保留平台核心别名；域配置类型别名与 `WithTenantGuard` / `WithQuotaGuard` 薄包装已随阶段 3 删除。
-- `check-layering.sh` 的 `LAYER_SEMANTIC_BASELINE` 清空，`PLATFORM_MAX_FILES` 下调到 5，基线只减不增。
+- 平台顶层兼容层 `aliases.go` 已删除；`cmd/*` 与测试改为直接 import 子包（config / storage / observability / httpserver / authn / async），平台根只保留 `Deps` / `Run` / `Options` / `SessionValidator` / `NewAsyncRuntime` 等装配入口。
+- `check-layering.sh` 的 `LAYER_SEMANTIC_BASELINE` 清空，`PLATFORM_MAX_FILES` 由 5 下调到 4，基线只减不增。
 
 ## 后果
 

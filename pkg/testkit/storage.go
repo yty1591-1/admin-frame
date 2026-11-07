@@ -16,10 +16,10 @@ import (
 // https 端点保持 TLS 校验，不提供跳过证书校验的开关。
 func Storage(t *testing.T) storage.Store {
 	t.Helper()
-	endpoint := requireEnv(t, EnvS3Endpoint)
-	accessKey := requireEnv(t, EnvS3AccessKey)
-	secretKey := requireEnv(t, EnvS3SecretKey)
-	bucket := requireEnv(t, EnvS3Bucket)
+	endpoint := RequireEnv(t, EnvS3Endpoint)
+	accessKey := RequireEnv(t, EnvS3AccessKey)
+	secretKey := RequireEnv(t, EnvS3SecretKey)
+	bucket := RequireEnv(t, EnvS3Bucket)
 
 	store, err := storage.Open(context.Background(), storage.Config{
 		Driver: "minio",

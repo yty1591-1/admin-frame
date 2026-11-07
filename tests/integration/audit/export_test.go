@@ -13,7 +13,9 @@ import (
 	"github.com/admin-frame/admin-frame/internal/audit/app"
 	"github.com/admin-frame/admin-frame/internal/audit/domain"
 	"github.com/admin-frame/admin-frame/internal/audit/infrastructure/persistence"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
@@ -48,12 +50,12 @@ func exportWindow(now time.Time) domain.Filter {
 // 建任务 → 真实 MySQL 抢锁执行 → 真实对象存储落 CSV → 下载 → 与库内行数对账。
 func TestAuditExportJobEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	objects := testkit.Storage(t)
 	clearExportTables(t, sqlDB)
 
 	now := time.Now().UTC()
-	emitter := audit.SQLEmitter{DB: sqlDB}
+	emitter := platformaudit.SQLEmitter{DB: sqlDB}
 	const seeded = 25
 	for i := 0; i < seeded; i++ {
 		event := seedEvent("exp-"+strconv.Itoa(i), audit.ActionAuthLogin, "admin-1", now.Add(-time.Duration(i)*time.Minute))
@@ -159,7 +161,7 @@ func TestAuditExportJobEndToEnd(t *testing.T) {
 // 未用尽重试的任务回 pending，已用尽的重试直接终态失败（避免毒丸饿死队列）。
 func TestAuditExportJobStaleRecovery(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	clearExportTables(t, sqlDB)
 	now := time.Now().UTC()
 	svc := newExportService(t, sqlDB, testkit.Storage(t), 100, 2)
@@ -214,7 +216,7 @@ func newExportService(t *testing.T, sqlDB *sql.DB, objects storage.Store, maxRow
 		Store:   store,
 		Reader:  reader,
 		Objects: objects,
-		Emitter: audit.SQLEmitter{DB: sqlDB},
+		Emitter: platformaudit.SQLEmitter{DB: sqlDB},
 		IDs:     &seqIDs{next: time.Now().UnixNano()},
 		Options: app.ExportJobOptions{
 			MaxRange: 24 * time.Hour,

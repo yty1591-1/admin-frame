@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
@@ -152,7 +153,7 @@ func newAuthFixture(t *testing.T, channel domain.Channel, opts ...withAuthConfig
 		Password:    passwordSvc,
 		Tokens:      tokens,
 		Revocation:  store,
-		Audit:       audit.SlogEmitter{Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		Audit:       platformaudit.SlogEmitter{Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		IDs:         ids,
 		Channel:     channel,
 		IdleTimeout: 72 * time.Hour,

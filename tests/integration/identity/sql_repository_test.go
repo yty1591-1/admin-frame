@@ -8,8 +8,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // newIntegrationProtector 构造固定密钥的主体保护器。
@@ -30,7 +30,7 @@ func newIntegrationProtector(t *testing.T) persistence.SubjectProtector {
 // TestSQLAccountSubjectProtection 验证 S5：明文列已删除，读写只走索引与密文。
 func TestSQLAccountSubjectProtection(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	protector := newIntegrationProtector(t)
 	repo := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector))
 	plainRepo := persistence.NewSQLAccountRepository(sqlDB)
@@ -124,7 +124,7 @@ const accountListLimitForTest = 20
 // TestSQLOAuthSubjectProtection 验证 S5：外部身份主体只存索引与密文。
 func TestSQLOAuthSubjectProtection(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	protector := newIntegrationProtector(t)
 	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector))
 	oauthRepo := persistence.NewSQLOAuthIdentityRepository(sqlDB, persistence.WithOAuthSubjectProtector(protector))
@@ -199,7 +199,7 @@ func TestSQLOAuthSubjectProtection(t *testing.T) {
 // TestSQLSessionArchiveSameTransaction 验证归档写入与在线删除在同一事务内生效。
 func TestSQLSessionArchiveSameTransaction(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	sessions := persistence.NewSQLSessionRepository(sqlDB)
 	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 

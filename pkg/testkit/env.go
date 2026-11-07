@@ -31,8 +31,8 @@ func envValue(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
 }
 
-// requireEnv 返回必填环境变量；未配置时跳过当前用例并打印可执行的补救命令。
-func requireEnv(t *testing.T, key string) string {
+// RequireEnv 返回必填环境变量；未配置时跳过当前用例并打印可执行的补救命令。
+func RequireEnv(t *testing.T, key string) string {
 	t.Helper()
 	value := envValue(key)
 	if value == "" {

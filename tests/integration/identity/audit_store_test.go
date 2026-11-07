@@ -5,14 +5,15 @@ import (
 	"testing"
 	"time"
 
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 )
 
 // TestIdentityAuditSQLEmitter 验证审计事件落库、按 actor/target/trace 检索与重试幂等。
 func TestIdentityAuditSQLEmitter(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	if _, err := sqlDB.ExecContext(ctx, "DELETE FROM audit_event"); err != nil {
 		t.Fatalf("clear audit table: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestIdentityAuditSQLEmitter(t *testing.T) {
 		Reason:       "left_company",
 		Attrs:        map[string]string{"scope": "list"},
 	}
-	emitter := audit.SQLEmitter{DB: sqlDB}
+	emitter := platformaudit.SQLEmitter{DB: sqlDB}
 
 	if err := emitter.Emit(ctx, event); err != nil {
 		t.Fatalf("emit audit event: %v", err)

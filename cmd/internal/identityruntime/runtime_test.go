@@ -10,6 +10,7 @@ import (
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // cleanupSessionsStub 只实现清理路径调用的方法。
@@ -55,9 +56,9 @@ func (o *cleanupObserverStub) OnCleanupRun(_ context.Context, result app.Cleanup
 
 // TestNewFailsFastWithoutDatabase 验证 db.driver 非 memory 时缺失连接直接失败（IDN-P2-01）。
 func TestNewFailsFastWithoutDatabase(t *testing.T) {
-	cfg := &platform.Config{
+	cfg := &platformconfig.Config{
 		Channel: "admin",
-		DB:      platform.DBConfig{Driver: "mysql"},
+		DB:      platformconfig.DBConfig{Driver: "mysql"},
 	}
 	if _, err := New(&platform.Deps{Config: cfg}, identityconfig.IdentityConfig{Enabled: true}); err == nil ||
 		!strings.Contains(err.Error(), "no database connection is available") {
@@ -122,11 +123,11 @@ func TestRunCleanupOnceSkipsWhenLockHeld(t *testing.T) {
 
 // TestIdentityMFAFactors 验证因子白名单默认 totp 与大小写归一（BIZ-03）。
 func TestIdentityMFAFactors(t *testing.T) {
-	defaults := identityMFAFactors(configView{Config: &platform.Config{}})
+	defaults := identityMFAFactors(configView{Config: &platformconfig.Config{}})
 	if len(defaults) != 1 || defaults[0] != app.MFAFactorTOTP {
 		t.Fatalf("defaults = %v, want [totp]", defaults)
 	}
-	cfg := configView{Config: &platform.Config{}}
+	cfg := configView{Config: &platformconfig.Config{}}
 	cfg.Identity.MFA.Factors = []string{" TOTP "}
 	explicit := identityMFAFactors(cfg)
 	if len(explicit) != 1 || explicit[0] != app.MFAFactorTOTP {
@@ -136,14 +137,14 @@ func TestIdentityMFAFactors(t *testing.T) {
 
 // TestPasswordPolicyFromConfig 验证配置策略映射与零值默认行为（IDN-P2-01）。
 func TestPasswordPolicyFromConfig(t *testing.T) {
-	empty := passwordPolicyFromConfig(configView{Config: &platform.Config{}})
+	empty := passwordPolicyFromConfig(configView{Config: &platformconfig.Config{}})
 	fallback := app.DefaultPasswordPolicy()
 	if empty != fallback {
 		t.Fatalf("policy = %+v, want default %+v", empty, fallback)
 	}
 
 	requireComplexity := false
-	cfg := configView{Config: &platform.Config{}}
+	cfg := configView{Config: &platformconfig.Config{}}
 	cfg.Identity.Password.MinLength = 10
 	cfg.Identity.Password.MaxLength = 64
 	cfg.Identity.Password.RequireComplexity = &requireComplexity

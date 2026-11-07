@@ -230,6 +230,31 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 | staging | staging | 拓扑近似生产；密钥隔离；必须 `auth.mode=jwt`；多副本时显式 `id.node_id` 或 `statefulset`，幂等/限流用 `redis` |
 | prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启；多副本同上，`async.enabled=true` 且 `async.outbox.publish_in_api=false`，投递统一由 `cmd/worker` 承担（IAM enforce 强制 `async.enabled=true`） |
 
+### 6.1 环境差异矩阵（照抄即可的最小覆盖）
+
+仓库只提交 `configs/prod/*.example` 一套样板：多份样例会与 schema 漂移（CFG-07 单一来源），
+且 dev/staging 的差异是**可枚举的少量键**，用下表 + `ADMIN_FRAME_*` 环境变量覆盖比复制整套 YAML 更不易腐化。
+
+| 键 | local | dev / test | staging | prod |
+|---|---|---|---|---|
+| `env` | `local` | `dev` / `test` | `staging` | `prod` |
+| `auth.mode` | `demo` | `demo` 或 `jwt` | `jwt`（唯一合法值） | `jwt`（`demo` 启动即失败） |
+| `db.driver` | `memory` | `memory` / `mysql` | `mysql` | `mysql` |
+| `redis.addr` | 空（限流/幂等退内存） | 可空 | 必填 | 必填 |
+| `storage.driver` | `memory` / `local` | `local` / `minio` | `s3`（或兼容网关） | `s3`（或兼容网关） |
+| `storage.key_prefix` | `local/<端>/` | `dev/<端>/` | `staging/<端>/` | `prod/<端>/` |
+| `log.level` | `debug` | `debug` / `info` | `info` | `info`（禁止长期 `debug`） |
+| `log.format` | `text` | `text` / `json` | `json` | `json` |
+| `async.enabled` | `false` | 可 `false` | `true` | `true`，且 `async.outbox.publish_in_api=false` |
+| `id.node_id` | 可省略 | 单实例可省略 | 多副本必填（或用 `statefulset`） | 同 staging |
+| `cors.allow_origins` | `http://localhost:*` | 显式域名 | 显式域名（禁止 `*`） | 显式域名（禁止 `*`） |
+| 密钥来源 | 环境变量随便填 | 环境变量（禁生产凭据） | Vault / KMS 隔离实例 | Vault / KMS |
+
+派生本地配置的做法：`cp -r configs/prod configs/local`，只改上表对应键并删除 `include:` 中的 `identity` 段
+（本地 identity 默认关闭），密钥仍走环境变量；`configs/**/*.yaml` 已被 `.gitignore` 忽略，只有 `*.yaml.example` 入库。
+
+自检：`make check-config`（配置 schema 与禁止项）与 `go run ./cmd/admin-api -config configs/local/admin.yaml` 的启动校验。
+
 ---
 
 ## 7. MUST NOT

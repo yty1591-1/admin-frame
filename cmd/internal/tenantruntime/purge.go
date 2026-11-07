@@ -10,6 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/infrastructure/persistence"
 	identitypersistence "github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	tenantapp "github.com/admin-frame/admin-frame/internal/tenant/app"
 	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
@@ -88,15 +89,15 @@ func buildPurgeService(deps *platform.Deps, tenants domain.Repository, tenantCfg
 // 事务一致性由 Relay 保证）；无 DB 时退回结构化日志（内存模式无处置对象）。
 func purgeEmitter(deps *platform.Deps) audit.Emitter {
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return audit.OutboxEmitter{Topic: tenantapp.TopicAudit, Events: deps.Async.Store()}
+		return platformaudit.OutboxEmitter{Topic: tenantapp.TopicAudit, Events: deps.Async.Store()}
 	}
 	if deps.Database != nil {
-		return audit.MultiEmitter{
-			audit.SQLEmitter{DB: deps.Database.SQL()},
-			audit.SlogEmitter{Log: deps.Logger},
+		return platformaudit.MultiEmitter{
+			platformaudit.SQLEmitter{DB: deps.Database.SQL()},
+			platformaudit.SlogEmitter{Log: deps.Logger},
 		}
 	}
-	return audit.SlogEmitter{Log: deps.Logger}
+	return platformaudit.SlogEmitter{Log: deps.Logger}
 }
 
 // registerPurgeLoop 注册周期扫描（默认 1 小时一轮；任务幂等——

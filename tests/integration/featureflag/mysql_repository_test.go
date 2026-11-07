@@ -20,8 +20,8 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/featureflag/domain"
 	"github.com/admin-frame/admin-frame/internal/featureflag/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/db"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // envDSN 是特性开关域集成测试的连接串开关。
@@ -71,7 +71,7 @@ func openAndMigrate(rawDSN string) (*sql.DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	if err := testkit.Migrate(context.Background(), sqlDB); err != nil {
+	if err := testdb.Migrate(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
 	}

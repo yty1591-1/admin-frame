@@ -19,6 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/featureflag/observability"
 	"github.com/admin-frame/admin-frame/internal/featureflag/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
@@ -140,13 +141,13 @@ func buildObserver(deps *platform.Deps) app.EvaluationObserver {
 // buildEmitter 审计出口：优先 Outbox（与业务事务同源），退回双出口
 // （审计表 + 结构化日志）。
 func buildEmitter(deps *platform.Deps) audit.Emitter {
-	slogEmitter := audit.SlogEmitter{Log: deps.Logger}
+	slogEmitter := platformaudit.SlogEmitter{Log: deps.Logger}
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return audit.OutboxEmitter{Topic: "featureflag.audit", Events: deps.Async.Store()}
+		return platformaudit.OutboxEmitter{Topic: "featureflag.audit", Events: deps.Async.Store()}
 	}
 	if deps.Database != nil {
-		return audit.MultiEmitter{
-			audit.SQLEmitter{DB: deps.Database.SQL()},
+		return platformaudit.MultiEmitter{
+			platformaudit.SQLEmitter{DB: deps.Database.SQL()},
 			slogEmitter,
 		}
 	}

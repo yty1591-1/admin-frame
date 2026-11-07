@@ -255,6 +255,26 @@ internal/
 | 某端的 HTTP DTO / Handler？ | `internal/<domain>/transport/<channel>/` |
 | 对接某外部系统的适配？ | `internal/<domain>/infrastructure/` |
 
+### 3.4 选层决策表（pkg / shared / platform / 域）
+
+仓库同时存在 `pkg/errors` 与 `shared/apperr`、`pkg/httpx` 与 `shared/apiresp` 这类「近义两层」。
+它们不是重复实现，而是**可复用库 → 本仓库契约 → 进程装配**的三段分工；按下表判定，不要凭手感选：
+
+| 你要放的东西 | 位置 | 判定依据 | 常见误放 |
+|---|---|---|---|
+| 与业务无关、换项目能直接复用的原语（错误链、HTTP 信封、RBAC 判定器、JWT 原语） | `pkg/<x>` | 不得 import `internal/*`（LAYER-10） | 放进 `shared`，导致契约层随库实现变动 |
+| 本仓库的对外契约：数字错误码、响应信封适配、Principal、鉴权快照类型、审计事件模型 | `internal/shared/<x>` | 只放类型 / 接口 / 码表 / 校验，不放存储与投递实现（AUD-03b、LAYER-04） | 放进 `pkg`，把本服务语义固化进可复用库 |
+| 进程级能力实现：配置装配与校验、日志、HTTP 管线、鉴权接线、审计出口、密钥、对象存储、异步运行时 | `internal/platform/<x>` | 由 `cmd` 装配，不承载业务规则（PLAT-15） | 放进 `shared`，把 mq / db 依赖传染给所有引用方 |
+| 某域的业务规则 / 用例 / 外部适配 | `internal/<domain>/{domain,app,infrastructure}` | 只依赖 shared 契约 | 放进 `platform`，违反 LAYER-02 |
+
+配套约定：
+
+- `internal/shared/apiresp` 是 `pkg/httpx` 的适配层（`type Envelope = pkghttpx.Envelope`），两者字段不可能漂移；
+  业务与 transport 一律走 `apiresp`，由它把 `shared/apperr` 的数字码注入信封，禁止直接写 `pkg/httpx` 自造码表。
+- `internal/shared/apperr` 建在 `pkg/errors` 之上：业务只写 `apperr.Xxx()`，语义码 → 数字码的映射由它承担。
+- `pkg/rbac`（判定器）+ `internal/shared/authz`（快照类型）+ `internal/security`（中间件）是三层协作，
+  禁止在业务域另建一套权限判定。
+
 ---
 
 ## 四、多端业务架构（A/B/C）
@@ -747,7 +767,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 | **指标** | RED + 业务关键指标；按 `service`/`channel` 分标签；队列积压、缓存命中率、连接池使用率 |
 | **追踪** | OpenTelemetry 全链路；跨服务 W3C Trace Context / 约定 header 透传 |
 | **健康检查** | `/healthz` 存活；`/readyz` 就绪（探测 DB/MQ 等关键依赖） |
-| **审计** | 见 AUD 专文：事件目录、字段字典、追加写存储、保留期；经 `internal/shared/audit` 发出 |
+| **审计** | 见 AUD 专文：事件目录、字段字典、追加写存储、保留期；契约（Event / Emitter）在 `internal/shared/audit`，出口实现在 `internal/platform/audit` |
 
 **审计读侧（ENT-04）**：
 

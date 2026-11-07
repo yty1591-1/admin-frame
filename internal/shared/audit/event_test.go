@@ -1,10 +1,6 @@
 package audit_test
 
 import (
-	"bytes"
-	"context"
-	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -127,29 +123,5 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing actions: %v", want)
-	}
-}
-
-func TestSlogEmitterEmit(t *testing.T) {
-	var buf bytes.Buffer
-	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	em := audit.SlogEmitter{Log: slog.New(h)}
-	if err := em.Emit(context.Background(), validEvent()); err != nil {
-		t.Fatal(err)
-	}
-	out := buf.String()
-	for _, needle := range []string{`"audit":true`, `"action":"auth.login"`, `"event_id":"evt-1"`} {
-		if !strings.Contains(out, needle) {
-			t.Fatalf("log missing %s; got %s", needle, out)
-		}
-	}
-}
-
-func TestSlogEmitterRejectsInvalid(t *testing.T) {
-	em := audit.SlogEmitter{Log: slog.Default()}
-	e := validEvent()
-	e.Service = ""
-	if err := em.Emit(context.Background(), e); err == nil {
-		t.Fatal("expected validate error")
 	}
 }

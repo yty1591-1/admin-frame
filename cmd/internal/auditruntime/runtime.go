@@ -16,6 +16,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/audit/infrastructure/persistence"
 	auditrest "github.com/admin-frame/admin-frame/internal/audit/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -43,9 +44,9 @@ func New(deps *platform.Deps, auditCfg auditconfig.AuditConfig) (*Runtime, error
 	if err != nil {
 		return nil, fmt.Errorf("audit reader: %w", err)
 	}
-	emitter := audit.MultiEmitter{
-		audit.SQLEmitter{DB: deps.Database.SQL()},
-		audit.SlogEmitter{Log: deps.Logger},
+	emitter := platformaudit.MultiEmitter{
+		platformaudit.SQLEmitter{DB: deps.Database.SQL()},
+		platformaudit.SlogEmitter{Log: deps.Logger},
 	}
 	opts := auditapp.QueryOptions{
 		MaxRange:       time.Duration(auditCfg.Query.MaxRangeDays) * 24 * time.Hour,
@@ -103,9 +104,9 @@ func StartRetention(ctx context.Context, deps *platform.Deps, auditCfg auditconf
 	if err != nil {
 		return nil, fmt.Errorf("audit retention store: %w", err)
 	}
-	emitter := audit.MultiEmitter{
-		audit.SQLEmitter{DB: deps.Database.SQL()},
-		audit.SlogEmitter{Log: deps.Logger},
+	emitter := platformaudit.MultiEmitter{
+		platformaudit.SQLEmitter{DB: deps.Database.SQL()},
+		platformaudit.SlogEmitter{Log: deps.Logger},
 	}
 	// 归档桶与导出桶一致：同属审计数据，生命周期与权限应统一治理。
 	archiver, err := newRetentionArchiver(deps, auditCfg)
@@ -223,9 +224,9 @@ func StartExportRunner(ctx context.Context, deps *platform.Deps, auditCfg auditc
 	if err != nil {
 		return nil, fmt.Errorf("audit reader: %w", err)
 	}
-	emitter := audit.MultiEmitter{
-		audit.SQLEmitter{DB: deps.Database.SQL()},
-		audit.SlogEmitter{Log: deps.Logger},
+	emitter := platformaudit.MultiEmitter{
+		platformaudit.SQLEmitter{DB: deps.Database.SQL()},
+		platformaudit.SlogEmitter{Log: deps.Logger},
 	}
 	service, err := newExportJobService(deps, auditCfg, reader, emitter)
 	if err != nil {

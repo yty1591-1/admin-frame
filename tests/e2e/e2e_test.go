@@ -27,8 +27,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/db"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // envDSN / envRedis 是 E2E 依赖的开关（也是 nightly 门禁的触发条件）。
@@ -211,7 +211,7 @@ func migrateDatabase(t *testing.T, dsn string) {
 		t.Fatalf("open e2e mysql: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := testkit.Migrate(context.Background(), database.SQL()); err != nil {
+	if err := testdb.Migrate(context.Background(), database.SQL()); err != nil {
 		t.Fatalf("migrate e2e database: %v", err)
 	}
 }
@@ -465,7 +465,7 @@ func redisBlock(addr string) string {
 
 // identityBlock 是三端共用的身份域配置。
 //
-// 密钥必须与 pkg/testkit.Migrate 种入引导管理员时使用的测试密钥一致
+// 密钥必须与 internal/testdb.Migrate 种入引导管理员时使用的测试密钥一致
 // （hash = 0x11×32，subject key ring = 0x22×32 / k1）——否则 subject_index
 // 不匹配，二进制启动会重复插入引导账号并撞主键。
 func identityBlock(extra string) string {

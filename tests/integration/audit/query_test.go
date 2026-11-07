@@ -7,8 +7,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/audit/domain"
 	"github.com/admin-frame/admin-frame/internal/audit/infrastructure/persistence"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 )
 
 // seedEvent 构造一条可落库的审计事件。
@@ -31,7 +32,7 @@ func seedEvent(id, action, actor string, occurred time.Time) audit.Event {
 // TestAuditReaderAndRetention 覆盖审计表的查询、分页总量与到期清理（ENT-04 T4/T6）。
 func TestAuditReaderAndRetention(t *testing.T) {
 	ctx := context.Background()
-	db := testkit.MySQL(t)
+	db := testdb.MySQL(t)
 	sqlDB := db.SQL()
 	if _, err := sqlDB.ExecContext(ctx, "DELETE FROM audit_event"); err != nil {
 		t.Fatalf("clear audit table: %v", err)
@@ -39,7 +40,7 @@ func TestAuditReaderAndRetention(t *testing.T) {
 
 	now := time.Now().UTC()
 	expired := now.AddDate(0, 0, -400)
-	emitter := audit.SQLEmitter{DB: sqlDB}
+	emitter := platformaudit.SQLEmitter{DB: sqlDB}
 	for _, event := range []audit.Event{
 		seedEvent("evt-recent-1", audit.ActionAuthLogin, "admin-1", now.Add(-2*time.Hour)),
 		seedEvent("evt-recent-2", audit.ActionAuthLogin, "admin-2", now.Add(-time.Hour)),

@@ -11,7 +11,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/audit/app"
 	"github.com/admin-frame/admin-frame/internal/audit/infrastructure/persistence"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
@@ -20,13 +22,13 @@ import (
 // 每批先写归档对象再删行，归档总行数与删除行数一致，未到期数据不受影响。
 func TestAuditRetentionArchivesThenDeletes(t *testing.T) {
 	ctx := context.Background()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	objects := testkit.Storage(t)
 	clearExportTables(t, sqlDB)
 
 	now := time.Now().UTC()
 	longAgo := now.AddDate(0, 0, -400)
-	emitter := audit.SQLEmitter{DB: sqlDB}
+	emitter := platformaudit.SQLEmitter{DB: sqlDB}
 	const expired, kept = 12, 3
 	for i := 0; i < expired; i++ {
 		event := seedEvent("old-"+strconv.Itoa(i), audit.ActionAuthLogin, "admin-1", longAgo.Add(time.Duration(i)*time.Minute))
@@ -53,7 +55,7 @@ func TestAuditRetentionArchivesThenDeletes(t *testing.T) {
 	svc, err := app.NewRetentionService(store, app.ObjectArchiver{
 		Objects: objects,
 		Prefix:  prefix,
-	}, audit.SQLEmitter{DB: sqlDB}, &seqIDs{next: time.Now().UnixNano()}, nil, app.RetentionOptions{
+	}, platformaudit.SQLEmitter{DB: sqlDB}, &seqIDs{next: time.Now().UnixNano()}, nil, app.RetentionOptions{
 		RetentionDays: 180,
 		BatchSize:     5, // 12 行 → 5 + 5 + 2 三个归档对象
 		MaxBatches:    10,

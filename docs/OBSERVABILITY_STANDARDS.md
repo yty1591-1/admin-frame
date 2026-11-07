@@ -98,7 +98,8 @@ IAM 审计投递仍保留 `iam_outbox_delivery_total` / `iam_outbox_pending` / `
 ## 6. 审计触发点
 
 **完整硬约束**见 [`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)（事件目录、字段字典、保留期、不可篡改）。
-实现统一走 `internal/shared/audit` Emitter；禁止用普通访问日志冒充审计。
+实现统一走 `internal/shared/audit` 的 Emitter 端口（出口实现见 `internal/platform/audit`）；
+禁止用普通访问日志冒充审计。
 
 ---
 

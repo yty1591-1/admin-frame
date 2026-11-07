@@ -12,6 +12,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
@@ -39,7 +40,7 @@ func iamTestConfig() iamconfig.IAMConfig {
 }
 
 // newDeps 构造不依赖外部服务的装配参数（db.driver=memory 或 SkipPing 的 mysql）。
-func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platform.Deps {
+func newDeps(t *testing.T, async platformconfig.AsyncConfig, withDatabase bool) *platform.Deps {
 	t.Helper()
 	registry := prometheus.NewRegistry()
 	met, err := metrics.New(metrics.Options{
@@ -53,7 +54,7 @@ func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platf
 		t.Fatalf("metrics.New: %v", err)
 	}
 	deps := &platform.Deps{
-		Config: &platform.Config{
+		Config: &platformconfig.Config{
 			Env:     "local",
 			Service: "admin-api",
 			Channel: "admin",
@@ -86,7 +87,7 @@ func newDeps(t *testing.T, async platform.AsyncConfig, withDatabase bool) *platf
 
 // TestRuntimeWithoutAsyncKeepsSlogRecorder 验证未启用 async 时装配成功且不注册异步指标。
 func TestRuntimeWithoutAsyncKeepsSlogRecorder(t *testing.T) {
-	deps := newDeps(t, platform.AsyncConfig{}, false)
+	deps := newDeps(t, platformconfig.AsyncConfig{}, false)
 	if deps.Async != nil {
 		t.Fatal("async runtime must be nil when disabled")
 	}
@@ -100,20 +101,20 @@ func TestRuntimeWithoutAsyncKeepsSlogRecorder(t *testing.T) {
 
 // TestRuntimeAsyncRegistersIAMHandlers 验证启用 async 后 IAM 主题已在路由中注册。
 func TestRuntimeAsyncRegistersIAMHandlers(t *testing.T) {
-	deps := newDeps(t, platform.AsyncConfig{
+	deps := newDeps(t, platformconfig.AsyncConfig{
 		Enabled: true,
-		Driver:  platform.AsyncDriverDB,
-		Outbox: platform.AsyncOutboxConfig{
+		Driver:  platformconfig.AsyncDriverDB,
+		Outbox: platformconfig.AsyncOutboxConfig{
 			PollInterval: time.Second,
 			BatchSize:    10,
 			Lease:        30 * time.Second,
 			MaxAttempts:  3,
 			Concurrency:  1,
 		},
-		Consumer: platform.AsyncConsumerConfig{
+		Consumer: platformconfig.AsyncConsumerConfig{
 			Concurrency:       2,
 			VisibilityTimeout: time.Minute,
-			RetryBackoff:      platform.AsyncBackoffExponential,
+			RetryBackoff:      platformconfig.AsyncBackoffExponential,
 		},
 	}, true)
 	if deps.Async == nil {
@@ -126,20 +127,20 @@ func TestRuntimeAsyncRegistersIAMHandlers(t *testing.T) {
 
 // TestRuntimeAsyncGaugesRegistered 验证 IAM 积压指标与投递指标可在 /metrics 中被采集。
 func TestRuntimeAsyncGaugesRegistered(t *testing.T) {
-	deps := newDeps(t, platform.AsyncConfig{
+	deps := newDeps(t, platformconfig.AsyncConfig{
 		Enabled: true,
-		Driver:  platform.AsyncDriverDB,
-		Outbox: platform.AsyncOutboxConfig{
+		Driver:  platformconfig.AsyncDriverDB,
+		Outbox: platformconfig.AsyncOutboxConfig{
 			PollInterval: time.Second,
 			BatchSize:    10,
 			Lease:        30 * time.Second,
 			MaxAttempts:  3,
 			Concurrency:  1,
 		},
-		Consumer: platform.AsyncConsumerConfig{
+		Consumer: platformconfig.AsyncConsumerConfig{
 			Concurrency:       2,
 			VisibilityTimeout: time.Minute,
-			RetryBackoff:      platform.AsyncBackoffExponential,
+			RetryBackoff:      platformconfig.AsyncBackoffExponential,
 		},
 	}, true)
 	if _, err := iamruntime.New(deps, iamTestConfig(), iamruntime.Options{}); err != nil {

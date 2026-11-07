@@ -19,7 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
-	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	securecrypto "github.com/admin-frame/admin-frame/pkg/crypto"
@@ -222,7 +222,7 @@ func newCFixture(t *testing.T, opts ...cOption) *cFixture {
 		Password:    passwordSvc,
 		Tokens:      tokens,
 		Revocation:  revocation,
-		Audit:       audit.SlogEmitter{Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		Audit:       platformaudit.SlogEmitter{Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		IDs:         ids,
 		Channel:     domain.ChannelC,
 		IdleTimeout: 72 * time.Hour,

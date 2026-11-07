@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/idempotency"
 	"github.com/admin-frame/admin-frame/pkg/mq"
@@ -28,8 +30,8 @@ func TestNodeIDUniqueAcrossReplicas(t *testing.T) {
 	generators := make([]id.Generator, replicas)
 	for i, nodeID := range nodeIDs {
 		nodeID := nodeID
-		generator, _, err := platform.NewIDGenerator(platform.IDConfig{
-			NodeIDSource: platform.IDSourceConfig,
+		generator, _, err := platform.NewIDGenerator(platformconfig.IDConfig{
+			NodeIDSource: platformconfig.IDSourceConfig,
 			NodeID:       &nodeID,
 		})
 		if err != nil {
@@ -160,7 +162,7 @@ func TestSharedRateLimitQuota(t *testing.T) {
 
 // TestOutboxRestartNoLossNoDuplicate 验证 Relay 重启后已完成事件不重投、未完成事件不丢失（AC-ENT-02-4 / AC-ENT-03-1）。
 func TestOutboxRestartNoLossNoDuplicate(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	ctx := context.Background()
 	store := outbox.NewMySQLStore(database.SQL())
 

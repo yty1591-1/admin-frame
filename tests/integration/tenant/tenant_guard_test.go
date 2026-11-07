@@ -13,13 +13,14 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 	"github.com/admin-frame/admin-frame/internal/tenant/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
-	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // envDSN 是租户域集成测试的开关。
@@ -71,7 +72,7 @@ func openAndMigrate(rawDSN string) (*sql.DB, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
-	if err := testkit.Migrate(context.Background(), sqlDB); err != nil {
+	if err := testdb.Migrate(context.Background(), sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
 	}
@@ -464,7 +465,7 @@ func TestAuditOutboxIsTransactionalOnMySQL(t *testing.T) {
 	actor := app.Actor{SubjectID: "it-admin", ActorType: "user", Channel: "admin", TraceID: "it-trace"}
 
 	service, err := app.NewService(repo, &seqIDs{},
-		audit.OutboxEmitter{Topic: app.TopicAudit, Events: store}, app.Options{
+		platformaudit.OutboxEmitter{Topic: app.TopicAudit, Events: store}, app.Options{
 			Service: "admin-api", Plans: repo, Members: repo, Quotas: repo,
 		})
 	if err != nil {

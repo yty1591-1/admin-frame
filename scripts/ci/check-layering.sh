@@ -8,9 +8,11 @@
 #   4. shared 不依赖 platform 与业务域（避免契约层反向依赖）；
 #   5. iam/domain 不依赖 app/transport/infrastructure/platform；
 #   6. iam/transport 不依赖 iam/infrastructure；
-#   7. platform 单包非测试文件数与单文件行数不超过拆分基线（LAYER-07/08，PLAT-15）；
+#   7. platform 单包非测试文件数与单文件行数（递归含全部子包）不超过拆分基线
+#      （LAYER-07/08，PLAT-15）；
 #   8. platform 不得新增业务语义端口（Tenant / Quota / Merchant 相关 interface，
-#      LAYER-09，PLAT-15 / ARCHITECTURE §5.6「不承载业务语义」）。
+#      LAYER-09，PLAT-15 / ARCHITECTURE §5.6「不承载业务语义」）；
+#   9. pkg 不得 import internal/*（LAYER-10：可复用库层不得反向依赖应用内实现）。
 #
 # 基线只减不增：每次完成拆分后必须同步下调基线值，禁止以扩容基线的方式放行。
 #
@@ -129,22 +131,24 @@ else
 fi
 
 echo "==> LAYER-08: platform file size (PLAT-15)"
-for f in "${PLATFORM_DIR}"/*.go; do
+# 递归覆盖全部子包：历史上只扫根包，导致 async/async_nats.go（622 行）与
+# secrets/vault.go（619 行）长期超限而门禁仍绿（评审差距 G3）。
+while IFS= read -r f; do
   [[ -f "${f}" ]] || continue
   [[ "${f}" == *_test.go ]] && continue
   lines=$(awk 'END { print NR }' "${f}")
   [[ "${lines}" -le "${PLATFORM_MAX_FILE_LINES}" ]] && continue
-  base_name="$(basename "${f}")"
+  rel="${f#${PLATFORM_DIR}/}"
   registered=0
   for b in "${LAYER_LINE_BASELINE[@]}"; do
-    [[ "${base_name}" == "${b}" ]] && registered=1
+    [[ "${rel}" == "${b}" ]] && registered=1
   done
   if [[ "${registered}" -eq 0 ]]; then
     fail_with "${f} has ${lines} lines > ${PLATFORM_MAX_FILE_LINES} (PLAT-15: split the file)"
   else
-    echo "    BASELINE: ${base_name} ${lines} lines (must leave the baseline after split)"
+    echo "    BASELINE: ${rel} ${lines} lines (must leave the baseline after split)"
   fi
-done
+done < <(find "${PLATFORM_DIR}" -name '*.go' -type f | sort)
 
 echo "==> LAYER-09: platform must not define business-semantic ports (PLAT-15)"
 semantic_matches=$(grep -RHo --include='*.go' --exclude='*_test.go' -E \
@@ -167,6 +171,17 @@ else
       echo "    BASELINE: ${name} (must move to the owning domain)"
     fi
   done <<< "${semantic_matches}"
+fi
+
+echo "==> LAYER-10: pkg must not import internal (dependency inversion)"
+# pkg/ 是可复用库层：一旦 import internal/*，就丧失「可独立复用 / 可独立发布」属性，
+# 并把测试工具链与业务实现绑死（评审差距 G2，pkg/testkit → internal/identity）。
+if grep -RIn --include='*.go' -E \
+  '"github.com/admin-frame/admin-frame/internal/' \
+  pkg 2>/dev/null; then
+  fail_with "pkg must stay reusable: it must not import internal/* (LAYER-10)"
+else
+  echo "    OK: pkg has no internal import"
 fi
 
 if [[ "${FAIL}" -ne 0 ]]; then

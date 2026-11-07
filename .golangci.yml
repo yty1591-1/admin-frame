@@ -3,6 +3,7 @@
 version: "2"
 linters:
   enable:
+    - depguard
     - gosec
     - gocritic
     - misspell
@@ -12,6 +13,35 @@ linters:
     - usestdlibvars
     - whitespace
   settings:
+    # depguard 把 scripts/ci/check-layering.sh 的分层规则编译期化：
+    # 脚本只在 CI 跑，编辑器与本地 `go build` 看不到；lint 阶段即可拦截。
+    # 规则与脚本一一对应，改动须同步（ARCHITECTURE §6.1 / LAYER-01/03/04/10）。
+    depguard:
+      rules:
+        transport-no-platform:
+          list-mode: lax
+          files: ["**/internal/*/transport/**", "!**/*_test.go"]
+          deny:
+            - pkg: "github.com/admin-frame/admin-frame/internal/platform"
+              desc: "transport must depend on shared contracts (LAYER-01)"
+        shared-no-platform:
+          list-mode: lax
+          files: ["**/internal/shared/**", "!**/*_test.go"]
+          deny:
+            - pkg: "github.com/admin-frame/admin-frame/internal/platform"
+              desc: "shared contract layer must not import platform (LAYER-04)"
+        security-no-platform:
+          list-mode: lax
+          files: ["**/internal/security/**", "!**/*_test.go"]
+          deny:
+            - pkg: "github.com/admin-frame/admin-frame/internal/platform"
+              desc: "security must not import platform (LAYER-03)"
+        pkg-no-internal:
+          list-mode: lax
+          files: ["**/pkg/**", "!**/*_test.go"]
+          deny:
+            - pkg: "github.com/admin-frame/admin-frame/internal"
+              desc: "pkg must stay reusable: no internal/* import (LAYER-10)"
     gosec:
       # G104 与 errcheck 重复；演示令牌解析不涉及弱随机。
       excludes:

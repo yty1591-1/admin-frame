@@ -18,6 +18,7 @@ import (
 	identitycache "github.com/admin-frame/admin-frame/internal/identity/infrastructure/cache"
 	"github.com/admin-frame/admin-frame/internal/identity/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
@@ -38,7 +39,7 @@ func nextID() string {
 // testDB 返回已迁移的测试数据库并清空身份 / 异步表。
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
-	sqlDB := testkit.MySQL(t).SQL()
+	sqlDB := testdb.MySQL(t).SQL()
 	reset(t, sqlDB)
 	return sqlDB
 }

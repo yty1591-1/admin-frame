@@ -77,6 +77,30 @@ if [[ -f "${PKG}/emitter.go" ]] && ! grep -q 'type Emitter interface' "${PKG}/em
   FAIL=1
 fi
 
+echo "==> AUD-03b: audit contract purity（契约层不得装实现）"
+# shared/audit 只放 Event / 字段字典 / Emitter 端口；出口实现必须在
+# internal/platform/audit（Slog / SQL / Outbox / Multi）。契约层一旦 import
+# 基础设施包，所有只消费 Event 的域都会被拖入 mq / outbox / db 依赖链。
+if grep -RInE --include='*.go' --exclude='*_test.go' \
+  '"github.com/admin-frame/admin-frame/pkg/(mq|outbox|retry|db|redis)"' \
+  "${PKG}" 2>/dev/null; then
+  echo "ERROR: ${PKG} must stay infra-free; move the implementation to internal/platform/audit (AUD-03b)" >&2
+  FAIL=1
+else
+  echo "    OK: ${PKG} has no infra import"
+fi
+PLATFORM_PKG="internal/platform/audit"
+if [[ -d "${PLATFORM_PKG}" ]]; then
+  for f in emitter.go sql.go outbox.go; do
+    if [[ ! -f "${PLATFORM_PKG}/${f}" ]]; then
+      echo "ERROR: missing ${PLATFORM_PKG}/${f}（出口实现应集中在此）" >&2
+      FAIL=1
+    else
+      echo "    OK: ${PLATFORM_PKG}/${f}"
+    fi
+  done
+fi
+
 echo "==> AUD: retention baseline mentioned in standards"
 if [[ -f docs/AUDIT_STANDARDS.md ]]; then
   if ! grep -q '180' docs/AUDIT_STANDARDS.md || ! grep -q '365' docs/AUDIT_STANDARDS.md; then

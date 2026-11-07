@@ -25,6 +25,8 @@ import (
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/crypto"
@@ -57,10 +59,10 @@ const refreshLimiterKeyPrefix = "identity:refresh:"
 
 // configView 把平台段配置与身份域配置组合为只读视图，供装配期各构造器使用。
 //
-// 平台 Config 不再内聚业务域配置，装配层显式接收域配置；嵌入 *platform.Config
+// 平台 Config 不再内聚业务域配置，装配层显式接收域配置；嵌入 *platformconfig.Config
 // 保留对 channel / db / auth 等平台字段的直接访问，避免大范围改签名。
 type configView struct {
-	*platform.Config
+	*platformconfig.Config
 	Identity identityconfig.IdentityConfig
 }
 
@@ -288,7 +290,7 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (*Runti
 
 	// 审计出口：启用异步时写入 identity.audit Outbox（与业务写入同事务），
 	// 内存模式下退化为进程日志；禁止静默丢弃。
-	var auditEmitter audit.Emitter = audit.SlogEmitter{Log: deps.Logger}
+	var auditEmitter audit.Emitter = platformaudit.SlogEmitter{Log: deps.Logger}
 	auditSink := "slog"
 	if deps.Async != nil {
 		auditEmitter = app.OutboxEmitter{Events: deps.Async.Store()}
@@ -416,11 +418,11 @@ func RegisterAsync(deps *platform.Deps) error {
 	if deps == nil || deps.Async == nil {
 		return nil
 	}
-	emitters := audit.MultiEmitter{}
+	emitters := platformaudit.MultiEmitter{}
 	if deps.Database != nil {
-		emitters = append(emitters, audit.SQLEmitter{DB: deps.Database.SQL()})
+		emitters = append(emitters, platformaudit.SQLEmitter{DB: deps.Database.SQL()})
 	}
-	emitters = append(emitters, audit.SlogEmitter{Log: deps.Logger})
+	emitters = append(emitters, platformaudit.SlogEmitter{Log: deps.Logger})
 	if err := deps.Async.Register(app.TopicAudit, app.AuditEventHandler(emitters)); err != nil {
 		return fmt.Errorf("identity async handler %s: %w", app.TopicAudit, err)
 	}

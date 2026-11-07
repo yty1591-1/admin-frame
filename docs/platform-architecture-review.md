@@ -1,6 +1,6 @@
 # internal/platform 架构评审报告
 
-> **状态**：评审完成（v0.1，2026-11-07），未做代码整改
+> **状态**：评审完成（v0.1，2026-11-07）＋ 整改完成并回写度量（v0.2，2026-11-07）
 > **定位**：只评审 `internal/platform` 的结构、职责边界与装配方式；业务域实现、`pkg/` 库质量不在范围内
 > **适用范围**：`internal/platform/`（含 `dependency/`、`secrets/` 子包）及其被 `cmd/*` 的使用方式
 > **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)（§3.3、§5.6、§6.1）、[CODE_STYLE.md](./CODE_STYLE.md)（S-11）、[CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md)、[scripts/ci/check-layering.sh](../scripts/ci/check-layering.sh)
@@ -14,14 +14,20 @@
 
 「不符合企业级 / 生产级架构」的判断**部分成立**：运行时能力（生命周期、超时、限流、幂等、追踪、探针）是达标的，问题集中在**配置层巨石**与**装配层隐式顺序**，且这两点已直接违反项目自己的规范性条款（ARCHITECTURE §5.6 的拆分触发条件 PLAT-15）。
 
+> **v0.2 复评（2026-11-07）**：下表 3 项「不达标」均已整改关闭，逐项证据见[第十节](#十整改执行状态2026-11-07)。
+> 复评实测：`platform` 根包非测试文件 **5** 个（≤ 5 基线）、根包最大文件 483 行；全部子包最大文件 256 行
+> （`async/async_nats.go` 622 行已拆为 `async_nats.go` 256 + `async_nats_consumer.go` 252 + `async_nats_message.go` 143；
+> `secrets/vault.go` 619 行已拆为 `vault.go` 419 + `vault_helpers.go` 211）。
+> `check-layering.sh` LAYER-01～10 全绿，且 LAYER-08 已改为递归覆盖子包。
+
 | 维度 | 判断 | 说明 |
 |---|---|---|
 | 运行时可靠性 | 达标 | `defer` 清理完整、无 `os.Exit`、端口先绑定后打日志、优雅关闭可配 |
-| 依赖方向 | 达标 | `check-layering.sh` LAYER-01～06 全绿，platform 未 import 任何业务域实现 |
-| 职责边界 | **不达标** | 平台层承载 identity / IAM / audit / tenant 配置与业务端口（见 P0-2、P1-4） |
-| 包内聚与拆分 | **不达标** | 单包 21 个非测试文件、单文件 3375 行（见 P0-1） |
-| 装配可演进性 | **不达标** | 235 行 `Run` + 5 个回调选项，顺序靠注释约定（见 P0-3） |
-| 可测试性 | 达标 | 5011 行测试覆盖 21 个生产文件，关键路径均有单测 |
+| 依赖方向 | 达标 | `check-layering.sh` LAYER-01～10 全绿，platform 未 import 任何业务域实现 |
+| 职责边界 | ~~不达标~~ → **达标**（v0.2） | 域配置已下沉 `internal/<domain>/config`；`GuardPort` / `MembershipPort` 已下沉 `internal/tenant/app`（见 P0-2、P1-4） |
+| 包内聚与拆分 | ~~不达标~~ → **达标**（v0.2） | 根包 5 个非测试文件 / 最大 483 行；子包最大 256 行（见 P0-1、P2-7） |
+| 装配可演进性 | ~~不达标~~ → **达标**（v0.2） | `Run` 拆为 7 个显式步骤，前置依赖逐项校验（见 P0-3） |
+| 可测试性 | 达标 | 生产 5891 行 / 测试 3633 行（28 个测试文件），关键路径均有单测 |
 
 ---
 
@@ -33,16 +39,17 @@
 - ARCHITECTURE §6.1 L434：`platform → shared、security、pkg`，不得反向依赖业务域。
 - CODE_STYLE S-11：控制函数体与复杂度，超限须拆分或 MR 说明。
 
-度量（2026-11-07，`internal/platform` 顶层）：
+度量（2026-11-07，v0.1 评审时 `internal/platform` 顶层；v0.2 复评值见末列）：
 
-| 指标 | 实测 | 规范阈值 | 结论 |
-|---|---|---|---|
-| 非测试 `.go` 文件 | 21 | ≤ 20 | 超限 1 |
-| 非测试代码行 | 6357 | — | — |
-| 单文件最大行数 | 3375（`config.go`） | ≤ 500 | 超限 6.7 倍 |
-| 第二超限文件 | 620（`async_nats.go`） | ≤ 500 | 超限 |
-| 配置结构体数（`config.go`） | 47 | — | 单文件承担全部域配置 |
-| 测试代码行 | 5011（29 文件） | — | 测试密度合理 |
+| 指标 | 实测（v0.1） | 规范阈值 | 结论 | v0.2 复评 |
+|---|---|---|---|---|
+| 非测试 `.go` 文件（根包） | 21 | ≤ 20 | 超限 1 | **5**（达标） |
+| 非测试代码行（含子包） | 6357 | — | — | 5891 |
+| 单文件最大行数 | 3375（`config.go`） | ≤ 500 | 超限 6.7 倍 | **483**（`bootstrap.go`，达标） |
+| 第二超限文件 | 620（`async_nats.go`） | ≤ 500 | 超限 | **419**（`secrets/vault.go` 拆分后，达标） |
+| 子包超限文件 | 未统计（门禁盲区） | ≤ 500 | 未拦截 | 0（LAYER-08 已递归覆盖） |
+| 配置结构体数（`config.go`） | 47 | — | 单文件承担全部域配置 | 已按域下沉，平台段独立文件 |
+| 测试代码行 | 5011（29 文件） | — | 测试密度合理 | 3633（28 文件，生产 5891 行） |
 
 ---
 
@@ -209,7 +216,7 @@ internal/tenant/config/     # 处置时间线/配额
 
 | 基线项 | 当前值 | 移除条件 |
 |---|---|---|
-| `PLATFORM_MAX_FILES` | 5（阶段 2 后为 7） | 阶段 3 守卫端口下沉后已下调到 5 |
+| `PLATFORM_MAX_FILES` | 4（阶段 2 为 7，阶段 3 为 5） | 兼容层 `aliases.go` 删除后再次下调；只减不增 |
 | `LAYER_LINE_BASELINE` | 空 | 阶段 1 拆分 `config.go` 后已清空 |
 | `LAYER_SEMANTIC_BASELINE` | 空 | 阶段 3 端口下沉到 `internal/tenant/app` 后已清空 |
 
@@ -253,3 +260,18 @@ internal/tenant/config/     # 处置时间线/配额
 | 域配置完全自持 | 完成 | `platform.Config` 移除 `Identity` / `IAM` / `Audit` / `Tenant` 字段；`cmd/internal/appconfig` 负责组合加载与编排校验；各域 runtime 显式接收域配置；平台顶层域配置别名已删除 |
 
 兼容性：本批为阶段 3 的破坏性切换，不再保留域配置类型别名；`platform` 顶层只保留核心段别名，`cmd/*` 统一经 `cmd/internal/appconfig` 装配，域 runtime 通过构造参数接收域配置。
+
+### 10.2 横切目录复评追加整改（v0.2，2026-11-07）
+
+复评对象：[platform-shared-security-review.md](./platform-shared-security-review.md) 的差距清单 P1 项。
+
+| 差距 | 状态 | 证据 |
+|---|---|---|
+| G1 `shared/audit` 混入落库 / 投递实现 | 完成 | 出口实现迁至 `internal/platform/audit`（`emitter.go` / `sql.go` / `outbox.go`）；`shared/audit` 只剩 `Event` + 字段字典 + `Emitter` 端口，import 列表无 `pkg/{mq,outbox,retry,db}`；`check-audit.sh` 新增 AUD-03b 契约纯度断言，15 个调用点更新 |
+| G2 `pkg/testkit` 反向 import `internal/identity` | 完成 | MySQL 夹具迁至 `internal/testdb`（`MySQL` / `Migrate`），`pkg/testkit` 只保留不感知业务的 env / Redis / 对象存储 / 仓库根；14 个测试文件改 `testdb.*`；`check-layering.sh` 新增 LAYER-10 断言 `pkg` 不得 import `internal/*` |
+| G3 分层门禁覆盖不全 | 完成 | LAYER-08 改为递归遍历全部子包（阈值 500 行，基线为空）；`async_nats.go`(622)、`secrets/vault.go`(619) 已拆分；`.golangci.yml` 增加 depguard 四条规则（LAYER-01/03/04/10），已用探针文件证伪拦截生效 |
+| G5 数据范围字面值靠注释同步 | 完成 | `internal/iam/domain/scope_contract.go` 在 `init` 中断言 `DataScopeType` 与 `shared/authz` 常量逐字一致，漂移即启动失败 / 测试失败 |
+
+同时补充：[ARCHITECTURE.md](./ARCHITECTURE.md) §3.4 新增选层决策表（pkg / shared / platform / 域），消除「近义两层」的选层歧义（差距 G4）。
+
+残留（未在本批处理）：`configs/` 仅 `prod/` 一套样板，环境差异见 CONFIG_STANDARDS 的环境矩阵（差距 G8，已在文档层面关闭）。差距 G7 已完成：`platform/aliases.go` 兼容层删除，`cmd` 侧改为直接 import 子包，`PLATFORM_MAX_FILES` 降至 4。

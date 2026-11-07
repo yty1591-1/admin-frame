@@ -1,4 +1,4 @@
-package testkit
+package testdb
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/migrate"
+	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
 
 // MySQL 打开测试 MySQL 并应用 migrations/ 下的全部迁移；未配置 TEST_MYSQL_DSN 时跳过用例。
@@ -27,14 +28,14 @@ import (
 // 生产环境迁移只允许 cmd/migrate 或部署 Job 执行，本函数仅服务于测试进程。
 func MySQL(t *testing.T) *db.DB {
 	t.Helper()
-	dsn := requireEnv(t, EnvMySQLDSN)
+	dsn := testkit.RequireEnv(t, testkit.EnvMySQLDSN)
 	if !strings.Contains(dsn, "parseTime=true") {
-		t.Fatalf("%s must enable parseTime=true (and loc=UTC) so DATETIME(3) scans into time.Time", EnvMySQLDSN)
+		t.Fatalf("%s must enable parseTime=true (and loc=UTC) so DATETIME(3) scans into time.Time", testkit.EnvMySQLDSN)
 	}
 	// 迁移依赖连接 collation 与表级 DDL 一致，忽略 DSN 中可能遗留的旧模板值。
 	dsn, err := db.ForceMySQLCollation("mysql", dsn, db.MySQLDefaultCollation)
 	if err != nil {
-		t.Fatalf("normalize %s: %v", EnvMySQLDSN, err)
+		t.Fatalf("normalize %s: %v", testkit.EnvMySQLDSN, err)
 	}
 
 	ctx := context.Background()
@@ -60,15 +61,15 @@ func MySQL(t *testing.T) *db.DB {
 // 保证测试后续写入的账号与引导账号可用同一保护器互读。
 func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 	if sqlDB == nil {
-		return errors.New("testkit: nil *sql.DB")
+		return errors.New("testdb: nil *sql.DB")
 	}
-	root, err := RepoRoot()
+	root, err := testkit.RepoRoot()
 	if err != nil {
 		return err
 	}
 	migrations, err := migrate.LoadDir(filepath.Join(root, "migrations"), migrate.LoadOptions{})
 	if err != nil {
-		return fmt.Errorf("testkit: load migrations: %w", err)
+		return fmt.Errorf("testdb: load migrations: %w", err)
 	}
 	runner, err := migrate.New(sqlDB, migrate.Config{
 		Migrations: migrations,
@@ -76,27 +77,27 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 		Table:      "schema_migrations",
 	})
 	if err != nil {
-		return fmt.Errorf("testkit: new migration runner: %w", err)
+		return fmt.Errorf("testdb: new migration runner: %w", err)
 	}
 
 	migrateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if _, err := runner.Up(migrateCtx); err != nil {
-		return fmt.Errorf("testkit: apply migrations: %w", err)
+		return fmt.Errorf("testdb: apply migrations: %w", err)
 	}
 
 	hasher, err := crypto.NewHasher("v1", map[string][]byte{"v1": bytes.Repeat([]byte{0x11}, 32)})
 	if err != nil {
-		return fmt.Errorf("testkit: build test hasher: %w", err)
+		return fmt.Errorf("testdb: build test hasher: %w", err)
 	}
 	ring, err := crypto.NewKeyRing(map[string][]byte{"k1": bytes.Repeat([]byte{0x22}, 32)}, "k1", nil)
 	if err != nil {
-		return fmt.Errorf("testkit: build test key ring: %w", err)
+		return fmt.Errorf("testdb: build test key ring: %w", err)
 	}
 	defer ring.Close()
 	if _, err := bootstrap.EnsureAdmin(migrateCtx, sqlDB,
 		persistence.NewSubjectProtector(hasher, ring), bootstrap.Options{}); err != nil {
-		return fmt.Errorf("testkit: bootstrap admin: %w", err)
+		return fmt.Errorf("testdb: bootstrap admin: %w", err)
 	}
 	return nil
 }

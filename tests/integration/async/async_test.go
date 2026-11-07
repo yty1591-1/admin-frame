@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/mq"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
@@ -40,7 +41,7 @@ func newEvent(t *testing.T, topic, agent string) *outbox.Event {
 
 // TestOutboxResumeAfterRestart 验证已提交未投递的事件在 Relay 重启后继续投递且不重投（AC-ENT-03-1）。
 func TestOutboxResumeAfterRestart(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	store := outbox.NewMySQLStore(database.SQL())
 	ctx := context.Background()
 
@@ -91,7 +92,7 @@ func TestOutboxResumeAfterRestart(t *testing.T) {
 
 // TestOutboxConcurrentReplicasDeliverOnce 验证两个 Relay 并发认领时同一事件只投递一次。
 func TestOutboxConcurrentReplicasDeliverOnce(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	first := outbox.NewMySQLStore(database.SQL())
 	second := outbox.NewMySQLStore(database.SQL())
 	ctx := context.Background()
@@ -161,7 +162,7 @@ func TestOutboxConcurrentReplicasDeliverOnce(t *testing.T) {
 
 // TestOutboxPermanentFailureWritesDLQ 验证毒消息同事务进入死信表（AC-ENT-03-3）。
 func TestOutboxPermanentFailureWritesDLQ(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	store := outbox.NewMySQLStore(database.SQL())
 	ctx := context.Background()
 
@@ -200,7 +201,7 @@ func TestOutboxPermanentFailureWritesDLQ(t *testing.T) {
 
 // TestOutboxRetryExhaustedWritesDLQ 验证退避重试耗尽后转入 dead 并写死信。
 func TestOutboxRetryExhaustedWritesDLQ(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	store := outbox.NewMySQLStore(database.SQL())
 	ctx := context.Background()
 
@@ -250,7 +251,7 @@ func TestOutboxRetryExhaustedWritesDLQ(t *testing.T) {
 
 // TestOutboxCrossProcessDelivery 验证 API 连接写入的事件可由另一个连接（模拟 worker 进程）投递（AC-ENT-03-4）。
 func TestOutboxCrossProcessDelivery(t *testing.T) {
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	ctx := context.Background()
 
 	workerDB, err := db.Open(ctx, db.Config{Driver: "mysql", DSN: os.Getenv(testkit.EnvMySQLDSN)})

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/testdb"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/testkit"
 )
@@ -16,7 +17,7 @@ func TestSmokeMySQLMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	database := testkit.MySQL(t)
+	database := testdb.MySQL(t)
 	var version int64
 	if err := database.SQL().QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version); err != nil {

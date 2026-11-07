@@ -16,6 +16,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/notification/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/notification/observability"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	pkgemail "github.com/admin-frame/admin-frame/pkg/email"
 	pkgpush "github.com/admin-frame/admin-frame/pkg/push"
@@ -191,13 +192,13 @@ func buildRepositories(deps *platform.Deps) (notificationRepos, error) {
 // buildEmitter 与租户域 buildDeps 同源：优先 Outbox（与业务事务同源），
 // 退回双出口（审计表 + 结构化日志）。
 func buildEmitter(deps *platform.Deps) audit.Emitter {
-	slogEmitter := audit.SlogEmitter{Log: deps.Logger}
+	slogEmitter := platformaudit.SlogEmitter{Log: deps.Logger}
 	if deps.Async != nil && deps.Async.Store() != nil {
-		return audit.OutboxEmitter{Topic: "notification.audit", Events: deps.Async.Store()}
+		return platformaudit.OutboxEmitter{Topic: "notification.audit", Events: deps.Async.Store()}
 	}
 	if deps.Database != nil {
-		return audit.MultiEmitter{
-			audit.SQLEmitter{DB: deps.Database.SQL()},
+		return platformaudit.MultiEmitter{
+			platformaudit.SQLEmitter{DB: deps.Database.SQL()},
 			slogEmitter,
 		}
 	}

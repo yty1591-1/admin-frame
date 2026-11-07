@@ -9,6 +9,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
+	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 )
@@ -397,7 +398,7 @@ func TestSlogRecorderAndNopRecorder(t *testing.T) {
 	if err := (app.SlogRecorder{}).Record(context.Background(), event); bizCode(err) != apperr.CodeInternal {
 		t.Fatalf("SlogRecorder without emitter err = %v, want 50000", err)
 	}
-	recorder := app.SlogRecorder{Emitter: audit.SlogEmitter{}}
+	recorder := app.SlogRecorder{Emitter: platformaudit.SlogEmitter{}}
 	if err := recorder.Record(context.Background(), event); err != nil {
 		t.Fatalf("SlogRecorder: %v", err)
 	}
