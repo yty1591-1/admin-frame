@@ -37,6 +37,8 @@
 | CI-13 | 工具与镜像版本**钉扎**；禁止无说明的浮动 `latest` | 流水线 YAML |
 | CI-14 | Job/阶段必须有超时或平台默认超时；禁止无限跑 | 流水线配置 |
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
+| CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
+| CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -88,11 +90,15 @@
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
-| RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make docker-push` + `make check-release` |
+| CI-15 / CI-16 | 并入 `arch` | `arch` | `make check-ci-paths` + `make check-ci-parity` |
+| RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make image-scan`（构建 + Trivy）+ `make docker-push` + `make check-release` |
+| CI-17（本地判定等价） | —（本地专用） | — | `make ci-strict` / `make ci-full` |
 
 变更任一平台的检查命令时，**必须同 MR** 更新：另一平台 YAML、`gitee-job.sh`（若改逻辑）、`Makefile`（若改本地），并更新本表。
 
 **服务依赖（CI-05 补充）**：`tests/integration/iam` 需要 MySQL 8.0。GitHub Actions 的 `test` job 已声明 `services.mysql`（`mysql:8.0` + health check）并注入 `IAM_TEST_MYSQL_DSN` / `TENANT_TEST_MYSQL_DSN`（两者指向同一 service 与库）；Gitee Go 无等价 service 声明，需在控制台配置同名环境变量后启用，未配置时用例显式跳过（非静默通过）。详见 `docs/rbac-iam.md` §13.6。
+
+**并发约束（CI-05 补充）**：注入 DSN 后 `go test ./...` 会并行执行多个集成包，而每个包启动时都会 `reset` 清表，**并行必然互踩**（表被清空、固定 bootstrap 账号争抢唯一键），失败与被测代码无关。`scripts/ci/run-tests.sh` 因此固定 `-p 1` 串行执行包，与 `run-integration-tests.sh` 的既有约定一致；新增集成包沿用同一前提，不得依赖「runner 核数少所以不撞」。
 
 **工具依赖（CI-05 补充）**：`check-oncall.sh` 的 OC-03 通过 `scripts/ops/paging_probe.py` 解析 Alertmanager 路由，该脚本依赖 PyYAML。版本钉在 `scripts/ci/requirements.txt`（`pyyaml==6.0.3`），GitHub `arch` job 在运行门禁前安装该文件。本地首次运行前执行一次 `make ci-deps`（优先创建仓库内 `.venv`，避免污染受 PEP 668 管理的系统 Python）；`check-oncall.sh` 会优先使用 `.venv` 解释器，并在缺少 PyYAML 时直接提示修复命令，不再以笼统的汇总结论失败。Gitee Go 的 `build@golang` 镜像未预装 PyYAML，若启用 `arch` step 须显式执行 `make ci-deps`（或等效安装），否则 OC-03 报 `ModuleNotFoundError: No module named 'yaml'`。
 
@@ -208,7 +214,8 @@ make check-license        # LIC-01/02/06
 make check-codegen        # GEN-01/02
 make check-perf           # PERF-01/02
 make build                # CI-08
-make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构/扫描见 CI `image`）
+make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构见 CI `image`）
+make image-scan                        # 本地复现 image job 的 Trivy 扫描（HIGH/CRITICAL）
 ```
 
 或一键：
@@ -218,6 +225,31 @@ make ci
 ```
 
 `make ci` 失败时**禁止**依赖「远端 CI 会过」而强行合入。
+
+### 5.1 本地判定等价（CI-17）
+
+`make ci` 是**降级版**：门禁缺前置条件时 SKIP 而非 FAIL（无 MySQL → IAM 总体覆盖率与
+persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → 相应段跳过）。
+因此「本地绿」不等于「CI 绿」。按可信度从低到高：
+
+| 命令 | 覆盖 | 用途 |
+|------|------|------|
+| `make ci` | 快，但允许静默跳过 | 日常迭代 |
+| `make ci-strict` | 同上，但把未豁免跳过判为失败，并打印跳过清单 | 提交前快检（需 MySQL DSN，否则按 CI-17 失败） |
+| `make ci-full` | `make ci`（严格）+ 真实 MySQL/Redis/MinIO + `tests/integration/...` + `-race` + 镜像 Trivy | 合并前 / 改 CI、依赖、覆盖率相关代码时 |
+
+`make ci-full` 需要 docker + compose v2；`--skip-race` / `--skip-image` 可裁剪耗时。
+跳过项必须先在自己的前置条件上补齐，**不得**为了让门禁变绿而在 `scripts/ci/ci-run.sh` 的
+`ALLOW` 表里新增「判据类」豁免——该表只接受「本地工具缺失、且 CI 有等价覆盖」的条目。
+
+典型红绿不一致的成因与对策（2026-11-07 实例）：
+
+| 现象 | 成因 | 对策 |
+|------|------|------|
+| `test` job 报 IAM 总覆盖率不足，本地全绿 | 无 `IAM_TEST_MYSQL_DSN` 时 total/persistence 门禁**不执行** | `make ci-full`，或用 `ci-full.sh` 导出的 DSN 跑 `check-iam-coverage.sh` |
+| `image` job 报 HIGH CVE，本地 `make vuln` 绿 | govulncheck 看代码可达性，Trivy 扫二进制模块 + OS 包 | `make image-scan` |
+| `integration` job 红，本地 `make ci` 绿 | `tests/integration/...` 不在 `make ci` 里（Tier B） | `make ci-full`，或 `make test-integration` |
+| 新增 job 本地没有对应命令 | job 与 make 目标各自演进 | `make check-ci-parity`（CI-16） |
 
 ---
 
@@ -290,6 +322,8 @@ make ci
 - [ ] 版本仍钉扎；权限未被放宽
 - [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）
 - [ ] 已更新本专文映射表（若有增删 job）
+- [ ] `make check-ci-parity` 通过：新增/改名 job 已在 `check-ci-parity.sh` 登记本地入口（CI-16）
+- [ ] 新门禁若依赖外部工具/服务，已说明 `make ci-full` 如何提供，或已在 `ci-run.sh` 的 ALLOW 表写明豁免理由（CI-17）
 
 ---
 
@@ -304,6 +338,11 @@ make ci
 | `scripts/ci/check-vuln.sh` | `vuln` job：govulncheck + `deps/vuln-allowlist.txt` 受控例外（带到期日） |
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-ci-paths.sh` | CI-15 |
+| `scripts/ci/check-ci-parity.sh` | CI-16：workflow job ↔ 本地入口一致性 |
+| `scripts/ci/ci-run.sh` | CI-17：跳过项汇总与严格模式（被 `make ci-strict` 调用） |
+| `scripts/ci/ci-full.sh` | CI-17：本地判定等价（service 容器 + integration + `-race` + 镜像扫描） |
+| `scripts/ci/run-race-tests.sh` | 容器内 `-race`（补足本地无 CGO 的降级） |
+| `scripts/ci/check-image-scan.sh` | 本地复现 `image` job 的 Trivy 扫描 |
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
 | `scripts/ci/check-deps.sh` | DEP-01/03/05 |

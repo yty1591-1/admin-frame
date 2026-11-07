@@ -12,10 +12,11 @@ PYTHON ?= python3
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
 	check-migrations check-reliability check-observability \
-	check-ci-paths \
+	check-ci-paths check-ci-parity \
 	check-git check-release check-sbom check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal
+        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal \
+        ci-full ci-strict ci-race image-scan
 
 build: build-admin build-biz build-c build-worker build-migrate
 
@@ -298,7 +299,29 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-ci-parity check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+
+# CI-16：workflow job ↔ 本地入口一致性（防「某个 job 在本地根本没有入口」）。
+check-ci-parity:
+	bash scripts/ci/check-ci-parity.sh
+
+# 跑 make ci 并把「本次跳过了什么」汇总成一张表；CI_STRICT=1 时未豁免跳过即失败。
+# 缺 MySQL 时 IAM 总体覆盖率门禁会静默消失，严格模式能把它抓出来。
+ci-strict:
+	CI_STRICT=1 bash scripts/ci/ci-run.sh ci
+
+# 本地复现 CI 测试面全集（需 docker）：service 容器 + DSN + integration + -race + 镜像扫描。
+# 比 make ci 慢（约 25min），但判定与 GitHub 等价；提交前建议跑这个。
+ci-full:
+	bash scripts/ci/ci-full.sh
+
+# 无 CGO 工具链时补跑 -race（Linux 容器内，镜像按 go.mod 钉扎）。
+ci-race:
+	bash scripts/ci/run-race-tests.sh
+
+# 本地复现 image job 的 Trivy 扫描（HIGH/CRITICAL 命中即失败）。
+image-scan:
+	bash scripts/ci/check-image-scan.sh
 
 migrate-up: build-migrate
 	./$(BIN_DIR)/migrate -dir migrations -action up

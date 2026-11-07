@@ -75,6 +75,7 @@ case "${job}" in
     bash scripts/ci/check-transport-imports.sh
     bash scripts/ci/check-layering.sh
     bash scripts/ci/check-ci-paths.sh
+    bash scripts/ci/check-ci-parity.sh
     bash scripts/ci/check-migrations.sh
     bash scripts/ci/check-reliability.sh
     bash scripts/ci/check-observability.sh
