@@ -9,7 +9,7 @@ cd "${ROOT}"
 FAIL=0
 
 echo "==> ENT-01: production mfa baseline"
-if ! grep -q 'identity.mfa.admin_required must be true' internal/platform/config/identity_validate.go; then
+if ! grep -q 'identity.mfa.admin_required must be true' internal/identity/config/validate.go; then
   echo "ERROR: config.go missing production MFA baseline (identity.mfa.admin_required)" >&2
   FAIL=1
 else

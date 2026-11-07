@@ -9,7 +9,7 @@ cd "${ROOT}"
 FAIL=0
 
 echo "==> ENT-02: pipeline must mount idempotency middleware"
-PIPELINE="internal/platform/pipeline.go"
+PIPELINE="internal/platform/httpserver/pipeline.go"
 if [[ ! -f "${PIPELINE}" ]]; then
   echo "ERROR: missing ${PIPELINE}" >&2
   FAIL=1

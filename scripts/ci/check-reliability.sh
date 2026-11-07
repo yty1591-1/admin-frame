@@ -73,7 +73,7 @@ else
 fi
 
 echo "==> REL-02: ListenAndServe must accept shutdown timeout"
-SERVER="internal/platform/server.go"
+SERVER="internal/platform/httpserver/server.go"
 if [[ -f "${SERVER}" ]] && grep -q 'shutdownTimeout' "${SERVER}"; then
   echo "    OK: shutdownTimeout wiring"
 else

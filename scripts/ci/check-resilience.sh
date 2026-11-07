@@ -26,7 +26,8 @@ for symbol in "type Registry struct" "type Caller interface" "ErrUnknownDependen
 done
 test -f internal/platform/dependency/observability/metrics.go \
   || fail "dependency metrics adapter missing (dependency_call_total)"
-grep -q "deps.Dependencies = dependency.NewRegistry" internal/platform/bootstrap.go \
+# 装配入口拆为 bootstrap.go（Run）与 infra.go（prepareInfra），注册表在后者构造。
+grep -q "deps.Dependencies = dependency.NewRegistry" internal/platform/bootstrap.go internal/platform/infra.go 2>/dev/null \
   || fail "registry must be constructed in bootstrap"
 grep -q "Dependencies \*dependency.Registry" internal/platform/bootstrap.go \
   || fail "Deps must expose the registry"

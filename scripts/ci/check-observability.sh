@@ -22,7 +22,7 @@ else
       echo "    OK: logger field ${field}"
     fi
   done
-  if ! grep -q 'pkg/logger' internal/platform/logger.go; then
+  if ! grep -q 'pkg/logger' internal/platform/observability/logger.go; then
     echo "ERROR: platform.NewLogger must delegate to pkg/logger" >&2
     FAIL=1
   else
@@ -31,7 +31,7 @@ else
 fi
 
 echo "==> OBS-01: AccessLog must emit trace_id"
-if grep -Rq '"trace_id"' pkg/middleware internal/platform/middleware.go 2>/dev/null; then
+if grep -Rq '"trace_id"' pkg/middleware internal/platform/httpserver/middleware.go 2>/dev/null; then
   echo "    OK: AccessLog trace_id"
 else
   echo "ERROR: AccessLog must log trace_id (OBS-01)" >&2
@@ -39,12 +39,14 @@ else
 fi
 
 echo "==> Tracing: platform bootstrap must Init pkg/tracing and mount HTTPMiddleware"
+# 装配入口拆为 bootstrap.go（Run）与 infra.go（prepareInfra），追踪初始化在前者调用的后者里。
 BOOTSTRAP="internal/platform/bootstrap.go"
-PIPELINE="internal/platform/pipeline.go"
-if grep -q 'tracing.Init' "${BOOTSTRAP}"; then
+INFRA="internal/platform/infra.go"
+PIPELINE="internal/platform/httpserver/pipeline.go"
+if grep -q 'tracing.Init' "${BOOTSTRAP}" "${INFRA}" 2>/dev/null; then
   echo "    OK: bootstrap tracing.Init"
 else
-  echo "ERROR: ${BOOTSTRAP} missing tracing.Init" >&2
+  echo "ERROR: ${BOOTSTRAP} / ${INFRA} missing tracing.Init" >&2
   FAIL=1
 fi
 if grep -q 'tracing.HTTPMiddleware' "${PIPELINE}"; then
@@ -79,7 +81,7 @@ for symbol in MountHealth MountVersion MountMetrics; do
 done
 
 echo "==> OBS-02: endpoints registers /healthz, /readyz, /metrics"
-ENDPOINTS="internal/platform/endpoints.go"
+ENDPOINTS="internal/platform/httpserver/endpoints.go"
 if [[ -f "${ENDPOINTS}" ]] \
   && grep -q '/healthz' "${ENDPOINTS}" \
   && grep -q '/readyz' "${ENDPOINTS}"; then

@@ -88,7 +88,7 @@ else
   echo "    OK: ldflags version injection"
 fi
 
-ENDPOINTS="internal/platform/endpoints.go"
+ENDPOINTS="internal/platform/httpserver/endpoints.go"
 if [[ -f "${ENDPOINTS}" ]] && grep -q 'BuildInfo' "${ENDPOINTS}" && grep -q 'build_time' "${ENDPOINTS}"; then
   echo "    OK: /version exposes build info"
 else
