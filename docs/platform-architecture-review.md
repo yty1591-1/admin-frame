@@ -211,6 +211,7 @@ internal/tenant/config/     # 处置时间线/配额
 | LAYER-07 | `internal/platform` 顶层非测试 `.go` 文件数 | > 21（基线，目标 ≤ 20） |
 | LAYER-08 | 每个非测试文件行数 | > 500 且不在 `LAYER_LINE_BASELINE` |
 | LAYER-09 | 平台层是否定义租户/配额/商户语义 `interface` | 出现不在 `LAYER_SEMANTIC_BASELINE` 的新端口 |
+| LAYER-09b | 平台层是否持有租户/配额/商户语义 `func` 字段 | 任何 struct 字段命中即失败（无基线） |
 
 基线登记（只减不增，整改时逐条删除）：
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
@@ -15,23 +16,26 @@ import (
 //
 // 顺序即装配契约：已停用租户在租户状态守卫就被 403，不应再消耗配额判定。
 // 内存模式（单进程形态）两者均不启用，返回 nil（与旧构造器同口径）。
-func AuthGuards(deps *platform.Deps) ([]func(http.Handler) http.Handler, error) {
-	tenantMW, err := NewGuard(deps)
+//
+// 返回的 runtimebind.Tenant 供 cmd 装配层传给 identity 运行时；平台 Deps
+// 不再持有该业务语义函数字段。
+func AuthGuards(deps *platform.Deps) ([]func(http.Handler) http.Handler, runtimebind.Tenant, error) {
+	tenantMW, bind, err := NewGuard(deps)
 	if err != nil {
-		return nil, fmt.Errorf("tenant guard: %w", err)
+		return nil, runtimebind.Tenant{}, fmt.Errorf("tenant guard: %w", err)
 	}
 	if tenantMW == nil {
-		return nil, nil
+		return nil, bind, nil
 	}
 	quotaMW, err := NewQuotaGuard(deps)
 	if err != nil {
-		return nil, fmt.Errorf("quota guard: %w", err)
+		return nil, runtimebind.Tenant{}, fmt.Errorf("quota guard: %w", err)
 	}
 	guards := []func(http.Handler) http.Handler{tenantMW}
 	if quotaMW != nil {
 		guards = append(guards, quotaMW)
 	}
-	return guards, nil
+	return guards, bind, nil
 }
 
 // NewQuotaGuard 构造 B 端 API 配额守卫中间件（ENT-14）。

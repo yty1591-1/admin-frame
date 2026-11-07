@@ -10,8 +10,9 @@
 #   6. iam/transport 不依赖 iam/infrastructure；
 #   7. platform 单包非测试文件数与单文件行数（递归含全部子包）不超过拆分基线
 #      （LAYER-07/08，PLAT-15）；
-#   8. platform 不得新增业务语义端口（Tenant / Quota / Merchant 相关 interface，
-#      LAYER-09，PLAT-15 / ARCHITECTURE §5.6「不承载业务语义」）；
+#   8. platform 不得新增业务语义端口或函数字段（Tenant / Quota / Merchant 相关
+#      interface 与 struct func 字段，LAYER-09，PLAT-15 / ARCHITECTURE §5.6
+#      「不承载业务语义」）；函数字段曾绕过 interface 正则，必须同样拦截；
 #   9. pkg 不得 import internal/*（LAYER-10：可复用库层不得反向依赖应用内实现）。
 #
 # 基线只减不增：每次完成拆分后必须同步下调基线值，禁止以扩容基线的方式放行。
@@ -171,6 +172,21 @@ else
       echo "    BASELINE: ${name} (must move to the owning domain)"
     fi
   done <<< "${semantic_matches}"
+fi
+
+echo "==> LAYER-09b: platform must not hold business-semantic func fields (PLAT-15)"
+# Deps 曾以 VerifyTenant / IsTenantMember 等函数字段承载租户语义，绕过上面的
+# interface 正则（评审：模块边界漏点）。字段与端口同为业务语义，必须一起拦截。
+semantic_fields=$(grep -RHo --include='*.go' --exclude='*_test.go' -E \
+  "^[[:space:]]+[A-Za-z_]*(Tenant|Quota|Merchant)[A-Za-z_]*[[:space:]]+func\\(" \
+  "${PLATFORM_DIR}" 2>/dev/null || true)
+if [[ -z "${semantic_fields}" ]]; then
+  echo "    OK: no business-semantic func field in platform"
+else
+  while IFS= read -r match; do
+    [[ -z "${match}" ]] && continue
+    fail_with "${match} carries business semantics (PLAT-15: pass it from cmd, not Deps)"
+  done <<< "${semantic_fields}"
 fi
 
 echo "==> LAYER-10: pkg must not import internal (dependency inversion)"

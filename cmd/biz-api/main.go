@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -55,13 +56,18 @@ func run(configPath string) error {
 		identityOn  sync.Once
 		identityRT  *identityruntime.Runtime
 		identityErr error
+		// tenantBind 由 NewAuthGuards 填充（buildGuards 先于 buildAuthN 执行），
+		// identity 运行时在构造期读取，平台 Deps 不再承载业务语义函数字段。
+		tenantBind runtimebind.Tenant
 	)
 	buildIAM := func(deps *platform.Deps) (*iamruntime.Runtime, error) {
 		iamOnce.Do(func() { iamRT, iamErr = newIAMRuntime(deps, appCfg.IAM) })
 		return iamRT, iamErr
 	}
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
-		identityOn.Do(func() { identityRT, identityErr = identityruntime.New(deps, appCfg.Identity) })
+		identityOn.Do(func() {
+			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity, tenantBind)
+		})
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{
@@ -70,7 +76,14 @@ func run(configPath string) error {
 		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09），
 		// 并执行 API 配额（ENT-14）。守卫顺序由 tenantruntime 显式声明：
 		// 租户状态 → 配额，均包在 AuthMW 内层。
-		NewAuthGuards: tenantruntime.AuthGuards,
+		NewAuthGuards: func(deps *platform.Deps) ([]func(http.Handler) http.Handler, error) {
+			guards, bind, err := tenantruntime.AuthGuards(deps)
+			if err != nil {
+				return nil, err
+			}
+			tenantBind = bind
+			return guards, nil
+		},
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

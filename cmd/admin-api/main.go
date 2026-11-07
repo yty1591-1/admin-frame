@@ -60,12 +60,14 @@ func run(configPath string) error {
 	}
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
 		identityOn.Do(func() {
-			// T-22：成员关系查询必须先于 identity 构造注入（切换端点依赖）。
-			if mErr := tenantruntime.InjectMembership(deps); mErr != nil {
+			// T-22：成员关系绑定必须先于 identity 构造取得（切换端点依赖）；
+			// 绑定经 cmd 显式传入，不写回 platform.Deps。
+			bind, mErr := tenantruntime.MembershipBinding(deps)
+			if mErr != nil {
 				identityErr = mErr
 				return
 			}
-			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity)
+			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity, bind)
 		})
 		return identityRT, identityErr
 	}

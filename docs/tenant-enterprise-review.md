@@ -564,7 +564,7 @@ VIRTUAL 后通过；已记录在迁移注释。
 | T-22 claims | B 端签发带 `current_tenant`（初始 = merchant_id，纯增量）；`Principal.CurrentTenant()` 定义回落链：current_tenant 优先、旧令牌回落 merchant_id——**旧令牌行为明确定义**：切换前令牌继续有效至自然过期 |
 | T-22 守卫 | `WithTenantGuard` 改读 `CurrentTenant()`——B 端请求按当前令牌的生效租户校验，多租户切换立即生效 |
 | T-22 切换 | `POST /biz/v1/auth/tenant-switch`（identity）：成员关系校验（`MembershipChecker` 端口，**nil 即拒绝** fail-closed）+ 租户服务期校验（复用 T-08 端口）+ 会话有效性校验 + 同会话重签 access（sid/ver 不变，不作废旧令牌）+ `auth.tenant_switch` 审计 |
-| T-22 装配 | `platform.TenantMembership` 接口（与 TenantGuard 同模式反转依赖）；租户域 `InjectMembership` 注入 Deps（幂等），identityruntime 经适配器消费——**注入必须先于 identity 构造**（main.go 的 once 里先行调用） |
+| T-22 装配 | 租户域 `MembershipBinding` 返回 `runtimebind.Tenant`（不再写入 Deps），identityruntime 经参数接收并适配消费——**绑定必须先于 identity 构造取得**（main.go 的 once 里先行调用）；LAYER-09b 拦截函数字段回流平台 |
 | 契约 | `admin.yaml` 7.6.0（T-15 纯增量）；`biz.yaml` **6.0.0 major**（claims 语义 + 切换端点，按任务表要求） |
 
 **关键取舍**：① 切换是授权上下文变更不是重新认证：不递增 token_version、

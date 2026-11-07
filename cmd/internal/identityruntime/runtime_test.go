@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -60,7 +61,7 @@ func TestNewFailsFastWithoutDatabase(t *testing.T) {
 		Channel: "admin",
 		DB:      platformconfig.DBConfig{Driver: "mysql"},
 	}
-	if _, err := New(&platform.Deps{Config: cfg}, identityconfig.IdentityConfig{Enabled: true}); err == nil ||
+	if _, err := New(&platform.Deps{Config: cfg}, identityconfig.IdentityConfig{Enabled: true}, runtimebind.Tenant{}); err == nil ||
 		!strings.Contains(err.Error(), "no database connection is available") {
 		t.Fatalf("err=%v want fail-fast without database", err)
 	}

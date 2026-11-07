@@ -48,12 +48,6 @@ type Deps struct {
 	AuthMW func(http.Handler) http.Handler
 	// RequirePermission 是权限中间件工厂，由 cmd 注入的 Authorizer 提供。
 	RequirePermission auth.PermissionMiddleware
-	// VerifyTenant 判定商户当前是否可服务（ENT-09），由 cmd 装配期写入；
-	// nil 表示本端不做租户校验。平台只保存通用函数签名，不定义业务语义端口。
-	VerifyTenant func(ctx context.Context, merchantID string) (bool, error)
-	// IsTenantMember 判定主体是否为租户在册成员（ENT-09 T-22）；
-	// nil 表示本端不提供成员关系查询（切换端点将拒绝服务）。
-	IsTenantMember func(ctx context.Context, tenantID, subjectID string) (bool, error)
 	// Dependencies 是外部依赖注册表（ENT-13）：出站依赖（第三方 HTTP API
 	// 等）在装配期按名登记超时 / 重试 / 熔断，运行期经 Caller.Do 执行并
 	// 出指标。nil 仅出现在单测形态。
@@ -144,8 +138,8 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if err := buildAsync(infra.deps); err != nil {
 		return err
 	}
-	// 步骤 3：鉴权守卫（租户状态 / 配额）。必须先于身份运行时：登录 / 开通需要读到
-	// deps.VerifyTenant。
+	// 步骤 3：鉴权守卫（租户状态 / 配额）。必须先于身份运行时，使 cmd 在构造
+	// 身份运行时之前拿到租户判定绑定（经 Options.NewAuthGuards 返回值传递）。
 	if err := buildGuards(infra.deps, opts); err != nil {
 		return err
 	}
@@ -184,8 +178,8 @@ func buildAsync(deps *Deps) error {
 
 // buildGuards 构造鉴权链守卫（租户状态 / API 配额等）；必须先于身份运行时装配。
 //
-// 守卫构造期会写入 deps.VerifyTenant 等通用函数字段，供 identityruntime 在
-// NewSessionValidator 阶段读取（登录 / 开通据此校验租户是否在服务期）。
+// 平台只保存守卫链本身；租户判定等业务语义绑定由 cmd 在 NewAuthGuards 内
+// 自行保存并显式传给域运行时，不写回 Deps。
 func buildGuards(deps *Deps, opts Options) error {
 	if deps.Config == nil {
 		return errors.New("platform: buildGuards requires config")

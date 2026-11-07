@@ -126,9 +126,9 @@ internal/<业务域>/{domain,app,infrastructure,transport}
 
 ### 逐项说明（只在需要证据时展开）
 
-**分层清晰度**：这是本轮最强项。`check-layering.sh` 不只检查 import 字符串，还检查"包体积基线只减不增"（`PLATFORM_MAX_FILES=4`）和"platform 不得定义业务语义端口"（`type *Tenant*|*Quota*|*Merchant* interface` 正则）。把架构约束写成可执行断言、并禁止扩容基线，是企业级治理的标志性做法。
+**分层清晰度**：这是本轮最强项。`check-layering.sh` 不只检查 import 字符串，还检查"包体积基线只减不增"（`PLATFORM_MAX_FILES=4`）和"platform 不得定义业务语义端口 / 函数字段"（`Tenant` / `Quota` / `Merchant` 命名的 `interface` 与 struct `func` 字段，LAYER-09 / 09b）。把架构约束写成可执行断言、并禁止扩容基线，是企业级治理的标志性做法。
 
-**模块边界的两处漏点**：一是 `shared/audit`（详见差距 G1）；二是 `platform` 仍有 5 个 `func(ctx, merchantID) (bool, error)` 形式的业务语义函数字段（`Deps.VerifyTenant` / `IsTenantMember`）——用函数签名而非 interface 绕过了 LAYER-09 的正则检查，语义上是同一种耦合。
+**模块边界的两处漏点（均已于 2026-11 关闭）**：一是 `shared/audit` 契约与实现混层（G1，实现已迁至 `internal/platform/audit`）；二是 `platform.Deps` 的 `VerifyTenant` / `IsTenantMember` 用函数签名绕过 LAYER-09 正则（已移除，绑定由 `cmd/internal/runtimebind.Tenant` 在装配层显式传递，并新增 LAYER-09b 拦截 struct `func` 字段）。
 
 **依赖管理**：`go.mod` 无 `replace`（`deps/replace-allowlist.txt` 默认为空），许可证白名单 + 漏洞例外带到期日 + SBOM，这套供应链治理超出多数团队水平。扣分点在于**分层检查是 shell grep 而非编译期规则**——ARCHITECTURE §463 自己建议用 depguard，`.golangci.yml` 目前启用了 gosec/gocritic/revive 等 8 个 linter，但没有 depguard。
 

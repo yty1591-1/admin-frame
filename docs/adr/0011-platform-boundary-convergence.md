@@ -37,9 +37,13 @@
 
 - `GuardPort` / `MembershipPort` 定义在 `internal/tenant/app`；配额执行器沿用 `tenant/app.QuotaEnforcer`。
 - 平台层只保留通用装配点：`httpserver.TenantGuardMiddleware` / `QuotaGuardMiddleware` 接收函数类型，`httpserver.AfterAuth` 负责按声明顺序插入鉴权链内层。
-- `platform.Deps` 删除 `TenantGuard` / `QuotaGuard` / `TenantMembership` 字段，改为通用函数字段：
-  - `VerifyTenant func(ctx, merchantID) (bool, error)`
-  - `IsTenantMember func(ctx, tenantID, subjectID) (bool, error)`
+- `platform.Deps` 删除 `TenantGuard` / `QuotaGuard` / `TenantMembership` 字段，也不保留任何租户语义函数字段：
+  - 过渡期的 `VerifyTenant` / `IsTenantMember` 已移除（2026-11-07）；判定绑定由
+    `cmd/internal/runtimebind.Tenant` 在 cmd 装配层显式传递：
+    `tenantruntime.AuthGuards` / `MembershipBinding` 返回绑定，`identityruntime.New`
+    以参数接收。
+  - `check-layering.sh` 新增 **LAYER-09b**，拦截 `Tenant` / `Quota` / `Merchant`
+    命名的 struct `func` 字段，防止再次以函数签名绕过 interface 正则。
 - `platform.Options` 以 `NewAuthGuards func(*Deps) ([]func(http.Handler) http.Handler, error)` 取代 `NewTenantGuard` / `NewQuotaGuard`；数组顺序即运行顺序（`auth → guards[0] → guards[1] → handler`）。
 
 ### 4. 显式装配顺序
@@ -50,7 +54,7 @@
 prepareInfra → buildAsync → buildGuards → buildAuthN → buildAuthorizer → buildRouter → serve
 ```
 
-- `buildGuards` 在 `buildAuthN` 前执行，守卫构造期写入 `deps.VerifyTenant`，供 identity 登录 / 开通读取。
+- `buildGuards` 在 `buildAuthN` 前执行；租户判定绑定由 `Options.NewAuthGuards` 实现方（cmd）保存，`buildAuthN` 内的 identity 运行时以参数接收，不再经 `Deps`。
 - `buildAuthN` 在 `NewSessionValidator` 前完成守卫构造，在 AuthMW 之后按 `deps.authGuards` 顺序插入。
 - 每个步骤显式检查前置依赖（`Config` / `Logger`），缺失返回错误而非依赖注释约定。
 - `httpserver/guards_test.go` 增加顺序单测：租户守卫拒绝后配额守卫不得被调用。
@@ -62,6 +66,6 @@ prepareInfra → buildAsync → buildGuards → buildAuthN → buildAuthorizer �
 
 ## 后果
 
-- **正面**：域配置演进不再触碰平台层；平台层不再定义业务语义接口，LAYER-09 无基线；装配顺序变成代码结构而非注释。
+- **正面**：域配置演进不再触碰平台层；平台层不再定义业务语义接口或函数字段（LAYER-09 / 09b 无基线）；装配顺序变成代码结构而非注释。
 - **负面**：`cmd/internal/appconfig` 成为新的组合装配点，新增域配置需同时改域包与组合层。
 - **移除计划（已完成）**：调用方完成域配置自持后，已删除 `platform` 顶层域配置别名；守卫包装已删除，仅保留 `httpserver` 通用装配点。

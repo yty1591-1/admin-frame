@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	identitybootstrap "github.com/admin-frame/admin-frame/internal/identity/bootstrap"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
@@ -79,7 +80,10 @@ type Runtime struct {
 }
 
 // New 按配置装配身份域；identity.enabled=false 时返回空运行时（保持只验签）。
-func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (*Runtime, error) {
+//
+// tenantBind 由 cmd 装配层显式传入（租户状态 / 成员关系判定）；
+// platform.Deps 不再承载业务语义函数字段。
+func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantBind runtimebind.Tenant) (*Runtime, error) {
 	if deps == nil || deps.Config == nil {
 		return nil, apperr.Internal("identity runtime requires platform deps", nil)
 	}
@@ -318,16 +322,17 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig) (*Runti
 		uow = persistence.NewSQLUnitOfWork(deps.Database.SQL())
 	}
 
-	// T-08/T-10：平台守卫先于身份运行时构造（bootstrap 顺序保证），
-	// B 端登录与账号开通据此校验租户是否在服务期；A/C 端未注入，跳过校验。
+	// T-08/T-10：cmd 装配层在构造身份运行时之前先构造租户守卫，并把绑定
+	// 经 runtimebind.Tenant 传入；B 端登录与账号开通据此校验租户是否在服务期，
+	// A/C 端未注入，跳过校验。
 	var tenantCheck app.TenantStatusChecker
-	if deps.VerifyTenant != nil {
-		tenantCheck = tenantStatusAdapter{verify: deps.VerifyTenant}
+	if tenantBind.VerifyTenant != nil {
+		tenantCheck = tenantStatusAdapter{verify: tenantBind.VerifyTenant}
 	}
-	// T-22：成员关系查询（租户域适配注入 Deps）；nil 时切换端点拒绝（fail-closed）。
+	// T-22：成员关系判定同样来自装配绑定；nil 时切换端点拒绝（fail-closed）。
 	var membership app.MembershipChecker
-	if deps.IsTenantMember != nil {
-		membership = membershipAdapter{deps.IsTenantMember}
+	if tenantBind.IsTenantMember != nil {
+		membership = membershipAdapter{tenantBind.IsTenantMember}
 	}
 
 	authSvc, err := app.NewAuthService(app.AuthServiceConfig{
@@ -1018,8 +1023,8 @@ func registerHealth(deps *platform.Deps) {
 	}
 }
 
-// tenantStatusAdapter 把平台注入的通用判定函数适配成 identity 的
-// TenantStatusChecker 端口（T-08/T-10）；平台不再定义租户语义接口。
+// tenantStatusAdapter 把 cmd 装配绑定传入的判定函数适配成 identity 的
+// TenantStatusChecker 端口（T-08/T-10）；平台不定义租户语义接口。
 type tenantStatusAdapter struct {
 	verify func(ctx context.Context, merchantID string) (bool, error)
 }
@@ -1029,7 +1034,7 @@ func (a tenantStatusAdapter) Verify(ctx context.Context, merchantID string) (boo
 	return a.verify(ctx, merchantID)
 }
 
-// membershipAdapter 把平台注入的通用成员判定函数适配成 identity 的
+// membershipAdapter 把 cmd 装配绑定传入的成员判定函数适配成 identity 的
 // MembershipChecker 端口（T-22）；两接口方法签名一致，仅包边界转换。
 type membershipAdapter struct {
 	inner func(ctx context.Context, tenantID, subjectID string) (bool, error)

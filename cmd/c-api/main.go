@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
@@ -51,7 +52,10 @@ func run(configPath string) error {
 		identityErr  error
 	)
 	buildIdentity := func(deps *platform.Deps) (*identityruntime.Runtime, error) {
-		identityOnce.Do(func() { identityRT, identityErr = identityruntime.New(deps, appCfg.Identity) })
+		// C 端不装配租户守卫：租户状态 / 成员关系判定不适用，传空绑定。
+		identityOnce.Do(func() {
+			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity, runtimebind.Tenant{})
+		})
 		return identityRT, identityErr
 	}
 	return platform.Run(context.Background(), platform.Options{

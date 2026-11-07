@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	iamapp "github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
@@ -95,11 +96,8 @@ func New(deps *platform.Deps, revoker app.SessionRevoker, tenantCfg tenantconfig
 		return nil, err
 	}
 
-	// T-22：成员关系查询注入 Deps（identity 的切换端点据此校验成员关系）。
-	// New 自身也会被 worker 等路径单独调用，这里幂等注入。
-	if err := InjectMembership(deps); err != nil {
-		return nil, err
-	}
+	// T-22：成员关系查询由 cmd 装配层经 runtimebind.Tenant 传给 identity 运行时，
+	// 不再写回 platform.Deps（平台层不持有业务语义函数字段）。
 
 	service, err := app.NewService(repo, deps.IDs, emitter, app.Options{
 		DefaultPageSize: defaultPageSize,
@@ -190,14 +188,20 @@ func RegisterAsync(deps *platform.Deps) error {
 // 与 A 端进程不共享租户表，用它判定会把所有 B 端请求误判为「租户不存在」。
 // 生产与集成环境使用 MySQL，守卫必然启用。
 //
-// 构造期同时写入 deps.VerifyTenant，供 identity 域在登录 / 开通时复用同一判定。
-func NewGuard(deps *platform.Deps) (func(http.Handler) http.Handler, error) {
+// 返回的 runtimebind.Tenant 由 cmd 装配层传给 identity 运行时，使登录 / 开通
+// 复用同一判定；平台 Deps 不再持有该函数字段。
+func NewGuard(deps *platform.Deps) (func(http.Handler) http.Handler, runtimebind.Tenant, error) {
 	guard, err := buildGuard(deps)
-	if err != nil || guard == nil {
-		return nil, err
+	if err != nil {
+		return nil, runtimebind.Tenant{}, err
 	}
-	deps.VerifyTenant = guard.Verify
-	return httpserver.TenantGuardMiddleware(guard.Verify, deps.Config.Channel == "biz"), nil
+	if guard == nil {
+		return nil, runtimebind.Tenant{}, nil
+	}
+	bind := runtimebind.Tenant{VerifyTenant: guard.Verify}
+	// 平台通道：B 端要求商户在服务期，其余端由业务自行校验。
+	tenantMW := httpserver.TenantGuardMiddleware(guard.Verify, deps.Config.Channel == "biz")
+	return tenantMW, bind, nil
 }
 
 // buildGuard 构造租户状态守卫实例；内存模式返回 nil。
@@ -296,23 +300,20 @@ func (m membershipChecker) IsMember(ctx context.Context, tenantID, subjectID str
 	return member.Active(), nil
 }
 
-// InjectMembership 把租户成员仓储适配成通用函数并写入 Deps.IsTenantMember
-// （T-22）。必须先于 identityruntime.New 调用——identity 构造期读取该依赖；
-// 重复注入无害（同一 Deps 覆盖同值）。memory 与 SQL 模式都提供（本地可用）。
-func InjectMembership(deps *platform.Deps) error {
+// MembershipBinding 把租户成员仓储适配成 runtimebind.Tenant 并返回（T-22）。
+//
+// 必须先于 identityruntime.New 调用——identity 构造期读取该绑定。
+// memory 与 SQL 模式都提供（本地可用）；平台 Deps 不再持有该函数字段。
+func MembershipBinding(deps *platform.Deps) (runtimebind.Tenant, error) {
 	if deps == nil {
-		return fmt.Errorf("tenant membership injection requires deps")
-	}
-	if deps.IsTenantMember != nil {
-		return nil // 已注入（幂等）。
+		return runtimebind.Tenant{}, fmt.Errorf("tenant membership binding requires deps")
 	}
 	store, _, err := buildDeps(deps)
 	if err != nil {
-		return fmt.Errorf("tenant membership injection: %w", err)
+		return runtimebind.Tenant{}, fmt.Errorf("tenant membership binding: %w", err)
 	}
 	checker := membershipChecker{members: store.members}
-	deps.IsTenantMember = checker.IsMember
-	return nil
+	return runtimebind.Tenant{IsTenantMember: checker.IsMember}, nil
 }
 
 // newRoleSyncer 构造成员角色 → IAM 绑定同步器（T-18，ADR-0007）。
