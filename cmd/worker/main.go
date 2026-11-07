@@ -19,6 +19,10 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	platformobservability "github.com/admin-frame/admin-frame/internal/platform/observability"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	pkgmetrics "github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
@@ -55,7 +59,7 @@ func run(configPath, replayDLQ string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	cfg := &appCfg.Config
-	logger := platform.NewLogger(cfg)
+	logger := platformobservability.NewLogger(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -92,7 +96,7 @@ func run(configPath, replayDLQ string) error {
 
 	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met, IDs: ids}
 	// worker 也要对象存储：审计异步导出的文件由 worker 生成并上传（ENT-04 T5）。
-	stores, err := platform.OpenStorageSet(ctx, cfg.Storage)
+	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
 	}
@@ -185,7 +189,7 @@ func run(configPath, replayDLQ string) error {
 //
 // 只暴露 /metrics、/healthz 与 /readyz；不挂载任何业务路由。
 func startWorkerHTTP(
-	cfg *platform.Config,
+	cfg *platformconfig.Config,
 	database *db.DB,
 	met *pkgmetrics.Metrics,
 	logger *slog.Logger,
@@ -237,7 +241,7 @@ func replayDeadLetters(ctx context.Context, deps *platform.Deps, target string, 
 	if deps.Database == nil {
 		return fmt.Errorf("replay-dlq requires a persistent database")
 	}
-	store := platform.NewAsyncStore(deps.Database)
+	store := platformasync.NewAsyncStore(deps.Database)
 	replayer, ok := store.(outbox.DeadLetterReplayer)
 	if !ok {
 		return fmt.Errorf("async store does not support dead letter replay")

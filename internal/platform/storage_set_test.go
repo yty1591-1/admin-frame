@@ -5,15 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 )
 
 func TestOpenStorageSetNamedBuckets(t *testing.T) {
-	set, err := platform.OpenStorageSet(context.Background(), platform.StorageConfig{
+	set, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
 		Driver:    "memory",
 		KeyPrefix: "default/",
-		Buckets: map[string]platform.BucketConfig{
+		Buckets: map[string]platformstorage.BucketConfig{
 			"public": {
 				Driver:    "memory",
 				KeyPrefix: "public/",
@@ -63,9 +63,9 @@ func TestOpenStorageSetNamedBuckets(t *testing.T) {
 }
 
 func TestOpenStorageSetRejectsDefaultName(t *testing.T) {
-	_, err := platform.OpenStorageSet(context.Background(), platform.StorageConfig{
+	_, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
 		Driver: "memory",
-		Buckets: map[string]platform.BucketConfig{
+		Buckets: map[string]platformstorage.BucketConfig{
 			"default": {Driver: "memory"},
 		},
 	})
@@ -75,10 +75,10 @@ func TestOpenStorageSetRejectsDefaultName(t *testing.T) {
 }
 
 func TestValidateStorageNamedBucket(t *testing.T) {
-	err := platform.ValidateStorage("prod", platform.StorageConfig{
+	err := platformstorage.ValidateStorage("prod", platformstorage.StorageConfig{
 		Driver: "s3",
 		S3:     storage.S3Config{Bucket: "a", Region: "us-east-1"},
-		Buckets: map[string]platform.BucketConfig{
+		Buckets: map[string]platformstorage.BucketConfig{
 			"public": {Driver: "memory"},
 		},
 	})

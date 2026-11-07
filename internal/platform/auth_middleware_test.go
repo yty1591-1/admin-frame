@@ -6,39 +6,40 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformauthn "github.com/admin-frame/admin-frame/internal/platform/authn"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 )
 
 func TestNewAuthMiddlewareRejectsProductionWithoutAuthenticator(t *testing.T) {
-	_, err := platform.NewAuthMiddleware(
-		platform.AuthConfig{ExpectedChannel: "c"}, auth.ChannelC, "prod")
+	_, err := platformauthn.NewAuthMiddleware(
+		platformconfig.AuthConfig{ExpectedChannel: "c"}, auth.ChannelC, "prod")
 	if err == nil {
 		t.Fatal("expected error when prod has no jwt configuration")
 	}
 }
 
 func TestNewAuthMiddlewareRejectsChannelMismatch(t *testing.T) {
-	_, err := platform.NewAuthMiddleware(
-		platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "admin"}, auth.ChannelC, "test")
+	_, err := platformauthn.NewAuthMiddleware(
+		platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "admin"}, auth.ChannelC, "test")
 	if err == nil {
 		t.Fatal("expected channel mismatch")
 	}
 }
 
 func TestNewAuthMiddlewareRejectsDemoInProd(t *testing.T) {
-	_, err := platform.NewAuthMiddleware(
-		platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "c"}, auth.ChannelC, "prod")
+	_, err := platformauthn.NewAuthMiddleware(
+		platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "c"}, auth.ChannelC, "prod")
 	if err == nil {
 		t.Fatal("expected demo mode to be rejected when env=prod")
 	}
 }
 
 func TestNewAuthMiddlewareDemo(t *testing.T) {
-	mw, err := platform.NewAuthMiddleware(
-		platform.AuthConfig{Mode: platform.AuthModeDemo, ExpectedChannel: "c"}, auth.ChannelC, "dev")
+	mw, err := platformauthn.NewAuthMiddleware(
+		platformconfig.AuthConfig{Mode: platformconfig.AuthModeDemo, ExpectedChannel: "c"}, auth.ChannelC, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestNewAuthMiddlewareDemo(t *testing.T) {
 func TestNewAuthMiddlewareProdDefaultsToJWT(t *testing.T) {
 	// 未显式声明 auth.mode 时，prod 回退 jwt；提供合法 JWT 配置即可启动。
 	secret := testJWTSecret('s')
-	mw, err := platform.NewAuthMiddleware(platform.AuthConfig{
+	mw, err := platformauthn.NewAuthMiddleware(platformconfig.AuthConfig{
 		ExpectedChannel: "c",
 		JWT: security.JWTConfig{
 			Issuer:   "issuer",
@@ -84,8 +85,8 @@ func TestNewAuthMiddlewareProdDefaultsToJWT(t *testing.T) {
 
 func TestNewAuthMiddlewareLocalDefaultsToDemo(t *testing.T) {
 	// 未显式声明 auth.mode 时，非生产环境回退 demo，便于本地起服务。
-	mw, err := platform.NewAuthMiddleware(
-		platform.AuthConfig{ExpectedChannel: "c"}, auth.ChannelC, "local")
+	mw, err := platformauthn.NewAuthMiddleware(
+		platformconfig.AuthConfig{ExpectedChannel: "c"}, auth.ChannelC, "local")
 	if err != nil {
 		t.Fatalf("local fallback should use demo: %v", err)
 	}
@@ -102,8 +103,8 @@ func TestNewAuthMiddlewareLocalDefaultsToDemo(t *testing.T) {
 
 func TestNewAuthMiddlewareJWT(t *testing.T) {
 	secret := testJWTSecret('s') // 32 bytes
-	cfg := platform.AuthConfig{
-		Mode:            platform.AuthModeJWT,
+	cfg := platformconfig.AuthConfig{
+		Mode:            platformconfig.AuthModeJWT,
 		ExpectedChannel: "c",
 		JWT: security.JWTConfig{
 			Alg:      security.JWTAlgHS256,
@@ -112,7 +113,7 @@ func TestNewAuthMiddlewareJWT(t *testing.T) {
 			Secret:   secret,
 		},
 	}
-	mw, err := platform.NewAuthMiddleware(cfg, auth.ChannelC, "prod")
+	mw, err := platformauthn.NewAuthMiddleware(cfg, auth.ChannelC, "prod")
 	if err != nil {
 		t.Fatal(err)
 	}

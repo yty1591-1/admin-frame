@@ -8,17 +8,17 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
 func TestAsyncMetricsDeliveryCounter(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platform.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewAsyncMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}
-	if _, err := platform.NewAsyncMetrics(registry); err == nil {
+	if _, err := platformasync.NewAsyncMetrics(registry); err == nil {
 		t.Fatal("duplicate registration should fail")
 	}
 
@@ -52,7 +52,7 @@ func TestAsyncMetricsDeliveryCounter(t *testing.T) {
 
 func TestAsyncMetricsGauges(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platform.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewAsyncMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestAsyncMetricsGauges(t *testing.T) {
 
 func TestAsyncMetricsGaugesFailureExposesZero(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platform.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewAsyncMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}

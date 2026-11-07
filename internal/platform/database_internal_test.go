@@ -3,13 +3,15 @@ package platform
 import (
 	"testing"
 	"time"
+
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // TestDBConfigFromCarriesPoolParams 锁定「配置字段 → pkg/db 参数」的搬运：
 // 漏搬任一字段都会让 db.max_open_conns 静默失效，而 db_pool_max_open_connections
 // 指标回落到 pkg/db 默认值，DBPoolExhaustion 告警的分母随之失真。
 func TestDBConfigFromCarriesPoolParams(t *testing.T) {
-	got, err := dbConfigFrom(DBConfig{
+	got, err := dbConfigFrom(platformconfig.DBConfig{
 		Driver:          "mysql",
 		DSN:             "root:root@tcp(localhost:3306)/admin_frame?parseTime=true",
 		MaxOpenConns:    6,
@@ -32,7 +34,7 @@ func TestDBConfigFromCarriesPoolParams(t *testing.T) {
 
 // TestDBConfigFromMapsPostgresDriver 覆盖 postgres → pgx 的驱动名转换。
 func TestDBConfigFromMapsPostgresDriver(t *testing.T) {
-	got, err := dbConfigFrom(DBConfig{Driver: "postgres", DSN: "postgres://u:p@localhost:5432/db"}) // #nosec G101 -- 测试用假 DSN，非真实凭据
+	got, err := dbConfigFrom(platformconfig.DBConfig{Driver: "postgres", DSN: "postgres://u:p@localhost:5432/db"}) // #nosec G101 -- 测试用假 DSN，非真实凭据
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +45,7 @@ func TestDBConfigFromMapsPostgresDriver(t *testing.T) {
 
 // TestDBConfigFromRejectsUnknownDriver 确认未知引擎不静默回落。
 func TestDBConfigFromRejectsUnknownDriver(t *testing.T) {
-	if _, err := dbConfigFrom(DBConfig{Driver: "sqlite", DSN: "x"}); err == nil {
+	if _, err := dbConfigFrom(platformconfig.DBConfig{Driver: "sqlite", DSN: "x"}); err == nil {
 		t.Fatal("expected error for unsupported driver")
 	}
 }

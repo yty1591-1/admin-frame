@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/migrate"
 )
@@ -101,7 +101,7 @@ type options struct {
 }
 
 func run(ctx context.Context, opts options) error {
-	dbCfg, err := platform.LoadDBConfig(opts.ConfigPath)
+	dbCfg, err := platformconfig.LoadDBConfig(opts.ConfigPath)
 	if err != nil {
 		return err
 	}

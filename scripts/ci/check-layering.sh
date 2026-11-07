@@ -35,10 +35,10 @@ fail_with() {
 # PLAT-15 拆分基线（ARCHITECTURE §5.6）。
 #
 # 阶段 1/2 已拆出 config / observability / httpserver / authn / async / storage
-# 子包；阶段 3 将守卫端口下沉到业务域，根包仅剩装配与兼容转发文件（5 个）。
+# 子包；阶段 3 将守卫端口下沉到业务域，兼容别名层已下线，根包仅剩装配文件（4 个）。
 # 基线只减不增，禁止上调。
 PLATFORM_DIR="internal/platform"
-PLATFORM_MAX_FILES=5
+PLATFORM_MAX_FILES=4
 PLATFORM_MAX_FILE_LINES=500
 # 已登记的超限文件（拆分完成后必须从本数组删除）。
 LAYER_LINE_BASELINE=()

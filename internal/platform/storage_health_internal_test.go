@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/pkg/health"
 )
 
@@ -15,9 +16,9 @@ import (
 // 命名桶漏注册会让该桶不可用时进程仍被视为 Ready，异步导出与审计归档会把文件
 // 写到不可用后端（OPS-02）。
 func TestRegisterStorageChecksProbesDefaultAndNamedBuckets(t *testing.T) {
-	stores, err := OpenStorageSet(context.Background(), StorageConfig{
+	stores, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
 		Driver: "memory",
-		Buckets: map[string]BucketConfig{
+		Buckets: map[string]platformstorage.BucketConfig{
 			"exports": {Driver: "memory"},
 		},
 	})

@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformobservability "github.com/admin-frame/admin-frame/internal/platform/observability"
 	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
@@ -36,7 +36,7 @@ func TestRegisterDBMetrics(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	reg := prometheus.NewRegistry()
-	if err := platform.RegisterDBMetrics(reg, database); err != nil {
+	if err := platformobservability.RegisterDBMetrics(reg, database); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	families, err := reg.Gather()
@@ -62,10 +62,10 @@ func TestRegisterDBMetrics(t *testing.T) {
 }
 
 func TestRegisterDBMetricsSkipsNil(t *testing.T) {
-	if err := platform.RegisterDBMetrics(prometheus.NewRegistry(), nil); err != nil {
+	if err := platformobservability.RegisterDBMetrics(prometheus.NewRegistry(), nil); err != nil {
 		t.Fatalf("nil database: %v", err)
 	}
-	if err := platform.RegisterDBMetrics(nil, &db.DB{}); err != nil {
+	if err := platformobservability.RegisterDBMetrics(nil, &db.DB{}); err != nil {
 		t.Fatalf("nil registerer: %v", err)
 	}
 }

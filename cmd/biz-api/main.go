@@ -15,6 +15,7 @@ import (
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 
@@ -65,7 +66,7 @@ func run(configPath string) error {
 	}
 	return platform.Run(context.Background(), platform.Options{
 		Config: &appCfg.Config,
-		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Build:  httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		// B 端是多租户通道：认证通过后还需确认商户仍在服务期（ENT-09），
 		// 并执行 API 配额（ENT-14）。守卫顺序由 tenantruntime 显式声明：
 		// 租户状态 → 配额，均包在 AuthMW 内层。

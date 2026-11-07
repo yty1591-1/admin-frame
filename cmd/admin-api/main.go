@@ -13,6 +13,7 @@ import (
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/security"
 
 	// 注册全部云存储驱动：admin-api 支持 memory / local / s3 / minio / oss / cos / obs。
@@ -70,7 +71,7 @@ func run(configPath string) error {
 	}
 	return platform.Run(context.Background(), platform.Options{
 		Config: &appCfg.Config,
-		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Build:  httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

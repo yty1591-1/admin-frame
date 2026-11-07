@@ -8,10 +8,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/platform/async"
+	platformauthn "github.com/admin-frame/admin-frame/internal/platform/authn"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/platform/dependency"
 	dependencyobservability "github.com/admin-frame/admin-frame/internal/platform/dependency/observability"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/platform/lifecycle"
+	platformobservability "github.com/admin-frame/admin-frame/internal/platform/observability"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -30,11 +35,11 @@ import (
 // 只暴露“平台能力”，不暴露 repo / bus 等业务对象，避免变成 god object；
 // 业务依赖由 cmd 在 Register 回调内自行构造。
 type Deps struct {
-	Config  *Config
+	Config  *platformconfig.Config
 	Logger  *slog.Logger
 	Metrics *metrics.Metrics
 	Tracer  *tracing.Provider
-	Storage *StorageSet
+	Storage *platformstorage.StorageSet
 	// Database 是进程数据库；db.driver=memory 时为 nil（业务使用内存实现）。
 	Database *db.DB
 	// Redis 是共享缓存客户端；未配置 redis.addr 时为 nil。
@@ -68,7 +73,7 @@ type Deps struct {
 	//
 	// 业务域通过 Async.Register 声明 topic 与 handler；API 进程仅在
 	// async.outbox.publish_in_api=true 时启动 Relay。
-	Async *AsyncRuntime
+	Async *async.AsyncRuntime
 
 	// authGuards 是 buildGuards 产出的鉴权链守卫（按声明顺序）；
 	// 由 buildAuthN 读取并插入 AuthMW 内层。不导出：顺序只由 Run 编排。
@@ -90,9 +95,9 @@ type Options struct {
 	//
 	// 非空时不再读取 ConfigPath；cmd 通过 cmd/internal/appconfig 加载后传入，
 	// 平台只持有平台段，域配置由 cmd 闭包自行传递给各域 runtime。
-	Config *Config
+	Config *platformconfig.Config
 	// Build 是构建身份；Service 为空时取配置中的 service。
-	Build BuildInfo
+	Build httpserver.BuildInfo
 	// NewSessionValidator 构造撤销检查器；identity.enabled=false 时返回 nil。
 	//
 	// 该回调在 AuthMW 构造前调用，使登录态校验能立即读取撤销状态。
@@ -114,13 +119,13 @@ type Options struct {
 
 // infraState 是 prepareInfra 产出的进程级基础设施。
 type infraState struct {
-	cfg        *Config
+	cfg        *platformconfig.Config
 	logger     *slog.Logger
 	nodeID     int64
-	build      BuildInfo
+	build      httpserver.BuildInfo
 	metrics    *metrics.Metrics
 	tracer     *tracing.Provider
-	stores     *StorageSet
+	stores     *platformstorage.StorageSet
 	database   *db.DB
 	redis      *redis.Client
 	health     *health.Handler
@@ -189,14 +194,14 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 
 	cfg := opts.Config
 	if cfg == nil {
-		loaded, loadErr := LoadConfig(opts.ConfigPath)
+		loaded, loadErr := platformconfig.LoadConfig(opts.ConfigPath)
 		if loadErr != nil {
 			return nil, fmt.Errorf("load config: %w", loadErr)
 		}
 		cfg = loaded
 	}
 	infra.cfg = cfg
-	logger := NewLogger(cfg)
+	logger := platformobservability.NewLogger(cfg)
 	infra.logger = logger
 
 	ids, nodeID, err := NewIDGenerator(cfg.ID)
@@ -229,7 +234,7 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 	}
 	infra.tracer = tp
 
-	stores, err := OpenStorageSet(ctx, cfg.Storage)
+	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
 		return nil, fmt.Errorf("storage: %w", err)
 	}
@@ -240,7 +245,7 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 		return nil, err
 	}
 	infra.database = database
-	if err := RegisterDBMetrics(met.RegistererWithoutChannel(), database); err != nil {
+	if err := platformobservability.RegisterDBMetrics(met.RegistererWithoutChannel(), database); err != nil {
 		return nil, fmt.Errorf("db metrics: %w", err)
 	}
 
@@ -379,7 +384,7 @@ func buildAuthN(deps *Deps, opts Options) error {
 	}
 
 	cfg := deps.Config
-	authMW, err := NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
+	authMW, err := platformauthn.NewAuthMiddleware(cfg.Auth, auth.Channel(cfg.Channel), cfg.Env, authOpts...)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
@@ -408,7 +413,7 @@ func buildAuthorizer(deps *Deps, opts Options) error {
 }
 
 // buildRouter 注册业务路由、探针端点与入口请求链路。
-func buildRouter(deps *Deps, opts Options, build BuildInfo) (http.Handler, error) {
+func buildRouter(deps *Deps, opts Options, build httpserver.BuildInfo) (http.Handler, error) {
 	cfg := deps.Config
 	if cfg == nil {
 		return nil, errors.New("platform: buildRouter requires config")
@@ -419,19 +424,19 @@ func buildRouter(deps *Deps, opts Options, build BuildInfo) (http.Handler, error
 	}
 
 	root := http.NewServeMux()
-	MountHealth(root, deps.Health)
-	MountVersion(root, build)
-	MountMetrics(root, deps.Metrics.Handler())
+	httpserver.MountHealth(root, deps.Health)
+	httpserver.MountVersion(root, build)
+	httpserver.MountMetrics(root, deps.Metrics.Handler())
 	root.Handle("/", api)
 
-	pipeline, err := NewPipeline(PipelineConfig{
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
 		Timeout:        cfg.HTTP.Timeout,
 		BodyLimitBytes: cfg.HTTP.BodyLimitBytes,
 		Channel:        cfg.Channel,
 		RateLimit:      cfg.RateLimit,
 		Idempotency:    cfg.Idempotency,
 		CORS:           cfg.CORS,
-	}, PipelineDeps{
+	}, httpserver.PipelineDeps{
 		Logger:   deps.Logger,
 		Metrics:  deps.Metrics,
 		Tracer:   deps.Tracer,
@@ -458,11 +463,11 @@ func serve(ctx context.Context, infra *infraState, handler http.Handler) error {
 		"node_id", infra.nodeID,
 		"background_tasks", len(tasks),
 	)
-	return ListenAndServe(ctx, infra.cfg, handler, infra.logger)
+	return httpserver.ListenAndServe(ctx, infra.cfg, handler, infra.logger)
 }
 
 // registerStorageChecks 为默认桶与命名桶注册就绪探测。
-func registerStorageChecks(hh *health.Handler, stores *StorageSet) {
+func registerStorageChecks(hh *health.Handler, stores *platformstorage.StorageSet) {
 	hh.Register("storage", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -480,4 +485,14 @@ func registerStorageChecks(hh *health.Handler, stores *StorageSet) {
 			return storage.Ready(ctx, st)
 		})
 	}
+}
+
+// NewAsyncRuntime 把根包 Deps 转译为子包局部依赖，避免 async 反向依赖平台根包。
+func NewAsyncRuntime(deps *Deps) (*async.AsyncRuntime, error) {
+	if deps == nil {
+		return nil, fmt.Errorf("async runtime: deps is required")
+	}
+	return async.NewAsyncRuntime(async.RuntimeDeps{
+		Config: deps.Config, Logger: deps.Logger, Database: deps.Database, Metrics: deps.Metrics,
+	})
 }

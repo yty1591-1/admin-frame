@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 )
 
@@ -21,7 +22,7 @@ func discardLogger() *slog.Logger {
 // TestPipelineOrder 验证 RequestID 位于 BodyLimit / RateLimit 外层：被拒绝的请求
 // 仍带 X-Request-ID 与信封 trace_id（AC-PLAT-07-1 的可观测断言）。
 func TestPipelineOrder(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{BodyLimitBytes: 4}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{BodyLimitBytes: 4}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +48,14 @@ func TestPipelineOrder(t *testing.T) {
 
 // TestPipelineRateLimitEnvelope 验证限流返回 429 + 42900 稳定业务码（REL-05）。
 func TestPipelineRateLimitEnvelope(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
-		RateLimit: platform.RateLimitConfig{
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		RateLimit: platformconfig.RateLimitConfig{
 			Enabled: true,
 			RPS:     0.001,
 			Burst:   1,
 			IdleTTL: time.Minute,
 		},
-	}, platform.PipelineDeps{Logger: discardLogger()})
+	}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestPipelineRateLimitEnvelope(t *testing.T) {
 
 // TestPipelineBodyLimit 验证超限请求体在进入 Handler 前被拒绝。
 func TestPipelineBodyLimit(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{BodyLimitBytes: 8}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{BodyLimitBytes: 8}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestPipelineBodyLimit(t *testing.T) {
 
 // TestPipelineTimeoutPropagatesDeadline 验证 http.timeout 注入的 deadline 可被 Handler 感知。
 func TestPipelineTimeoutPropagatesDeadline(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{Timeout: 20 * time.Millisecond}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{Timeout: 20 * time.Millisecond}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestPipelineTimeoutPropagatesDeadline(t *testing.T) {
 
 // TestPipelineRecoverEnvelope 验证 panic 被最外层 Recover 转为 500 信封。
 func TestPipelineRecoverEnvelope(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,7 @@ func TestPipelineRecoverEnvelope(t *testing.T) {
 
 // TestPipelineRequestID 验证链路回写 X-Request-ID 并透传到响应信封。
 func TestPipelineRequestID(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,9 +173,9 @@ func TestPipelineRequestID(t *testing.T) {
 
 // TestPipelineCORSPreflight 验证仅显式允许的 Origin 获得 CORS 响应头。
 func TestPipelineCORSPreflight(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
-		CORS: platform.CORSConfig{AllowOrigins: []string{"https://admin.example.com"}},
-	}, platform.PipelineDeps{Logger: discardLogger()})
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		CORS: platformconfig.CORSConfig{AllowOrigins: []string{"https://admin.example.com"}},
+	}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,14 +207,14 @@ func TestPipelineCORSPreflight(t *testing.T) {
 
 // TestPipelineIdempotencyReplay 验证同键同请求只执行一次并回放首次响应（AC-ENT-02-2）。
 func TestPipelineIdempotencyReplay(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
-		Idempotency: platform.IdempotencyConfig{
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		Idempotency: platformconfig.IdempotencyConfig{
 			Enabled: true,
-			Driver:  platform.IdempotencyDriverMemory,
+			Driver:  platformconfig.IdempotencyDriverMemory,
 			Header:  "Idempotency-Key",
 			TTL:     time.Minute,
 		},
-	}, platform.PipelineDeps{Logger: discardLogger()})
+	}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,14 +248,14 @@ func TestPipelineIdempotencyReplay(t *testing.T) {
 
 // TestPipelineIdempotencyConflict 验证同键不同载荷返回 40900（REL-04）。
 func TestPipelineIdempotencyConflict(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
-		Idempotency: platform.IdempotencyConfig{
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		Idempotency: platformconfig.IdempotencyConfig{
 			Enabled: true,
-			Driver:  platform.IdempotencyDriverMemory,
+			Driver:  platformconfig.IdempotencyDriverMemory,
 			Header:  "Idempotency-Key",
 			TTL:     time.Minute,
 		},
-	}, platform.PipelineDeps{Logger: discardLogger()})
+	}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,15 +278,15 @@ func TestPipelineIdempotencyConflict(t *testing.T) {
 
 // TestPipelineIdempotencyRequired 验证强制幂等键缺失时拒绝写请求。
 func TestPipelineIdempotencyRequired(t *testing.T) {
-	pipeline, err := platform.NewPipeline(platform.PipelineConfig{
-		Idempotency: platform.IdempotencyConfig{
+	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		Idempotency: platformconfig.IdempotencyConfig{
 			Enabled:  true,
-			Driver:   platform.IdempotencyDriverMemory,
+			Driver:   platformconfig.IdempotencyDriverMemory,
 			Header:   "Idempotency-Key",
 			TTL:      time.Minute,
 			Required: true,
 		},
-	}, platform.PipelineDeps{Logger: discardLogger()})
+	}, httpserver.PipelineDeps{Logger: discardLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,9 +308,9 @@ func TestPipelineIdempotencyRequired(t *testing.T) {
 
 // TestPipelineInvalidRateLimit 验证非法限流参数在装配期失败。
 func TestPipelineInvalidRateLimit(t *testing.T) {
-	if _, err := platform.NewPipeline(platform.PipelineConfig{
-		RateLimit: platform.RateLimitConfig{Enabled: true, RPS: 0, Burst: 0},
-	}, platform.PipelineDeps{}); err == nil {
+	if _, err := httpserver.NewPipeline(httpserver.PipelineConfig{
+		RateLimit: platformconfig.RateLimitConfig{Enabled: true, RPS: 0, Burst: 0},
+	}, httpserver.PipelineDeps{}); err == nil {
 		t.Fatal("expected error for invalid rate limit")
 	}
 }

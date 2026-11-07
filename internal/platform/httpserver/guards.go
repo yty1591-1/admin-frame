@@ -102,6 +102,19 @@ func QuotaGuardMiddleware(allow func(ctx context.Context, tenantID string) (retr
 	}
 }
 
+// WithTenantGuard 在鉴权之后校验租户状态（ENT-09）。
+//
+// 兼容包装：旧签名接收命名接口，现改为接收实现的方法值（tenantapp.Guard.Verify）。
+// 业务语义端口已下沉到 internal/tenant/app，平台只保留通用中间件装配点。
+func WithTenantGuard(mw func(http.Handler) http.Handler, verify func(ctx context.Context, merchantID string) (bool, error), requireMerchant bool) func(http.Handler) http.Handler {
+	return AfterAuth(mw, TenantGuardMiddleware(verify, requireMerchant))
+}
+
+// WithQuotaGuard 在租户状态守卫之后执行 API 配额（ENT-14）。
+func WithQuotaGuard(mw func(http.Handler) http.Handler, allow func(ctx context.Context, tenantID string) (int, error)) func(http.Handler) http.Handler {
+	return AfterAuth(mw, QuotaGuardMiddleware(allow))
+}
+
 // AfterAuth 按声明顺序把守卫插入鉴权之后。
 //
 // guards[0] 最先执行（最外层），最终链路为 auth → guards[0] → guards[1] → handler。

@@ -4,18 +4,18 @@ import (
 	"context"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformstorage "github.com/admin-frame/admin-frame/internal/platform/storage"
 )
 
 func TestValidateStorageProdForbidsMemory(t *testing.T) {
-	err := platform.ValidateStorage("prod", platform.StorageConfig{Driver: "memory"})
+	err := platformstorage.ValidateStorage("prod", platformstorage.StorageConfig{Driver: "memory"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestOpenStorageMemoryDefault(t *testing.T) {
-	store, err := platform.OpenStorage(context.Background(), platform.StorageConfig{})
+	store, err := platformstorage.OpenStorage(context.Background(), platformstorage.StorageConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestOpenStorageMemoryDefault(t *testing.T) {
 }
 
 func TestValidateStorageLocalNeedsRoot(t *testing.T) {
-	err := platform.ValidateStorage("local", platform.StorageConfig{Driver: "local"})
+	err := platformstorage.ValidateStorage("local", platformstorage.StorageConfig{Driver: "local"})
 	if err == nil {
 		t.Fatal("expected root required")
 	}

@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
 	// 注册全部云存储驱动；C 端如需独立裁剪可只 import 所需驱动。
 	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
@@ -55,7 +56,7 @@ func run(configPath string) error {
 	}
 	return platform.Run(context.Background(), platform.Options{
 		Config: &appCfg.Config,
-		Build:  platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Build:  httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

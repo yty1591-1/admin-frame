@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/pkg/health"
 )
 
@@ -17,8 +17,8 @@ func TestMountHealthRoutes(t *testing.T) {
 	hh := health.New()
 	hh.Register("ok", func() error { return nil })
 	mux := http.NewServeMux()
-	platform.MountHealth(mux, hh)
-	platform.MountVersion(mux, platform.BuildInfo{Service: "c-api", Version: "v1"})
+	httpserver.MountHealth(mux, hh)
+	httpserver.MountVersion(mux, httpserver.BuildInfo{Service: "c-api", Version: "v1"})
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody))
@@ -37,7 +37,7 @@ func TestMountHealthRoutes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("version status=%d", rec.Code)
 	}
-	var info platform.BuildInfo
+	var info httpserver.BuildInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &info); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestMountReadinessFails(t *testing.T) {
 	hh := health.New()
 	hh.Register("db", func() error { return errors.New("down") })
 	mux := http.NewServeMux()
-	platform.MountHealth(mux, hh)
+	httpserver.MountHealth(mux, hh)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
@@ -65,18 +65,18 @@ func TestMountReadinessFails(t *testing.T) {
 
 // TestMountNilSafe 验证 nil mux / nil handler 不 panic（AC-PLAT-08-3）。
 func TestMountNilSafe(_ *testing.T) {
-	platform.MountHealth(nil, nil)
-	platform.MountVersion(nil, platform.BuildInfo{})
-	platform.MountMetrics(nil, nil)
+	httpserver.MountHealth(nil, nil)
+	httpserver.MountVersion(nil, httpserver.BuildInfo{})
+	httpserver.MountMetrics(nil, nil)
 	mux := http.NewServeMux()
-	platform.MountHealth(mux, nil)
-	platform.MountMetrics(mux, nil)
+	httpserver.MountHealth(mux, nil)
+	httpserver.MountMetrics(mux, nil)
 }
 
 // TestMountMetrics 验证 /metrics 端点挂载。
 func TestMountMetrics(t *testing.T) {
 	mux := http.NewServeMux()
-	platform.MountMetrics(mux, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	httpserver.MountMetrics(mux, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("metrics"))
 	}))
 	rec := httptest.NewRecorder()

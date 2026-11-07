@@ -9,7 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
@@ -21,7 +21,7 @@ import (
 // 全部指标一起丢失，DBPoolExhaustion 反而永远不响。
 func TestAsyncMetricsGaugesShareOneSnapshot(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platform.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewAsyncMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestAsyncMetricsGaugesShareOneSnapshot(t *testing.T) {
 // Gather 仍能返回指标（沿用上一次成功快照），而不是把采集错误抛给抓取端。
 func TestAsyncMetricsGaugesSurviveSlowStats(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	metrics, err := platform.NewAsyncMetrics(registry)
+	metrics, err := platformasync.NewAsyncMetrics(registry)
 	if err != nil {
 		t.Fatalf("new metrics: %v", err)
 	}

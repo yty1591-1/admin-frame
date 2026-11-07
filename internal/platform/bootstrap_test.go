@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 )
 
 // TestRunRequiresRegister 验证缺少路由注册时装配期失败。
@@ -65,7 +66,7 @@ func TestRunBootstrapsAndShutsDown(t *testing.T) {
 
 	err := platform.Run(ctx, platform.Options{
 		ConfigPath: path,
-		Build:      platform.BuildInfo{Version: "test"},
+		Build:      httpserver.BuildInfo{Version: "test"},
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
 			if deps.Config == nil || deps.Logger == nil || deps.Metrics == nil ||
 				deps.Tracer == nil || deps.Storage == nil || deps.AuthMW == nil ||

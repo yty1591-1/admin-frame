@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
@@ -22,12 +22,12 @@ func TestRequestIDReusesOTelTraceID(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	var got string
-	h := platform.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := httpserver.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = apiresp.TraceIDFromContext(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}),
 		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer("http.server"))),
-		platform.RequestID(),
+		httpserver.RequestID(),
 	)
 
 	rr := httptest.NewRecorder()
@@ -51,12 +51,12 @@ func TestRequestIDKeepsIncomingHeader(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	var got string
-	h := platform.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := httpserver.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = apiresp.TraceIDFromContext(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}),
 		tracing.HTTPMiddleware(tracing.WithTracer(tp.Tracer("http.server"))),
-		platform.RequestID(),
+		httpserver.RequestID(),
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)

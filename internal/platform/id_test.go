@@ -2,6 +2,8 @@ package platform
 
 import (
 	"testing"
+
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
 // TestResolveNodeID 覆盖显式节点号与 StatefulSet 序号推导。
@@ -9,18 +11,18 @@ func TestResolveNodeID(t *testing.T) {
 	nodeID := int64(7)
 	cases := []struct {
 		name     string
-		cfg      IDConfig
+		cfg      platformconfig.IDConfig
 		hostname string
 		want     int64
 		wantErr  bool
 	}{
-		{name: "explicit", cfg: IDConfig{NodeIDSource: IDSourceConfig, NodeID: &nodeID}, want: 7},
-		{name: "default zero", cfg: IDConfig{}, want: 0},
-		{name: "statefulset", cfg: IDConfig{NodeIDSource: IDSourceStatefulSet}, hostname: "admin-api-3", want: 3},
-		{name: "statefulset multi digit", cfg: IDConfig{NodeIDSource: IDSourceStatefulSet}, hostname: "biz-api-12", want: 12},
-		{name: "statefulset missing suffix", cfg: IDConfig{NodeIDSource: IDSourceStatefulSet}, hostname: "admin-api", wantErr: true},
-		{name: "statefulset out of range", cfg: IDConfig{NodeIDSource: IDSourceStatefulSet}, hostname: "admin-api-1024", wantErr: true},
-		{name: "unsupported source", cfg: IDConfig{NodeIDSource: "registry"}, wantErr: true},
+		{name: "explicit", cfg: platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceConfig, NodeID: &nodeID}, want: 7},
+		{name: "default zero", cfg: platformconfig.IDConfig{}, want: 0},
+		{name: "statefulset", cfg: platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceStatefulSet}, hostname: "admin-api-3", want: 3},
+		{name: "statefulset multi digit", cfg: platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceStatefulSet}, hostname: "biz-api-12", want: 12},
+		{name: "statefulset missing suffix", cfg: platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceStatefulSet}, hostname: "admin-api", wantErr: true},
+		{name: "statefulset out of range", cfg: platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceStatefulSet}, hostname: "admin-api-1024", wantErr: true},
+		{name: "unsupported source", cfg: platformconfig.IDConfig{NodeIDSource: "registry"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -44,7 +46,7 @@ func TestResolveNodeID(t *testing.T) {
 // TestNewIDGeneratorGeneratesUniqueIDs 验证同一节点号下 ID 严格递增。
 func TestNewIDGeneratorGeneratesUniqueIDs(t *testing.T) {
 	nodeID := int64(5)
-	generator, got, err := NewIDGenerator(IDConfig{NodeIDSource: IDSourceConfig, NodeID: &nodeID})
+	generator, got, err := NewIDGenerator(platformconfig.IDConfig{NodeIDSource: platformconfig.IDSourceConfig, NodeID: &nodeID})
 	if err != nil {
 		t.Fatalf("NewIDGenerator: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 )
 
 // stubQuotaGuard 记录调用并按预设返回（ENT-14）。
@@ -27,7 +27,7 @@ func (g *stubQuotaGuard) AllowRequest(_ context.Context, tenantID string) (int, 
 // TestWithQuotaGuardAllowsWithinQuota 验证配额内放行并透传租户。
 func TestWithQuotaGuardAllowsWithinQuota(t *testing.T) {
 	guard := &stubQuotaGuard{}
-	handler := platform.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
+	handler := httpserver.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -43,7 +43,7 @@ func TestWithQuotaGuardAllowsWithinQuota(t *testing.T) {
 // TestWithQuotaGuardRejectsExhausted 验证耗尽返回 42900 + Retry-After。
 func TestWithQuotaGuardRejectsExhausted(t *testing.T) {
 	guard := &stubQuotaGuard{retryAfter: 7}
-	handler := platform.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
+	handler := httpserver.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -62,7 +62,7 @@ func TestWithQuotaGuardRejectsExhausted(t *testing.T) {
 // TestWithQuotaGuardFailsOpenOnError 验证执行器故障放行（配额不比业务更脆）。
 func TestWithQuotaGuardFailsOpenOnError(t *testing.T) {
 	guard := &stubQuotaGuard{err: errors.New("backend down")}
-	handler := platform.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
+	handler := httpserver.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, guardRequest("m1"))
@@ -75,7 +75,7 @@ func TestWithQuotaGuardFailsOpenOnError(t *testing.T) {
 // TestWithQuotaGuardSkipsPlatformRequests 验证无租户上下文的平台级请求不扣减。
 func TestWithQuotaGuardSkipsPlatformRequests(t *testing.T) {
 	guard := &stubQuotaGuard{}
-	handler := platform.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
+	handler := httpserver.WithQuotaGuard(identityMW, guard.AllowRequest)(okHandler())
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/anything", http.NoBody))

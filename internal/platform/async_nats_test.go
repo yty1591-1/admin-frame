@@ -11,7 +11,8 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 
-	"github.com/admin-frame/admin-frame/internal/platform"
+	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/mq"
 )
 
@@ -38,7 +39,7 @@ func startJetStream(t *testing.T) string {
 }
 
 // testNATSBroker 用嵌入式服务装配 Broker，结束后关闭连接；同时返回服务地址。
-func testNATSBroker(t *testing.T, opts platform.NATSBrokerOptions) (broker mq.Broker, url string) {
+func testNATSBroker(t *testing.T, opts platformasync.NATSBrokerOptions) (broker mq.Broker, url string) {
 	t.Helper()
 	opts.URL = startJetStream(t)
 	opts.Stream = "async"
@@ -47,7 +48,7 @@ func testNATSBroker(t *testing.T, opts platform.NATSBrokerOptions) (broker mq.Br
 	if opts.AckWait <= 0 {
 		opts.AckWait = 5 * time.Second
 	}
-	broker, err := platform.NewNATSBroker(opts)
+	broker, err := platformasync.NewNATSBroker(opts)
 	if err != nil {
 		t.Fatalf("new nats broker: %v", err)
 	}
@@ -79,7 +80,7 @@ func runConsumer(t *testing.T, consumer mq.Consumer) func() {
 }
 
 func TestNATSBrokerPublishConsume(t *testing.T) {
-	broker, _ := testNATSBroker(t, platform.NATSBrokerOptions{MaxDeliver: 3, MaxAckPending: 4})
+	broker, _ := testNATSBroker(t, platformasync.NATSBrokerOptions{MaxDeliver: 3, MaxAckPending: 4})
 
 	received := make(chan mq.Message, 1)
 	consumer := broker.Consumer()
@@ -125,7 +126,7 @@ func TestNATSBrokerPublishConsume(t *testing.T) {
 }
 
 func TestNATSBrokerDeadLetter(t *testing.T) {
-	broker, url := testNATSBroker(t, platform.NATSBrokerOptions{MaxDeliver: 1, MaxAckPending: 4})
+	broker, url := testNATSBroker(t, platformasync.NATSBrokerOptions{MaxDeliver: 1, MaxAckPending: 4})
 
 	var calls atomic.Int32
 	consumer := broker.Consumer()
@@ -175,12 +176,12 @@ func TestNATSBrokerDeadLetter(t *testing.T) {
 }
 
 func TestValidateAsyncNATSBroker(t *testing.T) {
-	valid := func() *platform.Config {
+	valid := func() *platformconfig.Config {
 		cfg := iamBaseConfig()
-		cfg.DB = platform.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
+		cfg.DB = platformconfig.DBConfig{Driver: "mysql", DSN: "iam:iam@tcp(127.0.0.1:3306)/iam"}
 		cfg.Async.Enabled = true
-		cfg.Async.Driver = platform.AsyncDriverNATS
-		cfg.Async.Broker = platform.AsyncBrokerConfig{
+		cfg.Async.Driver = platformconfig.AsyncDriverNATS
+		cfg.Async.Broker = platformconfig.AsyncBrokerConfig{
 			URL:           "nats://127.0.0.1:4222",
 			Stream:        "async",
 			SubjectPrefix: "async",
@@ -195,15 +196,15 @@ func TestValidateAsyncNATSBroker(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		mutate func(*platform.Config)
+		mutate func(*platformconfig.Config)
 		want   string
 	}{
-		{"missing url", func(c *platform.Config) { c.Async.Broker.URL = "" }, "async.broker.url is required"},
-		{"bad scheme", func(c *platform.Config) { c.Async.Broker.URL = "http://127.0.0.1:4222" }, "async.broker.url must start with"},
-		{"bad stream", func(c *platform.Config) { c.Async.Broker.Stream = "async.stream" }, "async.broker.stream"},
-		{"bad subject prefix", func(c *platform.Config) { c.Async.Broker.SubjectPrefix = "async.*" }, "async.broker.subject_prefix"},
-		{"ack wait too small", func(c *platform.Config) { c.Async.Broker.AckWait = 500 * time.Millisecond }, "async.broker.ack_wait"},
-		{"max deliver too large", func(c *platform.Config) { c.Async.Broker.MaxDeliver = 101 }, "async.broker.max_deliver"},
+		{"missing url", func(c *platformconfig.Config) { c.Async.Broker.URL = "" }, "async.broker.url is required"},
+		{"bad scheme", func(c *platformconfig.Config) { c.Async.Broker.URL = "http://127.0.0.1:4222" }, "async.broker.url must start with"},
+		{"bad stream", func(c *platformconfig.Config) { c.Async.Broker.Stream = "async.stream" }, "async.broker.stream"},
+		{"bad subject prefix", func(c *platformconfig.Config) { c.Async.Broker.SubjectPrefix = "async.*" }, "async.broker.subject_prefix"},
+		{"ack wait too small", func(c *platformconfig.Config) { c.Async.Broker.AckWait = 500 * time.Millisecond }, "async.broker.ack_wait"},
+		{"max deliver too large", func(c *platformconfig.Config) { c.Async.Broker.MaxDeliver = 101 }, "async.broker.max_deliver"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,8 +219,8 @@ func TestValidateAsyncNATSBroker(t *testing.T) {
 
 func TestValidateAsyncNATSRequiresTLSInProd(t *testing.T) {
 	cfg := prodBaseConfig()
-	cfg.Async.Driver = platform.AsyncDriverNATS
-	cfg.Async.Broker = platform.AsyncBrokerConfig{
+	cfg.Async.Driver = platformconfig.AsyncDriverNATS
+	cfg.Async.Broker = platformconfig.AsyncBrokerConfig{
 		URL:           "nats://127.0.0.1:4222",
 		Stream:        "async",
 		SubjectPrefix: "async",
@@ -237,7 +238,7 @@ func TestValidateAsyncNATSRequiresTLSInProd(t *testing.T) {
 // TestValidateAsyncNATSDisabledSkipsBroker 校验 enabled=false 时仅声明驱动不触发 broker 必填。
 func TestValidateAsyncNATSDisabledSkipsBroker(t *testing.T) {
 	cfg := iamBaseConfig()
-	cfg.Async.Driver = platform.AsyncDriverNATS
+	cfg.Async.Driver = platformconfig.AsyncDriverNATS
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("disabled nats driver: %v", err)
 	}

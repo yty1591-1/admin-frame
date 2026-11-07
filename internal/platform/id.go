@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -17,9 +18,9 @@ var statefulSetOrdinal = regexp.MustCompile(`-(\d+)$`)
 //
 // 节点号来源：显式 id.node_id，或 statefulset 模式下从 HOSTNAME 末尾序号派生。
 // 非法配置返回错误而非 panic，由调用方终止启动（S-04）。
-func NewIDGenerator(cfg IDConfig) (id.Generator, int64, error) {
+func NewIDGenerator(cfg platformconfig.IDConfig) (id.Generator, int64, error) {
 	hostname := ""
-	if strings.EqualFold(strings.TrimSpace(cfg.NodeIDSource), IDSourceStatefulSet) {
+	if strings.EqualFold(strings.TrimSpace(cfg.NodeIDSource), platformconfig.IDSourceStatefulSet) {
 		name, err := os.Hostname()
 		if err != nil {
 			return nil, 0, fmt.Errorf("id: read hostname: %w", err)
@@ -38,22 +39,22 @@ func NewIDGenerator(cfg IDConfig) (id.Generator, int64, error) {
 }
 
 // resolveNodeID 计算生效节点号；hostname 仅在 statefulset 来源下使用。
-func resolveNodeID(cfg IDConfig, hostname string) (int64, error) {
+func resolveNodeID(cfg platformconfig.IDConfig, hostname string) (int64, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.NodeIDSource)) {
-	case "", IDSourceConfig, IDSourceEnv:
+	case "", platformconfig.IDSourceConfig, platformconfig.IDSourceEnv:
 		if cfg.NodeID == nil {
 			// 非生产环境允许未显式配置；prod/staging 已在 Validate 阶段拒绝。
 			return 0, nil
 		}
 		return *cfg.NodeID, nil
-	case IDSourceStatefulSet:
+	case platformconfig.IDSourceStatefulSet:
 		match := statefulSetOrdinal.FindStringSubmatch(hostname)
 		if match == nil {
 			return 0, fmt.Errorf("id: hostname %q has no statefulset ordinal suffix", hostname)
 		}
 		nodeID, err := strconv.ParseInt(match[1], 10, 64)
-		if err != nil || nodeID < 0 || nodeID > maxNodeID {
-			return 0, fmt.Errorf("id: statefulset ordinal must be in [0, %d]", maxNodeID)
+		if err != nil || nodeID < 0 || nodeID > platformconfig.MaxNodeID {
+			return 0, fmt.Errorf("id: statefulset ordinal must be in [0, %d]", platformconfig.MaxNodeID)
 		}
 		return nodeID, nil
 	default:
