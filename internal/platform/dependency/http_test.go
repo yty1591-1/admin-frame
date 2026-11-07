@@ -37,7 +37,7 @@ func TestHTTPRetriesAndObserves(t *testing.T) {
 	}
 	defer caller.CloseIdleConnections()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL, http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestHTTPRetriesAndObserves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if hits != 2 {
 		t.Fatalf("hits=%d want 2", hits)
@@ -82,13 +82,13 @@ func TestHTTPBreakerOpenFailsFast(t *testing.T) {
 	defer caller.CloseIdleConnections()
 
 	send := func() error {
-		req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+		req, err := http.NewRequest(http.MethodGet, srv.URL, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp, err := caller.Do(req)
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return err
 	}
@@ -125,7 +125,7 @@ func TestHTTPNonIdempotentNotRetried(t *testing.T) {
 	}
 	defer caller.CloseIdleConnections()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL, nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL, http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestHTTPNonIdempotentNotRetried(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if hits != 1 {
 		t.Fatalf("hits=%d want 1 for non-idempotent", hits)
 	}

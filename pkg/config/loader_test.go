@@ -555,8 +555,8 @@ func TestLoadNormalizeErrorAborts(t *testing.T) {
 	sentinel := errors.New("normalize failed")
 	loader, err := config.NewLoader(config.Options[normalizeProbe]{
 		Files:     []string{path},
-		Normalize: func(c *normalizeProbe) error { return sentinel },
-		Validate: func(c *normalizeProbe) error {
+		Normalize: func(_ *normalizeProbe) error { return sentinel },
+		Validate: func(_ *normalizeProbe) error {
 			t.Error("validate must not run after normalize failure")
 			return nil
 		},

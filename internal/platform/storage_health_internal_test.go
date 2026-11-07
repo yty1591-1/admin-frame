@@ -16,7 +16,7 @@ import (
 // 命名桶漏注册会让该桶不可用时进程仍被视为 Ready，异步导出与审计归档会把文件
 // 写到不可用后端（OPS-02）。
 func TestRegisterStorageChecksProbesDefaultAndNamedBuckets(t *testing.T) {
-	stores, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.StorageConfig{
+	stores, err := platformstorage.OpenStorageSet(context.Background(), platformstorage.Config{
 		Driver: "memory",
 		Buckets: map[string]platformstorage.BucketConfig{
 			"exports": {Driver: "memory"},
@@ -34,7 +34,7 @@ func TestRegisterStorageChecksProbesDefaultAndNamedBuckets(t *testing.T) {
 	registerStorageChecks(hh, stores)
 
 	rec := httptest.NewRecorder()
-	hh.Readiness()(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	hh.Readiness()(rec, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}

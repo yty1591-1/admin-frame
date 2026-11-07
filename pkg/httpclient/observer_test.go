@@ -16,7 +16,7 @@ type attemptRecorder struct {
 	statuses []int
 }
 
-func (r *attemptRecorder) AttemptObserved(attempt, statusCode int, _ error) {
+func (r *attemptRecorder) AttemptObserved(_, statusCode int, _ error) {
 	r.attempts++
 	r.statuses = append(r.statuses, statusCode)
 }
@@ -46,7 +46,7 @@ func TestObserverRecordsEachAttempt(t *testing.T) {
 	}
 	defer client.CloseIdleConnections()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL, http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestObserverRecordsEachAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if obs.attempts != 2 {
 		t.Fatalf("attempts=%d want 2", obs.attempts)
