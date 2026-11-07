@@ -106,6 +106,31 @@ func TestHTTPBreakerOpenFailsFast(t *testing.T) {
 	}
 }
 
+func TestHTTPCallerClientAccessor(t *testing.T) {
+	registry := dependency.NewRegistry(nil)
+	caller, err := registry.HTTP(dependency.Spec{
+		Name:    "downstream:client",
+		Timeout: time.Second,
+	}, httpclient.Config{DisableRetry: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer caller.CloseIdleConnections()
+
+	client := caller.Client()
+	if client == nil {
+		t.Fatal("Client() = nil want injected client")
+	}
+	if client.HTTP() != caller.HTTP() {
+		t.Fatal("Client().HTTP() must equal caller.HTTP()")
+	}
+
+	var nilCaller *dependency.HTTPCaller
+	if nilCaller.Client() != nil {
+		t.Fatal("nil HTTPCaller.Client() must be nil")
+	}
+}
+
 func TestHTTPNonIdempotentNotRetried(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

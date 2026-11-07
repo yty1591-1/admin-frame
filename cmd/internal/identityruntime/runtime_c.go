@@ -99,14 +99,26 @@ func buildSMSLoginService(
 		return nil, nil
 	}
 
-	sender, err := pkgsms.Open(context.Background(), pkgsms.Config{
+	smsDriverCfg := pkgsms.Config{
 		Driver: smsCfg.Driver,
 		Aliyun: pkgsms.AliyunConfig{
 			AccessKeyID:     os.Getenv(aliyunSMSAccessKeyIDEnv),
 			AccessKeySecret: os.Getenv(aliyunSMSAccessKeySecretEnv),
 			SignName:        smsCfg.SignName,
 		},
-	})
+	}
+	// 出站客户端经依赖注册表构造：超时与依赖指标统一口径；重试保持关闭，
+	// 由 identitysms 编排层按供应商语义决定，避免与注册表重试叠加。
+	if deps.Dependencies != nil {
+		caller, depErr := deps.Dependencies.HTTP(dependency.Spec{
+			Name: "identity:sms:" + smsCfg.Driver,
+		}, httpclient.Config{DisableRetry: true})
+		if depErr != nil {
+			return nil, apperr.Internal("identity sms dependency", depErr)
+		}
+		smsDriverCfg.HTTPClient = caller.Client()
+	}
+	sender, err := pkgsms.Open(context.Background(), smsDriverCfg)
 	if err != nil {
 		return nil, apperr.Internal("identity sms driver: "+smsCfg.Driver, err)
 	}

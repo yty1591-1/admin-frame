@@ -12,8 +12,9 @@
 //     显式传 NoRetry——注册表不猜语义；
 //   - HTTP 依赖经 Registry.HTTP 构造：请求级重试复用 pkg/httpclient 的
 //     退避与 Retry-After 语义，超时 / 重试 / 熔断 / 指标口径与本表一致；
-//   - 受 import 方向约束（pkg/sms、pkg/push）或在配置解析期执行（vault）的
-//     调用方暂无法访问注册表，仍直连 pkg/httpclient；后续经装配层注入客户端收敛。
+//   - 受 import 方向约束的下游驱动由装配层注入注册表客户端：pkg/sms 已注入；
+//     pkg/push 尚未装配生产驱动，接入时按同一方式注入；vault 在配置解析期
+//     执行（注册表尚未构造），仍直连 pkg/httpclient 并接受 check-deps 守护。
 package dependency
 
 import (

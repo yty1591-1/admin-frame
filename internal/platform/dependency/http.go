@@ -35,6 +35,16 @@ func (c *HTTPCaller) HTTP() *http.Client {
 	return c.client.HTTP()
 }
 
+// Client 返回底层 *httpclient.Client（含注册表的重试 / 熔断 / 观测链）。
+//
+// 供只接受 *httpclient.Client 的下游驱动（如 pkg/sms）在装配期注入使用。
+func (c *HTTPCaller) Client() *httpclient.Client {
+	if c == nil {
+		return nil
+	}
+	return c.client
+}
+
 // CloseIdleConnections 关闭空闲连接（进程退出前可选调用）。
 func (c *HTTPCaller) CloseIdleConnections() {
 	if c == nil {
