@@ -1,0 +1,36 @@
+# 通知域告警。
+#
+# 指标来源：internal/notification/observability（notify_*）。
+# 补这一组的原因：该域此前零规则，notification-delivery.md 没有任何监控入口；
+# 且 notify_audit_emit_failed_total 的 Help 明确写「非零即应告警」。
+#
+# 未包含「投递积压」规则：notify_delivery_active 是非终态明细数，健康基线随业务量波动，
+# 在没有历史数据前定阈值只会产生噪声。待拿到一周基线后再补，口径写进 notification-delivery.md。
+groups:
+  - name: admin-frame-notification
+    rules:
+      - alert: NotifyAuditEmitFailed
+        expr: increase(notify_audit_emit_failed_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: notify.audit.emit_failed
+        annotations:
+          summary: "通知域审计事件写出失败（拒发 / 补偿留痕缺失）"
+          description: "通知的拒发与补偿动作缺审计留痕，属合规缺口；按 async-dlq.md「审计写入失败」处置，不要只关注投递成功率。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: NotifySendFailureRate
+        expr: |
+          (sum by (channel) (rate(notify_send_total{result="failed"}[10m]))
+           / sum by (channel) (rate(notify_send_total[10m]))) > 0.2
+          and
+          sum by (channel) (rate(notify_send_total{result="failed"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: notify.send.failure_rate
+        annotations:
+          summary: "通知渠道终态失败率超过 20%（channel={{ $labels.channel }}）"
+          description: "result=failed 为终态失败（重试已耗尽）；先看 semantic 语义码区分供应商故障 / 收件人无效 / 模板错误，再按 notification-delivery.md 处置。"
+          runbook_url: docs/runbooks/notification-delivery.md

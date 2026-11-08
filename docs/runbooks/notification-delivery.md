@@ -1,12 +1,13 @@
 # Runbook：通知投递故障（notification-delivery）
 
-> 关联告警：`notify_send_total{result="failed"}` 突增、`notify_delivery_active` 持续增长、`notify_rate_limited_total` 突增（见 `docs/runbooks/ALERTS.md`）
+> 关联告警：`notify.send.failure_rate`（P2，渠道终态失败率 > 20%）、`notify.audit.emit_failed`（P1，审计写出失败）；另有 `notify_rate_limited_total` 突增与 `notify_delivery_active` 持续增长两项**尚未建规则**，见 `docs/runbooks/ALERTS.md`
 > 关联域：`internal/notification`（ENT-10）；架构见 `docs/adr/0008-notification-event-driven.md`
-> 最后更新：2026-11-04
+> 最后更新：2026-11-08（登记 `notify.send.failure_rate` 与 `notify.audit.emit_failed` 两条规则；说明积压类规则待基线）
 
 ## 症状
 
-- 指标 `notify_send_total{result="failed"}` 在 5 分钟内显著上升；
+- 指标 `notify_send_total{result="failed"}` 在 5 分钟内显著上升（对应告警 `notify.send.failure_rate`）；
+- 指标 `notify_audit_emit_failed_total` 增长（对应告警 `notify.audit.emit_failed`，属合规缺口，处置见 [async-dlq.md](./async-dlq.md)「审计写入失败」）；
 - 指标 `notify_delivery_active`（pending + retrying）持续增长不回落；
 - `notify_rate_limited_total` 突增（伴随业务方反馈通知延迟或丢失）；
 - `async_dlq` 出现 `notification.requested` 主题的死信积压；

@@ -15,6 +15,12 @@
 | `iam.shadow.mismatch` | P2 | shadow 判定与静态表不一致，enforce 前必须归零 | [iam.md](./iam.md) |
 | `iam.breakglass.active` | P1 | 存在有效破玻璃授权（`iam_breakglass_active > 0`） | [iam.md](./iam.md) |
 | `iam.outbox.backlog` | P1 | 平台 Outbox 中 IAM 主题积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），通常为 `cmd/worker` 未运行或审计出口不可用，审计延迟且可能丢失 | [iam.md](./iam.md) |
+| `iam.outbox.dead` | P1 | IAM 审计事件投递进入终态 dead（`increase(iam_outbox_delivery_total{result="dead"}[10m]) > 0`），重试已耗尽、审计事实不可回补 | [async-dlq.md](./async-dlq.md) |
+| `iam.outbox.poison` | P1 | IAM 审计事件被判为毒消息（`result="poison"`），重放会再次失败，须先修因 | [async-dlq.md](./async-dlq.md) |
+| `tenant.audit.emit_failed` | P1 | 租户域审计写入失败（`tenant_audit_emit_failed_total` 增长），业务事务已随之回滚 | [async-dlq.md](./async-dlq.md) |
+| `tenant.guard.error_rate` | P2 | 租户状态守卫无法判定比例 > 1%（`result="error"`），fail closed 导致商户侧 503/50300 | [tenant-suspend.md](./tenant-suspend.md) |
+| `notify.audit.emit_failed` | P1 | 通知域审计写出失败（`notify_audit_emit_failed_total` 增长），拒发与补偿留痕缺失 | [async-dlq.md](./async-dlq.md) |
+| `notify.send.failure_rate` | P2 | 通知渠道终态失败率 > 20%（`notify_send_total{result="failed"}`），重试已耗尽 | [notification-delivery.md](./notification-delivery.md) |
 | `async.outbox.backlog` | P1 | 通用 Outbox 积压（pending > 1000 或 lag > 300s），审计/通知延迟 | [async-dlq.md](./async-dlq.md) |
 | `identity.sms.balance_low` | P1 | 短信供应商余额不足，C 端验证码发送失败（`identity_sms_provider_alerts_total{kind="insufficient_balance"}`） | [identity-sms-balance.md](./identity-sms-balance.md) |
 | `identity.token.reuse` | P1 | 检测到刷新令牌重放（`identity_token_reuse_total` 5 分钟内增长），整条设备链已撤销 | [identity-auth-failure.md](./identity-auth-failure.md) |

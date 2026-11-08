@@ -81,3 +81,28 @@ groups:
           summary: "IAM 审计 Outbox 积压（pending/lag 超阈值）"
           description: "通常为 worker 未运行或审计出口不可用；审计延迟可能影响合规。"
           runbook_url: docs/runbooks/iam.md
+
+      # 终态失败：积压告警只覆盖「还没投出去」，这两条覆盖「投不出去且已放弃」。
+      # iam/observability 预创建了 dead / poison 标签值，就是为了让这两个表达式在
+      # 无投递时也能求值、不为空向量（见 metrics.go 注释）。
+      - alert: IAMAuditOutboxDead
+        expr: increase(iam_outbox_delivery_total{result="dead"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: iam.outbox.dead
+        annotations:
+          summary: "IAM 审计事件投递进入终态 dead"
+          description: "重试耗尽仍投递失败，审计事实缺失且不可回补；先按 async-dlq.md「审计写入失败」取 last_error 与载荷，再决定重放。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: IAMAuditOutboxPoison
+        expr: increase(iam_outbox_delivery_total{result="poison"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: iam.outbox.poison
+        annotations:
+          summary: "IAM 审计事件被判为毒消息（poison）"
+          description: "同一事件反复失败后被隔离；直接重放会再次进入 poison，须先修因（载荷格式或下游 schema）。"
+          runbook_url: docs/runbooks/async-dlq.md
