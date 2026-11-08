@@ -36,6 +36,7 @@
 | `identity.cleanup.backlog` | P2 | 单轮清理达到批次上限未清空（`identity_cleanup_batch_limit_hit_total`） | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.cleanup.not_running` | P2 | 清理指标缺失（`absent(identity_cleanup_runs_total)`），worker 未暴露指标或清理未启动 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `async.dlq.depth` | P2 | 存在未重放的死信事件（`async_dlq_depth > 0`） | [async-dlq.md](./async-dlq.md) |
+| `async.dlq.stalled` | P2 | 死信 30 分钟未减少（`min_over_time(async_dlq_depth[30m]) > 0`），重放疑似无效 | [async-dlq.md](./async-dlq.md) |
 | `async.outbox.dead` | P2 | Outbox 出现新的死信/毒消息 | [async-dlq.md](./async-dlq.md) |
 | `async.broker.publish_error` | P2 | NATS JetStream 发布失败率升高（`async.driver=nats`） | [async-dlq.md](./async-dlq.md) |
 | `async.broker.consume_dead` | P2 | broker 消费者转入 DLQ | [async-dlq.md](./async-dlq.md) |

@@ -5,7 +5,7 @@
 | 告警 ID | `identity.token.reuse` / `identity.lockout.spike` / `identity.revocation.store_error` / `identity.revocation.cache_write_error` / `identity.refresh.failure_rate` / `identity.refresh.latency` / `identity.login.failure_rate` / `identity.mfa.latency` / `identity.mfa.recovery_used` / `identity.step_up.latency` / `identity.oauth.latency` / `identity.session.revoke_failure` / `identity.outbox.backlog` / `identity.outbox.lag` / `identity.sms.breaker_open` / `identity.cleanup.failure` / `identity.cleanup.backlog` / `identity.cleanup.not_running` |
 | 级别 | P1（`token.reuse` / `lockout.spike` / `revocation.store_error`）；其余 P2 |
 | 服务 / 端 | admin-api、biz-api、c-api、worker（`identity` 域 + `cmd/worker` 清理任务） |
-| 最后更新 | 2026-11-02 |
+| 最后更新 | 2026-11-08（补「fail-closed 处置」：判定阈值、代码级熔断行为与恢复顺序） |
 
 > **目标**：在 5 分钟内判断是依赖故障、攻击行为还是配置错误，并执行可回滚的处置。
 
@@ -75,6 +75,46 @@
 3. 熔断期内 jti 校验直接快速失败（503），不再逐请求等待 3s 读超时，避免故障放大为请求雪崩。
 4. 若 Redis 长时间不可用，评估临时开启 `identity.revocation.failure_mode=fail_open` 的**安全代价**；生产默认禁止。
 5. Redis 恢复后确认 `identity_revocation_store_errors_total` 停止增长，并抽查撤销快照键；下一次冷却结束会自动重新探测 Redis。
+
+#### fail-closed 处置（判定阈值与恢复顺序）
+
+**先明确一个事实：当前没有本地降级开关。** 进程内没有「跳过撤销校验」的开关，现场只有三条路：
+
+| 路径 | 手段 | 代价 / 限制 |
+|---|---|---|
+| 修依赖 | 恢复 Redis | 唯一不影响安全语义的路径 |
+| 放大宽限 | `identity.revocation.token_grace`（默认 30s，硬上限 60s，负值禁用） | 改配置需发布；上限在 `validate` 里强制，不能无限放大 |
+| 安全降级 | `identity.revocation.failure_mode=fail_open` | prod / staging 被 `validate` 强制 `fail_closed`；开启需安全负责人书面同意，并补审计与复盘 |
+
+不存在「只让某个副本放行」的开关，因此**不要用重启单个 Pod 的方式试图绕过**：重启只会丢掉本地宽限与 L1 缓存，使 503 面变大。
+
+先分清 503 的来源，三者处置方向不同：
+
+| 判据 | 阈值 | 判定 |
+|---|---|---|
+| `identity_revocation_store_errors_total` | 5 分钟内持续增长且不回落 | 撤销存储不可用 → 本节 |
+| `/readyz` 的 `identity_db` | 失败 | DB 故障 → 按 DB 连接池手册，不是本节 |
+| 50300 响应占比 | 5 分钟内 > 5% | 已影响用户 → 按 P1 升级 |
+
+故障期的代码行为（据此判断「是否已熔断」，不要凭现象猜）：
+
+- 连续 **3 次**存储失败后进入 **10s 冷却**（`internal/identity/app/revocation.go` 的 `revocationStoreBreakerThreshold` / `revocationStoreBreakerCooldown`）；
+- 冷却期内**账号 / 会话快照直接回源 DB**，不再等 Redis 读超时（DB 是唯一事实源）；
+- **jti 黑名单没有 DB 事实源**：冷却期内若该 jti 在宽限窗口内被验证过未撤销则放行，否则按 `failure_mode` 返回 **50300**。
+
+所以 Redis 抖动期间的正确预期是「**部分请求 503、活跃会话仍可用**」。若出现全量 503，说明宽限与回源都被打穿，立即按 P1 升级，不要继续观察。
+
+判断 Redis 是否恢复，用冷却周期做口径：**每个 10s 冷却周期结束后仍产生新错误，连续 3 个周期（约 30s）→ 判为未恢复**；若某周期内错误停止增长，说明 Redis 已回来，转入恢复确认。
+
+**恢复顺序**（按序执行，不要跳步）：
+
+1. 先修 Redis 侧（主从 / 哨兵 / 集群状态、连接数、内存淘汰），不要先动应用；
+2. 不重启 API Pod：冷却结束后首个请求会自动重新探测 Redis；
+3. 观察 `identity_revocation_store_errors_total` 连续 5 分钟零增长；
+4. 抽查撤销键：账号 / 会话快照存在且 TTL 正常，jti 黑名单写入生效；
+5. 冒烟四项：登录 → 刷新 → 登出 → **用登出前的令牌请求应为 401**（若返回 200，说明撤销未生效，立即升级 P1）；
+6. 复盘时补一项影响面：故障窗口内命中宽限而放行的请求，其「已撤销但暂可用」时长上限等于 `token_grace`（默认 30s，最大 60s）；当前没有专门的宽限命中指标，用故障持续时长与 `identity_revocation_store_errors_total` 曲线估算上界，并写入复盘。
+
 
 ### 令牌重放
 

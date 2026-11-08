@@ -2,15 +2,16 @@
 
 | 字段 | 内容 |
 |------|------|
-| 告警 ID | `async.dlq.depth_high`（建议）、`async.outbox.pending_high`（建议） |
+| 告警 ID | `async.dlq.depth`、`async.dlq.stalled`、`async.outbox.dead`、`async.outbox.backlog` |
 | 级别 | P2（单主题 DLQ 增长且业务可延迟）/ P1（核心审计 / 权限事件连续进入 DLQ） |
 | 服务 / 端 | worker（投递方）、admin-api / biz-api（`async.outbox.publish_in_api=true` 时） |
-| 最后更新 | 2026-10-22 |
+| 最后更新 | 2026-11-08（补 `async.dlq.stalled` 与「重放有效性判定」；告警 ID 由「建议」改为实际 ID） |
 
 ## 症状
 
 - 触发条件：
   - `async_dlq_depth > 0` 且在 10 分钟内未回落；
+  - `min_over_time(async_dlq_depth[30m]) > 0`（`async.dlq.stalled`）：死信持续 30 分钟未减少；
   - `async_outbox_delivery_total{result="dead"}` 或 `{result="poison"}` 持续增长；
   - `async_outbox_pending` / `async_outbox_lag_seconds` 持续上升。
 - 用户可见表现：业务侧异步动作（审计落库、缓存失效、通知）延迟或不生效；
@@ -52,6 +53,38 @@
    - 业务错误（下游不可用、唯一键冲突）：修复下游后重放。
 5. 查 worker 日志：`service=worker msg="outbox delivery failed"`、
    `msg="async relay started"` 中的 `topics` 是否包含告警主题。
+
+## 重放有效性判定（30 分钟未下降）
+
+`async.dlq.stalled` 命中时，「depth 没有下降」有两种相反原因，处置方向相反，必须先分清：
+
+| 判据 | 指向 | 处置 |
+|---|---|---|
+| 没有任何重放痕迹（`replayed_at` 全为 NULL） | **没人重放**，不是投递故障 | 按「缓解与恢复」先修因再重放，不必怀疑 handler |
+| 已执行 `-replay-dlq`、`replayed_at` 有值，但 depth 30 分钟未降 | **重放无效**：事件重新投递后再次失败 | 比对 `last_error` 是否与上次相同：相同即 poison 循环，先定位载荷；不同则查 handler 阻塞或下游未恢复 |
+
+判定 SQL（只读，MySQL / PostgreSQL 通用）：
+
+```sql
+-- 是否发生过重放
+SELECT COUNT(*) AS total,
+       SUM(CASE WHEN replayed_at IS NOT NULL THEN 1 ELSE 0 END) AS replayed,
+       MAX(replayed_at) AS last_replay
+FROM async_dlq;
+
+-- 重放后是否又落回死信（failed_at 晚于 replayed_at = 重放无效）
+SELECT source_id, topic, attempts, last_error, failed_at
+FROM async_dlq
+WHERE replayed_at IS NOT NULL AND failed_at > replayed_at
+ORDER BY failed_at DESC
+LIMIT 20;
+```
+
+三条禁止的判断：
+
+- 不要把「depth 没涨」当作已缓解：depth 不下降正是本告警的触发条件；
+- 不要在 `last_error` 未变化时反复执行 `-replay-dlq=all`：每次重放都会重新走指数退避，放大下游压力；
+- 不要手工把 `async_dlq_depth` 改成 0：指标由表行数计算，只能通过重放或经 Owner 批准的放弃流程下降。
 
 ## 缓解与恢复
 
