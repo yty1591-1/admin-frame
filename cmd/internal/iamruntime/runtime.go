@@ -26,6 +26,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/security"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	pkgcache "github.com/admin-frame/admin-frame/pkg/cache"
+	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/outbox"
 	"github.com/admin-frame/admin-frame/pkg/rbac"
 )
@@ -319,29 +320,17 @@ func New(deps *platform.Deps, iamCfg iamconfig.IAMConfig, opts Options) (*Runtim
 	}
 
 	// 访问复核（P1-7）：默认开启；显式关闭时 Certification=nil，Handler 不注册复核路由。
-	var certificationSvc *app.CertificationService
-	if cfg.IAM.Certification.IsEnabled() {
-		campaigns, tasks := buildCertificationRepositories(deps)
-		certificationSvc, err = app.NewCertificationService(app.CertificationServiceConfig{
-			Campaigns:  campaigns,
-			Tasks:      tasks,
-			Bindings:   bindings,
-			Roles:      roles,
-			Revoker:    bindingCertificationRevoker{svc: bindingSvc},
-			Recorder:   recorder,
-			UnitOfWork: uow,
-			IDs:        ids,
-			Audit:      auditMeta,
-			Limits: app.CertificationLimits{
-				RequireReason:   cfg.IAM.Security.RequireReason,
-				AllowBizChannel: true,
-				AutoRevoke:      cfg.IAM.Certification.AutoRevoke,
-			},
-			Logger: deps.Logger,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("iam certification service: %w", err)
-		}
+	certificationSvc, err := buildCertificationService(deps, cfg.IAM, certificationServiceDeps{
+		Roles:      roles,
+		Bindings:   bindings,
+		BindingSvc: bindingSvc,
+		Recorder:   recorder,
+		UnitOfWork: uow,
+		IDs:        ids,
+		Audit:      auditMeta,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("iam certification service: %w", err)
 	}
 
 	handler, err := rest.NewHandler(rest.HandlerConfig{
@@ -447,6 +436,53 @@ type bindingCertificationRevoker struct {
 // Revoke 回收绑定；MerchantID 留空，因为调用前已校验绑定与活动商户一致。
 func (r bindingCertificationRevoker) Revoke(ctx context.Context, bindingID, actor, reason string) error {
 	return r.svc.Unbind(ctx, app.UnbindCommand{ID: bindingID, Actor: actor, Reason: reason})
+}
+
+// certificationServiceDeps 是访问复核用例的装配输入。
+//
+// 单独抽出是为了让 API 进程（带 HTTP handler）与一次性扫描进程
+// （worker -certification-sweep）共用同一套 limits / revoker / 审计出口：
+// 两处各写一遍必然漂移，最危险的漂移是 auto_revoke 开关不一致。
+type certificationServiceDeps struct {
+	Roles      domain.RoleRepository
+	Bindings   domain.BindingRepository
+	BindingSvc *app.BindingService
+	Recorder   app.ChangeRecorder
+	UnitOfWork app.UnitOfWork
+	IDs        id.Generator
+	Audit      app.AuditMeta
+}
+
+// buildCertificationService 装配访问复核用例；未启用时返回 nil。
+func buildCertificationService(
+	deps *platform.Deps, iamCfg iamconfig.IAMConfig, parts certificationServiceDeps,
+) (*app.CertificationService, error) {
+	if !iamCfg.Certification.IsEnabled() {
+		return nil, nil
+	}
+	campaigns, tasks := buildCertificationRepositories(deps)
+	return app.NewCertificationService(app.CertificationServiceConfig{
+		Campaigns:  campaigns,
+		Tasks:      tasks,
+		Bindings:   parts.Bindings,
+		Roles:      parts.Roles,
+		Revoker:    bindingCertificationRevoker{svc: parts.BindingSvc},
+		Recorder:   parts.Recorder,
+		UnitOfWork: parts.UnitOfWork,
+		IDs:        parts.IDs,
+		Audit:      parts.Audit,
+		Limits:     certificationLimits(iamCfg),
+		Logger:     deps.Logger,
+	})
+}
+
+// certificationLimits 把配置映射为复核规模与安全开关。
+func certificationLimits(iamCfg iamconfig.IAMConfig) app.CertificationLimits {
+	return app.CertificationLimits{
+		RequireReason:   iamCfg.Security.RequireReason,
+		AllowBizChannel: true,
+		AutoRevoke:      iamCfg.Certification.AutoRevoke,
+	}
 }
 
 // buildCertificationRepositories 装配访问复核仓储；内存与 SQL 语义保持一致。

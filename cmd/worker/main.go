@@ -42,8 +42,10 @@ var (
 func main() {
 	configPath := flag.String("config", "configs/worker.yaml", "config file path")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
+	sweepCertifications := flag.Bool("certification-sweep", false,
+		"run one access-certification expiry sweep and exit")
 	flag.Parse()
-	if err := run(*configPath, *replayDLQ); err != nil {
+	if err := run(*configPath, *replayDLQ, *sweepCertifications); err != nil {
 		log.Printf("worker: %v", err)
 		os.Exit(1)
 	}
@@ -52,8 +54,9 @@ func main() {
 // run 装配 worker 依赖并阻塞消费，直到收到退出信号。
 //
 // worker 是 Outbox Relay 的独占宿主：注册业务 topic handler 后运行 Relay；
-// -replay-dlq 模式只做死信重放后退出，不启动 Relay（见 docs/runbooks/async-dlq.md）。
-func run(configPath, replayDLQ string) error {
+// -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
+// （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
+func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	appCfg, err := appconfig.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -109,6 +112,18 @@ func run(configPath, replayDLQ string) error {
 	logger.Info("id generator ready", "node_id", nodeID)
 	if replayDLQ != "" {
 		return replayDeadLetters(ctx, deps, replayDLQ, logger)
+	}
+	if sweepCertifications {
+		// 一次性扫描：只有 async 启用时才建 Outbox，让审计事件持久化后由常驻
+		// worker 投递；未启用时审计退化为结构化日志（本地 / demo 语义）。
+		if cfg.Async.Enabled {
+			asyncRuntime, err := platform.NewAsyncRuntime(deps)
+			if err != nil {
+				return fmt.Errorf("async runtime: %w", err)
+			}
+			deps.Async = asyncRuntime
+		}
+		return runCertificationSweep(ctx, deps, appCfg.IAM, logger)
 	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)
