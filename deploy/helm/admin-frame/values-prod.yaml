@@ -244,6 +244,12 @@ workloads:
 migrate:
   enabled: true
 
+# 生产开启超期扫描：auto_revoke 仍由 config.iam.certification.auto_revoke 控制，
+# 未开启时扫描只把超期任务标记为 expired（不回收），可先以该形态运行。
+certificationSweep:
+  enabled: true
+  schedule: "0 2 * * *"
+
 serviceMonitor:
   enabled: true
 

@@ -301,6 +301,34 @@ migrate:
       cpu: 500m
       memory: 256Mi
 
+# 访问复核超期扫描（P1-7）：一次性 worker 进程 + CronJob，默认关闭。
+#
+# 开启前确认 iam.certification.enabled 未被显式关闭；auto_revoke 决定扫描是
+# 「只标记 expired」还是「同时回收绑定」，生产开启回收应先在 staging 演练。
+certificationSweep:
+  enabled: false
+  # 每日 02:00（集群时区）：复核截止时间按 UTC 存储，扫描本身与时区无关，
+  # 选择低峰期只是避免与业务写入争锁。
+  schedule: "0 2 * * *"
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  image:
+    repository: worker
+    tag: ""
+    digest: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 serviceMonitor:
   enabled: false
   # 集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）时的行为。

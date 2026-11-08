@@ -17,6 +17,7 @@
 | `iam.outbox.backlog` | P1 | 平台 Outbox 中 IAM 主题积压（`iam_outbox_pending > 1000` 或 `iam_outbox_lag_seconds > 60`），通常为 `cmd/worker` 未运行或审计出口不可用，审计延迟且可能丢失 | [iam.md](./iam.md) |
 | `iam.outbox.dead` | P1 | IAM 审计事件投递进入终态 dead（`increase(iam_outbox_delivery_total{result="dead"}[10m]) > 0`），重试已耗尽、审计事实不可回补 | [async-dlq.md](./async-dlq.md) |
 | `iam.outbox.poison` | P1 | IAM 审计事件被判为毒消息（`result="poison"`），重放会再次失败，须先修因 | [async-dlq.md](./async-dlq.md) |
+| `iam.certification.sweep_failed` | P2 | 访问复核超期扫描 CronJob 失败（`kube_job_status_failed{job_name=~"admin-frame-certification-sweep.*"} > 0`），超期任务不会被标记 expired，复核证据停更 | [iam.md](./iam.md) |
 | `tenant.audit.emit_failed` | P1 | 租户域审计写入失败（`tenant_audit_emit_failed_total` 增长），业务事务已随之回滚 | [async-dlq.md](./async-dlq.md) |
 | `tenant.guard.error_rate` | P2 | 租户状态守卫无法判定比例 > 1%（`result="error"`），fail closed 导致商户侧 503/50300 | [tenant-suspend.md](./tenant-suspend.md) |
 | `notify.audit.emit_failed` | P1 | 通知域审计写出失败（`notify_audit_emit_failed_total` 增长），拒发与补偿留痕缺失 | [async-dlq.md](./async-dlq.md) |

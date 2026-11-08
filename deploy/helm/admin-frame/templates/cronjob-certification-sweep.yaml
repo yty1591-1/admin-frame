@@ -1,0 +1,108 @@
+{{- if .Values.certificationSweep.enabled }}
+# 访问复核超期扫描：一次性 worker 进程（`worker -certification-sweep`），不常驻。
+#
+# 为什么是 CronJob 而不是进程内定时器：自动回收必须复用解绑用例（软撤销 +
+# 约束校验 + 快照失效 + rbac.binding_change 审计），这些依赖只在完整装配的
+# 进程里；一次性 Job 同时保证 API 多副本不会重复执行同一轮扫描
+# （契约见 docs/rbac-iam.md §10.3，处置见 docs/runbooks/iam.md §季度访问复核）。
+#
+# 手动补跑：kubectl -n <namespace> create job --from=cronjob/<本对象名> <任意名>
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-certification-sweep
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "certification-sweep") | nindent 4 }}
+spec:
+  schedule: {{ .Values.certificationSweep.schedule | quote }}
+  suspend: {{ .Values.certificationSweep.suspend }}
+  # Forbid：上一轮未结束时不再并发起新一轮，避免两轮同时回收同一批任务。
+  concurrencyPolicy: {{ .Values.certificationSweep.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ .Values.certificationSweep.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.certificationSweep.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.certificationSweep.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.certificationSweep.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.certificationSweep.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "admin-frame.selectorLabels" (dict "root" . "component" "certification-sweep") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "admin-frame.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: certification-sweep
+              image: {{ include "admin-frame.image" (dict "root" . "workload" (dict "image" .Values.certificationSweep.image)) }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - -config
+                - /etc/admin-frame/config.yaml
+                - -certification-sweep
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.certificationSweep.resources | nindent 16 }}
+              {{- if or .Values.env .Values.identitySecrets.enabled }}
+              env:
+                {{- with .Values.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+                {{- if .Values.identitySecrets.enabled }}
+                # 与 worker 保持一致：配置校验要求身份域密钥可解析，
+                # 扫描 Pod 若缺这两个变量会在装配期直接失败。
+                - name: ADMIN_FRAME_IDENTITY_HASH_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.identitySecrets.secretName }}
+                      key: {{ .Values.identitySecrets.hashKeyKey }}
+                - name: ADMIN_FRAME_IDENTITY_MFA_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.identitySecrets.secretName }}
+                      key: {{ .Values.identitySecrets.mfaSecretKey }}
+                {{- end }}
+              {{- end }}
+              {{- with .Values.envFrom }}
+              envFrom:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/admin-frame
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                {{- if ((.Values.secretMounts | default dict).enabled) }}
+                - name: app-secrets
+                  mountPath: {{ .Values.secretMounts.mountPath }}
+                  readOnly: true
+                {{- end }}
+          volumes:
+            # 复用 worker 的 ConfigMap：service / channel / id / async 必须与常驻
+            # worker 完全一致，否则扫描写入的 outbox 事件会落在另一个服务名下。
+            - name: config
+              configMap:
+                name: {{ include "admin-frame.configMapName" (dict "root" . "key" "worker") }}
+            - name: tmp
+              emptyDir: {}
+            {{- if ((.Values.secretMounts | default dict).enabled) }}
+            - name: app-secrets
+              projected:
+                defaultMode: 0400
+                sources:
+                  {{- range .Values.secretMounts.sources }}
+                  - secret:
+                      name: {{ .secretName }}
+                      {{- if .optional }}
+                      optional: true
+                      {{- end }}
+                      items:
+                        {{- toYaml .items | nindent 24 }}
+                  {{- end }}
+            {{- end }}
+{{- end }}

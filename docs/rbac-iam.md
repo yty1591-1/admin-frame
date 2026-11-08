@@ -1319,7 +1319,9 @@ JOIN role_chain c ON c.id = s.role_id;
 - **超期回收**：截止时间后可将 `iam.certification.auto_revoke` 打开（默认关闭）执行自动回收；回收前按绑定的 subject/channel/merchant/role/expiresAt/revoked 指纹做二次校验，与生成任务时不一致则任务置 `skipped`（死信）且绝不回收，等待人工处理。
 - **证据导出**：`GET /admin/v1/iam/certifications/{id}/export?format=csv|json` 输出任务级完整字段（活动、主体、角色、绑定、责任人、状态、裁决、原因、裁决人、时间），用于等保 / SOC 2 周期性归档。
 - 所有创建、激活、裁决、自动动作与导出均写 `rbac.certification` 审计，并与业务写入同事务；审计失败则操作回滚。
-- 周期触发由 SRE 配置定时调用 `auto-expire` 端点（可重入），服务本身不内置调度器；季度复核、离职 / 转岗解绑与破玻璃 24h 复盘要求不变。
+- **超期扫描**：服务本身不内置调度器（避免 API 多副本重复执行），由 Helm `certificationSweep` 渲染的 CronJob 起一次性进程 `worker -certification-sweep` 执行；进程内按 `active` 活动分页扫描，先只读收集已过截止时间的活动，再对每个活动开独立事务处理，单个活动失败不阻断其余活动。
+- 人工触发与扫描共用同一段过期状态机（`expireOverdueTasks`）：差别仅在入口是否做端别 / 商户可见性校验；扫描使用固定 actor `system:certification` 留痕，`auto_revoke` 仍由配置决定是「只标记 expired」还是「回收绑定」。
+- 扫描进程复用解绑用例（软撤销 + 约束校验 + 快照失效 + `rbac.binding_change` 审计），并连共享 Redis 删除快照键；未配置 Redis 时回收在 L2 TTL（≤15m）内才全量生效。季度复核、离职 / 转岗解绑与破玻璃 24h 复盘要求不变。
 
 ---
 

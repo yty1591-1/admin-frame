@@ -106,3 +106,16 @@ groups:
           summary: "IAM 审计事件被判为毒消息（poison）"
           description: "同一事件反复失败后被隔离；直接重放会再次进入 poison，须先修因（载荷格式或下游 schema）。"
           runbook_url: docs/runbooks/async-dlq.md
+
+      # 超期扫描是唯一会把「过期未裁决」变成 expired 的路径；Job 失败意味着
+      # 复核证据停更，而人工未必会发现（没有请求、没有 5xx）。依赖 kube-state-metrics。
+      - alert: CertificationSweepFailed
+        expr: max by (job_name) (kube_job_status_failed{job_name=~"admin-frame-certification-sweep.*"} > 0)
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: iam.certification.sweep_failed
+        annotations:
+          summary: "访问复核超期扫描 Job 失败"
+          description: "超期任务不会被标记 expired，复核证据与回收动作停更；按 runbook 查 Job 日志并手工补跑 worker -certification-sweep。"
+          runbook_url: docs/runbooks/iam.md

@@ -24,6 +24,7 @@ deploy/helm/admin-frame/
     ├── serviceaccount.yaml     # pre-hook（weight -20）
     ├── migrate-config.yaml     # pre-hook（weight -10），迁移专用配置
     ├── migrate-job.yaml        # pre-install/pre-upgrade Hook（weight 0）
+    ├── cronjob-certification-sweep.yaml  # 访问复核超期扫描（默认关闭，生产开启）
     └── NOTES.txt
 ```
 
