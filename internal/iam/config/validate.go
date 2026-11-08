@@ -195,6 +195,17 @@ func (c *IAMConfig) Validate(env, channel, dbDriver string, redisEnabled, asyncE
 	if c.Certification.AutoRevoke && !c.Certification.IsEnabled() {
 		errs = append(errs, errors.New("iam.certification.auto_revoke requires iam.certification.enabled=true"))
 	}
+	// 单活动上限：0 表示沿用服务内置默认，负值没有语义，超过封顶值属容量设计
+	// 问题（应拆活动而不是抬上限），两者都在装配期拒绝。
+	if c.Certification.MaxTasksPerCampaign < 0 {
+		errs = append(errs, errors.New(
+			"iam.certification.max_tasks_per_campaign must be >= 0 (0 means built-in default 10000)"))
+	}
+	if c.Certification.MaxTasksPerCampaign > MaxCertificationTasksPerCampaignCap {
+		errs = append(errs, fmt.Errorf(
+			"iam.certification.max_tasks_per_campaign=%d exceeds cap %d",
+			c.Certification.MaxTasksPerCampaign, MaxCertificationTasksPerCampaignCap))
+	}
 	return errors.Join(errs...)
 }
 

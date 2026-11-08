@@ -479,9 +479,10 @@ func buildCertificationService(
 // certificationLimits 把配置映射为复核规模与安全开关。
 func certificationLimits(iamCfg iamconfig.IAMConfig) app.CertificationLimits {
 	return app.CertificationLimits{
-		RequireReason:   iamCfg.Security.RequireReason,
-		AllowBizChannel: true,
-		AutoRevoke:      iamCfg.Certification.AutoRevoke,
+		RequireReason:       iamCfg.Security.RequireReason,
+		AllowBizChannel:     true,
+		AutoRevoke:          iamCfg.Certification.AutoRevoke,
+		MaxTasksPerCampaign: iamCfg.Certification.MaxTasksPerCampaign,
 	}
 }
 
