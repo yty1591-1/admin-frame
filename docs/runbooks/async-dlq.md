@@ -2,10 +2,10 @@
 
 | 字段 | 内容 |
 |------|------|
-| 告警 ID | `async.dlq.depth`、`async.dlq.stalled`、`async.outbox.dead`、`async.outbox.backlog` |
+| 告警 ID | `async.dlq.depth`、`async.dlq.stalled`、`async.dlq.replay_ineffective`、`async.outbox.dead`、`async.outbox.backlog` |
 | 级别 | P2（单主题 DLQ 增长且业务可延迟）/ P1（核心审计 / 权限事件连续进入 DLQ） |
 | 服务 / 端 | worker（投递方）、admin-api / biz-api（`async.outbox.publish_in_api=true` 时） |
-| 最后更新 | 2026-11-08（补 `async.dlq.stalled` 与「重放有效性判定」；告警 ID 由「建议」改为实际 ID） |
+| 最后更新 | 2026-11-08（补 `async.dlq.stalled` 与 `async.dlq.replay_ineffective`、DB 派生指标 `async_dlq_replayed_30m`；告警 ID 由「建议」改为实际 ID） |
 
 ## 症状
 
@@ -56,14 +56,23 @@
 
 ## 重放有效性判定（30 分钟未下降）
 
-`async.dlq.stalled` 命中时，「depth 没有下降」有两种相反原因，处置方向相反，必须先分清：
+先看命中的是哪个告警，两者分工不同：
+
+| 告警 | 判据 | 指向 |
+|---|---|---|
+| `async.dlq.replay_ineffective` | `async_dlq_depth > 0` 且 `async_dlq_replayed_30m > 0` | **重放无效**：重放确实发起过，事件又落回死信 |
+| `async.dlq.stalled` | `min_over_time(async_dlq_depth[30m]) > 0` | **滞留**：30 分钟未下降，但不区分「没人重放」与「重放无效」 |
+
+`async_dlq_replayed_30m` 是 DB 派生量（`async_dlq.replayed_at` 落在 30 分钟窗口内的行数），不是进程内计数器——重放是 `cmd/worker -replay-dlq` 的一次性 CLI，进程退出后没有指标可抓。窗口常量与告警语义绑定在同一处（`pkg/outbox/store.go` 的 `ReplayRecentWindow`）。
+
+只有 `stalled` 命中（`replayed_30m` 为 0）时，用下表区分原因：
 
 | 判据 | 指向 | 处置 |
 |---|---|---|
 | 没有任何重放痕迹（`replayed_at` 全为 NULL） | **没人重放**，不是投递故障 | 按「缓解与恢复」先修因再重放，不必怀疑 handler |
-| 已执行 `-replay-dlq`、`replayed_at` 有值，但 depth 30 分钟未降 | **重放无效**：事件重新投递后再次失败 | 比对 `last_error` 是否与上次相同：相同即 poison 循环，先定位载荷；不同则查 handler 阻塞或下游未恢复 |
+| 已执行 `-replay-dlq`、`replayed_at` 有值，但 depth 30 分钟未降 | 与 `replay_ineffective` 同义（窗口可能已过 30 分钟） | 比对 `last_error` 是否与上次相同：相同即 poison 循环，先定位载荷；不同则查 handler 阻塞或下游未恢复 |
 
-判定 SQL（只读，MySQL / PostgreSQL 通用）：
+二次确认 SQL（只读，MySQL / PostgreSQL 通用）：
 
 ```sql
 -- 是否发生过重放

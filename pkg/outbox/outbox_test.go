@@ -322,3 +322,48 @@ func TestMemoryStoreReplayDeadLetter(t *testing.T) {
 		t.Fatalf("double replay = %v, %v", ok, err)
 	}
 }
+
+// TestMemoryStoreStatsReplayedRecently 锁定 Stats 的两个语义：
+// 重放后 DLQ 必须下降（与 MySQL 的 replayed_at IS NULL 对齐）；
+// ReplayedRecently 只统计 ReplayRecentWindow 内的重放。
+func TestMemoryStoreStatsReplayedRecently(t *testing.T) {
+	ctx := context.Background()
+	store := outbox.NewMemoryStore()
+	now := time.Now().UTC()
+	for _, id := range []string{"evt-recent", "evt-old"} {
+		if err := store.Append(ctx, newEvent(t, id)); err != nil {
+			t.Fatalf("Append %s: %v", id, err)
+		}
+	}
+	if _, err := store.ClaimBatch(ctx, now, time.Minute, 10); err != nil {
+		t.Fatalf("ClaimBatch: %v", err)
+	}
+	for _, id := range []string{"evt-recent", "evt-old"} {
+		if err := store.MarkFailed(ctx, id, now, "poison"); err != nil {
+			t.Fatalf("MarkFailed %s: %v", id, err)
+		}
+	}
+	stats, err := store.Stats(ctx)
+	if err != nil || stats.DLQ != 2 || stats.ReplayedRecently != 0 {
+		t.Fatalf("before replay stats = %+v, %v", stats, err)
+	}
+
+	if ok, err := store.ReplayDeadLetter(ctx, "evt-recent", now); err != nil || !ok {
+		t.Fatalf("replay recent = %v, %v", ok, err)
+	}
+	// 窗口外的重放不应计入「近期」。
+	if ok, err := store.ReplayDeadLetter(ctx, "evt-old", now.Add(-2*outbox.ReplayRecentWindow)); err != nil || !ok {
+		t.Fatalf("replay old = %v, %v", ok, err)
+	}
+
+	stats, err = store.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.DLQ != 0 {
+		t.Fatalf("DLQ = %d, want 0 (replayed rows must leave DLQ)", stats.DLQ)
+	}
+	if stats.ReplayedRecently != 1 {
+		t.Fatalf("ReplayedRecently = %d, want 1 (only window hits count)", stats.ReplayedRecently)
+	}
+}

@@ -102,12 +102,13 @@ func (m *Metrics) OnBrokerConsume(_ context.Context, result string) {
 	m.brokerConsume.WithLabelValues(result).Inc()
 }
 
-// RegisterGauges 注册 async_outbox_pending / async_outbox_lag_seconds / async_dlq_depth。
+// RegisterGauges 注册 async_outbox_pending / async_outbox_lag_seconds / async_dlq_depth /
+// async_dlq_replayed_30m。
 //
-// 三个 GaugeFunc 各自查询统计；查询失败时 pending/dlq 暴露 0、lag 暴露 0，
+// 每个 GaugeFunc 各自查询统计；查询失败时 pending/dlq/replayed 暴露 0、lag 暴露 0，
 // 投递失败仍可通过 async_outbox_delivery_total{result=dead|poison} 告警。
 //
-// 三个 Gauge 共用一份带 TTL 的快照（metrics.SnapshotCache）：DB 变慢时每个抓取
+// 所有 Gauge 共用一份带 TTL 的快照（metrics.SnapshotCache）：DB 变慢时每个抓取
 // 周期只付一次查询超时，而不是三次；否则 /metrics 响应会慢到超过 Prometheus 的
 // scrape_timeout，导致该进程**全部**指标丢失，连 db_pool_* 也一起消失
 // （ENT-06 T6 实测：DB 池耗尽时 DBPoolExhaustion 反而无法触发）。
@@ -143,6 +144,11 @@ func (m *Metrics) RegisterGauges(stats func(context.Context) (outbox.Stats, erro
 			name: "async_dlq_depth",
 			help: "死信表中未重放的事件数；>0 需按 ASYNC_DLQ runbook 处理。",
 			pick: func(s outbox.Stats, _ time.Time) float64 { return nonNegative(s.DLQ) },
+		},
+		{
+			name: "async_dlq_replayed_30m",
+			help: "最近 30 分钟内被重放的死信行数；与 dlq_depth 同时 >0 表示重放未生效。",
+			pick: func(s outbox.Stats, _ time.Time) float64 { return nonNegative(s.ReplayedRecently) },
 		},
 	}
 	for _, counter := range counters {
