@@ -62,13 +62,11 @@ git diff --unified=0 "${BASE}...HEAD" -- internal/iam |
     }
   ' >"${ranges}"
 
-total="$(wc -l <"${ranges}" | tr -d ' ')"
-if [[ "${total}" -eq 0 ]]; then
-  echo "OK: no changed IAM production lines; diff coverage skipped (P1-5)"
-  exit 0
-fi
-
-covered="$(awk '
+# 分母只取「变更行 ∩ 覆盖率档案中的可执行语句行」：
+# 覆盖率档案包含未执行语句（count=0），但永不含 package / import / 注释 / 空行，
+# 因此用它做可执行行判定可以避免把 `package config` 这类行算成「未覆盖」——
+# 否则仅新增包注释就会误报 0.0% 并阻断合并。
+read -r total covered < <(awk '
   NR == FNR { split($0, cols, "\t"); changed[cols[1] SUBSEP cols[2]] = 1; next }
   /^mode:/ { next }
   {
@@ -81,17 +79,28 @@ covered="$(awk '
     split(spans[1], s, ".")
     split(spans[2], e, ".")
     count = $3 + 0
-    if (count <= 0) { next }
     for (line = s[1] + 0; line <= e[1] + 0; line++) {
       key = rel SUBSEP line
-      if (changed[key] && !hit[key]) {
+      if (!changed[key]) { next }
+      if (!(key in seen)) {
+        seen[key] = 1
+        total++
+      }
+      if (count > 0 && !hit[key]) {
         hit[key] = 1
         covered++
       }
     }
   }
-  END { print covered + 0 }
-' "${ranges}" "${PROFILE}")"
+  END { print total + 0, covered + 0 }
+' "${ranges}" "${PROFILE}")
+
+total="${total:-0}"
+covered="${covered:-0}"
+if [[ "${total}" -eq 0 ]]; then
+  echo "OK: no changed executable IAM lines; diff coverage skipped (P1-5)"
+  exit 0
+fi
 
 pct="$(awk -v c="${covered}" -v t="${total}" 'BEGIN{printf "%.1f", 100*c/t}')"
 echo "    IAM changed lines: ${covered}/${total} covered (${pct}%)"

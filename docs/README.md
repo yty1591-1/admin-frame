@@ -81,7 +81,7 @@
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足），`ENT-25` 暂缓 |
-| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 立项评审稿 v1.0（待评审） | IAM 覆盖率门禁（P1-5）、OIDC/SAML/SCIM（P1-6）、访问复核（P1-7）：里程碑自 2026-11-30 起，尚未启动 |
+| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.1（部分交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML **已交付**、SCIM/M2M **未开工**（P1-6）；访问复核工具链**已交付待演练**（P1-7）。20 条验收已按代码与门禁实测回写，M0 会签仍待补 |
 
 > 这三份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4）已全部闭环，位于 [`archive/`](./archive/)。
 >
@@ -131,7 +131,7 @@ docs/
 ├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-*.md  # 活跃计划（L3）
-├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 立项评审稿（L3）
+├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 执行基线（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）
