@@ -23,6 +23,14 @@
 cert drill summary: l2_redis=true scanned=2 overdue=2 expired=2 tasks=2 audit_events=11
 ```
 
+| 计时口径 | 结果 | 说明 |
+|---|---|---|
+| 检测用时 | **N/A** | 本演练验证功能链路正确性，未注入故障、不产生告警；`iam.certification.sweep_failed` 告警的检测/确认/缓解计时须在 staging 实战演练中测量（复用 AI-05 窗口） |
+| 确认用时 | **N/A** | 同上 |
+| 缓解用时 | **N/A** | 同上 |
+
+> 本记录不声称完成事故实战演练：可核验的事实是「全流程在真实 MySQL / Redis / Outbox 链路上按剧本逐步通过」，证据以测试输出与导出文件为准。
+
 ## 2. 演练发现与处置
 
 | # | 发现 | 定性 | 处置 |
