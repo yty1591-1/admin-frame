@@ -2,7 +2,7 @@
 
 > **状态**：已落地（PostgreSQL / MySQL）  
 > **关联**：[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)（DATA-01～DATA-08）、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)（RELS-06）、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十四、[`pkg-roadmap.md`](./pkg-roadmap.md)、[`migrations/`](../migrations)  
-> **最后更新**：2026-10-20  
+> **最后更新**：2026-11-07（平台拆包后路径同步：`internal/platform/config/config.go`）  
 > **变更方式**：CLI 参数、配置优先级、迁移文件规范或故障处置流程变更须同步 `cmd/migrate`、`pkg/migrate` 单测与本文，并确认与 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 一致  
 > **目标读者**：后端开发、SRE / 发布负责人、Code Review  
 > **效力说明**：本文是使用说明。硬约束以 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 为准；两者冲突时以规范为准。

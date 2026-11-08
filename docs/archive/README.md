@@ -108,3 +108,17 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 
 > 两份计划的「生产渠道驱动装配」仍依赖渠道凭据，属环境配置项，不构成计划未闭环；
 > 若后续要改编排语义，按规则 §一.5 新建 L3 计划，不要搬回归档文件。
+
+---
+
+## 七、租户与 IAM 领域（2 份）
+
+两份的结论均已回写 L1 / L2 / L3，不再作为排期或验收依据。
+
+| 文档 | 归档理由 | 结论去向 |
+|------|----------|----------|
+| [tenant-enterprise-review.md](./tenant/tenant-enterprise-review.md) | 租户域企业级差距评审 + B1～B4 分批计划，2026-11-05 全部收口（评审时的 3 个 P0 缺陷已修复，6 项文档回写清单全部落地） | `ENT-09` 状态（[`production-readiness-implementation-plan.md`](../production-readiness-implementation-plan.md) §十二）、[`tenant-data-lifecycle.md`](../tenant-data-lifecycle.md)、[`adr/0006`](../adr/0006-tenant-as-isolation-boundary.md) / [`adr/0007`](../adr/0007-tenant-member-iam-binding.md)、`scripts/ci/check-tenant.sh` |
+| [iam-audit-report-2026-11-05.md](./iam/iam-audit-report-2026-11-05.md) | 2026-11-05 一次性 IAM 审计（总覆盖率 57.2%、门禁与架构评估），结论已被下游引用 | [`iam-p1-5-7-engineering-plan.md`](../iam-p1-5-7-engineering-plan.md)（P1-5/6/7 的输入依据）、[`rbac-iam.md`](../rbac-iam.md) |
+
+> 租户评审的 B1～B4 执行记录留在归档正文 §6.2～§6.4；若租户域再起整改，按 §一.5 新建 L3 计划并在
+> [`docs/README.md`](../README.md) §3.2 登记，不要搬回本目录。

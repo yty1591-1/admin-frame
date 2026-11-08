@@ -1,7 +1,7 @@
 # pkg 公共能力包路线图
 
 > **状态**：主要能力已落地（P0～P3 完成；P4 工具包按需补齐）
-> **最后更新**：2026-10-21（`pkg/clock` / `timeutil` / `circuitbreaker` / `convert` / `decimal` / `money` / `webhook` / `config` 已落地）
+> **最后更新**：2026-11-07（平台拆包同步：`internal/shared/httpx` → `apiresp`；前次 2026-10-21：`pkg/clock` / `timeutil` / `circuitbreaker` / `convert` / `decimal` / `money` / `webhook` / `config` 已落地）
 > **变更方式**：新增包、状态迁移或放置边界调整须同步本文「能力清单」与「最后更新」；新增第三方依赖按 DEP-06 在 MR 说明用途、许可证与替代方案
 > **对照**：业务约定放 `internal/shared`；进程装配放 `internal/platform`；通知渠道见 [`notification-channels.md`](./notification-channels.md)；RBAC 服务化见 [`rbac-iam.md`](./rbac-iam.md)
 

@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-08（校正地图偏差：ADR 补至 0011，补登 `deploy-kind-verify.md`、`incident/`、`oncall/` 与 IAM 审计报告；`docs/archive/` 合计 28 份）
+> **最后整理**：2026-11-08（归档 `tenant-enterprise-review.md` 与 `iam-audit-report-2026-11-05.md`；`deploy-kind-verify.md`、`tenant-data-lifecycle.md` 补状态头；21 份文档「最后更新」按实际提交回写；`docs/archive/` 合计 30 份）
 
 ---
 
@@ -81,12 +81,11 @@
 |------|------|----------|
 | [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足），`ENT-25` 暂缓 |
-| [tenant-enterprise-review.md](./tenant-enterprise-review.md) | 评审完成 v1.2 | 租户域企业级差距与分批开发计划：**B1、B2 已完成；B3 进行中（套餐模型 + 开通前置已落地，契约 7.3.0）**；B4 未开始；D-01～D-05 已定 |
 | [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 立项评审稿 v1.0（待评审） | IAM 覆盖率门禁（P1-5）、OIDC/SAML/SCIM（P1-6）、访问复核（P1-7）：里程碑自 2026-11-30 起，尚未启动 |
 
-> 这四份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关）已全部闭环，位于 [`archive/`](./archive/)。
+> 这三份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4）已全部闭环，位于 [`archive/`](./archive/)。
 >
-> **输入依据（非计划）**：[iam-audit-report-2026-11-05.md](./iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，满足 §四 归档条件后应移入 `archive/iam/`。
+> **输入依据（已归档）**：[iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
 
 ---
 
@@ -132,9 +131,7 @@ docs/
 ├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-*.md  # 活跃计划（L3）
-├── tenant-enterprise-review.md # 租户域差距评审与分批计划（L3）
 ├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 立项评审稿（L3）
-├── iam-audit-report-2026-11-05.md # IAM 一次性审计（P1-5/6/7 输入依据，归档候选）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）
@@ -146,7 +143,9 @@ docs/
     ├── platform/              # platform 整改计划、IAM 权限模型改造清单
     ├── reviews/               # 前端对接/架构评审、platform 架构与三目录边界评审
     ├── verify/                # 一次性验证与演练记录（ENT-04 / ENT-06）
-    └── plans/                 # 已实施领域计划（通知中心、特性开关）
+    ├── plans/                 # 已实施领域计划（通知中心、特性开关）
+    ├── tenant/                # 租户域差距评审与 B1～B4 分批计划（ENT-09）
+    └── iam/                   # IAM 一次性代码审计（P1-5/6/7 输入依据）
 ```
 
 ---

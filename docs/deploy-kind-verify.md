@@ -1,5 +1,9 @@
 # 用 kind 验证 Helm Chart（ENT-05 的可重复执行环境）
 
+> **状态**：已落地（ENT-05 闭环后的可重复验证流程；2026-11-02 首次跑通全流程，2026-11-06 补故障排查）  
+> **最后更新**：2026-11-06（补本机代理、`port-forward` 断连、集成测试起栈三类故障排查）  
+> **变更方式**：验证步骤或「已知坑」变更须同 MR 更新本文；验证入口（`deploy/helm/admin-frame/values-kind.yaml`、`scripts/ci/release-smoke.sh`、Helm 流程）调整须同步本文步骤与命令，ENT-05 状态变更回写 `production-readiness-implementation-plan.md`  
+
 在没有 staging 集群时，用 kind 真跑一遍「渲染 → 部署 → 冒烟 → 回滚 → 迁移失败阻断」。
 它能发现 `helm lint`、`kubectl --dry-run=client`、甚至 `kubectl --dry-run=server` 都
 发现不了的问题——那些只有容器真正启动才暴露的缺陷。

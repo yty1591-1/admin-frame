@@ -1,6 +1,10 @@
 # 租户数据生命周期（保留期 / 导出窗口 / 硬删除边界）
 
-> 关联：D-05（三段式数据处置）、ADR-0006、ENT-15（配额执行与用量）、`docs/audit/EVENTS.md`（`tenant.data_purge`）
+> **状态**：已落地（T-23 / ENT-15；三段式处置与证据链于 2026-11-04 生效）  
+> **最后更新**：2026-11-04  
+> **变更方式**：保留期 / 导出窗口 / 各域边界表 / 证据链变更须同步 `tenant.retention.*` 配置、`internal/tenant/app/purge.go`、`cmd/internal/tenantruntime/purge.go` 与 ENT-15 状态表，经架构 Owner Review 后合入  
+
+> 关联：D-05（三段式数据处置）、ADR-0006、ENT-15（数据分类 / 保留 / 导出 / 删除）、`docs/audit/EVENTS.md`（`tenant.data_purge`）
 >
 > 归口说明：本文只定义**租户侧**的接口、时间线与验收；通用数据处置平台
 > （导出执行、跨域级联、报告归档）归 ENT-15。本文与 ENT-15 的分工：

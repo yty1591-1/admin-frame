@@ -5,7 +5,7 @@
 > **适用范围**：OpenAPI、sqlc、mockery 及其它 `go generate` 产物的目录、提交与修改策略
 > **关联**：API 见 `API_STANDARDS.md`；测试 mock 见 `TESTING_STANDARDS.md`；架构工具链
 > **执行方式**：[`docs/codegen/MANIFEST.md`](./codegen/MANIFEST.md) + `check-codegen.sh` + Review
-> **最后更新**：2026-10-13
+> **最后更新**：2026-10-24（OpenAPI 派生产物改为只出 `dist/`、不入库；补多环境契约与 changelog 生成）
 > **变更方式**：修改本规范须同步更新 MANIFEST、生成配置与 `scripts/ci/check-codegen.sh`，经架构 Owner Review
 
 ---

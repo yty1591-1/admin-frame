@@ -4,7 +4,7 @@
 > **定位**：本文只评估**平台级能力**——任何未来业务域都需要的身份、租户、数据、异步、多实例、运维、安全与交付能力；具体业务域的实现不在评估范围内
 > **适用范围**：`internal/platform/`、`internal/security/`、`internal/shared/`、`internal/iam/`、`cmd/`、`pkg/`、`migrations/`、`deploy/`、`tests/`、`.github/`、`docs/`
 > **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)、[standards-roadmap.md](./standards-roadmap.md)、[platform-remediation-plan.md](./archive/platform/platform-remediation-plan.md)、[rbac-iam.md](./rbac-iam.md)、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[RELIABILITY_STANDARDS.md](./RELIABILITY_STANDARDS.md)、[OBSERVABILITY_STANDARDS.md](./OBSERVABILITY_STANDARDS.md)、[AUDIT_STANDARDS.md](./AUDIT_STANDARDS.md)、[DATA_STANDARDS.md](./DATA_STANDARDS.md)、[RELEASE_STANDARDS.md](./RELEASE_STANDARDS.md)、[RUNBOOK_STANDARDS.md](./RUNBOOK_STANDARDS.md)、[TESTING_STANDARDS.md](./TESTING_STANDARDS.md)
-> **最后更新**：2026-10-22
+> **最后更新**：2026-11-07（归档 8 份已验证记录后修正引用路径；评估结论仍为 v0.2 / 基线 `dad8fc0`）
 > **变更方式**：新增 / 关闭条目须同步更新「十、状态跟踪」与「执行记录」；P0 关闭须附验收命令与输出。优先级调整须架构 Owner 确认
 > **目标读者**：技术负责人、后端工程师、SRE、安全 / 合规 Reviewer、产品负责人
 

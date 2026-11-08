@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部代码、配置样例、流水线与发布物  
 > **关联**：架构 §十；密钥扫描与 gosec 见 CI；注释中的隐私约束见 `COMMENT_STANDARDS.md` C-08  
 > **执行方式**：gitleaks + gosec（golangci-lint）+ 调试端点检查 + MR 模板 + Review  
-> **最后更新**：2026-10-19  
+> **最后更新**：2026-10-21（补 gitleaks 高熵样例串的构造方式，禁止新增 allowlist）  
 > **变更方式**：修改本规范须同步更新 `.gitleaks.toml`、`.golangci.yml`（gosec）、流水线与架构 §十，经架构 Owner Review
 
 ---

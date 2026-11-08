@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部对外 API、worker、以及对外部系统（HTTP/RPC/DB/MQ/缓存）的调用  
 > **关联**：架构 §十一、§九；API 错误码见 `API_STANDARDS.md`；可观测见 `OBSERVABILITY_STANDARDS.md`  
 > **执行方式**：`check-reliability.sh` + 单测 + Review + MR 模板  
-> **最后更新**：2026-10-19  
+> **最后更新**：2026-11-07（平台拆包后路径同步：`internal/platform/server.go` → `httpserver/server.go`）  
 > **变更方式**：修改本规范须同步更新 `scripts/ci/check-reliability.sh`、`apperr` 限流码与架构 §十一，经架构 Owner Review
 
 ---

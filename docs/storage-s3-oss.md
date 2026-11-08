@@ -2,7 +2,7 @@
 
 > **状态**：已落地（M0–M5；默认 L1，`native=true` 切 L2）
 > **关联**：[`pkg/storage`](../pkg/storage)、[`docs/pkg-roadmap.md`](./pkg-roadmap.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十五
-> **最后更新**：2026-10-20
+> **最后更新**：2026-11-05（补状态与变更方式字段；新增「1. 定位与边界」）
 > **变更方式**：新增驱动、调整键/错误语义或默认 `driver` 须同步 `pkg/storage` 契约、配置示例与本文选型表，经安全 Review 后合入
 > **目标读者**：后端 / 平台装配 / 安全 Review
 

@@ -5,7 +5,7 @@
 > **适用范围**：本仓库配置样例、加载逻辑、环境变量与多环境约定
 > **关联**：架构 §十七；密钥见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
 > **执行方式**：`Validate()` 单测 + 配置样例门禁 + gitleaks + Review
-> **最后更新**：2026-10-20
+> **最后更新**：2026-11-07（新增 dev / staging 两套配置样板与环境变量清单；prod 单一来源改为三环境分目录）
 > **变更方式**：修改本规范须同步更新 `internal/platform/config`、`internal/{identity,iam,audit,tenant}/config`、`cmd/internal/appconfig`、`scripts/ci/check-config.sh`、`configs/*.example` 与架构 §十七，经架构 Owner Review
 
 ---

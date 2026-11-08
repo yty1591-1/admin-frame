@@ -2,7 +2,7 @@
 
 > **状态**：核心契约与 L1 驱动已实现（短信阿里云、邮件 SMTP、推送 APNs/FCM；M4 业务编排待首个真实调用方）  
 > **关联**：[`pkg-roadmap.md`](./pkg-roadmap.md) §2.6、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §5.7 / §6 / §11 / §12、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)  
-> **最后更新**：2026-10-20  
+> **最后更新**：2026-11-05（补状态与变更方式字段；关联章节按 `pkg-roadmap` 重编号同步为 §2.6）  
 > **变更方式**：渠道契约、错误语义、驱动矩阵或安全红线变更须同步 `pkg/{sms,email,push}` 契约、契约测试与本文配置 / 观测章节，经安全 Review 后合入
 > **目标读者**：后端 / 平台装配 / 安全 Review / SRE
 

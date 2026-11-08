@@ -8,7 +8,7 @@
 | 文档状态 | 待评审 |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
-| 输入依据 | [IAM 审计报告](./iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
+| 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
 | 批准人 | 研发负责人、安全负责人、运维负责人（立项会签） |
 | 变更控制 | 里程碑、验收阈值、范围变更须经变更评审（CCB）批准并更新本文档版本 |
 
@@ -428,7 +428,7 @@ golangci-lint run ./internal/iam/... ./internal/identity/...
 
 ### 14.2 关联文件
 
-- [IAM 审计报告](./iam-audit-report-2026-11-05.md)
+- [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md)
 - [RBAC 与 IAM 设计](./rbac-iam.md)
 - [身份认证设计](./identity-authn.md)
 - [CI 测试门禁](../scripts/ci/check-test-gates.sh)

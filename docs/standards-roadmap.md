@@ -4,7 +4,7 @@
 > **已落地**：注释（C）、风格（S）、CI、SEC、API、TEST、DEP、CFG、DATA、REL、OBS、GIT、RELS、RB、AUD、[LIC](./LICENSE_STANDARDS.md)、[GEN](./CODEGEN_STANDARDS.md)、[PERF](./PERFORMANCE_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-10-13（LIC + GEN + PERF P4 已落地；路线图表内专文全部完成）
+> **最后更新**：2026-11-02（补文档地图与 `docs/archive/` 归档区条目；路线图表内专文全部完成）
 
 ---
 

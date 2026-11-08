@@ -1,10 +1,12 @@
 # 租户域企业级评审与分批开发计划（ENT-09）
 
-> **文档性质**：L3 活跃计划（评审结论 + 分批任务）。未关闭条目的范围与验收对合入有约束力。  
+> **归档**：本文件已于 2026-11-08 归档，只读不再维护；现行结论以 [`tenant-data-lifecycle.md`](../../tenant-data-lifecycle.md)、[`adr/0006`](../../adr/0006-tenant-as-isolation-boundary.md)、[`adr/0007`](../../adr/0007-tenant-member-iam-binding.md) 与 `production-readiness-implementation-plan.md` 的 `ENT-09` 状态为准，归档索引见 [`archive/README.md`](../README.md)。
+
+> **文档性质**：**L4 归档**（原 L3 活跃计划，2026-11-08 归档）。B1～B4 全部完成、结论已回写 L1/L2，**不再作为排期或验收依据**；文件名与正文保留，仅供追溯当时的判断依据。  
 > **评审对象**：`internal/tenant`（4243 行）、`migrations/000008`～`000011`、`api/openapi/{paths,schemas}/admin/tenant.yaml`、`cmd/internal/tenantruntime`、`internal/platform/httpserver/guards.go`、`docs/adr/0006`。  
 > **评审日期**：2026-11-03  
-> **当前结论**：**不满足企业级租户模块要求**；作为「主数据 + 状态机」垂直切片质量合格，但缺入驻审核、套餐、邀请、租户自助与 IAM 联动，且有 3 个已复现的 P0 缺陷。  
-> **状态**：**B1 已完成；B2 进行中（T-05/T-06 已完成）**，B3/B4 未开始。执行记录见 [§6.2](#62-b1-实施记录2026-11-03) / [§6.3](#63-b2-实施记录2026-11-032)。
+> **评审时结论（2026-11-03）**：**不满足企业级租户模块要求**；作为「主数据 + 状态机」垂直切片质量合格，但缺入驻审核、套餐、邀请、租户自助与 IAM 联动，且有 3 个已复现的 P0 缺陷。该结论已由 B1～B4 整改全部关闭。  
+> **状态**：**B1～B4 全部完成（2026-11-05 收口），ENT-09 验收缺口全部关闭**。执行记录见 [§6.2](#62-b1-实施记录2026-11-03) / [§6.3](#63-b2-实施记录2026-11-032) / [§6.4](#64-b3-实施记录2026-11-03进行中)。
 
 ---
 
@@ -26,8 +28,8 @@
 
 | 取舍                                             | 出处                                                          | 影响                                                       |
 | ---------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
-| `tenant.id` 直接等于 `merchant_id`，不建映射表、不设 `code` | [ADR-0006](./adr/0006-tenant-as-isolation-boundary.md)      | 上线顺序被固定为「先回填租户 → 再开守卫」；`merchant_id` 从自由字符串收紧为必须存在的租户 ID |
-| C 端保持全局单租户，`merchant_id` 恒为空串                  | [ADR-0005](./adr/0005-c-channel-multi-merchant-boundary.md) | C 端不接租户守卫是正确的，不是遗漏                                       |
+| `tenant.id` 直接等于 `merchant_id`，不建映射表、不设 `code` | [ADR-0006../../adr/0006-tenant-as-isolation-boundary.md)      | 上线顺序被固定为「先回填租户 → 再开守卫」；`merchant_id` 从自由字符串收紧为必须存在的租户 ID |
+| C 端保持全局单租户，`merchant_id` 恒为空串                  | [ADR-0005../../adr/0005-c-channel-multi-merchant-boundary.md) | C 端不接租户守卫是正确的，不是遗漏                                       |
 | 成员只有 owner / admin / member 三级，不复制 IAM 权限模型    | 计划 §3.1、ADR-0006                                            | 细粒度权限必须通过 IAM 绑定表达，因此「成员表 ↔ IAM」的联动不可省略（见 P1-8）          |
 
 ---
@@ -625,12 +627,12 @@ ETag 闭环）；T-22 identity +3 组（成员切换成功与 claims 断言、�
 
 ## 八、门禁与文档回写清单
 
-- [ ] `scripts/ci/check-tenant.sh`（T-17）并接入 `make ci`
-- [ ] `docs/audit/EVENTS.md`：补充 `tenant.member.*` 的触发路径变化（B1 后）
-- [ ] `docs/adr/0006-tenant-as-isolation-boundary.md`：修正失效机制表述（T-06）
-- [ ] `docs/production-readiness-implementation-plan.md` §十二：ENT-09 状态改为「主体完成 + 验收缺口」，链接本文
-- [ ] `docs/runbooks/tenant-suspend.md`：补登录行为与 503/403 之外的新错误码
-- [ ] `docs/iam/PERMISSIONS.md`：若 T-18 引入租户级角色，需同步权限目录与 `internal/iam/catalog`
+- [x] `scripts/ci/check-tenant.sh`（T-17）并接入 `make ci` —— 已存在，`make ci` 目标链含 `check-tenant`
+- [x] `docs/audit/EVENTS.md`：补充 `tenant.member.*` 的触发路径变化（B1 后）—— 已登记 `add` / `role_change` / `disable` / `enable` 四事件
+- [x] `docs/adr/0006-tenant-as-isolation-boundary.md`：修正失效机制表述（T-06）—— 已改为 TTL 30s +「不做进程内即时失效」
+- [x] `docs/production-readiness-implementation-plan.md` §十二：ENT-09 状态改为「主体完成 + 验收缺口」，链接本文 —— 已回写；缺口于 2026-11-05 全部关闭，故记为「完成」
+- [x] `docs/runbooks/tenant-suspend.md`：补登录行为与 503/403 之外的新错误码 —— 已补 403/`40300`、503/`50300` 与登录期校验
+- [x] `docs/iam/PERMISSIONS.md`：若 T-18 引入租户级角色，需同步权限目录与 `internal/iam/catalog` —— T-18 走商户级模板角色绑定（ADR-0007），未新增租户级角色；`tenant:read` / `tenant:write` / `tenant:approve` 已在目录
 
 ---
 
