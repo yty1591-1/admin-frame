@@ -334,17 +334,19 @@ func findEventByActor(events []audit.Event, action, operation, actorID string) *
 }
 
 // certDrillArtifact 落盘演练证据；CERT_DRILL_ARTIFACT_DIR 未设置时写临时目录。
+//
+//nolint:gosec // G703: 输出目录来自本地测试环境变量 CERT_DRILL_ARTIFACT_DIR，非外部输入
 func certDrillArtifact(t *testing.T, name string, data []byte) string {
 	t.Helper()
 	dir := strings.TrimSpace(os.Getenv("CERT_DRILL_ARTIFACT_DIR"))
 	if dir == "" {
 		dir = t.TempDir()
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir artifact dir: %v", err)
 	}
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write artifact %s: %v", path, err)
 	}
 	t.Logf("cert drill artifact: %s", path)
@@ -483,8 +485,8 @@ func TestCertificationSweepFullFlowOnMySQL(t *testing.T) {
 // TestCertificationSweepAutoRevokeOnMySQL 演练 B：auto_revoke=true 的回收与防护。
 //
 // 两个主体、两个活动：
-//  - 9002：生成任务后解绑重绑 → 指纹漂移，扫描必须 skip，绝不回收新绑定；
-//  - 9003：指纹一致 → 自动回收，绑定软撤销、审计留痕、主体快照被失效。
+//   - 9002：生成任务后解绑重绑 → 指纹漂移，扫描必须 skip，绝不回收新绑定；
+//   - 9003：指纹一致 → 自动回收，绑定软撤销、审计留痕、主体快照被失效。
 func TestCertificationSweepAutoRevokeOnMySQL(t *testing.T) {
 	env := newCertDrillEnv(t)
 	ctx := context.Background()
