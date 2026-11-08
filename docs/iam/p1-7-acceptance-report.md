@@ -3,51 +3,62 @@
 | 字段 | 内容 |
 |---|---|
 | 范围 | P1-7 访问复核全量（S7-1 模型契约 → S7-5 演练与验收） |
-| 结论 | **工具链功能验收通过；整体签收不通过**（3 项前置未完成，见 §5） |
-| 日期 | 2026-11-08 |
+| 结论 | **工具链与验证链路全部闭环；剩余 3 项均为环境与人的环节**（见 §5） |
+| 日期 | 2026-11-08（§3.1 补真实入口裁决与完整演练；§3.5 补集群调度） |
 | 依据 | [计划 §13.3 验收标准](../iam-p1-5-7-engineering-plan.md#133-p1-7-验收)、[计划 §8 性能指标](../iam-p1-5-7-engineering-plan.md#8-性能指标与容量基线) |
 | 评审状态 | **未签字**：安全评审与平台评审均未发生，本报告是待评审输入 |
-| 环境口径 | 集成层为真实 MySQL 8.0.46 + Redis 7 + Outbox；**staging 集群实战未做** |
+| 环境口径 | 本地真实进程（HTTP 全链路）+ 真实 MySQL/Redis/Outbox；kind 集群 CronJob 真实调度；**staging 业务集群未做** |
 
 ## 1. 结论
 
-分两层，避免把「功能跑通」说成「已验收」：
+分三层，避免把「功能跑通」或「本地演练过」当成「已验收」：
 
-- **功能验收：通过。** 复核活动的创建、激活、清单生成、裁决、超期扫描、自动回收、证据导出、
-  审计投递全链路在真实存储链路上逐步验证，语义与 [rbac-iam.md §10.3](../rbac-iam.md) 设计一致。
-- **整体签收：不通过。** 差三件事——季度演练的运维形态（CronJob 真实调度 + staging 实战）、
-  单活动规模上限的口径决策、双评审签字。这三项都不是「再测一遍代码」，而是需要窗口与人的环节。
+- **功能与验证链路：闭环。** 复核活动的创建、激活、清单生成、裁决、超期扫描、自动回收、证据导出、
+  审计投递全链路已验证到位；其中「责任人裁决」走 A 端真实 HTTP 入口，「超期扫描」由真实
+  `worker -certification-sweep` 进程执行，「集群按计划触发」在 kind 上实测。
+- **验收项：4 条全部达标**（§2），其中第 1 条的「技术链路」已由一次组合演练覆盖；
+  组织层面的「真实季度执行」（真实责任人、真实周期）仍需 Owner 排期。
+- **整体签收：不通过。** 只剩三项：staging 环境实战与告警收敛、ADR-0012 容量评审、双评审签字。
+  这三项都需要窗口与签字人，不是代码或验证缺口。
 
 ## 2. 验收项逐条判定
 
 | # | §13.3 验收项 | 判定 | 主要证据 |
 |---|---|---|---|
-| 1 | 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出 | **部分达标** | 全链路已在集成层跑通，但责任人确认是脚本调用、CronJob 未真实调度（§3.1） |
+| 1 | 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出 | **达标（技术链路）** | 同一活动内四段串联：A 端 API 建活动与激活 → 真实入口裁决 → 真实 worker 进程扫描 → 证据导出含两种终态（§3.1） |
 | 2 | 复核结果全程审计可关联 Campaign；导出字段完整率 100% | **达标** | 审计事件与业务同事务、fail-closed；已裁决 100 行四列全 100%（§3.2） |
 | 3 | 自动回收具备并发安全与回退开关；误操作可人工恢复 | **达标** | `expectedVersion` 乐观锁 + 指纹二次校验 + `auto_revoke` 默认关（§3.3） |
 | 4 | 10k 主体清单生成达性能指标；10 万行导出口径 | **技术达标，口径待批** | 10k 529 ms；10 万档位生成 4.68 s、导出 479–595 ms（§3.4） |
 
 ## 3. 逐条说明
 
-### 3.1 季度复核演练（部分达标）
+### 3.1 完整季度复核演练（达标，技术链路）
 
-已达成（[演练记录](../incident/drills/2026-11-08-certification-sweep.md)）：
+演练用例 `TestCertificationQuarterlyDrillEndToEnd`（`tests/e2e/certification_test.go`）在**同一个活动**
+内串起四段，且全程走真实入口与真实进程：
 
-- 演练 A（`auto_revoke=false`）：超期任务置 `expired`、绑定**未**回收、≥3 条审计事件经 `async_outbox`
-  投递成功（pending=0 / DLQ=0）、无 `unbind` 事件、二轮扫描幂等（tasks=0、零新增审计）。
-- 演练 B（`auto_revoke=true`）：指纹漂移场景任务 `skipped` 且重绑后的绑定不被回收；指纹一致场景
-  任务 `revoked`、绑定软撤销、主体快照（L1 + Redis L2）被删除、三类审计齐备。
-- 审计 fail-closed、快照失效（含共享 L2）均按设计成立。
+| 段 | 怎么做的 | 断言 |
+|---|---|---|
+| 清单生成 | A 端 API 建角色 + 2 条绑定 → 建活动（`due_at` = +8s）→ 激活 | `task_count=2` |
+| 责任人确认 | A 端 API 裁决任务 1（`decision=confirmed` + 原因） | 状态 `confirmed`、`decided_by` 非空 |
+| 超期回收 | 等过截止时间，起**真实 worker 进程** `-certification-sweep` | 退出码 0、日志 `tasks=1`、另一条任务 `expired` |
+| 证据导出 | A 端 API 导出 CSV | 3 行（表头 + 2），`confirmed` 与 `expired` 两种终态并存、`decided_at` 均非空 |
+| 活动关闭 | A 端 API `close` | `status=closed`、任务不删除 |
 
-未达成，且不能用现有证据替代：
+为什么四段要放在一个活动里：分开测会漏掉「同一活动内混合终态」的导出语义——证据包必须能同时
+承载「人工确认保留」和「超期自动过期」两类结论，这才是一次真实季度复核的样子。
 
-| 缺口 | 为什么不能算已达成 |
-|---|---|
-| 责任人通过真实入口裁决 | 演练用脚本调 `DecideTask` 100 次，未验证 A 端 HTTP 入口 + 权限点 + 前端菜单这条真实路径的可用性 |
-| CronJob 真实调度 | 只验证了 `worker -certification-sweep` 的一次性进程行为，`concurrencyPolicy: Forbid`、镜像 digest、Job 失败重试与告警收敛未实测 |
-| staging 环境 | 全程本机 compose；staging 的配置、网络、权限边界未覆盖 |
+补充证据（同一链路的另一组验证）：
 
-判定：**功能链路闭环，运维形态未闭环**。计划里这条保持不勾选。
+- 集成层双路径演练（`auto_revoke` 关 / 开、指纹漂移防护、审计 fail-closed、Redis L2 快照失效）：
+  [2026-11-08-certification-sweep.md](../incident/drills/2026-11-08-certification-sweep.md)。
+- 另一条「纯粹由责任人点完」的链路（建活动 → 激活 → 裁决 → 重复裁决被拒 → 导出 → 关闭）：
+  `TestCertificationReviewOnAdminEntry`，覆盖 A 端权限点 `iam:certification:read/write/decide`。
+
+**边界（不声称完成的部分）**：
+
+- 真实责任人是脚本账户（guided admin），不是组织中的人；「季度」周期与 Owner 排期属组织流程（§5 第 5 项）。
+- 环境为本地真实进程 + 真实依赖，不是 staging（§5 第 1 项）。
 
 ### 3.2 审计关联与字段完整率（达标）
 
@@ -82,6 +93,26 @@
 再把默认上限提到 100000」，导出保持全量读入不做流式。**生产默认值未改动**，决策待容量评审。
 10 万档位的实测数据与代价见 [10 万档位实测](../incident/drills/2026-11-08-s7-2-perf-100k.md)。
 
+### 3.5 集群调度与失败行为（达标，kind）
+
+[CronJob 真实调度演练](../incident/drills/2026-11-08-cronjob-sweep-kind.md) 在 kind `af-verify`（K8s v1.34.3）
+上开启 `certificationSweep`，用每分钟调度实测：
+
+| 验证点 | 结果 |
+|---|---|
+| 按 `schedule` 真实触发（非手动 `create job`） | 两轮连续触发，均 `Complete 1/1` |
+| 扫描语义（`auto_revoke=false`） | `scanned=1 overdue=1 expired=1 tasks=2`，绑定未撤销 |
+| 幂等 | 第二轮 `tasks=0` |
+| 审计跨进程投递 | 2 条 `auto_expire` 入 `async_outbox`，常驻 worker 投递 `succeeded` |
+| 失败路径 | 注入坏 DSN → 3 个 Pod（`backoffLimit=2`）→ Job `Failed`，日志为装配期连接错误 |
+
+演练还暴露两个运维陷阱，已写入 [runbooks/iam.md](../runbooks/iam.md)「季度访问复核」：
+`--reuse-values` 会丢弃 `certificationSweep` 段默认值（镜像名渲染为空、并发策略退化为 `Allow`）；
+`kubectl set env` 改过 CronJob 后直接 `helm upgrade` 会因 `value`/`valueFrom` 并存被拒。
+
+未覆盖：Alertmanager 告警路由与收敛（集群内无 Prometheus/Alertmanager 实例）、staging 环境、
+`Forbid` 的重叠抑制（需单次扫描超过调度间隔）、镜像 digest 校验。
+
 ## 4. 交付物清单
 
 | 层 | 交付物 | 位置 |
@@ -98,20 +129,25 @@
 
 ## 5. 未完成项与签收条件
 
-| # | 未完成项 | 类型 | 完成判据 |
-|---|---|---|---|
-| 1 | CronJob 在 staging 真实调度一次（复用 AI-05 窗口） | 运维验证 | Job 按计划触发、`Forbid` 生效、失败时 `iam.certification.sweep_failed` 在 Alertmanager 收到并可收敛 |
-| 2 | 责任人经 A 端真实入口完成一轮裁决 | 功能验证 | 用真实权限点与账号走 HTTP 入口，至少 1 个活动全量裁决完毕 |
-| 3 | ADR-0012 容量评审 | 决策 | 评审 Accept 并落地配置项；或选择「多活动累计」口径并同步改指标 |
-| 4 | 安全评审 + 平台评审签字 | 流程 | 两份签字记录归档到 `docs/archive/reviews/` |
-| 5 | 季度节拍的 Owner 与首轮排期 | 运营 | `rbac-iam.md` 中「访问复核流程与季度计划已建立」一项转勾选 |
+| # | 事项 | 类型 | 状态 | 完成判据 |
+|---|---|---|---|---|
+| 1 | 责任人经 A 端真实入口完成一轮裁决 | 功能验证 | **已完成**（2026-11-08） | `TestCertificationReviewOnAdminEntry`：真实权限点 + HTTP 入口，含重复裁决被拒、CSV 导出、活动关闭 |
+| 2 | CronJob 真实调度 | 运维验证 | **已完成（kind）**（2026-11-08） | 两轮按分钟触发、失败路径 Job `Failed`；见 [演练记录](../incident/drills/2026-11-08-cronjob-sweep-kind.md) |
+| 3 | ADR-0012 的配置通道 | 实现 | **已完成**（2026-11-08） | `iam.certification.max_tasks_per_campaign` 已接入配置与封装（0=默认 10000，封顶 500000，负值/超封顶拒绝）；默认值未改 |
+| 4 | ADR-0012 容量评审 | 决策 | **待评审** | 评审 Accept 后决定是否把默认上限提到 100000；或选择「多活动累计」口径并同步改指标 |
+| 5 | staging 实战与告警收敛 | 运维验证 | **未做**（需 AI-05 窗口） | Job 按计划触发；`iam.certification.sweep_failed` 在 Alertmanager 收到并可收敛到 0 |
+| 6 | 安全评审 + 平台评审签字 | 流程 | **未做** | 两份签字记录归档到 `docs/archive/reviews/` |
+| 7 | 季度节拍的 Owner 与首轮排期 | 运营 | **未做** | `rbac-iam.md` 中「访问复核流程与季度计划已建立」转勾选 |
 
-5 项全部完成后，可把 §13.3 第一条勾选并进入 M6 生产准入评审。
+剩余 4 项（4–7）全部是决策、环境与签字环节，没有代码或验证缺口。4–7 完成后进入 M6 生产准入评审。
 
 ## 6. 证据索引
 
 | 证据 | 文件 | 复跑方式 |
 |---|---|---|
+| 完整季度演练（真实入口 + 一次性扫描 + 混合终态导出） | `tests/e2e/certification_test.go` `TestCertificationQuarterlyDrillEndToEnd` | `E2E_MYSQL_DSN=… E2E_REDIS_ADDR=… go test ./tests/e2e/ -run TestCertificationQuarterlyDrillEndToEnd -v` |
+| 纯人工裁决链路（权限点 / 重复裁决 / 导出 / 关闭） | 同上 `TestCertificationReviewOnAdminEntry` | 同上，改 `-run` 用例名 |
+| 集群 CronJob 真实调度与失败路径 | [2026-11-08-cronjob-sweep-kind.md](../incident/drills/2026-11-08-cronjob-sweep-kind.md) | 见该文 §6 |
 | 全流程演练（扫描 / 回收 / 审计 / 快照） | [2026-11-08-certification-sweep.md](../incident/drills/2026-11-08-certification-sweep.md) + `artifacts/2026-11-08-certification/` | 见该文 §4 |
 | 10k 性能与字段完整率 | [2026-11-08-s7-2-perf.md](../incident/drills/2026-11-08-s7-2-perf.md) + `artifacts/2026-11-08-s7-2-perf/` | 见该文 §9 |
 | 10 万档位性能与内存代价 | [2026-11-08-s7-2-perf-100k.md](../incident/drills/2026-11-08-s7-2-perf-100k.md) + `artifacts/2026-11-08-s7-2-perf-100k/` | 见该文 §6 |

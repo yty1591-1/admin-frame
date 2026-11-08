@@ -170,6 +170,18 @@
     失败对象仍存在而持续（`kubectl -n <ns> delete job <失败 Job 名>`）。
   - `auto_revoke=false`（默认）时扫描只把超期任务标记为 `expired`，不回收绑定；
     开启回收前必须在 staging 演练一次，并确认指纹不一致的任务落 `skipped` 而非被回收。
+  - **开启 / 升级时的两个已知陷阱**（2026-11-08 kind 实测，见
+    `docs/incident/drills/2026-11-08-cronjob-sweep-kind.md`）：
+    1. `helm upgrade --reuse-values` 会丢弃 `certificationSweep` 段的 chart 默认值——
+       镜像 `repository` 渲染成空（`%!s(<nil>)`）、`concurrencyPolicy` 退化为 `Allow`。
+       用 `--reset-then-reuse-values`，升级后核对三项：
+       `kubectl -n <ns> get cronjob <name> -o jsonpath='{.spec.schedule}{"\t"}{.spec.concurrencyPolicy}{"\t"}{.spec.jobTemplate.spec.template.spec.containers[0].image}{"\n"}'`
+       （期望 `0 2 * * *` / `Forbid` / `<registry>/<ns>/worker:<tag>`）。
+    2. 用 `kubectl set env` 临时改过 CronJob 的 env 后，直接 `helm upgrade` 会因同一 env 项
+       `value` 与 `valueFrom` 并存被 K8s 拒绝（release 停在 `failed`）。先
+       `kubectl -n <ns> delete cronjob <name>` 再 upgrade，让 helm 重建对象；失败 Job 一并清理。
+  - 失败判读：Job `Failed` 且日志首行是装配错误（如 `db: ping: ... connection refused`）说明
+    失败发生在装配期、未进入扫描逻辑；`backoffLimit=2` 会产生 1 次初始 + 2 次重试共 3 个 Pod。
 - **证据归档**：`GET /admin/v1/iam/certifications/{id}/export?format=csv|json` 导出任务级
   完整字段，作为等保 / SOC 2 周期证据；导出本身也写 `rbac.certification` 审计。
 - **收敛判定**：活动关闭（`POST .../{id}/close`）后本轮复核才算完成；关闭前应确认

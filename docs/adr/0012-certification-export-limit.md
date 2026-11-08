@@ -27,8 +27,10 @@
 1. **先补配置通道，再改默认值**：当前 `MaxTasksPerCampaign` 只存在于 `app.CertificationLimits` 结构体，
    `certificationLimits()`（`cmd/internal/iamruntime/runtime.go`）没有映射它，`IAMCertificationConfig`
    也没有对应字段——**生产上这个上限根本没有调整入口，恒为内置默认 10000**。
-   因此第一步是在 `IAMCertificationConfig` 增加 `max_tasks_per_campaign`（`yaml:"max_tasks_per_campaign"`）
-   并在 `certificationLimits()` 中映射，配套 `validate` 校验（正数、上限封顶）。
+   **配置通道已于 2026-11-08 落地**：`IAMCertificationConfig.MaxTasksPerCampaign`
+   （`yaml:"max_tasks_per_campaign"`，0 = 沿用内置默认）、`certificationLimits()` 已映射、
+   `validate` 拒绝负值与超过 `MaxCertificationTasksPerCampaignCap`（500000）的值，均有单测。
+   默认值仍是 10000，等本 ADR 评审后再改。
 2. **把默认值从 10000 提到 100000**，作为「一个季度复核活动覆盖全量主体」的容量档位。
 3. **导出实现保持全量读入 + 一次性编码，不做流式改造**：10 万行实测 480 ms / 14.3 MB，距离 2 min 指标有两个数量级余量，流式改造的复杂度买不到收益。
 4. 上限按环境可配（大租户上调、小租户维持），不做全局硬编码，也不做按租户动态计算——复核规模由运维在建活动时决定，隐式推导会让证据范围不可预期。
@@ -78,7 +80,9 @@
 2. **并发生成压测**：2–3 个活动同时 `ActivateCampaign`，观测事务等待、慢查询日志与连接池占用。
 3. **网关响应体核对**：14.3 MB 单次响应经过入口网关时的缓冲与超时配置。
 4. **清理任务口径**：`iam_certification_task` 单活动行数放大 10 倍后，保留期清理是否按活动删除、是否会与扫描任务争锁。
-5. **配置与文档同步**：`IAMCertificationConfig` 新增字段的 yaml 示例、部署 values 注释、`docs/iam/PERMISSIONS.md` 与运维手册中的上限描述一并更新；`validate` 需拒绝 ≤0 与超过封顶值的配置。
+5. **配置与文档同步**：配置通道已就绪（`configs/prod/modules/iam.yaml.example` 已加段说明，
+   `validate` 拒绝负值与超封顶值并有单测）；`docs/runbooks/iam.md` 与部署 values 注释中的上限描述，
+   在默认值真正调整时一并更新。
 
 ## 后果
 
