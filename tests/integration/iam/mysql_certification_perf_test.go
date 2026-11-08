@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -38,6 +39,10 @@ import (
 // perfBudget 是计划 §8 的清单生成门槛。
 const perfBudget = 5 * time.Minute
 
+// defaultMaxTasks 是 CertificationService 在 Limits.MaxTasksPerCampaign<=0 时的内置默认值
+// （certification_service.go 的 NewCertificationService）。上限边界用例与规模场景共用同一常量。
+const defaultMaxTasks = 10000
+
 // perfBindingIDBase 选在雪花量级，避开与其它用例的数据重叠。
 const perfBindingIDBase int64 = 7300000000000000
 
@@ -46,7 +51,18 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 		t.Skip("IAM_PERF_DRILL is not set: 10k 性能实测默认跳过（规模数据会拖慢 CI）")
 	}
 	n := perfEnvInt(t, "IAM_PERF_BINDINGS", 10000)
+	// 规模场景的上限必须 ≥ n，否则 ActivateCampaign 会先被上限拒绝，量不到生成耗时。
+	// 默认为内置上限，规模化演练由 CERT_DRILL_MAX_TASKS 显式抬高。
+	maxTasks := certDrillMaxTasks(t)
+	if maxTasks == 0 {
+		maxTasks = defaultMaxTasks
+	}
+	if n > maxTasks {
+		t.Fatalf("IAM_PERF_BINDINGS=%d 超过单活动上限 %d：规模场景无法落地，"+
+			"请同时设置 CERT_DRILL_MAX_TASKS≥%d（或减小 IAM_PERF_BINDINGS）", n, maxTasks, n)
+	}
 	env := newCertDrillEnv(t)
+	t.Logf("[perf] max_tasks_per_campaign=%d (default=%d), bindings=%d", maxTasks, defaultMaxTasks, n)
 
 	// 角色必须存在，绑定才有外键可挂；权限非高危，避免 PrivilegedOnly 场景先行过滤掉。
 	newRole(t, env.sqlRoles, "720250001", "perf_bulk_role",
@@ -58,16 +74,23 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 	t.Logf("[perf] seed %d bindings: %s", n, bindDur.Round(time.Millisecond))
 
 	// 场景 1：默认复核范围（不判特权）——纯写放大。
+	// 内存采样放在计时区间之外：ReadMemStats 会 STW，混进耗时会让数字失真。
 	insertsBefore, selectsBefore := perfStatus(t, env.db)
 	campaign := env.createCampaign(t, "S7-2 10k 全量复核", "720250001")
+	memBefore := perfHeap(t)
 	activateStart := time.Now()
 	activated := env.activate(t, campaign.ID)
 	activateDur := time.Since(activateStart)
+	memAfter := perfHeap(t)
 	insertsAfter, selectsAfter := perfStatus(t, env.db)
 
 	t.Logf("[perf] ActivateCampaign(n=%d, privileged_only=false): %s", n, activateDur.Round(time.Millisecond))
 	t.Logf("[perf] task_count=%d generated, Com_insert delta=%d, Com_select delta=%d",
 		activated.TaskCount, insertsAfter-insertsBefore, selectsAfter-selectsBefore)
+	t.Logf("[perf] 生成期分配: TotalAlloc +%d B (%.1f KB/任务), HeapInuse %+d B",
+		memAfter.totalAlloc-memBefore.totalAlloc,
+		float64(memAfter.totalAlloc-memBefore.totalAlloc)/float64(n)/1024,
+		memAfter.heapInuse-memBefore.heapInuse)
 
 	if activated.TaskCount != n {
 		t.Fatalf("task_count=%d, want %d（清单生成应覆盖全部生效绑定）", activated.TaskCount, n)
@@ -119,19 +142,23 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 	t.Logf("[perf] 非空列: decision=%d reason=%d decided_by=%d decided_at=%d（共 %d 行）",
 		fill.decision, fill.reason, fill.decidedBy, fill.decidedAt, fill.rows)
 
-	// 场景 4：单活动上限（MaxTasksPerCampaign 默认 10000）的确定性边界。
-	// 这决定了「10 万行导出」指标能否单活动达成：第 10001 条绑定必须被拒。
-	perfSeedBindingAt(t, env.db, n, "720250001")
-	overCampaign := env.createCampaign(t, "S7-2 超上限复核", "720250001")
-	_, overErr := env.plain.ActivateCampaign(context.Background(), overCampaign.ID,
+	// 场景 4：服务内置默认上限（10000）的确定性边界。
+	// 这决定了「10 万行导出」能否单活动达成：用不受 CERT_DRILL_MAX_TASKS 影响的
+	// env.defaultLimit 验证「默认值仍是 10000」，避免规模场景抬高上限后把默认值一起抬高。
+	// 绑定补到 10001 条：n < 10001 时补齐，n ≥ 10001 时已有足够数据。
+	if n <= defaultMaxTasks {
+		perfSeedBindingsFrom(t, env.db, n, defaultMaxTasks+1-n, "720250001")
+	}
+	overCampaign := env.createCampaign(t, "S7-2 超默认上限复核", "720250001")
+	_, overErr := env.defaultLimit.ActivateCampaign(context.Background(), overCampaign.ID,
 		app.CertificationScope{Channel: domain.ChannelAdmin}, "perf")
 	if overErr == nil {
-		t.Fatalf("%d 条绑定（> 默认上限 10000）应被拒绝，实际成功", n+1)
+		t.Fatalf("超过默认上限 %d 条绑定应被拒绝，实际成功", defaultMaxTasks)
 	}
 	if !strings.Contains(overErr.Error(), "exceeds limit") {
 		t.Fatalf("超上限错误=%v，want 含 'exceeds limit'", overErr)
 	}
-	t.Logf("[perf] boundary: %d 条绑定被上限拦截 -> %v", n+1, overErr)
+	t.Logf("[perf] boundary: 默认上限 %d 生效 -> %v", defaultMaxTasks, overErr)
 
 	// 场景 5：已裁决任务的证据字段完整率（应填口径）。
 	// S7-4 的「导出字段完整率 100%」此前没有量化证据：pending 任务的裁决列本就为空，
@@ -179,10 +206,15 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 	t.Logf("[perf] audit outbox delivered=%d (pending=0, dlq=0)", delivered)
 
 	perfWriteArtifacts(t, perfSummary{
-		Bindings:                   n,
-		SeedMillis:                 bindDur.Milliseconds(),
-		ActivateFullMillis:         activateDur.Milliseconds(),
-		ActivatePrivilegedMillis:   privDur.Milliseconds(),
+		Bindings:                 n,
+		MaxTasksPerCampaign:      maxTasks,
+		DefaultMaxTasks:          defaultMaxTasks,
+		SeedMillis:               bindDur.Milliseconds(),
+		ActivateFullMillis:       activateDur.Milliseconds(),
+		ActivatePrivilegedMillis: privDur.Milliseconds(),
+		ActivateAllocBytes:       memAfter.totalAlloc - memBefore.totalAlloc,
+		//nolint:gosec // G115: 堆统计值远低于 MaxInt64；该差值只用于观测规模量级，不参与断言
+		ActivateHeapInuseDelta:     int64(memAfter.heapInuse) - int64(memBefore.heapInuse),
 		InsertStatements:           insertsAfter - insertsBefore,
 		SelectStatementsFull:       selectsAfter - selectsBefore,
 		SelectStatementsPrivileged: privSelectsAfter - privSelectsBefore,
@@ -230,12 +262,6 @@ func perfSeedBindings(t *testing.T, db *sql.DB, n int, roleID string) {
 	perfSeedBindingsFrom(t, db, 0, n, roleID)
 }
 
-// perfSeedBindingAt 追加第 index 条绑定（下标从 0 起，与批量种子同一 ID/主体编号空间）。
-func perfSeedBindingAt(t *testing.T, db *sql.DB, index int, roleID string) {
-	t.Helper()
-	perfSeedBindingsFrom(t, db, index, 1, roleID)
-}
-
 func perfSeedBindingsFrom(t *testing.T, db *sql.DB, from, count int, roleID string) {
 	t.Helper()
 	const batch = 500
@@ -269,6 +295,24 @@ func perfSeedBindingsFrom(t *testing.T, db *sql.DB, from, count int, roleID stri
 			t.Fatalf("seed bindings batch %d-%d: %v", start, end, err)
 		}
 	}
+}
+
+// perfHeapSample 是堆采样快照，用于量化「抬高单活动上限」的内存代价。
+type perfHeapSample struct {
+	totalAlloc uint64
+	heapInuse  uint64
+}
+
+// perfHeap 读取当前堆状态。
+//
+// 取 TotalAlloc（累计分配）而非 HeapAlloc：生成结束后任务对象即可能被回收，
+// HeapAlloc 会低估；TotalAlloc 差值才是本次生成真实申请过的内存总量。
+// 同时保留 HeapInuse，用于观察「生成期间存活对象的峰值抬升」。
+func perfHeap(t *testing.T) perfHeapSample {
+	t.Helper()
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return perfHeapSample{totalAlloc: stats.TotalAlloc, heapInuse: stats.HeapInuse}
 }
 
 // perfStatus 读取本次连接可见的累计插入/查询语句数。
@@ -368,9 +412,13 @@ func perfEvidenceFill(t *testing.T, payload []byte) perfFill {
 // perfSummary 是落盘的结构化实测结果，供报告与后续回归对照。
 type perfSummary struct {
 	Bindings                   int            `json:"bindings"`
+	MaxTasksPerCampaign        int            `json:"max_tasks_per_campaign"`
+	DefaultMaxTasks            int            `json:"default_max_tasks"`
 	SeedMillis                 int64          `json:"seed_ms"`
 	ActivateFullMillis         int64          `json:"activate_full_ms"`
 	ActivatePrivilegedMillis   int64          `json:"activate_privileged_ms"`
+	ActivateAllocBytes         uint64         `json:"activate_alloc_bytes"`
+	ActivateHeapInuseDelta     int64          `json:"activate_heap_inuse_delta_bytes"`
 	InsertStatements           int64          `json:"insert_statements"`
 	SelectStatementsFull       int64          `json:"select_statements_full"`
 	SelectStatementsPrivileged int64          `json:"select_statements_privileged"`

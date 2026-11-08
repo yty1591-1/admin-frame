@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -79,10 +80,13 @@ type certDrillEnv struct {
 	// plain 对应 iam.certification.auto_revoke=false（默认生产行为）。
 	plain *app.CertificationService
 	// auto 对应 iam.certification.auto_revoke=true。
-	auto    *app.CertificationService
-	store   outbox.Store
-	emitter *certDrillEmitter
-	cache   *iampcache.SnapshotCache
+	auto *app.CertificationService
+	// defaultLimit 强制使用服务内置默认上限（10000），不受 CERT_DRILL_MAX_TASKS 影响。
+	// 用于在规模化演练中独立验证「默认上限仍然生效」，与抬高上限的规模场景互不干扰。
+	defaultLimit *app.CertificationService
+	store        outbox.Store
+	emitter      *certDrillEmitter
+	cache        *iampcache.SnapshotCache
 	// l2Redis 报告快照缓存是否配置了共享 Redis L2。
 	l2Redis bool
 }
@@ -147,7 +151,7 @@ func newCertDrillEnv(t *testing.T) *certDrillEnv {
 		t.Fatalf("NewBindingService: %v", err)
 	}
 	env.bindingSvc = bindingSvc
-	newCert := func(autoRevoke bool) *app.CertificationService {
+	newCert := func(autoRevoke bool, maxTasks int) *app.CertificationService {
 		svc, err := app.NewCertificationService(app.CertificationServiceConfig{
 			Campaigns:  campaigns,
 			Tasks:      tasks,
@@ -158,17 +162,41 @@ func newCertDrillEnv(t *testing.T) *certDrillEnv {
 			UnitOfWork: uow,
 			IDs:        ids,
 			Audit:      app.AuditMeta{Service: "worker", ActorType: "system"},
-			Limits:     app.CertificationLimits{AllowBizChannel: true, AutoRevoke: autoRevoke},
-			Logger:     logger,
+			Limits: app.CertificationLimits{
+				AllowBizChannel: true,
+				AutoRevoke:      autoRevoke,
+				// 0 表示沿用服务内置默认（10000），与生产配置缺省行为一致。
+				MaxTasksPerCampaign: maxTasks,
+			},
+			Logger: logger,
 		})
 		if err != nil {
-			t.Fatalf("NewCertificationService(auto_revoke=%v): %v", autoRevoke, err)
+			t.Fatalf("NewCertificationService(auto_revoke=%v, max_tasks=%d): %v", autoRevoke, maxTasks, err)
 		}
 		return svc
 	}
-	env.plain = newCert(false)
-	env.auto = newCert(true)
+	maxTasks := certDrillMaxTasks(t)
+	env.plain = newCert(false, maxTasks)
+	env.auto = newCert(true, maxTasks)
+	env.defaultLimit = newCert(false, 0)
 	return env
+}
+
+// certDrillMaxTasks 返回演练用的单活动任务上限覆盖值，未设置时返回 0（沿用服务默认 10000）。
+//
+// 默认 10000 会让 10 万规模的清单生成与导出口径不可达；需要量「抬高上限后的真实代价」时，
+// 由 CERT_DRILL_MAX_TASKS 覆盖，而不改动生产默认值。
+func certDrillMaxTasks(t *testing.T) int {
+	t.Helper()
+	raw := strings.TrimSpace(os.Getenv("CERT_DRILL_MAX_TASKS"))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		t.Fatalf("CERT_DRILL_MAX_TASKS=%q 必须是正整数", raw)
+	}
+	return value
 }
 
 // newCertDrillSnapshotCache 构造快照缓存；TEST_REDIS_ADDR 可用时挂共享 L2。
