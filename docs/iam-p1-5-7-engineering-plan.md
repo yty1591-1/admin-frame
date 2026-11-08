@@ -118,7 +118,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **代码已完成，性能未验**：`CreateCampaign` / `ListTasks` 可用；10k 主体耗时无实测记录 |
 | S7-3 决策与回收 | 2026-12-14 ~ 12-18 | 确认/驳回、超期升级、自动回收、破玻璃豁免 | 超期回收与二次确认用例通过 | **已完成**：`DecideTask` / `CloseCampaign` / `AutoExpireOverdue`；回收按 `expectedVersion` 做乐观锁校验，`auto_revoke` 默认关闭（仅标记 expired）；超期扫描由 `SweepOverdue` + `worker -certification-sweep` + Helm CronJob 交付（2026-11-08），与人工触发共用同一状态机 |
 | S7-4 证据与审计 | 2026-12-21 ~ 12-23 | 证据导出（CSV/JSON）、审计事件、留存策略 | 导出可复现、审计可关联 Campaign | **已完成**：`ExportEvidence`；审计 `rbac.certification` 保留 180d；字段完整率未做量化验证 |
-| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **部分完成**：`docs/runbooks/iam.md` §「季度访问复核」已补工具链操作（发起 / 裁决 / 单项补扫 / 定时扫描 / 证据导出 / 失败处置，2026-11-08）；季度演练记录与验收报告仍未产出 |
+| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **大部分完成**：手册已补工具链操作；全流程演练于 2026-11-08 通过并归档证据（MySQL 8.0.46 + Redis L2 + Outbox 真实链路，`docs/incident/drills/2026-11-08-certification-sweep.md`，含 auto_revoke 双路径、指纹漂移防护与审计 fail-closed 验证）；剩余：CronJob 真实调度与 staging 实战（复用 AI-05 窗口）、验收报告与评审签字 |
 
 ---
 
