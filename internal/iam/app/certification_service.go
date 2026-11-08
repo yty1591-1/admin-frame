@@ -703,6 +703,10 @@ func (s *CertificationService) generateTasks(
 	if err != nil {
 		return nil, err
 	}
+	// 特权判定按角色缓存：SQL 仓储的 FindByID 需要 3 条查询（角色 + 权限 + 数据范围），
+	// 若按绑定逐条判定，1 万绑定就是 3 万次往返（实测 49s → 15s 级）。
+	// 缓存只在本次活动生成内有效，语义与逐条判定等价（角色在生成期间不可变）。
+	privilegedCache := make(map[string]bool, len(roleScope))
 	tasks := make([]*domain.CertificationTask, 0, len(bindings))
 	for _, binding := range bindings {
 		if binding == nil || binding.IsRevoked() || binding.IsExpired(now) {
@@ -714,9 +718,13 @@ func (s *CertificationService) generateTasks(
 			}
 		}
 		if campaign.PrivilegedOnly {
-			privileged, err := s.isPrivilegedRole(ctx, binding.RoleID)
-			if err != nil {
-				return nil, err
+			privileged, cached := privilegedCache[binding.RoleID]
+			if !cached {
+				privileged, err = s.isPrivilegedRole(ctx, binding.RoleID)
+				if err != nil {
+					return nil, err
+				}
+				privilegedCache[binding.RoleID] = privileged
 			}
 			if !privileged {
 				continue
