@@ -108,7 +108,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
 | S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **未开始**：`grep -ri scim` 在 `internal api cmd` 零命中 |
 | S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **未开始**：全仓仅 `grant_type=authorization_code`，无 `client_credentials` |
-| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **部分完成**：OIDC / SAML 接入与故障处置步骤已写入 `identity-authn.md`；独立 IdP 配置模板与接入 Runbook 未建（`docs/runbooks/` 仅 `iam.md`） |
+| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **部分完成**：OIDC / SAML 设计步骤见 `identity-authn.md`；SSO 故障处置已于 2026-11-08 补入 `docs/runbooks/identity-auth-failure.md`（含 4 条失败类告警）；IdP 配置模板与独立接入 Runbook 仍未建 |
 
 ### 3.4 P1-7 阶段拆解
 

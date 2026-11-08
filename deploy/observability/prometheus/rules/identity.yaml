@@ -225,3 +225,58 @@ groups:
           summary: "身份域清理指标缺失"
           description: "worker 未暴露清理指标或清理任务未启动；确认 worker ServiceMonitor 抓取与 StartCleanup 日志。"
           runbook_url: docs/runbooks/identity-auth-failure.md
+
+      # SSO 失败类告警。校验失败是 fail-closed 快速返回（40100 / 50300），
+      # 失败请求比成功更快，identity.oauth.latency 不会随之升高，
+      # 因此必须直接观测 result 维度，而不能只靠延迟。
+      - alert: IdentityOAuthCallbackFailureRate
+        expr: |
+          (sum by (provider) (rate(identity_oauth_callback_total{result="failure"}[10m]))
+           / sum by (provider) (rate(identity_oauth_callback_total[10m]))) > 0.5
+          and
+          sum by (provider) (rate(identity_oauth_callback_total{result="failure"}[10m])) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: identity.oauth.failure_rate
+        annotations:
+          summary: "OIDC 回调失败率超过 50%（provider={{ $labels.provider }}）"
+          description: "签名 / issuer / audience / nonce 校验失败或 IdP 不可达；先看 reason 分布再动手，禁止关闭验签或放宽 audience。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityOIDCJWKSCacheStale
+        expr: identity_oauth_jwks_cache_age_seconds > 3600
+        for: 10m
+        labels:
+          severity: P1
+          alert_id: identity.oidc.jwks_stale
+        annotations:
+          summary: "OIDC 公钥缓存 1 小时未刷新（provider={{ $labels.provider }}）"
+          description: "默认 jwks_ttl=15m，超过 1 小时说明刷新持续失败或 IdP 不可达；未知 kid 会失败关闭，登录可能已全挂。阈值需按该 provider 配置的 jwks_ttl 调整。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityOIDCJWKSRefreshFailing
+        expr: increase(identity_oauth_jwks_refresh_total{result="failure"}[15m]) > 0
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.oidc.jwks_refresh_failing
+        annotations:
+          summary: "OIDC 公钥集刷新失败（provider={{ $labels.provider }}）"
+          description: "前导指标：缓存尚可用时登录不受影响，但 IdP 一旦轮换签名 key 就会登录失败；检查网络、证书信任链与 JWKS 端点。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentitySAMLACSFailureRate
+        expr: |
+          (sum by (provider) (rate(identity_saml_acs_total{result="failure"}[10m]))
+           / sum by (provider) (rate(identity_saml_acs_total[10m]))) > 0.5
+          and
+          sum by (provider) (rate(identity_saml_acs_total{result="failure"}[10m])) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: identity.saml.acs_failure_rate
+        annotations:
+          summary: "SAML ACS 断言校验失败率超过 50%（provider={{ $labels.provider }}）"
+          description: "证书轮换、XML Encryption 算法不匹配或时钟偏移；对照 identity-authn.md §8.2.1 的 Keycloak 兼容项排查。"
+          runbook_url: docs/runbooks/identity-auth-failure.md

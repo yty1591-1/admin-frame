@@ -2,10 +2,10 @@
 
 | 字段 | 内容 |
 |------|------|
-| 告警 ID | `identity.token.reuse` / `identity.lockout.spike` / `identity.revocation.store_error` / `identity.revocation.cache_write_error` / `identity.refresh.failure_rate` / `identity.refresh.latency` / `identity.login.failure_rate` / `identity.mfa.latency` / `identity.mfa.recovery_used` / `identity.step_up.latency` / `identity.oauth.latency` / `identity.session.revoke_failure` / `identity.outbox.backlog` / `identity.outbox.lag` / `identity.sms.breaker_open` / `identity.cleanup.failure` / `identity.cleanup.backlog` / `identity.cleanup.not_running` |
-| 级别 | P1（`token.reuse` / `lockout.spike` / `revocation.store_error`）；其余 P2 |
+| 告警 ID | `identity.token.reuse` / `identity.lockout.spike` / `identity.revocation.store_error` / `identity.revocation.cache_write_error` / `identity.refresh.failure_rate` / `identity.refresh.latency` / `identity.login.failure_rate` / `identity.mfa.latency` / `identity.mfa.recovery_used` / `identity.step_up.latency` / `identity.oauth.latency` / `identity.oauth.failure_rate` / `identity.oidc.jwks_stale` / `identity.oidc.jwks_refresh_failing` / `identity.saml.acs_failure_rate` / `identity.session.revoke_failure` / `identity.outbox.backlog` / `identity.outbox.lag` / `identity.sms.breaker_open` / `identity.cleanup.failure` / `identity.cleanup.backlog` / `identity.cleanup.not_running` |
+| 级别 | P1（`token.reuse` / `lockout.spike` / `revocation.store_error` / `oauth.failure_rate` / `oidc.jwks_stale` / `saml.acs_failure_rate`）；其余 P2 |
 | 服务 / 端 | admin-api、biz-api、c-api、worker（`identity` 域 + `cmd/worker` 清理任务） |
-| 最后更新 | 2026-11-08（补「fail-closed 处置」：判定阈值、代码级熔断行为与恢复顺序） |
+| 最后更新 | 2026-11-08（补「SSO 故障（OIDC / SAML）」：失败率与 JWKS 告警的判定分流、按 reason 处置、禁止动作） |
 
 > **目标**：在 5 分钟内判断是依赖故障、攻击行为还是配置错误，并执行可回滚的处置。
 
@@ -17,6 +17,8 @@
   - 5 分钟内账号锁定 > 5 次（`lockout.spike`，P1）；
   - 登录 / 刷新失败率超阈值（`login.failure_rate` > 30%、`refresh.failure_rate` > 10%）；
   - 刷新 / MFA / step-up P95 > 500ms，OAuth 回调 P95 > 3s；
+  - OIDC 回调失败率 > 50%（`oauth.failure_rate`，P1）或 SAML ACS 校验失败率 > 50%（`saml.acs_failure_rate`，P1）；
+  - OIDC 公钥缓存 1 小时未刷新（`oidc.jwks_stale`，P1）或公钥集刷新失败（`oidc.jwks_refresh_failing`，P2）；
   - `identity_session_revoke_total{result="failure"}` 增长（`session.revoke_failure`）；
   - `identity_outbox_pending > 0` 或 `identity_outbox_lag_seconds > 300`（审计积压）；
   - `identity_sms_breaker_open == 1`（短信通道熔断）；
@@ -30,6 +32,7 @@
 
 - 影响端与范围：
   - `revocation.store_error` 影响**全部已认证请求**（A/B/C 三端），是可用性最高风险项；
+  - `oauth.failure_rate` / `saml.acs_failure_rate` / `oidc.jwks_stale` 影响**走 SSO 的登录入口**（企业管理端与 C 端企业 SSO）；账号密码 + MFA 通道不受影响，因此失败面取决于该 provider 的接入比例；
   - `token.reuse` / `session.revoke_failure` 影响单个账号及其设备链，属账号安全事件；
   - `outbox.*` 影响审计时效与合规，不影响接口可用性；
   - `cleanup.*` 影响 `identity_session` 归档与表容量，长期不处理会拖慢会话查询。
@@ -56,6 +59,8 @@
    | `identity.lockout.spike` | 撞库 / 锁定阈值过低 | 查看 reason 分布；必要时临时上调 `identity.lockout.max_failures` 或封禁来源 IP |
    | `identity.refresh.failure_rate` 高 | 会话过期 / 撤销 / 客户端时钟 | 检查 `identity_session` 状态与设备绝对到期；确认客户端时间同步 |
    | `identity.mfa.recovery_used` | 用户丢失 TOTP 设备 | 通知账号所有者；核查操作来源；必要时重置 MFA |
+   | `identity.oauth.failure_rate` / `identity.saml.acs_failure_rate` | IdP 签名 key 轮换、证书过期、时钟偏移、issuer / audience 配错 | 见「缓解与恢复 · SSO 故障（OIDC / SAML）」 |
+   | `identity.oidc.jwks_stale` / `identity.oidc.jwks_refresh_failing` | JWKS 端点不可达、证书信任链失效、网络策略拦截 | 见「缓解与恢复 · SSO 故障（OIDC / SAML）」 |
    | `identity.session.revoke_failure` | DB 事务失败 / Redis 快照失败 | 检查 DB 连接与慢查询；确认事务回滚原因；撤销失败时旧令牌可能继续有效，需重试 |
    | 管理员密码/MFA 被异常重置 | 特权操作滥用 | 见「缓解与恢复 · 管理员账号接管」 |
    | `identity.outbox.*` | worker 未运行 / 审计出口不可用 | 检查 `cmd/worker` 存活与 `async_outbox` 表；参见 [async-dlq.md](./async-dlq.md) |
@@ -114,6 +119,56 @@
 4. 抽查撤销键：账号 / 会话快照存在且 TTL 正常，jti 黑名单写入生效；
 5. 冒烟四项：登录 → 刷新 → 登出 → **用登出前的令牌请求应为 401**（若返回 200，说明撤销未生效，立即升级 P1）；
 6. 复盘时补一项影响面：故障窗口内命中宽限而放行的请求，其「已撤销但暂可用」时长上限等于 `token_grace`（默认 30s，最大 60s）；当前没有专门的宽限命中指标，用故障持续时长与 `identity_revocation_store_errors_total` 曲线估算上界，并写入复盘。
+
+
+### SSO 故障（OIDC / SAML）
+
+> **先明确一个反直觉事实**：SSO 校验失败走 fail-closed 快速返回（`40100` / `50300`），失败请求比成功更快，
+> 所以 `identity.oauth.latency`（P95）在 SSO 全挂时**不会升高，甚至更低**。
+> 判断 SSO 是否故障只看 `result` 维度，不要用延迟告警反推。
+
+**第一步：分清是哪一类（三个量，按顺序）**
+
+| 观测 | 查询 | 判定 |
+|---|---|---|
+| 失败率与主因 | `topk(5, sum by (provider, reason) (rate(identity_oauth_callback_total{result="failure"}[10m])))` | 拿到主因，进第二步分流 |
+| 公钥新鲜度 | `identity_oauth_jwks_cache_age_seconds` 对照该 provider 的 `identity.oauth.providers[].jwks_ttl`（默认 15m） | 超过 TTL 表示公钥已无法更新 |
+| 刷新是否失败 | `increase(identity_oauth_jwks_refresh_total{result="failure"}[15m])` | > 0 表示拉取 JWKS 失败 |
+
+SAML 侧对称：`identity_saml_authorize_total` 与 `identity_saml_acs_total` 的 `{result="failure", reason=...}`。
+两边 reason 词表共用（`internal/identity/app/saml.go` 的 `samlMetricReason` 直接复用 `oauthMetricReason`）。
+
+**第二步：按 reason 处置**
+
+| reason | 含义 | 首个动作 | 禁止动作 |
+|---|---|---|---|
+| `oauth_not_configured` | 该 provider 未配置，或 `oidc_enabled` 未显式开启 | 核对发布版本与配置项，这是配置问题不是 IdP 问题 | 不要先去动 IdP |
+| `oauth_invalid` | `state` 失效 / 重放、`nonce` 不匹配、id_token 签名或 `iss` / `aud` 校验失败 | ① 查 IdP 是否刚轮换签名 key（与公钥年龄对照）；② 核对服务器时钟，偏移超过 `nonce` 窗口会全量失败 | 不要关闭验签，不要放宽 `audience` / `issuer` |
+| `unavailable` | JWKS 拉不到，或 IdP 5xx / 超时 | 从 Pod 内直接请求 JWKS 端点，查 DNS、出网策略、CA 信任链 | 不要重启 API Pod（只会丢本地缓存，让失败面更大） |
+| `rate_limited` | 回调被限流 | 查限流阈值与来源 IP 分布，判断是否被刷 | 不要直接放开限流 |
+| `oauth_failed` | 其他 | 取审计事件 `auth.oauth.callback` 的 reason 原文与 `trace_id` | 不要凭现象猜原因 |
+
+SAML 额外三项（来自 2026-11-06 真实 Keycloak 联调的实测结论，见 [identity-authn.md](../identity-authn.md) §8.2.1）：
+
+- IdP 侧 XML Encryption 必须用 CBC 模式（`AES-256-CBC` 等），**AES-256-GCM 不支持**；Keycloak 26 默认的 XML Encryption 1.1（`rsa-oaep` = RSA-OAEP-256 + `xmlenc#sha256`）需 SP 侧注册，已在 `internal/identity/infrastructure/saml/keys.go` 补上，回滚到旧版本会重新失败；
+- IdP 证书轮换后必须同步更新 `identity.saml.idp.certificate`，否则验签全失败且表现为 100% ACS 失败；
+- 断言 ID 重放被判失败是**预期行为**（重放防护），不要当故障处理。
+
+**第三步：恢复确认**
+
+1. 失败率回落到基线并保持 10 分钟；
+2. 做一次真实 SSO 登录，确认 `identity_oauth_callback_total{result="success"}` 或 `identity_saml_acs_total{result="success"}` 递增；
+3. `identity_oauth_jwks_cache_age_seconds` 回到该 provider 的 `jwks_ttl` 以内；
+4. 若调整过配置，按 [release-rollback.md](./release-rollback.md) 记录变更点与回滚版本。
+
+**三条禁止动作（任何情况下）**
+
+- 关闭验签或跳过 id_token 校验：等价于允许任意伪造断言登录；
+- 放宽 `audience` / `issuer`：会把其他环境或其他租户的令牌放进本系统；
+- 顺手把 `identity.revocation.failure_mode` 改成 `fail_open`：这与 SSO 故障无关，只会同时削弱令牌撤销能力。
+
+> **阈值前提**：`identity.oidc.jwks_stale` 取 3600s，前提是该 provider 的 `jwks_ttl` 保持默认或不超过 1h（`validate` 允许配到 24h）。若某 provider 调大过 TTL，把规则阈值改为 `4 × jwks_ttl`，否则会产生稳定误报。
+
 
 
 ### 令牌重放

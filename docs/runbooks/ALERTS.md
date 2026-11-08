@@ -28,6 +28,10 @@
 | `identity.mfa.recovery_used` | P2 | 有账号使用 MFA 恢复码，疑似丢失 TOTP 设备 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.step_up.latency` | P2 | 特权操作 step-up P95 超过 500ms | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.oauth.latency` | P2 | OAuth 回调 P95 超过 3s，IdP 变慢或网络抖动 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.oauth.failure_rate` | P1 | OIDC 回调失败率 > 50%（`identity_oauth_callback_total{result="failure"}` 占 10 分钟窗口一半以上且失败速率 > 0.05/s） | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.oidc.jwks_stale` | P1 | OIDC 公钥缓存 1 小时未刷新（`identity_oauth_jwks_cache_age_seconds > 3600`），未知 kid 将失败关闭 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.oidc.jwks_refresh_failing` | P2 | OIDC 公钥集刷新失败（`increase(identity_oauth_jwks_refresh_total{result="failure"}[15m]) > 0`），IdP 轮换后可能全量登录失败 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.saml.acs_failure_rate` | P1 | SAML ACS 断言校验失败率 > 50%（`identity_saml_acs_total{result="failure"}`），证书轮换或算法不匹配 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.session.revoke_failure` | P2 | 设备会话撤销失败（`identity_session_revoke_total{result="failure"}`），旧令牌可能继续可用 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.outbox.backlog` | P2 | identity.audit Outbox 存在积压（`identity_outbox_pending > 0`），审计事件未投递 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.outbox.lag` | P2 | identity.audit 最老事件积压超过 5 分钟（`identity_outbox_lag_seconds > 300`），影响合规时效 | [identity-auth-failure.md](./identity-auth-failure.md) |
