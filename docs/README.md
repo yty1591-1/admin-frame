@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-07（归档 8 份已闭环文档：4 份验证记录、2 份平台评审、2 份已实施计划；`docs/archive/` 合计 28 份）
+> **最后整理**：2026-11-08（校正地图偏差：ADR 补至 0011，补登 `deploy-kind-verify.md`、`incident/`、`oncall/` 与 IAM 审计报告；`docs/archive/` 合计 28 份）
 
 ---
 
@@ -45,8 +45,10 @@
 
 **附属清单**（被门禁脚本直接读取，改动需同步脚本）：
 
-- [adr/](./adr/) — 架构决策记录（ADR-0001～0005）
+- [adr/](./adr/) — 架构决策记录（ADR-0001～0011）
 - [runbooks/](./runbooks/) — 值班手册（`ALERTS.md` 与 `deploy/observability` 告警规则双向校验）
+- [incident/](./incident/) — 事故定级 / 响应 / 复盘 / 演练（RB-08，`check-oncall` OC-02/OC-04）
+- [oncall/ROTATION.md](./oncall/ROTATION.md) — 排班、交接与呼叫链路验证（RB-09，`check-oncall` OC-05/OC-06）
 - [audit/EVENTS.md](./audit/EVENTS.md) / [audit/FIELDS.md](./audit/FIELDS.md) — 审计事件与字段字典
 - [codegen/MANIFEST.md](./codegen/MANIFEST.md) — 生成物清单
 - [perf/BASELINES.md](./perf/BASELINES.md) — 性能基线与微基准登记
@@ -70,6 +72,7 @@
 | [migration-guide.md](./migration-guide.md) | `pkg/migrate` / `cmd/migrate` 使用与故障处置 |
 | [data-inventory.md](./data-inventory.md) | 数据资产清单、PII 分类分级与删除边界（ENT-15 登记） |
 | [tenant-data-lifecycle.md](./tenant-data-lifecycle.md) | 租户数据保留期、导出窗口与硬删除边界 |
+| [deploy-kind-verify.md](./deploy-kind-verify.md) | 用 kind 验证 Helm Chart：渲染 → 部署 → 冒烟 → 回滚 → 迁移失败阻断 |
 | [pkg-roadmap.md](./pkg-roadmap.md) | `pkg/` 公共能力包规划与落地状态 |
 
 ### 3.2 活跃计划（有未关闭条目）
@@ -82,6 +85,8 @@
 | [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 立项评审稿 v1.0（待评审） | IAM 覆盖率门禁（P1-5）、OIDC/SAML/SCIM（P1-6）、访问复核（P1-7）：里程碑自 2026-11-30 起，尚未启动 |
 
 > 这四份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关）已全部闭环，位于 [`archive/`](./archive/)。
+>
+> **输入依据（非计划）**：[iam-audit-report-2026-11-05.md](./iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，满足 §四 归档条件后应移入 `archive/iam/`。
 
 ---
 
@@ -129,8 +134,11 @@ docs/
 ├── production-readiness-*.md  # 活跃计划（L3）
 ├── tenant-enterprise-review.md # 租户域差距评审与分批计划（L3）
 ├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 立项评审稿（L3）
+├── iam-audit-report-2026-11-05.md # IAM 一次性审计（P1-5/6/7 输入依据，归档候选）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
+├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）
+├── oncall/                    # 值班排班与交接（L1）
 ├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）
 └── archive/                   # 已闭环过程文档（L4，只读）
     ├── README.md
