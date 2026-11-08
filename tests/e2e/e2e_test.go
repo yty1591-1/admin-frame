@@ -167,8 +167,9 @@ func buildBinaries(t *testing.T) string {
 			binErr = err
 			return
 		}
-		for _, name := range []string{"admin-api", "biz-api", "c-api"} {
-			//nolint:gosec // G204: 参数来自测试内固定清单（三个已知服务名），非用户输入。
+		// worker 用于 P1-7 季度复核演练：一次性模式（`-certification-sweep`）与 CronJob 同一入口。
+		for _, name := range []string{"admin-api", "biz-api", "c-api", "worker"} {
+			//nolint:gosec // G204: 参数来自测试内固定清单（四个已知服务名），非用户输入。
 			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, exeName(name)), "./cmd/"+name)
 			cmd.Dir = repoRoot(t)
 			out, err := cmd.CombinedOutput()
