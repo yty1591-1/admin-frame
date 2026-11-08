@@ -500,6 +500,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 验收用例：`TestOIDCEndToEndAuthorizationCodeFlow`（授权码 + PKCE + nonce 全链路、授权码重放与 nonce 不匹配拒绝）、`TestJWKSRetainsCacheWhenRefreshFails`（故障期保留旧公钥、未知 kid 失败关闭）、`TestOIDCRequiresExplicitFlag`（显式开关）。
 - 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
+- IdP 侧参数模板：[idp-config-templates.md](./identity/idp-config-templates.md)（Keycloak 26.x 实测基线 + 通用验收清单）。
 - 仍待交付：SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。SAML 2.0 SP 见 §8.2.1（已实现）。
 
 ---
