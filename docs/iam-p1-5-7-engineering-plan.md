@@ -5,7 +5,7 @@
 | 文档编号 | IAM-PLAN-2026-11-001 |
 | 文档版本 | v1.1（执行基线；v1.0 立项评审稿已由 2026-11-08 基线校正取代） |
 | 编制日期 | 2026-11-05 |
-| 文档状态 | **执行中（部分交付）**：P1-5 已交付、P1-6 部分交付（OIDC / SAML 已交付，SCIM / M2M 未开始）、P1-7 工具链已交付待演练；立项会签（M0）尚未完成，故不按「已批准」表述 |
+| 文档状态 | **执行中（部分交付）**：P1-5 已交付、P1-6 部分交付（OIDC / SAML 已交付，SCIM / M2M 未开始）、P1-7 工具链已交付且验收报告已出具（整体签收未通过）；立项会签（M0）尚未完成，故不按「已批准」表述 |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
 | 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
@@ -86,7 +86,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | M2 OIDC 可接入 | 2026-12-04 | OIDC 授权码 + PKCE | 至少 1 个 IdP（Keycloak 或等价测试 IdP）端到端登录成功；JWKS 轮换演练通过 | **已完成（提前，2026-11-05）**：staging 真实 Keycloak 授权码 + PKCE 冒烟通过；JWKS 轮换有步骤与判定指标，但记录未附具体数值快照 |
 | M3 SAML 可接入 | 2026-12-18 | SAML 2.0 SP-initiated | 签名断言校验、证书轮换、重放防护用例通过 | **已完成（提前，2026-11-06）**：kind 等价 staging + Keycloak 26.7.4，加密断言 + 签名全链路通过，证书轮换演练通过 |
 | M4 SCIM + M2M | 2027-01-08 | 用户/组同步与机器身份 | 10k 用户同步演练达标；client credentials 轮换与审计通过 | **未开始**：`scim` 与 `client_credentials` 在代码中零实现（全仓仅 `authorization_code`） |
-| M5 P1-7 复核闭环 | 2026-12-25 | 访问复核工具链 | 一次完整季度复核演练完成；超期回收与证据导出可用 | **工具链已交付（提前，2026-11-05），演练未做**：Campaign / 决策 / 超期回收 / 证据导出已实现且路由默认开启；季度演练与 Runbook 缺失 |
+| M5 P1-7 复核闭环 | 2026-12-25 | 访问复核工具链 | 一次完整季度复核演练完成；超期回收与证据导出可用 | **工具链与演练已交付，签收未通过**：Campaign / 决策 / 超期回收 / 证据导出已实现且路由默认开启；全流程演练 2026-11-08 通过、验收报告已出具（`docs/iam/p1-7-acceptance-report.md`）；差 staging CronJob 实战、责任人真实入口裁决、上限口径评审与双评审签字 |
 | M6 生产准入评审 | 2027-01-15 | 三项整体验收 | 全部质量门禁、合规评审、回滚演练通过 | **未开始**：依赖 M0、M4、M5 演练与双评审签字 |
 
 ### 3.2 P1-5 阶段拆解
@@ -115,10 +115,10 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-08 校正） |
 |------|------|--------|---------|------------------------|
 | S7-1 模型与契约 | 2026-11-30 ~ 12-04 | Campaign/Task/Decision 领域模型、API 契约、状态机 | 与审批/绑定模型评审通过；错误码冻结 | **已完成（提前，2026-11-05）**：`internal/iam/domain/certification.go`、`app/certification_service.go`、`transport/admin/router.go` 复核路由、审计事件 `rbac.certification` |
-| S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **已完成**：10k 实测 403–767 ms（目标 ≤5 min，2026-11-08，`docs/incident/drills/2026-11-08-s7-2-perf.md`）；同批修掉两处写放大——任务落库 10003 条 INSERT → 23 条批量（约 20 倍）、特权判定 30003 条查询 → 6 条（按角色去重，约 100 倍）。边界：单活动上限 10000 条，第 10001 条被拒，故 10 万行导出须先决策口径 |
+| S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **已完成**：10k 实测 403–767 ms（目标 ≤5 min，2026-11-08，`docs/incident/drills/2026-11-08-s7-2-perf.md`）；同批修掉两处写放大——任务落库 10003 条 INSERT → 23 条批量（约 20 倍）、特权判定 30003 条查询 → 6 条（按角色去重，约 100 倍）。**10 万档位已补实测**（同一日）：清单生成 4.68 s、导出 10 万行 479–595 ms / 14.30 MB、生成期堆驻留 +67.8 MB；默认上限 10000 未改动，抬升方案见 `docs/adr/0012-certification-export-limit.md`（Proposed） |
 | S7-3 决策与回收 | 2026-12-14 ~ 12-18 | 确认/驳回、超期升级、自动回收、破玻璃豁免 | 超期回收与二次确认用例通过 | **已完成**：`DecideTask` / `CloseCampaign` / `AutoExpireOverdue`；回收按 `expectedVersion` 做乐观锁校验，`auto_revoke` 默认关闭（仅标记 expired）；超期扫描由 `SweepOverdue` + `worker -certification-sweep` + Helm CronJob 交付（2026-11-08），与人工触发共用同一状态机 |
 | S7-4 证据与审计 | 2026-12-21 ~ 12-23 | 证据导出（CSV/JSON）、审计事件、留存策略 | 导出可复现、审计可关联 Campaign | **已完成**：`ExportEvidence`；审计 `rbac.certification` 保留 180d；字段完整率已按「状态应填口径」量化（2026-11-08）：已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 全 100%，未裁决 10 000 行按语义留空；导出 1 万行 48–81 ms / 1.43 MB |
-| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **大部分完成**：手册已补工具链操作；全流程演练于 2026-11-08 通过并归档证据（MySQL 8.0.46 + Redis L2 + Outbox 真实链路，`docs/incident/drills/2026-11-08-certification-sweep.md`，含 auto_revoke 双路径、指纹漂移防护与审计 fail-closed 验证）；剩余：CronJob 真实调度与 staging 实战（复用 AI-05 窗口）、验收报告与评审签字 |
+| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **验收报告已出具，签收未通过**：手册已补工具链操作；全流程演练于 2026-11-08 通过并归档证据（MySQL 8.0.46 + Redis L2 + Outbox 真实链路，`docs/incident/drills/2026-11-08-certification-sweep.md`，含 auto_revoke 双路径、指纹漂移防护与审计 fail-closed 验证）；验收报告 `docs/iam/p1-7-acceptance-report.md` 逐条判定 §13.3——2 条达标、1 条技术达标待口径评审、1 条部分达标；剩余：CronJob 真实调度与 staging 实战（复用 AI-05 窗口）、责任人经 A 端真实入口裁决、ADR-0012 容量评审、安全与平台双评审签字 |
 
 ---
 
@@ -311,9 +311,9 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | SAML 断言校验 p95 | ≤ 50 ms | 压测 |
 | SCIM 同步 10k 用户 + 50 组 | ≤ 30 min，错误率 < 0.1% | 演练 |
 | M2M 令牌签发 p95 | ≤ 100 ms | 压测 |
-| 复核清单生成 10k 主体 | ≤ 5 min | 演练 → **实测 403–767 ms**（2026-11-08，MySQL 8.0.46，`2026-11-08-s7-2-perf.md`） |
+| 复核清单生成 10k 主体 | ≤ 5 min | 演练 → **实测 403–767 ms**（2026-11-08，MySQL 8.0.46，`2026-11-08-s7-2-perf.md`）；10 万主体档位 4.68 s（`2026-11-08-s7-2-perf-100k.md`） |
 | 复核决策 API p95 | ≤ 200 ms | 压测 |
-| 证据导出 10 万行 | ≤ 2 min | 演练 → **当前不可达**：单活动上限 10000 条，10 000 行实测 48–81 ms / 1.43 MB；10 万行需提高上限或改为多活动累计（口径待评审） |
+| 证据导出 10 万行 | ≤ 2 min | 演练 → **抬升上限档位下实测 479–595 ms / 14.30 MB，达标**；默认上限 10000 仍拒绝第 10001 条，档位是否抬升见 [ADR-0012](./adr/0012-certification-export-limit.md)（Proposed） |
 | 可用性 SLO | 99.9%（月度） | 监控 |
 
 容量评估由 SRE 在 staging 完成；未达标不得进入生产灰度。
@@ -418,17 +418,17 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 
 ### 13.3 P1-7 验收
 
-- [ ] 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出。
+- [ ] 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出。**（部分达标，2026-11-08）** 全链路已在真实 MySQL / Redis / Outbox 跑通，但「责任人确认」是脚本调用而非 A 端真实入口、「CronJob 真实调度」与「staging 环境」未覆盖——详见 [P1-7 验收报告](./iam/p1-7-acceptance-report.md) §3.1。
 - [x] 复核结果全程审计可关联 Campaign；导出字段完整率 100%（应填口径实测：已裁决 100 行四列全 100%，未裁决行按语义留空，见 `2026-11-08-s7-2-perf.md` §7）。
 - [x] 自动回收具备并发安全与回退开关；误操作可人工恢复。
-- [x] 10k 主体清单生成达到性能指标（403–767 ms ≤ 5 min）。10 万行导出受单活动上限 10000 阻断，指标口径待评审：提高上限 / 改为多活动累计 / 导出改流式（`2026-11-08-s7-2-perf.md` §6）。
+- [x] 10k 主体清单生成达到性能指标（403–767 ms ≤ 5 min）。10 万行导出的**技术可达性已实测**：抬升上限档位下生成 4.68 s、导出 479–595 ms / 14.30 MB；默认上限 10000 仍拒绝第 10001 条，是否抬升属容量决策，见 [ADR-0012](./adr/0012-certification-export-limit.md)（Proposed，待评审）与 [10 万档位实测](./incident/drills/2026-11-08-s7-2-perf-100k.md)。
 
 **证据与缺口（2026-11-08 核对）**
 
 - 工具链已具备：`internal/iam/app/certification_service.go` 提供 `CreateCampaign` / `ActivateCampaign` / `DecideTask` / `CloseCampaign` / `AutoExpireOverdue` / `ExportEvidence`，`certification_sweeper.go` 提供 `SweepOverdue`（worker 一次性模式与 CronJob 的入口）；路由注册于 `internal/iam/transport/admin/router.go:136`，受 `iam.certification.enabled` 控制（`config.IAMCertificationConfig.IsEnabled()` 未配置时默认开启）。
 - 403 成立依据：`AutoExpireOverdue` 按 `task.Version` 做乐观锁（`Save(ctx, task, expectedVersion)`），`auto_revoke` 默认 `false` 仅标记过期，`validate.go:196` 强制「`auto_revoke` 必须同时启用 `certification`」，可整体关闭回到人工模式。
 - 402 已闭环（2026-11-08）：字段完整率按「状态应填口径」实测——已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 均为 100%，未裁决 10 000 行按语义留空；口径依据见 `2026-11-08-s7-2-perf.md` §7。
-- 404 部分闭环（2026-11-08）：10k 主体清单生成实测 403–767 ms；10 万行导出因单活动上限 10000 条不可达，1 万行实测 48–81 ms / 1.43 MB，口径决策见 `2026-11-08-s7-2-perf.md` §6。
+- 404 部分闭环（2026-11-08）：10k 主体清单生成实测 403–767 ms；10 万行导出因单活动上限 10000 条在默认值下不可达，1 万行实测 48–81 ms / 1.43 MB。**同日补 10 万档位实测**：抬升上限至 100000 后生成 4.68 s、导出 479–595 ms / 14.30 MB / 10 万行、生成期堆驻留 +67.8 MB，证据 `docs/incident/drills/2026-11-08-s7-2-perf-100k.md`；口径选择（提上限 / 多活动累计 / 流式）已单独立为 `docs/adr/0012-certification-export-limit.md`，待容量评审。生产默认值未改动。
 
 ### 13.4 整体生产准入（DoD）
 
@@ -439,7 +439,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 - [ ] 文档更新：设计文档、接口契约、Runbook、监控看板、验收报告。
 - [ ] 无未关闭的 P0/P1 缺陷。
 
-**当前阻断 DoD 的具体项**：M0 会签未完成；M4（SCIM + M2M）未开工；M5 季度演练与 Runbook 未做；安全/合规评审无签字记录；staging 回滚演练未做。M1 的 `make ci` 全绿需在 CI 上复核（本地缺 MySQL DSN 与部分工具链）。
+**当前阻断 DoD 的具体项**：M0 会签未完成；M4（SCIM + M2M）未开工；M5 的 staging CronJob 实战与责任人真实入口裁决未做、ADR-0012 未评审（演练与 Runbook 已完成，见 [P1-7 验收报告](./iam/p1-7-acceptance-report.md) §5）；安全/合规评审无签字记录；staging 回滚演练未做。M1 的 `make ci` 全绿需在 CI 上复核（本地缺 MySQL DSN 与部分工具链）。
 
 ---
 
@@ -460,6 +460,11 @@ golangci-lint run ./internal/iam/... ./internal/identity/...
 - [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md)
 - [RBAC 与 IAM 设计](./rbac-iam.md)
 - [身份认证设计](./identity-authn.md)
+- [P1-7 验收报告](./iam/p1-7-acceptance-report.md)
+- [ADR-0012 单活动规模上限与导出口径](./adr/0012-certification-export-limit.md)
+- [S7-5 全流程演练记录](./incident/drills/2026-11-08-certification-sweep.md)
+- [S7-2 10k 性能实测](./incident/drills/2026-11-08-s7-2-perf.md)
+- [S7-2 10 万档位实测](./incident/drills/2026-11-08-s7-2-perf-100k.md)
 - [CI 测试门禁](../scripts/ci/check-test-gates.sh)
 - [集成测试脚本](../scripts/ci/run-integration-tests.sh)
 - [Makefile](../Makefile)
