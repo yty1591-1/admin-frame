@@ -518,69 +518,81 @@ func (s *CertificationService) AutoExpireOverdue(
 		if !campaignVisibleTo(campaign, scope) {
 			return apperr.NotFound("certification campaign not found")
 		}
-		if campaign.Status != domain.CertificationStatusActive {
-			return apperr.Conflict("certification campaign is not active")
-		}
-		if !campaign.IsOverdue(now) {
-			return nil
-		}
-		all, err := s.tasks.ListByCampaign(ctx, campaign.ID)
-		if err != nil {
-			return err
-		}
-		for _, task := range all {
-			if task.Status != domain.CertificationTaskStatusPending {
-				continue
-			}
-			expectedVersion := task.Version
-			if !s.limits.AutoRevoke {
-				if err := task.Expire(now); err != nil {
-					return err
-				}
-				if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-					return err
-				}
-				if err := s.recordDecision(ctx, campaign, task, "auto_expire", certificationSystemActor, certificationAutoReason); err != nil {
-					return err
-				}
-				affected++
-				continue
-			}
-			binding, findErr := s.bindings.FindByID(ctx, task.BindingID)
-			if findErr != nil || bindingFingerprintMismatch(task, binding, campaign) {
-				if findErr != nil && !errors.Is(findErr, apperr.ErrNotFound) {
-					return findErr
-				}
-				if err := task.MarkSkipped(certificationSystemActor, certificationAutoReason, now); err != nil {
-					return err
-				}
-				if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-					return err
-				}
-				if err := s.recordDecision(ctx, campaign, task, "auto_skip", certificationSystemActor, certificationAutoReason); err != nil {
-					return err
-				}
-				affected++
-				continue
-			}
-			if err := task.Decide(domain.CertificationDecisionRevoke, certificationSystemActor, certificationAutoReason, now); err != nil {
-				return err
-			}
-			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-				return err
-			}
-			if err := s.revoker.Revoke(ctx, binding.ID, certificationSystemActor, certificationAutoReason); err != nil {
-				return err
-			}
-			if err := s.recordDecision(ctx, campaign, task, "auto_revoke", certificationSystemActor, certificationAutoReason); err != nil {
-				return err
-			}
-			affected++
-		}
-		return nil
+		affected, err = s.expireOverdueTasks(ctx, campaign, now)
+		return err
 	})
 	if err != nil {
 		return 0, err
+	}
+	return affected, nil
+}
+
+// expireOverdueTasks 在调用方事务内处理单个活动的超期任务。
+//
+// 调用方必须先完成可见性 / 作用域校验：本函数只做状态机与回收，
+// 不判断请求来源，避免扫描任务与人工触发出现两套判定。
+func (s *CertificationService) expireOverdueTasks(
+	ctx context.Context, campaign *domain.CertificationCampaign, now time.Time,
+) (int, error) {
+	if campaign.Status != domain.CertificationStatusActive {
+		return 0, apperr.Conflict("certification campaign is not active")
+	}
+	if !campaign.IsOverdue(now) {
+		return 0, nil
+	}
+	affected := 0
+	all, err := s.tasks.ListByCampaign(ctx, campaign.ID)
+	if err != nil {
+		return 0, err
+	}
+	for _, task := range all {
+		if task.Status != domain.CertificationTaskStatusPending {
+			continue
+		}
+		expectedVersion := task.Version
+		if !s.limits.AutoRevoke {
+			if err := task.Expire(now); err != nil {
+				return 0, err
+			}
+			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+				return 0, err
+			}
+			if err := s.recordDecision(ctx, campaign, task, "auto_expire", certificationSystemActor, certificationAutoReason); err != nil {
+				return 0, err
+			}
+			affected++
+			continue
+		}
+		binding, findErr := s.bindings.FindByID(ctx, task.BindingID)
+		if findErr != nil || bindingFingerprintMismatch(task, binding, campaign) {
+			if findErr != nil && !errors.Is(findErr, apperr.ErrNotFound) {
+				return 0, findErr
+			}
+			if err := task.MarkSkipped(certificationSystemActor, certificationAutoReason, now); err != nil {
+				return 0, err
+			}
+			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+				return 0, err
+			}
+			if err := s.recordDecision(ctx, campaign, task, "auto_skip", certificationSystemActor, certificationAutoReason); err != nil {
+				return 0, err
+			}
+			affected++
+			continue
+		}
+		if err := task.Decide(domain.CertificationDecisionRevoke, certificationSystemActor, certificationAutoReason, now); err != nil {
+			return 0, err
+		}
+		if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+			return 0, err
+		}
+		if err := s.revoker.Revoke(ctx, binding.ID, certificationSystemActor, certificationAutoReason); err != nil {
+			return 0, err
+		}
+		if err := s.recordDecision(ctx, campaign, task, "auto_revoke", certificationSystemActor, certificationAutoReason); err != nil {
+			return 0, err
+		}
+		affected++
 	}
 	return affected, nil
 }
