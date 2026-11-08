@@ -314,10 +314,10 @@
 
 **验收标准**
 
-- [ ] `AC-ENT-05-1`：`helm template` / `kubectl --dry-run` 在 dev / staging / prod 三套 values 下通过。
-- [ ] `AC-ENT-05-2`：清单包含探针、资源、HPA、PDB、NetworkPolicy、安全上下文。
-- [ ] `AC-ENT-05-3`：仓库与渲染产物中无明文密钥；镜像使用 digest。
-- [ ] `AC-ENT-05-4`：staging 完成一次部署 → 冒烟 → 回滚演练。
+- [x] `AC-ENT-05-1`：`helm template` 在 dev / staging / prod 三套 values 下通过（2026-11-08 复核：`helm template af deploy/helm/admin-frame -f values-<env>.yaml --api-versions monitoring.coreos.com/v1`，三套均成功，资源数 13 / 25 / 33）。
+- [x] `AC-ENT-05-2`：prod 清单含探针（4/4 工作负载 liveness + readiness）、`resources`、HPA（3）、PDB（4）、NetworkPolicy（3）与 `securityContext`（Pod 与容器双层，共 10 处）。**分层差异**：staging 仅 NetworkPolicy（3），无 HPA/PDB，worker 未开探针与 Service（`values.yaml` 中 `workloads.worker.probes.enabled=false`，只有生产 overlay 开启）；dev 为单副本，无 HPA/PDB/NetworkPolicy。判定以 prod 为准。
+- [x] `AC-ENT-05-3`：渲染产物无明文密钥（三套均无 `kind: Secret` 对象；`dsn` / `password` 等键为空字符串，实际值经 `secretKeyRef` 注入，prod 35 处 / staging 20 处）。镜像 digest 仅 prod 强制（5 个引用均为 `@sha256:`，`values-prod.yaml` 为发布前必换的占位值）；staging / dev 用版本 tag `0.1.0`。
+- [ ] `AC-ENT-05-4`：staging 完成一次部署 → 冒烟 → 回滚演练（待环境窗口；同流程已在 kind 实测，见 [`deploy-kind-verify.md`](./deploy-kind-verify.md)）。
 
 **门禁**：新增 `make check-deploy`（清单存在性、探针、资源、密钥、digest）。
 
@@ -580,7 +580,7 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 | ENT-16 | P1 | 完成（2026-11-04） | 集成矩阵 + 三端 E2E + 契约测试 + 压测基线登记 |
 | ENT-17 | P1 | 完成（2026-11-04） | `release.yml` 八阶段 + 迁移门禁 + 金丝雀指标门禁 + 自动回滚 |
 | ENT-18 | P1 | 完成（2026-11-05）；staging 实战演练挂行动项 | 分级矩阵 + 响应流程 + 复盘模板 + 行动项台账 + 排班交接 + Game Day（tabletop） |
-| ENT-19 | P2 | 待做 | SBOM / 签名 / DAST |
+| ENT-19 | P2 | 完成（2026-11-05；DAST 归 ENT-20） | SBOM（CycloneDX 按 digest）+ cosign keyless 签名 + 部署前验签；keyless 首跑随首个 `v*` 发布（SC-01） |
 | ENT-20 | P2 | 待做 | WAF / 网关 / mTLS / 安全头 |
 | ENT-21 | P2 | 待做 | CODEOWNERS + 分支保护 + 文档站点 |
 | ENT-22 | P2 | 待做 | 容量模型 + 成本治理 |

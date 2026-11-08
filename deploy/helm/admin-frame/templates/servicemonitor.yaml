@@ -8,7 +8,9 @@ API 集合完整，发现不了 CRD 缺失；只有真 API server 会拒绝，�
 这里提前判断，把「缺什么、怎么办」写进失败信息。
 
 放行方式（见 values.yaml 的 serviceMonitor.allowMissingCRD）：
-  - 离线渲染：helm template --api-versions monitoring.coreos.com/v1/ServiceMonitor
+  - 离线渲染：helm template --api-versions monitoring.coreos.com/v1
+    （必须写成组版本形式。`monitoring.coreos.com/v1/ServiceMonitor` 带 Kind 后缀，
+    不会命中下面的 Has 判断，照做仍然渲染失败。）
   - 该环境不抓指标：allowMissingCRD=true（跳过渲染，NOTES 会提示）
 */ -}}
 {{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
@@ -36,6 +38,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- else if not .Values.serviceMonitor.allowMissingCRD }}
-{{- fail "serviceMonitor.enabled=true 但当前集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）。部署前请先安装 Operator（kube-prometheus-stack，或只装 prometheus-operator-crds），或把 serviceMonitor.enabled 设为 false；确认该环境不抓取指标时才设 serviceMonitor.allowMissingCRD=true 跳过渲染。离线渲染时可用 --api-versions monitoring.coreos.com/v1/ServiceMonitor 声明模拟的 API 集合。" }}
+{{- fail "serviceMonitor.enabled=true 但当前集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）。部署前请先安装 Operator（kube-prometheus-stack，或只装 prometheus-operator-crds），或把 serviceMonitor.enabled 设为 false；确认该环境不抓取指标时才设 serviceMonitor.allowMissingCRD=true 跳过渲染。离线渲染时用 --api-versions monitoring.coreos.com/v1 声明模拟的 API 集合（必须写组版本；带 /ServiceMonitor 后缀的写法不会命中本判断，照做仍会失败）。" }}
 {{- end }}
 {{- end }}

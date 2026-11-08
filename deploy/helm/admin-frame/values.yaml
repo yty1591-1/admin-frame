@@ -308,8 +308,9 @@ serviceMonitor:
   #               难懂的 `no matches for kind "ServiceMonitor"`。
   # true：跳过 ServiceMonitor 渲染（该环境不抓取指标时才这样设；指标会缺失）。
   # 离线渲染（helm template）不会自带 CRD，用
-  #   --api-versions monitoring.coreos.com/v1/ServiceMonitor
-  # 声明模拟的 API 集合，而不是把这个开关设成 true。
+  #   --api-versions monitoring.coreos.com/v1
+  # 声明模拟的 API 集合，而不是把这个开关设成 true。必须写组版本；
+  # 带 Kind 后缀的 `monitoring.coreos.com/v1/ServiceMonitor` 不命中判断。
   allowMissingCRD: false
   interval: 30s
   scrapeTimeout: 10s

@@ -1,7 +1,7 @@
 # 用 kind 验证 Helm Chart（ENT-05 的可重复执行环境）
 
 > **状态**：已落地（ENT-05 闭环后的可重复验证流程；2026-11-02 首次跑通全流程，2026-11-06 补故障排查）  
-> **最后更新**：2026-11-06（补本机代理、`port-forward` 断连、集成测试起栈三类故障排查）  
+> **最后更新**：2026-11-08（补离线渲染参数写法的已知坑：组版本与带 Kind 后缀的区别；前次 2026-11-06 补三类故障排查）  
 > **变更方式**：验证步骤或「已知坑」变更须同 MR 更新本文；验证入口（`deploy/helm/admin-frame/values-kind.yaml`、`scripts/ci/release-smoke.sh`、Helm 流程）调整须同步本文步骤与命令，ENT-05 状态变更回写 `production-readiness-implementation-plan.md`  
 
 在没有 staging 集群时，用 kind 真跑一遍「渲染 → 部署 → 冒烟 → 回滚 → 迁移失败阻断」。
@@ -242,6 +242,7 @@ not ready. status: Failed
 |---|---|
 | `ERROR: no matches for kind "ServiceMonitor"` | 未装 Operator CRD；先执行步骤 2 |
 | `helm template` 报缺 CRD 而集群已装 | `helm template` 离线渲染不带 CRD，加 `--api-versions monitoring.coreos.com/v1` |
+| 加了 `--api-versions` 仍报缺 CRD | 参数必须是组版本 `monitoring.coreos.com/v1`；带 Kind 后缀的 `monitoring.coreos.com/v1/ServiceMonitor` 不命中模板里的 `Has` 判断（2026-11-08 实测：后者照做仍失败） |
 | `kind load` 报 `content digest ... not found` | 多平台镜像；改用 `docker save` + `ctr import` |
 | `ctr: open /tmp/x.tar: no such file` | 节点内 `/tmp` 是 tmpfs；`docker cp` 到 `/root/` |
 | Job 卡在 Running 但 `get pods` 为空 | pre-install 阶段 ServiceAccount 不存在；SA 必须是 weight `-20` 的 pre-hook |
