@@ -97,7 +97,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | S5-2 用例补齐（第一批） | 2026-11-12 ~ 11-17 | 审批/模板/缓存竞态用例 | 新增用例全部通过；关键分支覆盖可追溯 | 已完成：`app` 76.3%、`cache` 88.6%、`catalog` 72.7% 均过门槛 |
 | S5-3 用例补齐（第二批） | 2026-11-12 ~ 11-17 | SQL 仓储边界、HTTP handler/契约用例 | 变更行覆盖率达到门槛；契约快照稳定 | 已完成：`transport/rest` 60.6%、`transport/admin` 与 `biz` 100%；`persistence` 由 `tests/integration/iam` 计入 |
 | S5-4 门禁改造 | 2026-11-18 ~ 11-19 | `check-test-gates.sh` 分层门槛、PR 集成测试编排、Makefile 目标 | 本地与 CI 同口径；失败信息可定位到包 | 已完成：`check-test-gates.sh` 调用 `check-iam-coverage.sh`；`ci.yml` integration job 跑 `tests/integration/...` 并注入 `IAM_TEST_MYSQL_DSN` |
-| S5-5 门禁演练 | 2026-11-20 | 门禁失败演练记录、回滚说明 | 人为降低覆盖率/移除集成测试均能阻断合并 | **部分完成**：变更行门禁负向用例已验证（阈值注入 101% → `exit 1`），并修掉一处会误伤的假阳性；「删除集成测试」未演练 |
+| S5-5 门禁演练 | 2026-11-20 | 门禁失败演练记录、回滚说明 | 人为降低覆盖率/移除集成测试均能阻断合并 | **已完成**：阈值注入负向用例（101% → exit 1）与「移除集成测试」负向用例均验证通过（2026-11-08，`docs/incident/drills/2026-11-08-s5-5-integration-gate.md`）；门禁落地为 run-integration-tests.sh 的三层清单断言（包存在 / 15 个关键用例点名 / 总数 ≥70），在 compose up 前确定性失败 |
 
 ### 3.3 P1-6 阶段拆解
 

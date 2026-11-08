@@ -1,0 +1,6 @@
+==> S5-5 inventory: package-level presence
+ERROR: tests/integration/smoke has no *_test.go left (S5-5)
+==> S5-5 inventory: required scenario tests
+ERROR: required integration test TestSmokeMySQLMigration is missing (S5-5)
+==> S5-5 inventory: total count >= 70
+ERROR: integration test inventory check failed; merge blocked (S5-5)

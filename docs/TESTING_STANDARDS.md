@@ -30,7 +30,7 @@
 | TEST-04 | CI（Linux）/ `make test-ci` 必须带 `-race`；失败即阻断合并。本地 Windows 无 CGO 工具链时可降级并告警 | job `test` / `run-tests.sh` |
 | TEST-05 | 禁止在测试或 CI 中使用生产凭据、生产 DSN、生产库；仅用 memory / fixture / ephemeral 容器 | Review + CI-12；流水线禁注入 prod secrets |
 | TEST-06 | 禁止无 issue 引用的 `t.Skip` 掩盖 TEST-03 必测场景 | Review + 必测 `-run` |
-| TEST-07 | 集成测试（若有）放在 `tests/integration/`，使用 testcontainers 或等价 ephemeral，不得连共享生产/预发库 | Review（容器集成门禁可后续加强） |
+| TEST-07 | 集成测试（若有）放在 `tests/integration/`，使用 testcontainers 或等价 ephemeral，不得连共享生产/预发库；集成测试清单由 `run-integration-tests.sh` 前置断言（包存在 / 关键用例点名 / 数量基线，S5-5），删除测试确定性阻断 CI integration job | Review |
 | TEST-08 | 合并请求须使用仓库 MR 模板并勾选测试自检 | `.github/` 与 `.gitee/` PR 模板 |
 
 ---
