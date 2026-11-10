@@ -210,3 +210,17 @@ func TestOAuth2ProviderExchangeMissingArgs(t *testing.T) {
 		t.Fatal("missing state must be rejected")
 	}
 }
+
+// TestOAuth2ProviderExchangeIdPUnreachable 覆盖演练 D2：IdP 不可达时必须返回 50300，
+// 且 errors.Is 能命中 ErrUnavailable，否则上层会降级为 50000。
+func TestOAuth2ProviderExchangeIdPUnreachable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	provider := testProvider(t, server, "")
+	server.Close()
+
+	_, err := provider.Exchange(context.Background(), "code-1", "verifier-1")
+	requireCode(t, err, apperr.CodeServiceUnavailable)
+	if !errors.Is(err, apperr.ErrUnavailable) {
+		t.Fatalf("errors.Is(err, ErrUnavailable) = false: %v", err)
+	}
+}
