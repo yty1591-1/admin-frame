@@ -62,7 +62,7 @@
 | 编号 | 事项 | 选项 | 决议 |
 |---|---|---|---|
 | `D1` | 是否接受 `RR-01`～`RR-06` | 全部接受 / 有条件接受 / 要求整改 |  |
-| `D2` | `SEC-F-01` 的处置时点（见 §5） | M6 前修复 / 转入 P2 backlog |  |
+| `D2` | `SEC-F-02` 的核对时点（见 §5） | staging 实测核对 / M6 前核对 |  |
 | `D3` | 四通道生产默认值是否维持 `enabled=false` | 维持 / 允许按客户灰度开启 |  |
 | `D4` | 本评审结论是否作为 M4（SCIM / M2M）验收通过的前置 | 是 / 否 |  |
 
@@ -70,7 +70,7 @@
 
 | 编号 | 偏差 | 证据 | 建议处置 |
 |---|---|---|---|
-| `SEC-F-01` | 设计 §21.2.3 声明指标 `identity_m2m_secret_age_seconds{client}` 与「`secret_age` 超 `max_secret_age` 告警」，代码仅做配置范围校验并写 `rotation_due_at`，未注册该指标，也无超龄告警逻辑 | `internal/identity/observability/metrics.go` 无对应 Gauge；`internal/identity/app/m2m.go` 仅在轮换时写 `RotationDueAt` | 二选一：补指标 + 告警规则；或改设计为「仅暴露 `rotation_due_at` 字段，由运维按清单巡检」。修复前 `RR-04` 的补偿控制不成立 |
+| `SEC-F-01` | ~~设计 §21.2.3 声明指标 `identity_m2m_secret_age_seconds{client}` 与超龄告警，代码未实现~~ **已修复（2026-11-10）**：新增 Gauge 并在签发时上报 secret 年龄，告警规则 `identity.m2m.secret_rotation_due`（P3）已加入 `rules/identity.yaml`，`ALERTS.md` 与 `key-rotation.md` 同步 | `internal/identity/observability/metrics.go`、`internal/identity/app/m2m.go`、`deploy/observability/prometheus/rules/identity.yaml` | 评审时确认阈值口径（默认 90 天与 `max_secret_age` 对齐） |
 | `SEC-F-02` | 同节的「`result="denied"` 5 分钟突增」告警依赖指标 label，需在告警规则中确认 label 取值与代码一致 | `identity_m2m_token_total{client,channel,result,reason}` | 上线前在 staging 抓一次真实序列核对 label |
 
 ## 6. 结论与签字
@@ -85,7 +85,7 @@
 
 | 编号 | 整改项 | Owner | 期限 | 验证方式 | 状态 |
 |---|---|---|---|---|---|
-| `SEC-F-01` |  |  |  | 指标 + 告警规则或设计修订 | 待分配 |
+| `SEC-F-01` | 补指标 + 告警规则，并同步 `ALERTS.md` / `key-rotation.md` | IAM 工程组 | 2026-11-10 | 单测 `TestM2MObserveSecretAge` + 规则文件审查 | 已完成 |
 | `SEC-F-02` |  |  |  | staging 指标序列截图 | 待分配 |
 | （按 §4 决议追加） |  |  |  |  |  |
 

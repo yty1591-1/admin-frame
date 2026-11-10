@@ -47,6 +47,7 @@ type Metrics struct {
 	samlACSDuration       *prometheus.HistogramVec
 	m2mTokenTotal         *prometheus.CounterVec
 	m2mTokenDuration      *prometheus.HistogramVec
+	m2mSecretAge          *prometheus.GaugeVec
 	scimRequestTotal      *prometheus.CounterVec
 	scimRequestDuration   *prometheus.HistogramVec
 	scimLastSuccess       *prometheus.GaugeVec
@@ -268,6 +269,10 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Help:    "M2M 令牌签发耗时（秒），含凭据校验与签名；p95 > 100ms 需排查。",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 		}, []string{"result"}),
+		m2mSecretAge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "identity_m2m_secret_age_seconds",
+			Help: "M2M 各客户端当前认证所用 secret 的年龄（秒）；超 max_secret_age 触发轮换告警，不会自动失效。client 为 client_id 前缀桶。",
+		}, []string{"client"}),
 		scimRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "identity_scim_request_total",
 			Help: "SCIM 请求次数；resource=User|Group|...，result=success|error，reason 为 scimType 或状态码。",
@@ -316,7 +321,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		m.oauthCallbackDuration, m.tokenReuseTotal, m.sessionRevokeTotal, m.smsSendTotal,
 		m.smsProviderAlert, m.mfaRecoveryUsed, m.oauthCallbackTotal, m.oauthJWKSRefreshTotal,
 		m.samlAuthorizeTotal, m.samlACSTotal, m.samlACSDuration,
-		m.m2mTokenTotal, m.m2mTokenDuration,
+		m.m2mTokenTotal, m.m2mTokenDuration, m.m2mSecretAge,
 		m.scimRequestTotal, m.scimRequestDuration, m.scimLastSuccess,
 		m.scimGroupMapTotal, m.scimNameTruncated,
 		m.revocationStoreError,
@@ -387,6 +392,16 @@ func (m *Metrics) ObserveM2MToken(_ context.Context, clientID, channel, result, 
 	}
 	m.m2mTokenTotal.WithLabelValues(m2mClientLabel(clientID), channel, result, reason).Inc()
 	m.m2mTokenDuration.WithLabelValues(result).Observe(duration.Seconds())
+}
+
+// ObserveM2MSecretAge 实现 app.M2MObserver：记录当前认证所用 secret 的年龄。
+//
+// client 标签与 token 指标共用前缀桶，避免时间序列随客户端数量无界增长。
+func (m *Metrics) ObserveM2MSecretAge(_ context.Context, clientID string, age time.Duration) {
+	if m == nil {
+		return
+	}
+	m.m2mSecretAge.WithLabelValues(m2mClientLabel(clientID)).Set(age.Seconds())
 }
 
 // m2mClientLabel 返回低基数客户端标签；未知客户端统一归入 "unknown"。

@@ -50,6 +50,17 @@ groups:
           description: "撤销快照写 Redis 失败；最长 60s 后回源生效，需关注 Redis 抖动。"
           runbook_url: docs/runbooks/identity-auth-failure.md
 
+      - alert: IdentityM2MSecretRotationDue
+        expr: max by (client) (identity_m2m_secret_age_seconds) >= 90 * 24 * 3600
+        for: 1h
+        labels:
+          severity: P3
+          alert_id: identity.m2m.secret_rotation_due
+        annotations:
+          summary: "M2M 客户端 secret 超过轮换周期"
+          description: "某客户端用于签发令牌的 secret 年龄超过 90 天（默认 max_secret_age=2160h）。仅提示轮换，不会自动失效；按 key-rotation 手册轮换并保留旧 secret 至宽限期结束。"
+          runbook_url: docs/runbooks/key-rotation.md
+
       - alert: IdentityRefreshFailureRateHigh
         expr: |
           (

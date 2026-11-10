@@ -104,7 +104,7 @@
 | `RR-01` | SCIM 映射到的角色按「IdP 权威」对待：管理员手工授予的同名角色，在成员移出组后会被一并撤销 | 绑定唯一键不含来源列（`(channel, subject_type, subject_id, merchant_id, role_id, active_key)`） | 与 IAM 季度复核配合；解绑原因写 `scim group ...` 可追溯 | ADR 评估来源列后 |
 | `RR-02` | 无 `If-Match` 的写入走 last-write-wins，可能覆盖并发修改 | 兼容不支持条件请求的 IdP | 审计 `attrs.version_check=none`；客户端可选择启用 ETag | IdP 能力盘点后 |
 | `RR-03` | SAML 静态元数据下，IdP **签名**证书轮换仍需改配置并重部署 | 未实现动态元数据拉取的强制刷新 | 接入清单固化轮换窗口；`metadata_ttl` 缓存 + 未知证书强刷 | S6-6 真实接入后 |
-| `RR-04` | `max_secret_age` 超龄无实际告警：设计声明 `identity_m2m_secret_age_seconds`，代码只有配置范围校验与 `rotation_due_at` 字段，超龄 secret 不会被自动发现 | 未实现指标与告警规则（见评审单 `SEC-F-01`） | 运维按客户端 `rotation_due_at` 巡检；**不视为已缓解** | M6 准入评审 |
+| `RR-04` | `max_secret_age` 超龄**只告警、不自动失效**，secret 可长期有效 | 设计即「提示轮换」而非强制，避免生产断链 | 已实现 `identity_m2m_secret_age_seconds{client}` + 告警 `identity.m2m.secret_rotation_due`（P3），处置见 [`key-rotation.md`](../runbooks/key-rotation.md) | M6 准入评审 |
 | `RR-05` | 审计投递依赖 Outbox Relay，Relay 停摆期间事件只在库内 | 已有 DLQ 与积压告警 | [`async-dlq.md`](../runbooks/async-dlq.md) 处置；`async_outbox` 可按 `trace_id` 回捞 | 季度演练 |
 | `RR-06` | 单部署仅支持一个 SCIM `provider` | 表结构按 provider 隔离，但配置为单值 | 多 IdP 需多实例或改配置结构 | 出现第二个企业客户时 |
 

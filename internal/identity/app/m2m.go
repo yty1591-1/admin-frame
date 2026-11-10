@@ -93,6 +93,8 @@ type M2MServiceConfig struct {
 type M2MObserver interface {
 	// ObserveM2MToken 记录一次签发尝试；result=issued|denied，reason 为粗粒度原因。
 	ObserveM2MToken(ctx context.Context, clientID, channel, result, reason string, duration time.Duration)
+	// ObserveM2MSecretAge 记录本次认证所用 secret 的年龄；超 max_secret_age 由告警规则判定。
+	ObserveM2MSecretAge(ctx context.Context, clientID string, age time.Duration)
 }
 
 // M2MService 承载机器客户端生命周期与令牌签发用例。
@@ -430,6 +432,14 @@ func m2mDeniedReason(err error) string {
 	}
 }
 
+// observeSecretAge 上报本次认证所用 secret 的年龄；超 max_secret_age 由告警规则判定。
+func (s *M2MService) observeSecretAge(ctx context.Context, clientID string, record *domain.M2MSecret, now time.Time) {
+	if s.observer == nil || record == nil || record.CreatedAt.IsZero() {
+		return
+	}
+	s.observer.ObserveM2MSecretAge(ctx, clientID, now.Sub(record.CreatedAt))
+}
+
 // issueToken 是签发实现主体：失败原因对外一律 invalid_client
 // （不区分不存在 / 停用 / 密钥错误），审计中保留真实原因供排障。
 func (s *M2MService) issueToken(ctx context.Context, input IssueTokenInput) (*M2MToken, error) {
@@ -468,6 +478,7 @@ func (s *M2MService) issueToken(ctx context.Context, input IssueTokenInput) (*M2
 		s.auditDenied(ctx, client.ClientID, input.TraceID, "invalid_client")
 		return nil, ErrM2MInvalidClient
 	}
+	s.observeSecretAge(ctx, client.ClientID, record, now)
 	if !client.AllowsChannel(s.channel) {
 		s.auditDenied(ctx, client.ClientID, input.TraceID, "invalid_scope")
 		return nil, ErrM2MInvalidScope

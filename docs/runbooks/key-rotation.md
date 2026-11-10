@@ -1,11 +1,11 @@
-# 密钥轮换（JWT / 摘要密钥）
+# 密钥轮换（JWT / 摘要 / M2M 客户端 secret）
 
 | 字段 | 内容 |
 |------|------|
-| 告警 ID | 无固定告警；由发布窗口或安全策略触发（建议每 90 天一次） |
+| 告警 ID | `identity.m2m.secret_rotation_due`（P3，M2M 客户端 secret 超龄）；其余无固定告警，由发布窗口或安全策略触发（建议每 90 天一次） |
 | 级别 | P3（计划内）；计划外紧急轮换按 [key-compromise.md](./key-compromise.md) 走 P1 |
 | 服务 / 端 | admin-api、biz-api、c-api、worker |
-| 最后更新 | 2026-11-02 |
+| 最后更新 | 2026-11-10 |
 
 ## 症状
 
@@ -13,6 +13,7 @@
   - 到达密钥轮换周期（建议 90 天，或组织合规要求的更短周期）；
   - `auth.jwt.active_kid` 需要切换到新密钥对；
   - `identity.hash_key` / `identity.previous_hash_keys` 需要滚动到新版本；
+  - M2M 客户端 secret 超龄告警（`identity.m2m.secret_rotation_due`，`identity_m2m_secret_age_seconds ≥ 90 天`）；
   - 安全评审要求更换签发密钥但不涉及泄露事件。
 - 用户可见表现：**计划内轮换不应有任何用户可见表现**。若出现 401 激增，说明轮换顺序或重叠期配置有误，按「影响」段判断。
 
@@ -116,6 +117,18 @@ Vault 适配走 HTTP API（`net/http` + `pkg/httpclient`），不含 Vault SDK�
 
 回滚：把 `providers` 改回 `[file]`（或把 vault 移到 file 之后）单独发布。**不要先在 Vault 侧撤权限**
 ——那会让回滚前的每次启动都直接失败。
+
+### M2M 客户端 secret（`identity.m2m`）
+
+适用：`identity.m2m.secret_rotation_due` 告警，或按安全策略主动轮换服务账号密钥。
+
+1. `GET /admin/v1/auth/m2m/clients` 找到目标客户端，记录当前 secret 的 `fingerprint` 与 `rotation_due_at`（该字段是上次轮换时间，不是到期标志）；
+2. `POST /admin/v1/auth/m2m/clients/{id}/secrets` 轮换，响应中**仅此一次**返回新明文 secret，立即交给调用方离线保存，禁止贴进工单或聊天；
+3. 旧 secret 进入 `retiring`，在 `rotate_grace`（默认 24h）内仍可签发；期间让调用方逐步切换，确认 `identity_m2m_token_total{result="issued"}` 在新旧 secret 上均有增长；
+4. 宽限期结束后旧 secret 自动失效（`401 invalid_client`），无需人工删除；
+5. 告警消除依赖 `identity_m2m_secret_age_seconds` 被**成功签发**刷新：若客户端长期静默，指标不会回落，此时按 `rotation_due_at` 与指纹人工确认已完成轮换，不要反复执行轮换。
+
+注意：`max_secret_age`（默认 2160h）**只做告警阈值对齐，不会自动失效**；停用、轮换、缩小 scope 都会让 `token_version` 自增，旧令牌在 ≤60s 内被拒绝。
 
 ### 数据库 / Redis 凭据
 

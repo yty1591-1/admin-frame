@@ -36,6 +36,25 @@ func (c *m2mClock) Advance(delta time.Duration) {
 	c.now = c.now.Add(delta)
 }
 
+// m2mObserverStub 记录观测调用，供断言指标输入（SEC-F-01）。
+type m2mObserverStub struct {
+	mu   sync.Mutex
+	ages map[string]time.Duration
+}
+
+// ObserveM2MToken 记录签发指标；本夹具只关心 secret 年龄。
+func (o *m2mObserverStub) ObserveM2MToken(_ context.Context, _, _, _, _ string, _ time.Duration) {}
+
+// ObserveM2MSecretAge 记录客户端 secret 年龄。
+func (o *m2mObserverStub) ObserveM2MSecretAge(_ context.Context, clientID string, age time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.ages == nil {
+		o.ages = make(map[string]time.Duration)
+	}
+	o.ages[clientID] = age
+}
+
 // m2mFixture 是 M2M 用例的测试装配。
 type m2mFixture struct {
 	svc     *app.M2MService
@@ -43,6 +62,7 @@ type m2mFixture struct {
 	clock   *m2mClock
 	clients domain.M2MClientRepository
 	store   *cache.MemoryRevocationStore
+	obs     *m2mObserverStub
 }
 
 // newM2MFixture 构造基于内存仓储的 M2M 服务。
@@ -67,6 +87,7 @@ func newM2MFixture(t *testing.T) *m2mFixture {
 	}
 	clients, secrets := persistence.NewMemoryM2MRepositories()
 	store := cache.NewMemoryRevocationStore()
+	obs := &m2mObserverStub{}
 	svc, err := app.NewM2MService(app.M2MServiceConfig{
 		Clients:            clients,
 		Secrets:            secrets,
@@ -80,12 +101,13 @@ func newM2MFixture(t *testing.T) *m2mFixture {
 		MaxSecretAge:       2160 * time.Hour,
 		AllowedScopes:      []string{"order:read", "order:write"},
 		Service:            "identity-test",
+		Observer:           obs,
 		Clock:              clock,
 	})
 	if err != nil {
 		t.Fatalf("new m2m service: %v", err)
 	}
-	return &m2mFixture{svc: svc, signer: signer, clock: clock, clients: clients, store: store}
+	return &m2mFixture{svc: svc, signer: signer, clock: clock, clients: clients, store: store, obs: obs}
 }
 
 // createClient 创建一个只允许 order:read 的客户端。
@@ -147,6 +169,32 @@ func TestM2MIssueTokenClaims(t *testing.T) {
 	}
 	if claims.GetString("merchant_id") != "" || claims.GetString("sid") != "" {
 		t.Fatalf("client token must not carry merchant_id / sid")
+	}
+}
+
+// TestM2MObserveSecretAge 验证签发时上报所用 secret 的年龄（SEC-F-01 指标输入）。
+func TestM2MObserveSecretAge(t *testing.T) {
+	fixture := newM2MFixture(t)
+	created := fixture.createClient(t, []string{"order:read"})
+	fixture.clock.Advance(48 * time.Hour)
+
+	if _, err := fixture.svc.IssueToken(context.Background(), app.IssueTokenInput{
+		ClientID:     created.Client.ClientID,
+		ClientSecret: created.ClientSecret,
+		Scope:        "order:read",
+		TraceID:      "trace-secret-age",
+	}); err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	fixture.obs.mu.Lock()
+	age, ok := fixture.obs.ages[created.Client.ClientID]
+	fixture.obs.mu.Unlock()
+	if !ok {
+		t.Fatalf("secret age not observed for %s", created.Client.ClientID)
+	}
+	if age != 48*time.Hour {
+		t.Fatalf("secret age = %s, want 48h", age)
 	}
 }
 
