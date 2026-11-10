@@ -3,9 +3,9 @@
 | 项目 | 内容 |
 |------|------|
 | 文档编号 | IAM-PLAN-2026-11-001 |
-| 文档版本 | v1.3（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付） |
+| 文档版本 | v1.5（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计） |
 | 编制日期 | 2026-11-05 |
-| 文档状态 | **执行中（部分交付）**：P1-5 已交付；P1-6 代码与门禁已全部交付（OIDC / SAML / SCIM / M2M，2026-11-10），待 S6-1 安全评审与签名、S6-6 独立接入 Runbook；P1-7 验收项 4 条全部达标，签收待 staging 实战与评审签字；立项会签（M0）尚未完成，故不按「已批准」表述 |
+| 文档状态 | **执行中（部分交付）**：P1-5 已交付；P1-6 代码与门禁已全部交付（OIDC / SAML / SCIM / M2M，2026-11-10），待 S6-1 安全评审与签名；S6-6 接入 Runbook 已建，待真实/仿真 IdP 接入与运维交接；P1-7 验收项 4 条全部达标，签收待 staging 实战与评审签字；立项会签（M0）尚未完成，故不按「已批准」表述 |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
 | 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
@@ -20,6 +20,8 @@
 | v1.1 | 2026-11-08 | IAM 工程组 | **基线校正**：按代码、门禁与 CI 实测把已交付批次回写进 §3 里程碑与 §13 验收。判定依据见 §13 证据块；同时修正 §3.1/§13 与 §5.1.1 之间「已达成 / 未启动」的矛盾。范围与阈值未变，不涉及 CCB 事项 |
 | v1.2 | 2026-11-10 | IAM 工程组 | **S6-1 设计交付**：SCIM 2.0 与 M2M 设计冻结稿写入 [`identity-authn.md`](./identity-authn.md) §21（资源映射、令牌与密钥生命周期、错误码、配置、门禁与验收），同步回写 §3.1 的 S6-1 状态。范围、阈值与里程碑不变，不涉及 CCB 事项 |
 | v1.3 | 2026-11-10 | IAM 工程组 | **P1-6 代码交付回写**：SCIM 2.0 与 M2M 已实现并接入 `check-authn` 门禁，同步更新 M4、S6-4 / S6-5、§6.1 门禁落地现状与 §13.2 验收证据；SCIM 10k 以 `LB-STG-SCIM-SYNC` 通过。范围与阈值未变，不涉及 CCB 事项 |
+| v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
+| v1.5 | 2026-11-10 | IAM 工程组 | **M2M 端到端补齐**：新增 `tests/integration/identity/m2m_test.go`（真实 MySQL + Redis 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离 / 审计落库）；用例暴露机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被校验丢弃，已修复。范围与阈值未变，不涉及 CCB 事项 |
 
 ---
 
@@ -109,8 +111,8 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | S6-2 OIDC 实现 | 2026-11-30 ~ 12-04 | 授权码 + PKCE、state/nonce、JWKS 缓存与轮换、账号绑定 | 测试 IdP 端到端通过；单元/集成测试达标 | **已完成（提前，2026-11-05）**：`internal/identity/{app,infrastructure/oauth}`；验收用例 `TestOIDCEndToEndAuthorizationCodeFlow` 等 |
 | S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
 | S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **已完成（提前，2026-11-10），待安全评审**：`internal/identity/{app,transport/scim}`、迁移 `000027`；集成用例 `tests/integration/identity/scim_sync_test.go`；10k 演练 151.7s、0 错误（[`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.4 `LB-STG-SCIM-SYNC`），重复批次幂等已复证 |
-| S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **已完成（提前，2026-11-10），待安全评审**：`internal/identity/app/m2m.go`、迁移 `000028`、权限种子 `000029`；`client_credentials` + 双 secret 轮换 + `authn:client_ver` 吊销；单测 `app/m2m_test.go` 与 `check-authn` 负向用例覆盖；缺 MySQL/Redis 端到端集成用例（SCIM 已有对照） |
-| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **部分完成**：OIDC / SAML 设计步骤见 `identity-authn.md`；SSO 故障处置已于 2026-11-08 补入 `docs/runbooks/identity-auth-failure.md`（含 4 条失败类告警）；IdP 配置模板已于 2026-11-08 建立（`docs/identity/idp-config-templates.md`，Keycloak 26.x 实测基线 + 8 项验收清单）；独立接入 Runbook 仍未建 |
+| S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **已完成（提前，2026-11-10），待安全评审**：`internal/identity/app/m2m.go`、迁移 `000028`、权限种子 `000029`；`client_credentials` + 双 secret 轮换 + `authn:client_ver` 吊销；单测 `app/m2m_test.go` 与 `check-authn` 负向用例覆盖；MySQL + Redis 端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离与审计落库，并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题 |
+| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **进行中**：IdP 配置模板（`docs/identity/idp-config-templates.md`，Keycloak 26.x 基线 + 8 项验收清单）与 SSO 故障处置（`docs/runbooks/identity-auth-failure.md`）已建；独立接入 Runbook 于 2026-11-10 新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)（OIDC / SAML / SCIM / M2M 全流程、材料清单、冒烟命令、回滚与交接）；**剩余**：至少 1 家真实/仿真 IdP 接入与运维交接 |
 
 ### 3.4 P1-7 阶段拆解
 
