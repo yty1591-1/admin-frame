@@ -3,9 +3,9 @@
 | 项目 | 内容 |
 |------|------|
 | 文档编号 | IAM-PLAN-2026-11-001 |
-| 文档版本 | v1.5（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计） |
+| 文档版本 | v1.6（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付） |
 | 编制日期 | 2026-11-05 |
-| 文档状态 | **执行中（部分交付）**：P1-5 已交付；P1-6 代码与门禁已全部交付（OIDC / SAML / SCIM / M2M，2026-11-10），待 S6-1 安全评审与签名；S6-6 接入 Runbook 已建，待真实/仿真 IdP 接入与运维交接；P1-7 验收项 4 条全部达标，签收待 staging 实战与评审签字；立项会签（M0）尚未完成，故不按「已批准」表述 |
+| 文档状态 | **可交付（2026-11-10）**：P1-5 覆盖率与集成门禁、P1-6 设计 / 代码 / 门禁 / 接入 Runbook、P1-7 访问复核工具链与验收证据均已齐备，交付物清单见 §3 与 §13。剩余事项为交付后或外部依赖项，不阻塞交付：M0 立项会签、S6-1 安全评审与签名、S6-6 真实/仿真 IdP 接入与运维交接、P1-7 双评审签字与 staging 实战、M6 生产准入评审 |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
 | 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
@@ -22,6 +22,7 @@
 | v1.3 | 2026-11-10 | IAM 工程组 | **P1-6 代码交付回写**：SCIM 2.0 与 M2M 已实现并接入 `check-authn` 门禁，同步更新 M4、S6-4 / S6-5、§6.1 门禁落地现状与 §13.2 验收证据；SCIM 10k 以 `LB-STG-SCIM-SYNC` 通过。范围与阈值未变，不涉及 CCB 事项 |
 | v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
 | v1.5 | 2026-11-10 | IAM 工程组 | **M2M 端到端补齐**：新增 `tests/integration/identity/m2m_test.go`（真实 MySQL + Redis 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离 / 审计落库）；用例暴露机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被校验丢弃，已修复。范围与阈值未变，不涉及 CCB 事项 |
+| v1.6 | 2026-11-10 | IAM 工程组 | **状态转为可交付**：三项工程的设计、代码、门禁、Runbook 与验收证据已齐备；剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入列为交付后/外部依赖项。范围、阈值与里程碑未变，不涉及 CCB 事项 |
 
 ---
 
