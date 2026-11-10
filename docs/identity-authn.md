@@ -31,7 +31,7 @@
 18. [实施阶段与状态](#十八实施阶段与状态)
 19. [多租户边界与扩展模型](#十九多租户边界与扩展模型biz-09)
 20. [错误码与本地化](#二十错误码与本地化biz-05)
-21. [企业身份扩展：SCIM 2.0 与 M2M](#二十一企业身份扩展scim-20-与-m2m设计冻结未实现)
+21. [企业身份扩展：SCIM 2.0 与 M2M](#二十一企业身份扩展scim-20-与-m2m)
 
 ---
 
@@ -505,7 +505,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
 - IdP 侧参数模板：[idp-config-templates.md](./identity/idp-config-templates.md)（Keycloak 26.x 实测基线 + 通用验收清单）。
-- 仍待交付：SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。SAML 2.0 SP 见 §8.2.1（已实现）；SCIM 与 M2M 的设计冻结稿见 §21。
+- SCIM 目录同步与 M2M 客户端凭证见 §21（2026-11-10 已实现，默认关闭）。启用需显式配置并完成 S6-1 安全评审；未启用时相关路由不注册。
 
 ---
 
@@ -1151,8 +1151,8 @@ internal/identity/
 ## 二十一、企业身份扩展：SCIM 2.0 与 M2M
 
 > **状态**：§21.1 SCIM 与 §21.2 M2M 均已实现（2026-11-10）并接入 `check-authn` 门禁；默认关闭，`enabled=false` 时相关路由不注册（404）。
-> **定位**：承接 [`iam-p1-5-7-engineering-plan.md`](./iam-p1-5-7-engineering-plan.md) `S6-1`，把 P1-6 剩余两项（SCIM 目录同步、M2M 机器身份）写到可评审、可拆任务、可验收的粒度。
-> **边界**：本章只定义契约与不变量，不代替实现；实现合入前，任何配置、部署清单、对外文档都不得声明这两项「已启用」。
+> **定位**：承接 [`iam-p1-5-7-engineering-plan.md`](./iam-p1-5-7-engineering-plan.md) `S6-1`，既是 SCIM / M2M 的设计冻结稿，也是 `S6-4` / `S6-5` 的实现说明。
+> **边界**：实现已于 2026-11-10 合入；默认关闭，启用须显式配置并通过安全评审。任何配置、部署清单、对外文档不得在未启用时声明「已启用」。
 
 ### 21.1 SCIM 2.0 目录同步
 

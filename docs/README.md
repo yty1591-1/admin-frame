@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-10（`identity-authn.md` 增补 §21 SCIM 2.0 / M2M 设计冻结稿，IAM 计划升至 v1.2；仅更新状态描述，无文档增删）；前次 2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，实施计划 §六 补齐 P2 条目现状证据；`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态：IAM 计划升 v1.3，README 与 `identity-authn.md` §21 对齐；无文档增删）；前次 2026-11-10（`identity-authn.md` 增补 §21 设计稿，IAM 计划升 v1.2）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -64,7 +64,7 @@
 
 | 文档 | 覆盖范围 |
 |------|----------|
-| [identity-authn.md](./identity-authn.md) | 账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；SCIM 2.0 与 M2M 设计（§21，冻结未实现） |
+| [identity-authn.md](./identity-authn.md) | 账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；SCIM 2.0 与 M2M（§21，已实现、默认关闭） |
 | [rbac-iam.md](./rbac-iam.md) | IAM 域：权限模型、审批、破玻璃、Outbox、B 端自助 |
 | [identity-slo.md](./identity-slo.md) | 身份域 SLO、容量公式与压测方法 |
 | [notification-channels.md](./notification-channels.md) | 短信 / 邮件 / 推送渠道契约与驱动 |
@@ -80,7 +80,7 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
-| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.2（部分交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML **已交付**、SCIM/M2M **设计冻结、代码未开工**（P1-6）；访问复核工具链**已交付待演练**（P1-7）。20 条验收已按代码与门禁实测回写，M0 会签仍待补 |
+| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.3（部分交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML/SCIM/M2M **代码与门禁已交付**（P1-6，待安全评审）；访问复核工具链**已交付待签收**（P1-7）。20 条验收已按代码与门禁实测回写，M0 会签仍待补 |
 
 > 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）已全部闭环，位于 [`archive/`](./archive/)。
 >
