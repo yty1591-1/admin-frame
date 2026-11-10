@@ -67,6 +67,16 @@
    - 制造登录失败：验证 `IdentityLockoutSpike` 与锁定审计。
    - 重放刷新令牌：验证整链撤销与 `IdentityTokenReuseDetected`。
 
+**执行口径（2026-11-10 补充，来自 STG-EQ-01 演练）**：
+
+- A 端 `mfa.admin_required=true` 时，登录只返回 `MFAChallenge`，刷新令牌在 `mfa/verify` 之后签发；
+  因此 `refresh` 场景必须以「已有会话的客户端」建模——按 VU 分片维持轮换中的令牌，
+  而不是每次刷新都重新登录（后者把 3 倍请求量与 Argon2 成本算进刷新时延）。
+- 每账号独立 TOTP：账号池文件 `ACCOUNTS_FILE`（`subject,totp_secret`）交给执行器；
+  同一账号在同一 30 s 时间步内被并发校验会被按重放拒绝（`last_used_step` 单调递增），
+  这类响应单独计 `skipped`，不计入失败率。
+- 实测读数与偏离项登记在 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.3。
+
 ## 4. 容量评审清单
 
 - [ ] `password.max_concurrent` 与 Pod 内存 limit 匹配

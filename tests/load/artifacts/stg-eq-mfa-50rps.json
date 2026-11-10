@@ -1,0 +1,22 @@
+{
+  "scenario": "identity.mfa",
+  "target": "POST /admin/v1/auth/mfa/verify（TOTP 正确 / 错误各 50%）",
+  "channel": "admin",
+  "accounts": 2000,
+  "rate_rps": 50,
+  "duration": "10m",
+  "samples": 33144,
+  "success_rate": 1,
+  "errors": 0,
+  "skipped": 2692,
+  "http_req_failed_rate": 0,
+  "p50_ms": 106.189,
+  "p95_ms": 474.982,
+  "p99_ms": 766.848,
+  "max_ms": 2121.96,
+  "threshold_p95_ms": 500,
+  "threshold_p99_ms": null,
+  "p95_passed": true,
+  "elapsed_seconds": 719.8,
+  "started_at": "2026-11-10T07:34:07.165Z"
+}
