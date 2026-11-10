@@ -15,7 +15,6 @@ var (
 	ErrNotClaimed = errors.New("outbox: event is not claimed")
 )
 
-// Stats 是 Outbox 积压统计快照。
 // ReplayRecentWindow 是 Stats.ReplayedRecently 的统计窗口。
 //
 // 它与 async.dlq.replay_ineffective 告警的语义绑定：改这个值等于改告警里「近期」的口径，

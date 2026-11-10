@@ -18,7 +18,7 @@ const m2mClientSelectColumns = `id, client_id, name, status, allowed_channels, a
 	token_version, owner, created_by, rotation_due_at, created_at, updated_at, deleted_at, version`
 
 // m2mSecretSelectColumns 是密钥表的显式列清单。
-const m2mSecretSelectColumns = `id, client_id, secret_hash, fingerprint, status, created_at, expires_at, revoked_at`
+const m2mSecretSelectColumns = `id, client_id, secret_hash, fingerprint, status, created_at, expires_at, revoked_at` //nolint:gosec // G101 误报：SQL 列清单，非凭据。
 
 // SQLM2MClientRepository 是 MySQL 8.0 的 M2M 客户端仓储。
 type SQLM2MClientRepository struct {

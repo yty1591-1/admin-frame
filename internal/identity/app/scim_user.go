@@ -487,7 +487,7 @@ func (s *ScimService) updateUser(
 }
 
 // DeleteUser 软删账号：撤销会话、清理组成员与角色投影；重复删除幂等返回。
-func (s *ScimService) DeleteUser(ctx context.Context, id string, traceID string) error {
+func (s *ScimService) DeleteUser(ctx context.Context, id, traceID string) error {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {
 		return scimNotFound("user not found")

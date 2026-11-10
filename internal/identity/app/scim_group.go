@@ -432,7 +432,7 @@ func (s *ScimService) updateGroup(
 }
 
 // DeleteGroup 软删组、清空成员并回收该组带来的角色投影。
-func (s *ScimService) DeleteGroup(ctx context.Context, id string, traceID string) error {
+func (s *ScimService) DeleteGroup(ctx context.Context, id, traceID string) error {
 	group, err := s.groups.FindByID(ctx, strings.TrimSpace(id))
 	if err != nil {
 		if errors.Is(err, apperr.ErrNotFound) {

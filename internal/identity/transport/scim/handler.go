@@ -68,12 +68,6 @@ func NewHandler(cfg HandlerConfig) *Handler {
 // principalKey 是上下文中的 SCIM 令牌主体键。
 type principalKey struct{}
 
-// principalFrom 读取认证后的 SCIM 令牌主体。
-func principalFrom(ctx context.Context) (*app.ScimPrincipal, bool) {
-	principal, ok := ctx.Value(principalKey{}).(*app.ScimPrincipal)
-	return principal, ok
-}
-
 // wrap 组合认证、限流、超时、链路头与观测，返回可直接挂到 mux 的处理器。
 func (h *Handler) wrap(resource, method string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

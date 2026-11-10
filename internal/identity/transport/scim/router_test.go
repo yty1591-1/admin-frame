@@ -36,7 +36,7 @@ func itoa(value int64) string {
 }
 
 // newSCIMHandler 构造带真实令牌的 SCIM Handler。
-func newSCIMHandler(t *testing.T) (*scim.Handler, string) {
+func newSCIMHandler(t *testing.T) (handler *scim.Handler, token string) {
 	t.Helper()
 	tokens, groups := persistence.NewMemoryScimRepositories()
 	svc, err := app.NewScimService(app.ScimServiceConfig{
@@ -58,7 +58,7 @@ func newSCIMHandler(t *testing.T) (*scim.Handler, string) {
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	handler := scim.NewHandler(scim.HandlerConfig{Service: svc})
+	handler = scim.NewHandler(scim.HandlerConfig{Service: svc})
 	if handler == nil {
 		t.Fatalf("handler must not be nil")
 	}
@@ -83,7 +83,7 @@ func TestSCIMRejectsMissingAndJWTBearer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/ServiceProviderConfig", nil)
+			request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/ServiceProviderConfig", http.NoBody)
 			if tc.header != "" {
 				request.Header.Set("Authorization", tc.header)
 			}
@@ -105,7 +105,7 @@ func TestSCIMErrorEnvelope(t *testing.T) {
 	mux := http.NewServeMux()
 	scim.Register(mux, handler)
 
-	request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/Users/does-not-exist", nil)
+	request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/Users/does-not-exist", http.NoBody)
 	request.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, request)
@@ -143,7 +143,7 @@ func TestSCIMGroupPagination(t *testing.T) {
 	mux := http.NewServeMux()
 	scim.Register(mux, handler)
 
-	request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/Groups?startIndex=1&count=10", nil)
+	request := httptest.NewRequest(http.MethodGet, "/admin/scim/v2/Groups?startIndex=1&count=10", http.NoBody)
 	request.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, request)
@@ -204,7 +204,7 @@ func TestSCIMDiscoveryEndpoints(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			request := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
 			request.Header.Set("Authorization", "Bearer "+token)
 			recorder := httptest.NewRecorder()
 			mux.ServeHTTP(recorder, request)

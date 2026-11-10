@@ -206,7 +206,7 @@ func TestM2MRoutesAbsentWhenDisabled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(tc.method, tc.path, nil)
+		request := httptest.NewRequest(tc.method, tc.path, http.NoBody)
 		mux.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("%s %s: status = %d, want 404", tc.method, tc.path, recorder.Code)
@@ -241,7 +241,7 @@ func TestScimRoutesAbsentWhenDisabled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(tc.method, tc.path, nil)
+		request := httptest.NewRequest(tc.method, tc.path, http.NoBody)
 		mux.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("%s %s: status = %d, want 404", tc.method, tc.path, recorder.Code)

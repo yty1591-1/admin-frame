@@ -128,8 +128,6 @@ const (
 	identityDefaultSCIMRPS = 10
 	// identityDefaultSCIMBurst SCIM 端点默认突发容量。
 	identityDefaultSCIMBurst = 20
-	// identityMaxSCIMActiveTokens 每 provider 允许同时生效的令牌数（当前 + 待退役）。
-	identityMaxSCIMActiveTokens = 2
 )
 
 // identitySCIMProviderPattern 约束 provider 命名：小写字母开头，允许 [a-z0-9_-]，2～32 字符。

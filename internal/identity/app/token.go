@@ -258,7 +258,7 @@ func (s *TokenService) signAccessToken(account *domain.Account, sessionID, curre
 //   - exp - iat 固定等于 client_ttl（未配置时回退 access_ttl），不接受调用方指定。
 //
 // 返回值第二项为 expires_in 秒数。
-func (s *TokenService) IssueClientToken(clientID string, tokenVersion int64, scopes []string) (string, int64, error) {
+func (s *TokenService) IssueClientToken(clientID string, tokenVersion int64, scopes []string) (token string, expiresIn int64, err error) {
 	trimmed := strings.TrimSpace(clientID)
 	if trimmed == "" {
 		return "", 0, apperr.Internal("client id is required", nil)
@@ -292,11 +292,11 @@ func (s *TokenService) IssueClientToken(clientID string, tokenVersion int64, sco
 			"scope":     strings.Join(scopes, " "),
 		},
 	}
-	token, err := s.signer.Sign(claims)
+	signed, err := s.signer.Sign(claims)
 	if err != nil {
 		return "", 0, apperr.Internal("sign client token failed", err)
 	}
-	return token, int64(ttl / time.Second), nil
+	return signed, int64(ttl / time.Second), nil
 }
 
 // ClientSubject 返回机器主体在令牌中的 sub 值。

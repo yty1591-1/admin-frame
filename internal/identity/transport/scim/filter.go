@@ -121,7 +121,7 @@ func splitFilter(raw string) ([]string, error) {
 			continue
 		}
 		if !inQuote && (char == ' ' || char == '\t') {
-			if loc := filterAndPattern.FindStringIndex(trimmed[i:]); loc != nil && loc[0] == 0 {
+			if loc := filterAndPattern.FindStringIndex(trimmed[i:]); len(loc) > 0 && loc[0] == 0 {
 				parts = append(parts, strings.TrimSpace(current.String()))
 				current.Reset()
 				i += loc[1]

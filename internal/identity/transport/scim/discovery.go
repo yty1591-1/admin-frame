@@ -7,7 +7,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 )
 
-// serviceProviderConfigBody 是 GET /ServiceProviderConfig 响应。
+// ServiceProviderConfig 返回 GET /ServiceProviderConfig 响应。
 //
 // 明确声明不支持 bulk / sort / changePassword：客户端据此选择降级路径，
 // 避免反复试探（RFC 7643 §5）。

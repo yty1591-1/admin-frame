@@ -51,7 +51,7 @@ const (
 //
 // 目的：让「客户端不存在」与「密钥错误」在返回前都执行一次常数时间比较，
 // 避免通过响应耗时枚举 client_id（AC-P16-M2M-1）。
-const m2mDummySecretHash = "9f2f1b6d5b0a4c3e8d7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e"
+const m2mDummySecretHash = "9f2f1b6d5b0a4c3e8d7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e" //nolint:gosec // G101 误报：假比对用的摘要常量，非真实凭据。
 
 // M2MServiceConfig 是 M2M 用例的装配参数。
 type M2MServiceConfig struct {
@@ -567,7 +567,7 @@ func (s *M2MService) invalidateClientState(ctx context.Context, clientID string)
 }
 
 // softDeleteOrphan 清理「客户端已建、密钥未建成」的孤儿客户端。
-func (s *M2MService) softDeleteOrphan(ctx context.Context, client *domain.M2MClient, actorID, traceID string) {
+func (s *M2MService) softDeleteOrphan(ctx context.Context, client *domain.M2MClient, _, traceID string) {
 	now := s.clock.Now().UTC()
 	client.Status = domain.M2MClientDeleted
 	client.DeletedAt = &now

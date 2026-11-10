@@ -45,7 +45,10 @@ func main() {
 		acct := strings.TrimSpace(id)
 		// 凭据主键从账号 ID 派生（同一账号幂等），避开雪花发号与既有号段。
 		credID := int64(0)
-		fmt.Sscanf(acct, "%d", &credID)
+		if _, err := fmt.Sscanf(acct, "%d", &credID); err != nil {
+			fmt.Fprintf(os.Stderr, "skip %q: not a numeric account id\n", acct)
+			continue
+		}
 		credID += 8000000000000000000
 		// 只在缺口令凭据时插入：SCIM 账号首次注入，重跑不覆盖用户自助改过的口令。
 		fmt.Printf("INSERT INTO identity_credential (id, account_id, credential_type, credential_hash, algorithm, password_history, created_at, updated_at) "+

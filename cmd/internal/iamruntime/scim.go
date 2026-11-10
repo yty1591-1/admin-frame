@@ -3,6 +3,7 @@
 // 依赖方向：身份域只定义 ScimRoleProvisioner 端口，本文件在 cmd 层实现它，
 // 身份域不 import IAM（§13.1）。绑定写入复用 BindingService，
 // 保证与手工授权走同一套唯一键、审计（rbac.binding_change）与额度校验。
+
 package iamruntime
 
 import (
@@ -18,7 +19,6 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
-	"github.com/admin-frame/admin-frame/pkg/outbox"
 )
 
 // scimBindingReason 是 SCIM 投影授权的审计原因；不包含组名（可能是 PII 线索）。
@@ -89,9 +89,7 @@ func NewScimRoleProvisioner(deps *platform.Deps, iamCfg iamconfig.IAMConfig) (*S
 func ChangeRecorderFor(deps *platform.Deps) app.ChangeRecorder {
 	emitter := platformaudit.SlogEmitter{Log: deps.Logger}
 	if deps.Async != nil {
-		if store, ok := deps.Async.Store().(outbox.Store); ok {
-			return app.OutboxRecorder{Events: store}
-		}
+		return app.OutboxRecorder{Events: deps.Async.Store()}
 	}
 	return app.SlogRecorder{Emitter: emitter}
 }

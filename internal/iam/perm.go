@@ -57,7 +57,7 @@ const (
 	// PermIdentityM2MCredential 轮换 M2M 客户端密钥（返回一次性明文）。
 	//
 	// 与 write 分离：能建客户端不等于能取走密钥，落实职责分离（SEC-02）。
-	PermIdentityM2MCredential PermissionCode = "identity:m2m:credential"
+	PermIdentityM2MCredential PermissionCode = "identity:m2m:credential" //nolint:gosec // G101 误报：权限码，非凭据。
 	// PermIdentitySCIMRead 查看 SCIM 令牌指纹与组映射状态（A 端专属，§21.1.6）。
 	PermIdentitySCIMRead PermissionCode = "identity:scim:read"
 	// PermIdentitySCIMWrite 签发与吊销 SCIM 令牌（A 端专属）。

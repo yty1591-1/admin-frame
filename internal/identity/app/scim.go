@@ -60,32 +60,12 @@ func (e *ScimError) Error() string {
 }
 
 // 常用 SCIM 错误构造器；detail 禁止包含 PII。
-func scimInvalidSyntax(detail string) *ScimError {
-	return &ScimError{Status: http.StatusBadRequest, ScimType: "invalidSyntax", Detail: detail}
-}
-
 func scimInvalidValue(detail string) *ScimError {
 	return &ScimError{Status: http.StatusBadRequest, ScimType: "invalidValue", Detail: detail}
 }
 
-func scimInvalidPath(detail string) *ScimError {
-	return &ScimError{Status: http.StatusBadRequest, ScimType: "invalidPath", Detail: detail}
-}
-
-func scimInvalidFilter(detail string) *ScimError {
-	return &ScimError{Status: http.StatusBadRequest, ScimType: "invalidFilter", Detail: detail}
-}
-
-func scimNoTarget(detail string) *ScimError {
-	return &ScimError{Status: http.StatusBadRequest, ScimType: "noTarget", Detail: detail}
-}
-
 func scimUniqueness(detail string) *ScimError {
 	return &ScimError{Status: http.StatusConflict, ScimType: "uniqueness", Detail: detail}
-}
-
-func scimMutability(detail string) *ScimError {
-	return &ScimError{Status: http.StatusBadRequest, ScimType: "mutability", Detail: detail}
 }
 
 func scimNotFound(detail string) *ScimError {
@@ -319,10 +299,7 @@ func (s *ScimService) CreateToken(ctx context.Context, actorID, traceID string) 
 			}
 			active = active[:i]
 		}
-		if createErr := s.tokens.Create(txCtx, token); createErr != nil {
-			return createErr
-		}
-		return nil
+		return s.tokens.Create(txCtx, token)
 	}); err != nil {
 		return nil, err
 	}

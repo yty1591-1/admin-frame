@@ -41,7 +41,7 @@ const (
 	ActionAuthM2MClientDisabled = "auth.m2m.client.disabled"
 	ActionAuthM2MClientEnabled  = "auth.m2m.client.enabled"
 	ActionAuthM2MClientDeleted  = "auth.m2m.client.deleted"
-	ActionAuthM2MSecretRotated  = "auth.m2m.secret.rotated"
+	ActionAuthM2MSecretRotated  = "auth.m2m.secret.rotated" //nolint:gosec // G101 误报：审计动作名，非凭据。
 	// SCIM 2.0 目录同步（§21.1.5）：资源变更与令牌生命周期。
 	ActionAuthScimUserCreated  = "auth.scim.user.created"
 	ActionAuthScimUserUpdated  = "auth.scim.user.updated"

@@ -22,8 +22,6 @@ const (
 	schemaListResponse = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 	// schemaError 协议错误 schema URN。
 	schemaError = "urn:ietf:params:scim:api:messages:2.0:Error"
-	// schemaPatchOp PATCH 请求 schema URN。
-	schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 	// schemaServiceProviderConfig 能力声明 schema URN。
 	schemaServiceProviderConfig = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 	// schemaResourceType 资源类型 schema URN。
