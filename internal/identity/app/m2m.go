@@ -499,8 +499,16 @@ func (s *M2MService) issueToken(ctx context.Context, input IssueTokenInput) (*M2
 	return &M2MToken{AccessToken: token, ExpiresIn: expiresIn, Scopes: scopes}, nil
 }
 
-// systemActor 是机器主体在审计中的 actor_id 前缀；actor_type 固定 system。
+// systemActor 是机器主体在审计中的 actor_id 占位；调用方传该值表示无人工主体。
 const systemActor = ""
+
+// m2mActorID 返回机器事件的 actor_id：优先 client_id，缺失时用固定占位。
+func m2mActorID(clientID string) string {
+	if trimmed := strings.TrimSpace(clientID); trimmed != "" {
+		return trimmed
+	}
+	return "m2m:unknown"
+}
 
 // setClientStatus 统一处理停用类状态迁移（停用 / 软删之外的处置）。
 func (s *M2MService) setClientStatus(
@@ -593,8 +601,12 @@ func (s *M2MService) emitAudit(
 		return
 	}
 	actorType := "system"
-	if actorID != "" {
+	if actorID != systemActor {
 		actorType = "staff"
+	} else {
+		// 机器事件没有人工主体，但 audit.Event 要求 actor_id 非空：
+		// 用 client_id 标识来源，缺失时落到固定占位，避免整条审计被校验拒绝后丢弃。
+		actorID = m2mActorID(clientID)
 	}
 	event := audit.Event{
 		EventID:      eventID,
