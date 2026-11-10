@@ -476,7 +476,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
   开通审计落 Outbox，口令与 TOTP 密钥不进入日志。
 - `mfa_setup_ticket` 不能访问任何业务接口；过期 / 重放返回 `40100` 且不产生绑定副作用。
 
-### 7.3 OIDC（已实现并通过 staging 真实 Keycloak 验收，SCIM / M2M 待交付）
+### 7.3 OIDC（已实现并通过 staging 真实 Keycloak 验收）
 
 - `identity.oauth.providers[]` 的每个 provider 必须显式 `oidc_enabled: true` 才启用 OIDC；默认关闭。
   - 开启时 `issuer` 与 `jwks_url` 必填且必须成对出现，`userinfo_url` 可省略；
@@ -1416,7 +1416,7 @@ internal/identity/
 | `AC-P16-M2M-1` | 不存在 / 停用 / secret 错误的客户端统一 `401 invalid_client`，响应时间差异 ≤ 10% | 单测 + 时序断言 |
 | `AC-P16-M2M-2` | 超出 `allowed_scopes` 的申请 `400 invalid_scope`，不签发令牌 | `internal/identity/app/m2m_test.go` |
 | `AC-P16-M2M-3` | 令牌 scope 之外调用返回 `40300` | 授权中间件用例 |
-| `AC-P16-M2M-4` | 轮换后旧 secret 宽限内可用、到期 `401`；新 secret 立即可用 | `tests/integration/identity/m2m_client_test.go` |
+| `AC-P16-M2M-4` | 轮换后旧 secret 宽限内可用、到期 `401`；新 secret 立即可用 | `tests/integration/identity/m2m_test.go` |
 | `AC-P16-M2M-5` | 停用 / 缩小 scope 后旧令牌 ≤ 60s 失效 | 撤销时效断言 |
 | `AC-P16-M2M-6` | 三端令牌互不通过（`aud` / `channel` / `kid`） | 复用 `AC-ENT-01-3` 语义 |
 
@@ -1426,6 +1426,7 @@ internal/identity/
 - 协议端点（`/admin/scim/v2/*`、`/{端}/v1/auth/token`）是统一错误信封的**显式例外**；其余端点维持 §20.1 的 `{code,message,trace_id}`。
 - 审计、日志、指标、Trace 均不得出现 `client_secret`、SCIM 令牌、`userName`、成员列表原文。
 - 数据迁移只增不改，与实现同一 MR；配置示例同步更新并接受 `check-config` / `check-authn` 校验。
+- 威胁建模、残留风险与评审记录见 [`identity/threat-model.md`](./identity/threat-model.md)（`S6-1` 交付物）。
 - 实施顺序：M2M（范围小、可独立验收）→ SCIM `User` → SCIM `Group` 与角色投影 → 一致性演练与门禁接入。SCIM 依赖 OIDC 的账号绑定模型，必须在 OIDC 已交付（现状满足）后启动。
 
 ### 21.4 门禁（实现阶段接入 `check-authn`）

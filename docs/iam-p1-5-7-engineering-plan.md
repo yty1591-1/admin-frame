@@ -109,7 +109,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 
 | 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
 |------|------|--------|---------|------------------------|
-| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **设计已完成（2026-11-10），待安全评审**：OIDC 见 [`identity-authn.md`](./identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模与安全评审签字未做 |
+| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **设计已完成（2026-11-10），待安全评审**：OIDC 见 [`identity-authn.md`](./identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模稿见 [`identity/threat-model.md`](./identity/threat-model.md)（四通道 STRIDE + 6 项残留风险 `RR-01`～`RR-06`），待安全评审与签字 |
 | S6-2 OIDC 实现 | 2026-11-30 ~ 12-04 | 授权码 + PKCE、state/nonce、JWKS 缓存与轮换、账号绑定 | 测试 IdP 端到端通过；单元/集成测试达标 | **已完成（提前，2026-11-05）**：`internal/identity/{app,infrastructure/oauth}`；验收用例 `TestOIDCEndToEndAuthorizationCodeFlow` 等 |
 | S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
 | S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **已完成（提前，2026-11-10），待安全评审**：`internal/identity/{app,transport/scim}`、迁移 `000027`；集成用例 `tests/integration/identity/scim_sync_test.go`；10k 演练 151.7s、0 错误（[`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.4 `LB-STG-SCIM-SYNC`），重复批次幂等已复证 |
@@ -467,6 +467,7 @@ golangci-lint run ./internal/iam/... ./internal/identity/...
 - [RBAC 与 IAM 设计](./rbac-iam.md)
 - [身份认证设计](./identity-authn.md)
 - [M0 立项会签单](./iam/m0-signoff-record-2026-11-10.md)
+- [身份域威胁建模](./identity/threat-model.md)
 - [P1-7 验收报告](./iam/p1-7-acceptance-report.md)
 - [ADR-0012 单活动规模上限与导出口径](./adr/0012-certification-export-limit.md)
 - [S7-5 全流程演练记录](./incident/drills/2026-11-08-certification-sweep.md)
