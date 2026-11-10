@@ -3,9 +3,9 @@
 | 项目 | 内容 |
 |------|------|
 | 文档编号 | IAM-PLAN-2026-11-001 |
-| 文档版本 | v1.1（执行基线；v1.0 立项评审稿已由 2026-11-08 基线校正取代） |
+| 文档版本 | v1.2（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 仅补 S6-1 设计交付状态） |
 | 编制日期 | 2026-11-05 |
-| 文档状态 | **执行中（部分交付）**：P1-5 已交付、P1-6 部分交付（OIDC / SAML 已交付，SCIM / M2M 未开始）、P1-7 验收项 4 条全部达标，签收待 staging 实战与评审签字；立项会签（M0）尚未完成，故不按「已批准」表述 |
+| 文档状态 | **执行中（部分交付）**：P1-5 已交付、P1-6 部分交付（OIDC / SAML 已交付；SCIM / M2M 设计已冻结、代码未开始）、P1-7 验收项 4 条全部达标，签收待 staging 实战与评审签字；立项会签（M0）尚未完成，故不按「已批准」表述 |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
 | 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
@@ -18,6 +18,7 @@
 |------|------|--------|------|
 | v1.0 | 2026-11-05 | IAM 工程组 | 首次编制，覆盖 P1-5/P1-6/P1-7 立项规划 |
 | v1.1 | 2026-11-08 | IAM 工程组 | **基线校正**：按代码、门禁与 CI 实测把已交付批次回写进 §3 里程碑与 §13 验收。判定依据见 §13 证据块；同时修正 §3.1/§13 与 §5.1.1 之间「已达成 / 未启动」的矛盾。范围与阈值未变，不涉及 CCB 事项 |
+| v1.2 | 2026-11-10 | IAM 工程组 | **S6-1 设计交付**：SCIM 2.0 与 M2M 设计冻结稿写入 [`identity-authn.md`](./identity-authn.md) §21（资源映射、令牌与密钥生命周期、错误码、配置、门禁与验收），同步回写 §3.1 的 S6-1 状态。范围、阈值与里程碑不变，不涉及 CCB 事项 |
 
 ---
 
@@ -103,11 +104,11 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 
 | 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-08 校正） |
 |------|------|--------|---------|------------------------|
-| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **部分完成**：OIDC 见 `identity-authn.md` §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）；SCIM / M2M 无设计 |
+| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **设计已完成（2026-11-10），待安全评审**：OIDC 见 [`identity-authn.md`](./identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模与安全评审签字未做 |
 | S6-2 OIDC 实现 | 2026-11-30 ~ 12-04 | 授权码 + PKCE、state/nonce、JWKS 缓存与轮换、账号绑定 | 测试 IdP 端到端通过；单元/集成测试达标 | **已完成（提前，2026-11-05）**：`internal/identity/{app,infrastructure/oauth}`；验收用例 `TestOIDCEndToEndAuthorizationCodeFlow` 等 |
 | S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
-| S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **未开始**：`grep -ri scim` 在 `internal api cmd` 零命中 |
-| S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **未开始**：全仓仅 `grant_type=authorization_code`，无 `client_credentials` |
+| S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **未开始**：`grep -ri scim` 在 `internal api cmd` 零命中；设计见 [`identity-authn.md`](./identity-authn.md) §21.1 |
+| S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **未开始**：全仓仅 `grant_type=authorization_code`，无 `client_credentials`；设计见 [`identity-authn.md`](./identity-authn.md) §21.2 |
 | S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **部分完成**：OIDC / SAML 设计步骤见 `identity-authn.md`；SSO 故障处置已于 2026-11-08 补入 `docs/runbooks/identity-auth-failure.md`（含 4 条失败类告警）；IdP 配置模板已于 2026-11-08 建立（`docs/identity/idp-config-templates.md`，Keycloak 26.x 实测基线 + 8 项验收清单）；独立接入 Runbook 仍未建 |
 
 ### 3.4 P1-7 阶段拆解

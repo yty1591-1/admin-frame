@@ -1,10 +1,12 @@
 # 生产级与企业级平台能力差距评估（Production Readiness Gaps）
 
-> **状态**：评估完成（v0.2，2026-10-22）；基线 `dad8fc0`
+> **归档**：本文件已于 2026-11-09 归档，只读不再维护；各 `ENT` 的最新状态与排期以 [`production-readiness-implementation-plan.md`](../../production-readiness-implementation-plan.md) §十二 为准，归档索引见 [`archive/README.md`](../README.md)。
+
+> **状态**：评估完成（v0.2，2026-10-22）；基线 `dad8fc0`；归档时为只读快照
 > **定位**：本文只评估**平台级能力**——任何未来业务域都需要的身份、租户、数据、异步、多实例、运维、安全与交付能力；具体业务域的实现不在评估范围内
 > **适用范围**：`internal/platform/`、`internal/security/`、`internal/shared/`、`internal/iam/`、`cmd/`、`pkg/`、`migrations/`、`deploy/`、`tests/`、`.github/`、`docs/`
-> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md)、[standards-roadmap.md](./standards-roadmap.md)、[platform-remediation-plan.md](./archive/platform/platform-remediation-plan.md)、[rbac-iam.md](./rbac-iam.md)、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[RELIABILITY_STANDARDS.md](./RELIABILITY_STANDARDS.md)、[OBSERVABILITY_STANDARDS.md](./OBSERVABILITY_STANDARDS.md)、[AUDIT_STANDARDS.md](./AUDIT_STANDARDS.md)、[DATA_STANDARDS.md](./DATA_STANDARDS.md)、[RELEASE_STANDARDS.md](./RELEASE_STANDARDS.md)、[RUNBOOK_STANDARDS.md](./RUNBOOK_STANDARDS.md)、[TESTING_STANDARDS.md](./TESTING_STANDARDS.md)
-> **最后更新**：2026-11-07（归档 8 份已验证记录后修正引用路径；评估结论仍为 v0.2 / 基线 `dad8fc0`）
+> **关联**：[ARCHITECTURE.md](../../ARCHITECTURE.md)、[standards-roadmap.md](../../standards-roadmap.md)、[platform-remediation-plan.md](../platform/platform-remediation-plan.md)、[rbac-iam.md](../../rbac-iam.md)、[SECURITY_STANDARDS.md](../../SECURITY_STANDARDS.md)、[RELIABILITY_STANDARDS.md](../../RELIABILITY_STANDARDS.md)、[OBSERVABILITY_STANDARDS.md](../../OBSERVABILITY_STANDARDS.md)、[AUDIT_STANDARDS.md](../../AUDIT_STANDARDS.md)、[DATA_STANDARDS.md](../../DATA_STANDARDS.md)、[RELEASE_STANDARDS.md](../../RELEASE_STANDARDS.md)、[RUNBOOK_STANDARDS.md](../../RUNBOOK_STANDARDS.md)、[TESTING_STANDARDS.md](../../TESTING_STANDARDS.md)
+> **最后更新**：2026-11-09（归档至 `archive/platform/`，仅修正相对链接与补归档说明；评估结论仍为 v0.2 / 基线 `dad8fc0`）
 > **变更方式**：新增 / 关闭条目须同步更新「十、状态跟踪」与「执行记录」；P0 关闭须附验收命令与输出。优先级调整须架构 Owner 确认
 > **目标读者**：技术负责人、后端工程师、SRE、安全 / 合规 Reviewer、产品负责人
 
@@ -128,7 +130,7 @@
 
 ### ENT-01 身份闭环：账号域与令牌生命周期
 
-**状态**：`已完成（2026-10-23，阶段 1–5）`；领域模型、令牌 / 撤销语义、配置与任务拆解详见 [`identity-authn.md`](./identity-authn.md)。缺口结论与验收标准不变。
+**状态**：`已完成（2026-10-23，阶段 1–5）`；领域模型、令牌 / 撤销语义、配置与任务拆解详见 [`identity-authn.md`](../../identity-authn.md)。缺口结论与验收标准不变。
 
 **现状证据**
 
@@ -317,7 +319,7 @@
 - [x] `AC-ENT-05-1`：`helm template` 在 dev / staging / prod 三套 values 下通过（2026-11-08 复核：`helm template af deploy/helm/admin-frame -f values-<env>.yaml --api-versions monitoring.coreos.com/v1`，三套均成功，资源数 13 / 25 / 33）。
 - [x] `AC-ENT-05-2`：prod 清单含探针（4/4 工作负载 liveness + readiness）、`resources`、HPA（3）、PDB（4）、NetworkPolicy（3）与 `securityContext`（Pod 与容器双层，共 10 处）。**分层差异**：staging 仅 NetworkPolicy（3），无 HPA/PDB，worker 未开探针与 Service（`values.yaml` 中 `workloads.worker.probes.enabled=false`，只有生产 overlay 开启）；dev 为单副本，无 HPA/PDB/NetworkPolicy。判定以 prod 为准。
 - [x] `AC-ENT-05-3`：渲染产物无明文密钥（三套均无 `kind: Secret` 对象；`dsn` / `password` 等键为空字符串，实际值经 `secretKeyRef` 注入，prod 35 处 / staging 20 处）。镜像 digest 仅 prod 强制（5 个引用均为 `@sha256:`，`values-prod.yaml` 为发布前必换的占位值）；staging / dev 用版本 tag `0.1.0`。
-- [ ] `AC-ENT-05-4`：staging 完成一次部署 → 冒烟 → 回滚演练（待环境窗口；同流程已在 kind 实测，见 [`deploy-kind-verify.md`](./deploy-kind-verify.md)）。
+- [ ] `AC-ENT-05-4`：staging 完成一次部署 → 冒烟 → 回滚演练（待环境窗口；同流程已在 kind 实测，见 [`deploy-kind-verify.md`](../../deploy-kind-verify.md)）。
 
 **门禁**：新增 `make check-deploy`（清单存在性、探针、资源、密钥、digest）。
 
@@ -350,14 +352,14 @@
 - [x] `AC-ENT-06-1`：每条 `ALERTS.md` 告警都有规则文件与 runbook 链接（`make check-alerts` 通过）。
 - [x] `AC-ENT-06-2`：staging 注入故障（5xx / DB 池耗尽 / Outbox 积压）可触发对应告警
       （2026-11-02 kind 真集群实测：`API5xxRateHigh` / `DBPoolExhaustion` / `AsyncOutboxBacklog` 均实触发；
-      记录见 [alert-drill-ent06.md](./archive/verify/alert-drill-ent06.md)）。
+      记录见 [alert-drill-ent06.md](../verify/alert-drill-ent06.md)）。
 - [x] `AC-ENT-06-3`：看板能看到三端 RED、IAM 授权结果、Outbox / worker 指标
       （2026-11-03 kind 真集群实测：37 个面板查询错误 0、空数据 0；记录见
-      [observability-dashboard-verify.md](./archive/verify/observability-dashboard-verify.md)）。
+      [observability-dashboard-verify.md](../verify/observability-dashboard-verify.md)）。
 - [x] `AC-ENT-06-4`：一次请求的 trace 可从入口追到 DB / 外部依赖
       （2026-11-03 kind 真集群实测：`GET /admin/v1/audit/events` → `sql.conn.query`
       `db.system=mysql` 且带语句，父子链完整；做法为 `pkg/db.OpenTraced` 用 otelsql 包装驱动，
-      记录见 [trace-chain-verify.md](./archive/verify/trace-chain-verify.md)）。
+      记录见 [trace-chain-verify.md](../verify/trace-chain-verify.md)）。
       外部 HTTP 依赖 span 由 `pkg/httpclient` 埋点提供，本轮请求未触发外部调用，
       该分支在 staging 待补一次真实调用。
 
@@ -558,11 +560,11 @@ ENT-16 测试基础设施 ─► 所有 P0 的验收自动化
 
 > 状态：`待做` / `进行中` / `已完成` / `暂缓`。完成须附验收证据链接或命令输出。
 
-> 状态以 [`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) 的实施状态列为准；本表保留缺口原始描述，状态列随关闭动作更新。
+> 状态以 [`production-readiness-implementation-plan.md`](../../production-readiness-implementation-plan.md) 的实施状态列为准；本表保留缺口原始描述，状态列随关闭动作更新。
 
 | ID | 优先级 | 状态 | 关闭判据（摘要） |
 |---|---|---|---|
-| ENT-01 | P0 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](./identity-authn.md) |
+| ENT-01 | P0 | 已完成（2026-10-23，阶段 1–5） | 登录 / 刷新 / 登出 / 撤销 / MFA 可用，禁用 ≤ 60s 生效；详见 [`identity-authn.md`](../../identity-authn.md) |
 | ENT-02 | P0 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；staging 实测随 ENT-05 补 |
 | ENT-03 | P0 | 已完成（2026-10-22） | 通用 Outbox + 消费运行时 + DLQ；broker 适配按 T7 预留接口，容量触发再评估 |
 | ENT-04 | P0 | 完成（2026-11-03） | 审计查询 / 导出 / 保留 ≥ 180 天；`AC-ENT-04-1`～`4` 达成 |

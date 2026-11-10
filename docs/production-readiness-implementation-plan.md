@@ -1,12 +1,12 @@
 # 生产级能力缺口实施规划（Production Readiness Implementation Plan）
 
-> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2  
+> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2（2026-11-09 归档至 `archive/platform/`，只读追溯）  
 > **定位**：把 `ENT-01`～`ENT-25` 的差距评估转化为**可执行、可验收、可回滚**的任务包；只规划平台级能力，不新增业务域功能  
 > **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md) 同级  
 > **适用范围**：`internal/`、`pkg/`、`cmd/`、`migrations/`、`deploy/`、`tests/`、`scripts/ci/`、`.github/`、`docs/`  
-> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)  
+> **关联**：[`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)  
 > **执行方式**：每条 `ENT` 独立 MR；验收标准全绿 + `make ci` + 本条新增门禁通过 + 文档回写完成，方可标记关闭  
-> **最后更新**：2026-11-07（ENT-09～19 状态回写、归档记录链接修正；规划结构与验收判据仍为 v0.1）  
+> **最后更新**：2026-11-09（归档上游差距评估并反指其归档路径；§六 补齐 `ENT-19`～`ENT-25` 现状证据，其余结构仍为 v0.1）  
 > **变更方式**：调整波次、范围或验收标准须同步更新「十二、状态跟踪」与「执行记录」，经架构 Owner Review；P0 关闭须附验收命令与输出
 
 ---
@@ -35,7 +35,7 @@
 
 | 项        | 内容                                                                                |
 | -------- | --------------------------------------------------------------------------------- |
-| 差距评估     | [`production-readiness-gaps.md`](./production-readiness-gaps.md) v0.2（2026-10-22） |
+| 差距评估     | [`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md) v0.2（2026-10-22） |
 | 代码基线     | `dad8fc0`（工作区干净；演示业务域已清理）                                                         |
 | 已完成的平台整改 | `platform-remediation-plan.md` PLAT-01～PLAT-15 全部完成                               |
 | 已完成的 IAM | `rbac-iam.md` M0～M4.7；M5 生产加固进行中                                                  |
@@ -794,15 +794,15 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 
 > P2 只在触发条件成立后启动；启动前必须完成对应前置评估，禁止「为了企业级而企业级」。
 
-| ID | 能力 | 启动条件 | 前置评估 / 产出 |
-|---|---|---|---|
-| `ENT-19` | 供应链强化 | 对外发布或客户安全评审 | SBOM（Syft）、镜像签名（Cosign）、DAST 方案；`make check-sbom` |
-| `ENT-20` | 边缘与传输安全 | 公网暴露或等保 / 渗透测试 | WAF / API Gateway 配置、mTLS 方案、安全头基线、C 端 Bot 防护 |
-| `ENT-21` | 治理与文档运营 | 团队规模扩大 | CODEOWNERS、分支保护勾选、文档站点；`standards-roadmap.md` §四 |
-| `ENT-22` | 容量与成本治理 | 进入放量阶段 | 负载模型、容量评估、成本标签、预算告警；压测基线升级 |
-| `ENT-23` | 多区域 / 读副本 / 多活 | 可用性目标提升或多区域合规 | 只读副本、跨区备份、故障切换与演练 |
-| `ENT-24` | 搜索 / 报表 / 数仓 | 运营分析或对账需求 | CDC / ETL、读模型、导出任务、BI 对接 |
-| `ENT-25` | ABAC / 组织架构 | 权限复杂度明确 | 先立 ADR，再评估部门树、角色继承、条件策略 |
+| ID | 能力 | 启动条件 | 现状证据（2026-10-22 评估快照，已归档） | 前置评估 / 产出 |
+|---|---|---|---|---|
+| `ENT-19` | 供应链强化 | 对外发布或客户安全评审 | 仅有 Trivy 扫描；无 SBOM、镜像签名 / 来源证明、DAST、依赖更新 SLA 落地 | SBOM（Syft）、镜像签名（Cosign）、DAST 方案；`make check-sbom` |
+| `ENT-20` | 边缘与传输安全 | 公网暴露或等保 / 渗透测试 | 无 WAF / API Gateway 配置、无 mTLS / 服务身份、无 HSTS 等安全头基线、C 端无 Bot 防护 | WAF / API Gateway 配置、mTLS 方案、安全头基线、C 端 Bot 防护 |
+| `ENT-21` | 治理与文档运营 | 团队规模扩大 | 分支保护仍待管理员勾选（`standards-roadmap.md` §四）；无 CODEOWNERS 落地、无文档站点 | CODEOWNERS、分支保护勾选、文档站点；`standards-roadmap.md` §四 |
+| `ENT-22` | 容量与成本治理 | 进入放量阶段 | 只有微基准（[`perf/BASELINES.md`](./perf/BASELINES.md)），无负载模型、容量评估、成本标签与预算告警 | 负载模型、容量评估、成本标签、预算告警；压测基线升级 |
+| `ENT-23` | 多区域 / 读副本 / 多活 | 可用性目标提升或多区域合规 | 单区域单库；无只读副本、跨区备份、故障切换方案 | 只读副本、跨区备份、故障切换与演练 |
+| `ENT-24` | 搜索 / 报表 / 数仓 | 运营分析或对账需求 | 无 CDC / ETL、读模型、导出任务、BI 对接 | CDC / ETL、读模型、导出任务、BI 对接 |
+| `ENT-25` | ABAC / 组织架构 | 权限复杂度明确 | v1 明确不做；无部门树、角色继承、条件策略 | 先立 ADR，再评估部门树、角色继承、条件策略 |
 
 **P2 启动检查清单**
 
@@ -918,7 +918,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-09～18 | 对应域文档、三端 OpenAPI、`TESTING_STANDARDS.md`、`PERFORMANCE_STANDARDS.md`、`ARCHITECTURE.md` §10 / §17 |
 | 全部门禁 | `Makefile`、`.github/workflows/*.yml`、`.workflow/*.sh`、`scripts/ci/*`、PR 模板 |
 
-> 规则：**文档回写与代码同 MR**；禁止「先合代码，后补文档」。上游 `production-readiness-gaps.md` 的状态表在条目关闭时同步更新。
+> 规则：**文档回写与代码同 MR**；禁止「先合代码，后补文档」。上游差距评估已于 2026-11-09 归档只读，`ENT` 状态只在本文 §十二 维护；§六 保留归档时的现状证据快照，用于触发条件判定。
 
 ---
 

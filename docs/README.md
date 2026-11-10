@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-08（归档 `tenant-enterprise-review.md` 与 `iam-audit-report-2026-11-05.md`；`deploy-kind-verify.md`、`tenant-data-lifecycle.md` 补状态头；21 份文档「最后更新」按实际提交回写；`docs/archive/` 合计 30 份）
+> **最后整理**：2026-11-10（`identity-authn.md` 增补 §21 SCIM 2.0 / M2M 设计冻结稿，IAM 计划升至 v1.2；仅更新状态描述，无文档增删）；前次 2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，实施计划 §六 补齐 P2 条目现状证据；`docs/archive/` 合计 31 份）
 
 ---
 
@@ -64,7 +64,7 @@
 
 | 文档 | 覆盖范围 |
 |------|----------|
-| [identity-authn.md](./identity-authn.md) | 账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约 |
+| [identity-authn.md](./identity-authn.md) | 账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；SCIM 2.0 与 M2M 设计（§21，冻结未实现） |
 | [rbac-iam.md](./rbac-iam.md) | IAM 域：权限模型、审批、破玻璃、Outbox、B 端自助 |
 | [identity-slo.md](./identity-slo.md) | 身份域 SLO、容量公式与压测方法 |
 | [notification-channels.md](./notification-channels.md) | 短信 / 邮件 / 推送渠道契约与驱动 |
@@ -79,13 +79,14 @@
 
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
-| [production-readiness-gaps.md](./production-readiness-gaps.md) | 评估完成 v0.2 | 平台级差距清单（`ENT-01`～`ENT-25` 的问题定义） |
-| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足），`ENT-25` 暂缓 |
-| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.1（部分交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML **已交付**、SCIM/M2M **未开工**（P1-6）；访问复核工具链**已交付待演练**（P1-7）。20 条验收已按代码与门禁实测回写，M0 会签仍待补 |
+| [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
+| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.2（部分交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML **已交付**、SCIM/M2M **设计冻结、代码未开工**（P1-6）；访问复核工具链**已交付待演练**（P1-7）。20 条验收已按代码与门禁实测回写，M0 会签仍待补 |
 
-> 这三份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4）已全部闭环，位于 [`archive/`](./archive/)。
+> 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）已全部闭环，位于 [`archive/`](./archive/)。
 >
-> **输入依据（已归档）**：[iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
+> **输入依据（已归档）**：
+> - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
+> - [production-readiness-gaps.md](./archive/platform/production-readiness-gaps.md) 是 2026-10-22 的平台能力差距评估（v0.2，基线 `dad8fc0`），各 `ENT` 状态与排期已由实施计划 §十二 承接；它不构成排期，已于 2026-11-09 移入 `archive/platform/`。
 
 ---
 
@@ -130,7 +131,7 @@ docs/
 ├── data-inventory.md          # 数据资产清单与 PII 分类分级（L2）
 ├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
-├── production-readiness-*.md  # 活跃计划（L3）
+├── production-readiness-implementation-plan.md # 平台能力实施计划（L3）
 ├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 执行基线（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
@@ -140,7 +141,7 @@ docs/
 └── archive/                   # 已闭环过程文档（L4，只读）
     ├── README.md
     ├── identity/              # identity 差距评审 → 批次台账 → 完成报告全链路
-    ├── platform/              # platform 整改计划、IAM 权限模型改造清单
+    ├── platform/              # platform 整改计划、IAM 权限模型改造清单、平台能力差距评估
     ├── reviews/               # 前端对接/架构评审、platform 架构与三目录边界评审
     ├── verify/                # 一次性验证与演练记录（ENT-04 / ENT-06）
     ├── plans/                 # 已实施领域计划（通知中心、特性开关）

@@ -52,17 +52,19 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 
 ---
 
-## 三、platform 领域（2 份）
+## 三、platform 领域（3 份）
 
 | 文档 | 归档理由 |
 |------|----------|
 | [platform-remediation-plan.md](./platform/platform-remediation-plan.md) | `internal/platform` 整改计划，2026-10-20 已实施；约束条目已并入 `CONFIG/RELIABILITY/OBSERVABILITY/SECURITY/TESTING` 各专文与 `ARCHITECTURE.md` §5.6/§6.1 |
 | [iam-permission-kind-removal-plan.md](./platform/iam-permission-kind-removal-plan.md) | IAM 权限模型精简与菜单资源改造，已按清单落地（`iam_menu` 建表、`action` 列删除、`resource` 改生成列） |
+| [production-readiness-gaps.md](./platform/production-readiness-gaps.md) | 平台级能力差距评估（v0.2，2026-10-22，基线 `dad8fc0`），2026-11-09 归档；`ENT-01`～`ENT-19` 已全部关闭，`ENT-20`～`ENT-25` 的状态、触发条件与现状证据已并入 [`production-readiness-implementation-plan.md`](../production-readiness-implementation-plan.md) §六 / §十二 |
 
-> 注意：这两份计划仍有 2 处指向 `platform-remediation-plan.md` 的引用来自活跃计划
-> [`production-readiness-gaps.md`](../production-readiness-gaps.md) 与
+> 注意：前两份计划仍有 2 处指向 `platform-remediation-plan.md` 的引用来自活跃计划
 > [`production-readiness-implementation-plan.md`](../production-readiness-implementation-plan.md)，
 > 链接已更新为 `../archive/platform/...`。
+> 第三份（差距评估）的上游关系已反转：实施计划 §1.1 的「差距评估」输入链接已改指本归档路径，
+> 排期与验收一律以实施计划 §十二 为准。
 
 ---
 
