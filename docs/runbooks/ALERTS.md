@@ -44,6 +44,8 @@
 | `identity.outbox.lag` | P2 | identity.audit 最老事件积压超过 5 分钟（`identity_outbox_lag_seconds > 300`），影响合规时效 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.sms.breaker_open` | P2 | 短信供应商熔断打开（`identity_sms_breaker_open == 1`），验证码通道不可用 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.m2m.secret_rotation_due` | P3 | M2M 客户端 secret 年龄超过 90 天（`identity_m2m_secret_age_seconds`），仅提示轮换、不自动失效 | [key-rotation.md](./key-rotation.md) |
+| `identity.m2m.denied_spike` | P2 | M2M 令牌签发被拒 5 分钟内超过 10 次（`identity_m2m_token_total{result="denied"}`），疑似密钥错误、scope 越权或凭据爆破 | [identity-auth-failure.md](./identity-auth-failure.md) |
+| `identity.m2m.latency` | P2 | M2M 令牌签发 P95 超过 100ms（`identity_m2m_token_duration_seconds{result="issued"}`），DB / Redis 或签名路径变慢 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.cleanup.failure` | P2 | 身份域清理任务执行失败，会话表会持续增长 | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.cleanup.backlog` | P2 | 单轮清理达到批次上限未清空（`identity_cleanup_batch_limit_hit_total`） | [identity-auth-failure.md](./identity-auth-failure.md) |
 | `identity.cleanup.not_running` | P2 | 清理指标缺失（`absent(identity_cleanup_runs_total)`），worker 未暴露指标或清理未启动 | [identity-auth-failure.md](./identity-auth-failure.md) |

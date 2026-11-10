@@ -61,6 +61,31 @@ groups:
           description: "某客户端用于签发令牌的 secret 年龄超过 90 天（默认 max_secret_age=2160h）。仅提示轮换，不会自动失效；按 key-rotation 手册轮换并保留旧 secret 至宽限期结束。"
           runbook_url: docs/runbooks/key-rotation.md
 
+      - alert: IdentityM2MTokenDeniedSpike
+        expr: sum(increase(identity_m2m_token_total{result="denied"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: identity.m2m.denied_spike
+        annotations:
+          summary: "M2M 令牌签发被拒次数突增"
+          description: "5 分钟内 denied 超过 10 次，可能是客户端密钥错误、scope 越权或凭据爆破；按 reason（invalid_client / invalid_scope / rate_limited）区分，并核对审计 auth.m2m.token.denied 的来源 IP 与 client_id。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
+      - alert: IdentityM2MTokenLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(identity_m2m_token_duration_seconds_bucket{result="issued"}[5m])) by (le)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: identity.m2m.latency
+        annotations:
+          summary: "M2M 令牌签发 P95 超过 100ms"
+          description: "签发耗时含凭据校验与签名。持续超阈值时检查 DB / Redis 延迟、签名私钥加载与实例 CPU；低流量下样本稀疏，可结合请求量一起判断。"
+          runbook_url: docs/runbooks/identity-auth-failure.md
+
       - alert: IdentityRefreshFailureRateHigh
         expr: |
           (
