@@ -237,25 +237,9 @@ func ensureBinding(ctx context.Context, tx *sql.Tx, accountID, roleID int64, now
 
 // writeAudit 只在本次新建账号时写入 Outbox 审计，且载荷不含明文主体。
 func writeAudit(ctx context.Context, tx *sql.Tx, accountID int64, index, service string, now time.Time) error {
-	payload, err := json.Marshal(map[string]any{
-		"event_id":      bootstrapEventID,
-		"action":        "auth.account.created",
-		"actor_id":      bootstrapActorID,
-		"actor_type":    "system",
-		"channel":       bootstrapChannel,
-		"resource_type": "account",
-		"resource_id":   strconv.FormatInt(accountID, 10),
-		"outcome":       "success",
-		"occurred_at":   now.Format("2006-01-02T15:04:05.000Z"),
-		"trace_id":      auditTraceID,
-		"service":       service,
-		"attrs": map[string]any{
-			"subject_index":        index,
-			"must_change_password": true,
-		},
-	})
+	payload, err := auditPayload(accountID, index, service, now)
 	if err != nil {
-		return fmt.Errorf("bootstrap: encode audit payload: %w", err)
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO async_outbox
 		(id, topic, event_type, version, tenant_id, aggregate_type, aggregate_id,
@@ -269,4 +253,35 @@ func writeAudit(ctx context.Context, tx *sql.Tx, accountID int64, index, service
 		return fmt.Errorf("bootstrap: insert audit event: %w", err)
 	}
 	return nil
+}
+
+// auditPayload 构造审计事件载荷。
+//
+// attrs 必须是字符串值：消费端按 audit.Event 解码，其 Attrs 是 map[string]string；
+// 写入 bool / 数字会让事件在 identity.audit 永久解码失败并进死信，
+// 结果是「引导管理员建号」这条审计永远查不到。
+func auditPayload(accountID int64, index, service string, now time.Time) ([]byte, error) {
+	payload, err := json.Marshal(map[string]any{
+		"event_id":      bootstrapEventID,
+		"action":        "auth.account.created",
+		"actor_id":      bootstrapActorID,
+		"actor_type":    "system",
+		"channel":       bootstrapChannel,
+		"resource_type": "account",
+		"resource_id":   strconv.FormatInt(accountID, 10),
+		"outcome":       "success",
+		"occurred_at":   now.Format("2006-01-02T15:04:05.000Z"),
+		"trace_id":      auditTraceID,
+		"service":       service,
+		"attrs": map[string]string{
+			"subject_index": index,
+			// 键名不得含 "password=" 片段：AUD-08 的敏感字段过滤按 key=value 匹配，
+			// 命中即整条事件非法（引导管理员的审计会永远写不进审计库）。
+			"initial_credential_reset": "true",
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: encode audit payload: %w", err)
+	}
+	return payload, nil
 }
