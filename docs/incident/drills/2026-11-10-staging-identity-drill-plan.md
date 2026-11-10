@@ -160,14 +160,14 @@
 | `D4` SCIM 风暴 | **通过** | 30 次串行请求 0.72s（41.7 rps）：`200`×25、`429`×5；`identity_scim_request_total{result="success"}`=25、`{result="error", reason="rate_limited"}`=5 |
 | `D5` M2M 生命周期 | **通过** | 创建 → 签发（`expires_in=900`）→ 错误密钥 `401 invalid_client` → 越权 scope `400 invalid_scope` → 轮换 → 宽限期内旧密钥可用 → 停用后签发 `401` → 恢复后可用 |
 | `SEC-F-01` 告警链路 | **通过** | 将 `identity_m2m_secret` 的 `created_at` 回拨 100 天并签发一次，`identity_m2m_secret_age_seconds{client="svc_dDLNp"}=8640013s`（&gt; 90 天阈值）；`IdentityM2MSecretRotationDue` 进入 `pending`（`severity=P3`、`alert_id=identity.m2m.secret_rotation_due`）。为验证 firing 通路，临时把该规则 `for` 改为 `1m` 后观测到 `state=firing`，随后恢复 `for: 1h` |
-| `SEC-F-02` label 核对 | **完成** | 实测序列为 `identity_m2m_token_total{channel="admin",client="svc_dDLNp",result="issued",reason=""}`、`{result="denied",reason="invalid_client"}`、`{reason="invalid_scope"}`；设计声明的 denied 突增与 p95 两条告警规则**缺失**（已回写评审单 §5） |
+| `SEC-F-02` label 核对与告警补齐 | **完成** | 实测序列为 `identity_m2m_token_total{channel="admin",client="svc_dDLNp",result="issued",reason=""}`、`{result="denied",reason="invalid_client"}`、`{reason="invalid_scope"}`。补 `identity.m2m.denied_spike`（P2）与 `identity.m2m.latency`（P2）后：本地造 24 次 denied，规则由 `pending` 转 `firing`（`activeAt=13:51:18Z`，触发时 5 分钟增量约 23 次）；签发 P95 实测 9.75ms，规则未误报 |
 
 ### 9.2 演练发现的缺陷与偏差
 
 1. **代码缺陷（已修复）**：`internal/identity/infrastructure/oauth/oauth2.go` 的 `oauthUnavailable` 用 `apperr.New(..., err)` 包装网络错误，未挂 `ErrUnavailable` 哨兵，导致 `errors.Is(err, apperr.ErrUnavailable)` 失配，`OAuthService` 把 IdP 不可用降级为 `50000`。修复为 `errors.Join(err, apperr.ErrUnavailable)` 并补回归用例 `TestOAuth2ProviderExchangeIdPUnreachable`。
 2. **环境偏差**：chart 中 `migrate.image.tag` 固定为 `verify`，该镜像内迁移只到 `000026`，`000027`（SCIM）/`000028`（M2M）/`000029`（权限点）从未应用；补跑迁移后 SCIM 才可用。staging 发布前需确认迁移镜像与代码同源。
 3. **配置偏差**：`values-kind.yaml` 的 `iam.mode: shadow` 只认静态超级角色 `admin`，而种子角色为 `system_admin`，导致已授权仍 `403`；演练环境改用 `enforce`。生产/预发需确认 `iam.mode` 与角色种子一致。
-4. **规则缺失（待补）**：设计 §21.2.5 声明的「denied 5 分钟突增」与「签发 p95 &gt; 100ms」告警未在 `rules/identity.yaml` 中实现，见 `SEC-F-02`。
+4. **规则缺失（已修复）**：设计 §21.2.5 声明的「denied 5 分钟突增」与「签发 p95 &gt; 100ms」告警原先未在 `rules/identity.yaml` 中实现；已补 `identity.m2m.denied_spike`（5 分钟增量 &gt; 10，P2）与 `identity.m2m.latency`（issued P95 &gt; 100ms，P2），`ALERTS.md` 同步登记，阈值可在 staging 按真实基线调整。
 
 ### 9.3 未覆盖项
 
