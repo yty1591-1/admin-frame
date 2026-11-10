@@ -468,6 +468,8 @@ golangci-lint run ./internal/iam/... ./internal/identity/...
 - [身份认证设计](./identity-authn.md)
 - [M0 立项会签单](./iam/m0-signoff-record-2026-11-10.md)
 - [身份域威胁建模](./identity/threat-model.md)
+- [S6-1 安全评审记录（待签）](./identity/s6-1-security-review-record-2026-11-10.md)
+- [staging 身份域演练清单](./incident/drills/2026-11-10-staging-identity-drill-plan.md)
 - [P1-7 验收报告](./iam/p1-7-acceptance-report.md)
 - [ADR-0012 单活动规模上限与导出口径](./adr/0012-certification-export-limit.md)
 - [S7-5 全流程演练记录](./incident/drills/2026-11-08-certification-sweep.md)
