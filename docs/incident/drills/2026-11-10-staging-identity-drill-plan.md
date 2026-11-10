@@ -143,6 +143,23 @@
 4. 缺陷与整改项登记 [`ACTION_ITEMS.md`](../ACTION_ITEMS.md)，与 `S6-1` 评审整改项合并跟踪。
 5. `D5` 结果用于确认 `T-M2M-05` 的缓解是否成立；不成立则更新 [`threat-model.md`](../../identity/threat-model.md) 对应行。
 
+## 9. 执行记录（2026-11-10 本地预检）
+
+环境：本地 kind `af-kind`（Helm rev 40，admin / biz / c 均 Running，四通道 `enabled=false`）+ Docker 集成 MySQL / Redis。**不是 staging**，仅记录可离线验证的部分。
+
+| 检查 / 场景 | 结果 | 证据 |
+|---|---|---|
+| 前置 2：通道关闭时路由不注册 | **通过** | `check-authn.sh` 输出 `OK: m2m routes absent when disabled`、`OK: scim routes absent when disabled`（transport 用例断言 `404`） |
+| `D5` M2M 轮换 / 宽限 / 停用语义 | **通过（服务层，非 staging 部署）** | `TEST_MYSQL_DSN=... TEST_REDIS_ADDR=... go test ./tests/integration/identity -run M2M`：`PASS`，0.29s |
+| 新告警规则语法 | **通过** | `promtool check rules rules/identity.yaml` → `SUCCESS: 23 rules found` |
+| `D1` 发版回滚 | **未执行** | 无非当前版本可发布；`helm upgrade` 无模板变更不会触发滚动，测不出回滚耗时。需 staging 发布流水线 |
+| `D2` IdP 不可用 | **未执行** | OIDC / SAML 未启用，且 kind 内无已注册的 Keycloak 客户端；开启需改配置并重启 |
+| `D3` 证书轮换 | **未执行** | 同 `D2`，SAML 通道关闭，无私钥与 IdP 元数据 |
+| `D4` SCIM 风暴 | **未执行** | SCIM 未启用；需先建 `scim_` 令牌，依赖 A 端管理凭据与 MFA |
+| 告警触发验证 | **未执行** | kind 内未部署 Prometheus / Alertmanager 实例，规则无法被求值 |
+
+遗留：`D1`～`D4` 与告警触发需在 staging 窗口执行；执行前请先完成 §2 的 10 项前置检查，并把本表替换为实测数据。
+
 ## 相关链接
 
 - [告警目录](../../runbooks/ALERTS.md)
