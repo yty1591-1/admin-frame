@@ -48,16 +48,18 @@ type m2mFixture struct {
 // newM2MFixture 构造基于内存仓储的 M2M 服务。
 func newM2MFixture(t *testing.T) *m2mFixture {
 	t.Helper()
+	// 签发与解析共用同一固定时钟：否则 exp 固定在过去，用例会随墙钟漂移而失败。
+	clock := &m2mClock{now: time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)}
 	signer, err := jwt.NewHMAC(jwt.HMACConfig{
 		Issuer:   "https://identity.example.com",
 		Audience: []string{"admin"},
 		Secret:   []byte("01234567890123456789012345678901"),
 		TTL:      time.Minute,
+		Clock:    clock,
 	})
 	if err != nil {
 		t.Fatalf("new signer: %v", err)
 	}
-	clock := &m2mClock{now: time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)}
 	tokens, err := app.NewTokenService(signer, domain.ChannelAdmin, 15*time.Minute, 168*time.Hour, &seqIDs{},
 		app.WithTokenParser(signer), app.WithClientTokenTTL(15*time.Minute), app.WithTokenClock(clock))
 	if err != nil {
