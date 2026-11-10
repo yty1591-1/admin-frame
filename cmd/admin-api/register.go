@@ -13,6 +13,7 @@ import (
 	featureflagadmin "github.com/admin-frame/admin-frame/internal/featureflag/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
+	identityscim "github.com/admin-frame/admin-frame/internal/identity/transport/scim"
 	notificationadmin "github.com/admin-frame/admin-frame/internal/notification/transport/admin"
 	notificationrest "github.com/admin-frame/admin-frame/internal/notification/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -31,6 +32,10 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	}
 	if identityRT != nil && identityRT.Handler != nil {
 		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW, deps.RequirePermission)
+	}
+	// SCIM 2.0 协议端点：独立 Bearer 鉴权，不挂 JWT 中间件（§21.1.2）。
+	if identityRT != nil && identityRT.ScimHandler != nil {
+		identityscim.Register(mux, identityRT.ScimHandler)
 	}
 	auditRT, err := auditruntime.New(deps, appCfg.Audit)
 	if err != nil {

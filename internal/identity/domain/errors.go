@@ -56,6 +56,16 @@ var (
 	ErrInvalidOAuthIdentity = errors.New("invalid oauth identity")
 	// ErrTokenReplay 刷新令牌重放，需撤销整条会话链。
 	ErrTokenReplay = errors.New("refresh token replay")
+	// ErrInvalidM2MClient 机器客户端字段非法（client_id / 端别 / scope 白名单）。
+	ErrInvalidM2MClient = errors.New("invalid m2m client")
+	// ErrInvalidM2MSecret 机器客户端密钥字段或状态非法。
+	ErrInvalidM2MSecret = errors.New("invalid m2m secret")
+	// ErrM2MClientDisabled 客户端已停用 / 软删，拒绝签发。
+	ErrM2MClientDisabled = errors.New("m2m client disabled")
+	// ErrInvalidSCIMToken SCIM 令牌字段或状态非法。
+	ErrInvalidSCIMToken = errors.New("invalid scim token")
+	// ErrInvalidSCIMGroup SCIM 组字段非法（外部 ID / 展示名为空、超长）。
+	ErrInvalidSCIMGroup = errors.New("invalid scim group")
 )
 
 // errInvalid 构造参数错误（HTTP 400 / 业务码 40000）。

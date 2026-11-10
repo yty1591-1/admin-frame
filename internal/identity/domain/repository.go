@@ -43,6 +43,14 @@ type AccountListFilter struct {
 	SubjectExact string
 	// MerchantID B 端商户过滤；空值表示不按商户过滤（A/C 端固定为空串）。
 	MerchantID string
+	// DisplayNameExact 展示昵称精确匹配；空值表示不过滤（SCIM displayName eq 使用）。
+	DisplayNameExact string
+	// Active 按「可登录 / 已停用」过滤；nil 表示不过滤（SCIM active eq 使用）。
+	//
+	// true：status != disabled；false：status = disabled。软删账号由 ExcludeDeleted 处理。
+	Active *bool
+	// ExcludeDeleted 是否排除软删账号；默认 false（既有调用方需要看到软删占位）。
+	ExcludeDeleted bool
 	// Limit 每页条数；调用方负责上限钳制。
 	Limit int
 	// Offset 偏移量；按 created_at、id 倒序。
@@ -172,4 +180,60 @@ type LoginAttemptRepository interface {
 	LastSuccessAt(ctx context.Context, channel Channel, accountRef string) (occurredAt time.Time, found bool, err error)
 	// DeleteBefore 删除 occurred_at 早于 before 的尝试记录，单次最多 limit 条。
 	DeleteBefore(ctx context.Context, before time.Time, limit int) (int, error)
+}
+
+// ScimTokenRepository 是 SCIM 令牌的持久化端口。
+//
+// 约定：
+//   - TokenHash 全局唯一，冲突返回 apperr.Conflict；
+//   - 每 provider 同时最多 2 个 active 由用例在事务内保证，仓储须提供
+//     ListByProvider 以便统计；
+//   - 未找到返回 apperr.NotFound。
+type ScimTokenRepository interface {
+	// Create 写入新令牌；摘要重复返回 Conflict。
+	Create(ctx context.Context, token *ScimToken) error
+	// UpdateStatus 更新状态、宽限到期与吊销时间。
+	UpdateStatus(ctx context.Context, token *ScimToken) error
+	// FindByHash 按 provider + 摘要加载令牌；不存在返回 NotFound。
+	FindByHash(ctx context.Context, provider, tokenHash string) (*ScimToken, error)
+	// FindByID 按主键加载令牌；不存在返回 NotFound。
+	FindByID(ctx context.Context, id string) (*ScimToken, error)
+	// ListByProvider 返回 provider 下全部令牌，按创建时间倒序。
+	ListByProvider(ctx context.Context, provider string) ([]*ScimToken, error)
+}
+
+// ScimGroupRepository 是 SCIM 组与成员关系的持久化端口。
+//
+// 约定：
+//   - (provider, external_id) 与 (provider, display_name) 各自唯一，冲突返回 Conflict；
+//   - Update / SoftDelete 使用 expectedVersion 做乐观锁；
+//   - 成员关系以 (group_id, account_id) 唯一，重复添加幂等；
+//   - 读方法返回副本，软删组对列表不可见但对 FindByID 可见（用于幂等 DELETE）。
+type ScimGroupRepository interface {
+	// FindByID 按主键加载组；不存在返回 NotFound。
+	FindByID(ctx context.Context, id string) (*ScimGroup, error)
+	// FindByExternalID 按 provider + 外部 ID 加载组；不存在返回 NotFound。
+	FindByExternalID(ctx context.Context, provider, externalID string) (*ScimGroup, error)
+	// FindByDisplayName 按 provider + 展示名加载组；不存在返回 NotFound。
+	FindByDisplayName(ctx context.Context, provider, displayName string) (*ScimGroup, error)
+	// Create 创建组；唯一键冲突返回 Conflict。
+	Create(ctx context.Context, group *ScimGroup) error
+	// Update 更新组并使用乐观锁；版本冲突返回 Conflict。
+	Update(ctx context.Context, group *ScimGroup, expectedVersion int64) error
+	// SoftDelete 软删组并使用乐观锁；版本冲突返回 Conflict。
+	SoftDelete(ctx context.Context, group *ScimGroup, expectedVersion int64) error
+	// List 分页列出未删除组，返回当页与总数。
+	List(ctx context.Context, filter ScimGroupFilter) ([]*ScimGroup, int, error)
+	// ListByAccount 返回账号所属的未删除组，按组 ID 升序。
+	ListByAccount(ctx context.Context, accountID string) ([]*ScimGroup, error)
+	// ListMembers 返回组成员，按账号 ID 升序。
+	ListMembers(ctx context.Context, groupID string) ([]*ScimGroupMember, error)
+	// AddMembers 批量添加成员；已存在的成员幂等跳过。
+	AddMembers(ctx context.Context, members []*ScimGroupMember) error
+	// RemoveMembers 批量移除成员；不存在的成员幂等跳过。
+	RemoveMembers(ctx context.Context, groupID string, accountIDs []string) error
+	// RemoveAllMembers 清空组成员（组删除时在同一事务内调用）。
+	RemoveAllMembers(ctx context.Context, groupID string) error
+	// CountMembers 返回组成员数量，用于管理端列表。
+	CountMembers(ctx context.Context, groupIDs []string) (map[string]int, error)
 }

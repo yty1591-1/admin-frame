@@ -45,6 +45,13 @@ type Metrics struct {
 	samlAuthorizeTotal    *prometheus.CounterVec
 	samlACSTotal          *prometheus.CounterVec
 	samlACSDuration       *prometheus.HistogramVec
+	m2mTokenTotal         *prometheus.CounterVec
+	m2mTokenDuration      *prometheus.HistogramVec
+	scimRequestTotal      *prometheus.CounterVec
+	scimRequestDuration   *prometheus.HistogramVec
+	scimLastSuccess       *prometheus.GaugeVec
+	scimGroupMapTotal     *prometheus.CounterVec
+	scimNameTruncated     prometheus.Counter
 	revocationStoreError  *prometheus.CounterVec
 	stateWriteErrors      *prometheus.CounterVec
 	l1Hits                *prometheus.CounterVec
@@ -62,6 +69,8 @@ var (
 	_ app.RevocationObserver      = (*Metrics)(nil)
 	_ app.RevocationCacheObserver = (*Metrics)(nil)
 	_ app.SAMLMetrics             = (*Metrics)(nil)
+	_ app.M2MObserver             = (*Metrics)(nil)
+	_ app.ScimObserver            = (*Metrics)(nil)
 )
 
 // CleanupMetrics 是清理任务的独立指标集，供 worker 进程单独注册（OPS-02）。
@@ -250,6 +259,36 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Help:    "SAML ACS 耗时（秒），含 state 消费、验签与解密。",
 			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10},
 		}, []string{"provider", "result"}),
+		m2mTokenTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_m2m_token_total",
+			Help: "M2M 令牌签发次数；result=issued|denied，reason=invalid_client|invalid_scope|error。client 为 client_id 前缀桶，避免高基数。",
+		}, []string{"client", "channel", "result", "reason"}),
+		m2mTokenDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "identity_m2m_token_duration_seconds",
+			Help:    "M2M 令牌签发耗时（秒），含凭据校验与签名；p95 > 100ms 需排查。",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}, []string{"result"}),
+		scimRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_scim_request_total",
+			Help: "SCIM 请求次数；resource=User|Group|...，result=success|error，reason 为 scimType 或状态码。",
+		}, []string{"resource", "method", "result", "reason"}),
+		scimRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "identity_scim_request_duration_seconds",
+			Help:    "SCIM 请求耗时（秒），含鉴权、事务与角色投影。",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+		}, []string{"resource", "method", "result"}),
+		scimLastSuccess: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "identity_scim_last_success_timestamp",
+			Help: "SCIM 各资源最近一次成功请求的 Unix 时间戳；长时间不增长表示 IdP 推送中断。",
+		}, []string{"resource"}),
+		scimGroupMapTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "identity_scim_group_map_total",
+			Help: "SCIM 组角色投影次数；result=ok|unmapped。",
+		}, []string{"result"}),
+		scimNameTruncated: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "identity_scim_display_name_truncated_total",
+			Help: "SCIM 展示名超长被截断次数；持续增长说明 IdP 侧昵称超出列宽。",
+		}),
 		revocationStoreError: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "identity_revocation_store_errors_total",
 			Help: "撤销存储 / 回源失败次数；op=account_load|session_load|token_load。",
@@ -277,6 +316,9 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		m.oauthCallbackDuration, m.tokenReuseTotal, m.sessionRevokeTotal, m.smsSendTotal,
 		m.smsProviderAlert, m.mfaRecoveryUsed, m.oauthCallbackTotal, m.oauthJWKSRefreshTotal,
 		m.samlAuthorizeTotal, m.samlACSTotal, m.samlACSDuration,
+		m.m2mTokenTotal, m.m2mTokenDuration,
+		m.scimRequestTotal, m.scimRequestDuration, m.scimLastSuccess,
+		m.scimGroupMapTotal, m.scimNameTruncated,
 		m.revocationStoreError,
 		m.stateWriteErrors, m.l1Hits, m.redisCalls, m.dbRefetches,
 	} {
@@ -302,6 +344,62 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 		return nil, fmt.Errorf("identity observability: register login qps gauge: %w", err)
 	}
 	return m, nil
+}
+
+// ObserveScimRequest 实现 app.ScimObserver（§21.1.5）。
+//
+// reason 只允许 scimType、HTTP 状态码与固定枚举（auth / rate_limited），
+// 避免把资源 ID 或主体写进标签造成高基数。
+func (m *Metrics) ObserveScimRequest(_ context.Context, resource, method, result, reason string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.scimRequestTotal.WithLabelValues(resource, method, result, reason).Inc()
+	m.scimRequestDuration.WithLabelValues(resource, method, result).Observe(duration.Seconds())
+	if result == "success" {
+		m.scimLastSuccess.WithLabelValues(resource).Set(float64(time.Now().Unix()))
+	}
+}
+
+// ObserveScimGroupMap 实现 app.ScimObserver：记录组投影结果。
+func (m *Metrics) ObserveScimGroupMap(_ context.Context, result string) {
+	if m == nil {
+		return
+	}
+	m.scimGroupMapTotal.WithLabelValues(result).Inc()
+}
+
+// ObserveScimDisplayNameTruncated 实现 app.ScimObserver：记录展示名截断。
+func (m *Metrics) ObserveScimDisplayNameTruncated(_ context.Context) {
+	if m == nil {
+		return
+	}
+	m.scimNameTruncated.Inc()
+}
+
+// ObserveM2MToken 实现 app.M2MObserver（§21.2.5）。
+//
+// client 标签只取 client_id 的稳定短哈希前缀：client_id 本身是随机串，
+// 直接作为标签会导致时间序列无界增长。
+func (m *Metrics) ObserveM2MToken(_ context.Context, clientID, channel, result, reason string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.m2mTokenTotal.WithLabelValues(m2mClientLabel(clientID), channel, result, reason).Inc()
+	m.m2mTokenDuration.WithLabelValues(result).Observe(duration.Seconds())
+}
+
+// m2mClientLabel 返回低基数客户端标签；未知客户端统一归入 "unknown"。
+func m2mClientLabel(clientID string) string {
+	trimmed := strings.TrimSpace(clientID)
+	if trimmed == "" {
+		return "unknown"
+	}
+	const prefixLen = 9 // svc_ + 5 个随机字符，足以区分常见客户端且基数可控
+	if len(trimmed) <= prefixLen {
+		return trimmed
+	}
+	return trimmed[:prefixLen]
 }
 
 // ObserveMFARecoveryUsed 实现 app.Metrics。

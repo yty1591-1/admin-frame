@@ -16,6 +16,7 @@ type MemoryRevocationStore struct {
 	mu            sync.RWMutex
 	states        map[string]memoryEntry[app.AccountState]
 	sessionStates map[string]memoryEntry[app.SessionState]
+	clientStates  map[string]memoryEntry[app.ClientState]
 	revoked       map[string]memoryEntry[struct{}]
 
 	clock func() time.Time
@@ -27,16 +28,59 @@ type memoryEntry[T any] struct {
 }
 
 // 编译期断言。
-var _ app.RevocationStore = (*MemoryRevocationStore)(nil)
+var (
+	_ app.RevocationStore  = (*MemoryRevocationStore)(nil)
+	_ app.ClientStateStore = (*MemoryRevocationStore)(nil)
+)
 
 // NewMemoryRevocationStore 创建空的进程内撤销存储。
 func NewMemoryRevocationStore() *MemoryRevocationStore {
 	return &MemoryRevocationStore{
 		states:        make(map[string]memoryEntry[app.AccountState]),
 		sessionStates: make(map[string]memoryEntry[app.SessionState]),
+		clientStates:  make(map[string]memoryEntry[app.ClientState]),
 		revoked:       make(map[string]memoryEntry[struct{}]),
 		clock:         func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// LoadClientState 读取 M2M 客户端撤销快照；过期视为未命中。
+func (s *MemoryRevocationStore) LoadClientState(_ context.Context, clientID string) (app.ClientState, bool, error) {
+	if clientID == "" {
+		return app.ClientState{}, false, apperr.BadRequest("client id is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.clientStates[clientID]
+	if !ok || s.expired(entry.expiresAt) {
+		return app.ClientState{}, false, nil
+	}
+	return entry.value, true, nil
+}
+
+// SaveClientState 写入客户端撤销快照；ttl 必须为正。
+func (s *MemoryRevocationStore) SaveClientState(_ context.Context, clientID string, state app.ClientState, ttl time.Duration) error {
+	if clientID == "" {
+		return apperr.BadRequest("client id is required")
+	}
+	if ttl <= 0 {
+		return apperr.BadRequest("client state ttl must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clientStates[clientID] = memoryEntry[app.ClientState]{value: state, expiresAt: s.clock().Add(ttl)}
+	return nil
+}
+
+// DeleteClientState 删除客户端撤销快照。
+func (s *MemoryRevocationStore) DeleteClientState(_ context.Context, clientID string) error {
+	if clientID == "" {
+		return apperr.BadRequest("client id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clientStates, clientID)
+	return nil
 }
 
 // LoadAccountState 读取账号撤销快照；过期视为未命中。

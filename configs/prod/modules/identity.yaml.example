@@ -99,6 +99,31 @@ identity:
       burst: 5 # 0 使用默认 5
       failure_mode: fail_closed # prod/staging 强制 fail_closed
     providers: [] # name / idp_entity_id / metadata_url 或 metadata_xml（二选一）
+  # M2M 机器身份（OAuth2 client_credentials）；默认关闭，关闭时不注册 /{端}/v1/auth/token。
+  m2m:
+    enabled: false
+    token_ttl: 15m # [5m, 1h]；调用方不可指定
+    rotate_grace: 24h # [0, 168h]；旧 secret 退役宽限
+    max_secret_age: 2160h # [720h, 8760h]，且 > rotate_grace；仅告警不自动失效
+    allowed_scopes: [] # 开启时必填；权限码白名单，禁止通配符 *
+    rate_limit:
+      rps: 5 # 按 client_id；0 使用默认 5
+      burst: 10 # 0 使用默认 10
+      failure_mode: fail_closed # prod/staging 强制 fail_closed
+  # SCIM 2.0 目录同步；仅 A 端，默认关闭，关闭时不注册 /admin/scim/v2 路由。
+  scim:
+    enabled: false
+    provider: "" # 开启时必填；^[a-z][a-z0-9_-]{1,31}$，写入映射表为 scim:<provider>
+    auto_provision: true # false 时 POST /Users 返回 400，账号必须先经 SSO 首登建立
+    group_role_map: {} # SCIM displayName → A 端角色 code；未映射组只同步成员、不授权
+    page_size: 50 # [1, 100]
+    max_payload: 1048576 # 单请求体上限（字节），[65536, 2097152]
+    request_timeout: 10s # [1s, 30s]
+    token_grace: 168h # [0, 720h]；旧令牌退役宽限
+    rate_limit:
+      rps: 10 # 单令牌；0 使用默认 10
+      burst: 20 # 0 使用默认 20
+      failure_mode: fail_closed # prod/staging 强制 fail_closed
   hash_key: "" # ADMIN_FRAME_IDENTITY_HASH_KEY（32B）
   hash_key_id: v1 # 摘要 key id；仅字母 / 数字 / 下划线 / 短横线
   previous_hash_keys: [] # 轮换期历史摘要密钥（id + 32B key），仅双读

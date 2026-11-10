@@ -54,6 +54,8 @@ const (
 	RevokeReasonAdmin RevokeReason = "admin"
 	// RevokeReasonAccountDisabled 账号被停用。
 	RevokeReasonAccountDisabled RevokeReason = "account_disabled"
+	// RevokeReasonAccountDeleted 账号被软删（SCIM DELETE 与自助注销）。
+	RevokeReasonAccountDeleted RevokeReason = "account_deleted"
 	// RevokeReasonTenantDisabled 所属租户被停用 / 终止，整租户会话撤销（ENT-09 D-02）。
 	RevokeReasonTenantDisabled RevokeReason = "tenant_disabled"
 	// RevokeReasonPasswordChanged 密码已修改。

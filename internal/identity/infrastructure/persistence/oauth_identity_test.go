@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -35,7 +36,7 @@ func TestNewOAuthIdentityValidate(t *testing.T) {
 		{name: "missing account", in: domain.NewOAuthIdentityParams{ID: "2001", Provider: "github", ProviderSubject: "s1"}, want: domain.ErrEmptyInput},
 		{name: "missing provider", in: domain.NewOAuthIdentityParams{ID: "2001", AccountID: "1001", Provider: " ", ProviderSubject: "s1"}, want: domain.ErrInvalidOAuthIdentity},
 		{name: "missing subject", in: domain.NewOAuthIdentityParams{ID: "2001", AccountID: "1001", Provider: "github"}, want: domain.ErrInvalidOAuthIdentity},
-		{name: "provider too long", in: domain.NewOAuthIdentityParams{ID: "2001", AccountID: "1001", Provider: string(make([]byte, 33)), ProviderSubject: "s1"}, want: domain.ErrInvalidOAuthIdentity},
+		{name: "provider too long", in: domain.NewOAuthIdentityParams{ID: "2001", AccountID: "1001", Provider: strings.Repeat("x", domain.MaxOAuthProviderLen+1), ProviderSubject: "s1"}, want: domain.ErrInvalidOAuthIdentity},
 		{name: "subject too long", in: domain.NewOAuthIdentityParams{ID: "2001", AccountID: "1001", Provider: "github", ProviderSubject: string(make([]byte, 256))}, want: domain.ErrInvalidOAuthIdentity},
 	}
 	for _, tc := range cases {

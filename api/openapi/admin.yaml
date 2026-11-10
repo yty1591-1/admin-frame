@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.2.0
+  version: 8.4.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -38,6 +38,12 @@ info:
     （消息携带当前版本）；租户详情与成功写入响应带 `ETag` 头（纯增量）。
     补录：7.5.0 邀请端点的 5 个路径已挂载到本文件 paths 段（7.5.0 时漏挂，
     由 T-17 域门禁的路由 ↔ OpenAPI 双向对账发现）。
+    8.3.0：M2M 机器身份（docs/identity-authn.md 21.2）——新增 `POST /admin/v1/auth/token`
+    与客户端生命周期六个端点；协议端点错误体为统一信封的显式例外（RFC 6749 5.2），
+    `client_secret` 仅在创建 / 轮换响应出现一次（纯增量）。
+    8.4.0：SCIM 2.0 目录同步（docs/identity-authn.md 21.1）——新增 `/admin/scim/v2/*`
+    协议端点与三个管理端点；SCIM 响应体按 RFC 7643 / 7644，是统一信封的显式例外，
+    链路 ID 经响应头 `X-Trace-Id` 返回（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -117,6 +123,44 @@ paths:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-unlock'
   /admin/v1/auth/accounts/{id}/mfa/reset:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-mfa-reset'
+  /admin/v1/auth/token:
+    $ref: './paths/admin/token.yaml#/admin-v1-auth-token'
+  /admin/v1/auth/m2m/clients:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients'
+  /admin/v1/auth/m2m/clients/{id}/secrets:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-secrets'
+  /admin/v1/auth/m2m/clients/{id}/disable:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-disable'
+  /admin/v1/auth/m2m/clients/{id}/enable:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-enable'
+  /admin/v1/auth/m2m/clients/{id}:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-by-id'
+  /admin/v1/auth/scim/tokens:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-tokens'
+  /admin/v1/auth/scim/tokens/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-tokens-id'
+  /admin/v1/auth/scim/groups:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-groups'
+  /admin/scim/v2/ServiceProviderConfig:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-service-provider-config'
+  /admin/scim/v2/ResourceTypes:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-resource-types'
+  /admin/scim/v2/ResourceTypes/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-resource-types-id'
+  /admin/scim/v2/Schemas:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-schemas'
+  /admin/scim/v2/Schemas/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-schemas-id'
+  /admin/scim/v2/Bulk:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-bulk'
+  /admin/scim/v2/Users:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-users'
+  /admin/scim/v2/Users/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-users-id'
+  /admin/scim/v2/Groups:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-groups'
+  /admin/scim/v2/Groups/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-groups-id'
   /admin/v1/me:
     $ref: './paths/admin/me.yaml#/admin-v1-me'
   /admin/v1/iam/permissions:
@@ -271,4 +315,8 @@ components:
       type: http
       scheme: bearer
       description: "A 端 JWT（Bearer）。权限与主体以 IAM 快照为准，令牌不携带角色。仅 auth.mode=demo 的本地/测试形态使用演示令牌 admin.<subject_id>，生产禁止。"
+    scimBearerAuth:
+      type: http
+      scheme: bearer
+      description: "SCIM 目录同步令牌（Bearer scim_<32B base64url>）。只能访问 /admin/scim/v2/*，不能调用任何 /{端}/v1/* 业务端点；A 端账号 JWT 也不能调用 SCIM（docs/identity-authn.md 21.1.2）。"
 

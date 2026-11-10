@@ -50,6 +50,18 @@ const (
 	PermIdentityAccountDelete PermissionCode = "identity:account:delete"
 	// PermIdentityAccountSession 撤销目标账号的会话（单设备或全部）。
 	PermIdentityAccountSession PermissionCode = "identity:account:session"
+	// PermIdentityM2MRead 查看 M2M 客户端列表与状态（A 端专属，§21.2.4）。
+	PermIdentityM2MRead PermissionCode = "identity:m2m:read"
+	// PermIdentityM2MWrite 创建 / 停用 / 启用 / 软删 M2M 客户端（A 端专属）。
+	PermIdentityM2MWrite PermissionCode = "identity:m2m:write"
+	// PermIdentityM2MCredential 轮换 M2M 客户端密钥（返回一次性明文）。
+	//
+	// 与 write 分离：能建客户端不等于能取走密钥，落实职责分离（SEC-02）。
+	PermIdentityM2MCredential PermissionCode = "identity:m2m:credential"
+	// PermIdentitySCIMRead 查看 SCIM 令牌指纹与组映射状态（A 端专属，§21.1.6）。
+	PermIdentitySCIMRead PermissionCode = "identity:scim:read"
+	// PermIdentitySCIMWrite 签发与吊销 SCIM 令牌（A 端专属）。
+	PermIdentitySCIMWrite PermissionCode = "identity:scim:write"
 	// PermChangeRead 查看高风险变更审批单。
 	PermChangeRead PermissionCode = "iam:change:read"
 	// PermChangeApprove 审批角色 / 绑定等高风险变更。

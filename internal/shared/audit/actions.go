@@ -33,14 +33,31 @@ const (
 	ActionAuthOAuthCallback   = "auth.oauth.callback"
 	ActionAuthSAMLAuthorize   = "auth.saml.authorize"
 	ActionAuthSAMLCallback    = "auth.saml.callback"
-	ActionAuthRateLimited     = "auth.rate_limited"
-	ActionAuthSessionEvicted  = "auth.session.evicted"
-	ActionAuthTenantSwitch    = "auth.tenant_switch"
-	ActionRBACRoleChange      = "rbac.role_change"
-	ActionRBACBindingChange   = "rbac.binding_change"
-	ActionRBACBreakglass      = "rbac.breakglass"
-	ActionRBACMenuChange      = "rbac.menu_change"
-	ActionRBACSodChange       = "rbac.sod_change"
+	// M2M 机器身份（§21.2.5）：签发成功 / 失败与客户端生命周期。
+	ActionAuthM2MTokenIssued    = "auth.m2m.token.issued" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthM2MTokenDenied    = "auth.m2m.token.denied" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthM2MClientCreated  = "auth.m2m.client.created"
+	ActionAuthM2MClientUpdated  = "auth.m2m.client.updated"
+	ActionAuthM2MClientDisabled = "auth.m2m.client.disabled"
+	ActionAuthM2MClientEnabled  = "auth.m2m.client.enabled"
+	ActionAuthM2MClientDeleted  = "auth.m2m.client.deleted"
+	ActionAuthM2MSecretRotated  = "auth.m2m.secret.rotated"
+	// SCIM 2.0 目录同步（§21.1.5）：资源变更与令牌生命周期。
+	ActionAuthScimUserCreated  = "auth.scim.user.created"
+	ActionAuthScimUserUpdated  = "auth.scim.user.updated"
+	ActionAuthScimUserDeact    = "auth.scim.user.deactivated"
+	ActionAuthScimUserDeleted  = "auth.scim.user.deleted"
+	ActionAuthScimGroupUpdated = "auth.scim.group.updated"
+	ActionAuthScimTokenCreated = "auth.scim.token.created" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthScimTokenRevoked = "auth.scim.token.revoked" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthRateLimited      = "auth.rate_limited"
+	ActionAuthSessionEvicted   = "auth.session.evicted"
+	ActionAuthTenantSwitch     = "auth.tenant_switch"
+	ActionRBACRoleChange       = "rbac.role_change"
+	ActionRBACBindingChange    = "rbac.binding_change"
+	ActionRBACBreakglass       = "rbac.breakglass"
+	ActionRBACMenuChange       = "rbac.menu_change"
+	ActionRBACSodChange        = "rbac.sod_change"
 	// ActionRBACCertification 访问复核：创建 / 激活 / 关闭活动、裁决任务与证据导出。
 	ActionRBACCertification = "rbac.certification"
 	ActionConfigChange      = "config.change"
@@ -90,6 +107,21 @@ func KnownActions() []string {
 		ActionAuthOAuthCallback,
 		ActionAuthSAMLAuthorize,
 		ActionAuthSAMLCallback,
+		ActionAuthM2MTokenIssued,
+		ActionAuthM2MTokenDenied,
+		ActionAuthM2MClientCreated,
+		ActionAuthM2MClientUpdated,
+		ActionAuthM2MClientDisabled,
+		ActionAuthM2MClientEnabled,
+		ActionAuthM2MClientDeleted,
+		ActionAuthM2MSecretRotated,
+		ActionAuthScimUserCreated,
+		ActionAuthScimUserUpdated,
+		ActionAuthScimUserDeact,
+		ActionAuthScimUserDeleted,
+		ActionAuthScimGroupUpdated,
+		ActionAuthScimTokenCreated,
+		ActionAuthScimTokenRevoked,
 		ActionAuthRateLimited,
 		ActionAuthSessionEvicted,
 		ActionAuthTenantSwitch,

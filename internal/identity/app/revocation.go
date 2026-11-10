@@ -83,8 +83,33 @@ func (s SessionState) Revoked(now time.Time) bool {
 	return !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt)
 }
 
-// RevocationStore 是撤销状态的持久化端口（Redis / 内存）。
+// ClientState 是撤销检查所需的 M2M 客户端最小快照（§21.2.3）。
 //
+// 与 AccountState 分离：client 令牌跳过账号 / 会话 / jti 检查，
+// 只比较客户端 token_version 与状态，键为 authn:client_ver:<client_id>。
+type ClientState struct {
+	// Version 客户端当前 TokenVersion。
+	Version int64
+	// Status 客户端生命周期状态；非 active 一律拒绝。
+	Status domain.M2MClientStatus
+	// FetchedAt 该快照回源数据库的时间；零值视为陈旧，必须回源刷新。
+	FetchedAt time.Time
+}
+
+// ClientStateStore 是撤销存储的可选扩展（M2M 客户端快照）。
+//
+// 独立于 RevocationStore：未实现时检查器直接回源数据库（DB 是唯一事实源），
+// 行为仍正确，只是少了加速层；这样既有实现与测试替身无需改动。
+type ClientStateStore interface {
+	// LoadClientState 读取客户端撤销快照；未命中返回 found=false。
+	LoadClientState(ctx context.Context, clientID string) (ClientState, bool, error)
+	// SaveClientState 写入客户端撤销快照，ttl 必须 > 0。
+	SaveClientState(ctx context.Context, clientID string, state ClientState, ttl time.Duration) error
+	// DeleteClientState 删除客户端撤销快照，使下一次校验必然回源数据库。
+	DeleteClientState(ctx context.Context, clientID string) error
+}
+
+// RevocationStore 是撤销状态的持久化端口（Redis / 内存）。//
 // 约定：
 //   - LoadAccountState / LoadSessionState 未命中返回 found=false，不得用零值代替「未知」；
 //   - 读写错误必须原样返回，由 RevocationChecker 按 failure_mode 决定放行或拒绝；
@@ -171,8 +196,18 @@ func WithRevocationSessions(sessions domain.SessionRepository) RevocationChecker
 	}
 }
 
-// WithRevocationTokenGrace 设置 jti 本地宽限（8.4 R-8.4-01）；≤0 表示禁用。
+// WithRevocationClients 注入 M2M 客户端仓储，启用 token_use=client 的撤销校验（§21.2.3）。
 //
+// 未注入时 client 令牌一律拒绝（失败关闭），避免「装配漏配 → 机器令牌不可撤销」。
+func WithRevocationClients(clients domain.M2MClientRepository) RevocationCheckerOption {
+	return func(c *RevocationChecker) {
+		if clients != nil {
+			c.clients = clients
+		}
+	}
+}
+
+// WithRevocationTokenGrace 设置 jti 本地宽限（8.4 R-8.4-01）；≤0 表示禁用。//
 // 宽限只在 Redis 读失败或熔断冷却期内生效；正常路径仍逐请求校验黑名单。
 func WithRevocationTokenGrace(grace time.Duration) RevocationCheckerOption {
 	return func(c *RevocationChecker) {
@@ -221,7 +256,9 @@ const (
 type RevocationChecker struct {
 	accounts      domain.AccountRepository
 	sessions      domain.SessionRepository
+	clients       domain.M2MClientRepository
 	store         RevocationStore
+	clientStore   ClientStateStore
 	failureMode   string
 	stateTTL      time.Duration
 	observer      RevocationObserver
@@ -268,6 +305,10 @@ func NewRevocationChecker(
 			opt(checker)
 		}
 	}
+	// 客户端快照是可选的加速层；存储未实现时检查器直接回源数据库。
+	if clientStore, ok := store.(ClientStateStore); ok {
+		checker.clientStore = clientStore
+	}
 	return checker, nil
 }
 
@@ -275,6 +316,10 @@ func NewRevocationChecker(
 //
 // 返回 apperr.ErrUnauthorized 时中间件输出 40100；返回 apperr.ErrUnavailable 时输出 50300。
 func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error {
+	// M2M 令牌走独立分支：不查账号 / 会话 / jti，只比较客户端版本与状态（§21.2.3）。
+	if claims.GetString("token_use") == TokenUseClient {
+		return c.checkClient(ctx, claims)
+	}
 	accountID := claims.Subject
 	if accountID == "" {
 		return invalidToken()
@@ -325,6 +370,93 @@ func (c *RevocationChecker) Check(ctx context.Context, claims jwt.Claims) error 
 		c.rememberToken(claims.ID, claims)
 	}
 	return nil
+}
+
+// checkClient 校验 M2M 令牌：客户端存在、状态 active、令牌版本不落后。
+//
+// 与用户令牌共享 failure_mode 语义：回源数据库失败时 fail_closed 返回 50300，
+// fail_open 仅允许非生产环境。会话、jti 黑名单不参与（机器令牌无 sid）。
+func (c *RevocationChecker) checkClient(ctx context.Context, claims jwt.Claims) error {
+	if c.clients == nil {
+		// 装配缺失时失败关闭：宁拒绝机器令牌，也不放行不可撤销的长期凭据。
+		return invalidToken()
+	}
+	clientID := strings.TrimSpace(claims.GetString("client_id"))
+	if clientID == "" {
+		fromSubject, ok := ClientIDFromSubject(claims.Subject)
+		if !ok {
+			return invalidToken()
+		}
+		clientID = fromSubject
+	}
+	state, err := c.loadClientState(ctx, clientID)
+	if err != nil {
+		return c.failure(err)
+	}
+	if state.Status != domain.M2MClientActive {
+		return invalidToken()
+	}
+	version, ok := claimVersion(claims)
+	if !ok || version < state.Version {
+		return invalidToken()
+	}
+	return nil
+}
+
+// loadClientState 读取客户端快照：命中且未超过陈旧度直接复用，否则回源数据库。
+func (c *RevocationChecker) loadClientState(ctx context.Context, clientID string) (ClientState, error) {
+	if c.clientStore == nil || c.storeSkipped() {
+		return c.refetchClientState(ctx, clientID)
+	}
+	state, hit, err := c.clientStore.LoadClientState(ctx, clientID)
+	if err != nil {
+		c.recordStoreFailure()
+		c.notifyStoreFailure(ctx, "client_load", err)
+		return c.refetchClientState(ctx, clientID)
+	}
+	c.recordStoreSuccess()
+	if hit && c.freshAt(state.FetchedAt) {
+		return state, nil
+	}
+	return c.refetchClientState(ctx, clientID)
+}
+
+// refetchClientState 回源数据库并回填客户端快照；同一 client_id 的并发回源合并。
+func (c *RevocationChecker) refetchClientState(ctx context.Context, clientID string) (ClientState, error) {
+	value, err, _ := c.refetch.Do("client:"+clientID, func() (any, error) {
+		workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refetchWorkTimeout)
+		defer cancel()
+		client, loadErr := c.clients.FindByClientID(workCtx, clientID)
+		if loadErr != nil {
+			if errors.Is(loadErr, apperr.ErrNotFound) {
+				// 不存在视为确定性拒绝，不是依赖故障。
+				return ClientState{}, apperr.ErrUnauthorized
+			}
+			return ClientState{}, loadErr
+		}
+		state := ClientState{
+			Version:   client.TokenVersion,
+			Status:    client.Status,
+			FetchedAt: c.clock.Now().UTC(),
+		}
+		if c.clientStore != nil && !c.storeSkipped() {
+			if saveErr := c.clientStore.SaveClientState(workCtx, clientID, state, c.stateTTL); saveErr != nil {
+				c.notifyStoreFailure(ctx, "client_save", saveErr)
+			}
+		}
+		return state, nil
+	})
+	if err != nil {
+		if errors.Is(err, apperr.ErrUnauthorized) {
+			return ClientState{}, invalidToken()
+		}
+		return ClientState{}, err
+	}
+	state, ok := value.(ClientState)
+	if !ok {
+		return ClientState{}, invalidToken()
+	}
+	return state, nil
 }
 
 // loadState 读取账号快照：命中且未超过陈旧度直接复用，否则回源数据库并回填。

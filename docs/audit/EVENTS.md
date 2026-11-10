@@ -34,6 +34,21 @@
 | `auth.oauth.callback` | C | OAuth 回调结果；只记 provider 与粗粒度原因，不含授权码 / 令牌 | 认证 | 180d | active |
 | `auth.saml.authorize` | C | SAML 授权发起（AuthnRequest / state 已签发）；只记 provider，不含主体 | 认证 | 180d | active |
 | `auth.saml.callback` | C | SAML ACS 断言校验结果；只记 provider 与粗粒度原因，不含断言原文 | 认证 | 180d | active |
+| `auth.m2m.token.issued` | A/B/C | M2M 令牌签发成功；记 `client_id`、端别与 scope，不含令牌原文 | 认证 | 180d | active |
+| `auth.m2m.token.denied` | A/B/C | M2M 签发失败；`reason=invalid_client\|invalid_scope\|disabled\|rate_limited` | 认证 | 180d | active |
+| `auth.m2m.client.created` | A | 创建机器客户端；记操作人与 scope 数量，不含 secret | 认证 | 180d | active |
+| `auth.m2m.client.updated` | A | 更新机器客户端（名称 / 归属 / scope / 端别） | 认证 | 180d | active |
+| `auth.m2m.client.disabled` | A | 停用机器客户端并查封全部密钥（`token_version++`） | 认证 | 180d | active |
+| `auth.m2m.client.enabled` | A | 启用机器客户端；不复活旧令牌与旧密钥 | 认证 | 180d | active |
+| `auth.m2m.client.deleted` | A | 软删机器客户端；`client_id` 不可复用 | 认证 | 180d | active |
+| `auth.m2m.secret.rotated` | A | 轮换客户端密钥；只记指纹与宽限到期时间，不含明文 | 认证 | 180d | active |
+| `auth.scim.user.created` | A | SCIM 建号；`actor_type=system`，记 `provider`、`external_id_hash`、`active`，不含 userName / 邮箱 | 认证 | 180d | active |
+| `auth.scim.user.updated` | A | SCIM 更新 User（userName / externalId / displayName / active）；记 `version_check=if-match\|none` | 认证 | 180d | active |
+| `auth.scim.user.deactivated` | A | SCIM `active=false`；撤销全部会话并递增 `token_version` | 认证 | 180d | active |
+| `auth.scim.user.deleted` | A | SCIM 软删 User；清理组成员与角色投影，不含成员原文 | 认证 | 180d | active |
+| `auth.scim.group.updated` | A | 组或成员变更；记 `provider`、`group_id`、`member_delta`（数量），不含成员列表 | 认证 | 180d | active |
+| `auth.scim.token.created` | A | 签发 SCIM 令牌；只记 `provider` 与 `fingerprint`，不含令牌原文 | 认证 | 180d | active |
+| `auth.scim.token.revoked` | A | 吊销 SCIM 令牌；只记 `provider` 与 `fingerprint` | 认证 | 180d | active |
 | `auth.rate_limited` | A/B/C | 登录 / 短信触发限流；`resource_id` 为账号或手机号摘要 | 认证 | 180d | active |
 | `auth.session.evicted` | A/B/C | 超出单账号设备上限，最久未使用的设备被淘汰（同时撤销该设备） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |

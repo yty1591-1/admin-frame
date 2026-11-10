@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -67,7 +68,17 @@ func run(configPath string) error {
 				identityErr = mErr
 				return
 			}
-			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity, bind)
+			var identityOpts []identityruntime.Option
+			if appCfg.Identity.SCIM.Enabled {
+				// SCIM 角色投影实现在 cmd 层：身份域不 import IAM（§13.1）。
+				provisioner, pErr := iamruntime.NewScimRoleProvisioner(deps, appCfg.IAM)
+				if pErr != nil {
+					identityErr = pErr
+					return
+				}
+				identityOpts = append(identityOpts, identityruntime.WithScimRoleProvisioner(provisioner))
+			}
+			identityRT, identityErr = identityruntime.New(deps, appCfg.Identity, bind, identityOpts...)
 		})
 		return identityRT, identityErr
 	}

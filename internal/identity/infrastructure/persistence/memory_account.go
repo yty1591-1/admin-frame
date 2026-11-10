@@ -110,6 +110,18 @@ func (r *MemoryAccountRepository) List(_ context.Context, filter domain.AccountL
 		if filter.MerchantID != "" && account.MerchantID != filter.MerchantID {
 			continue
 		}
+		if filter.DisplayNameExact != "" && account.DisplayName != filter.DisplayNameExact {
+			continue
+		}
+		if filter.Active != nil {
+			disabled := account.Status == domain.AccountStatusDisabled
+			if *filter.Active == disabled {
+				continue
+			}
+		}
+		if filter.ExcludeDeleted && account.IsDeleted() {
+			continue
+		}
 		if exact != "" {
 			if account.Subject != exact {
 				continue

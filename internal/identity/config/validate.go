@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ func (c *IdentityConfig) Validate(env, channel, authMode, dbDriver string, redis
 	var errs []error
 	if c.Enabled {
 		errs = append(errs, c.validateEnabled(env, channel, authMode, dbDriver, redisEnabled, asyncEnabled)...)
+	} else if c.M2M.Enabled {
+		// 未启用身份域却开启 M2M：签发依赖身份域令牌与撤销链路，必须启动失败。
+		errs = append(errs, errors.New("identity.m2m.enabled requires identity.enabled=true"))
 	}
 	errs = append(errs, c.validateSampleCredentials(env)...)
 	return errors.Join(errs...)
@@ -301,6 +305,135 @@ func (c *IdentityConfig) validateEnabled(env, channel, authMode, dbDriver string
 	errs = append(errs, c.validateSMS(env, channel)...)
 	errs = append(errs, c.validateOAuth(env, channel)...)
 	errs = append(errs, c.validateSAML(env, channel)...)
+	errs = append(errs, c.validateM2M(env)...)
+	errs = append(errs, c.validateSCIM(env, channel)...)
+	return errs
+}
+
+// validateSCIM 校验 SCIM 2.0 开关与参数（docs/identity-authn.md §10.2「SCIM 开关 / SCIM 参数」）。
+//
+// 角色 code 的「是否存在且为 A 端活跃角色」由 cmd 在装配期用 IAM 只读仓储校验：
+// 身份域不 import IAM（§13.1 依赖方向），这里只做语法与开关一致性。
+func (c *IdentityConfig) validateSCIM(env, channel string) []error {
+	scimCfg := c.SCIM
+	if !scimCfg.Enabled {
+		if len(scimCfg.GroupRoleMap) > 0 {
+			return []error{errors.New("identity.scim.group_role_map requires identity.scim.enabled=true")}
+		}
+		return nil
+	}
+	var errs []error
+	if !c.Enabled {
+		errs = append(errs, errors.New("identity.scim.enabled requires identity.enabled=true"))
+	}
+	if channel != "admin" {
+		// 只同步 A 端账号：B 端按商户隔离、C 端无组织概念，跨端投影会扩散权限。
+		errs = append(errs, fmt.Errorf("identity.scim.enabled is only supported on channel=admin, got %s", channel))
+	}
+	provider := strings.TrimSpace(scimCfg.Provider)
+	if provider == "" {
+		errs = append(errs, errors.New("identity.scim.provider is required when identity.scim.enabled=true"))
+	} else if !identitySCIMProviderPattern.MatchString(provider) {
+		errs = append(errs, fmt.Errorf("identity.scim.provider %q must match ^[a-z][a-z0-9_-]{1,31}$", provider))
+	}
+	if scimCfg.PageSize < identityMinSCIMPageSize || scimCfg.PageSize > identityMaxSCIMPageSize {
+		errs = append(errs, errors.New("identity.scim.page_size must be in [1, 100]"))
+	}
+	if scimCfg.MaxPayload < identityMinSCIMMaxPayload || scimCfg.MaxPayload > identityMaxSCIMMaxPayload {
+		errs = append(errs, errors.New("identity.scim.max_payload must be in [65536, 2097152] bytes"))
+	}
+	if scimCfg.RequestTimeout < identityMinSCIMRequestTimeout || scimCfg.RequestTimeout > identityMaxSCIMRequestTimeout {
+		errs = append(errs, errors.New("identity.scim.request_timeout must be in [1s, 30s]"))
+	}
+	if scimCfg.TokenGrace < 0 || scimCfg.TokenGrace > identityMaxSCIMTokenGrace {
+		errs = append(errs, errors.New("identity.scim.token_grace must be in [0, 720h]"))
+	}
+	for displayName, roleCode := range scimCfg.GroupRoleMap {
+		if strings.TrimSpace(displayName) == "" {
+			errs = append(errs, errors.New("identity.scim.group_role_map contains an empty display name"))
+			continue
+		}
+		code := strings.TrimSpace(roleCode)
+		if !identitySCIMRoleCodePattern.MatchString(code) {
+			errs = append(errs, fmt.Errorf(
+				"identity.scim.group_role_map[%q] role code %q must match ^[a-z][a-z0-9_]{1,63}$", displayName, roleCode))
+		}
+	}
+	switch scimCfg.RateLimit.FailureMode {
+	case "", failureModeClosed:
+	case failureModeOpen:
+		if isProdLikeEnv(env) {
+			errs = append(errs, errors.New("identity.scim.rate_limit.failure_mode must be fail_closed in prod/staging"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("identity.scim.rate_limit.failure_mode unsupported: %s", scimCfg.RateLimit.FailureMode))
+	}
+	if scimCfg.RateLimit.RPS < 0 || scimCfg.RateLimit.Burst < 0 {
+		errs = append(errs, errors.New("identity.scim.rate_limit rps/burst must be >= 0"))
+	}
+	return errs
+}
+
+// identityPermissionCodePattern 与 IAM 权限码语法一致：全小写，2～4 段，以 ":" 分隔。
+//
+// 身份域不 import IAM（§13.1 依赖方向），这里只做语法校验；
+// 「权限码是否存在于 IAM 活跃目录」由 cmd/internal/appconfig 在装配期校验。
+var identityPermissionCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*){0,2}$`)
+
+// validateM2M 校验 M2M 开关与时长（docs/identity-authn.md §10.2「M2M 开关 / M2M 时长」）。
+func (c *IdentityConfig) validateM2M(env string) []error {
+	m2m := c.M2M
+	if !m2m.Enabled {
+		return nil
+	}
+	var errs []error
+	if !c.Enabled {
+		errs = append(errs, errors.New("identity.m2m.enabled requires identity.enabled=true"))
+	}
+	if m2m.TokenTTL < identityMinM2MTokenTTL || m2m.TokenTTL > identityMaxM2MTokenTTL {
+		errs = append(errs, errors.New("identity.m2m.token_ttl must be in [5m, 1h]"))
+	}
+	if m2m.RotateGrace < 0 || m2m.RotateGrace > identityMaxM2MRotateGrace {
+		errs = append(errs, errors.New("identity.m2m.rotate_grace must be in [0, 168h]"))
+	}
+	if m2m.MaxSecretAge < identityMinM2MMaxSecretAge || m2m.MaxSecretAge > identityMaxM2MMaxSecretAge {
+		errs = append(errs, errors.New("identity.m2m.max_secret_age must be in [720h, 8760h]"))
+	}
+	if m2m.MaxSecretAge <= m2m.RotateGrace {
+		errs = append(errs, errors.New("identity.m2m.max_secret_age must be greater than identity.m2m.rotate_grace"))
+	}
+	if len(m2m.AllowedScopes) == 0 {
+		errs = append(errs, errors.New("identity.m2m.allowed_scopes is required when identity.m2m.enabled=true"))
+	}
+	seen := make(map[string]struct{}, len(m2m.AllowedScopes))
+	for _, scope := range m2m.AllowedScopes {
+		code := strings.TrimSpace(scope)
+		if strings.Contains(code, "*") {
+			errs = append(errs, fmt.Errorf("identity.m2m.allowed_scopes must not contain wildcard: %s", scope))
+			continue
+		}
+		if !identityPermissionCodePattern.MatchString(code) {
+			errs = append(errs, fmt.Errorf("identity.m2m.allowed_scopes has invalid permission code: %s", scope))
+			continue
+		}
+		if _, dup := seen[code]; dup {
+			errs = append(errs, fmt.Errorf("identity.m2m.allowed_scopes has duplicate entry: %s", code))
+		}
+		seen[code] = struct{}{}
+	}
+	switch m2m.RateLimit.FailureMode {
+	case "", failureModeClosed:
+	case failureModeOpen:
+		// 生产环境禁止 fail_open：限流失效不得放大为无限签发（§21.2.2）。
+		if isProdLikeEnv(env) {
+			errs = append(errs, errors.New("identity.m2m.rate_limit.failure_mode must be fail_closed in prod/staging"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("identity.m2m.rate_limit.failure_mode unsupported: %s", m2m.RateLimit.FailureMode))
+	}
+	if m2m.RateLimit.RPS < 0 || m2m.RateLimit.Burst < 0 {
+		errs = append(errs, errors.New("identity.m2m.rate_limit rps/burst must be >= 0"))
+	}
 	return errs
 }
 

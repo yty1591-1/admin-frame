@@ -1,11 +1,11 @@
 # 身份域与令牌生命周期（Identity & Authentication）
 
-> **状态**：设计生效（v0.1，2026-10-23）；`ENT-01` 阶段 1（账号域）～阶段 5（收口）已全部完成
+> **状态**：设计生效（v0.1，2026-10-23）；`ENT-01` 阶段 1（账号域）～阶段 5（收口）已全部完成；2026-11-10 增补 SCIM 2.0 与 M2M 设计；§21.1 SCIM 与 §21.2 M2M 均已实现并接入 `check-authn` 门禁（配置 / 领域 / 迁移 `000027`～`000029` / 仓储 / 用例 / 协议端点与管理端点 / 审计与指标 / 角色投影）
 > **定位**：定义账号域、凭据、会话、令牌签发与撤销、A 端 MFA、三端认证契约；解决「只有验签、没有登录」的上线阻断问题
 > **适用范围**：`internal/identity/`、`internal/security/`、`internal/shared/{auth,audit,apperr}`、`internal/platform/`、`pkg/{jwt,totp,password,crypto,redis,sms}`、`cmd/`、`migrations/`、`api/openapi/`、`scripts/ci/`、`docs/`
-> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md) `ENT-01`、[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) `ENT-01`、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §10、[`rbac-iam.md`](./rbac-iam.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md) `SEC-04`、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`docs/audit/EVENTS.md`](./audit/EVENTS.md)
-> **最后更新**：2026-11-06（补 SAML SP 密钥轮换演练：active / next 双 KeyDescriptor、`EncryptedKey` 解密验证与回滚路径；前次 2026-11-05：首个管理员改由 `000005` 角色种子 + A 端启动引导开通，移除 `cmd/identity-seed`）
-> **变更方式**：调整领域模型、撤销语义、表结构或验收标准须同步更新 [`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) 与 [`production-readiness-gaps.md`](./production-readiness-gaps.md)，经架构 Owner 与安全 Reviewer 评审后合入
+> **关联**：[`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md) `ENT-01`、[`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) `ENT-01`、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §10、[`rbac-iam.md`](./rbac-iam.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md) `SEC-04`、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`docs/audit/EVENTS.md`](./audit/EVENTS.md)
+> **最后更新**：2026-11-10（补收口：`ResourceTypes/{id}` / `Schemas/{id}` 单项发现端点、路由改字面量注册以恢复 `tests/contract` 双向对账、`group_role_map` 缺少投影实现时启动失败；同日 §21.1 SCIM 实现落地：`identity_scim_token` / `identity_scim_group` / `identity_scim_group_member` 与 `provider` 扩宽、`/admin/scim/v2/*` 协议端点（Users / Groups / 发现 / `/Bulk` 501）、A 端三个管理端点、`ScimRoleProvisioner` 角色投影、审计 `auth.scim.*` 与 `identity_scim_*` 指标；同批完成 §21.2 M2M）
+> **变更方式**：调整领域模型、撤销语义、表结构或验收标准须同步更新 [`production-readiness-implementation-plan.md`](./production-readiness-implementation-plan.md) 与 [`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md)，经架构 Owner 与安全 Reviewer 评审后合入
 
 ---
 
@@ -31,6 +31,7 @@
 18. [实施阶段与状态](#十八实施阶段与状态)
 19. [多租户边界与扩展模型](#十九多租户边界与扩展模型biz-09)
 20. [错误码与本地化](#二十错误码与本地化biz-05)
+21. [企业身份扩展：SCIM 2.0 与 M2M](#二十一企业身份扩展scim-20-与-m2m设计冻结未实现)
 
 ---
 
@@ -158,6 +159,7 @@ active ──刷新──► rotated
 | `jti` | 雪花 ID 或随机 ULID | 单会话撤销与重放检测的键 |
 | `ver` | `Account.TokenVersion` | 账号级撤销；校验时与 Redis / DB 比较 |
 | `channel` | 进程 channel | 与 `aud` 双重校验 |
+| `token_use` | 签发场景 | 用户令牌写 `user`；M2M 令牌写 `client`（§21.2.3）。旧令牌缺省该声明时按用户令牌处理 |
 | `merchant_id` | `Account.MerchantID` | 仅 B 端携带 |
 | `roles` | **禁止签发** | 角色由 IAM 快照解析，避免撤权滞后 |
 
@@ -315,6 +317,7 @@ sequenceDiagram
 | `authn:sid:<session_id>` | `status\|revoked_at\|expires_at\|fetched_at` | `identity.revocation.state_ttl`（≤60s） | 会话级撤销；Access Token 的 `sid` 命中且为 `revoked`/`expired` 时拒绝 |
 | `authn:revoked:<jti>` | `1` | 令牌剩余寿命 | 单会话撤销 |
 | `authn:fail:<channel>:login_fail:<account_ref>` | 失败次数 | `identity.lockout.window` | 登录失败窗口计数；跨副本共享，Redis 不可用时回退登录尝试表 |
+| `authn:client_ver:<client_id>` | `token_version\|status\|fetched_at` | `identity.revocation.state_ttl`（≤60s） | M2M 客户端撤销；`token_use=client` 时替代账号级检查（§21.2.3） |
 
 - 所有键统一带环境前缀（复用 `pkg/redis` 的 `KeyPrefix`），跨环境互不影响。
 - 写入使用 `SET ... EX`；撤销检查只读，不延长 TTL。
@@ -337,6 +340,7 @@ type RevocationChecker interface {
 - `NewJWTAuth` 增加 `WithRevocationChecker` 选项；在签名 / `iss` / `aud` / `exp` 通过后执行。
 - 返回 `apperr.ErrUnavailable` 时中间件输出 `50300`；返回 `ErrUnauthorized` 时输出 `40100`。
 - 校验顺序：签名 → 时间 → issuer / audience / channel → 账号状态 → `token_version` → 会话状态（`sid`）→ `jti` 黑名单。
+- `token_use=client` 时跳过账号、会话与 `jti` 黑名单检查，改用客户端快照（`authn:client_ver`）校验 `ver` 与状态；其余步骤一致（§21.2.3）。
 - 会话状态：`sid` 命中 `authn:sid` 且为 `revoked` / `expired`（或已过 `expires_at`）时拒绝；`rotated` 放行，保证刷新成功后仍在途的旧 Access Token 不被误杀。
 - 会话快照与账号快照共享陈旧度上限：命中后超过 `state_ttl` 必须回源 `identity_session`，回源失败按 `failure_mode` 处理；会话不存在视为确定性拒绝。
 - 撤销检查结果不得使用长 TTL 进程内缓存；如需缓存，上限 5 秒且必须可主动失效。
@@ -501,7 +505,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
 - IdP 侧参数模板：[idp-config-templates.md](./identity/idp-config-templates.md)（Keycloak 26.x 实测基线 + 通用验收清单）。
-- 仍待交付：SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。SAML 2.0 SP 见 §8.2.1（已实现）。
+- 仍待交付：SCIM 目录同步、M2M 客户端凭证与密钥轮换；这些能力未实现前不得在配置或文档中声明已启用。SAML 2.0 SP 见 §8.2.1（已实现）；SCIM 与 M2M 的设计冻结稿见 §21。
 
 ---
 
@@ -755,6 +759,29 @@ identity:
       burst: 5
       failure_mode: fail_closed
     providers: []              # [{name, idp_entity_id, metadata_url 或 metadata_xml（二选一）}]
+  scim:                        # 仅 A 端；默认关闭，关闭时不注册 /admin/scim/v2 路由（§21.1）
+    enabled: false
+    provider: ""               # 开启时必填，^[a-z][a-z0-9_-]{1,31}$
+    auto_provision: true       # 未绑定账号时按 User 建号；false → 400 invalidValue
+    group_role_map: {}         # SCIM displayName → A 端角色 code
+    page_size: 50              # [1, 100]
+    max_payload: 1048576       # 单请求体字节数，[65536, 2097152]（1 MiB）
+    request_timeout: 10s       # [1s, 30s]
+    token_grace: 168h          # [0, 720h]，旧 SCIM 令牌退役宽限
+    rate_limit:
+      rps: 10
+      burst: 20
+      failure_mode: fail_closed
+  m2m:                         # 服务间机器身份；默认关闭（§21.2）
+    enabled: false
+    token_ttl: 15m             # [5m, 1h]
+    rotate_grace: 24h          # [0, 168h]
+    max_secret_age: 2160h      # [720h, 8760h]，仅告警不自动失效
+    allowed_scopes: []         # 开启时必填；权限码白名单，禁止通配符
+    rate_limit:
+      rps: 5
+      burst: 10
+      failure_mode: fail_closed
 ```
 
 ### 10.2 校验规则
@@ -774,6 +801,10 @@ identity:
 | SAML 时长 | `timeout ∈ [1s, 30s]`；`metadata_ttl ∈ [1m, 24h]`；`metadata_min_refresh ∈ [5s, metadata_ttl]`；`clock_skew ≤ 5m`；`assertion_ttl` / `request_ttl ≤ 15m`；`replay_ttl ≥ assertion_ttl + clock_skew`；`ticket_ttl ∈ [30s, 5m]` |
 | SAML IdP | `providers[].name` 唯一且匹配 `^[a-z][a-z0-9_-]{1,31}$`；`idp_entity_id` 必填；`metadata_url` 与 `metadata_xml` 必须且只能二选一，`metadata_url` 为绝对 URL |
 | SAML NameID | `name_id_format` 仅 `persistent`（默认）/ `transient` / `unspecified`，其他值启动失败（`saml: invalid name_id_format`） |
+| SCIM 开关 | `scim.enabled=true` 时 `provider` 必填且唯一，仅允许 `channel=admin` 装配；`enabled=false` 时不得配置 `group_role_map`；`group_role_map` 的 value 必须匹配 `^[a-z][a-z0-9_]{1,63}$` 且为 A 端活跃角色（`cmd/internal/appconfig` 装配期校验） |
+| SCIM 参数 | `page_size ∈ [1,100]`；`max_payload ∈ [65536,2097152]` 字节；`request_timeout ∈ [1s,30s]`；`token_grace ∈ [0,720h]`；每 provider `active` 令牌 ≤ 2 |
+| M2M 开关 | `m2m.enabled=true` 时 `allowed_scopes` 非空，每项匹配权限码格式且存在于 IAM 活跃权限目录；含 `*` 视为配置错误（`cmd/internal/appconfig` 装配期校验） |
+| M2M 时长 | `token_ttl ∈ [5m,1h]`；`rotate_grace ∈ [0,168h]`；`max_secret_age ∈ [720h,8760h]` 且 > `rotate_grace` |
 | 持久化 | prod/staging 且 `identity.enabled=true` 时 `db.driver` 不得为 `memory`；运行时 `db.driver` 非 memory 但无数据库连接直接启动失败，禁止回退内存仓储 |
 | 审计出口 | prod/staging 且 `identity.enabled=true` 时 `async.enabled=true`（审计写入 Outbox）；启动日志输出 `identity audit sink`（`outbox` / `slog`） |
 | 撤销陈旧度 | `revocation.state_ttl ∈ [1s, 60s]`；未配置时取 `min(access_ttl+1m, 60s)`，禁止超过 60s |
@@ -814,6 +845,11 @@ identity:
 | `auth.account.disabled` | 管理员停用账号 | 操作人 + 目标账号 | 同时撤销会话 |
 | `auth.saml.authorize` | SAML 授权发起（AuthnRequest / state 已签发） | `actor_type=anonymous`、`attrs.provider`、`trace_id` | 失败关闭；不记录 AuthnRequest ID 原文 |
 | `auth.saml.callback` | SAML ACS 断言校验结果 | 成功：账号 + `attrs.provider`；失败：`reason` 粗粒度分类 | 不记录 `SAMLResponse`、断言 ID 与 NameID |
+| `auth.scim.user.created` / `.updated` / `.deactivated` / `.deleted` | SCIM `User` 资源变更（§21.1.5） | `actor_type=system`、`attrs.provider`、`attrs.external_id_hash`、`attrs.active` | 不记录 `userName`、邮箱与成员原文 |
+| `auth.scim.group.updated` | SCIM `Group` 或成员变更 | `attrs.provider`、`attrs.group_id`、`attrs.member_delta` | 不记录成员列表原文 |
+| `auth.scim.token.created` / `.revoked` | A 端签发 / 吊销 SCIM 令牌 | 操作人、`attrs.provider`、`attrs.fingerprint` | 不记录令牌原文 |
+| `auth.m2m.token.issued` / `.denied` | M2M 令牌签发成功 / 失败（§21.2.5） | `attrs.client_id`、`attrs.channel`、`attrs.scope`、`attrs.reason` | 不记录 `client_secret` 与令牌原文 |
+| `auth.m2m.client.*` / `auth.m2m.secret.rotated` | 客户端生命周期与 secret 轮换 | 操作人、目标 `client_id`、`attrs.fingerprint` | 不记录 secret 原文 |
 
 ### 11.2 落库与一致性
 
@@ -866,6 +902,12 @@ identity:
 | C | `POST /c/v1/auth/saml/acs` | 无（凭 RelayState） | IdP 表单回传断言，成功后 303 跳前端 |
 | C | `POST /c/v1/auth/saml/exchange` | 无（凭一次性 ticket） | 换取访问 / 刷新令牌 |
 | C | `GET /c/v1/auth/saml/metadata` | 无 | SP 元数据 XML |
+| A/B/C | `POST /{端}/v1/auth/token` | 客户端凭证（Basic / 表单） | M2M `client_credentials`，仅 `identity.m2m.enabled=true` 时注册（§21.2） |
+| A | `GET` / `POST /admin/scim/v2/Users`、`GET` / `PUT` / `PATCH` / `DELETE /admin/scim/v2/Users/{id}` | SCIM Bearer | SCIM 2.0 用户同步（§21.1） |
+| A | `GET` / `POST /admin/scim/v2/Groups`、`GET` / `PUT` / `PATCH` / `DELETE /admin/scim/v2/Groups/{id}` | SCIM Bearer | 组与成员同步、角色投影 |
+| A | `GET /admin/scim/v2/ServiceProviderConfig`、`/ResourceTypes`、`/Schemas` | SCIM Bearer | 能力与模型发现 |
+| A | `GET` / `POST /admin/v1/auth/m2m/clients`、`POST /admin/v1/auth/m2m/clients/{id}/secrets`、`/{id}/disable`、`/{id}/enable`、`DELETE /{id}` | Bearer + `identity:m2m:read` / `write` / `credential` | M2M 客户端与 secret 生命周期（§21.2.4） |
+| A | `GET` / `POST /admin/v1/auth/scim/tokens`、`DELETE /admin/v1/auth/scim/tokens/{id}`、`GET /admin/v1/auth/scim/groups` | Bearer + `identity:scim:read` / `write` | SCIM 令牌签发与组映射查看（§21.1.6） |
 
 ### 12.2 请求 / 响应约束
 
@@ -875,6 +917,7 @@ identity:
 - 错误信封沿用 `httpx` 统一格式；登录失败统一 `40100`，不区分账号不存在 / 密码错误。
 - 强制绑定 MFA：登录返回 `200 {"mfa_binding_required": true, "mfa_setup_ticket": "..."}`；该票据只能调用 `mfa/setup` 与 `mfa/verify`，绑定成功后直接返回 `TokenPair`（§7.2.1）。
 - SAML ACS 只接受 `application/x-www-form-urlencoded`（否则 `415`），请求体上限 512KB（否则 `413`）；`SAMLResponse` / `RelayState` 缺失为 `40000`，校验失败统一 `40100`；成功后 `303` 跳转，响应体为空，令牌只经 exchange 下发。
+- SCIM 端点（`/admin/scim/v2/*`）与 M2M 令牌端点（`POST /{端}/v1/auth/token`）按协议标准返回错误体（RFC 7644 §3.12 / RFC 6749 §5.2），是 `{code,message,trace_id}` 统一信封的**显式例外**；`trace_id` 经响应头 `X-Trace-Id` 返回（§21.3）。
 - 认证端点必须声明 `Idempotency-Key` 可选策略（写接口），刷新与登出按幂等语义处理。
 - 禁止缓存（`IDN-P2-03`）：所有认证、账号与 `/me` 端点由路由层统一追加 `Cache-Control: no-store, no-cache, must-revalidate, private`、`Pragma: no-cache`、`Expires: 0`、`Vary: Authorization`（`pkg/httpx.NoStoreMiddleware`）；登录 / 刷新 / MFA setup 的敏感载荷禁止经浏览器或共享缓存复用。
 
@@ -898,11 +941,14 @@ internal/identity/
 ├── infrastructure/
 │   ├── persistence/ # MySQL / 内存仓储
 │   ├── cache/       # Redis 撤销与验证码存储
-│   └── oauth/       # OAuth / OIDC 适配（预留）
+│   ├── oauth/       # OAuth / OIDC 适配（预留）
+│   ├── scim/        # SCIM 资源映射与令牌校验（§21.1）
+│   └── m2m/         # M2M 客户端凭证与 secret 校验（§21.2）
 └── transport/
     ├── admin/       # /admin/v1/auth/*
     ├── biz/         # /biz/v1/auth/*
     ├── c/           # /c/v1/auth/*
+    ├── scim/        # /admin/scim/v2/*（§21.1）
     └── rest/        # 通道无关 Handler / DTO
 ```
 
@@ -1099,3 +1145,296 @@ internal/identity/
 - 该配置影响 Redis 计数键的日期后缀；跨时区切换会开启新的日窗口，切换前应选择
   业务低峰，并在变更记录中说明。
 - 小时窗口仍按 UTC 小时桶；如需按本地小时，需扩展限流键并在测试中覆盖。
+
+---
+
+## 二十一、企业身份扩展：SCIM 2.0 与 M2M
+
+> **状态**：§21.1 SCIM 与 §21.2 M2M 均已实现（2026-11-10）并接入 `check-authn` 门禁；默认关闭，`enabled=false` 时相关路由不注册（404）。
+> **定位**：承接 [`iam-p1-5-7-engineering-plan.md`](./iam-p1-5-7-engineering-plan.md) `S6-1`，把 P1-6 剩余两项（SCIM 目录同步、M2M 机器身份）写到可评审、可拆任务、可验收的粒度。
+> **边界**：本章只定义契约与不变量，不代替实现；实现合入前，任何配置、部署清单、对外文档都不得声明这两项「已启用」。
+
+### 21.1 SCIM 2.0 目录同步
+
+#### 21.1.1 能力边界
+
+- 只做 **SCIM 服务端**：企业 IdP（Keycloak / Entra ID / Okta）作为客户端推送用户与组；本平台不反向拉取，不作为 SCIM 客户端。
+- 资源范围：`User`、`Group`、`ServiceProviderConfig`、`ResourceTypes`、`Schemas`。明确不支持 `/Me`、`/Bulk`、`/.search`。
+- 协议：RFC 7643（资源模型）+ RFC 7644（协议）；接受 `application/scim+json` 与 `application/json`，UTF-8；`/Bulk` 返回 `501 notImplemented`。
+- 端别：只同步 A 端员工 / 运营账号（`channel=admin`）。B 端商户员工与 C 端消费者不在 v1 范围，避免 IdP 组跨租户扩散权限。
+- 与 SSO 的分工：SCIM 负责「账号与组成员关系」，不负责登录。SCIM 建出的账号没有本地口令，只能经 §7.3 OIDC 或 §8.2.1 SAML 登录；口令字段一律拒绝。
+
+#### 21.1.2 端点与认证
+
+基础路径固定 `/admin/scim/v2`，不随 `channel` 变化；由 `admin-api` 单独注册路由组（不挂在 `/admin/v1` 前缀下），以便独立鉴权与限流。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /admin/scim/v2/ServiceProviderConfig` | 能力声明：`patch` 支持、`bulk` 不支持、过滤支持度、认证方案 |
+| `GET /admin/scim/v2/ResourceTypes`、`/Schemas` | 资源类型与模型声明（只读） |
+| `GET /admin/scim/v2/ResourceTypes/{id}`、`/Schemas/{id}` | 单项声明；列表项的 `meta.location` 指向此处，客户端会跟随（RFC 7644 §4） |
+| `GET` / `POST /admin/scim/v2/Users` | 列表（分页 + 受限过滤）、创建 |
+| `GET` / `PUT` / `PATCH` / `DELETE /admin/scim/v2/Users/{id}` | 查询、整体替换、增量更新、停用或删除 |
+| `GET` / `POST /admin/scim/v2/Groups` | 列表、创建 |
+| `GET` / `PUT` / `PATCH` / `DELETE /admin/scim/v2/Groups/{id}` | 查询、替换、成员增删、删除 |
+
+认证与令牌约束：
+
+- `Authorization: Bearer scim_<32 字节 base64url>`；令牌按 provider 签发，库内只存 SHA-256，明文只在创建响应中出现一次。
+- 令牌只能访问 `/admin/scim/v2/*`：不能访问任何 `/{端}/v1/*` 业务端点；A 端账号访问令牌也不能直接调 SCIM（管理 UI 走 §21.1.6 的 v1 管理端点）。
+- 每个 provider 同时最多 2 个 `active` 令牌（当前 + 待退役）；退役后进入宽限 `identity.scim.token_grace`（默认 168h，上限 720h），到期自动 `revoked`。
+- 限流：单令牌 10 rps / burst 20，叠加单 IP 20 rps；Redis `fail_closed`，超限 `429` + `Retry-After`。
+- 令牌签发与吊销走 A 端管理端点（`identity:scim:write`），审计事件见 §11.1。
+
+#### 21.1.3 资源映射
+
+`User` 落 `identity_account` + `identity_oauth_identity`（`provider=scim:<name>`），不新建用户表：
+
+| SCIM 字段 | 内部字段 | 规则 |
+|---|---|---|
+| `id` | `Account.ID` | 服务端生成，稳定不可变 |
+| `externalId` | `identity_oauth_identity.provider_subject_index` + `provider_subject_ciphertext` | **必填**，幂等键；按 `HMAC(externalId\|provider)` 建索引、AES-256-GCM 存密文；缺失 `400 invalidValue`，重复 `409 uniqueness` |
+| `userName` | `Account.subject_index` + `subject_ciphertext` | 必填，A 端登录主体（邮箱或 UPN）；写 `HMAC(subject\|channel\|merchant\|subject)` 与 AES-GCM 密文；改名即主体变更，需重算索引并重新加密，冲突 `409 uniqueness` |
+| `name.givenName` / `familyName` | `Account.display_name` | 拼接后截断到 64 字符（列宽 `VARCHAR(64)`）；截断不报错但计入指标，避免整批同步失败 |
+| `emails[primary=true]` | 不单独落库 | 仅作语义佐证；不新增 PII 列 |
+| `active=false` | 停用 + 撤销全部会话 + `token_version++` | 与 `POST /admin/v1/auth/accounts/{id}/disable` 同语义 |
+| `active=true` | 恢复启用 | 不恢复旧会话（同 §5.4） |
+| `password` | **拒绝** | SSO-only 账号禁止经 SCIM 下发或重置口令；出现即 `400 mutability` |
+| `groups` | 只读 | 由 `Group.members` 反查，忽略写入 |
+
+`Group` 落 `identity_scim_group` / `identity_scim_group_member`：
+
+| SCIM 字段 | 内部字段 | 规则 |
+|---|---|---|
+| `id` | `identity_scim_group.id` | 服务端生成 |
+| `externalId` | `external_id` | 必填，幂等键，`UNIQUE(provider, external_id)` |
+| `displayName` | `display_name` | 必填，角色映射键，`UNIQUE(provider, display_name)` |
+| `members[].value` | `identity_scim_group_member.account_id` | 接受 `Account.ID` 或 `externalId`；均匹配不到时整请求 `400 invalidValue` |
+| `members` 增 / 删 | IAM 角色绑定 | 见下方「角色投影」 |
+| `DELETE /Groups/{id}` | 软删组 + 回收该组产生的全部绑定 | 不删除账号 |
+
+角色投影（与 IAM 的边界）：
+
+- 配置 `identity.scim.group_role_map`：`displayName → IAM role code`。未配置映射的组只同步成员关系、不产生授权，管理端标记 `mapped_roles=[]`，指标记 `unmapped`。
+- 身份域**不 import IAM**：由 `cmd` 注入 `ScimRoleProvisioner` 端口（与 §13.2 `NewSessionValidator` 同一装配模式），实现放 `cmd/internal/iamruntime`；按 `(channel=admin, subject_type=staff, subject_id=<account_id>, merchant_id="", role=<role_id>)` 增删绑定，并写 `iam.binding.*` 审计。
+- 映射到不存在 / 已停用 / 已软删的角色：**整请求失败**（`400 invalidValue`），不落半成品。禁止「同步成功但没有授权」。
+- 组删除或成员移除后，绑定在同一事务内回收；IAM 快照 ≤60s 生效（复用撤销时效）。
+- 实现说明（2026-11-10）：`iam_role_binding` 的唯一键是 `(channel, subject_type, subject_id, merchant_id, role_id, active_key)`，不含来源列，因此**同一账号同一角色只有一条生效绑定**。SCIM 投影按「账号当前全部组 → 期望角色集合」重算，只对差集增删：多组映射同一角色时移除其中一个组不会撤权；但若该角色此前由管理员手工授予，SCIM 加授是幂等的、随后成员移除会一并撤销——SCIM 映射到的角色按「由 IdP 权威管理」对待，需与 IAM 复核流程配合。`group_role_map` 的授权人写 `scim:<provider>`，解绑原因写 `scim group ...`，便于审计追溯。
+- 只允许 A 端角色：`role_code` 必须属于 `channel=admin`，否则视为配置错误。
+
+#### 21.1.4 幂等、并发与错误
+
+- 幂等键：`(provider, externalId)`。`POST /Users` 重复 → `409 uniqueness`；`PUT` / `PATCH` 幂等；重复 `DELETE` 返回 `204`。
+- 不接受仅凭 `userName` 去重：改名后重复建号的风险高于 IdP 便利性。
+- 乐观锁：`meta.version` 为正整数，`ETag: W/"<version>"`。请求带 `If-Match` 时校验，不匹配 `412 preconditionFailed`；不带时按 last-write-wins 并递增版本（兼容不支持条件请求的 IdP），审计 `attrs.version_check=none` 可追溯。
+- `PATCH` 仅支持 `add` / `replace` / `remove`，`path` 限定 `active`、`userName`、`externalId`、`displayName`、`members`；其他 `path` → `400 invalidPath`；`remove` 无目标 → `400 noTarget`。
+- 分页：`startIndex` 从 1 开始；`count ∈ [0,100]`，默认 `identity.scim.page_size`（50）；必须返回 `totalResults`。
+- 过滤：仅支持 `eq` / `and`，属性限定 `userName`、`externalId`、`displayName`、`active`、`id`、`members`；其余 `400 invalidFilter`。不实现通用表达式解析，收敛注入面。
+- 协议错误体（RFC 7644 §3.12）：
+
+  ```json
+  {"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"409","scimType":"uniqueness","detail":"externalId already exists"}
+  ```
+
+  这是本仓库**唯一**不使用 `{code,message,trace_id}` 统一信封的端点组（原因：SCIM 客户端兼容性）；`trace_id` 经响应头 `X-Trace-Id` 返回，`detail` 不回显主体原文。
+- 错误码映射：`40000 → 400`（`invalidSyntax` / `invalidValue` / `invalidPath` / `invalidFilter`）、`40100 → 401`、`40300 → 403`、`40400 → 404`、`40900 → 409 uniqueness`、`42900 → 429`、`50300 → 503 temporarilyUnavailable`。
+
+#### 21.1.5 审计与可观测性
+
+| 事件 | 触发 | 关键字段 |
+|---|---|---|
+| `auth.scim.user.created` / `.updated` / `.deactivated` / `.deleted` | `User` 资源变更 | `actor_type=system`、`attrs.provider`、`attrs.external_id_hash`、`attrs.active` |
+| `auth.scim.group.updated` | 组或成员变更 | `attrs.provider`、`attrs.group_id`、`attrs.member_delta`（数量） |
+| `auth.scim.token.created` / `.revoked` | 管理端签发 / 吊销 | 操作人、`attrs.provider`、`attrs.fingerprint` |
+
+- 禁止记录 `userName`、邮箱、成员列表原文与令牌原文；`external_id_hash` 用 `identity.hash_key` 摘要。
+- 指标：`identity_scim_request_total{resource,method,result,reason}`、`identity_scim_request_duration_seconds{resource,method,result}`、`identity_scim_last_success_timestamp{resource}`、`identity_scim_group_map_total{result}`（`ok` / `unmapped`）。
+- 告警：5 分钟内 `result="error"` 占比 > 20%；`group_map_total{result="ok"}` 长时间无增长（IdP 推送中断）。
+
+#### 21.1.6 管理端点（A 端 v1）
+
+| 方法与路径 | 权限 | 说明 |
+|---|---|---|
+| `GET /admin/v1/auth/scim/tokens` | `identity:scim:read` | 列出令牌指纹与状态，不含原文 |
+| `POST /admin/v1/auth/scim/tokens` | `identity:scim:write` | 签发令牌，返回一次原文 |
+| `DELETE /admin/v1/auth/scim/tokens/{id}` | `identity:scim:write` | 吊销；宽限期外立即失效 |
+| `GET /admin/v1/auth/scim/groups` | `identity:scim:read` | 组、`mapped_roles` 与成员数量 |
+
+#### 21.1.7 配置与校验
+
+配置结构见 §10.1 `identity.scim`，校验规则见 §10.2「SCIM 开关 / SCIM 参数」。补充说明：
+
+- `auto_provision=true`（默认）表示 `POST /Users` 在无绑定时直接建号；设为 `false` 则表示账号必须先经 SSO 首登建立，SCIM 只做更新，`POST /Users` 返回 `400 invalidValue`。
+- `group_role_map` 的角色存在性由 `cmd/internal/appconfig` 在装配期读取 IAM 只读目录校验，不在身份域内校验（避免 `identity → iam` 依赖）。
+- 仅 `admin-api` 装配该能力；`biz-api` / `c-api` 出现 `scim.enabled=true` 直接启动失败。
+
+#### 21.1.8 数据模型
+
+迁移 `migrations/000027_create_identity_scim.{up,down}.sql`（`000028` 为 M2M 表、`000029` 为权限种子）：
+
+| 表 | 关键列 | 约束 |
+|---|---|---|
+| `identity_scim_token` | `id`、`provider`、`token_hash`、`status`、`expires_at`、`created_by`、`created_at`、`revoked_at` | `UNIQUE(token_hash)`；`INDEX(provider, status)`；每 provider `active` ≤ 2（事务内校验） |
+| `identity_scim_group` | `id`、`provider`、`external_id`、`display_name`、`version`、`mapped_role`、`deleted_at` | `UNIQUE(provider, external_id)`、`UNIQUE(provider, display_name)` |
+| `identity_scim_group_member` | `group_id`、`account_id`、`created_at` | `UNIQUE(group_id, account_id)`；外键指向组与账号 |
+
+- 用户复用既有账号表与外部身份映射表：`provider` 当前为 `VARCHAR(32)`，容纳 `scim:<name>` 需在同一迁移中扩到 `VARCHAR(64)`（扩宽为兼容变更）；`subject` / `externalId` 仍按既有 HMAC 索引 + 密文两列存储，不新增明文列。
+- 迁移只增不改；`down` 按外键逆序 drop，并把 `provider` 收窄放最后（存在 `scim:` 数据时拒绝收窄）；与代码同一 MR（GEN-02）。
+
+#### 21.1.9 验收（G6-4）
+
+| AC | 要求 | 验证 |
+|---|---|---|
+| `AC-P16-SCIM-1` | 10k 用户 + 50 组同步 ≤ 30 min，错误率 < 0.1% | 演练脚本 + 指标 |
+| `AC-P16-SCIM-2` | 同一批次重复执行不产生重复账号或绑定 | `tests/integration/identity/scim_sync_test.go` |
+| `AC-P16-SCIM-3` | `active=false` 后 ≤ 60s 旧访问令牌失效 | 复用 `AC-ENT-01-1` 语义 |
+| `AC-P16-SCIM-4` | 成员移除 / 组删除后 ≤ 60s 权限失效 | IAM 快照时效断言 |
+| `AC-P16-SCIM-5` | 未映射组不产生授权；映射角色不存在时请求失败且无半成品 | 事务回滚断言 |
+| `AC-P16-SCIM-6` | SCIM 令牌不能访问 `/{端}/v1/*`；账号令牌不能访问 SCIM | 路由级负向用例 |
+**实现落点（2026-11-10）**
+
+| 层 | 文件 | 要点 |
+|---|---|---|
+| 配置 | `internal/identity/config/{config,defaults,limits,validate}.go` | `identity.scim`；启用时 `provider` 必填、仅 `channel=admin`、`group_role_map` 值须匹配角色 code 语法 |
+| 领域 | `internal/identity/domain/scim.go`、`repository.go` | 令牌状态机（active / retiring / revoked）、组与成员、两个仓储端口 |
+| 迁移 | `migrations/000027_create_identity_scim.{up,down}.sql` | 三张表 + `identity_oauth_identity.provider` 扩到 64；down 在存在 `scim:` 数据时拒绝收窄 |
+| 仓储 | `persistence/{memory_scim,mysql_scim}.go` | 唯一键、乐观锁、成员幂等增删、按账号反查组 |
+| 用例 | `internal/identity/app/scim{,_user,_group}.go` | 令牌签发 / 轮换 / 吊销；User CRUD；Group CRUD 与角色差量投影 |
+| 传输 | `internal/identity/transport/scim/` | 协议端点（含 `ResourceTypes/{id}` / `Schemas/{id}` 单项发现）与 RFC 7644 §3.12 错误体、过滤 / PATCH 白名单解析、限流与观测 |
+| 管理端 | `internal/identity/transport/rest/scim_admin.go` + `transport/admin/router.go` | 三个 v1 端点，权限 `identity:scim:read\|write` |
+| 投影 | `cmd/internal/iamruntime/scim.go` | `ScimRoleProvisioner`：复用 `BindingService`，写 `rbac.binding_change` |
+| 装配 | `cmd/internal/identityruntime/runtime.go`、`cmd/admin-api/*` | 仅 A 端装配协议路由；装配期校验 `group_role_map` 角色可用 |
+| 审计 / 指标 | `internal/shared/audit/actions.go`、`observability/metrics.go`、`docs/audit/EVENTS.md` | `auth.scim.*` 七个动作；`identity_scim_*` 五个指标 |
+| 验证 | `internal/identity/app/scim_test.go`、`transport/scim/*_test.go`、`tests/integration/identity/scim_sync_test.go`、`tests/load/scim_sync.js` | 单测 + 批量幂等冒烟 + 10k 演练执行器 |
+
+- `AC-P16-SCIM-1`：执行器 `tests/load/scim_sync.js`（`USERS/GROUPS/PER_GROUP` 可配），判定阈值写在脚本 `thresholds`。
+  已在本机 staging 等价单副本跑通 10000 用户 + 50 组 × 200 成员：10050 次请求、0 错误、
+  总耗时 120.4 s（上限 30 min）、p95 45.8 ms；读数与复现命令登记在
+  [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §3.4（`LB-DEV-SCIM-SYNC`，产物
+  `tests/load/artifacts/scim-sync-10k.json`）。
+  2026-11-10 又在**生产配置口径**（`env=staging` 强制校验 + 2 副本 + Envoy 轮询 + RS256 +
+  IAM enforce + Redis 撤销）的 STG-EQ-01 上复跑：10050 次请求、0 错误、151.7 s、p95 65.3 ms；
+  同批次幂等复跑 10050 次全部 409、计数不变。读数与偏离项见
+  [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.3（`LB-STG-SCIM-SYNC`，产物
+  `tests/load/artifacts/stg-eq-scim-sync-10k.json`）。该等价环境读数已按 2026-11-10 决议
+  采纳为 `STG-01` 通过依据（决议范围与残余风险见 §4.4）。
+- `AC-P16-SCIM-2`：`tests/integration/identity/scim_sync_test.go` 两轮同批次同步，断言账号 / 组 / 成员数量不变且重复请求全部命中 409 uniqueness。
+- `AC-P16-SCIM-3/4/5`：`internal/identity/app/scim_test.go`（停用递增 `token_version`、多组共享角色不误撤、未映射组不授权）。
+- `AC-P16-SCIM-6`：`internal/identity/transport/scim/router_test.go`（JWT 调 SCIM → 401）与 `transport/admin/router_test.go`（关闭时 404）。
+
+### 21.2 M2M 机器身份（OAuth2 client credentials）
+
+#### 21.2.1 能力边界
+
+- 仅 `grant_type=client_credentials`。不支持 JWT bearer assertion、token exchange、on-behalf-of、refresh token。
+- 只代表服务，不绑定人：不得登录 UI、不得代表用户访问用户资源；禁止用于 A 端后台人工操作。
+- 令牌按目标端别隔离：一次只为 `admin` / `biz` / `c` 中一个端签发；调多个端必须分别取令牌（§4.4 密钥隔离的直接结果）。
+
+#### 21.2.2 端点与认证
+
+- `POST /{端}/v1/auth/token`（`{端} ∈ admin|biz|c`），`Content-Type: application/x-www-form-urlencoded`。
+- 客户端认证：HTTP Basic（`client_id:client_secret`）或表单 `client_id` + `client_secret`；两者同时出现且不一致 → `401 invalid_client`；禁止经 query 传参。
+- 参数：`grant_type=client_credentials` 必填；`scope` 必填（空格分隔），不提供隐式默认值，缺失或超出 `allowed_scopes` 均 `400 invalid_scope`（强制显式最小权限）。
+- 响应：`access_token`、`token_type=Bearer`、`expires_in`、`scope`；不返回 `refresh_token`；响应头 `Cache-Control: no-store`。
+- 错误体按 RFC 6749 §5.2（`error` / `error_description`），属统一信封的显式例外：`invalid_client` `401`、`invalid_scope` `400`、`unsupported_grant_type` `400`、`429` 限流、`503` 依赖不可用；`X-Trace-Id` 回传。
+- 限流：按 `client_id` 5 rps / burst 10，叠加单 IP；Redis `fail_closed`。
+- `enabled=false` 时路由不注册（`404`），而不是返回 `403`。
+
+#### 21.2.3 令牌
+
+| 声明 | 值 |
+|---|---|
+| `iss` | 身份域统一 issuer（`auth.jwt.issuer`） |
+| `aud` / `channel` | 当前端点端别，二者必须一致 |
+| `sub` | `client:<client_id>` |
+| `token_use` | `client`；用户令牌写 `user`，旧令牌缺省按用户令牌兼容处理 |
+| `client_id` | 客户端标识 |
+| `scope` | 空格分隔的权限码，必须 ⊆ 客户端 `allowed_scopes` |
+| `iat` / `exp` | `identity.m2m.token_ttl`（默认 15m，上限 1h），调用方不可指定 |
+| `jti` | 雪花 ID / ULID，用于事件关联与排障 |
+| `ver` | 客户端 `token_version`，撤销版本 |
+
+- 禁止携带 `roles`、`merchant_id`、`current_tenant`；`scope` 不允许通配符。
+- 签名使用目标端密钥环与 `active_kid`（§4.3）：M2M 令牌只能由该端进程签发；未知 `kid` 直接拒绝。
+- 校验：`AuthMW` 遇 `token_use=client` 构造 `Principal{Channel, SubjectID=client:<id>, ClientID, Scopes, TokenID, TokenVersion, TokenUse}`（`auth.Principal` 新增 `ClientID` / `Scopes` / `TokenUse` 三个字段，零值保持用户语义）；与用户令牌共用 `aud` / `channel` / `kid` / `ver` 校验，但不查账号会话。
+- 授权：IAM `Authorizer` 对 client 主体**只按 scope 判定**（scope 必须精确包含所需权限码），不做角色快照；scope 为空即 `40300`。用户主体路径不变。
+- 撤销：停用客户端、轮换 secret、缩小 scope 都必须 `token_version++` 并删除快照 `authn:client_ver:<client_id>`（沿用 §6.1 键前缀与 `state_ttl`，值含 `token_version|status|fetched_at`）；`RevocationChecker` 按 `token_use` 分支，client 令牌跳过账号 / 会话检查，旧令牌 ≤60s 失效。
+
+#### 21.2.4 客户端与密钥生命周期
+
+| 方法与路径 | 权限 | 说明 |
+|---|---|---|
+| `GET /admin/v1/auth/m2m/clients` | `identity:m2m:read` | 列表（名称、端别、scope、secret 指纹、最近轮换时间） |
+| `POST /admin/v1/auth/m2m/clients` | `identity:m2m:write` | 创建；`client_secret` 只在响应中出现一次 |
+| `POST /admin/v1/auth/m2m/clients/{id}/secrets` | `identity:m2m:credential` | 轮换：新 secret 生效，旧 secret 进入 `retiring` |
+| `POST /admin/v1/auth/m2m/clients/{id}/disable` | `identity:m2m:write` | 停用并撤销全部令牌（`token_version++`） |
+| `POST /admin/v1/auth/m2m/clients/{id}/enable` | `identity:m2m:write` | 启用（不复活旧令牌） |
+| `DELETE /admin/v1/auth/m2m/clients/{id}` | `identity:m2m:write` | 软删；保留审计与 secret 指纹 |
+
+- `client_id` 形如 `svc_<16 字节 base64url>`；`client_secret` 为 32 字节随机数 base64url，库内只存 SHA-256，比对使用恒定时间函数；客户端不存在时也执行一次假比对（防枚举与时序侧信道，复用 `VerifyDummy` 模式）。
+- 每客户端最多 2 个有效 secret（`current` + `retiring`）；轮换在单事务内完成并 `SELECT ... FOR UPDATE`；宽限 `identity.m2m.rotate_grace`（默认 24h，上限 168h）。
+- `secret_age > identity.m2m.max_secret_age`（默认 2160h / 90d）只标记 `rotation_due` 并告警，不自动失效，避免生产断链。
+- `allowed_channels` 非空且 ⊆ `{admin,biz,c}`；`allowed_scopes` 非空、均为 IAM 活跃权限码、不含通配符。
+- 缩小 scope 或移除端别：必须同时 `token_version++`，否则旧令牌最长可残留 1 个 TTL。
+
+#### 21.2.5 审计与可观测性
+
+| 事件 | 触发 | 关键字段 |
+|---|---|---|
+| `auth.m2m.token.issued` | 签发成功 | `actor_type=system`、`attrs.client_id`、`attrs.channel`、`attrs.scope`、`attrs.jti` |
+| `auth.m2m.token.denied` | 认证 / scope / 状态 / 限流失败 | `attrs.client_id`（不存在时省略）、`attrs.reason`（`invalid_client` / `invalid_scope` / `disabled` / `rate_limited`） |
+| `auth.m2m.client.created` / `.updated` / `.disabled` / `.enabled` / `.deleted` | 管理端变更 | 操作人、目标 `client_id`、变更前后 scope 数量 |
+| `auth.m2m.secret.rotated` | secret 轮换 | 操作人、`attrs.fingerprint`、`attrs.expires_at` |
+
+- 指标：`identity_m2m_token_total{client,channel,result,reason}`、`identity_m2m_token_duration_seconds{result}`、`identity_m2m_secret_age_seconds{client}`。
+- 告警：`result="denied"` 5 分钟突增；`secret_age_seconds` 超 `max_secret_age`；签发 p95 > 100ms（§P1-6 性能项）。
+- 禁止记录 `client_secret`、令牌原文与完整 `jti`（审计写摘要或省略）。
+
+#### 21.2.6 配置与校验
+
+配置结构见 §10.1 `identity.m2m`，校验规则见 §10.2「M2M 开关 / M2M 时长」。补充说明：
+
+- `allowed_scopes` 的权限码存在性由 `cmd/internal/appconfig` 在装配期对照 IAM 权限目录校验；未知权限启动失败。
+- `enabled=false` 时三个端点均不注册，配置中出现 `allowed_scopes` 视为配置漂移但允许保留（便于灰度），不触发启动失败。
+- 生产环境禁止 `failure_mode=fail_open`；`db.driver=memory` 时即使 `enabled=true` 也不得签发（内存实现仅用于测试）。
+
+#### 21.2.7 数据模型
+
+迁移 `migrations/000028_create_identity_m2m.{up,down}.sql`：
+
+| 表 | 关键列 | 约束 |
+|---|---|---|
+| `identity_m2m_client` | `id`、`client_id`、`name`、`status`、`allowed_channels`、`allowed_scopes`、`token_version`、`owner`、`created_by`、`created_at`、`updated_at`、`deleted_at` | `UNIQUE(client_id)`；`INDEX(status)` |
+| `identity_m2m_secret` | `id`、`client_id`、`secret_hash`、`fingerprint`、`status`、`created_at`、`expires_at`、`revoked_at` | `UNIQUE(secret_hash)`；`INDEX(client_id, status)`；每客户端 `current + retiring` ≤ 2（事务内校验） |
+
+- `client_id` 软删后不可复用；两张表保留 ≥180 天，与审计留存对齐。
+
+#### 21.2.8 验收（G6-5）
+
+| AC | 要求 | 验证 |
+|---|---|---|
+| `AC-P16-M2M-1` | 不存在 / 停用 / secret 错误的客户端统一 `401 invalid_client`，响应时间差异 ≤ 10% | 单测 + 时序断言 |
+| `AC-P16-M2M-2` | 超出 `allowed_scopes` 的申请 `400 invalid_scope`，不签发令牌 | `internal/identity/app/m2m_test.go` |
+| `AC-P16-M2M-3` | 令牌 scope 之外调用返回 `40300` | 授权中间件用例 |
+| `AC-P16-M2M-4` | 轮换后旧 secret 宽限内可用、到期 `401`；新 secret 立即可用 | `tests/integration/identity/m2m_client_test.go` |
+| `AC-P16-M2M-5` | 停用 / 缩小 scope 后旧令牌 ≤ 60s 失效 | 撤销时效断言 |
+| `AC-P16-M2M-6` | 三端令牌互不通过（`aud` / `channel` / `kid`） | 复用 `AC-ENT-01-3` 语义 |
+
+### 21.3 共同约束与实施顺序
+
+- 默认关闭：`enabled=false` 时不注册路由、不读表、不参与健康检查；开启但配置非法必须启动失败，不得降级为「已启用但不可用」。
+- 协议端点（`/admin/scim/v2/*`、`/{端}/v1/auth/token`）是统一错误信封的**显式例外**；其余端点维持 §20.1 的 `{code,message,trace_id}`。
+- 审计、日志、指标、Trace 均不得出现 `client_secret`、SCIM 令牌、`userName`、成员列表原文。
+- 数据迁移只增不改，与实现同一 MR；配置示例同步更新并接受 `check-config` / `check-authn` 校验。
+- 实施顺序：M2M（范围小、可独立验收）→ SCIM `User` → SCIM `Group` 与角色投影 → 一致性演练与门禁接入。SCIM 依赖 OIDC 的账号绑定模型，必须在 OIDC 已交付（现状满足）后启动。
+
+### 21.4 门禁（实现阶段接入 `check-authn`）
+
+| 检查 | 规则 |
+|---|---|
+| 开关一致性 | `identity.m2m.enabled=true` 时 `allowed_scopes` 非空且格式合法；`identity.scim.enabled=true` 时 `provider` 非空 |
+| 路由注册 | `enabled=false` 时 `/{端}/v1/auth/token` 与 `/admin/scim/v2/*` 返回 `404`（路由级单测） |
+| 示例配置 | `configs/` 示例中不出现 `client_secret`、`token_hash`、明文 SCIM 令牌 |
+| 指标与审计 | `identity_m2m_*` / `identity_scim_*` 指标有命名断言；新增 action 同时进入 `KnownActions()` 与 [`audit/EVENTS.md`](./audit/EVENTS.md) |
+| 负向用例 | 未授权 scope、错误 secret、伪造令牌、跨端令牌各有失败用例，缺失即门禁失败 |
+路由字面量约束（实现阶段补充）：SCIM 与 M2M 的新端点必须用 `mux.Handle("METHOD /literal/path", ...)` 注册，不得按渠道或前缀拼接字符串。`tests/contract`（ENT-16）对实现路由与三端契约做双向对账，只识别字面量形态；拼接会让端点从对账视野消失，表现为「契约有、实现无」或漏登记的公开端点。

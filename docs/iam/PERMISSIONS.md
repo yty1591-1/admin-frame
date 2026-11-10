@@ -62,6 +62,11 @@
 | `identity:account:credential` | admin | 否 | 活跃 | 重置目标账号密码 / MFA；账号接管高风险动作，须与生命周期权限分离 |
 | `identity:account:delete` | admin | 否 | 活跃 | 软删目标账号；不可逆操作入口，不包含恢复与会话撤销 |
 | `identity:account:session` | admin | 否 | 活跃 | 撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更 |
+| `identity:m2m:read` | admin | 否 | 活跃 | 查看 M2M 客户端列表 / 状态 / scope；不返回任何密钥材料 |
+| `identity:m2m:write` | admin | 否 | 活跃 | 创建、停用、启用、软删 M2M 客户端；不包含密钥轮换 |
+| `identity:m2m:credential` | admin | 否 | 活跃 | 轮换 M2M 客户端密钥（返回一次性明文）；与 write 分离以落实职责分离 |
+| `identity:scim:read` | admin | 否 | 活跃 | 查看 SCIM 令牌指纹与组映射状态；不返回令牌原文 |
+| `identity:scim:write` | admin | 否 | 活跃 | 签发与吊销 SCIM 令牌 |
 | `tenant:read` | admin | 否 | 活跃 | 查询租户列表与详情（含状态与状态原因）；不包含任何状态变更 |
 | `tenant:write` | admin | 否 | 活跃 | 创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计 |
 | `tenant:approve` | admin | 否 | 活跃 | 入驻审核裁决（通过 / 驳回）；与 `tenant:write` 拆开授予，且领域层拒绝「提交人审批自己的申请」（职责分离） |

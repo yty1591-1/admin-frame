@@ -8,8 +8,11 @@ package appconfig
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
+	iamcatalog "github.com/admin-frame/admin-frame/internal/iam/catalog"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
@@ -66,7 +69,31 @@ func (c *Config) Validate() error {
 		c.Identity.Validate(c.Env, c.Channel, c.Auth.EffectiveMode(c.Env), c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled),
 		c.Audit.Validate(c.Env, c.DB.Driver, c.Storage.Driver),
 		c.Tenant.Validate(),
+		c.validateM2MScopes(),
 	)
+	return errors.Join(errs...)
+}
+
+// validateM2MScopes 校验 identity.m2m.allowed_scopes 均为 IAM 活跃权限码（§21.2.6）。
+//
+// 身份域不 import IAM，权限目录校验只能落在装配层：未知权限码启动失败，
+// 避免「配置写了 scope，运行期却永远无法授权」的假启用。
+func (c *Config) validateM2MScopes() error {
+	if !c.Identity.M2M.Enabled {
+		return nil
+	}
+	known := make(map[string]struct{}, len(iamcatalog.Codes()))
+	for _, code := range iamcatalog.Codes() {
+		known[string(code)] = struct{}{}
+	}
+	var errs []error
+	for _, scope := range c.Identity.M2M.AllowedScopes {
+		code := strings.TrimSpace(scope)
+		if _, ok := known[code]; !ok {
+			errs = append(errs, fmt.Errorf(
+				"identity.m2m.allowed_scopes contains unknown permission code: %s", scope))
+		}
+	}
 	return errors.Join(errs...)
 }
 

@@ -176,6 +176,63 @@ func (c *IdentityConfig) ApplyDefaults() {
 		}
 	}
 	c.ApplySAMLDefaults()
+	c.ApplyM2MDefaults()
+	c.ApplySCIMDefaults()
+}
+
+// ApplySCIMDefaults 填充 SCIM 2.0 默认值（docs/identity-authn.md §21.1.7）。
+//
+// auto_provision 的「未配置=true」由 IdentitySCIMConfig.AutoProvision 解释，
+// 这里不写指针，避免默认值把「显式 false」覆盖成 true。
+func (c *IdentityConfig) ApplySCIMDefaults() {
+	scimCfg := &c.SCIM
+	if scimCfg.PageSize == 0 {
+		scimCfg.PageSize = identityDefaultSCIMPageSize
+	}
+	if scimCfg.MaxPayload == 0 {
+		scimCfg.MaxPayload = identityDefaultSCIMMaxPayload
+	}
+	if scimCfg.RequestTimeout == 0 {
+		scimCfg.RequestTimeout = identityDefaultSCIMRequestTimeout
+	}
+	if scimCfg.TokenGrace == 0 {
+		scimCfg.TokenGrace = identityDefaultSCIMTokenGrace
+	}
+	if scimCfg.RateLimit.RPS == 0 {
+		scimCfg.RateLimit.RPS = identityDefaultSCIMRPS
+	}
+	if scimCfg.RateLimit.Burst == 0 {
+		scimCfg.RateLimit.Burst = identityDefaultSCIMBurst
+	}
+	if scimCfg.RateLimit.FailureMode == "" {
+		scimCfg.RateLimit.FailureMode = failureModeClosed
+	}
+}
+
+// ApplyM2MDefaults 填充 M2M 默认值（docs/identity-authn.md §21.2.6）。
+//
+// max_secret_age 需大于 rotate_grace；未配置时按比例取默认值，避免
+// 「宽限期未结束即判定超龄」的无意义告警。
+func (c *IdentityConfig) ApplyM2MDefaults() {
+	m2m := &c.M2M
+	if m2m.TokenTTL == 0 {
+		m2m.TokenTTL = identityDefaultM2MTokenTTL
+	}
+	if m2m.RotateGrace == 0 {
+		m2m.RotateGrace = identityDefaultM2MRotateGrace
+	}
+	if m2m.MaxSecretAge == 0 {
+		m2m.MaxSecretAge = identityDefaultM2MMaxSecretAge
+	}
+	if m2m.RateLimit.RPS == 0 {
+		m2m.RateLimit.RPS = identityDefaultM2MRPS
+	}
+	if m2m.RateLimit.Burst == 0 {
+		m2m.RateLimit.Burst = identityDefaultM2MBurst
+	}
+	if m2m.RateLimit.FailureMode == "" {
+		m2m.RateLimit.FailureMode = failureModeClosed
+	}
 }
 
 // ApplySAMLDefaults 填充 SAML 默认值；replay_ttl 依赖断言有效期与时钟偏差。

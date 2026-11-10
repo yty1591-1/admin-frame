@@ -105,6 +105,43 @@ func Register(
 		secure(authMW(accountSession(idempotent(http.HandlerFunc(h.RevokeAccountSession))))))
 	mux.Handle("POST /admin/v1/auth/accounts/{id}/sessions/revoke-all",
 		secure(authMW(accountSession(idempotent(http.HandlerFunc(h.RevokeAccountSessions))))))
+
+	// M2M 机器身份：enabled=false 时 token 与客户端管理端点都不注册（§21.2.6）。
+	if h.M2MEnabled() {
+		m2mRead := permission(permMW, string(iam.PermIdentityM2MRead))
+		m2mWrite := permission(permMW, string(iam.PermIdentityM2MWrite))
+		m2mCredential := permission(permMW, string(iam.PermIdentityM2MCredential))
+		mux.Handle("GET /admin/v1/auth/m2m/clients",
+			secure(authMW(m2mRead(http.HandlerFunc(h.ListM2MClients)))))
+		mux.Handle("POST /admin/v1/auth/m2m/clients",
+			secure(authMW(m2mWrite(idempotent(http.HandlerFunc(h.CreateM2MClient))))))
+		// 轮换返回一次性明文密钥：独立权限点 + 强制幂等键，避免重复轮换。
+		mux.Handle("POST /admin/v1/auth/m2m/clients/{id}/secrets",
+			secure(authMW(m2mCredential(idempotent(http.HandlerFunc(h.RotateM2MSecret))))))
+		mux.Handle("POST /admin/v1/auth/m2m/clients/{id}/disable",
+			secure(authMW(m2mWrite(idempotent(http.HandlerFunc(h.DisableM2MClient))))))
+		mux.Handle("POST /admin/v1/auth/m2m/clients/{id}/enable",
+			secure(authMW(m2mWrite(idempotent(http.HandlerFunc(h.EnableM2MClient))))))
+		mux.Handle("DELETE /admin/v1/auth/m2m/clients/{id}",
+			secure(authMW(m2mWrite(idempotent(http.HandlerFunc(h.DeleteM2MClient))))))
+		// 签发端点用本端字面量注册：契约对账靠静态扫描 mux.Handle（§21.2.2）。
+		mux.Handle("POST /admin/v1/auth/token", rest.M2MTokenHandler(h))
+	}
+
+	// SCIM 2.0 管理端点：enabled=false 时全部不注册（§21.1.6）。
+	// 协议端点 /admin/scim/v2/* 由 transport/scim 单独注册（独立 Bearer 鉴权）。
+	if h.SCIMEnabled() {
+		scimRead := permission(permMW, string(iam.PermIdentitySCIMRead))
+		scimWrite := permission(permMW, string(iam.PermIdentitySCIMWrite))
+		mux.Handle("GET /admin/v1/auth/scim/tokens",
+			secure(authMW(scimRead(http.HandlerFunc(h.ListSCIMTokens)))))
+		mux.Handle("POST /admin/v1/auth/scim/tokens",
+			secure(authMW(scimWrite(idempotent(http.HandlerFunc(h.CreateSCIMToken))))))
+		mux.Handle("DELETE /admin/v1/auth/scim/tokens/{id}",
+			secure(authMW(scimWrite(idempotent(http.HandlerFunc(h.RevokeSCIMToken))))))
+		mux.Handle("GET /admin/v1/auth/scim/groups",
+			secure(authMW(scimRead(http.HandlerFunc(h.ListSCIMGroups)))))
+	}
 }
 
 // permission 返回权限中间件；未注入时失败关闭（403），禁止账号管理端点裸奔。

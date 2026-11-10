@@ -115,7 +115,8 @@ if [[ ! -f docs/audit/EVENTS.md || ! -f "${ACTIONS_FILE}" ]]; then
   echo "ERROR: missing docs/audit/EVENTS.md or ${ACTIONS_FILE}" >&2
   FAIL=1
 else
-  AUTH_ACTIONS="$(grep -oE 'auth\.[a-z._]+' docs/audit/EVENTS.md | sort -u)"
+  # 动作名允许数字（如 auth.m2m.*），否则会被截断成 auth.m 造成误报。
+  AUTH_ACTIONS="$(grep -oE 'auth\.[a-z0-9._]+' docs/audit/EVENTS.md | sort -u)"
   for action in ${AUTH_ACTIONS}; do
     # 末尾 || true：无匹配时 grep 返回 1，在 set -euo pipefail 下会静默终止脚本，
     # 让「常量缺失」变成「门禁无输出即失败」——这里必须走到下面的 ERROR 分支。
@@ -133,6 +134,161 @@ else
       echo "    OK: ${action} -> ${name}"
     fi
   done
+fi
+
+echo "==> ENT-01: M2M switch consistency"
+if ! grep -q 'identity.m2m.allowed_scopes is required' internal/identity/config/validate.go; then
+  echo "ERROR: m2m enabled without allowed_scopes must fail startup (identity-authn.md 21.2.6)" >&2
+  FAIL=1
+else
+  echo "    OK: m2m allowed_scopes required"
+fi
+if ! grep -q 'identity.m2m.token_ttl must be in' internal/identity/config/validate.go; then
+  echo "ERROR: m2m token_ttl range validation missing" >&2
+  FAIL=1
+else
+  echo "    OK: m2m token_ttl range"
+fi
+if ! grep -q 'unknown permission code' cmd/internal/appconfig/appconfig.go; then
+  echo "ERROR: m2m allowed_scopes must be checked against the IAM catalog at assembly" >&2
+  FAIL=1
+else
+  echo "    OK: m2m scopes checked against IAM catalog"
+fi
+
+echo "==> ENT-01: M2M disabled routes are not registered (404)"
+if ! grep -q 'TestM2MRoutesAbsentWhenDisabled' internal/identity/transport/admin/router_test.go; then
+  echo "ERROR: missing 404 route test for identity.m2m.enabled=false" >&2
+  FAIL=1
+elif command -v go >/dev/null 2>&1; then
+  if ! go test -count=1 ./internal/identity/transport/admin/ -run TestM2MRoutesAbsentWhenDisabled; then
+    echo "ERROR: m2m disabled route test failed" >&2
+    FAIL=1
+  else
+    echo "    OK: m2m routes absent when disabled"
+  fi
+fi
+
+echo "==> ENT-01: M2M metrics and audit naming"
+for metric in identity_m2m_token_total identity_m2m_token_duration_seconds; do
+  if ! grep -q "${metric}" internal/identity/observability/metrics.go; then
+    echo "ERROR: missing metric ${metric}" >&2
+    FAIL=1
+  else
+    echo "    OK: ${metric}"
+  fi
+done
+for pair in \
+  "auth.m2m.token.issued:ActionAuthM2MTokenIssued" \
+  "auth.m2m.token.denied:ActionAuthM2MTokenDenied" \
+  "auth.m2m.client.created:ActionAuthM2MClientCreated" \
+  "auth.m2m.secret.rotated:ActionAuthM2MSecretRotated"; do
+  action="${pair%%:*}"
+  name="${pair##*:}"
+  count="$(grep -c "\b${name}\b" internal/shared/audit/actions.go || true)"
+  if [[ "${count}" -lt 2 ]]; then
+    echo "ERROR: ${name} must appear in const and KnownActions (got ${count})" >&2
+    FAIL=1
+  else
+    echo "    OK: ${action} -> ${name}"
+  fi
+done
+
+echo "==> ENT-01: M2M negative cases (wrong secret / scope escalation)"
+if command -v go >/dev/null 2>&1; then
+  if ! go test -count=1 ./internal/identity/app/ -run 'TestM2MUnknownClientRejected|TestM2MScopeEscalationRejected'; then
+    echo "ERROR: m2m negative case tests failed" >&2
+    FAIL=1
+  else
+    echo "    OK: m2m negative cases"
+  fi
+fi
+
+echo "==> ENT-01: SCIM switch consistency"
+if ! grep -q 'identity.scim.provider is required' internal/identity/config/validate.go; then
+  echo "ERROR: scim enabled without provider must fail startup (identity-authn.md 21.1.7)" >&2
+  FAIL=1
+else
+  echo "    OK: scim provider required"
+fi
+if ! grep -q 'identity.scim.enabled is only supported on channel=admin' internal/identity/config/validate.go; then
+  echo "ERROR: scim must be rejected on biz/c channel" >&2
+  FAIL=1
+else
+  echo "    OK: scim admin-only"
+fi
+if ! grep -q 'group_role_map requires identity.scim.enabled=true' internal/identity/config/validate.go; then
+  echo "ERROR: scim group_role_map must not be configured when disabled" >&2
+  FAIL=1
+else
+  echo "    OK: scim mapping requires enabled"
+fi
+if ! grep -q 'requires a ScimRoleProvisioner' cmd/internal/identityruntime/runtime.go; then
+  echo "ERROR: scim group_role_map without a role provisioner must fail startup (silent no-grant)" >&2
+  FAIL=1
+else
+  echo "    OK: scim mapping requires role provisioner"
+fi
+
+echo "==> ENT-01: SCIM disabled routes are not registered (404)"
+if ! grep -q 'TestScimRoutesAbsentWhenDisabled' internal/identity/transport/admin/router_test.go; then
+  echo "ERROR: missing 404 route test for identity.scim.enabled=false" >&2
+  FAIL=1
+elif command -v go >/dev/null 2>&1; then
+  if ! go test -count=1 ./internal/identity/transport/admin/ -run TestScimRoutesAbsentWhenDisabled; then
+    echo "ERROR: scim disabled route test failed" >&2
+    FAIL=1
+  else
+    echo "    OK: scim routes absent when disabled"
+  fi
+fi
+
+echo "==> ENT-01: SCIM token namespace isolation (AC-P16-SCIM-6)"
+if command -v go >/dev/null 2>&1; then
+  if ! go test -count=1 ./internal/identity/transport/scim/ -run TestSCIMRejectsMissingAndJWTBearer; then
+    echo "ERROR: scim token namespace isolation test failed" >&2
+    FAIL=1
+  else
+    echo "    OK: jwt cannot call scim api"
+  fi
+fi
+
+echo "==> ENT-01: SCIM metrics and audit naming"
+for metric in identity_scim_request_total identity_scim_request_duration_seconds identity_scim_group_map_total; do
+  if ! grep -q "${metric}" internal/identity/observability/metrics.go; then
+    echo "ERROR: missing metric ${metric}" >&2
+    FAIL=1
+  else
+    echo "    OK: ${metric}"
+  fi
+done
+for pair in \
+  "auth.scim.user.created:ActionAuthScimUserCreated" \
+  "auth.scim.user.updated:ActionAuthScimUserUpdated" \
+  "auth.scim.user.deactivated:ActionAuthScimUserDeact" \
+  "auth.scim.user.deleted:ActionAuthScimUserDeleted" \
+  "auth.scim.group.updated:ActionAuthScimGroupUpdated" \
+  "auth.scim.token.created:ActionAuthScimTokenCreated" \
+  "auth.scim.token.revoked:ActionAuthScimTokenRevoked"; do
+  action="${pair%%:*}"
+  name="${pair##*:}"
+  count="$(grep -c "\b${name}\b" internal/shared/audit/actions.go || true)"
+  if [[ "${count}" -lt 2 ]]; then
+    echo "ERROR: ${name} must appear in const and KnownActions (got ${count})" >&2
+    FAIL=1
+  else
+    echo "    OK: ${action} -> ${name}"
+  fi
+done
+
+echo "==> ENT-01: SCIM negative cases (duplicate externalId / forged token)"
+if command -v go >/dev/null 2>&1; then
+  if ! go test -count=1 ./internal/identity/app/ -run 'TestScimCreateUserRejectsDuplicateExternalID|TestScimAuthenticateRejectsRevokedAndUnknownToken'; then
+    echo "ERROR: scim negative case tests failed" >&2
+    FAIL=1
+  else
+    echo "    OK: scim negative cases"
+  fi
 fi
 
 echo "==> ENT-01: no hardcoded secrets in example configs"

@@ -6,6 +6,7 @@ import (
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
+	identityrest "github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	notificationcallback "github.com/admin-frame/admin-frame/internal/notification/transport/callback"
 	"github.com/admin-frame/admin-frame/internal/platform"
 )
@@ -19,6 +20,12 @@ import (
 func registerRoutes(deps *platform.Deps, mux *http.ServeMux, identityRT *identityruntime.Runtime) error {
 	if identityRT != nil && identityRT.CHandler != nil {
 		identityc.Register(mux, identityRT.CHandler, deps.AuthMW)
+	}
+	// M2M 机器令牌：C 端认证路由由 identityc 承载，但签发端点与 A/B 端共用
+	// rest.Handler 实现，这里显式注册以保持三端契约一致（§21.3）。
+	// 路径写字面量：契约对账（tests/contract）只识别 mux.Handle 的字面量形态。
+	if identityRT != nil && identityRT.Handler != nil && identityRT.Handler.M2MEnabled() {
+		mux.Handle("POST /c/v1/auth/token", identityrest.M2MTokenHandler(identityRT.Handler))
 	}
 	// 通知回执回调：验签密钥未配置（fail closed，构造失败）时该部署形态
 	// 无回执能力，投递以 accepted 为终态；不挂无验签的公开写端点。

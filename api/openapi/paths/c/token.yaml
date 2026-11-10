@@ -1,0 +1,56 @@
+c-v1-auth-token:
+  post:
+    tags: [auth]
+    summary: M2M 机器令牌（client_credentials）
+    description: |
+      仅 `grant_type=client_credentials`，只代表服务、不绑定人；令牌 `token_use=client`，
+      调用业务接口时按 `scope` 精确授权，不查账号会话。
+      凭据只允许 HTTP Basic 或表单；禁止经 query 传参。
+      本端点是统一信封 `{code,message,trace_id}` 的**显式例外**：
+      错误体按 RFC 6749 §5.2，`trace_id` 经响应头 `X-Trace-Id` 返回。
+      `identity.m2m.enabled=false` 时本路径不注册（404）。
+    operationId: cAuthToken
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/M2MTokenRequest"
+    responses:
+      "200":
+        description: 机器令牌（不含 refresh_token）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/M2MTokenResponse"
+      "400":
+        description: invalid_scope / unsupported_grant_type / invalid_request
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/OAuth2Error"
+      "401":
+        description: invalid_client（客户端不存在 / 停用 / 密钥错误，对外不区分）
+        headers:
+          WWW-Authenticate:
+            schema: {type: string}
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/OAuth2Error"
+      "429":
+        description: 按 client_id 或单 IP 限流
+        headers:
+          Retry-After:
+            schema: {type: integer, minimum: 1}
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/OAuth2Error"
+      "503":
+        description: 依赖不可用（fail_closed）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/OAuth2Error"

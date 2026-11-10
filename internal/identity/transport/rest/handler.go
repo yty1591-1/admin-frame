@@ -39,6 +39,12 @@ type HandlerConfig struct {
 	Hasher *crypto.Hasher
 	// EndpointLimiter 是 refresh / logout 的端点级限流器（SEC-04）；nil 时不限流。
 	EndpointLimiter app.LoginLimiter
+	// M2M 机器身份用例；nil 时不注册令牌与客户端管理端点（§21.2.6）。
+	M2M *app.M2MService
+	// M2MLimiter 是签发端点限流器（按 client_id，叠加单 IP）；nil 时回退 EndpointLimiter。
+	M2MLimiter app.LoginLimiter
+	// SCIM 是 SCIM 2.0 用例；nil 时不注册 A 端 SCIM 管理端点（§21.1.6）。
+	SCIM *app.ScimService
 }
 
 // Handler 处理认证 HTTP 请求。
@@ -49,6 +55,9 @@ type Handler struct {
 	ipResolver *pkghttpx.ClientIPResolver
 	hasher     *crypto.Hasher
 	limiter    app.LoginLimiter
+	m2m        *app.M2MService
+	m2mLimiter app.LoginLimiter
+	scim       *app.ScimService
 }
 
 // NewHandler 构造认证 Handler。
@@ -66,6 +75,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	return &Handler{
 		auth: cfg.Auth, accounts: accounts, channel: cfg.Channel,
 		ipResolver: cfg.ClientIP, hasher: cfg.Hasher, limiter: cfg.EndpointLimiter,
+		m2m: cfg.M2M, m2mLimiter: cfg.M2MLimiter, scim: cfg.SCIM,
 	}, nil
 }
 
