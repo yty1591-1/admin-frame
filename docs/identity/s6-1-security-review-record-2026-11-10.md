@@ -71,7 +71,7 @@
 | 编号 | 偏差 | 证据 | 建议处置 |
 |---|---|---|---|
 | `SEC-F-01` | ~~设计 §21.2.3 声明指标 `identity_m2m_secret_age_seconds{client}` 与超龄告警，代码未实现~~ **已修复（2026-11-10）**：新增 Gauge 并在签发时上报 secret 年龄，告警规则 `identity.m2m.secret_rotation_due`（P3）已加入 `rules/identity.yaml`，`ALERTS.md` 与 `key-rotation.md` 同步 | `internal/identity/observability/metrics.go`、`internal/identity/app/m2m.go`、`deploy/observability/prometheus/rules/identity.yaml` | 评审时确认阈值口径（默认 90 天与 `max_secret_age` 对齐） |
-| `SEC-F-02` | 同节的「`result="denied"` 5 分钟突增」告警依赖指标 label，需在告警规则中确认 label 取值与代码一致 | `identity_m2m_token_total{client,channel,result,reason}` | 上线前在 staging 抓一次真实序列核对 label |
+| `SEC-F-02` | 同节的「`result="denied"` 5 分钟突增」与「签发 p95 > 100ms」两条告警在 `rules/identity.yaml` 中**并不存在**；label 本身与代码一致（本地实测序列为 `identity_m2m_token_total{channel="admin",client="svc_dDLNp",result="issued",reason=""}` 与 `{result="denied",reason="invalid_client"}` / `{reason="invalid_scope"}`） | 本地 D5 实测 Prometheus 序列；`rules/identity.yaml` 全量检索无对应 `alert` | 补两条规则（denied 5m 突增按 `alert_id=identity.m2m.denied_spike`，p95 用 `histogram_quantile` 需先确认是否存在签发耗时直方图）后回归 `promtool` |
 
 ## 6. 结论与签字
 
@@ -86,7 +86,7 @@
 | 编号 | 整改项 | Owner | 期限 | 验证方式 | 状态 |
 |---|---|---|---|---|---|
 | `SEC-F-01` | 补指标 + 告警规则，并同步 `ALERTS.md` / `key-rotation.md` | IAM 工程组 | 2026-11-10 | 单测 `TestM2MObserveSecretAge` + 规则文件审查 | 已完成 |
-| `SEC-F-02` |  |  |  | staging 指标序列截图 | 待分配 |
+| `SEC-F-02` | 核对 label 并补齐缺失的 denied 突增 / 签发 p95 告警 | IAM 工程组 | 待定 | 本地 label 核对已完成（见 §5）；规则补齐后 `promtool check rules` + 一次 firing 验证 | 进行中 |
 | （按 §4 决议追加） |  |  |  |  |  |
 
 ## 8. 通过后的文档动作

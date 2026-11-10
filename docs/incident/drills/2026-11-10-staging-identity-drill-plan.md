@@ -129,11 +129,11 @@
 
 | 场景 | 开始 | 结束 | 时长 | 判定 | 偏差 / 缺陷 | 证据 |
 |---|---|---|---|---|---|---|
-| `D1` 发版回滚 |  |  |  |  |  |  |
-| `D2` IdP 不可用 |  |  |  |  |  |  |
-| `D3` 证书轮换 |  |  |  |  |  |  |
-| `D4` SCIM 风暴 |  |  |  |  |  |  |
-| `D5` M2M 停用 |  |  |  |  |  |  |
+| `D1` 发版回滚 | — | — | 部署 5.2s / 回滚 1.3s | 通过 | 无 | Helm rev47 滚动 → rollback rev46，回滚后 `/readyz` 200、管理员登录 `code=0` |
+| `D2` IdP 不可用 | — | — | 单次 &lt; 1s | 通过（修复后） | 见 §9.2 缺陷 1 | 6/6 返回 `503`/`50300`；熔断打开后同样 `50300`；恢复后免重启登录成功 |
+| `D3` 证书轮换 | — | — | 3 次滚动 | 通过（JWT kid 等价） | SAML 通道本地未配置，见 §9.2 | k1→k2 并存期新旧令牌均可用；退役 k1 后旧令牌 `401`、k2 令牌 `200` |
+| `D4` SCIM 风暴 | — | — | 0.72s / 30 次 | 通过 | 无 | 41.7 rps → `429`×5、`200`×25；指标 `result="error", reason="rate_limited"` |
+| `D5` M2M 停用 | — | — | 全链路 &lt; 5s | 通过 | 无（脚本假象已排除） | 错误密钥 `401 invalid_client`、越权 `400 invalid_scope`、停用后 `401`、恢复后签发成功 |
 
 ## 8. 演练后动作
 
@@ -143,22 +143,36 @@
 4. 缺陷与整改项登记 [`ACTION_ITEMS.md`](../ACTION_ITEMS.md)，与 `S6-1` 评审整改项合并跟踪。
 5. `D5` 结果用于确认 `T-M2M-05` 的缓解是否成立；不成立则更新 [`threat-model.md`](../../identity/threat-model.md) 对应行。
 
-## 9. 执行记录（2026-11-10 本地预检）
+## 9. 执行记录（2026-11-10 本地 kind 实测）
 
-环境：本地 kind `af-kind`（Helm rev 40，admin / biz / c 均 Running，四通道 `enabled=false`）+ Docker 集成 MySQL / Redis。**不是 staging**，仅记录可离线验证的部分。
+自建环境（非 staging）：kind `af-kind` + 集群内 MySQL / Redis / Keycloak 26 + `monitoring` 命名空间的 standalone Prometheus（4 个 target 健康）。通过本地 overlay 打开 `admin` 的 `m2m` / `scim` 与 `c` 的 `oauth` 通道，`iam.mode=enforce`，JWT 使用 RS256 密钥环；Keycloak 侧注册 OIDC 客户端与 `drill-user`。全部凭据、overlay 与脚本仅存放在本机临时目录，不入库。
+
+### 9.1 实测结果
 
 | 检查 / 场景 | 结果 | 证据 |
 |---|---|---|
-| 前置 2：通道关闭时路由不注册 | **通过** | `check-authn.sh` 输出 `OK: m2m routes absent when disabled`、`OK: scim routes absent when disabled`（transport 用例断言 `404`） |
-| `D5` M2M 轮换 / 宽限 / 停用语义 | **通过（服务层，非 staging 部署）** | `TEST_MYSQL_DSN=... TEST_REDIS_ADDR=... go test ./tests/integration/identity -run M2M`：`PASS`，0.29s |
-| 新告警规则语法 | **通过** | `promtool check rules rules/identity.yaml` → `SUCCESS: 23 rules found` |
-| `D1` 发版回滚 | **未执行** | 无非当前版本可发布；`helm upgrade` 无模板变更不会触发滚动，测不出回滚耗时。需 staging 发布流水线 |
-| `D2` IdP 不可用 | **未执行** | OIDC / SAML 未启用，且 kind 内无已注册的 Keycloak 客户端；开启需改配置并重启 |
-| `D3` 证书轮换 | **未执行** | 同 `D2`，SAML 通道关闭，无私钥与 IdP 元数据 |
-| `D4` SCIM 风暴 | **未执行** | SCIM 未启用；需先建 `scim_` 令牌，依赖 A 端管理凭据与 MFA |
-| 告警触发验证 | **未执行** | kind 内未部署 Prometheus / Alertmanager 实例，规则无法被求值 |
+| `D1` 发版回滚 | **通过** | `helm upgrade --wait` 5.2s（rev47，`admin` 双副本）；`helm rollback 46 --wait` 1.3s；回滚后 `/readyz` 200、管理员登录 `code=0` |
+| `D2` IdP 不可用（修复前） | **不通过** | `keycloak` 副本置 0 后回调返回 `500` / `50000`，与设计「IdP 故障统一 50300」不符，定位为 `oauthUnavailable` 未挂 `ErrUnavailable` 哨兵（§9.2） |
+| `D2` IdP 不可用（修复后） | **通过** | 6 轮回调均 `503` / `50300`；第 7 轮熔断打开，错误体退化为 `oauth provider temporarily unavailable`，业务码仍 `50300`；`identity_oauth_callback_total{provider="kc",result="failure",reason="unavailable"}` 逐轮递增 |
+| `D2` JWKS 缓存观测 | **通过** | IdP 停机期间 `identity_oauth_jwks_cache_age_seconds{provider="kc"}` 由 0 增长到 68s，恢复后回落（重新拉取） |
+| `D2` 自愈 | **通过** | IdP 恢复后**不重启** `c-api`，完整 OIDC 登录（authorize → Keycloak 表单登录 → callback）返回 `200`，`result="success", reason="ok"` 计数递增 |
+| `D3` 证书轮换（JWT kid 等价） | **通过** | k2 上线后：k1 旧访问令牌仍 `200`（密钥环保留旧公钥），新登录令牌头 `kid=k2` 且可用；移除 k1 后旧令牌 `401`、k2 令牌 `200` |
+| `D4` SCIM 风暴 | **通过** | 30 次串行请求 0.72s（41.7 rps）：`200`×25、`429`×5；`identity_scim_request_total{result="success"}`=25、`{result="error", reason="rate_limited"}`=5 |
+| `D5` M2M 生命周期 | **通过** | 创建 → 签发（`expires_in=900`）→ 错误密钥 `401 invalid_client` → 越权 scope `400 invalid_scope` → 轮换 → 宽限期内旧密钥可用 → 停用后签发 `401` → 恢复后可用 |
+| `SEC-F-01` 告警链路 | **通过** | 将 `identity_m2m_secret` 的 `created_at` 回拨 100 天并签发一次，`identity_m2m_secret_age_seconds{client="svc_dDLNp"}=8640013s`（&gt; 90 天阈值）；`IdentityM2MSecretRotationDue` 进入 `pending`（`severity=P3`、`alert_id=identity.m2m.secret_rotation_due`）。为验证 firing 通路，临时把该规则 `for` 改为 `1m` 后观测到 `state=firing`，随后恢复 `for: 1h` |
+| `SEC-F-02` label 核对 | **完成** | 实测序列为 `identity_m2m_token_total{channel="admin",client="svc_dDLNp",result="issued",reason=""}`、`{result="denied",reason="invalid_client"}`、`{reason="invalid_scope"}`；设计声明的 denied 突增与 p95 两条告警规则**缺失**（已回写评审单 §5） |
 
-遗留：`D1`～`D4` 与告警触发需在 staging 窗口执行；执行前请先完成 §2 的 10 项前置检查，并把本表替换为实测数据。
+### 9.2 演练发现的缺陷与偏差
+
+1. **代码缺陷（已修复）**：`internal/identity/infrastructure/oauth/oauth2.go` 的 `oauthUnavailable` 用 `apperr.New(..., err)` 包装网络错误，未挂 `ErrUnavailable` 哨兵，导致 `errors.Is(err, apperr.ErrUnavailable)` 失配，`OAuthService` 把 IdP 不可用降级为 `50000`。修复为 `errors.Join(err, apperr.ErrUnavailable)` 并补回归用例 `TestOAuth2ProviderExchangeIdPUnreachable`。
+2. **环境偏差**：chart 中 `migrate.image.tag` 固定为 `verify`，该镜像内迁移只到 `000026`，`000027`（SCIM）/`000028`（M2M）/`000029`（权限点）从未应用；补跑迁移后 SCIM 才可用。staging 发布前需确认迁移镜像与代码同源。
+3. **配置偏差**：`values-kind.yaml` 的 `iam.mode: shadow` 只认静态超级角色 `admin`，而种子角色为 `system_admin`，导致已授权仍 `403`；演练环境改用 `enforce`。生产/预发需确认 `iam.mode` 与角色种子一致。
+4. **规则缺失（待补）**：设计 §21.2.5 声明的「denied 5 分钟突增」与「签发 p95 &gt; 100ms」告警未在 `rules/identity.yaml` 中实现，见 `SEC-F-02`。
+
+### 9.3 未覆盖项
+
+- `D3` 的 SAML SP 证书轮换（`certificate_next_pem` / `private_key_next`）未执行：本地未配置 SAML IdP 元数据，仅以 JWT kid 轮换覆盖同类「双密钥并存 → 退役」路径。
+- 部分 Pod 已用新 kid 签发、其余 Pod 尚未滚到的灰度窗口未验证（本地副本数受限，滚动为全量替换）。
 
 ## 相关链接
 
