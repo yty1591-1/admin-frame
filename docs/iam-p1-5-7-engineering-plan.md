@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |------|------|
 | 文档编号 | IAM-PLAN-2026-11-001 |
-| 文档版本 | v1.6（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付） |
+| 文档版本 | v1.7（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付，v1.7 回写 §13 验收证据） |
 | 编制日期 | 2026-11-05 |
 | 文档状态 | **可交付（2026-11-10）**：P1-5 覆盖率与集成门禁、P1-6 设计 / 代码 / 门禁 / 接入 Runbook、P1-7 访问复核工具链与验收证据均已齐备，交付物清单见 §3 与 §13。剩余事项为交付后或外部依赖项，不阻塞交付：M0 立项会签、S6-1 安全评审与签名、S6-6 真实/仿真 IdP 接入与运维交接、P1-7 双评审签字与 staging 实战、M6 生产准入评审 |
 | 密级 | 内部 |
@@ -23,6 +23,7 @@
 | v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
 | v1.5 | 2026-11-10 | IAM 工程组 | **M2M 端到端补齐**：新增 `tests/integration/identity/m2m_test.go`（真实 MySQL + Redis 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离 / 审计落库）；用例暴露机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被校验丢弃，已修复。范围与阈值未变，不涉及 CCB 事项 |
 | v1.6 | 2026-11-10 | IAM 工程组 | **状态转为可交付**：三项工程的设计、代码、门禁、Runbook 与验收证据已齐备；剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入列为交付后/外部依赖项。范围、阈值与里程碑未变，不涉及 CCB 事项 |
+| v1.7 | 2026-11-10 | IAM 工程组 | **§13 验收回写**：§13.2 的 M2M 条目改为端到端用例已通过并记录审计修复；§13.1 门禁演练按 S5-5 演练记录勾选，正文统一为「删除集成测试由清单断言在 `compose up` 前失败」。范围与阈值未变，不涉及 CCB 事项 |
 
 ---
 
@@ -395,14 +396,14 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 - [x] IAM 分层覆盖率全部达到 §5.1.1 目标，且 CI 实际执行门槛。
 - [x] IAM MySQL 集成测试在 PR 流水线必跑并通过。
 - [x] 新增审批/模板/缓存竞态/SQL 边界/HTTP 契约用例全部通过。
-- [ ] 门禁演练：人为降低覆盖率或删除集成测试可使 PR 失败，记录可查。**（部分完成，见下方现状）**
+- [x] 门禁演练：人为降低覆盖率或删除集成测试可使 PR 失败，记录可查。**（2026-11-08 达标）**
 - [x] 变更行覆盖率 ≥70%。
 
 **证据（2026-11-08 实测，命令可复跑）**
 
 - `bash scripts/ci/check-iam-coverage.sh`：`domain 84.7%/≥80`、`app 76.3%/≥75`、`catalog 72.7%/≥60`、`cache 88.6%/≥75`、`menuview 100%/≥90`、`observability 95.1%/≥45`、`transport/rest 60.6%/≥60`、`transport/admin 100%/≥90`、`transport/biz 100%/≥90`。`persistence` 本地跳过（无 `IAM_TEST_MYSQL_DSN`），CI 由 integration job 注入。
 - 变更行门禁：以 `586f232~1` 为基线、真实覆盖率档案运行，`229/243` 行 = **94.2%**。
-- 门禁演练：阈值注入 `IAM_DIFF_COVERAGE_MIN=101` 时脚本 `exit 1`，阻断成立；「删除集成测试」未演练，故该条不勾选。
+- 门禁演练：阈值注入 `IAM_DIFF_COVERAGE_MIN=101` 时脚本 `exit 1`，阻断成立；「删除集成测试」由 `run-integration-tests.sh` 的三层清单断言（包存在 / 15 个关键用例点名 / 总数 ≥70）在 `compose up` 前确定性失败，演练记录见 `docs/incident/drills/2026-11-08-s5-5-integration-gate.md`。
 - 顺带修复：该脚本原先把 `package config` 这类不进入覆盖率档案的行计入分母，导致「只加包注释」也报 0.0% 并阻断合并（`062397a` 复现）。现分母改为「变更行 ∩ 档案内可执行语句行」，同一提交重跑输出 `no changed executable IAM lines; skipped`。
 
 ### 13.2 P1-6 验收
@@ -410,7 +411,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 - [x] 至少 1 个 IdP 完成 OIDC 端到端接入，含 PKCE、state/nonce、JWKS 轮换。
 - [x] SAML SP-initiated SSO 通过签名断言、重放、证书轮换安全用例。
 - [x] SCIM 10k 用户同步演练达标，重复批次不产生重复数据。**（2026-11-10 达标）** 集成用例 `tests/integration/identity/scim_sync_test.go`；STG-EQ-01 实测 10k 用户 + 50 组 151.7s、0 错误（`LB-STG-SCIM-SYNC`），同批重复执行数量不变。
-- [x] M2M client credentials 可签发、轮换、吊销，scope 最小化且审计可查。**（2026-11-10 达标）** 单测 `internal/identity/app/m2m_test.go` 覆盖签发、双 secret 轮换、scope 越权、停用吊销；审计动作 `auth.m2m.*` 已注册；端到端 MySQL/Redis 用例待补。
+- [x] M2M client credentials 可签发、轮换、吊销，scope 最小化且审计可查。**（2026-11-10 达标）** 单测 `internal/identity/app/m2m_test.go` 覆盖签发、双 secret 轮换、scope 越权、停用吊销；审计动作 `auth.m2m.*` 已注册且机器事件（以 `client_id` 作 `actor_id`）实际落库；端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建、签发、双 secret 轮换、宽限、停用、端别隔离与审计。
 - [ ] 安全测试无高危/严重问题；中危问题有整改计划与期限。
 
 **证据与缺口（2026-11-10 核对）**
@@ -418,7 +419,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 - OIDC：`docs/identity-authn.md` §7.3「已实现并通过 staging 真实 Keycloak 验收（2026-11-05）」；用例 `TestOIDCEndToEndAuthorizationCodeFlow`、`TestJWKSRetainsCacheWhenRefreshFails`、`TestOIDCRequiresExplicitFlag`。JWKS 轮换有步骤与判定指标，但验收记录未附指标数值快照，复核时需补一次。
 - SAML：`docs/identity-authn.md` §8.2.1，2026-11-06 在 kind `af-verify` + Keycloak 26.7.4 跑通加密断言 + 签名全链路，证书轮换演练通过（`kid=rotate`）。
 - SCIM：已实现（2026-11-10，`internal/identity/{app,transport/scim}`），10k 演练见 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.4；默认关闭，`enabled=false` 时路由 404。
-- M2M：已实现（2026-11-10，`internal/identity/app/m2m.go`），`client_credentials` 签发 / 双 secret 轮换 / `authn:client_ver` 吊销齐备；缺 MySQL/Redis 端到端集成用例。
+- M2M：已实现（2026-11-10，`internal/identity/app/m2m.go`），`client_credentials` 签发 / 双 secret 轮换 / `authn:client_ver` 吊销齐备；端到端用例 `tests/integration/identity/m2m_test.go` 已在真实 MySQL + Redis 通过（2026-11-10），并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题。
 - 安全测试报告：仓库内无 P1-6 专项安全测试记录，S6-1 安全评审仍未签字。
 
 ### 13.3 P1-7 验收

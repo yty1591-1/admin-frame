@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-10（IAM 计划升 v1.6，状态转为可交付；补 M2M 端到端集成用例并修复机器审计；新建 `runbooks/identity-federation-onboarding.md`，补 S6-6 接入 Runbook）；前次 2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态，IAM 计划升 v1.3）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-10（IAM 计划升 v1.7，状态转为可交付并回写 §13 验收证据；补 M2M 端到端集成用例并修复机器审计；新建 `runbooks/identity-federation-onboarding.md`，补 S6-6 接入 Runbook）；前次 2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态，IAM 计划升 v1.3）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -80,7 +80,7 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
-| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.6（可交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML/SCIM/M2M **代码与门禁已交付**（P1-6）；接入 Runbook **已建**、访问复核工具链**已交付待签收**（P1-7）。20 条验收已按代码与门禁实测回写。剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入，属交付后/外部依赖项 |
+| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.7（可交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML/SCIM/M2M **代码与门禁已交付**（P1-6）；接入 Runbook **已建**、访问复核工具链**已交付待签收**（P1-7）。20 条验收已按代码与门禁实测回写，§13.1 门禁演练与 §13.2 M2M 端到端证据于 v1.7 补齐。剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入，属交付后/外部依赖项 |
 
 > 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）已全部闭环，位于 [`archive/`](./archive/)。
 >
