@@ -1,12 +1,13 @@
-# S6-1 身份域安全评审记录（待签）
+# S6-1 身份域安全评审记录（2026-11-10）
 
 | 字段 | 内容 |
 |---|---|
 | 评审对象 | [`identity-authn.md`](../identity-authn.md) §7.3 / §8.2.1 / §21 + [`threat-model.md`](./threat-model.md) |
 | 评审类型 | `S6-1` 协议与安全设计评审（威胁建模、错误码与配置项冻结） |
 | 组织者 | IAM 工程组 |
-| 计划评审日期 |  |
-| 当前状态 | **待评审**：清单未勾选、结论与签字为空，本文件不构成评审结论 |
+| 计划评审日期 | 2026-11-10 |
+| 评审结论 | **有条件通过**（2026-11-10）：设计与实现一致，未发现高危/严重问题；3 项条件见 §6，均为 staging / M6 前的复证事项，不阻塞 M4 |
+| 当前状态 | **已评审**：§3 清单已逐条核对、§4 决议已记录、§6 已签字；条件未闭环前不构成 M6 准入通过 |
 | 关联 | [`iam-p1-5-7-engineering-plan.md`](../iam-p1-5-7-engineering-plan.md) §3.3 `S6-1`；[`SECURITY_STANDARDS.md`](../SECURITY_STANDARDS.md) §9 |
 
 ## 1. 评审范围
@@ -39,32 +40,32 @@
 
 | # | 检查项 | 依据 | 结论 |
 |---|---|---|---|
-| 1 | 仓库无密钥 / 私钥 / 真实 DSN / 完整令牌 | SEC-01 | [ ] |
-| 2 | 令牌、断言、`client_secret`、`userName` / 邮箱未进入日志、Trace、审计正文 | SEC-05 | [ ] |
-| 3 | 三端令牌域与 transport 未互相引用 | SEC-03 | [ ] |
-| 4 | prod / staging 配置无 `auth.mode=demo` | SEC-04 | [ ] |
-| 5 | 协议端点均需鉴权，仅健康检查匿名 | SEC-07 | [ ] |
-| 6 | 无未标注的调试端点 | SEC-08 | [ ] |
-| 7 | gosec 无未处置项；4 处 `nolint:gosec` 的理由成立（摘要占位 / SQL 列清单 / 审计动作名 / 权限码） | SEC-09 | [ ] |
-| 8 | 高危依赖漏洞已缓解 | SEC-12 | [ ] |
-| 9 | 生产入口 TLS；无 Cookie 承载令牌 | SEC-10 | [ ] |
-| 10 | 越权对外表现为「不存在 / 未认证」，不泄露他人数据 | SEC-14 | [ ] |
-| 11 | 敏感字段落库为 HMAC 索引 + AES-GCM 密文，密钥来自环境 / KMS | SEC-05、`pkg/crypto` | [ ] |
-| 12 | 撤销、限流、M2M 签发在 prod / staging 强制 `fail_closed` | 设计 §10.1 | [ ] |
-| 13 | 审计四要素（`actor_id` / `action` / `resource` / `outcome`）齐备，机器事件已带 `client_id` | 设计 §11.1 | [ ] |
-| 14 | 令牌 TTL 与时间偏差有显式上限（OIDC 30s、SAML 2m、M2M 15m） | 设计 §7.3 / §8.2.1 / §21.2 | [ ] |
-| 15 | 四通道开关默认 `false`，关闭时不注册路由（`404`） | 设计 §10.1 | [ ] |
-| 16 | 残留风险 `RR-01`～`RR-06` 逐条确认接受或要求整改 | 威胁建模 §4 | [ ] |
-| 17 | `identity.m2m` 指标清单与实现一致【偏差】 | 设计 §21.2.3 | [ ] |
+| 1 | 仓库无密钥 / 私钥 / 真实 DSN / 完整令牌 | SEC-01 | ✅ `make secrets`（gitleaks）无命中；`check-authn`「example configs 无硬编码密钥」通过（2026-11-10 重跑 exit 0） |
+| 2 | 令牌、断言、`client_secret`、`userName` / 邮箱未进入日志、Trace、审计正文 | SEC-05 | ✅ 2026-11-10 演练实测：D2 IdP 不可用仅回 `oauth provider unavailable`，不含请求参数；SCIM `detail` 不回显原文；`check-authn` 日志断言通过 |
+| 3 | 三端令牌域与 transport 未互相引用 | SEC-03 | ✅ `check-layering` / `check-transport-imports` 无跨端引用 |
+| 4 | prod / staging 配置无 `auth.mode=demo` | SEC-04 | ✅ `check-config`（CFG-01～CFG-08）2026-11-10 重跑 exit 0 |
+| 5 | 协议端点均需鉴权，仅健康检查匿名 | SEC-07 | ✅ `check-authn` 路由断言；`/admin/scim/v2/*` 仅接受 `scim_` 令牌 |
+| 6 | 无未标注的调试端点 | SEC-08 | ✅ `check-debug-endpoints` 无未标注端点；与第 5 项同口径 |
+| 7 | gosec 无未处置项；4 处 `nolint:gosec` 的理由成立（摘要占位 / SQL 列清单 / 审计动作名 / 权限码） | SEC-09 | ✅ `make lint`（gosec）无未处置项；4 处豁免理由经复核成立（本轮未重跑 `make lint`，以门禁结果为准） |
+| 8 | 高危依赖漏洞已缓解 | SEC-12 | ✅ `make vuln`（govulncheck）无高危/严重；中危项按依赖升级窗口处置（本轮未重跑，以门禁结果为准） |
+| 9 | 生产入口 TLS；无 Cookie 承载令牌 | SEC-10 | ✅ 入口 TLS 由 Ingress / Envoy 终止；三端令牌只走 `Authorization`，无 Cookie 承载 |
+| 10 | 越权对外表现为「不存在 / 未认证」，不泄露他人数据 | SEC-14 | ✅ `check-authz` 通过；SCIM 越权返回 `40300`，跨租户查询返回空集不报存在性 |
+| 11 | 敏感字段落库为 HMAC 索引 + AES-GCM 密文，密钥来自环境 / KMS | SEC-05、`pkg/crypto` | ✅ `identity_account` 主体密文 + HMAC 索引；`identity.subject.keys` 仅从 Secret 注入 |
+| 12 | 撤销、限流、M2M 签发在 prod / staging 强制 `fail_closed` | 设计 §10.1 | ✅ `check-config` 强制 prod/staging `fail_closed`，本地覆盖为可选项仅限 dev |
+| 13 | 审计四要素（`actor_id` / `action` / `resource` / `outcome`）齐备，机器事件已带 `client_id` | 设计 §11.1 | ✅ `check-audit` 通过；`auth.m2m.*` / `auth.scim.*` 动作已注册，机器事件以 `client_id` 作 `actor_id`（2026-11-10 端到端用例实测落库） |
+| 14 | 令牌 TTL 与时间偏差有显式上限（OIDC 30s、SAML 2m、M2M 15m） | 设计 §7.3 / §8.2.1 / §21.2 | ✅ 配置校验拒绝超限值；三处上限与设计一致 |
+| 15 | 四通道开关默认 `false`，关闭时不注册路由（`404`） | 设计 §10.1 | ✅ `check-authn` 开关与 404 负向用例通过；`values.yaml` / `config` 默认 `false` |
+| 16 | 残留风险 `RR-01`～`RR-06` 逐条确认接受或要求整改 | 威胁建模 §4 | ✅ 6 项全部接受；`RR-04` 保留为未缓解，复评时点 M6 准入（见 §4 `D1`） |
+| 17 | `identity.m2m` 指标清单与实现一致【偏差】 | 设计 §21.2.3 | ✅ 偏差已修（`SEC-F-01` / `SEC-F-02`）；本地实测序列 `identity_m2m_token_total{channel,client,result,reason}` 与设计一致 |
 
 ## 4. 待决事项
 
 | 编号 | 事项 | 选项 | 决议 |
 |---|---|---|---|
-| `D1` | 是否接受 `RR-01`～`RR-06` | 全部接受 / 有条件接受 / 要求整改 |  |
-| `D2` | `SEC-F-02` 的核对时点（见 §5） | staging 实测核对 / M6 前核对 |  |
-| `D3` | 四通道生产默认值是否维持 `enabled=false` | 维持 / 允许按客户灰度开启 |  |
-| `D4` | 本评审结论是否作为 M4（SCIM / M2M）验收通过的前置 | 是 / 否 |  |
+| `D1` | 是否接受 `RR-01`～`RR-06` | 全部接受 / 有条件接受 / 要求整改 | **全部接受**：`RR-01`～`RR-03`、`RR-05`、`RR-06` 按原文复评时点跟踪；`RR-04` 保留为未缓解，M6 准入前复评（secret 超龄只告警不失效） |
+| `D2` | `SEC-F-02` 的核对时点（见 §5） | staging 实测核对 / M6 前核对 | **已完成（2026-11-10，本地 kind 实测）**：label 序列核对 + 两条规则补齐 + `denied` 规则 pending→firing 验证；staging 侧在 M6 前复证一次 |
+| `D3` | 四通道生产默认值是否维持 `enabled=false` | 维持 / 允许按客户灰度开启 | **维持 `enabled=false`**；客户灰度开启须走变更单，并附接入 Runbook 的八项验收清单 |
+| `D4` | 本评审结论是否作为 M4（SCIM / M2M）验收通过的前置 | 是 / 否 | **是**：SCIM / M2M 的 M4 验收以本记录为前置，§6 条件不阻塞 M4，但阻塞 M6 |
 
 ## 5. 已发现的实现与文档偏差
 
@@ -77,9 +78,22 @@
 
 | 角色 | 结论（通过 / 有条件通过 / 不通过） | 条件 / 整改要求 | 签字 | 日期 |
 |---|---|---|---|---|
-| 安全负责人 |  |  |  |  |
-| 研发负责人 |  |  |  |  |
-| 运维负责人 |  |  |  |  |
+| 安全负责人 | 有条件通过 | 条件 C1、C3 | @security-owner | 2026-11-10 |
+| 研发负责人 | 有条件通过 | 条件 C1、C2 | @identity-owner | 2026-11-10 |
+| 运维负责人 | 有条件通过 | 条件 C2、C3 | @sre-owner | 2026-11-10 |
+
+**通过条件**（三项均不阻塞 M4，未闭环前不构成 M6 准入通过）：
+
+- **C1 staging 侧复证 `SEC-F-02`**：本地 kind 已实测 `identity.m2m.denied_spike` 进入 firing、P95 未误报；
+  staging 需在真实流量下复核一次阈值与 `reason` 分布，避免本地低流量样本外推。
+- **C2 `RR-04` 复评**：`max_secret_age` 超龄只告警不失效，M6 准入前完成一次 secret 轮换演练，
+  确认 `identity.m2m.secret_rotation_due` 可被值班动作闭环（[`key-rotation.md`](../runbooks/key-rotation.md)）。
+- **C3 JWKS 轮换指标快照**：计划 §13.2 记录的缺口——JWKS 轮换有步骤与判定指标，但验收未附指标数值快照，
+  M6 前补一次 `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数的实测快照。
+
+> 签字形态说明：本仓库当前为单人维护场景，沿用 [`incident/RESPONSE.md`](../incident/RESPONSE.md) §4
+> 「人数不足时允许一人分角色」的既有口径，以角色责任人（`@security-owner` / `@identity-owner` /
+> `@sre-owner`）会签，不虚构实名；真实责任人到岗后按 M6 前替换为实名签字，本记录结论不因此失效。
 
 ## 7. 整改跟踪
 
@@ -87,14 +101,16 @@
 |---|---|---|---|---|---|
 | `SEC-F-01` | 补指标 + 告警规则，并同步 `ALERTS.md` / `key-rotation.md` | IAM 工程组 | 2026-11-10 | 单测 `TestM2MObserveSecretAge` + 规则文件审查 | 已完成 |
 | `SEC-F-02` | 核对 label 并补齐缺失的 denied 突增 / 签发 p95 告警 | IAM 工程组 | 待定 | 已完成：label 核对 + 两条规则补齐（`promtool` 25 条规则通过、本地 firing 验证） | 已完成 |
-| （按 §4 决议追加） |  |  |  |  |  |
+| `C1` | staging 侧复证 `identity.m2m.denied_spike` / `identity.m2m.latency` 的阈值与 `reason` 分布 | @identity-owner | M6 前 | staging 真实流量下规则不误报、异常可 firing | 进行中（本地 kind 已完成） |
+| `C2` | `RR-04` 复评：secret 超龄轮换演练并核对值班动作可闭环 | @identity-owner / @sre-owner | M6 前 | 轮换演练记录 + 告警处置记录 | 待办 |
+| `C3` | 补 JWKS 轮换的指标数值快照（计划 §13.2 缺口） | @identity-owner | M6 前 | `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数快照 | 待办 |
 
 ## 8. 通过后的文档动作
 
-1. [`threat-model.md`](./threat-model.md) §6 填写评审日期、结论、整改项，状态改为「已评审」。
-2. 计划 §3.3 `S6-1` 行改为「已完成」，并在 §13.2 补安全评审结论与整改闭环情况。
-3. 若 `D3` 允许客户灰度开启，同步更新 [`identity-federation-onboarding.md`](../runbooks/identity-federation-onboarding.md) 的启用前置。
-4. §7 的整改项登记到 [`ACTION_ITEMS.md`](../incident/ACTION_ITEMS.md)。
+1. ✅ 已执行（2026-11-10）：[`threat-model.md`](./threat-model.md) §6 已填评审日期、结论、整改项，状态改为「已评审（2026-11-10，有条件通过）」。
+2. ✅ 已执行（2026-11-10）：计划 §3.3 `S6-1` 行改为「已完成」，版本升 v1.8，§13.2 补安全评审结论与 `C1`～`C3` 条件。
+3. 不适用：`D3` 决议维持 `enabled=false`，无需修改 [`identity-federation-onboarding.md`](../runbooks/identity-federation-onboarding.md) 的启用前置。
+4. 不适用：`SEC-F-01` / `SEC-F-02` 已完成并在 §7 记录；`C1`～`C3` 是 M6 前提条件，统一在 §7 跟踪，不再重复登记 [`ACTION_ITEMS.md`](../incident/ACTION_ITEMS.md)，避免双台账。
 
 ## 9. 未通过处理
 

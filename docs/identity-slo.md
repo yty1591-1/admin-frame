@@ -1,7 +1,7 @@
 # 身份域 SLO 与容量基线
 
 > **状态**：已落地（MNT-04 口径生效）
-> **最后更新**：2026-11-05
+> **最后更新**：2026-11-10（补 M2M / SCIM 的 SLI、容量与压测口径，对齐 `identity.m2m.*` 三条告警）
 > **变更方式**：SLO 目标、容量公式或告警口径变更须同步 `internal/identity/observability` 指标与 `docs/runbooks/`，经 SRE Review 后合入
 
 本文给出身份域（`internal/identity`）的生产 SLO、容量公式与压测方法。指标来自 `internal/identity/observability` 的 `identity_*` 与平台 `http_server_*`；自 2026-11（MNT-04）起刷新 / MFA / step-up / OAuth 均已注册时延直方图，Redis 读口径见 §2.2。
@@ -23,6 +23,13 @@
 | 审计 Outbox 积压 | pending=0 且 lag ≤ 5m | `identity_outbox_pending` / `identity_outbox_lag_seconds` | `IdentityOutboxBacklog` / `IdentityOutboxLagHigh` |
 | 短信通道 | 熔断关闭 | `identity_sms_breaker_open` / `identity_sms_send_total{result=failure}` | `IdentitySMSBreakerOpen` |
 | 可用性 | 99.9%/月 | 5xx 比率 + 依赖健康 | `API5xxRateHigh` |
+| M2M 签发成功率 | ≥ 99.5%（排除 429/503 后的业务拒绝） | `1 - denied/(issued+denied)`，取自 `identity_m2m_token_total{result}` | `IdentityM2MTokenDeniedSpike` |
+| M2M 签发 P95 | ≤ 100 ms | `identity_m2m_token_duration_seconds{result="issued"}` p95 | `IdentityM2MTokenLatencyP95High` |
+| M2M secret 年龄 | ≤ 90 天（与 `max_secret_age` 对齐） | `identity_m2m_secret_age_seconds{client}` | `IdentityM2MSecretRotationDue` |
+| SCIM 目录同步 | 10k 用户 + 50 组 ≤ 30 min；错误率 < 0.1% | `identity_scim_request_total{result="error"}` + 演练总耗时 | 无专用告警：按演练口径与错误率观测 |
+
+> M2M 与 SCIM 的告警阈值（`denied` 5 分钟增量 > 10、签发 P95 > 100ms）与本节目标同源；
+> 两者默认关闭（`enabled=false`），未启用时指标无序列，规则不会误报。
 
 > 登录成功率口径：故意排除限流与依赖不可用造成的失败，避免把攻击流量计入业务 SLO；安全侧另用 token reuse / lockout 告警。
 
@@ -51,6 +58,26 @@
 - 日吞吐 ≈ `每轮上限 × (24h / cleanup_interval)`；必须大于日新增 rotated 会话 + 失败登录尝试。
 - 清理依赖 000008 索引；未执行索引时吞吐会随表增长退化。
 
+### 2.4 M2M 令牌签发
+
+- 限流按 `client_id` 5 rps / burst 10，叠加单 IP 限制；超限返回 429（`result="denied"`、`reason="rate_limited"`）。
+- 单次签发 = 1 次 client 查询 + SHA-256 恒定时间比对 + 1 次 RS256 签名，**不含 Argon2**，
+  因此不占 §2.1 的密码并发池，CPU 成本比登录低一个数量级。
+- 吞吐瓶颈在 DB 查询与签名，不在 Go 侧；`identity_m2m_token_duration_seconds` 为现成直方图，
+  P95 目标 100 ms（本轮实测 9.75 ms，余量约 10 倍）。
+- 容量辅助信号：`identity_m2m_token_total{result}`（含 `issued` / `denied` 与 `reason` 维度）、
+  `identity_m2m_secret_age_seconds{client}`（每 client 一条，成本可忽略）。
+
+### 2.5 SCIM 目录同步
+
+- 限流：单令牌 10 rps + 单 IP 20 rps，Redis `fail_closed`；批量同步应由 IdP 侧排队重试消化 429。
+- 写入放大：每用户 1 个事务（账号 + `scim:<provider>` 身份映射）；每组 `N` 成员 = `N` 次 `externalId`
+  解析 + `N` 条成员插入，**组创建是长尾来源**（占总耗时 60% 以上，单次最大约 2.7 s）。
+- 基线水位：10k 用户 + 50 组 × 200 成员，单副本 120.4 s（本机 DEV-01）、151.7 s（STG-EQ-01 两副本），
+  登记见 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §2 `LB-DEV-SCIM-SYNC` / `LB-STG-SCIM-SYNC`。
+- 容量核算：按「日增量用户数 × 单条写入成本」折算并留 2 倍余量；**全量重同步**按 §4 演练水位
+  评估窗口，不要用增量水位外推。
+
 ## 3. 压测方法
 
 1. 在 staging 使用生产同规格 DB/Redis，开启 `identity.enabled=true`、`mfa.admin_required=true`（A 端）。
@@ -58,9 +85,13 @@
    - 密码登录：正确密码 70%、错误密码 20%、不存在账号 10%。
    - 刷新：有效令牌 90%、已轮换令牌 10%（验证重放路径）。
    - MFA：TOTP 成功 / 错误各 50%。
+   - M2M 签发：有效 `client_id`/`secret` 80%、错误 secret 15%、越权 `scope` 5%（验证 `denied` 的 `reason` 分布）。
+   - SCIM 同步：`tests/load/scim_sync.js`，10k 用户 + 50 组 × 200 成员，8 VU；同批重复执行验证幂等。
 3. 采样：每档 10 分钟，记录 `identity_login_duration_seconds`、`identity_refresh_duration_seconds`、
    `identity_mfa_verify_duration_seconds`、`identity_step_up_duration_seconds`、`identity_oauth_callback_duration_seconds`
-   的 p50/p95/p99，以及 5xx、DB 连接池等待、Redis RTT。
+   的 p50/p95/p99，以及 5xx、DB 连接池等待、Redis RTT；M2M 另记 `identity_m2m_token_duration_seconds`
+   与 `identity_m2m_token_total{result,reason}`，SCIM 另记 `identity_scim_request_total{result}` 与总耗时。
+   实测读数统一登记到 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §2，不在本文重复维护。
 4. 通过标准：P95/P99 满足第 1 节 SLO；无连接池等待；Redis 故障注入时账号/会话校验仍可用（jti 按 fail_closed 拒绝）。
 5. 故障注入：
    - 停 Redis：验证 DB 回退、熔断与告警；确认 Pod 不被 readiness 批量摘流。
@@ -84,4 +115,6 @@
 - [ ] `revocation.state_ttl` 下 DB 回源 QPS 可接受
 - [ ] 清理日吞吐 ≥ 日新增会话 + 登录尝试
 - [ ] 登录/刷新/MFA P95/P99 达标
+- [ ] M2M 签发 P95 ≤ 100ms，且 `denied` 的 `reason` 分布无异常集中
+- [ ] SCIM 10k 同步总耗时与错误率达标；组创建长尾在窗口内
 - [ ] Redis 故障注入通过

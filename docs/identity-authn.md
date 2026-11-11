@@ -505,7 +505,7 @@ setup_required / pending --票据过期、重放、账号禁用--> 40100，客�
 - 验收记录：2026-11-05 在 staging 使用真实 Keycloak 完成 OIDC 冒烟，授权码 + PKCE 登录链路通过；JWKS 轮换演练按上节步骤执行，结果以 `identity_oauth_jwks_refresh_total` 与 `identity_oauth_jwks_cache_age_seconds` 为判定依据。
 - 账号映射：`(provider, provider_subject) → account_id`；找不到时按 `identity.oauth.auto_provision` 决定拒绝或建号。
 - IdP 侧参数模板：[idp-config-templates.md](./identity/idp-config-templates.md)（Keycloak 26.x 实测基线 + 通用验收清单）。
-- SCIM 目录同步与 M2M 客户端凭证见 §21（2026-11-10 已实现，默认关闭）。启用需显式配置并完成 S6-1 安全评审；未启用时相关路由不注册。
+- SCIM 目录同步与 M2M 客户端凭证见 §21（2026-11-10 已实现，默认关闭）。启用需显式配置；安全评审 S6-1 已于 2026-11-10 完成（有条件通过，见 [`identity/s6-1-security-review-record-2026-11-10.md`](./identity/s6-1-security-review-record-2026-11-10.md)）；未启用时相关路由不注册。
 
 ---
 

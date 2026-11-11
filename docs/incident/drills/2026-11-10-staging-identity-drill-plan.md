@@ -174,6 +174,17 @@
 - `D3` 的 SAML SP 证书轮换（`certificate_next_pem` / `private_key_next`）未执行：本地未配置 SAML IdP 元数据，仅以 JWT kid 轮换覆盖同类「双密钥并存 → 退役」路径。
 - 部分 Pod 已用新 kid 签发、其余 Pod 尚未滚到的灰度窗口未验证（本地副本数受限，滚动为全量替换）。
 
+### 9.4 三段耗时（OC-05）
+
+| 演练 | 检测用时 | 确认用时 | 缓解用时 | 依据 |
+|---|---|---|---|---|
+| `D2` IdP 不可用 | < 1 s（首个回调即 500；`identity_oauth_callback_total{result="failure"}` 即时可见）；告警链路按规则 `for` 窗口 | ≈ 2 min：核对 `reason=unavailable`、熔断状态与 Keycloak Pod 就绪 | < 1 min：IdP 恢复后下一次回调即 200，**无需重启**（§9.1 D2 免重启自愈） | 本地 kind 实测 |
+| `D4` SCIM 风暴 / 限流 | < 1 s（首个 429 即出现在 `identity_scim_request_total{result="error"}` 与 `reason=rate_limited`） | ≈ 1 min：按 41.7 rps 与令牌配额比对，确认是限流而非故障 | < 10 s：停止压测后 429 回落，令牌限流窗口过后自动恢复 | §9.1 D4（200×25 + 429×5） |
+| `SEC-F-01` secret 超龄告警 | 1 min（临时将 `for` 降为 1m 等价验证；生产口径 1h） | ≈ 1 min：核对 `identity_m2m_secret_age_seconds{client}` 与 `max_secret_age` | 未执行：缓解手段是轮换 secret，按 `key-rotation.md` 另行演练，不在本轮范围 | §9.1 SEC-F-01 |
+
+> 三段耗时用于校准 `SEVERITY_MATRIX.md` 的响应承诺；本次为本地 kind 等价环境，检测链路真实、
+> 人工确认按单人分角色计时，staging 复跑时应以值班实际接管时间重记。
+
 ## 相关链接
 
 - [告警目录](../../runbooks/ALERTS.md)

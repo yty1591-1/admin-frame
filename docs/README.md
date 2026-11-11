@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-10（IAM 计划升 v1.7，状态转为可交付并回写 §13 验收证据；补 M2M 端到端集成用例并修复机器审计；新建 `runbooks/identity-federation-onboarding.md`，补 S6-6 接入 Runbook）；前次 2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态，IAM 计划升 v1.3）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-10（S6-1 安全评审完成，结论有条件通过，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；同日前次（IAM 计划升 v1.7，状态转为可交付并回写 §13 验收证据；补 M2M 端到端集成用例并修复机器审计；新建 `runbooks/identity-federation-onboarding.md`，补 S6-6 接入 Runbook）；前次 2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态，IAM 计划升 v1.3）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -52,6 +52,7 @@
 - [audit/EVENTS.md](./audit/EVENTS.md) / [audit/FIELDS.md](./audit/FIELDS.md) — 审计事件与字段字典
 - [codegen/MANIFEST.md](./codegen/MANIFEST.md) — 生成物清单
 - [perf/BASELINES.md](./perf/BASELINES.md) — 性能基线与微基准登记
+- [perf/LOAD_BASELINES.md](./perf/LOAD_BASELINES.md) — 全链路压测基线登记（本机 / staging 实测水位，与微基准互补）
 - [release/CHECKLIST.md](./release/CHECKLIST.md) — 发布检查清单
 - [release/supply-chain.md](./release/supply-chain.md) — SBOM / 镜像签名 / 部署前验签与验证边界
 - [iam/PERMISSIONS.md](./iam/PERMISSIONS.md) — 权限点目录（与 `internal/iam/catalog` 由单测强一致）
@@ -74,6 +75,8 @@
 | [tenant-data-lifecycle.md](./tenant-data-lifecycle.md) | 租户数据保留期、导出窗口与硬删除边界 |
 | [deploy-kind-verify.md](./deploy-kind-verify.md) | 用 kind 验证 Helm Chart：渲染 → 部署 → 冒烟 → 回滚 → 迁移失败阻断 |
 | [pkg-roadmap.md](./pkg-roadmap.md) | `pkg/` 公共能力包规划与落地状态 |
+| [identity/threat-model.md](./identity/threat-model.md) | 身份域威胁建模：四通道 STRIDE、残留风险 `RR-01`～`RR-06`、评审记录 |
+| [identity/idp-config-templates.md](./identity/idp-config-templates.md) | 企业 IdP 配置模板（Keycloak 26.x 基线 + 八项验收清单） |
 
 ### 3.2 活跃计划（有未关闭条目）
 
@@ -87,6 +90,18 @@
 > **输入依据（已归档）**：
 > - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
 > - [production-readiness-gaps.md](./archive/platform/production-readiness-gaps.md) 是 2026-10-22 的平台能力差距评估（v0.2，基线 `dad8fc0`），各 `ENT` 状态与排期已由实施计划 §十二 承接；它不构成排期，已于 2026-11-09 移入 `archive/platform/`。
+
+### 3.3 评审与验收记录（未闭环，不归档）
+
+| 文档 | 当前状态 | 归档前置 |
+|------|----------|----------|
+| [iam/m0-signoff-record-2026-11-10.md](./iam/m0-signoff-record-2026-11-10.md) | 待签（三位批准人均未签） | 会签完成后按 §四 归档 |
+| [identity/s6-1-security-review-record-2026-11-10.md](./identity/s6-1-security-review-record-2026-11-10.md) | 已评审，2026-11-10 有条件通过 | 条件 `C1`～`C3` 闭环后移入 `archive/reviews/` |
+| [iam/p1-7-acceptance-report.md](./iam/p1-7-acceptance-report.md) | 未签字（实现方出具的待评审输入） | M5 双评审签字 + staging 实战 |
+| [incident/drills/2026-11-10-staging-identity-drill-plan.md](./incident/drills/2026-11-10-staging-identity-drill-plan.md) | 本地 kind 已执行，staging 待执行 | staging 执行后按该文 §8 改名归档 |
+
+> 这四份仍是**验收与准入依据**，不满足 §四 的第三条（不再作为排期或验收依据），因此留在原位；
+> 其结论已分别沉淀到 L1（`runbooks/`、`ALERTS.md`）或 L2（`identity-slo.md`、`threat-model.md`）。
 
 ---
 
@@ -137,7 +152,8 @@ docs/
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）
 ├── oncall/                    # 值班排班与交接（L1）
-├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）
+├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）；iam/ 另含 M0 会签单与 P1-7 验收报告
+├── identity/                  # 身份域威胁建模、S6-1 评审记录、IdP 配置模板（L2 / 过程记录）
 └── archive/                   # 已闭环过程文档（L4，只读）
     ├── README.md
     ├── identity/              # identity 差距评审 → 批次台账 → 完成报告全链路
