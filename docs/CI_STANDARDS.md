@@ -48,7 +48,7 @@
 
 **依赖门禁（DEPENDENCY_STANDARDS，并入 job `vuln`）：** `govulncheck` + `scripts/ci/check-deps.sh`（go.sum、replace、许可证）。
 
-**配置门禁（CONFIG_STANDARDS，并入 job `secrets`）：** `scripts/ci/check-config.sh`（example 齐全、禁跟踪本地 yaml、DSN 策略）+ gitleaks。
+**配置门禁（CONFIG_STANDARDS，并入 job `secrets`）：** `scripts/ci/check-no-static-config.sh`（禁止跟踪运行时静态配置、样例只减不增、DSN 占位符策略）+ gitleaks。
 
 **数据 / 可靠性 / 可观测门禁（DATA / REL / OBS，并入 job `arch`）：** `check-migrations.sh` + `check-reliability.sh` + `check-observability.sh`。
 
@@ -86,7 +86,7 @@
 | CI-05 + TEST-01～05 | `test` | `test` | `make test-ci` |
 | CI-06 + DEP-01/03～05 | `vuln` | `vuln` | `make vuln` + `make check-deps` |
 | CI-09 + DATA…AUD + LIC/GEN/PERF | `arch` | `arch` | `make check-transport` + 各 standards 检查脚本（见 gitee-job arch） |
-| SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
+| SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-no-static-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
@@ -201,7 +201,7 @@ make openapi         # API-01/07/08
 make test-ci         # CI-05 + TEST 门禁
 make vuln            # CI-06 / DEP-04
 make check-deps      # DEP-01/03/05
-make check-config         # CFG-01/02/06
+make check-no-static-config    # CFG-01/06（禁止新增静态配置）
 make check-migrations     # DATA-01/02/03
 make check-reliability    # REL-01/02/05
 make check-observability  # OBS-01/02/04
@@ -346,7 +346,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
 | `scripts/ci/check-deps.sh` | DEP-01/03/05 |
-| `scripts/ci/check-config.sh` | CFG-01/02/06 |
+| `scripts/ci/check-no-static-config.sh` | CFG-01/06 |
 | `scripts/ci/check-migrations.sh` | DATA-01/02/03 |
 | `scripts/ci/check-reliability.sh` | REL-01/02/05 |
 | `scripts/ci/check-observability.sh` | OBS-01/02/04 |

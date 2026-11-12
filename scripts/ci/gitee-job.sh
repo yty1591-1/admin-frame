@@ -97,7 +97,7 @@ case "${job}" in
   secrets)
     bash scripts/ci/check-debug-endpoints.sh
     bash scripts/ci/gitleaks.sh
-    bash scripts/ci/check-config.sh
+    bash scripts/ci/check-no-static-config.sh
     ;;
   openapi)
     bash scripts/ci/check-openapi.sh

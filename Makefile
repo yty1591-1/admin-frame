@@ -10,7 +10,7 @@ PYTHON ?= python3
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
-	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-config \
+	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-no-static-config \
 	check-migrations check-reliability check-observability \
 	check-ci-paths check-ci-parity \
 	check-git check-release check-sbom check-runbooks check-oncall check-audit \
@@ -141,9 +141,9 @@ openapi-artifacts: openapi-bundle openapi-docs openapi-client openapi-changelog
 check-deps:
 	bash scripts/ci/check-deps.sh
 
-# CFG-01/02/06：配置样例与入库策略。
-check-config:
-	bash scripts/ci/check-config.sh
+# CFG-01：仓库不得再跟踪运行时静态配置（configs/ 只减不增）。
+check-no-static-config:
+	bash scripts/ci/check-no-static-config.sh
 
 # DATA-01/02/03：迁移命名、up/down 配对、禁 API 自动 migrate。
 check-migrations:
@@ -299,7 +299,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-ci-parity check-debug secrets check-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-ci-parity check-debug secrets check-no-static-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 # CI-16：workflow job ↔ 本地入口一致性（防「某个 job 在本地根本没有入口」）。
 check-ci-parity:
