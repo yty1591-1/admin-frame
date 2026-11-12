@@ -61,10 +61,21 @@ const (
 	// ActionRBACCertification 访问复核：创建 / 激活 / 关闭活动、裁决任务与证据导出。
 	ActionRBACCertification = "rbac.certification"
 	ActionConfigChange      = "config.change"
-	ActionDataExport        = "data.export"
-	ActionDataQueryScope    = "data.query_scope"
-	ActionPaymentCapture    = "payment.capture"
-	ActionPaymentRefund     = "payment.refund"
+	// 配置中心（ADR-0013）：初始化、发布、回滚与审批。
+	ActionConfigBootstrapCompleted = "config.bootstrap.completed"
+	ActionConfigReleasePublish     = "config.release.publish"
+	ActionConfigReleaseRollback    = "config.release.rollback"
+	ActionConfigReleaseApprove     = "config.release.approve"
+	// 业务密钥（ADR-0014）：创建、轮换、吊销、授权与解析访问。
+	ActionConfigSecretCreate  = "config.secret.create"
+	ActionConfigSecretRotate  = "config.secret.rotate"
+	ActionConfigSecretRevoke  = "config.secret.revoke"
+	ActionConfigSecretGrant   = "config.secret.grant"
+	ActionConfigSecretResolve = "config.secret.resolve"
+	ActionDataExport          = "data.export"
+	ActionDataQueryScope      = "data.query_scope"
+	ActionPaymentCapture      = "payment.capture"
+	ActionPaymentRefund       = "payment.refund"
 	// ActionAuditQuery 审计事件查询（ENT-04）；记录查询范围摘要，不记过滤结果原文。
 	ActionAuditQuery = "audit.query"
 	// ActionAuditExport 审计事件导出（ENT-04）；含导出范围、条数与操作者。
@@ -132,6 +143,15 @@ func KnownActions() []string {
 		ActionRBACSodChange,
 		ActionRBACCertification,
 		ActionConfigChange,
+		ActionConfigBootstrapCompleted,
+		ActionConfigReleasePublish,
+		ActionConfigReleaseRollback,
+		ActionConfigReleaseApprove,
+		ActionConfigSecretCreate,
+		ActionConfigSecretRotate,
+		ActionConfigSecretRevoke,
+		ActionConfigSecretGrant,
+		ActionConfigSecretResolve,
 		ActionDataExport,
 		ActionDataQueryScope,
 		ActionPaymentCapture,
