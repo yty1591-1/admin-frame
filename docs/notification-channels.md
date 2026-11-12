@@ -1,6 +1,6 @@
 # 通知渠道：短信 / 邮件 / 推送 模块化驱动规划
 
-> **状态**：核心契约与 L1 驱动已实现（短信阿里云、邮件 SMTP、推送 APNs/FCM；M4 业务编排待首个真实调用方）  
+> **状态**：核心契约、L1 驱动（短信阿里云、邮件 SMTP、推送 APNs/FCM）与**配置驱动装配**均已落地；`cmd/worker` 按 `notification.channels` 构造渠道路由，prod/staging 禁止 memory  
 > **关联**：[`pkg-roadmap.md`](./pkg-roadmap.md) §2.6、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §5.7 / §6 / §11 / §12、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DEPENDENCY_STANDARDS.md`](./DEPENDENCY_STANDARDS.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)  
 > **最后更新**：2026-11-05（补状态与变更方式字段；关联章节按 `pkg-roadmap` 重编号同步为 §2.6）  
 > **变更方式**：渠道契约、错误语义、驱动矩阵或安全红线变更须同步 `pkg/{sms,email,push}` 契约、契约测试与本文配置 / 观测章节，经安全 Review 后合入
@@ -657,71 +657,71 @@ rate:sms:ip:<ip>
 
 ## 8. 配置草案
 
-> 配置结构由 `internal/platform` 映射到三个包的 `Config`；`pkg` 不读文件、不读环境变量（CFG-07）。
+> 配置由 `internal/notification/config` 定义，`cmd/internal/notificationruntime` 在字典装配期
+> 读取凭据并构造驱动；`pkg` 不读文件、不读环境变量（CFG-07）。
 
 ```yaml
-notify:
-  sms:
-    driver: memory            # memory | aliyun | tencent | huawei
-    timeout: 3s
-    allow_raw_content: false
-    aliyun:
-      endpoint: dysmsapi.aliyuncs.com
-      region: cn-hangzhou
+notification:
+  channels:
+    email:
+      driver: smtp                # memory | smtp | disabled
+      from: no-reply@example.com
+      from_name: AdminFrame
+      smtp:
+        host: smtp.example.com
+        port: 587
+        encryption: starttls      # starttls（默认）| tls
+        auth: plain               # plain（默认）| login
+        username: no-reply@example.com
+        password_env: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+        tls_min_version: "1.2"
+        allow_insecure: false     # 仅 local 允许 true
+
+    sms:
+      driver: aliyun              # memory | aliyun | disabled
+      template_id: SMS_123
       sign_name: "某某科技"
-      # access_key_id / access_key_secret 只允许环境变量注入
+      aliyun:
+        endpoint: https://dysmsapi.aliyuncs.com
+        region: cn-hangzhou
+        access_key_id: ""
+        access_key_secret_env: ALIYUN_SMS_ACCESS_KEY_SECRET
+        sign_name: ""
 
-  email:
-    driver: memory            # memory | smtp | ses
-    timeout: 10s
-    from: "noreply@example.com"
-    max_message_bytes: 10485760
-    max_recipients: 50
-    smtp:
-      host: smtp.example.com
-      port: 587
-      encryption: starttls    # starttls | tls | none（生产禁止 none）
-      auth: plain             # plain | login | none
-      username: "noreply@example.com"
-      helo_name: "admin-frame"
-      tls_min_version: "1.2"
-      # password 只允许环境变量注入
-
-  push:
-    driver: fcm               # memory | apns | fcm
-    timeout: 5s
-    apns:
-      endpoint: https://api.push.apple.com
-      topic: com.example.app
-      key_id: "ABC123DEFG"
-      team_id: "TEAM123456"
-      # private_key 只允许环境变量/文件挂载
-    fcm:
-      project_id: "example-prod"
-      endpoint: https://fcm.googleapis.com
-      # credentials_json 只允许环境变量或挂载文件路径
+    push:
+      driver: apns                # memory | apns | fcm | disabled
+      platform: ios               # apns→ios；fcm→android
+      apns:
+        endpoint: https://api.push.apple.com
+        topic: com.example.app
+        key_id: "ABC123DEFG"
+        team_id: "TEAM123456"
+        private_key_env: ADMIN_FRAME_NOTIFICATION_APNS_PRIVATE_KEY
+        push_type: alert
+      fcm:
+        project_id: "example-prod"
+        endpoint: https://fcm.googleapis.com
+        credentials_json_env: ADMIN_FRAME_NOTIFICATION_FCM_CREDENTIALS
 ```
 
-环境变量（CFG-04：env > 文件 > 默认值）：
+环境变量（只用于注入**值**；YAML 里只写变量名）：
 
 | 变量 | 说明 |
 |------|------|
-| `ADMIN_FRAME_NOTIFY_SMS_DRIVER` | 覆盖短信驱动 |
-| `ADMIN_FRAME_NOTIFY_SMS_ALIYUN_ACCESS_KEY_ID` | 阿里云 AK ID |
-| `ADMIN_FRAME_NOTIFY_SMS_ALIYUN_ACCESS_KEY_SECRET` | 阿里云 AK Secret |
-| `ADMIN_FRAME_NOTIFY_EMAIL_SMTP_PASSWORD` | SMTP 密码/授权码 |
-| `ADMIN_FRAME_NOTIFY_PUSH_APNS_PRIVATE_KEY` | APNs `.p8` 内容（PEM）或文件路径 |
-| `ADMIN_FRAME_NOTIFY_PUSH_FCM_CREDENTIALS_JSON` | Service Account JSON 或文件路径 |
+| `ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD` | SMTP 密码/授权码 |
+| `ALIYUN_SMS_ACCESS_KEY_SECRET` | 阿里云短信 AK Secret（名称可改，与 `*_env` 一致即可） |
+| `ADMIN_FRAME_NOTIFICATION_APNS_PRIVATE_KEY` | APNs `.p8` 内容（PEM）或文件路径 |
+| `ADMIN_FRAME_NOTIFICATION_FCM_CREDENTIALS` | Service Account JSON 或文件路径 |
 
 **校验规则（启动期，失败即退出）**：
 
-1. `driver` 必填且在已注册列表内；`env=prod` 禁止 `memory`，且 `sms.allow_raw_content` 必须为 false。
-2. `timeout` 必须在 `(0, 30s]`。
-3. `email.smtp.encryption=none` 仅允许 `env=local`；`port=465` 必须配 `tls`，`587` 配 `starttls`。
-4. `sms.aliyun` 缺少 AK/SignName 时拒绝启动；`push.apns` 缺少 `key_id/team_id/topic/private_key` 时拒绝启动。
-5. 密钥字段在 YAML 中必须为空；只从 env 或挂载文件读取（SEC-01 / CFG-06）。
-6. `email.from` 必须与配置的发件域一致；跨域 `From` 拒绝（防伪造）。
-7. 配置结构不得包含 `InsecureSkipVerify` 一类开关；TLS 校验不可关闭。
+1. `driver` 必须是 `memory | smtp | aliyun | apns | fcm | disabled` 之一；未配置视为 memory。
+2. `env=prod/staging` 禁止 `memory`；未使用的渠道必须显式 `disabled`，避免静默丢弃。
+3. `email.smtp`：`from` / `host` / `password_env` 必填；prod/staging 禁止 `encryption=none` 与 `allow_insecure=true`。
+4. `sms.aliyun`：`template_id`、`sign_name`（或 `aliyun.sign_name`）、`access_key_id`、`access_key_secret_env` 必填。
+5. `push.apns`：`topic` / `key_id` / `team_id` / `private_key_env` 必填且 `platform=ios`；`push.fcm`：`credentials_json_env` 必填且 `platform=android`。
+6. 凭据值在装配期从环境变量读取；变量缺失时进程失败关闭，不允许「启动成功但永远发不出去」。
+7. `pkg/email.Config` / `pkg/sms.Config` / `pkg/push.Config` 仍会二次校验连接参数与 TLS 下限。
 
 ---
 

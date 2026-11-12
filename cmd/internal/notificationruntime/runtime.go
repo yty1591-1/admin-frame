@@ -1,27 +1,25 @@
 // Package notificationruntime 装配通知域运行时（ENT-10）。
 //
-// 渠道驱动阶段语义（docs/notification-channels.md M4）：默认装配
-// memory 驱动（只记录不出网），生产驱动（SMTP / 阿里云 / APNs / FCM）
-// 由渠道配置就绪后经 NewWithRoute 注入；编排、可靠性、状态机与驱动无关。
+// 渠道路由由 notification.channels 配置决定：dev/test 可显式使用 memory
+// 驱动（只记录不出网），prod/staging 必须配置真实驱动（SMTP / 阿里云 /
+// APNs / FCM）或显式 disabled；编排、可靠性与状态机与驱动无关。
 package notificationruntime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/admin-frame/admin-frame/internal/notification/app"
+	notificationconfig "github.com/admin-frame/admin-frame/internal/notification/config"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
-	"github.com/admin-frame/admin-frame/internal/notification/infrastructure/channel"
 	"github.com/admin-frame/admin-frame/internal/notification/infrastructure/persistence"
 	"github.com/admin-frame/admin-frame/internal/notification/observability"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	pkgemail "github.com/admin-frame/admin-frame/pkg/email"
-	pkgpush "github.com/admin-frame/admin-frame/pkg/push"
 	"github.com/admin-frame/admin-frame/pkg/ratelimit"
-	pkgsms "github.com/admin-frame/admin-frame/pkg/sms"
 )
 
 // EnvBlacklistSalt 是黑名单 HMAC 盐的环境变量名（ENT-07：密钥只走环境
@@ -45,9 +43,16 @@ type Runtime struct {
 }
 
 // New 构造通知运行时：仓储按 db.driver 切换 MySQL / memory，
-// 渠道路由默认 memory 驱动（不出网，阶段语义见包注释），频控关闭。
-func New(deps *platform.Deps) (*Runtime, error) {
-	return NewWithRoute(deps, defaultMemoryRoute(), nil)
+// 渠道路由由配置决定（memory / SMTP / 阿里云 / APNs / FCM / disabled）。
+func New(deps *platform.Deps, cfg notificationconfig.NotificationConfig) (*Runtime, error) {
+	if errs := cfg.Validate(deps.Config.Env); len(errs) > 0 {
+		return nil, fmt.Errorf("notification config: %w", errors.Join(errs...))
+	}
+	route, err := buildRoute(context.Background(), cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithRoute(deps, route, nil)
 }
 
 // NewWithRoute 构造通知运行时并注入渠道路由与频控。
@@ -212,15 +217,4 @@ func blacklistHasher() (app.TargetHasher, error) {
 		return nil, fmt.Errorf("notification blacklist salt: environment variable %s is required (empty = offline-enumerable hash)", EnvBlacklistSalt)
 	}
 	return app.HMACHasher([]byte(salt))
-}
-
-// defaultMemoryRoute 装配 memory 驱动路由（不出网，M4 阶段语义）。
-// sms memory 驱动开启 AllowRawContent：通知模板在编排层渲染成成品正文，
-// memory 驱动按裸内容记录（生产驱动走厂商模板 ID + 参数，见 SMSSender）。
-func defaultMemoryRoute() map[domain.Channel][]app.Sender {
-	return map[domain.Channel][]app.Sender{
-		domain.ChannelEmail: {channel.NewEmailSender(pkgemail.NewMemory(pkgemail.MemoryConfig{}), pkgemail.Address{})},
-		domain.ChannelSms:   {channel.NewSMSSender(pkgsms.NewMemory(pkgsms.MemoryConfig{AllowRawContent: true}), "", "")},
-		domain.ChannelPush:  {channel.NewPushSender(pkgpush.NewMemory(pkgpush.MemoryConfig{}), pkgpush.PlatformIOS)},
-	}
 }

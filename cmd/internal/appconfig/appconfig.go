@@ -15,6 +15,7 @@ import (
 	iamcatalog "github.com/admin-frame/admin-frame/internal/iam/catalog"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	notificationconfig "github.com/admin-frame/admin-frame/internal/notification/config"
 	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
 	"github.com/admin-frame/admin-frame/pkg/config"
@@ -24,10 +25,11 @@ import (
 type Config struct {
 	platformconfig.Config `yaml:",inline"`
 
-	Identity identityconfig.IdentityConfig `yaml:"identity"`
-	IAM      iamconfig.IAMConfig           `yaml:"iam"`
-	Audit    auditconfig.AuditConfig       `yaml:"audit"`
-	Tenant   tenantconfig.TenantConfig     `yaml:"tenant"`
+	Identity     identityconfig.IdentityConfig         `yaml:"identity"`
+	IAM          iamconfig.IAMConfig                   `yaml:"iam"`
+	Audit        auditconfig.AuditConfig               `yaml:"audit"`
+	Tenant       tenantconfig.TenantConfig             `yaml:"tenant"`
+	Notification notificationconfig.NotificationConfig `yaml:"notification"`
 }
 
 // ApplyDefaults 依次填充平台段与各域默认值。
@@ -36,6 +38,7 @@ func (c *Config) ApplyDefaults() {
 	c.Identity.ApplyDefaults()
 	c.IAM.ApplyDefaults()
 	c.Audit.ApplyDefaults()
+	c.Notification.ApplyDefaults()
 }
 
 // Normalize 补齐平台段派生值、归一化 IAM 模式，并在同一次 Provider 解析中

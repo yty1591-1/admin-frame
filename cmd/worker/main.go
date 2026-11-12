@@ -40,7 +40,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/worker.yaml", "config file path")
+	configPath := flag.String("config", "configs/dev/worker.yaml", "config file path")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
 	sweepCertifications := flag.Bool("certification-sweep", false,
 		"run one access-certification expiry sweep and exit")
@@ -144,8 +144,8 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		return fmt.Errorf("register tenant async handlers: %w", err)
 	}
 	// 通知域（ENT-10）：编排 Handler 消费 notification.requested；
-	// 渠道默认 memory 驱动（阶段语义见 notificationruntime 包注释）。
-	notificationRT, err := notificationruntime.New(deps)
+	// 渠道路由由 notification 配置装配（SMTP / 阿里云 / APNs / FCM）。
+	notificationRT, err := notificationruntime.New(deps, appCfg.Notification)
 	if err != nil {
 		return fmt.Errorf("notification runtime: %w", err)
 	}
