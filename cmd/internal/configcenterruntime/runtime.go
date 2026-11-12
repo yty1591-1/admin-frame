@@ -78,9 +78,11 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		service = deps.Config.Service
 	}
 
-	// M1-4 才回填全量键声明；当前为空注册表，因此 Namespaces() 为空、
-	// 启动播种自然 no-op。管理面写入未声明键会被 400 拒绝（fail closed）。
-	registry := spec.NewRegistry()
+	// M1-4：平台启动键/热更键与 IAM 治理键已声明；业务域键待域 owner 补齐。
+	registry, err := spec.Platform()
+	if err != nil {
+		return nil, fmt.Errorf("configcenter key spec: %w", err)
+	}
 
 	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs,
 		app.Options{Service: service})
