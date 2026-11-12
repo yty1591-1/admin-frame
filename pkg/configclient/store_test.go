@@ -28,6 +28,33 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadFromStoreVerifiesSnapshot(t *testing.T) {
+	snapshot, verifier := signedSnapshot(t)
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "snapshot.json"))
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	if err := store.Save(context.Background(), snapshot); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+	loaded, err := LoadFromStore(context.Background(), store, verifier)
+	if err != nil {
+		t.Fatalf("load from store: %v", err)
+	}
+	if loaded.Values["http.timeout"] != "10s" {
+		t.Fatalf("loaded value = %q, want 10s", loaded.Values["http.timeout"])
+	}
+
+	tampered := snapshot
+	tampered.Values = map[string]string{"http.timeout": "99s", "log.level": "info"}
+	if err := store.Save(context.Background(), tampered); err != nil {
+		t.Fatalf("save tampered snapshot: %v", err)
+	}
+	if _, err := LoadFromStore(context.Background(), store, verifier); err == nil {
+		t.Fatal("tampered snapshot must be rejected")
+	}
+}
+
 func TestFileStoreRejectsEmptyPath(t *testing.T) {
 	if _, err := NewFileStore(""); err == nil {
 		t.Fatal("empty snapshot path must be rejected")

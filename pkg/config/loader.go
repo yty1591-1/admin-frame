@@ -46,6 +46,12 @@ type Options[T any] struct {
 	EnvPrefix string
 	// LookupEnv 读取环境变量；nil 时使用 os.LookupEnv。
 	LookupEnv func(key string) (value string, ok bool)
+	// Values 返回配置中心快照的扁平取值（yaml 路径 → 字符串）。
+	//
+	// 在文件与环境变量之后覆盖，优先级最高（CFG-04：配置中心 > 代码默认值）；
+	// 未出现在快照中的键保持文件/环境变量/默认值，便于迁移期只接管已声明键。
+	// nil 表示不接入配置中心；返回错误则整体加载失败。
+	Values func() (map[string]string, error)
 	// Defaults 在解码文件前写入默认值；可为 nil。
 	Defaults func(*T)
 	// Normalize 在环境变量覆盖之后、Validate 之前执行；可为 nil。
@@ -69,7 +75,7 @@ type Options[T any] struct {
 	AllowUnknownFields bool
 }
 
-// Loader 按「默认值 → 文件 → 环境变量 → 校验」加载 T 类型配置。
+// Loader 按「默认值 → 文件 → 环境变量 → 配置中心快照 → 校验」加载 T 类型配置。
 //
 // 构造后只读，可并发调用 Load；每次调用返回独立副本。
 type Loader[T any] struct {
@@ -128,10 +134,12 @@ func NewLoader[T any](opts Options[T]) (loader *Loader[T], err error) {
 
 // Load 按优先级加载并校验配置，返回独立副本。
 //
-// 执行顺序：Defaults → Files（按声明顺序，展开 include）→ 环境变量 → Normalize → Validate。
+// 执行顺序：Defaults → Files（按声明顺序，展开 include）→ 环境变量 →
+// 配置中心快照 → Normalize → Validate。
 // 失败返回包装 ErrInvalidConfig 的错误，并按原因附加 ErrMissingFile、
-// ErrFileUnreadable、ErrMalformedFile、ErrUnknownField 或 ErrEnvOverride；
-// 语义码为 InvalidArgument（文件不存在为 NotFound）。错误文本不含配置值。
+// ErrFileUnreadable、ErrMalformedFile、ErrUnknownField、ErrEnvOverride 或
+// ErrSnapshotOverride；语义码为 InvalidArgument（文件不存在为 NotFound）。
+// 错误文本不含配置值。
 func (l *Loader[T]) Load() (cfg *T, err error) {
 	if l == nil {
 		return nil, invalidConfig("nil loader")
@@ -147,6 +155,15 @@ func (l *Loader[T]) Load() (cfg *T, err error) {
 	}
 	if l.opts.EnvPrefix != "" {
 		if err := BindEnv(&value, l.opts.EnvPrefix, l.opts.LookupEnv); err != nil {
+			return nil, err
+		}
+	}
+	if l.opts.Values != nil {
+		values, err := l.opts.Values()
+		if err != nil {
+			return nil, normalizeError(err)
+		}
+		if err := BindValues(&value, values); err != nil {
 			return nil, err
 		}
 	}

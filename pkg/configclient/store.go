@@ -31,6 +31,27 @@ func NewFileStore(path string) (*FileStore, error) {
 	return &FileStore{Path: path}, nil
 }
 
+// LoadFromStore 读取本地快照并验签，供无中心 / 无 DB 的冷启动使用。
+//
+// 只接受已配置公钥验签通过的快照；文件缺失、内容损坏或验签失败均返回错误，
+// 由调用方决定是否降级为静态配置。
+func LoadFromStore(ctx context.Context, store SnapshotStore, verifier *Verifier) (Snapshot, error) {
+	if store == nil {
+		return Snapshot{}, fmt.Errorf("configclient: snapshot store is required")
+	}
+	if verifier == nil {
+		return Snapshot{}, fmt.Errorf("configclient: snapshot verifier is required")
+	}
+	snapshot, err := store.Load(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := verifier.Verify(snapshot); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
 // Load 读取并解码快照；文件不存在返回 os.ErrNotExist 包装错误。
 func (f *FileStore) Load(_ context.Context) (Snapshot, error) {
 	raw, err := os.ReadFile(f.Path)

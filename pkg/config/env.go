@@ -18,6 +18,9 @@ const (
 
 	// maxEnvKeyBytes 限制派生出的环境变量名长度，避免异常结构体制造超长键。
 	maxEnvKeyBytes = 128
+
+	// reasonUnsupportedLeaf 表示叶子类型不支持字符串绑定。
+	reasonUnsupportedLeaf = "unsupported leaf type"
 )
 
 var (
@@ -162,58 +165,78 @@ func (b *envBinder) applyLeaf(field reflect.Value, key string) (applied bool, er
 
 // setLeaf 按目标类型解析 raw；错误只报告变量名与期望类型。
 func (b *envBinder) setLeaf(field reflect.Value, key, raw string) error {
+	reason := assignLeaf(field, raw)
+	switch reason {
+	case "":
+		return nil
+	case reasonUnsupportedLeaf:
+		return unsupportedFieldError(field.Type().String(), key)
+	default:
+		return envError(key, reason)
+	}
+}
+
+// assignLeaf 把字符串写入叶子字段，返回失败原因；空串表示成功。
+//
+// 原因文本不包含原始取值，供环境变量与配置中心快照共用。
+func assignLeaf(field reflect.Value, raw string) string {
 	if field.Type() == durationType {
 		parsed, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return envError(key, "expected a Go duration such as 5s or 1m30s")
+			return "expected a Go duration such as 5s or 1m30s"
 		}
 		field.SetInt(int64(parsed))
-		return nil
+		return ""
 	}
 	if field.Kind() == reflect.Pointer {
 		elem := reflect.New(field.Type().Elem())
-		if err := b.setLeaf(elem.Elem(), key, raw); err != nil {
-			return err
+		if reason := assignLeaf(elem.Elem(), raw); reason != "" {
+			return reason
 		}
 		field.Set(elem)
-		return nil
+		return ""
 	}
 	if field.CanAddr() {
 		if unmarshaler, ok := field.Addr().Interface().(encoding.TextUnmarshaler); ok {
 			if err := unmarshaler.UnmarshalText([]byte(strings.TrimSpace(raw))); err != nil {
-				return envError(key, "expected text accepted by "+field.Type().String())
+				return "expected text accepted by " + field.Type().String()
 			}
-			return nil
+			return ""
 		}
 	}
 
 	switch field.Kind() {
 	case reflect.String:
 		field.SetString(raw)
+		return ""
 	case reflect.Bool:
 		parsed, ok := parseBool(raw)
 		if !ok {
-			return envError(key, "expected boolean: true/false, 1/0, yes/no or on/off")
+			return "expected boolean: true/false, 1/0, yes/no or on/off"
 		}
 		field.SetBool(parsed)
+		return ""
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, field.Type().Bits())
 		if err != nil {
-			return envError(key, "expected a base-10 integer")
+			return "expected a base-10 integer"
 		}
 		field.SetInt(parsed)
+		return ""
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		parsed, err := strconv.ParseUint(strings.TrimSpace(raw), 10, field.Type().Bits())
 		if err != nil {
-			return envError(key, "expected a non-negative base-10 integer")
+			return "expected a non-negative base-10 integer"
 		}
 		field.SetUint(parsed)
+		return ""
 	case reflect.Float32, reflect.Float64:
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), field.Type().Bits())
 		if err != nil {
-			return envError(key, "expected a floating-point number")
+			return "expected a floating-point number"
 		}
 		field.SetFloat(parsed)
+		return ""
 	case reflect.Slice:
 		parts := strings.Split(raw, ",")
 		items := make([]string, 0, len(parts))
@@ -223,10 +246,10 @@ func (b *envBinder) setLeaf(field reflect.Value, key, raw string) error {
 			}
 		}
 		field.Set(reflect.ValueOf(items).Convert(field.Type()))
+		return ""
 	default:
-		return unsupportedFieldError(field.Type().String(), key)
+		return reasonUnsupportedLeaf
 	}
-	return nil
 }
 
 // keyFor 计算环境变量名；显式 env 标签为完整变量名。

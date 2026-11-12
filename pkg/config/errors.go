@@ -19,6 +19,8 @@ var (
 	ErrUnknownField = pkgerrors.NewStd("config: unknown field")
 	// ErrEnvOverride 表示环境变量无法解析或目标字段不受支持。
 	ErrEnvOverride = pkgerrors.NewStd("config: invalid environment override")
+	// ErrSnapshotOverride 表示配置中心快照取值无法解析或写入目标字段。
+	ErrSnapshotOverride = pkgerrors.NewStd("config: invalid config center snapshot override")
 	// ErrUnsupportedField 表示显式 env 标签标注在不支持绑定的字段上。
 	ErrUnsupportedField = pkgerrors.NewStd("config: unsupported field type")
 	// ErrWatcherClosed 表示 Watcher 已关闭，不能再启动或手动重载。
@@ -70,4 +72,10 @@ func envError(key, reason string) error {
 func unsupportedFieldError(field, key string) error {
 	return configError(ErrUnsupportedField,
 		pkgerrors.InvalidArgument(fmt.Sprintf("field %s: type does not support environment binding (variable %s)", field, key)))
+}
+
+// snapshotError 构造快照取值绑定错误；只输出键名与期望类型，不输出取值。
+func snapshotError(key, reason string) error {
+	return configError(ErrSnapshotOverride,
+		pkgerrors.InvalidArgument(fmt.Sprintf("config center key %s: %s", key, reason)))
 }

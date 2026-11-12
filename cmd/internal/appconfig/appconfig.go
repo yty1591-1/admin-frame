@@ -102,9 +102,17 @@ func (c *Config) validateM2MScopes() error {
 
 // NewLoader 构造完整的进程配置加载器。
 func NewLoader(path string) (*config.Loader[Config], error) {
+	return NewLoaderWithValues(path, nil)
+}
+
+// NewLoaderWithValues 构造带配置中心快照覆盖的加载器。
+//
+// values 返回已验签快照的扁平取值（yaml 路径 → 字符串）；nil 表示不接入。
+func NewLoaderWithValues(path string, values func() (map[string]string, error)) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
 		Files:     []string{path},
 		EnvPrefix: platformconfig.EnvPrefix,
+		Values:    values,
 		Defaults:  (*Config).ApplyDefaults,
 		Normalize: (*Config).Normalize,
 		Validate:  (*Config).Validate,
@@ -115,7 +123,14 @@ func NewLoader(path string) (*config.Loader[Config], error) {
 //
 // 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
 func Load(path string) (*Config, error) {
-	loader, err := NewLoader(path)
+	return LoadWithValues(path, nil)
+}
+
+// LoadWithValues 加载配置并应用配置中心快照取值。
+//
+// 优先级：配置中心快照 > 环境变量 > 配置文件 > 默认值（CFG-04）。
+func LoadWithValues(path string, values func() (map[string]string, error)) (*Config, error) {
+	loader, err := NewLoaderWithValues(path, values)
 	if err != nil {
 		return nil, err
 	}
