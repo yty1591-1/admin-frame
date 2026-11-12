@@ -35,6 +35,29 @@ type ClientConfig struct {
 	Store SnapshotStore
 	// Now 时钟；测试注入。
 	Now func() time.Time
+	// OnRefresh 在每次刷新尝试后回调；用于运行期日志与指标，可为 nil。
+	//
+	// 回调在刷新 goroutine 内同步执行，必须快速返回，且不得调用 Refresh / Run。
+	// 事件中的 Snapshot 为只读副本，调用方不得修改。
+	OnRefresh func(RefreshEvent)
+}
+
+// RefreshEvent 描述一次刷新尝试的结果。
+//
+// Err 非 nil 表示本次拉取或验签失败；此时 Loaded 为 true 说明仍在服务
+// 上一份已验签快照（CFG-12）。事件只携带快照元数据与取值，敏感项本就不
+// 在快照内，调用方仍不得把取值写入日志。
+type RefreshEvent struct {
+	// At 是刷新完成时间。
+	At time.Time
+	// Snapshot 是当前可读快照；无可用快照时为零值，Loaded=false。
+	Snapshot Snapshot
+	// Loaded 表示当前是否存在可读快照。
+	Loaded bool
+	// Degraded 表示当前取值依赖本地快照（中心不可用）。
+	Degraded bool
+	// Err 是本次刷新失败原因；nil 表示成功。
+	Err error
 }
 
 // Client 是进程内配置读取客户端：拉取 → 验签 → 原子替换 → 类型化读取。
@@ -49,6 +72,7 @@ type Client struct {
 	namespace string
 	store     SnapshotStore
 	now       func() time.Time
+	onRefresh func(RefreshEvent)
 
 	current  atomic.Pointer[loaded]
 	degraded atomic.Bool
@@ -86,6 +110,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		namespace: cfg.Namespace,
 		store:     cfg.Store,
 		now:       now,
+		onRefresh: cfg.OnRefresh,
 	}, nil
 }
 
@@ -93,6 +118,13 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 //
 // 无可用内存快照时先尝试从本地文件快照恢复（再验签），仍失败则保持空缓存。
 func (c *Client) Refresh(ctx context.Context) error {
+	err := c.refresh(ctx)
+	c.observe(err)
+	return err
+}
+
+// refresh 执行一次拉取、验签与装载；不触发刷新回调。
+func (c *Client) refresh(ctx context.Context) error {
 	snapshot, err := c.source.Load(ctx, c.env, c.namespace)
 	if err != nil {
 		c.degraded.Store(true)
@@ -114,6 +146,19 @@ func (c *Client) Refresh(ctx context.Context) error {
 		_ = c.store.Save(ctx, snapshot)
 	}
 	return nil
+}
+
+// observe 把本次刷新结果交给回调；未配置回调时为空操作。
+func (c *Client) observe(err error) {
+	if c.onRefresh == nil {
+		return
+	}
+	event := RefreshEvent{At: c.now().UTC(), Degraded: c.degraded.Load(), Err: err}
+	if snapshot, ok := c.Snapshot(); ok {
+		event.Snapshot = snapshot
+		event.Loaded = true
+	}
+	c.onRefresh(event)
 }
 
 // install 原子替换当前快照。

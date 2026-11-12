@@ -127,6 +127,41 @@ func TestClientRejectsInvalidSnapshot(t *testing.T) {
 	}
 }
 
+func TestClientNotifiesRefreshEvents(t *testing.T) {
+	snapshot, verifier := signedSnapshot(t)
+	source := &fakeSource{}
+	var events []RefreshEvent
+	client, err := NewClient(ClientConfig{
+		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform",
+		OnRefresh: func(event RefreshEvent) { events = append(events, event) },
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	source.set(snapshot, nil)
+	if err := client.Refresh(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	source.set(Snapshot{}, errors.New("mysql unavailable"))
+	if err := client.Refresh(context.Background()); err == nil {
+		t.Fatal("refresh must report source failure")
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	if events[0].Err != nil || !events[0].Loaded || events[0].Degraded {
+		t.Fatalf("success event = %+v", events[0])
+	}
+	if events[0].Snapshot.ReleaseID != snapshot.ReleaseID {
+		t.Fatalf("success event release = %d, want %d", events[0].Snapshot.ReleaseID, snapshot.ReleaseID)
+	}
+	if events[1].Err == nil || !events[1].Loaded || !events[1].Degraded {
+		t.Fatalf("failure event = %+v", events[1])
+	}
+}
+
 func TestClientRequiresConfiguration(t *testing.T) {
 	_, verifier := signedSnapshot(t)
 	base := ClientConfig{Source: &fakeSource{}, Verifier: verifier, Env: "dev", Namespace: "platform"}

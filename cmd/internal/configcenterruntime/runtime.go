@@ -58,6 +58,12 @@ type Runtime struct {
 	// Snapshots 是当前生效快照读取服务，实现 configclient.Source；
 	// 业务进程据此装配 pkg/configclient.Client。
 	Snapshots *app.SnapshotService
+	// Client 是进程内动态刷新客户端；nil 表示未配置公钥，动态刷新关闭。
+	Client *configclient.Client
+
+	// clientEnv / clientNamespace 记录刷新归属，仅用于启动日志。
+	clientEnv       string
+	clientNamespace string
 }
 
 // Options 是装配参数。
@@ -143,7 +149,30 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter handler: %w", err)
 	}
-	return &Runtime{Handler: handler, Snapshots: snapshots}, nil
+
+	// M1-7：管理面进程内动态刷新。未配置可信公钥时关闭刷新（继续使用
+	// 启动期签名快照 / 文件配置）；配置了公钥则每 5s 拉取、验签并原子落盘。
+	client, err := NewRefreshClient(RefreshConfig{
+		Source:       snapshots,
+		PublicKeys:   os.Getenv(snapshotPublicKeysEnv),
+		SnapshotFile: os.Getenv(snapshotFileEnv),
+		Env:          deps.Config.Env,
+		Namespace:    spec.NamespacePlatform,
+		OnRefresh:    refreshLogger(deps.Logger),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configcenter refresh client: %w", err)
+	}
+	if client == nil && deps.Logger != nil {
+		deps.Logger.Warn("configcenter dynamic refresh disabled; set " + snapshotPublicKeysEnv)
+	}
+	return &Runtime{
+		Handler:         handler,
+		Snapshots:       snapshots,
+		Client:          client,
+		clientEnv:       deps.Config.Env,
+		clientNamespace: spec.NamespacePlatform,
+	}, nil
 }
 
 // buildSigner 从部署注入的密钥材料构造快照签名器。

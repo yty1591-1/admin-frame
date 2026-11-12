@@ -85,6 +85,10 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	if configRT != nil && configRT.Handler != nil {
 		configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
+	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
+	if configRT != nil {
+		configRT.StartRefresh(deps, 0)
+	}
 	if services != nil {
 		if tenantRT != nil {
 			tenantRT.SetInvitationNotifier(notificationruntime.NewInvitationNotifier(services.Dispatcher, ""))
