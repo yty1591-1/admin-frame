@@ -198,7 +198,7 @@ cp configs/prod/admin.yaml.example configs/prod-admin.yaml
 - `auth.expected_channel` 与 `channel` 一致（缺省时由 `normalize` 在 env 覆盖后派生）
 - `auth.mode` ∈ {demo, jwt}；`env=prod/staging` 且未显式声明 mode 时回退 `jwt`（缺 JWT 配置即失败，绝不静默回退 demo）
 - `auth.mode=jwt` ⇒ `auth.jwt.issuer` 非空、`audience` 含当前 channel、算法密钥满足长度/文件要求
-- `db.driver` ∈ {memory, mysql, postgres}；非 memory 时 `db.dsn` 必填
+- `db.driver` ∈ {memory, mysql}；非 memory 时 `db.dsn` 必填。SQL 仓储与迁移脚本为 MySQL 方言，`postgres` 已从启动校验移除
 - `db.max_open_conns` / `max_idle_conns` / `conn_max_lifetime` ≥ 0；0 表示沿用 `pkg/db` 默认值（25 / 5 / 30m）；显式给出时 `max_idle_conns ≤ max_open_conns`（超出部分会被 `database/sql` 静默截断）；`max_open_conns` 是 `db_pool_max_open_connections` 指标与 `DBPoolExhaustion` 告警的分母，容量按「副本数 × 本值 ≤ MySQL `max_connections` × 0.8」反推；`conn_max_lifetime` 必须小于 MySQL `wait_timeout`
 - `storage.driver` ∈ {memory, local, s3, minio, oss, cos, obs}；`local` 时 `storage.local.root` 必填；`env=prod` 禁止 `memory`；命名桶内禁止嵌套 `buckets`
 - `log.level` ∈ {debug, info, warn, error}；`log.format` ∈ {json, text}；`env=prod` 禁止 `text`（避免 `logger.Must` panic）
