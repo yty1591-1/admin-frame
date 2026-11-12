@@ -31,7 +31,7 @@
 | P1 | `docs/API_STANDARDS.md` | API | 分端 OpenAPI、错误码、分页 | 已完成 | oasdiff | §十六 |
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B/C 必测 | 已完成 | `make test-ci` | §十三 |
 | P2 | `docs/DEPENDENCY_STANDARDS.md` | DEP | go.sum、govulncheck、replace | 已完成 | `check-deps` + Dependabot | §8.5 |
-| P2 | `docs/CONFIG_STANDARDS.md` | CFG | 配置优先级、Validate | 已完成 | `check-config` | §十七 |
+| P2 | `docs/CONFIG_STANDARDS.md` | CFG | 配置优先级、Validate | 已完成 | `check-no-static-config` | §十七 |
 | P2 | `docs/DATA_STANDARDS.md` | DATA | 迁移可回滚、禁手改生产库 | 已完成 | `check-migrations` | §十四 |
 | P2 | `docs/RELIABILITY_STANDARDS.md` | REL | 超时、重试、限流、幂等 | 已完成 | `check-reliability` | §十一 |
 | P2 | `docs/OBSERVABILITY_STANDARDS.md` | OBS | 日志字段、探针、审计挂接 | 已完成 | `check-observability` | §十二 |

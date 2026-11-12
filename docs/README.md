@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-12（[config-center-plan.md](./config-center-plan.md) 升至 v0.3 并关闭 8 个 M0 前置条件：ADR-0013 / ADR-0014 转 Accepted，CFG-04 收敛为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动默认值初始化与密钥规则生成，完成权限点 / 审计事件等契约冻结；可进入 M1 编码）；前次 2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -26,11 +26,11 @@
 | [CODE_STYLE.md](./CODE_STYLE.md) | S-01～S-12 | `make fmt-check` + golangci-lint |
 | [COMMENT_STANDARDS.md](./COMMENT_STANDARDS.md) | C-01～C-10 | golangci-lint（godot / revive） |
 | [CI_STANDARDS.md](./CI_STANDARDS.md) | CI-01～CI-15 | `make ci` |
-| [SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md) | SEC-01～SEC-14 | `make secrets` / `make lint` / `check-debug` |
+| [SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md) | SEC-01～SEC-16 | `make secrets` / `make lint` / `check-debug` |
 | [API_STANDARDS.md](./API_STANDARDS.md) | API-01～API-12 | `check-openapi`（oasdiff） |
 | [TESTING_STANDARDS.md](./TESTING_STANDARDS.md) | TEST-01～TEST-08 | `make test-ci` / `check-test-gates` |
 | [DEPENDENCY_STANDARDS.md](./DEPENDENCY_STANDARDS.md) | DEP-01～DEP-08 | `check-deps` / `make vuln` |
-| [CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md) | CFG-01～CFG-08 | `check-config` |
+| [CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md) | CFG-01～CFG-12 | `check-no-static-config` / `check-configcenter` |
 | [DATA_STANDARDS.md](./DATA_STANDARDS.md) | DATA-01～DATA-08 | `check-migrations` |
 | [RELIABILITY_STANDARDS.md](./RELIABILITY_STANDARDS.md) | REL-01～REL-08 | `check-reliability` / `check-idempotency` / `check-outbox` |
 | [OBSERVABILITY_STANDARDS.md](./OBSERVABILITY_STANDARDS.md) | OBS-01～OBS-08 | `check-observability` |
@@ -45,7 +45,7 @@
 
 **附属清单**（被门禁脚本直接读取，改动需同步脚本）：
 
-- [adr/](./adr/) — 架构决策记录（ADR-0001～0011）
+- [adr/](./adr/) — 架构决策记录（ADR-0001～0014）
 - [runbooks/](./runbooks/) — 值班手册（`ALERTS.md` 与 `deploy/observability` 告警规则双向校验）
 - [incident/](./incident/) — 事故定级 / 响应 / 复盘 / 演练（RB-08，`check-oncall` OC-02/OC-04）
 - [oncall/ROTATION.md](./oncall/ROTATION.md) — 排班、交接与呼叫链路验证（RB-09，`check-oncall` OC-05/OC-06）
@@ -83,8 +83,9 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
+| [config-center-plan.md](./config-center-plan.md) | 已通过 v0.3（L2 设计 + L3 计划） | 8 个 M0 前置条件已满足：ADR-0013 / ADR-0014 Accepted、CFG-01/02/04 回写、首次启动初始化、密钥规则、契约冻结、签名快照、密钥解析、MVP 验收；可进入 M1 编码；§10.2 `Q1`～`Q14` 中 M2 专项待决 |
 
-> 这是当前唯一「有未关闭事项」的计划类文档。IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
+> 当前有两份「有未关闭事项」的计划类文档：生产就绪实施计划与配置中心规划。IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
 >
 > **输入依据（已归档）**：
 > - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./archive/plans/iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
@@ -147,6 +148,7 @@ docs/
 ├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-implementation-plan.md # 平台能力实施计划（L3）
+├── config-center-plan.md      # 配置中心规划与评审（L2 设计 + L3 计划）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）

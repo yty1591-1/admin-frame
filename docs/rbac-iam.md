@@ -1608,7 +1608,7 @@ BenchmarkReplaceRolePermissions_Diff
 | OBS-01 / OBS-05 | 结构化日志 + `trace_id` 贯通 | `make check-observability` |
 | OBS-02 / OBS-03 / OBS-04 | 探针 + IAM 依赖检查器 + `/version` | `make check-observability` |
 | OBS-06 / OBS-07 | 4xx 不打 Error；关键操作审计 | Review + `check-audit` |
-| CFG-01 / CFG-02 / CFG-05 | example 更新；不提交真实 yaml；Validate 覆盖 prod 互斥 | `make check-config` |
+| CFG-01 / CFG-02 / CFG-06 | 不新增 `configs/` 文件；不提交真实密钥 / DSN；key spec 为唯一来源 | `make check-no-static-config` |
 | CFG-03 / CFG-07 | 启动即校验；无魔法数 | 单测 + Review |
 | CI-03～CI-09 | fmt / lint / test / vuln / tidy / build / transport | `make ci` |
 | C-01～C-10 | 包注释、导出 godoc、`nolint` 原因、忽略 error 原因 | `make lint` + Review |
@@ -1961,12 +1961,12 @@ iam:
 
 - [`adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)：落位、失败关闭、`50300`、灰度路线的 ADR
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层、依赖、三端隔离、数据范围、缓存与消息
-- [`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)：SEC-01～SEC-14
+- [`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)：SEC-01～SEC-16
 - [`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)：AUD-01～AUD-09
 - [`DATA_STANDARDS.md`](./DATA_STANDARDS.md)：DATA-01～DATA-08
 - [`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)：TEST-01～TEST-08
 - [`API_STANDARDS.md`](./API_STANDARDS.md)：API-01～API-12
-- [`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)：CFG-01～CFG-08
+- [`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)：CFG-01～CFG-12
 - [`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)：REL-01～REL-08
 - [`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)：OBS-01～OBS-08
 - [`CODE_STYLE.md`](./CODE_STYLE.md) / [`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)：S-01～S-12 / C-01～C-10

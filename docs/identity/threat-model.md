@@ -92,7 +92,7 @@
 
 | ID | STRIDE | 场景 | 现有缓解 | 验证 |
 |---|---|---|---|---|
-| `T-COM-01` | Elevation | 撤销存储不可用时停用 / 轮换失效 | 生产强制 `failure_mode=fail_closed`，Redis 不可用即拒绝 | `check-config` + 配置校验 |
+| `T-COM-01` | Elevation | 撤销存储不可用时停用 / 轮换失效 | 生产强制 `failure_mode=fail_closed`，Redis 不可用即拒绝 | `Validate` 单测 + 启动校验 |
 | `T-COM-02` | Spoofing | JWT 密钥泄露或轮换不同步 | 三端独立密钥环；`kid` 精确匹配，未知 `kid` 拒绝；轮换见 [`key-rotation.md`](../runbooks/key-rotation.md) | 密钥轮换演练 |
 | `T-COM-03` | Repudiation | 机器事件缺 `actor_id` 导致审计被丢弃 | 机器事件以 `client_id` 作 `actor_id` + `actor_type=system`，落 `async_outbox` 后异步投递 | `tests/integration/identity/m2m_test.go` |
 | `T-COM-04` | DoS | 时钟偏差导致合法令牌被拒 | 各通道显式偏差上限（OIDC 30s、SAML 2 分钟）；不引入全局放宽 | 配置校验 |

@@ -162,7 +162,7 @@ docker build --target admin-api \
 
 | 资产 | 内容 | 用途 |
 |---|---|---|
-| `admin-frame-<version>-linux-{amd64,arm64}.tar.gz` | 5 个静态二进制（`CGO_ENABLED=0`，ldflags 与 Dockerfile 同源）+ `configs/**/*.example` + `migrations/` | 无容器运行时可直接取包核对/演练；**不含** `configs/prod/.env`（演练凭据不外发，SEC-01） |
+| `admin-frame-<version>-linux-{amd64,arm64}.tar.gz` | 5 个静态二进制（`CGO_ENABLED=0`，ldflags 与 Dockerfile 同源）+ `migrations/` | 无容器运行时可直接取包核对/演练；**不含**任何运行配置或凭据（CFG-01 / SEC-01） |
 | `sbom-<cmd>.cdx.json` | 每个镜像按 digest 生成的 CycloneDX SBOM | 让 SBOM 在 workflow artifact 90 天过期后仍可追溯（RELS-13 的长期留存） |
 | `images.json` | `version` / `commit` / `build_time` / `images`（每个 cmd 的 `<registry>/<owner>/<cmd>@sha256:…`） | 部署清单与运行中实例 `/version` 的核对基准（RELS-04） |
 | `SHA256SUMS` | 上述所有资产的 sha256 | 离线校验制品未被替换 |

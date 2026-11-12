@@ -16,13 +16,11 @@ A/B/C 三端业务的 Go 模块化单体骨架，实现见 [docs/ARCHITECTURE.md
 # 1. 依赖：MySQL 8.0 + Redis 7（本地可用 compose 一键起）
 docker compose -f docker-compose.integration.yml up -d mysql redis
 
-# 2. 配置：dev / staging / prod 分层；本地使用 dev
-cp configs/dev/env.example configs/dev/env   # 填入本地口令/密钥，勿入库
-# configs/dev/*.yaml 已就绪；缺文件时从同目录 *.yaml.example 复制
-
+# 2. 配置：无需复制配置文件；首次启动按代码默认值自动初始化（CFG-04 / CFG-09）
+#    业务密钥由配置中心密钥子域托管，明文不入库、不落盘
 # 3. 建库与迁移（驱动只支持 MySQL；见 docs/migration-guide.md）
 make migrate-up
-# 等价于：go run ./cmd/migrate -config configs/dev/admin.yaml -action up
+# 等价于：go run ./cmd/migrate -driver mysql -dsn "$ADMIN_FRAME_DB_DSN" -action up
 
 # 4. 编译并启动
 make build
@@ -74,11 +72,11 @@ curl -s http://127.0.0.1:8083/readyz
 - **CI 硬约束**：[docs/CI_STANDARDS.md](docs/CI_STANDARDS.md)（CI-01～CI-14）
   - GitHub：`.github/workflows/ci.yml`
   - Gitee：`.workflow/`（见 [.workflow/README.md](.workflow/README.md)）
-- **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-14；gitleaks / gosec）
+- **安全硬约束**：[docs/SECURITY_STANDARDS.md](docs/SECURITY_STANDARDS.md)（SEC-01～SEC-16；gitleaks / gosec）
 - **API 硬约束**：[docs/API_STANDARDS.md](docs/API_STANDARDS.md)（API-01～API-12；oasdiff）
 - **测试硬约束**：[docs/TESTING_STANDARDS.md](docs/TESTING_STANDARDS.md)（TEST-01～TEST-08）
 - **依赖硬约束**：[docs/DEPENDENCY_STANDARDS.md](docs/DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）
-- **配置硬约束**：[docs/CONFIG_STANDARDS.md](docs/CONFIG_STANDARDS.md)（CFG-01～CFG-08）
+- **配置硬约束**：[docs/CONFIG_STANDARDS.md](docs/CONFIG_STANDARDS.md)（CFG-01～CFG-12）
 - **数据硬约束**：[docs/DATA_STANDARDS.md](docs/DATA_STANDARDS.md)（DATA-01～DATA-08）
 - **数据库迁移指南**：[docs/migration-guide.md](docs/migration-guide.md)（`pkg/migrate` / `cmd/migrate` 使用与故障处置）
 - **可靠性硬约束**：[docs/RELIABILITY_STANDARDS.md](docs/RELIABILITY_STANDARDS.md)（REL-01～REL-08）
@@ -99,7 +97,7 @@ curl -s http://127.0.0.1:8083/readyz
 make test
 make test-ci              # -race + coverage + TEST 门禁
 make check-deps           # go.sum / replace / 许可证
-make check-config         # 配置样例门禁
+make check-no-static-config # CFG-01 防回退（禁止新增 configs 文件）
 make check-migrations     # 迁移 up/down 配对
 make check-reliability    # 超时客户端 / 限流码
 make check-observability  # 日志字段 / 探针

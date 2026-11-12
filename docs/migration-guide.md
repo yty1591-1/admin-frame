@@ -169,7 +169,7 @@ up: 1 migration(s)
 | 3 | 配置文件 `-config` 的 `db.driver` / `db.dsn` | `./bin/migrate -config configs/dev/admin.yaml` |
 | 4 | 内置默认 | 无默认驱动、无默认 DSN（缺失即报错） |
 
-规则对齐 CFG-04：**环境变量 > 配置文件 > 默认值**，CLI 参数位于环境变量之上。
+规则说明：`cmd/migrate` 是一次性运维工具，不是业务进程；上表仅描述迁移二进制的连接参数来源，**不属于 CFG-04 的业务配置优先级**。业务进程固定为「配置中心 > 代码默认值」。
 
 ### 3.2 支持的驱动
 
@@ -197,7 +197,7 @@ db:
 ./bin/migrate -config configs/migrate.yaml -action up
 ```
 
-**禁止**在 `configs/*.yaml.example` 或仓库文件中写真实口令 / 生产主机（CFG-06）。
+**禁止**在仓库文件或迁移命令历史中写真实口令 / 生产主机（CFG-06）；迁移 DSN 通过 CLI 参数或环境变量一次性注入，不落盘。
 
 ### 3.4 DSN 示例
 

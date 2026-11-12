@@ -75,7 +75,7 @@
 | 约束                                                      | 来源                                     | 落地检查                           |
 | ------------------------------------------------------- | -------------------------------------- | ------------------------------ |
 | API 进程**禁止**自动执行数据库迁移                                   | `DATA_STANDARDS`、`check-migrations.sh` | 迁移只允许 `cmd/migrate` 与部署 Job 执行 |
-| 生产 `iam.mode` 必须为 `enforce`                             | 项目硬约束、配置 `Validate`                    | `check-config` + 启动校验          |
+| 生产 `iam.mode` 必须为 `enforce`                             | 项目硬约束、配置 `Validate`                    | `Validate` 单测 + 启动校验          |
 | 高风险 IAM 直写在 `iam.approval.enabled=true` 时必须转审批单         | IAM M5 实现                              | 单测 + 配置校验                      |
 | 生产 IAM 必须使用持久化数据库驱动 + Redis 缓存 + Outbox                 | 配置 `Validate`                          | 启动失败关闭                         |
 | 禁止明文密钥进入仓库、日志、镜像                                        | `SECURITY_STANDARDS` SEC-01/05         | gitleaks + 配置脱敏 + 镜像扫描         |
@@ -357,7 +357,7 @@ identity:
 - 集成用例：登录 → 刷新 → 登出 → 旧令牌 401；禁用账号 → 旧令牌 ≤ 60s 失效；刷新令牌重放 → 会话撤销。
 - 三端契约：`api/{admin,biz,c}/openapi.yaml` 新增认证端点与错误码。
 - 新增 `make check-authn`：生产配置禁止 demo、认证端点契约存在、撤销路径有测试引用。
-- `make secrets`、`make check-config`、`make check-openapi` 必须通过。
+- `make secrets`、`make check-no-static-config`、`make check-openapi` 必须通过。
 
 **回滚与风险**
 
@@ -421,7 +421,7 @@ rate_limit:
 - `AC-ENT-02-1`：两副本批量创建无重复 ID；`AC-ENT-02-2`：同 key 跨副本同结果。
 - `AC-ENT-02-3`：共享配额、统一 `42900`；`AC-ENT-02-4`：滚动重启无事件丢失 / 无重复副作用。
 - 新增 `make check-idempotency`：扫描三端写路由是否挂载幂等或声明唯一键。
-- `make check-config` 增加生产 NodeID / Redis 强制校验。
+- 生产 NodeID / Redis 强制校验由 `Validate` 与单测保证（原 `check-config` 样例断言已随 CFG-01 下线）。
 - 多副本用例进入 CI 集成 job；本地可用 compose 复现。
 
 **落地说明（2026-10-22）**
@@ -432,7 +432,7 @@ rate_limit:
 - T5/T6：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`failure_mode` 默认 `fail_open`；分键支持 `channel / channel_user / channel_tenant_user / client`，超限继续 `42900` + `Retry-After`。
 - T7：ENT-03 已改为平台统一异步基础设施（`async.*`）：`async.outbox.publish_in_api` 控制 API 侧是否内嵌 Relay，默认由 `cmd/worker` 的 `AsyncRuntime` 投递，退出时等待循环收敛；IAM 审计写入 `async_outbox`，指标通过 `AuditTopicObserver` 映射。
 - T8：`tests/integration/multiinstance` 覆盖 NodeID 唯一性、跨副本幂等、共享限流与 outbox 重启不重投；`scripts/ci/check-idempotency.sh` 校验挂载、配置样例、固定 NodeID 与 OpenAPI 契约。
-- 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
+- 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-no-static-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
 
 **回滚与风险**
 
@@ -704,7 +704,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 - `AC-ENT-07-1`：轮换 JWT 密钥请求不中断，旧令牌重叠期可用。
 - `AC-ENT-07-2`：DB 凭据轮换步骤可执行；`AC-ENT-07-3`：仓库 / 镜像 / 日志无密钥。
 - `AC-ENT-07-4`：轮换与吊销 runbook 完成一次演练。
-- `make secrets`、`make check-config`、发布 Checklist 必须通过。
+- `make secrets`、`make check-no-static-config`、发布 Checklist 必须通过。
 - 新增 runbook：`docs/runbooks/key-rotation.md`、`docs/runbooks/key-compromise.md`。
 
 **回滚与风险**
@@ -855,7 +855,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | 既有门禁 | 扩展内容 |
 |---|---|
 | `check-layering.sh` | 新增 `internal/identity` / `internal/auditlog` / `internal/tenant` 不得依赖 `internal/platform` 的规则 |
-| `check-config.sh` | 新增配置段必须出现在四份样例；生产强制项与 `Validate` 一致 |
+| `check-no-static-config.sh` | 禁止新增 `configs/` 文件；迁移期样例只减不增；生产强制项由 `Validate` 保证 |
 | `check-migrations.sh` | 新增表必须有 up/down、索引、保留期说明；审计表禁止 UPDATE/DELETE 授权 |
 | `check-test-gates.sh` | 新增域覆盖率门槛（`TEST_IDENTITY_COVER_MIN=80`、`TEST_AUDIT_COVER_MIN=80`） |
 | `check-runbooks.sh` | 新增 `key-rotation`、`backup-restore`、`disaster-recovery`、`dlq-replay`、`oncall` 条目 |

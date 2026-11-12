@@ -1425,7 +1425,7 @@ internal/identity/
 - 默认关闭：`enabled=false` 时不注册路由、不读表、不参与健康检查；开启但配置非法必须启动失败，不得降级为「已启用但不可用」。
 - 协议端点（`/admin/scim/v2/*`、`/{端}/v1/auth/token`）是统一错误信封的**显式例外**；其余端点维持 §20.1 的 `{code,message,trace_id}`。
 - 审计、日志、指标、Trace 均不得出现 `client_secret`、SCIM 令牌、`userName`、成员列表原文。
-- 数据迁移只增不改，与实现同一 MR；配置示例同步更新并接受 `check-config` / `check-authn` 校验。
+- 数据迁移只增不改，与实现同一 MR；不新增 `configs/` 文件（CFG-01），配置键由代码 key spec 声明，并接受 `check-no-static-config` / `check-authn` 校验。
 - 威胁建模、残留风险与评审记录见 [`identity/threat-model.md`](./identity/threat-model.md)（`S6-1` 交付物）。
 - 实施顺序：M2M（范围小、可独立验收）→ SCIM `User` → SCIM `Group` 与角色投影 → 一致性演练与门禁接入。SCIM 依赖 OIDC 的账号绑定模型，必须在 OIDC 已交付（现状满足）后启动。
 

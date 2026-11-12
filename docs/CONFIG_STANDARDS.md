@@ -1,20 +1,24 @@
 # 工程化配置与多环境规范（硬约束）
 
-> **状态**：生效中（Normative）
+> **状态**：已批准（Approved，目标态）；M1 双读、M2 密钥迁移、M3 删除 `configs/` 后全面生效；迁移期例外见 §10
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
-> **适用范围**：本仓库配置样例、加载逻辑、环境变量与多环境约定
-> **关联**：架构 §十七；密钥见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
-> **执行方式**：`Validate()` 单测 + 配置样例门禁 + gitleaks + Review
-> **最后更新**：2026-11-07（新增 dev / staging 两套配置样板与环境变量清单；prod 单一来源改为三环境分目录）
-> **变更方式**：修改本规范须同步更新 `internal/platform/config`、`internal/{identity,iam,audit,tenant}/config`、`cmd/internal/appconfig`、`scripts/ci/check-config.sh`、`configs/*.example` 与架构 §十七，经架构 Owner Review
+> **适用范围**：配置 key spec、配置中心加载、首次启动初始化、业务密钥托管、多环境与迁移门禁
+> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)
+> **执行方式**：`Validate()` 单测 + `check-configcenter.sh` + `check-no-static-config.sh` + gitleaks + Review
+> **最后更新**：2026-11-12（v2：CFG-04 收敛为「配置中心 > 代码默认值」，删除环境变量与文件配置层；新增首次启动初始化与业务密钥托管约束）
+> **变更方式**：修改本规范须同步更新 `pkg/config`、`internal/configcenter`、`cmd/internal/appconfig`、`scripts/ci/check-configcenter.sh`、`scripts/ci/check-no-static-config.sh`、`deploy/` 与架构 §17，经架构 Owner 与安全 Reviewer 评审
 
 ---
 
 ## 1. 目标
 
 1. **启动即安全**：非法配置、互斥项、生产演示模式在启动时失败，不带病运行。
-2. **密钥不入库**：仓库只保留 example；真实密钥来自环境变量 / 密钥管理系统。
-3. **优先级清晰**：环境变量覆盖文件，行为可预期、可测。
+2. **单一事实源**：配置以配置中心为唯一事实源，代码 key spec 只提供类型、默认值与校验规则。
+3. **空环境可启动**：首次部署无配置记录时，按代码默认值自动播种基线 Release，不依赖人工导入。
+4. **密钥明文不入库**：业务密钥信封加密后入库，KEK 外部托管；明文不落库、不落快照、不落日志、不回显前端。
+5. **优先级清晰**：仅「配置中心 > 代码默认值」，行为可预期、可测试。
+
+**阶段说明**：本文描述 M3 完成后的目标态。M1 迁移期允许文件双读用于对比，但文件**不得**作为运行时取值来源；M3 删除 `configs/` 后不再保留文件或环境变量配置层。
 
 ---
 
@@ -22,308 +26,239 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| CFG-01 | 各业务进程必须有 `configs/prod/<name>.yaml.example`（admin / biz / c / worker） | `check-config.sh` |
-| CFG-02 | Git 只跟踪 `*.yaml.example`；本地 `configs/*.yaml` 由 `.gitignore` 忽略，禁止提交真实密钥配置 | `check-config.sh` + `.gitignore` |
-| CFG-03 | `LoadConfig` 内部按 CFG-04 顺序加载并由 `Loader` 自动调用 `Validate()`；失败则进程非零退出 | 代码 + 单测 |
-| CFG-04 | 配置优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须插在环境变量与文件之间，并更新本表） | `pkg/config.Loader`（`BindEnv`）+ 单测 |
+| CFG-01 | 删除 `configs/` 下全部运行时静态配置；**禁止新增** `configs/*.yaml` / `*.env` / `*.example` | `check-no-static-config.sh` |
+| CFG-02 | 配置 key spec 由代码声明并作为唯一来源：`key` / `value_type` / `default` / `validation` / `required` / `owner` / `reloadable` / `expires_at`；**不产出引导配置清单与配置中心导入清单** | Review + `check-configcenter.sh` |
+| CFG-03 | `LoadConfig` 按 CFG-04 顺序加载，由 `Loader` 自动调用 `Validate()`；失败则进程非零退出 | 代码 + 单测 |
+| CFG-04 | 配置优先级：**配置中心（tenant > namespace > global）> 代码默认值**；不再支持环境变量与配置文件配置层 | `pkg/config.Loader` + 单测 |
 | CFG-05 | `env=prod`（或等价）时 `auth.mode` 不得为 `demo`；`auth.expected_channel` 必须与 `channel` 一致；`auth.mode=jwt` 时 `issuer` / `audience` / 密钥必填 | `Validate` + 单测 |
-| CFG-06 | example 中 `db.dsn` 必须为空或明显占位；禁止真实口令 / 生产主机 | `check-config.sh` + gitleaks |
-| CFG-07 | 禁止在业务代码硬编码监听地址、超时、功能开关（应用配置或常量默认值经 `applyDefaults`；跨字段派生经 `normalize`） | Review |
+| CFG-06 | 仓库禁止出现真实密钥、生产 DSN、云 AK/SK；测试密钥须用 `strings.Repeat` 等构造，禁止高熵字面量 | gitleaks + Review |
+| CFG-07 | 禁止在业务代码硬编码监听地址、超时、功能开关；应用配置或常量默认值经 `applyDefaults`，跨字段派生经 `normalize` | Review |
 | CFG-08 | 合并请求须勾选配置自检 | PR 模板 |
+| CFG-09 | 首次启动空库时按 key spec 默认值播种基线 Release；初始化幂等、不覆盖已有值、强制审计 | 集成测试 + `check-configcenter.sh` |
+| CFG-10 | 业务密钥只允许密文入库：每版本独立 DEK + AES-256-GCM + 外部 KEK；密钥字段必须声明 `secret_rule`，首次启动仅对允许自动生成的字段用 `crypto/rand` 生成 | 单测 + 安全评审 + gitleaks |
+| CFG-11 | 密钥解析只经 `cmd/config-api`：mTLS / SPIFFE + 服务授权 + 短租约；业务进程不接触 KEK，禁止明文批量导出 | 集成测试 + 安全评审 |
+| CFG-12 | 读路径默认「本地 Ed25519 签名快照 + 失败继续服务」；快照只作冷启动与灾备兜底，不含密钥明文，不作为事实源 | 单测 + 灾备演练 |
 
 ---
 
-## 3. 文件与命名
+## 3. 配置来源与优先级
 
-配置按「领域模块 + 服务差异」分层声明，服务文件通过顶层 `include:` 组合模块，避免同一段
-`http / auth / redis / db / storage / tracing / iam / identity` 在四个进程间各抄一份。
+### 3.1 目标优先级
 
-| 文件 | 用途 |
-|------|------|
-| `configs/prod/modules/http.yaml.example` | HTTP 运行时基线 |
-| `configs/prod/modules/log.yaml.example` | 日志基线 |
-| `configs/prod/modules/platform.yaml.example` | 雪花 ID、幂等、限流、异步 Outbox |
-| `configs/prod/modules/auth.yaml.example` | JWT 认证基线 |
-| `configs/prod/modules/infra.yaml.example` | Redis / MySQL / 对象存储 / 链路追踪 |
-| `configs/prod/modules/iam.yaml.example` | IAM 基线（enforce） |
-| `configs/prod/modules/identity.yaml.example` | 身份域基线 |
-| `configs/prod/{admin,biz,c,worker}.yaml.example` | 各端差异（service / channel / addr / audience / node_id / CORS 等） |
-| `configs/dev/{admin,biz,c,worker}.yaml.example` | dev 各端差异；公共段 include `../prod/modules/*` |
-| `configs/dev/modules/dev.yaml.example` | dev 环境覆盖（只列与 prod 的差异键） |
-| `configs/staging/{admin,biz,c,worker}.yaml.example` | staging 各端差异；公共段 include `../prod/modules/*` |
-| `configs/staging/modules/staging.yaml.example` | staging 环境覆盖（只列与 prod 的差异键） |
-| `configs/{prod,dev,staging}/env.example` | 各环境环境变量清单（值仅为占位符） |
-| `configs/prod-*.yaml`（本地） | 从对应 example 复制；**不入库**，include 路径改为 `prod/modules/...` |
+```text
+配置中心（tenant > namespace > global）> 代码默认值（key spec / applyDefaults）
+```
 
-组合规则：
+- 不再读取配置文件；不再使用 `ADMIN_FRAME_*` 环境变量覆盖业务配置。
+- 配置中心自身地址、环境、服务身份、CA 与 DB / Redis 连接参数使用代码默认值承载，不进入业务配置层。
+- DB / Redis 口令、K8s 凭据、云账号根密钥、人员凭据属于基础设施口令，不属于业务配置项，按基础设施流程管理，不入配置中心。
+- 启动期配置（`addr`、`db.host/port/name/user`、`redis.addr`、`storage.driver`、`auth.issuer/audience/mode`、`async.*`、`iam.mode`、`http.*`）由配置中心提供，但只在启动期读取，变更需重启。
+- 热更配置只允许显式 `reloadable=hot` 的键；`addr` / `auth` / `storage.driver` 等需重建资源的键必须排除。
 
-- `include:` 只能是顶层字段，值为非空路径列表；相对路径按声明文件所在目录解析，绝对路径允许
-- 被包含文件按声明顺序先加载，当前文件最后加载；后出现的字段覆盖先出现的字段，未出现的字段保留
-- 嵌套层数上限 8，出现循环引用或缺失文件直接启动失败；自定义 `Decode` 不解析 include
-- YAML 锚点只在单个文件内有效，跨文件复用请用模块文件而不是锚点
-- 环境变量优先级仍高于所有文件（CFG-04）
+### 3.2 迁移期优先级
 
-本地：
+| 阶段 | 取值来源 | 说明 |
+|------|----------|------|
+| M0 | 现状文件 + 环境变量 | 仅契约冻结，不改运行行为 |
+| M1 | 配置中心为主；文件仅双读对比 | 文件不参与取值；差异 > 0 阻断切换 |
+| M2 | 配置中心 + 密钥子域 | 密钥类配置迁入；文件只读一个版本周期 |
+| M3 | 配置中心 + 代码默认值 | 删除 `configs/`；CI 防回退 |
 
-```bash
-cp configs/prod/admin.yaml.example configs/prod-admin.yaml
-# 把 include 的 modules/... 改为 prod/modules/...，按需修改；勿提交
+### 3.3 key spec 声明
+
+每个配置键必须在代码中声明以下字段，缺失即 Review 阻断：
+
+```text
+key / value_type / default / validation / required / owner / reloadable(startup|hot) / expires_at
+密钥字段额外声明：secret_rule（min_len / max_len / encoding / algorithm / prefix / auto_generate）
 ```
 
 ---
 
-## 4. 环境变量覆盖
+## 4. 首次启动初始化
 
-前缀：`ADMIN_FRAME_`，由 `internal/platform.NewConfigLoader` 交给
-[`pkg/config`](./pkg-roadmap.md) 的 `Loader` 完成：默认值 → 文件（含 `include` 展开）→
-环境变量 → `normalize` → `Validate`。变量名由 yaml 标签自动推导（`log.level` →
-`ADMIN_FRAME_LOG_LEVEL`），新增字段无需改环境变量代码。
+### 4.1 触发条件
 
-行为约定：
+配置中心数据库为空（无 `config_release_pointer` 或目标 namespace 无基线 Release）时触发；非空库不重复播种。
 
-- YAML 严格解析，未知字段（拼写错误、已删除字段）直接启动失败
-- 环境变量无法解析（如 `ADMIN_FRAME_SHUTDOWN_TIMEOUT=15` 缺少单位）时报错，
-  不再静默保留文件值；错误只含变量名，不含取值
-- 空值（未设置或仅空白）视为未覆盖，无法用环境变量把字段置为空串
-- 只识别由 yaml 标签推导出的规范变量名（如 `ADMIN_FRAME_STORAGE_S3_ACCESS_KEY`），
-  不保留历史别名；改名须同步部署清单
-- 仅标量字段与字符串列表（`[]string`，按逗号分隔）会自动推导环境变量；
-  结构体列表与映射字段（`identity.subject.keys`、`identity.mfa.keys`、`identity.oauth.providers`、
-  `identity.previous_hash_keys`、`auth.jwt.keys`、`storage.buckets`）不生成环境变量，
-  必须写入挂载的 Secret 文件或由部署侧（Helm values）生成
-- `auth.mode` 是唯一的鉴权模式开关；已移除 `auth.demo_mode` 旧字段与
-  `ADMIN_FRAME_AUTH_DEMO_MODE` 环境变量，不再兼容。残留旧字段会因严格解析
-  （未知字段）在启动期失败，须改为 `auth.mode: demo | jwt`
+### 4.2 初始化步骤
 
-| 变量 | 覆盖字段 |
-|------|----------|
-| `ADMIN_FRAME_ENV` | `env`（local / dev / test / staging / prod） |
-| `ADMIN_FRAME_SERVICE` | `service` |
-| `ADMIN_FRAME_CHANNEL` | `channel` |
-| `ADMIN_FRAME_ADDR` | `addr` |
-| `ADMIN_FRAME_SHUTDOWN_TIMEOUT` | `shutdown_timeout`（Go duration，如 `15s`） |
-| `ADMIN_FRAME_HTTP_READ_HEADER_TIMEOUT` | `http.read_header_timeout` |
-| `ADMIN_FRAME_HTTP_READ_TIMEOUT` | `http.read_timeout` |
-| `ADMIN_FRAME_HTTP_WRITE_TIMEOUT` | `http.write_timeout` |
-| `ADMIN_FRAME_HTTP_IDLE_TIMEOUT` | `http.idle_timeout` |
-| `ADMIN_FRAME_HTTP_MAX_HEADER_BYTES` | `http.max_header_bytes` |
-| `ADMIN_FRAME_HTTP_TIMEOUT` | `http.timeout`（单请求软超时） |
-| `ADMIN_FRAME_HTTP_BODY_LIMIT_BYTES` | `http.body_limit_bytes` |
-| `ADMIN_FRAME_LOG_LEVEL` | `log.level` |
-| `ADMIN_FRAME_LOG_FORMAT` | `log.format`（json / text） |
-| `ADMIN_FRAME_AUTH_MODE` | `auth.mode`（demo / jwt） |
-| `ADMIN_FRAME_AUTH_EXPECTED_CHANNEL` | `auth.expected_channel` |
-| `ADMIN_FRAME_AUTH_JWT_ALG` | `auth.jwt.alg`（HS256 / RS256） |
-| `ADMIN_FRAME_AUTH_JWT_ISSUER` | `auth.jwt.issuer` |
-| `ADMIN_FRAME_AUTH_JWT_AUDIENCE` | `auth.jwt.audience`（逗号分隔） |
-| `ADMIN_FRAME_AUTH_JWT_LEEWAY` | `auth.jwt.leeway` |
-| `ADMIN_FRAME_AUTH_JWT_SECRET` | `auth.jwt.secret`（HS256，≥32 字节；禁止写文件） |
-| `ADMIN_FRAME_AUTH_JWT_PUBLIC_KEY_FILE` | `auth.jwt.public_key_file`（RS256） |
-| `ADMIN_FRAME_RATE_LIMIT_ENABLED` | `rate_limit.enabled` |
-| `ADMIN_FRAME_RATE_LIMIT_DRIVER` | `rate_limit.driver`（memory / redis） |
-| `ADMIN_FRAME_RATE_LIMIT_KEY` | `rate_limit.key`（channel / channel_user / channel_tenant_user / client） |
-| `ADMIN_FRAME_RATE_LIMIT_FAILURE_MODE` | `rate_limit.failure_mode`（fail_open / fail_closed） |
-| `ADMIN_FRAME_RATE_LIMIT_RPS` | `rate_limit.rps` |
-| `ADMIN_FRAME_RATE_LIMIT_BURST` | `rate_limit.burst` |
-| `ADMIN_FRAME_RATE_LIMIT_IDLE_TTL` | `rate_limit.idle_ttl` |
-| `ADMIN_FRAME_ID_NODE_ID` | `id.node_id`（[0,1023]；prod/staging 非 worker 必填） |
-| `ADMIN_FRAME_ID_NODE_ID_SOURCE` | `id.node_id_source`（env / config / statefulset） |
-| `ADMIN_FRAME_IDEMPOTENCY_ENABLED` | `idempotency.enabled` |
-| `ADMIN_FRAME_IDEMPOTENCY_DRIVER` | `idempotency.driver`（memory / redis） |
-| `ADMIN_FRAME_IDEMPOTENCY_HEADER` | `idempotency.header`（默认 `Idempotency-Key`） |
-| `ADMIN_FRAME_IDEMPOTENCY_TTL` | `idempotency.ttl` |
-| `ADMIN_FRAME_IDEMPOTENCY_REQUIRED` | `idempotency.required` |
-| `ADMIN_FRAME_IDEMPOTENCY_MAX_BODY_BYTES` | `idempotency.max_body_bytes` |
-| `ADMIN_FRAME_ASYNC_ENABLED` | `async.enabled`（默认 false；启用要求 `db.driver ≠ memory`） |
-| `ADMIN_FRAME_ASYNC_DRIVER` | `async.driver`（本轮仅 `db`） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_PUBLISH_IN_API` | `async.outbox.publish_in_api`（prod/staging + IAM enforce 必须 false） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_POLL_INTERVAL` | `async.outbox.poll_interval`（[100ms, 1m]） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_BATCH_SIZE` | `async.outbox.batch_size`（[1, 500]） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_LEASE` | `async.outbox.lease`（processing 租约，[5s, 10m]） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_MAX_ATTEMPTS` | `async.outbox.max_attempts`（[1, 20]） |
-| `ADMIN_FRAME_ASYNC_OUTBOX_CONCURRENCY` | `async.outbox.concurrency`（[1, 16]） |
-| `ADMIN_FRAME_ASYNC_CONSUMER_CONCURRENCY` | `async.consumer.concurrency`（[1, 32]） |
-| `ADMIN_FRAME_ASYNC_CONSUMER_VISIBILITY_TIMEOUT` | `async.consumer.visibility_timeout`（[5s, 30m]） |
-| `ADMIN_FRAME_ASYNC_CONSUMER_RETRY_BACKOFF` | `async.consumer.retry_backoff`（exponential / fixed） |
-| `ADMIN_FRAME_REDIS_ADDR` | `redis.addr`（限流 / 幂等 / IAM 缓存 driver=redis 时必填） |
-| `ADMIN_FRAME_REDIS_USERNAME` | `redis.username` |
-| `ADMIN_FRAME_REDIS_PASSWORD` | `redis.password`（禁止写文件） |
-| `ADMIN_FRAME_REDIS_DB` | `redis.db` |
-| `ADMIN_FRAME_REDIS_KEY_PREFIX` | `redis.key_prefix` |
-| `ADMIN_FRAME_CORS_ALLOW_ORIGINS` | `cors.allow_origins`（逗号分隔；生产禁止 `*` + credentials） |
-| `ADMIN_FRAME_DB_DRIVER` | `db.driver` |
-| `ADMIN_FRAME_DB_DSN` | `db.dsn` |
-| `ADMIN_FRAME_DB_MAX_OPEN_CONNS` | `db.max_open_conns`（0 = 默认 25） |
-| `ADMIN_FRAME_DB_MAX_IDLE_CONNS` | `db.max_idle_conns`（0 = 默认 5，且 ≤ `max_open_conns`） |
-| `ADMIN_FRAME_DB_CONN_MAX_LIFETIME` | `db.conn_max_lifetime`（Go duration，0 = 默认 30m） |
-| `ADMIN_FRAME_STORAGE_DRIVER` | `storage.driver`（memory/local/s3/minio/oss/cos/obs） |
-| `ADMIN_FRAME_STORAGE_KEY_PREFIX` | `storage.key_prefix` |
-| `ADMIN_FRAME_STORAGE_LOCAL_ROOT` | `storage.local.root` |
-| `ADMIN_FRAME_STORAGE_S3_ENDPOINT` | `storage.s3.endpoint` |
-| `ADMIN_FRAME_STORAGE_S3_REGION` | `storage.s3.region` |
-| `ADMIN_FRAME_STORAGE_S3_BUCKET` | `storage.s3.bucket` |
-| `ADMIN_FRAME_STORAGE_S3_ACCESS_KEY` | `storage.s3.access_key` |
-| `ADMIN_FRAME_STORAGE_S3_SECRET_KEY` | `storage.s3.secret_key` |
-| `ADMIN_FRAME_STORAGE_S3_FORCE_PATH_STYLE` | `storage.s3.force_path_style` |
-| （yaml）`storage.buckets.*` | 命名附加桶；不可用环境变量批量覆盖，见 `storage-s3-oss.md` §6.3 |
-| （yaml）`storage.lifecycle` | 桶生命周期；仅 `apply_on_start=true` 时写入 |
-| `ADMIN_FRAME_WORKER_POLL_INTERVAL` | `worker.poll_interval` |
-| `ADMIN_FRAME_TRACING_ENABLED` | `tracing.enabled` |
-| `ADMIN_FRAME_TRACING_EXPORTER` | `tracing.exporter`（none / otlp / stdout / noop） |
-| `ADMIN_FRAME_TRACING_ENDPOINT` | `tracing.endpoint` |
-| `ADMIN_FRAME_TRACING_INSECURE` | `tracing.insecure` |
-| `ADMIN_FRAME_TRACING_SAMPLE_RATIO` | `tracing.sample_ratio` |
-| `ADMIN_FRAME_AUDIT_EXPORT_ASYNC` | `audit.export.async`（true 才有 POST 异步导出与任务下载） |
-| `ADMIN_FRAME_AUDIT_EXPORT_MAX_RANGE_DAYS` | `audit.export.max_range_days` |
-| `ADMIN_FRAME_AUDIT_EXPORT_MAX_ROWS` | `audit.export.max_rows`（超限拒绝，不截断） |
-| `ADMIN_FRAME_AUDIT_EXPORT_TTL_DAYS` | `audit.export.ttl_days`（[1, 365]） |
-| `ADMIN_FRAME_AUDIT_EXPORT_RETRY_MAX` | `audit.export.retry_max`（[1, 10]，含首次执行） |
-| `ADMIN_FRAME_AUDIT_EXPORT_POLL_INTERVAL` | `audit.export.poll_interval`（worker 轮询，≥ 1s） |
-| `ADMIN_FRAME_AUDIT_EXPORT_STALE_TIMEOUT` | `audit.export.stale_timeout`（running 回收阈值，≥ 1m） |
-| `ADMIN_FRAME_AUDIT_EXPORT_BUCKET` | `audit.export.bucket`（命名桶名；空 = 默认桶） |
-| `ADMIN_FRAME_AUDIT_RETENTION_ARCHIVE_PREFIX` | `audit.retention.archive_prefix`（到期归档前缀；空 = 不归档） |
+```text
+1. 扫描代码 key spec，校验 key 唯一、类型与默认值合法、secret_rule 完整
+2. 校验默认值可启动、无真实生产凭据、敏感字段不含明文默认值
+3. 为每个 namespace 生成 baseline Release（status=active）
+4. 对 auto_generate=true 的密钥字段用 crypto/rand 生成，按信封加密写入密钥子域
+5. 对无生成规则且 required 的密钥字段，标记 missing；启动阶段 fail-fast
+6. 写 config_release_pointer（CAS 初始化）
+7. 审计 config.bootstrap.completed（含 key 数量、生成密钥数量、缺失项）
+```
 
-生产密钥、DSN **优先**用环境变量注入，不写进文件或镜像层。
+### 4.3 约束
+
+- 初始化幂等：重复启动不新增 Release、不覆盖已有值、不重新生成密钥。
+- 初始化不得调用外部业务系统；不依赖人工导入清单。
+- 初始化失败必须回滚事务并 fail-fast，禁止带半初始化状态启动。
+- 默认值中不得包含真实第三方凭据、生产 DSN、私钥或高熵密钥。
+- 初始化日志只打印 key、来源与数量，不打印值。
 
 ---
 
-## 5. Validate 基线
+## 5. 业务密钥管理
 
-`cmd/internal/appconfig.Config.Validate()` 聚合平台段与各域配置，错误经 `errors.Join` 聚合，一次列出全部问题。平台段由 `internal/platform/config` 校验，域段由各域包 `Validate` 自持：
+### 5.1 托管范围
 
-组合校验至少覆盖（平台段与各域 `Validate` 分别负责其中一部分）：
+| 允许托管 | 禁止托管 |
+|----------|----------|
+| 第三方 API Key、SMTP / 短信凭据、Webhook 签名密钥、业务加密 / 签名密钥 | 根密钥 / KEK、配置中心自身 DB / Redis 口令、业务进程基础设施口令、K8s 集群凭据、云账号根密钥、SSH 私钥、人员口令 |
 
-- `service`、`channel`、`addr` 非空
-- `channel` ∈ {admin, biz, c, worker}
-- `auth.expected_channel` 与 `channel` 一致（缺省时由 `normalize` 在 env 覆盖后派生）
-- `auth.mode` ∈ {demo, jwt}；`env=prod/staging` 且未显式声明 mode 时回退 `jwt`（缺 JWT 配置即失败，绝不静默回退 demo）
-- `auth.mode=jwt` ⇒ `auth.jwt.issuer` 非空、`audience` 含当前 channel、算法密钥满足长度/文件要求
-- `db.driver` ∈ {memory, mysql}；非 memory 时 `db.dsn` 必填。SQL 仓储与迁移脚本为 MySQL 方言，`postgres` 已从启动校验移除
-- `db.max_open_conns` / `max_idle_conns` / `conn_max_lifetime` ≥ 0；0 表示沿用 `pkg/db` 默认值（25 / 5 / 30m）；显式给出时 `max_idle_conns ≤ max_open_conns`（超出部分会被 `database/sql` 静默截断）；`max_open_conns` 是 `db_pool_max_open_connections` 指标与 `DBPoolExhaustion` 告警的分母，容量按「副本数 × 本值 ≤ MySQL `max_connections` × 0.8」反推；`conn_max_lifetime` 必须小于 MySQL `wait_timeout`
-- `storage.driver` ∈ {memory, local, s3, minio, oss, cos, obs}；`local` 时 `storage.local.root` 必填；`env=prod` 禁止 `memory`；命名桶内禁止嵌套 `buckets`
-- `log.level` ∈ {debug, info, warn, error}；`log.format` ∈ {json, text}；`env=prod` 禁止 `text`（避免 `logger.Must` panic）
-- `http.read_header_timeout` / `max_header_bytes` / `timeout` / `body_limit_bytes` ≥ 0；`env=prod` 时 `http.timeout > 0`
-- `rate_limit.enabled=true` ⇒ `driver ∈ {memory, redis}`、`key ∈ {channel, channel_user, channel_tenant_user, client}`、`rps > 0`、`burst ≥ 1`；`driver=redis` ⇒ `redis.addr` 必填
-- `id.node_id` ∈ [0,1023]；`id.node_id_source ∈ {env, config, statefulset}`；`statefulset` 与显式 `node_id` 互斥，`registry` 暂不支持（启动失败）
-- `env ∈ {prod, staging}` 且 `channel ≠ worker` ⇒ 非 statefulset 时必须显式 `id.node_id`（避免多副本重复 ID）
-- `idempotency.enabled=true` ⇒ `driver ∈ {memory, redis}`、`ttl > 0`、`header` 非空；`driver=redis` ⇒ `redis.addr` 必填
-- `env ∈ {prod, staging}` 且启用幂等或限流 ⇒ `driver` 必须为 `redis`（否则配额/去重被副本数放大）
-- `async.driver ∈ {db, nats}`：`db`（默认）只走 DB Outbox；`nats` 在其之上把事件发布到 NATS JetStream（Outbox 仍是事实源）；`poll_interval ∈ [100ms,1m]`、`batch_size ∈ [1,500]`、`lease ∈ [5s,10m]`、`max_attempts ∈ [1,20]`、`outbox.concurrency ∈ [1,16]`、`consumer.concurrency ∈ [1,32]`、`visibility_timeout ∈ [5s,30m]`、`retry_backoff ∈ {exponential, fixed}`
-- `async.driver=nats` 且 `async.enabled=true` ⇒ `async.broker.url` 必填且以 `nats://`、`tls://`、`ws://`、`wss://` 开头；`env ∈ {prod, staging}` 时必须 `tls://` 或 `wss://`；`broker.stream` 仅允许 `[A-Za-z0-9_-]`（默认 `async`）；`broker.subject_prefix` 禁止通配符、空白与空层（默认 `async`）；`broker.ack_wait ∈ [1s,30m]`（默认 `30s`）、`broker.max_deliver ∈ [1,100]`（默认 `10`）；连接凭证建议走 `ADMIN_FRAME_ASYNC_BROKER_URL`
-- `async.enabled=true` ⇒ `db.driver ≠ memory`（Outbox 必须持久化）
-- `env ∈ {prod, staging}` 且 `iam.mode=enforce` 且 `async.enabled=true` ⇒ `async.outbox.publish_in_api=false`（由 worker 独占投递，避免重复）
-- `env` 为空或 ∈ {local, dev, test, staging, prod}
-- `tracing.exporter` ∈ {none, otlp, stdout, noop}；`otlp` 时 `endpoint` 必填；`env=prod` 禁止 `stdout`
-- `audit.retention.archive_prefix` 非空 ⇒ `storage.driver ≠ memory`（内存存储随进程消失，归档等于没做）；保留期任务必须「先归档成功、再按 ID 删除」，归档失败即中止清理
-- `audit.export.max_range_days ∈ [1,366]`、`max_rows ∈ [1,1000000]`、`ttl_days ∈ [1,365]`、`retry_max ∈ [1,10]`、`poll_interval ≥ 1s`、`stale_timeout ≥ 1m`；`audit.export.async=true` 要求 `audit.store=db`（或 `auto` 且 `db.driver ≠ memory`）且对象存储可用，否则启动期直接失败（导出文件必须落库外，且 API 与 worker 必须看到同一个桶）
+### 5.2 密文格式
 
-鉴权装配另见 SEC-04：`auth.mode` 未显式配置时按环境回退，生产（prod/staging）必须有可用的 JWT 配置。
+```text
+algorithm   = aes-256-gcm
+nonce       = 12 bytes（随机）
+ciphertext  = AES-256-GCM(DEK, plaintext, AAD)
+AAD         = env + ":" + namespace + ":" + name + ":" + version
+wrapped_dek = KEK.wrap(DEK)
+kek_key_id  = KEK 版本标识
+value_hash  = SHA-256(plaintext)[:8]（仅比对，不可逆）
+```
 
-**日志脱敏**：`platform.Config.LogValue` / `DBConfig.LogValue` / `StorageConfig.LogValue` 提供
-`slog.LogValuer`，DSN 只保留 scheme，JWT 密钥与云厂商 AK/SK 输出为 `***`。
-域配置段不再内联进平台快照，需记录域配置时由各域提供脱敏摘要，禁止直接输出结构体。
-禁止用 `%+v` / `json.Marshal(cfg)` 直接打印配置。
+- 每个密钥版本独立 DEK；禁止复用 DEK。
+- KEK 只存在于外部 KMS / Vault / HSM；配置库只存 `wrapped_dek` 与 `kek_key_id`。
+- 密文、`wrapped_dek`、明文均不得出现在列表 / 详情 / 导出 / 日志 / 指标 / 追踪 / 错误体 / 签名快照 / 前端响应中。
 
----
+### 5.3 secret_rule 与自动生成
 
-## 6. 多环境
+- `secret_rule` 必须声明长度、编码（`base64url` / `hex`）、算法、前缀与 `auto_generate`。
+- 首次启动仅对 `auto_generate=true` 的字段用 `crypto/rand` 生成；生成即版本 1 并审计。
+- 无规则或 `auto_generate=false` 的密钥必须人工录入；`required` 且缺失时 fail-fast。
+- 生成值只返回指纹；不得回显、不得落日志、不得写入快照。
 
-| 环境 | `env` | 要求 |
-|------|-------|------|
-| local | local | 可用 `auth.mode=demo`、memory DB |
-| dev / test | dev / test | 可销毁数据；禁止生产凭据 |
-| staging | staging | 拓扑近似生产；密钥隔离；必须 `auth.mode=jwt`；多副本时显式 `id.node_id` 或 `statefulset`，幂等/限流用 `redis` |
-| prod | prod | `auth.mode=jwt`；密钥走 KMS/环境变量；审计开启；多副本同上，`async.enabled=true` 且 `async.outbox.publish_in_api=false`，投递统一由 `cmd/worker` 承担（IAM enforce 强制 `async.enabled=true`） |
+### 5.4 生命周期
 
-### 6.1 环境差异矩阵（照抄即可的最小覆盖）
-
-公共段只有 `configs/prod/modules/*.example` 一份（CFG-07 单一来源）；dev / staging 各提交
-4 个服务差异文件 + 1 个环境覆盖模块，公共段统一 include `../prod/modules/*`，环境差异只落在
-覆盖模块与本端服务文件中。这样既避免整套复制导致的 schema 漂移，又能直接复制运行。
-密钥 / DSN 等运行时值仍由 `configs/<env>/env.example` 列出的环境变量注入。
-
-| 键 | local | dev / test | staging | prod |
-|---|---|---|---|---|
-| `env` | `local` | `dev` / `test` | `staging` | `prod` |
-| `auth.mode` | `demo` | `demo` 或 `jwt` | `jwt`（唯一合法值） | `jwt`（`demo` 启动即失败） |
-| `db.driver` | `memory` | `memory` / `mysql` | `mysql` | `mysql` |
-| `redis.addr` | 空（限流/幂等退内存） | 可空 | 必填 | 必填 |
-| `storage.driver` | `memory` / `local` | `local` / `minio` | `s3`（或兼容网关） | `s3`（或兼容网关） |
-| `storage.key_prefix` | `local/<端>/` | `dev/<端>/` | `staging/<端>/` | `prod/<端>/` |
-| `log.level` | `debug` | `debug` / `info` | `info` | `info`（禁止长期 `debug`） |
-| `log.format` | `text` | `text` / `json` | `json` | `json` |
-| `async.enabled` | `false` | 可 `false` | `true` | `true`，且 `async.outbox.publish_in_api=false` |
-| `id.node_id` | 可省略 | 单实例可省略 | 多副本必填（或用 `statefulset`） | 同 staging |
-| `cors.allow_origins` | `http://localhost:*` | 显式域名 | 显式域名（禁止 `*`） | 显式域名（禁止 `*`） |
-| 密钥来源 | 环境变量随便填 | 环境变量（禁生产凭据） | 隔离 Secret / 独立 Vault 实例（不复用 prod） | Vault / KMS |
-
-派生配置的做法：
-
-- dev / staging：`cp configs/dev/admin.yaml.example configs/dev/admin.yaml`（其余端同理），
-  include 的相对路径保持不变即可运行；变量按 `configs/dev/env.example` 注入。
-- 若把单文件放到 `configs/` 根目录（如 `configs/dev-admin.yaml`），include 改为
-  `prod/modules/...` 与 `dev/modules/dev.yaml.example`。
-- local：`cp -r configs/prod configs/local` 后改上表对应键，并按需删除 `include:` 中的
-  `identity` 段；`configs/**/*.yaml` 已被 `.gitignore` 忽略，只有 `*.yaml.example` 入库。
-
-自检：`make check-config`（配置 schema 与禁止项）与 `go run ./cmd/admin-api -config configs/local/admin.yaml` 的启动校验。
+- 创建 / 轮换 / 吊销 / 授权均双人审批，提交人 ≠ 审批人；生产密钥强制。
+- 轮换保留旧版本 grace（默认 24h，可配 ≤ 7d）；`dual_version=1` 的验签类密钥返回 active + grace。
+- 吊销后旧租约 ≤ TTL 失效；历史版本不可变。
+- 解析经 `cmd/config-api`，mTLS / SPIFFE + 服务授权 + 短租约（默认 5m，上限 15m）；业务进程不接触 KEK。
+- 密钥服务不可用时按 `required` 分级降级：required 缺失 fail-fast，非 required 使用内存缓存并标记 degraded。
 
 ---
 
-## 7. MUST NOT
+## 6. 加载、校验与降级
 
-- 将含真实 DSN / 云密钥的 `configs/*.yaml` 提交入库。
-- 跳过 `Validate` 直接使用配置。
-- 在 prod 打开 `auth.mode=demo`。
-- 用业务代码魔法数替代可配置超时 / 地址（演示常量除外且不得用于生产路径）。
+### 6.1 启动顺序
+
+```text
+代码默认值 / key spec → 初始化状态校验（空库则播种）→ 本地签名快照验签
+→ pointer 拉取（3s 超时）→ 快照验签 → normalize → Validate → 装配
+```
+
+### 6.2 失败策略
+
+| 场景 | 行为 |
+|------|------|
+| 无快照、无 Release、中心不可用 | 使用代码默认值；`required` 缺失 fail-fast |
+| 快照验签失败 | 拒绝装载；尝试拉取新快照；仍失败则按 required 分级 |
+| 非关键键缺失 | 使用默认值，标记 degraded，打点告警 |
+| 密钥解析不可用 | required 密钥 fail-fast；非 required 用内存缓存并告警 |
+
+### 6.3 Validate 基线
+
+保留现有平台段与域段校验，至少覆盖：
+
+- `service`、`channel`、`addr` 非空；`channel ∈ {admin, biz, c, worker}`。
+- `auth.expected_channel` 与 `channel` 一致；`env=prod/staging` 且未显式声明 `auth.mode` 时回退 `jwt`。
+- `auth.mode=jwt` ⇒ `issuer` 非空、`audience` 含当前 channel、签名密钥满足算法要求。
+- `db.driver ∈ {memory, mysql}`；非 memory 时连接参数完整；连接池上限与生命周期合法。
+- `storage.driver ∈ {memory, local, s3, minio, oss, cos, obs}`；`env=prod` 禁止 memory。
+- `log.level` / `log.format` 合法；`env=prod` 禁止 `text`。
+- `http.*` 非负；`env=prod` 时 `http.timeout > 0`。
+- 限流 / 幂等 / Outbox / 审计导出参数的取值范围与互斥项保持现有规则。
+- 配置中心新增：`reloadable` 合法；`required` 与默认值互斥关系合法；`secret_rule` 完整；初始化缺失项可枚举。
+
+### 6.4 脱敏
+
+`platform.Config.LogValue` / `DBConfig.LogValue` / `StorageConfig.LogValue` 与各域脱敏摘要必须覆盖新增密钥字段；禁止 `%+v` / `json.Marshal(cfg)` 直接打印配置。日志、Trace、错误体不得出现密钥明文、完整密文、`wrapped_dek` 或 KEK 标识以外的密钥材料。
+
+---
+
+## 7. 多环境
+
+| 环境 | `env` | 配置来源 | 密钥要求 |
+|------|-------|----------|----------|
+| local | local | 代码默认值 + 本地配置中心（可选） | 可用自动生成密钥；禁止生产凭据 |
+| dev / test | dev / test | 配置中心 dev namespace | 自动生成或测试占位；禁止生产凭据 |
+| staging | staging | 配置中心 staging namespace | 独立 KEK；`auth.mode=jwt`；双人审批 |
+| prod | prod | 配置中心 prod namespace | 独立 KMS / Vault / HSM；双人审批；审计开启；轮换演练 |
+
+- 各环境通过 `env + namespace` 隔离；禁止跨环境直接复制密钥。
+- 首次启动在每个环境独立播种；生产默认值不得含真实第三方凭据。
+- local 可使用 `auth.mode=demo` 与 memory DB；staging / prod 必须 `jwt` 与持久化存储。
 
 ---
 
 ## 8. 本地与 CI
 
 ```bash
-make check-config   # CFG-01/02/06
-make test           # 含 config Validate / env 单测
-make secrets        # gitleaks（密钥）
+make test                  # CFG-03/05/07 与 Validate
+make check-configcenter    # key spec / 权限 / 审计 / OpenAPI / 迁移成对
+make check-no-static-config # CFG-01 防回退
+make test                  # 含初始化 / 密钥生成 / 双读单测
+make secrets               # gitleaks（CFG-06）
 make ci
 ```
 
 | 平台 | 入口 |
 |------|------|
-| GitHub / Gitee | step/job 纳入 `config`（或与 `secrets` 同批） |
+| GitHub / Gitee | job `config` + `secrets` + `arch` |
 | MR | PR 模板「配置自检」 |
 
 ---
 
-## 9. 例外
+## 9. MUST NOT
 
-1. **临时本地 yaml 需分享结构**：只更新 `.example`，不共享含密钥的副本。
-2. **配置中心**：引入时写 ADR，并更新本专文优先级表与加载代码。
-3. **紧急热修**：24h 内补齐 `Validate` 与 example，轮换任何可能泄露的凭据。
-4. **热更新**：`pkg/config.Watcher` 已具备能力，但当前所有进程只在启动期加载。
-   启用前须定义可热更字段白名单（`addr`、`auth`、`storage.driver` 等需重建资源的字段必须排除）并写 ADR。
-
----
-
-## 10. Review 清单
-
-- [ ] example 已同步；无真实密钥入库
-- [ ] 新配置项有默认值或 Validate；prod 相关互斥已覆盖
-- [ ] 环境变量名已写入本专文或 example 注释
-- [ ] `make check-config` 与相关单测通过
+- 新增 `configs/*.yaml` / `*.env` / `*.example`，或以文件作为运行时配置来源。
+- 使用环境变量覆盖业务配置（基础设施口令除外，且不属于业务配置层）。
+- 产出引导配置清单或配置中心导入清单。
+- 将业务密钥明文写入配置库、快照、日志、指标、Trace、错误体或前端响应。
+- 让业务进程直接访问 KMS / Vault / KEK，或调用 `admin-api` 解析密钥。
+- 跳过 `Validate` 直接使用配置；在 prod 打开 `auth.mode=demo`。
+- 用业务代码魔法数替代可配置超时 / 地址（演示常量除外且不得用于生产路径）。
 
 ---
 
-## 11. 与工具链对应
+## 10. 例外
+
+1. **迁移期双读**：M1 允许文件双读对比，但文件不得参与取值；差异清零后关闭。
+2. **紧急热修**：仅限故障止血；24h 内补齐 key spec / Validate / 审计，并轮换可能泄露的凭据。
+3. **配置中心故障**：使用签名快照或代码默认值；`required` 缺失时 fail-fast，禁止静默降级。
+4. **密钥轮换窗口**：允许旧版本 grace；超过 grace 仍未切换的调用方须登记整改。
+5. **迁移期样例基线**：M3 前遗留的 `configs/**/*.example` 登记在 `scripts/ci/configs-legacy-baseline.txt`，只减不增（删除文件须同 MR 收缩基线）；新增任何 `configs/` 文件（含样例）均被 `check-no-static-config.sh` 拒绝。
+
+---
+
+## 11. Review 清单
+
+- [ ] 新配置键已在代码 key spec 声明（类型 / 默认值 / 校验 / owner / reloadable / expires_at）
+- [ ] 密钥字段已声明 `secret_rule`；无规则字段未被自动生成
+- [ ] 未新增 `configs/` 文件或环境变量配置覆盖
+- [ ] `Validate` 覆盖互斥与生产约束；初始化幂等用例通过
+- [ ] 无真实密钥入库；日志 / 快照 / 前端无明文
+- [ ] `make check-configcenter` / `check-no-static-config` / `make secrets` / `make test` 通过
+
+---
+
+## 12. 与工具链对应
 
 | 工具 / 文件 | 作用 |
 |-------------|------|
-| `configs/*.yaml.example` | 入库样例 |
-| `.gitignore`（`configs/*.yaml`） | CFG-02 |
-| `internal/platform/config` | 平台段字段 / 默认值 / `normalize` / 校验；加载委托 `pkg/config` |
-| `internal/{identity,iam,audit,tenant}/config` | 各域字段、默认值与校验规则自持 |
-| `cmd/internal/appconfig` | 组合加载：平台段内联 + 域段挂载，编排默认值、密钥回写与聚合校验 |
-| `pkg/config` | 通用 Loader / 严格 YAML / env 绑定 / 热更新 `Watcher` |
-| `scripts/ci/check-config.sh` | CFG-01/02/06 |
-| gitleaks | 密钥扫描 |
+| 代码 key spec | 配置键唯一来源（类型 / 默认值 / 校验 / reloadable / secret_rule） |
+| `internal/configcenter` | 配置中心域：Item / Version / Release / Pointer / Secret |
+| `pkg/config` | 通用 Loader：代码默认值 + 配置中心快照 + normalize + Validate |
+| `pkg/configclient` | 进程内读取、签名快照、Watch |
+| `cmd/config-api` | 内部密钥解析（mTLS / SPIFFE + grant + 租约） |
+| `cmd/internal/appconfig` | 组合加载与聚合校验 |
+| `scripts/ci/check-configcenter.sh` | key spec / 权限 / 审计 / OpenAPI / 迁移成对 |
+| `scripts/ci/check-no-static-config.sh` | CFG-01 防回退 |
+| gitleaks | CFG-06 密钥扫描 |
 | 本文件 | 规范正文 |
