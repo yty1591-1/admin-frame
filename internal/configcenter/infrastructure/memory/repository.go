@@ -269,16 +269,16 @@ func (r *releaseRepository) NextReleaseNo(_ context.Context, env, namespace stri
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
 	prefix := releaseNoKey(env, namespace)
-	var max int64
+	var maxNo int64
 	for entry, id := range r.store.releaseNos {
 		if !strings.HasPrefix(entry, prefix) {
 			continue
 		}
-		if release, ok := r.store.releases[id]; ok && release.ReleaseNo > max {
-			max = release.ReleaseNo
+		if release, ok := r.store.releases[id]; ok && release.ReleaseNo > maxNo {
+			maxNo = release.ReleaseNo
 		}
 	}
-	return max + 1, nil
+	return maxNo + 1, nil
 }
 
 // Transition 按前置状态迁移发布单；前置状态不符返回 domain.ErrStateConflict。
@@ -390,8 +390,8 @@ func (r *pointerRepository) CompareAndSwap(_ context.Context, env, namespace str
 	return pointer, nil
 }
 
-func paginate[T any](all []T, limit, offset int) ([]T, int, error) {
-	total := len(all)
+func paginate[T any](all []T, limit, offset int) (page []T, total int, err error) {
+	total = len(all)
 	if offset < 0 {
 		offset = 0
 	}

@@ -397,13 +397,13 @@ func (r *ReleaseRepository) List(ctx context.Context, env, namespace string, sta
 //
 // 只提供候选值；并发下由唯一键 uk_config_release_no 兜底（冲突返回 ErrDuplicateKey）。
 func (r *ReleaseRepository) NextReleaseNo(ctx context.Context, env, namespace string) (int64, error) {
-	var max int64
+	var maxNo int64
 	if err := queryFrom(ctx, r.db).QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(release_no), 0) FROM config_release WHERE env = ? AND namespace = ?`,
-		env, namespace).Scan(&max); err != nil {
+		env, namespace).Scan(&maxNo); err != nil {
 		return 0, fmt.Errorf("configcenter: next release no: %w", err)
 	}
-	return max + 1, nil
+	return maxNo + 1, nil
 }
 
 // Transition 按前置状态迁移发布单；前置状态不符返回 ErrStateConflict。
@@ -663,7 +663,7 @@ func scanRelease(s scanner) (domain.Release, error) {
 // ------------------------------------------------ value helpers
 
 // normalizePage 统一分页默认值与下界（与 memory 实现一致）。
-func normalizePage(limit, offset int) (int, int) {
+func normalizePage(limit, offset int) (normalizedLimit, normalizedOffset int) {
 	if limit <= 0 {
 		limit = 20
 	}

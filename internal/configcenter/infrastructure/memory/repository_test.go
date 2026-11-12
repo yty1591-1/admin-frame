@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func newRelease(id, releaseNo int64) domain.Release {
 		Env:          domain.EnvDev,
 		Namespace:    "platform",
 		ReleaseNo:    releaseNo,
-		Name:         "release-" + string(rune('0'+releaseNo)),
+		Name:         "release-" + strconv.FormatInt(releaseNo, 10),
 		Status:       domain.ReleaseStatusDraft,
 		Strategy:     domain.StrategyAll,
 		SnapshotHash: strings.Repeat("a", 64),
