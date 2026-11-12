@@ -64,6 +64,11 @@ func (s CertificationScope) Validate() error {
 	return nil
 }
 
+// DefaultMaxTasksPerCampaign 是单活动任务上限的内置默认值（ADR-0012，2026-11-11）。
+// 10 万档位实测生成 4.68 s、导出 479–595 ms / 14.30 MB（docs/incident/drills/2026-11-08-s7-2-perf-100k.md），
+// 足以让一个季度复核活动覆盖全量主体；可按环境用 iam.certification.max_tasks_per_campaign 覆盖。
+const DefaultMaxTasksPerCampaign = 100000
+
 // CertificationLimits 是访问复核的规模上限与安全开关。
 type CertificationLimits struct {
 	// RequireReason 创建活动 / 裁决是否强制填写原因；裁决原因始终由领域层强制。
@@ -72,7 +77,7 @@ type CertificationLimits struct {
 	AllowBizChannel bool
 	// AutoRevoke 到期后是否自动回收绑定；false 时只标记 expired。
 	AutoRevoke bool
-	// MaxTasksPerCampaign 单活动任务上限；≤0 时使用默认 10000。
+	// MaxTasksPerCampaign 单活动任务上限；≤0 时使用 DefaultMaxTasksPerCampaign。
 	MaxTasksPerCampaign int
 }
 
@@ -124,7 +129,7 @@ func NewCertificationService(cfg CertificationServiceConfig) (*CertificationServ
 		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	if cfg.Limits.MaxTasksPerCampaign <= 0 {
-		cfg.Limits.MaxTasksPerCampaign = 10000
+		cfg.Limits.MaxTasksPerCampaign = DefaultMaxTasksPerCampaign
 	}
 	logger := cfg.Logger
 	if logger == nil {

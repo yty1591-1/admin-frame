@@ -13,7 +13,7 @@ package iam_test
 //	IAM_TEST_MYSQL_DSN='app:app@tcp(127.0.0.1:3306)/admin_frame_test?parseTime=true&loc=UTC' \
 //	go test ./tests/integration/iam/ -run TestCertificationPerf -v
 //
-// 指标门槛来自 docs/iam-p1-5-7-engineering-plan.md §8：
+// 指标门槛来自 docs/archive/plans/iam-p1-5-7-engineering-plan.md §8：
 // 复核清单生成 10k 主体 ≤ 5 分钟。
 
 import (
@@ -40,8 +40,8 @@ import (
 const perfBudget = 5 * time.Minute
 
 // defaultMaxTasks 是 CertificationService 在 Limits.MaxTasksPerCampaign<=0 时的内置默认值
-// （certification_service.go 的 NewCertificationService）。上限边界用例与规模场景共用同一常量。
-const defaultMaxTasks = 10000
+// （app.DefaultMaxTasksPerCampaign，ADR-0012）。上限边界用例与规模场景共用同一常量。
+const defaultMaxTasks = app.DefaultMaxTasksPerCampaign
 
 // perfBindingIDBase 选在雪花量级，避开与其它用例的数据重叠。
 const perfBindingIDBase int64 = 7300000000000000
@@ -142,10 +142,10 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 	t.Logf("[perf] 非空列: decision=%d reason=%d decided_by=%d decided_at=%d（共 %d 行）",
 		fill.decision, fill.reason, fill.decidedBy, fill.decidedAt, fill.rows)
 
-	// 场景 4：服务内置默认上限（10000）的确定性边界。
+	// 场景 4：服务内置默认上限（100000，ADR-0012）的确定性边界。
 	// 这决定了「10 万行导出」能否单活动达成：用不受 CERT_DRILL_MAX_TASKS 影响的
-	// env.defaultLimit 验证「默认值仍是 10000」，避免规模场景抬高上限后把默认值一起抬高。
-	// 绑定补到 10001 条：n < 10001 时补齐，n ≥ 10001 时已有足够数据。
+	// env.defaultLimit 验证「默认值仍是 100000」，避免规模场景抬高上限后把默认值一起抬高。
+	// 绑定补到 100001 条：n < 100001 时补齐，n ≥ 100001 时已有足够数据。
 	if n <= defaultMaxTasks {
 		perfSeedBindingsFrom(t, env.db, n, defaultMaxTasks+1-n, "720250001")
 	}
@@ -166,7 +166,12 @@ func TestCertificationPerf10kOnMySQL(t *testing.T) {
 	const decideCount = 100
 	newRole(t, env.sqlRoles, "720250002", "perf_decide_role",
 		[]iam.PermissionCode{iam.PermRoleRead}, nil)
-	perfSeedBindingsFrom(t, env.db, n+1, decideCount, "720250002")
+	// 绑定 ID 必须避开场景 4 已占用的区间，否则主键冲突。
+	decideSeedStart := n
+	if n <= defaultMaxTasks {
+		decideSeedStart = defaultMaxTasks + 1
+	}
+	perfSeedBindingsFrom(t, env.db, decideSeedStart, decideCount, "720250002")
 	decideCampaign := env.createCampaign(t, "S7-2 字段完整率", "720250002")
 	decideActivated := env.activate(t, decideCampaign.ID)
 	decideTasks, _, err := env.plain.ListTasks(context.Background(), decideActivated.ID,

@@ -37,7 +37,7 @@ type IAMCertificationConfig struct {
 	Enabled *bool `yaml:"enabled"`
 	// AutoRevoke 到期后是否自动回收绑定；默认 false，只标记 expired。
 	AutoRevoke bool `yaml:"auto_revoke"`
-	// MaxTasksPerCampaign 单活动任务上限；0 表示沿用服务内置默认（10000）。
+	// MaxTasksPerCampaign 单活动任务上限；0 表示沿用服务内置默认（100000）。
 	// 复核规模属容量参数，按环境配置而不是固化进二进制——大租户的季度复核
 	// 可能覆盖十万级主体，小租户按默认档位即可。
 	MaxTasksPerCampaign int `yaml:"max_tasks_per_campaign"`

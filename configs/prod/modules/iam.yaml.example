@@ -29,7 +29,7 @@ iam:
   certification:
     enabled: true # 访问复核（P1-7）；显式 false 时不注册复核路由，到期扫描也不再运行
     auto_revoke: false # 到期只标记 expired；开启前必须先走 staging 演练
-    # 单活动任务上限：0 = 内置默认 10000，封顶 500000。
-    # 10 万档位实测见 docs/incident/drills/2026-11-08-s7-2-perf-100k.md；
-    # 上调前须完成 ADR-0012 列出的容量前置条件（staging 复测、并发压测、清理争锁）。
-    max_tasks_per_campaign: 10000
+    # 单活动任务上限：0 = 内置默认 100000（ADR-0012），封顶 500000。
+    # 10 万档位实测见 docs/incident/drills/2026-11-08-s7-2-perf-100k.md。
+    # 小租户可下调以缩小单个活动的任务量；上限属容量参数，按环境配置而非改代码。
+    max_tasks_per_campaign: 100000

@@ -81,7 +81,7 @@ type certDrillEnv struct {
 	plain *app.CertificationService
 	// auto 对应 iam.certification.auto_revoke=true。
 	auto *app.CertificationService
-	// defaultLimit 强制使用服务内置默认上限（10000），不受 CERT_DRILL_MAX_TASKS 影响。
+	// defaultLimit 强制使用服务内置默认上限（100000，ADR-0012），不受 CERT_DRILL_MAX_TASKS 影响。
 	// 用于在规模化演练中独立验证「默认上限仍然生效」，与抬高上限的规模场景互不干扰。
 	defaultLimit *app.CertificationService
 	store        outbox.Store
@@ -165,7 +165,7 @@ func newCertDrillEnv(t *testing.T) *certDrillEnv {
 			Limits: app.CertificationLimits{
 				AllowBizChannel: true,
 				AutoRevoke:      autoRevoke,
-				// 0 表示沿用服务内置默认（10000），与生产配置缺省行为一致。
+				// 0 表示沿用服务内置默认（100000），与生产配置缺省行为一致。
 				MaxTasksPerCampaign: maxTasks,
 			},
 			Logger: logger,
@@ -182,9 +182,9 @@ func newCertDrillEnv(t *testing.T) *certDrillEnv {
 	return env
 }
 
-// certDrillMaxTasks 返回演练用的单活动任务上限覆盖值，未设置时返回 0（沿用服务默认 10000）。
+// certDrillMaxTasks 返回演练用的单活动任务上限覆盖值，未设置时返回 0（沿用服务默认 100000）。
 //
-// 默认 10000 会让 10 万规模的清单生成与导出口径不可达；需要量「抬高上限后的真实代价」时，
+// 默认 100000 覆盖 10 万主体的季度复核；需要量「更大规模或更低上限」的代价时，
 // 由 CERT_DRILL_MAX_TASKS 覆盖，而不改动生产默认值。
 func certDrillMaxTasks(t *testing.T) int {
 	t.Helper()

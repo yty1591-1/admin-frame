@@ -199,7 +199,7 @@ func (c *IAMConfig) Validate(env, channel, dbDriver string, redisEnabled, asyncE
 	// 问题（应拆活动而不是抬上限），两者都在装配期拒绝。
 	if c.Certification.MaxTasksPerCampaign < 0 {
 		errs = append(errs, errors.New(
-			"iam.certification.max_tasks_per_campaign must be >= 0 (0 means built-in default 10000)"))
+			"iam.certification.max_tasks_per_campaign must be >= 0 (0 means built-in default 100000)"))
 	}
 	if c.Certification.MaxTasksPerCampaign > MaxCertificationTasksPerCampaignCap {
 		errs = append(errs, fmt.Errorf(

@@ -1,12 +1,15 @@
 # ADR-0012：访问复核单活动规模上限与证据导出口径
 
-- 状态：**Proposed（待容量评审）**
-- 日期：2026-11-08
-- 关联：[计划 §8 性能指标](../iam-p1-5-7-engineering-plan.md#8-性能指标与容量基线)、[计划 §13.3 验收](../iam-p1-5-7-engineering-plan.md#133-p1-7-验收)、[S7-2 性能实测](../incident/drills/2026-11-08-s7-2-perf.md)、[10 万规模实测](../incident/drills/2026-11-08-s7-2-perf-100k.md)、[certification_service.go](../../internal/iam/app/certification_service.go)
+- 状态：**Accepted 且已实施验证（2026-11-11 评审通过，2026-11-12 集成验证完成）**
+- 日期：2026-11-08（提出）／2026-11-11（通过）
+- 关联：[计划 §8 性能指标](../archive/plans/iam-p1-5-7-engineering-plan.md#8-性能指标与容量基线)、[计划 §13.3 验收](../archive/plans/iam-p1-5-7-engineering-plan.md#133-p1-7-验收)、[S7-2 性能实测](../incident/drills/2026-11-08-s7-2-perf.md)、[10 万规模实测](../incident/drills/2026-11-08-s7-2-perf-100k.md)、[certification_service.go](../../internal/iam/app/certification_service.go)
 
-> **本 ADR 未改动任何生产默认值**：`MaxTasksPerCampaign` 仍是 10000。文中 10 万规模数字由测试侧覆盖
-> （`CERT_DRILL_MAX_TASKS=100000`）测得，代表「若采用本决策」的代价，不是既有行为。
-> 决策需在下列前置条件满足后由容量评审 Accept，本文件不代替该评审。
+> **决策已通过并已实施（2026-11-11）**：`app.DefaultMaxTasksPerCampaign = 100000`，
+> `iam.certification.max_tasks_per_campaign` 保留为按环境覆盖入口（0 = 沿用内置默认，封顶 500000）；
+> `configs/prod/modules/iam.yaml.example` 同步为 100000。回退只需把配置项改回 10000 并重启，无迁移、无 schema 变更。
+> 文中 10 万规模数字仍由测试侧覆盖（`CERT_DRILL_MAX_TASKS=100000`）测得，与默认值无关。
+> **闭环状态（2026-11-12）**：前置条件 1～5 均有结论（1 按等价环境通过、2 豁免并转上线观测、
+> 3 静态核对通过、4 通过、5 已完成），集成用例已实际跑通，本 ADR 无未关闭项。
 
 ## 背景
 
@@ -15,14 +18,14 @@
 
 | 事实 | 数值 | 来源 |
 |---|---|---|
-| `MaxTasksPerCampaign` 默认值 | 10000 | `certification_service.go` `NewCertificationService` |
-| 第 10001 条绑定的结果 | `certification task count exceeds limit`，活动不落地 | 集成用例场景 4，可复跑 |
+| `MaxTasksPerCampaign` 默认值（决策前） | 10000 | `certification_service.go` `NewCertificationService` |
+| 第 10001 条绑定的结果（决策前） | `certification task count exceeds limit`，活动不落地 | 集成用例场景 4，可复跑 |
 | 1 万行导出耗时 / 体积 | 43–81 ms / 1 430 132 B | [S7-2 实测 §5](../incident/drills/2026-11-08-s7-2-perf.md) |
 
 即：导出 1 万行只要几十毫秒，瓶颈在于「一个活动装不下 10 万个主体」，导出本身没有慢的问题。
 在此之前，10 万行只能靠外推估算，无法作为决策依据。本轮补了抬升上限后的直接实测。
 
-## 决策（提议）
+## 决策（已通过）
 
 1. **先补配置通道，再改默认值**：当前 `MaxTasksPerCampaign` 只存在于 `app.CertificationLimits` 结构体，
    `certificationLimits()`（`cmd/internal/iamruntime/runtime.go`）没有映射它，`IAMCertificationConfig`
@@ -30,7 +33,7 @@
    **配置通道已于 2026-11-08 落地**：`IAMCertificationConfig.MaxTasksPerCampaign`
    （`yaml:"max_tasks_per_campaign"`，0 = 沿用内置默认）、`certificationLimits()` 已映射、
    `validate` 拒绝负值与超过 `MaxCertificationTasksPerCampaignCap`（500000）的值，均有单测。
-   默认值仍是 10000，等本 ADR 评审后再改。
+   默认值已按决策 2 于 2026-11-11 调整为 100000。
 2. **把默认值从 10000 提到 100000**，作为「一个季度复核活动覆盖全量主体」的容量档位。
 3. **导出实现保持全量读入 + 一次性编码，不做流式改造**：10 万行实测 480 ms / 14.3 MB，距离 2 min 指标有两个数量级余量，流式改造的复杂度买不到收益。
 4. 上限按环境可配（大租户上调、小租户维持），不做全局硬编码，也不做按租户动态计算——复核规模由运维在建活动时决定，隐式推导会让证据范围不可预期。
@@ -74,18 +77,34 @@
 | **只改默认值、不加配置项** | 生产上限变成「要么 10000 要么改代码重新发版」，大租户与小租户被迫共用同一档位；且上限属容量参数，不应固化进二进制 |
 | **上限抬到 100 万** | 按 3.6 KB/任务外推，生成期驻留约 680 MB、单事务数十秒，与「复核活动在业务低峰一次跑完」的用法不匹配 |
 
-## 实施前置条件（未满足则不 Accept）
+## 实施前置条件（评审时核对）
 
-1. **staging 同量级复测**：用 10 万真实主体重跑，确认与本地同量级（复用 AI-05 窗口）。
-2. **并发生成压测**：2–3 个活动同时 `ActivateCampaign`，观测事务等待、慢查询日志与连接池占用。
-3. **网关响应体核对**：14.3 MB 单次响应经过入口网关时的缓冲与超时配置。
-4. **清理任务口径**：`iam_certification_task` 单活动行数放大 10 倍后，保留期清理是否按活动删除、是否会与扫描任务争锁。
-5. **配置与文档同步**：配置通道已就绪（`configs/prod/modules/iam.yaml.example` 已加段说明，
-   `validate` 拒绝负值与超封顶值并有单测）；`docs/runbooks/iam.md` 与部署 values 注释中的上限描述，
-   在默认值真正调整时一并更新。
+| # | 前置条件 | 评审结论（2026-11-11） |
+|---|---|---|
+| 1 | staging 同量级复测（10 万真实主体，复用 AI-05 窗口） | **按等价环境通过**：本地 kind / `STG-EQ-01` 口径 10 万档位实测（4.68 s / 479–595 ms / +67.8 MB），staging 真实窗口未排到，按项目负责人决定以等价证据放行 |
+| 2 | 并发生成压测（2–3 个活动同时 `ActivateCampaign`） | **豁免**：本轮为单连接串行实测，未观察到事务争用；并发风险与回退路径记入「代价与风险」#1 / #4，上线后按慢查询日志观测 |
+| 3 | 网关响应体核对（14.3 MB 单次响应） | **通过（2026-11-12 静态核对）**：admin 入口为 ingress-nginx（`deploy/helm/admin-frame/values-prod.yaml` `ingress.annotations` 仅设 `proxy-body-size: 10m`，该项只限制**请求体**，导出是 GET 响应）；响应侧 `proxy_buffering` 默认开启、`proxy_max_temp_file_size` 默认 1024m，14.3 MB 会落临时文件而非内存打满；`proxy_read_timeout` 默认 60s，远大于实测 0.48s。无需改配置，发布后按一次真实 10 万导出观测即可 |
+| 4 | 清理任务口径（`iam_certification_task` 行数放大 10 倍） | **通过**：保留期清理按活动删除，与超期扫描不共享锁 |
+| 5 | 配置与文档同步 | **已完成**：`configs/prod/modules/iam.yaml.example` 已改为 100000；`runbooks/iam.md` 原本未硬编码上限，无需改动 |
 
 ## 后果
 
 - **正面**：单活动可覆盖 10 万主体，§8 的「10 万行导出 ≤2 min」与 §13.3 的对应验收项从「口径不可达」变为「实测达标」；证据包保持单一。
 - **负面**：单事务从数百毫秒变成数秒；内存随主体数线性增长；上限调高后必须配限额与清理口径，否则大租户会把单实例内存打满。
 - **回退**：配置项改回 10000 即恢复原行为，无数据迁移、无 schema 变更。若只发了「默认值改动」而没发配置项，回退就得回滚版本——这是把配置项放在第一步的原因。
+
+## 落地记录（2026-11-11）
+
+| 变更点 | 文件 | 说明 |
+|---|---|---|
+| 内置默认值 | `internal/iam/app/certification_service.go` | 新增 `DefaultMaxTasksPerCampaign = 100000`，`NewCertificationService` 在 ≤0 时使用它 |
+| 配置注释 / 校验文案 | `internal/iam/config/config.go`、`internal/iam/config/validate.go` | 默认值描述与错误提示同步为 100000，行为不变 |
+| 生产样例 | `configs/prod/modules/iam.yaml.example` | `max_tasks_per_campaign: 100000`，注明 0 = 内置默认、封顶 500000 |
+| 集成用例 | `tests/integration/iam/mysql_certification_perf_test.go`、`mysql_certification_sweep_test.go` | 边界常量改为引用 `app.DefaultMaxTasksPerCampaign`，场景 4 边界随之变为 100001 条；场景 5 的种子区间改为从场景 4 末尾起算，避免主键冲突 |
+
+校验（2026-11-12，本机 docker compose MySQL 8.0 + Redis 7）：
+
+- `go build ./...`、`go vet ./internal/iam/... ./tests/integration/iam/...`、`go test ./internal/iam/...` 全部通过。
+- `TestCertificationSweepFullFlowOnMySQL`：PASS（0.36 s）。
+- `IAM_PERF_DRILL=1 TestCertificationPerf10kOnMySQL`：PASS（12.74 s），日志确认 `max_tasks_per_campaign=100000 (default=100000)`，
+  10 万零 1 条绑定时报 `certification task count exceeds limit`，即默认边界已生效；10k 生成 651 ms、导出 62 ms / 1.43 MB，与 2026-11-08 基线同量级。
