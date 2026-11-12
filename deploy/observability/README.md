@@ -24,7 +24,7 @@ admin/biz/c/worker ──OTLP/HTTP :4318──► OTel Collector ──OTLP/gRPC
                                               └── 自身指标 :8888（可选抓取）
 ```
 
-应用侧由 [configs/*.yaml.example](../../configs/admin.yaml.example) 的 `tracing` 段控制：
+应用侧由 [configs/prod/modules/infra.yaml.example](../../configs/prod/modules/infra.yaml.example) 的 `tracing` 段控制：
 
 ```yaml
 tracing:

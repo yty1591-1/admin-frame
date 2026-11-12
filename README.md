@@ -7,42 +7,47 @@ A/B/C 三端业务的 Go 模块化单体骨架，实现见 [docs/ARCHITECTURE.md
 | `admin-api` | `:8081` | A 平台运营 |
 | `biz-api` | `:8082` | B 商家/企业 |
 | `c-api` | `:8083` | C 消费者 |
-| `worker` | — | 后台任务骨架（异步运行时待 ENT-03 落地） |
-| `migrate` | — | 迁移脚本执行器 |
+| `worker` | — | 后台任务：Outbox Relay、通知投递、审计导出等（已有独立异步运行时） |
+| `migrate` | — | 迁移脚本执行器（唯一 schema 变更入口） |
 
 ## 快速开始
 
 ```bash
-# 1. 配置
-cp configs/admin.yaml.example configs/admin.yaml
-cp configs/biz.yaml.example   configs/biz.yaml
-cp configs/c.yaml.example     configs/c.yaml
-cp configs/worker.yaml.example configs/worker.yaml
+# 1. 依赖：MySQL 8.0 + Redis 7（本地可用 compose 一键起）
+docker compose -f docker-compose.integration.yml up -d mysql redis
 
-# 2. 依赖与编译
-go mod tidy
+# 2. 配置：dev / staging / prod 分层；本地使用 dev
+cp configs/dev/env.example configs/dev/env   # 填入本地口令/密钥，勿入库
+# configs/dev/*.yaml 已就绪；缺文件时从同目录 *.yaml.example 复制
+
+# 3. 建库与迁移（驱动只支持 MySQL；见 docs/migration-guide.md）
+make migrate-up
+# 等价于：go run ./cmd/migrate -config configs/dev/admin.yaml -action up
+
+# 4. 编译并启动
 make build
-
-# 3. 启动（任选一端）
-make run-c
-# 或 make run-admin / make run-biz
+make run-admin   # 或 make run-biz / run-c / run-worker
 ```
 
-## 演示鉴权
+## 鉴权
 
-当前为 **Demo Bearer Token**（生产请替换为各端独立 JWT）：
+三端统一使用 JWT（`auth.mode: jwt`，HS256 或 RS256），不存在 Demo Token：
 
-| 端 | Header |
-|---|---|
-| A | `Authorization: Bearer admin.staff-1` |
-| B | `Authorization: Bearer biz.m100.staff-9` |
-| C | `Authorization: Bearer c.user-42` |
+```bash
+# A 端登录；引导账号 admin@example.com / Admin#Bootstrap2026 首登强制改密
+curl -s -X POST http://127.0.0.1:8081/admin/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"admin@example.com","password":"Admin#Bootstrap2026"}'
+```
+
+刷新、登出、会话撤销链路见 [docs/identity-authn.md](docs/identity-authn.md)；
+`tests/e2e` 覆盖「登录 → 刷新轮换 → 登出撤销 → 刷新令牌重放拒绝」。
 
 ### A 端 IAM 示例
 
 ```bash
 curl -s "http://127.0.0.1:8081/admin/v1/iam/permissions?page=1&page_size=20" \
-  -H "Authorization: Bearer admin.staff-1"
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ### 健康检查
@@ -116,5 +121,7 @@ make ci                   # 本地对齐托管平台必跑项
 
 ## 说明
 
-- 默认 `db.driver: memory`，各 API 进程内存独立；跨进程联调请接入共享 MySQL/Postgres 并实现 SQL 仓储。
-- `cmd/migrate` 已接入 PostgreSQL / MySQL 执行迁移；配置、发布与故障处置见 [docs/migration-guide.md](docs/migration-guide.md)。
+- 数据库只支持 **MySQL 8.0**：SQL 仓储与迁移脚本均为 MySQL 方言（`DATETIME(3)`、`AUTO_INCREMENT`、`InnoDB`），`db.driver` 仅允许 `memory` / `mysql`；`postgres` 已被启动校验拒绝。
+- 跨进程联调必须使用共享 MySQL；`memory` 仅用于单进程测试与本地快速验证。
+- `cmd/migrate` 仍保留多方言执行能力，但仓库内迁移脚本只提供 MySQL 版本，生产禁止使用其它方言。
+- 通知渠道在 `notification.channels` 中显式配置（SMTP / 阿里云 / APNs / FCM / disabled）；prod/staging 禁止 memory，见 [docs/notification-channels.md](docs/notification-channels.md)。

@@ -355,7 +355,7 @@ func main() {
 // run 只做装配声明；配置加载、鉴权、探针、请求链路与优雅关闭由 platform.Run 负责。
 func run() error {
     return platform.Run(context.Background(), platform.Options{
-        ConfigPath:    "configs/admin.yaml",
+        ConfigPath:    "configs/dev/admin.yaml",
         Build:         platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
         NewAuthorizer: newAuthorizer,
         Register: func(deps *platform.Deps, mux *http.ServeMux) error {
@@ -1125,15 +1125,17 @@ docs/adr/
 git clone <repo>
 cd myproject
 
-cp configs/admin.yaml.example configs/admin.yaml
-cp configs/biz.yaml.example   configs/biz.yaml
-cp configs/c.yaml.example     configs/c.yaml
+cp configs/dev/env.example configs/dev/env   # 填入本地口令/密钥
+cp configs/dev/admin.yaml.example configs/dev/admin.yaml
+cp configs/dev/biz.yaml.example   configs/dev/biz.yaml
+cp configs/dev/c.yaml.example     configs/dev/c.yaml
+cp configs/dev/worker.yaml.example configs/dev/worker.yaml
 
 # 本地依赖
-docker compose up -d
+docker compose -f docker-compose.integration.yml up -d mysql redis
 
 make build
-./bin/admin-api   # A 端，默认见 configs/admin.yaml
+./bin/admin-api   # A 端，默认读取 configs/dev/admin.yaml
 ./bin/biz-api     # B 端
 ./bin/c-api       # C 端
 ```
