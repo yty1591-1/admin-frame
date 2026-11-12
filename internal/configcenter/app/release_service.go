@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -25,6 +25,7 @@ type ReleaseService struct {
 	audit    auditContext
 	ids      id.Generator
 	now      func() time.Time
+	signer   *configclient.Signer
 }
 
 // NewReleaseService 构造发布用例；三个仓储、审计出口与 ID 生成器必填。
@@ -54,6 +55,7 @@ func NewReleaseService(items domain.ItemRepository, releases domain.ReleaseRepos
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
+		signer:   opts.Signer,
 	}, nil
 }
 
@@ -266,6 +268,24 @@ func (s *ReleaseService) Publish(ctx context.Context, releaseID int64, expectedP
 	if release.Status != domain.ReleaseStatusApproved {
 		return domain.Release{}, apperr.Conflict("only approved releases can be published")
 	}
+	items, err := s.releases.ListItems(ctx, release.ID)
+	if err != nil {
+		return domain.Release{}, translate(err)
+	}
+	if SnapshotHash(items) != release.SnapshotHash {
+		return domain.Release{}, apperr.Internal("release snapshot hash mismatch", nil)
+	}
+	signed, err := applySignature(s.signer, release)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	if signed.SnapshotSignature != "" {
+		if err := s.releases.UpdateSnapshotSignature(ctx, release.ID,
+			signed.SnapshotSignature, signed.SnapshotKeyID, s.now().UTC()); err != nil {
+			return domain.Release{}, translate(err)
+		}
+	}
+	release = signed
 	pointer, previousID, err := s.switchPointer(ctx, release, expectedPointerVersion,
 		actor.SubjectID, domain.ReleaseStatusSuperseded)
 	if err != nil {
@@ -385,6 +405,11 @@ func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain
 	if SnapshotHash(newItems) != target.SnapshotHash {
 		return domain.Release{}, apperr.Internal("rollback snapshot hash mismatch", nil)
 	}
+	signed, err := applySignature(s.signer, newRelease)
+	if err != nil {
+		return domain.Release{}, err
+	}
+	newRelease = signed
 	if err := s.releases.Create(ctx, newRelease, newItems); err != nil {
 		return domain.Release{}, translate(err)
 	}
@@ -594,24 +619,9 @@ func releaseResourceID(release domain.Release) string {
 
 // SnapshotHash 计算发布快照摘要。
 //
-// 规范化：按 config_key、item_id 排序后对 "key\0version\0value_hash\n"
-// 取 SHA-256；与条目顺序、数据库返回顺序无关，保证可复现。
+// 规范化实现由 pkg/configclient.HashItems 统一提供，保证管理面签名与
+// 客户端验签使用完全相同的算法（按 config_key、item_id 排序后对
+// "key\0version\0value_hash\n" 取 SHA-256）。
 func SnapshotHash(items []domain.ReleaseItem) string {
-	sorted := append([]domain.ReleaseItem(nil), items...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].ConfigKey == sorted[j].ConfigKey {
-			return sorted[i].ItemID < sorted[j].ItemID
-		}
-		return sorted[i].ConfigKey < sorted[j].ConfigKey
-	})
-	var builder strings.Builder
-	for _, item := range sorted {
-		builder.WriteString(item.ConfigKey)
-		builder.WriteByte(0)
-		fmt.Fprintf(&builder, "%d", item.ItemVersion)
-		builder.WriteByte(0)
-		builder.WriteString(item.ValueHash)
-		builder.WriteByte('\n')
-	}
-	return domain.HashValue(builder.String())
+	return configclient.HashItems(toSnapshotItems(items))
 }

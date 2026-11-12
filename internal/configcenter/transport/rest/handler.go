@@ -461,27 +461,29 @@ func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- release
 
 type releaseResponse struct {
-	ID               int64               `json:"id"`
-	Env              string              `json:"env"`
-	Namespace        string              `json:"namespace"`
-	ReleaseNo        int64               `json:"release_no"`
-	Name             string              `json:"name"`
-	Description      string              `json:"description"`
-	Status           string              `json:"status"`
-	Strategy         string              `json:"strategy"`
-	TargetRuleJSON   string              `json:"target_rule_json"`
-	SnapshotHash     string              `json:"snapshot_hash"`
-	SnapshotSize     int                 `json:"snapshot_size"`
-	BasedOnReleaseID *int64              `json:"based_on_release_id"`
-	CreatedBy        string              `json:"created_by"`
-	SubmittedBy      string              `json:"submitted_by"`
-	ApprovedBy       string              `json:"approved_by"`
-	ApprovedAt       *string             `json:"approved_at"`
-	PublishedAt      *string             `json:"published_at"`
-	CreatedAt        string              `json:"created_at"`
-	UpdatedAt        string              `json:"updated_at"`
-	Items            []releaseItemView   `json:"items,omitempty"`
-	Reviews          []releaseReviewView `json:"reviews,omitempty"`
+	ID                int64               `json:"id"`
+	Env               string              `json:"env"`
+	Namespace         string              `json:"namespace"`
+	ReleaseNo         int64               `json:"release_no"`
+	Name              string              `json:"name"`
+	Description       string              `json:"description"`
+	Status            string              `json:"status"`
+	Strategy          string              `json:"strategy"`
+	TargetRuleJSON    string              `json:"target_rule_json"`
+	SnapshotHash      string              `json:"snapshot_hash"`
+	SnapshotSize      int                 `json:"snapshot_size"`
+	SnapshotKeyID     string              `json:"snapshot_key_id,omitempty"`
+	SnapshotSignature string              `json:"snapshot_signature,omitempty"`
+	BasedOnReleaseID  *int64              `json:"based_on_release_id"`
+	CreatedBy         string              `json:"created_by"`
+	SubmittedBy       string              `json:"submitted_by"`
+	ApprovedBy        string              `json:"approved_by"`
+	ApprovedAt        *string             `json:"approved_at"`
+	PublishedAt       *string             `json:"published_at"`
+	CreatedAt         string              `json:"created_at"`
+	UpdatedAt         string              `json:"updated_at"`
+	Items             []releaseItemView   `json:"items,omitempty"`
+	Reviews           []releaseReviewView `json:"reviews,omitempty"`
 }
 
 type releaseItemView struct {
@@ -509,25 +511,27 @@ type releaseListResponse struct {
 
 func toReleaseView(release domain.Release) releaseResponse {
 	return releaseResponse{
-		ID:               release.ID,
-		Env:              release.Env,
-		Namespace:        release.Namespace,
-		ReleaseNo:        release.ReleaseNo,
-		Name:             release.Name,
-		Description:      release.Description,
-		Status:           string(release.Status),
-		Strategy:         string(release.Strategy),
-		TargetRuleJSON:   release.TargetRuleJSON,
-		SnapshotHash:     release.SnapshotHash,
-		SnapshotSize:     release.SnapshotSize,
-		BasedOnReleaseID: release.BasedOnReleaseID,
-		CreatedBy:        release.CreatedBy,
-		SubmittedBy:      release.SubmittedBy,
-		ApprovedBy:       release.ApprovedBy,
-		ApprovedAt:       formatTimePtr(release.ApprovedAt),
-		PublishedAt:      formatTimePtr(release.PublishedAt),
-		CreatedAt:        formatTime(release.CreatedAt),
-		UpdatedAt:        formatTime(release.UpdatedAt),
+		ID:                release.ID,
+		Env:               release.Env,
+		Namespace:         release.Namespace,
+		ReleaseNo:         release.ReleaseNo,
+		Name:              release.Name,
+		Description:       release.Description,
+		Status:            string(release.Status),
+		Strategy:          string(release.Strategy),
+		TargetRuleJSON:    release.TargetRuleJSON,
+		SnapshotHash:      release.SnapshotHash,
+		SnapshotSize:      release.SnapshotSize,
+		SnapshotKeyID:     release.SnapshotKeyID,
+		SnapshotSignature: release.SnapshotSignature,
+		BasedOnReleaseID:  release.BasedOnReleaseID,
+		CreatedBy:         release.CreatedBy,
+		SubmittedBy:       release.SubmittedBy,
+		ApprovedBy:        release.ApprovedBy,
+		ApprovedAt:        formatTimePtr(release.ApprovedAt),
+		PublishedAt:       formatTimePtr(release.PublishedAt),
+		CreatedAt:         formatTime(release.CreatedAt),
+		UpdatedAt:         formatTime(release.UpdatedAt),
 	}
 }
 

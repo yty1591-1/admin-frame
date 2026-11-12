@@ -444,6 +444,28 @@ func (r *ReleaseRepository) Transition(ctx context.Context, id int64, from, to d
 	return nil
 }
 
+// UpdateSnapshotSignature 写入发布快照签名；发布不存在返回 ErrNotFound。
+//
+// 幂等：重复写入相同签名时 RowsAffected 可能为 0，此时按存在性返回成功。
+func (r *ReleaseRepository) UpdateSnapshotSignature(ctx context.Context, id int64, signature, keyID string, at time.Time) error {
+	res, err := execFrom(ctx, r.db).ExecContext(ctx,
+		`UPDATE config_release SET snapshot_signature = ?, snapshot_key_id = ?, updated_at = ?
+		 WHERE id = ?`, signature, keyID, at.UTC(), id)
+	if err != nil {
+		return fmt.Errorf("configcenter: update release signature: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("configcenter: update release signature affected: %w", err)
+	}
+	if affected == 0 {
+		if _, err := r.Get(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ListItems 返回发布快照条目（按 item_id 升序）。
 func (r *ReleaseRepository) ListItems(ctx context.Context, releaseID int64) ([]domain.ReleaseItem, error) {
 	rows, err := queryFrom(ctx, r.db).QueryContext(ctx,

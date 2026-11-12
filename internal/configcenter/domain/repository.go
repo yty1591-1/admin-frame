@@ -32,6 +32,9 @@ type ReleaseRepository interface {
 	List(ctx context.Context, env, namespace string, status ReleaseStatus, limit, offset int) ([]Release, int, error)
 	NextReleaseNo(ctx context.Context, env, namespace string) (int64, error)
 	Transition(ctx context.Context, id int64, from, to ReleaseStatus, actor string, at time.Time) error
+	// UpdateSnapshotSignature 在发布生效前写入 Ed25519 签名与 key id。
+	// 快照内容不可变，签名只覆盖既有 snapshot_hash / snapshot_size 等元数据。
+	UpdateSnapshotSignature(ctx context.Context, id int64, signature, keyID string, at time.Time) error
 	ListItems(ctx context.Context, releaseID int64) ([]ReleaseItem, error)
 	AppendReview(ctx context.Context, review ReleaseReview) error
 	ListReviews(ctx context.Context, releaseID int64) ([]ReleaseReview, error)

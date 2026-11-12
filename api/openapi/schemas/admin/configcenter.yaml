@@ -274,6 +274,12 @@ components:
           type: string
         snapshot_size:
           type: integer
+        snapshot_key_id:
+          type: string
+          description: 快照签名 Ed25519 密钥版本；未配置签名密钥时省略。
+        snapshot_signature:
+          type: string
+          description: 快照 Ed25519 签名（base64）；未配置签名密钥时省略。
         based_on_release_id:
           type: integer
           format: int64

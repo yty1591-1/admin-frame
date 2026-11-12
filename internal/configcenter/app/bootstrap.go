@@ -10,6 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -25,6 +26,7 @@ type BootstrapService struct {
 	audit    auditContext
 	ids      id.Generator
 	now      func() time.Time
+	signer   *configclient.Signer
 }
 
 // NewBootstrapService 构造播种用例；仓储、key spec 注册表、审计出口与 ID 生成器必填。
@@ -57,6 +59,7 @@ func NewBootstrapService(items domain.ItemRepository, releases domain.ReleaseRep
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
+		signer:   opts.Signer,
 	}, nil
 }
 
@@ -131,6 +134,10 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 	}
 
 	release, err := s.buildBaselineRelease(ctx, in, entries, now)
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	release, err = applySignature(s.signer, release)
 	if err != nil {
 		return BootstrapResult{}, err
 	}

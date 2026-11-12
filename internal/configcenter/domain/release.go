@@ -140,6 +140,9 @@ func (r Release) Validate() error {
 	if r.SnapshotSize < 0 {
 		return fmt.Errorf("configcenter: snapshot_size must be >= 0")
 	}
+	if (r.SnapshotSignature == "") != (r.SnapshotKeyID == "") {
+		return fmt.Errorf("configcenter: snapshot_signature and snapshot_key_id must be set together")
+	}
 	if strings.TrimSpace(r.CreatedBy) == "" {
 		return fmt.Errorf("configcenter: created_by is required")
 	}

@@ -9,8 +9,13 @@ package configcenterruntime
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
+	"log/slog"
+	"os"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
@@ -21,6 +26,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -37,10 +43,21 @@ const (
 	bootstrapTrace   = "config-bootstrap"
 )
 
+// 快照签名密钥通过部署注入（base64）：32 字节 seed 或 64 字节私钥。
+// staging / prod 未配置时启动失败（fail closed），避免发布未签名快照。
+const (
+	signingKeyEnv       = "CONFIGCENTER_SNAPSHOT_SIGNING_KEY"
+	signingKeyIDEnv     = "CONFIGCENTER_SNAPSHOT_SIGNING_KEY_ID"
+	defaultSigningKeyID = "k1"
+)
+
 // Runtime 是配置中心域的运行时产物。
 type Runtime struct {
 	// Handler A 端管理 Handler；为 nil 表示本进程未装配（缺平台依赖）。
 	Handler *configcenterrest.Handler
+	// Snapshots 是当前生效快照读取服务，实现 configclient.Source；
+	// 业务进程据此装配 pkg/configclient.Client。
+	Snapshots *app.SnapshotService
 }
 
 // Options 是装配参数。
@@ -84,23 +101,33 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter key spec: %w", err)
 	}
 
-	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs,
-		app.Options{Service: service})
+	signer, err := buildSigner(deps.Config.Env, deps.Logger)
+	if err != nil {
+		return nil, err
+	}
+	appOpts := app.Options{Service: service, Signer: signer}
+
+	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, appOpts)
 	if err != nil {
 		return nil, fmt.Errorf("configcenter item service: %w", err)
 	}
 	releaseService, err := app.NewReleaseService(repos.items, repos.releases, repos.pointers,
-		emitter, deps.IDs, app.Options{Service: service})
+		emitter, deps.IDs, appOpts)
 	if err != nil {
 		return nil, fmt.Errorf("configcenter release service: %w", err)
 	}
 	bootstrapService, err := app.NewBootstrapService(repos.items, repos.releases, repos.pointers,
-		registry, emitter, deps.IDs, app.Options{Service: service})
+		registry, emitter, deps.IDs, appOpts)
 	if err != nil {
 		return nil, fmt.Errorf("configcenter bootstrap service: %w", err)
 	}
 	if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
 		return nil, err
+	}
+
+	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
 	}
 
 	handler, err := configcenterrest.NewHandler(configcenterrest.HandlerConfig{
@@ -116,7 +143,43 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter handler: %w", err)
 	}
-	return &Runtime{Handler: handler}, nil
+	return &Runtime{Handler: handler, Snapshots: snapshots}, nil
+}
+
+// buildSigner 从部署注入的密钥材料构造快照签名器。
+//
+// 未配置时：local / dev / test 允许关闭签名（客户端会拒绝未签名快照）；
+// staging / prod 直接失败，避免生产发布无法被客户端验证的快照。
+func buildSigner(env string, logger *slog.Logger) (*configclient.Signer, error) {
+	raw := strings.TrimSpace(os.Getenv(signingKeyEnv))
+	if raw == "" {
+		if env == "staging" || env == "prod" {
+			return nil, fmt.Errorf("configcenter: %s is required when env=%s", signingKeyEnv, env)
+		}
+		if logger != nil {
+			logger.Warn("configcenter snapshot signing disabled; snapshots will be rejected by clients",
+				"env", env, "key_env", signingKeyEnv)
+		}
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter: %s is not valid base64", signingKeyEnv)
+	}
+	var privateKey ed25519.PrivateKey
+	switch len(decoded) {
+	case ed25519.SeedSize:
+		privateKey = ed25519.NewKeyFromSeed(decoded)
+	case ed25519.PrivateKeySize:
+		privateKey = append(ed25519.PrivateKey(nil), decoded...)
+	default:
+		return nil, fmt.Errorf("configcenter: %s must be a base64 ed25519 seed or private key", signingKeyEnv)
+	}
+	keyID := strings.TrimSpace(os.Getenv(signingKeyIDEnv))
+	if keyID == "" {
+		keyID = defaultSigningKeyID
+	}
+	return configclient.NewSigner(keyID, privateKey)
 }
 
 // bootstrap 对每个已声明 namespace 幂等播种 baseline；任一失败即返回（fail fast）。

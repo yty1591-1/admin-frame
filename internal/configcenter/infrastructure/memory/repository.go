@@ -307,6 +307,21 @@ func (r *releaseRepository) Transition(_ context.Context, id int64, from, to dom
 	return nil
 }
 
+// UpdateSnapshotSignature 写入发布快照签名；发布不存在返回 domain.ErrNotFound。
+func (r *releaseRepository) UpdateSnapshotSignature(_ context.Context, id int64, signature, keyID string, at time.Time) error {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	release, ok := r.store.releases[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	release.SnapshotSignature = signature
+	release.SnapshotKeyID = keyID
+	release.UpdatedAt = at
+	r.store.releases[id] = release
+	return nil
+}
+
 // ListItems 返回发布快照条目（按 item_id 升序）。
 func (r *releaseRepository) ListItems(_ context.Context, releaseID int64) ([]domain.ReleaseItem, error) {
 	r.store.mu.RLock()
