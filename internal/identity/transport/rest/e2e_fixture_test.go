@@ -353,8 +353,10 @@ type e2eCall struct {
 	target      string
 	body        string
 	contentType string
-	principal   *auth.Principal
-	pathValues  map[string]string
+	// headers 是额外的请求头，用于 Basic 认证等场景。
+	headers    map[string]string
+	principal  *auth.Principal
+	pathValues map[string]string
 }
 
 // invoke 直调 Handler 并返回响应记录器。
@@ -370,6 +372,9 @@ func (f *e2eFixture) invoke(fn http.HandlerFunc, call e2eCall) *httptest.Respons
 			contentType = "application/json"
 		}
 		request.Header.Set("Content-Type", contentType)
+	}
+	for key, value := range call.headers {
+		request.Header.Set(key, value)
 	}
 	for key, value := range call.pathValues {
 		request.SetPathValue(key, value)
