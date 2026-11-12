@@ -32,7 +32,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/biz.yaml", "config file path")
+	configPath := flag.String("config", "configs/dev/biz.yaml", "config file path")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("biz-api: %v", err)

@@ -29,7 +29,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/c.yaml", "config file path")
+	configPath := flag.String("config", "configs/dev/c.yaml", "config file path")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("c-api: %v", err)

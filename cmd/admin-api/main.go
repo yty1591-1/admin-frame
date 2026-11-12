@@ -30,7 +30,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/admin.yaml", "config file path")
+	configPath := flag.String("config", "configs/dev/admin.yaml", "config file path")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("admin-api: %v", err)

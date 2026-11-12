@@ -36,16 +36,16 @@ build-migrate:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/migrate ./cmd/migrate
 
 run-admin: build-admin
-	./$(BIN_DIR)/admin-api -config configs/admin.yaml
+	./$(BIN_DIR)/admin-api -config configs/dev/admin.yaml
 
 run-biz: build-biz
-	./$(BIN_DIR)/biz-api -config configs/biz.yaml
+	./$(BIN_DIR)/biz-api -config configs/dev/biz.yaml
 
 run-c: build-c
-	./$(BIN_DIR)/c-api -config configs/c.yaml
+	./$(BIN_DIR)/c-api -config configs/dev/c.yaml
 
 run-worker: build-worker
-	./$(BIN_DIR)/worker -config configs/worker.yaml
+	./$(BIN_DIR)/worker -config configs/dev/worker.yaml
 
 test:
 	$(GO) test ./...
