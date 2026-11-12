@@ -479,6 +479,46 @@ var entries = []Entry{
 		Sort:        365,
 		Description: "确认保留或驳回回收复核任务；驳回前二次校验绑定指纹，与 write 分离以落实职责分离。",
 	},
+	{
+		Code:        iam.PermConfigPublish,
+		Name:        "发布配置",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        375,
+		Description: "将配置草稿发布为不可变 Release；不包含审批与密钥操作。",
+	},
+	{
+		Code:        iam.PermConfigApprove,
+		Name:        "审批配置发布",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        385,
+		Description: "审批配置发布单；申请人不得自审，与 config:publish 分离以落实职责分离。",
+	},
+	{
+		Code:        iam.PermConfigSecretRead,
+		Name:        "查看密钥元数据",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        395,
+		Description: "查看业务密钥列表、版本与授权元数据；不返回明文、密文或 wrapped DEK。",
+	},
+	{
+		Code:        iam.PermConfigSecretWrite,
+		Name:        "管理业务密钥",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        405,
+		Description: "创建、轮换、吊销业务密钥并提交审批；明文一次性输入，永不回显。",
+	},
+	{
+		Code:        iam.PermConfigSecretApprove,
+		Name:        "审批密钥操作",
+		Channel:     ChannelAdmin,
+		Status:      StatusActive,
+		Sort:        415,
+		Description: "审批业务密钥创建、轮换、吊销与授权；提交人不得自审。",
+	},
 }
 
 // All 返回目录副本，调用方可自由排序 / 过滤而不影响包内状态。

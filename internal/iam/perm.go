@@ -108,6 +108,16 @@ const (
 	PermConfigRead PermissionCode = "config:read"
 	// PermConfigWrite 修改运行时配置。
 	PermConfigWrite PermissionCode = "config:write"
+	// PermConfigPublish 发布配置 Release。
+	PermConfigPublish PermissionCode = "config:publish"
+	// PermConfigApprove 审批配置发布。
+	PermConfigApprove PermissionCode = "config:approve"
+	// PermConfigSecretRead 查看业务密钥元数据（不含明文）。
+	PermConfigSecretRead PermissionCode = "config:secret:read"
+	// PermConfigSecretWrite 创建、轮换、吊销业务密钥（明文一次性输入）。
+	PermConfigSecretWrite PermissionCode = "config:secret:write"
+	// PermConfigSecretApprove 审批业务密钥变更。
+	PermConfigSecretApprove PermissionCode = "config:secret:approve"
 	// PermTenantRead 查看租户（ENT-09）。
 	PermTenantRead PermissionCode = "tenant:read"
 	// PermTenantWrite 创建租户与变更租户状态（ENT-09）。
