@@ -137,7 +137,7 @@ func (s *ItemService) CreateItem(ctx context.Context, in CreateItemInput) (domai
 		"current_version": fmt.Sprintf("%d", item.CurrentVersion),
 	}
 	if in.Value != nil {
-		version, err := s.buildVersion(item, 1, *in.Value, in.ChangeSummary, in.Actor.SubjectID, now)
+		version, err := buildVersion(s.ids, item, 1, *in.Value, in.ChangeSummary, in.Actor.SubjectID, now)
 		if err != nil {
 			return domain.Item{}, err
 		}
@@ -193,7 +193,7 @@ func (s *ItemService) UpdateValue(ctx context.Context, in UpdateValueInput) (dom
 
 	now := s.now().UTC()
 	nextVersion := item.CurrentVersion + 1
-	version, err := s.buildVersion(item, nextVersion, in.Value, in.ChangeSummary, in.Actor.SubjectID, now)
+	version, err := buildVersion(s.ids, item, nextVersion, in.Value, in.ChangeSummary, in.Actor.SubjectID, now)
 	if err != nil {
 		return domain.Item{}, err
 	}
@@ -287,6 +287,30 @@ func (s *ItemService) Get(ctx context.Context, env, namespace, key string) (doma
 	return s.get(ctx, env, namespace, key)
 }
 
+// GetByID 按主键读取配置键（管理面路径参数）。
+func (s *ItemService) GetByID(ctx context.Context, itemID int64) (domain.Item, error) {
+	if itemID <= 0 {
+		return domain.Item{}, apperr.BadRequest("invalid item id")
+	}
+	item, err := s.items.GetByID(ctx, itemID)
+	if err != nil {
+		return domain.Item{}, translate(err)
+	}
+	return item, nil
+}
+
+// GetVersion 读取指定版本（版本内容不可变）。
+func (s *ItemService) GetVersion(ctx context.Context, itemID, version int64) (domain.ItemVersion, error) {
+	if itemID <= 0 || version < 1 {
+		return domain.ItemVersion{}, apperr.BadRequest("invalid item id or version")
+	}
+	itemVersion, err := s.items.GetVersion(ctx, itemID, version)
+	if err != nil {
+		return domain.ItemVersion{}, translate(err)
+	}
+	return itemVersion, nil
+}
+
 // List 按状态过滤列出配置键。
 func (s *ItemService) List(ctx context.Context, env, namespace string,
 	status domain.ItemStatus, limit, offset int) ([]domain.Item, int, error) {
@@ -325,9 +349,9 @@ func (s *ItemService) get(ctx context.Context, env, namespace, key string) (doma
 }
 
 // buildVersion 构造并校验一条不可变版本。
-func (s *ItemService) buildVersion(item domain.Item, versionNo int64, value, summary, actorID string,
+func buildVersion(ids id.Generator, item domain.Item, versionNo int64, value, summary, actorID string,
 	now time.Time) (domain.ItemVersion, error) {
-	versionID, err := s.ids.Next()
+	versionID, err := ids.Next()
 	if err != nil {
 		return domain.ItemVersion{}, apperr.Internal("generate version id failed", err)
 	}

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.4.0
+  version: 8.5.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -44,6 +44,11 @@ info:
     8.4.0：SCIM 2.0 目录同步（docs/identity-authn.md 21.1）——新增 `/admin/scim/v2/*`
     协议端点与三个管理端点；SCIM 响应体按 RFC 7643 / 7644，是统一信封的显式例外，
     链路 ID 经响应头 `X-Trace-Id` 返回（纯增量）。
+    8.5.0：配置中心管理面（M1-3）——新增 `/admin/v1/configs/*` 十四个端点
+    （namespace、配置键与版本、发布单创建 / 送审 / 审批 / 发布 / 回滚）；
+    读、写、审批、发布四权分离（`config:read` / `config:write` / `config:approve` /
+    `config:publish`）；敏感项（`sensitive=true`）只返回 `value_hash`，不返回明文；
+    快照不可变，生效只切换释放指针（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -70,6 +75,13 @@ tags:
     description: |
       身份认证：密码登录、一次性刷新、登出与会话管理。令牌不携带角色，
       权限以 IAM 快照为唯一来源；错误码覆盖 40000 / 40100 / 42900 / 50300。
+  - name: config
+    description: |
+      配置中心管理面（M1-3）。配置键只能追加版本、不可原地修改；发布单是
+      不可变快照，生效只切换释放指针。读、写、审批、发布四权分离
+      （`config:read` / `config:write` / `config:approve` / `config:publish`），
+      提交人不得自审（40300）；敏感项（`sensitive=true`）不返回明文，只返回
+      `value_hash`。指针与版本冲突返回 40900。
 paths:
   /healthz:
     $ref: './paths/admin/probe.yaml#/healthz'
@@ -263,6 +275,28 @@ paths:
     $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key'
   /admin/v1/feature-flags/{key}/status:
     $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key-status'
+  /admin/v1/configs/namespaces:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-namespaces'
+  /admin/v1/configs/items:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items'
+  /admin/v1/configs/items/{id}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id'
+  /admin/v1/configs/items/{id}/versions:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-versions'
+  /admin/v1/configs/items/{id}/versions/{version}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-versions-by-version'
+  /admin/v1/configs/releases:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases'
+  /admin/v1/configs/releases/{id}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id'
+  /admin/v1/configs/releases/{id}/submit:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-submit'
+  /admin/v1/configs/releases/{id}/approve:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-approve'
+  /admin/v1/configs/releases/{id}/publish:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-publish'
+  /admin/v1/configs/releases/{id}/rollback:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-rollback'
   /admin/v1/notifications:
     $ref: './paths/admin/notification.yaml#/admin-v1-notifications'
   /admin/v1/notifications/{id}:

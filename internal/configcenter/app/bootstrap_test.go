@@ -1,0 +1,170 @@
+package app_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/admin-frame/admin-frame/internal/configcenter/app"
+	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/audit"
+)
+
+func newBootstrapService(t *testing.T) (*app.BootstrapService, *memory.Repositories, *fakeEmitter) {
+	t.Helper()
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		testSpecs(t), emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap service: %v", err)
+	}
+	return service, repos, emitter
+}
+
+func TestBootstrapSeedsBaseline(t *testing.T) {
+	service, repos, emitter := newBootstrapService(t)
+	ctx := context.Background()
+
+	result, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvDev, Namespace: "platform", Actor: testActor,
+	})
+	if err != nil {
+		t.Fatalf("ensure baseline: %v", err)
+	}
+	if !result.Seeded || result.ItemCount != 3 || result.ReleaseNo != 1 {
+		t.Fatalf("unexpected bootstrap result: %+v", result)
+	}
+	if len(result.SkippedKeys) != 1 || result.SkippedKeys[0] != "smtp.password" {
+		t.Fatalf("sensitive key must be skipped: %+v", result.SkippedKeys)
+	}
+
+	pointer, err := repos.Pointers.Get(ctx, domain.EnvDev, "platform")
+	if err != nil || pointer.ActiveReleaseID != result.ReleaseID || pointer.Version != 1 {
+		t.Fatalf("pointer mismatch: %v %+v", err, pointer)
+	}
+	release, err := repos.Releases.Get(ctx, result.ReleaseID)
+	if err != nil {
+		t.Fatalf("get release: %v", err)
+	}
+	if release.Status != domain.ReleaseStatusActive || release.SnapshotSize != 3 ||
+		release.Name != "baseline" || release.PublishedAt == nil {
+		t.Fatalf("baseline release mismatch: %+v", release)
+	}
+	if release.SnapshotHash != app.SnapshotHash(mustItems(t, repos, release.ID)) {
+		t.Fatal("baseline snapshot hash mismatch")
+	}
+
+	item, err := repos.Items.GetByKey(ctx, domain.EnvDev, "platform", "http.timeout")
+	if err != nil {
+		t.Fatalf("get seeded item: %v", err)
+	}
+	if item.Status != domain.ItemStatusActive || item.CurrentVersion != 1 {
+		t.Fatalf("seeded item mismatch: %+v", item)
+	}
+	version, err := repos.Items.GetVersion(ctx, item.ID, 1)
+	if err != nil || version.ValueText != "10s" || version.ChangeSummary != "bootstrap" {
+		t.Fatalf("seeded version mismatch: %v %+v", err, version)
+	}
+
+	events := emitter.all()
+	if len(events) != 1 || events[0].Action != audit.ActionConfigBootstrapCompleted {
+		t.Fatalf("unexpected audit events: %+v", events)
+	}
+	if events[0].Attrs["item_count"] != "3" || events[0].Attrs["namespace"] != "platform" {
+		t.Fatalf("unexpected bootstrap attrs: %+v", events[0].Attrs)
+	}
+}
+
+func TestBootstrapIsIdempotent(t *testing.T) {
+	service, repos, emitter := newBootstrapService(t)
+	ctx := context.Background()
+	input := app.BootstrapInput{Env: domain.EnvDev, Namespace: "platform", Actor: testActor}
+
+	first, err := service.EnsureBaseline(ctx, input)
+	if err != nil || !first.Seeded {
+		t.Fatalf("first bootstrap: %v %+v", err, first)
+	}
+	second, err := service.EnsureBaseline(ctx, input)
+	if err != nil {
+		t.Fatalf("second bootstrap: %v", err)
+	}
+	if second.Seeded || second.ReleaseID != first.ReleaseID {
+		t.Fatalf("second bootstrap must be a no-op: %+v", second)
+	}
+
+	_, total, err := repos.Releases.List(ctx, domain.EnvDev, "platform", "", 10, 0)
+	if err != nil || total != 1 {
+		t.Fatalf("release count mismatch: %v %d", err, total)
+	}
+	if events := emitter.all(); len(events) != 1 {
+		t.Fatalf("second bootstrap must not emit audit, got %d events", len(events))
+	}
+}
+
+func TestBootstrapSkipsNamespaceWithoutDefaults(t *testing.T) {
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	registry := spec.NewRegistry()
+	if err := registry.Register(domain.KeySpec{
+		Namespace: "platform", Key: "smtp.password", ValueType: domain.ValueTypeString,
+		Description: "SMTP 口令", Owner: "team-platform", Sensitive: true,
+	}); err != nil {
+		t.Fatalf("register sensitive spec: %v", err)
+	}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		registry, emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap service: %v", err)
+	}
+
+	result, err := service.EnsureBaseline(context.Background(), app.BootstrapInput{
+		Env: domain.EnvDev, Namespace: "platform", Actor: testActor,
+	})
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if result.Seeded || len(result.SkippedKeys) != 1 {
+		t.Fatalf("no defaults must not seed: %+v", result)
+	}
+	if _, err := repos.Pointers.Get(context.Background(), domain.EnvDev, "platform"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("pointer must not be created: %v", err)
+	}
+}
+
+func TestBootstrapValidation(t *testing.T) {
+	service, _, _ := newBootstrapService(t)
+	ctx := context.Background()
+
+	if _, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvDev, Namespace: "platform",
+	}); !errors.Is(err, apperr.ErrUnauthorized) {
+		t.Fatalf("missing actor must be unauthorized, got %v", err)
+	}
+	if _, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: "prod-2", Namespace: "platform", Actor: testActor,
+	}); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("invalid env must be bad request, got %v", err)
+	}
+	if _, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvDev, Namespace: "unknown", Actor: testActor,
+	}); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("namespace without specs must be bad request, got %v", err)
+	}
+}
+
+// mustItems 读取发布快照条目，用于校验摘要。
+func mustItems(t *testing.T, repos *memory.Repositories, releaseID int64) []domain.ReleaseItem {
+	t.Helper()
+	items, err := repos.Releases.ListItems(context.Background(), releaseID)
+	if err != nil {
+		t.Fatalf("list release items: %v", err)
+	}
+	return items
+}

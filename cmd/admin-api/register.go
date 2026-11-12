@@ -5,11 +5,13 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
+	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
 	featureflagadmin "github.com/admin-frame/admin-frame/internal/featureflag/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
@@ -72,6 +74,16 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 		if tenantRT != nil && flagRT.Evaluator != nil {
 			tenantRT.SetFeatureEvaluator(featureflagruntime.NewTenantEvaluator(flagRT.Evaluator))
 		}
+	}
+	// M1-3：配置中心管理面（配置键 / 版本 / 发布 / 审批 / 回滚）。
+	// 装配失败不阻断其它管理链路（与 featureflag 口径一致），记录错误便于排查；
+	// 启动期 baseline 播种失败会由 New 返回错误，同样只降级本域路由。
+	configRT, cerr := configcenterruntime.New(deps, configcenterruntime.Options{Service: "admin-api"})
+	if cerr != nil {
+		deps.Logger.Warn("configcenter runtime unavailable, config management disabled", "error", cerr)
+	}
+	if configRT != nil && configRT.Handler != nil {
+		configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	if services != nil {
 		if tenantRT != nil {

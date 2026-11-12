@@ -81,6 +81,23 @@ func (r *Registry) List(namespace string) []domain.KeySpec {
 	return listed
 }
 
+// Namespaces 返回已声明键的全部 namespace，按字典序排序。
+func (r *Registry) Namespaces() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	seen := make(map[string]struct{}, len(r.specs))
+	namespaces := make([]string, 0, len(r.specs))
+	for _, keySpec := range r.specs {
+		if _, ok := seen[keySpec.Namespace]; ok {
+			continue
+		}
+		seen[keySpec.Namespace] = struct{}{}
+		namespaces = append(namespaces, keySpec.Namespace)
+	}
+	sort.Strings(namespaces)
+	return namespaces
+}
+
 // Defaults 返回 namespace 下所有非空代码默认值（首次启动播种输入）。
 //
 // 敏感键与 Required 键没有默认值，不会出现在结果中。
