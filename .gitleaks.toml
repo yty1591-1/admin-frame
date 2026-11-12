@@ -37,4 +37,11 @@ regexes = [
   # tests/e2e 的历史测试夹具（三端共用的 JWT 密钥）：已改为 strings.Repeat 构造
   # （见 tests/e2e/e2e_test.go 的 e2eJWTSecret），本条目只放行既有提交中的命中。
   '''^e2e-jwt-secret-0123456789abcdef0123456789abcdef$''',
+  # internal/identity/app/m2m.go 的 dummy 比对摘要：客户端不存在时用于常数时间
+  # 假比对的固定哈希，并非真实凭据。gitleaks 扫描 git 历史，工作区改动不能消除
+  # 既有提交中的命中。
+  '''^9f2f1b6d5b0a4c3e8d7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e$''',
+  # internal/identity/config/validate.go 的配置字段引用被 generic-api-key 误判
+  # （标识符含 secret，actual 是 m2m.MaxSecretAge 字段名，非凭据）。
+  '''^m2m\.MaxSecretAge$''',
 ]
