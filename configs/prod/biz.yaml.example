@@ -12,6 +12,7 @@ include:
   - modules/infra.yaml.example
   - modules/iam.yaml.example
   - modules/identity.yaml.example
+  - modules/notification.yaml.example
 
 env: prod
 service: biz-api
@@ -32,9 +33,9 @@ rate_limit:
   rps: 100
   burst: 200
 
-# prod baseline 关闭；开启时按 modules/identity 注入 hash_key，并保持 mfa=false。
+# 生产开启身份域：守护前置同 A 端；B 端不支持 MFA，admin_required 必须为 false。
 identity:
-  enabled: false
+  enabled: true
   mfa:
     admin_required: false # 仅 A 端支持 MFA；B 端配置 true 会被启动校验拒绝
 

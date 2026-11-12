@@ -12,6 +12,7 @@ include:
   - ../prod/modules/infra.yaml.example
   - ../prod/modules/iam.yaml.example
   - ../prod/modules/identity.yaml.example
+  - ../prod/modules/notification.yaml.example
   - modules/staging.yaml.example
 
 env: staging
@@ -31,9 +32,9 @@ id:
   node_id_source: env
   # node_id: 0
 
-# staging baseline 关闭，保持「只验签」；开启时删除本覆盖并注入 hash_key。
+# 预发与生产同构：开启身份域；前置 hash_key / mfa.secret_key 由 Secret 注入。
 identity:
-  enabled: false
+  enabled: true
 
 storage:
   key_prefix: "staging/admin/"

@@ -135,6 +135,10 @@ spec:
             items:
               - key: {{ $root.Values.jwtPublicKey.key }}
                 path: public.pem
+              {{- if (($root.Values.jwtPrivateKey | default dict).enabled) }}
+              - key: {{ $root.Values.jwtPrivateKey.key }}
+                path: private.pem
+              {{- end }}
         {{- end }}
         {{- if (($root.Values.secretMounts | default dict).enabled) }}
         # ENT-07：多个 Secret 投影到同一目录，文件名即密钥逻辑名（db_dsn 等）。

@@ -10,6 +10,7 @@ include:
   - ../prod/modules/auth.yaml.example
   - ../prod/modules/infra.yaml.example
   - ../prod/modules/iam.yaml.example
+  - ../prod/modules/notification.yaml.example
   - modules/staging.yaml.example
 
 env: staging

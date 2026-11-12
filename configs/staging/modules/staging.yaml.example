@@ -45,6 +45,26 @@ iam:
   cache:
     driver: redis # enforce 在 staging 强制 redis；shadow 也保持一致
 
+# 通知渠道：预发使用企业 SMTP 验证真实出网；未接入的渠道显式关闭。
+notification:
+  channels:
+    email:
+      driver: smtp
+      from: no-reply@staging.example.com
+      from_name: AdminFrame
+      smtp:
+        host: smtp.staging.example.com
+        port: 587
+        encryption: starttls
+        auth: plain
+        username: no-reply@staging.example.com
+        password_env: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+        tls_min_version: "1.2"
+    sms:
+      driver: disabled
+    push:
+      driver: disabled
+
 secrets:
   providers: [env] # 预发密钥隔离，仍走 K8s Secret → 环境变量
   allow_env_fallback: true

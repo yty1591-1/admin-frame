@@ -56,6 +56,16 @@ config:
     mode: shadow
     cache:
       driver: redis
+  # 本机 kind 无 SMTP/短信/推送依赖：env=staging 禁止 memory，
+  # 因此三类渠道显式 disabled，保证告警与落库链路仍可验证。
+  notification:
+    channels:
+      email:
+        driver: disabled
+      sms:
+        driver: disabled
+      push:
+        driver: disabled
 
 jwtPublicKey:
   enabled: true

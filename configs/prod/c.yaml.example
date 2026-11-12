@@ -13,6 +13,7 @@ include:
   - modules/infra.yaml.example
   - modules/iam.yaml.example
   - modules/identity.yaml.example
+  - modules/notification.yaml.example
 
 env: prod
 service: c-api

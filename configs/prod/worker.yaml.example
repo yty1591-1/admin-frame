@@ -12,6 +12,7 @@ include:
   - modules/auth.yaml.example
   - modules/infra.yaml.example
   - modules/iam.yaml.example
+  - modules/notification.yaml.example
 
 env: prod
 service: worker

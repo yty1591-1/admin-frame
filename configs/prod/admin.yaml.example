@@ -13,6 +13,7 @@ include:
   - modules/infra.yaml.example
   - modules/iam.yaml.example
   - modules/identity.yaml.example
+  - modules/notification.yaml.example
 
 env: prod
 service: admin-api
@@ -29,9 +30,11 @@ auth:
 id:
   node_id: 0 # [0,1023]；prod 非 worker 必填
 
-# prod baseline 关闭，保持「只验签」；开启时删除本覆盖并注入 hash_key / mfa.secret_key。
+# 生产开启身份域（IDN-GAP-P0-01）：前置 auth.mode=jwt、redis、mysql、
+# async.enabled=true，且注入 hash_key / mfa.secret_key；subject.keys 可选，
+# 配置后必须同时指定 active_key_id。A 端强制 MFA（mfa.admin_required=true）。
 identity:
-  enabled: false
+  enabled: true
 
 storage:
   key_prefix: "prod/admin/"

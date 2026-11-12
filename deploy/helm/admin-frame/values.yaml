@@ -108,6 +108,12 @@ jwtPublicKey:
   secretName: ""
   key: public.pem
 
+# JWT 私钥挂载（仅签发进程需要；当前 Chart 在全部 API/worker Pod 统一挂载，
+# 便于统一配置 auth.jwt.keys 并由文件权限控制）。
+jwtPrivateKey:
+  enabled: false
+  key: private.pem
+
 # 身份域密钥注入：values-identity-enabled.yaml 会打开并引用同一 Secret。
 # Secret 需包含 hash_key（32B HMAC 主密钥）与 mfa_secret_key（32B AES-GCM 主密钥）。
 identitySecrets:
