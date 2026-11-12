@@ -1,6 +1,6 @@
 module github.com/admin-frame/admin-frame
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/XSAM/otelsql v0.42.0
