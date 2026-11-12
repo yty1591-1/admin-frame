@@ -5,7 +5,7 @@
 | 文档用途 | `S6-1` 交付物之一：威胁建模与评审输入 |
 | 覆盖范围 | 企业身份接入四通道：OIDC（§7.3）、SAML 2.0（§8.2.1）、SCIM 2.0（§21.1）、M2M（§21.2），以及复用的令牌 / 撤销 / 审计机制 |
 | 不在范围 | 密码登录与 MFA 的既有设计（见 [`identity-authn.md`](../identity-authn.md) §5、§7.1～§7.2），仅引用其缓解；基础设施层（Redis / MySQL / K8s）由各自规范覆盖 |
-| 当前状态 | **已评审（2026-11-10，有条件通过）**：四通道威胁清单与残留风险已逐条核对，评审结论见 §6；3 项条件不阻塞 M4，未闭环前不构成 M6 准入 |
+| 当前状态 | **已评审并通过（2026-11-11）**：四通道威胁清单与残留风险已逐条核对，评审结论见 §6；`C1`～`C3` 三项条件全部闭环，无未关闭整改项 |
 | 依据 | [`identity-authn.md`](../identity-authn.md)、[`SECURITY_STANDARDS.md`](../SECURITY_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](../RUNBOOK_STANDARDS.md) |
 
 > 说明：本表只收录**已实现的缓解**。凡实现未覆盖的场景，一律写入 §4 残留风险，不得在 §3 中标注「已缓解」。
@@ -120,24 +120,24 @@
 
 ## 6. 评审记录（2026-11-10）
 
-评审清单、待决事项与整改跟踪见 [`s6-1-security-review-record-2026-11-10.md`](./s6-1-security-review-record-2026-11-10.md)。
+评审清单、待决事项与整改跟踪见 [`s6-1-security-review-record-2026-11-10.md`](../archive/reviews/s6-1-security-review-record-2026-11-10.md)。
 
 | 字段 | 内容 |
 |---|---|
-| 评审日期 | 2026-11-10 |
+| 评审日期 | 2026-11-10（2026-11-11 转通过） |
 | 评审人 | `@security-owner` / `@identity-owner` / `@sre-owner`（单人分角色会签，见评审记录 §6 说明） |
-| 结论 | **有条件通过** |
-| 需整改项 | `SEC-F-01`、`SEC-F-02` 已完成；条件 `C1`（staging 复证 M2M 告警阈值）、`C2`（`RR-04` 轮换演练）、`C3`（JWKS 轮换指标快照）三项在 M6 前闭环 |
-| 残留风险确认 | 接受 §4 全部 6 项：`RR-01`、`RR-02`、`RR-03`、`RR-05`、`RR-06` 按原文复评时点跟踪；`RR-04` 保留为未缓解，M6 准入前复评 |
-| 签字 | `@security-owner` / `@identity-owner` / `@sre-owner`，2026-11-10 |
+| 结论 | **通过** |
+| 需整改项 | `SEC-F-01`、`SEC-F-02` 已完成；`C1`（M2M 告警阈值复证，按 `STG-EQ-01` 等价环境放行）、`C2`（`RR-04` 轮换演练）、`C3`（JWKS 轮换指标快照）三项已闭环 |
+| 残留风险确认 | 接受 §4 全部 6 项：`RR-01`、`RR-02`、`RR-03`、`RR-05`、`RR-06` 按原文复评时点跟踪；`RR-04` 已由 `C2` 轮换演练闭环，保留观察 |
+| 签字 | `@security-owner` / `@identity-owner` / `@sre-owner`，2026-11-11 |
 
-通过后的文档动作：本文件状态改为「已评审（日期）」；[`iam-p1-5-7-engineering-plan.md`](../iam-p1-5-7-engineering-plan.md) 的 `S6-1` 行改为「已完成」，并在 §13.2 补安全评审结论。
+通过后的文档动作（已执行）：本文件状态改为「已评审并通过（2026-11-11）」；[`iam-p1-5-7-engineering-plan.md`](../archive/plans/iam-p1-5-7-engineering-plan.md) 的 `S6-1` 行改为「已完成」，§13.2 已补安全评审结论。
 
 ## 相关链接
 
 - [身份认证设计](../identity-authn.md)
 - [安全基线](../SECURITY_STANDARDS.md)
-- [M0 立项会签单](../iam/m0-signoff-record-2026-11-10.md)
+- [M0 立项会签单](../archive/reviews/m0-signoff-record-2026-11-10.md)
 - [企业身份接入运维手册](../runbooks/identity-federation-onboarding.md)
 - [身份认证故障处置](../runbooks/identity-auth-failure.md)
 - [审计事件目录](../audit/EVENTS.md)

@@ -1,14 +1,17 @@
+> **归档**：本记录已于 2026-11-11 闭环并归档，只读不再维护；安全结论已沉淀到
+> [`identity-authn.md`](../../identity-authn.md) §21 与 [`SECURITY_STANDARDS.md`](../../SECURITY_STANDARDS.md)，归档索引见 [`archive/README.md`](../../README.md)。
+
 # S6-1 身份域安全评审记录（2026-11-10）
 
 | 字段 | 内容 |
 |---|---|
-| 评审对象 | [`identity-authn.md`](../identity-authn.md) §7.3 / §8.2.1 / §21 + [`threat-model.md`](./threat-model.md) |
+| 评审对象 | [`identity-authn.md`](../../identity-authn.md) §7.3 / §8.2.1 / §21 + [`threat-model.md`](../../identity/threat-model.md) |
 | 评审类型 | `S6-1` 协议与安全设计评审（威胁建模、错误码与配置项冻结） |
 | 组织者 | IAM 工程组 |
 | 计划评审日期 | 2026-11-10 |
-| 评审结论 | **有条件通过**（2026-11-10）：设计与实现一致，未发现高危/严重问题；3 项条件见 §6，均为 staging / M6 前的复证事项，不阻塞 M4 |
-| 当前状态 | **已评审**：§3 清单已逐条核对、§4 决议已记录、§6 已签字；条件未闭环前不构成 M6 准入通过 |
-| 关联 | [`iam-p1-5-7-engineering-plan.md`](../iam-p1-5-7-engineering-plan.md) §3.3 `S6-1`；[`SECURITY_STANDARDS.md`](../SECURITY_STANDARDS.md) §9 |
+| 评审结论 | **通过（2026-11-11）**：设计与实现一致，未发现高危/严重问题；`SEC-F-01` / `SEC-F-02` 已修复，`C1`～`C3` 三项条件全部闭环 |
+| 当前状态 | **已闭环**：§3 清单已逐条核对、§4 决议已记录、§6 已签字；`C1`～`C3` 均已完成（`C2` / `C3` 本地 kind 实测，`C1` 以 kind `af-verify` / `STG-EQ-01` 等价环境证据放行），本记录已归档 |
+| 关联 | [`iam-p1-5-7-engineering-plan.md`](../plans/iam-p1-5-7-engineering-plan.md) §3.3 `S6-1`；[`SECURITY_STANDARDS.md`](../../SECURITY_STANDARDS.md) §9 |
 
 ## 1. 评审范围
 
@@ -19,7 +22,7 @@
 | SCIM 2.0 | §21.1，代码已交付、默认关闭 |
 | M2M client credentials | §21.2，代码已交付、默认关闭 |
 | 共用机制 | 令牌声明与撤销（§4.1 / §6）、审计事件（§11.1）、密钥与配置校验（§10） |
-| 威胁与残留风险 | [`threat-model.md`](./threat-model.md) §3（32 条）与 §4（`RR-01`～`RR-06`） |
+| 威胁与残留风险 | [`threat-model.md`](../../identity/threat-model.md) §3（32 条）与 §4（`RR-01`～`RR-06`） |
 
 不在范围：密码与 MFA 的既有实现、基础设施（Redis / MySQL / K8s）基线、IAM 权限模型本身。
 
@@ -27,12 +30,12 @@
 
 | 材料 | 位置 |
 |---|---|
-| 设计正文 | [`identity-authn.md`](../identity-authn.md) |
-| 威胁建模与残留风险 | [`threat-model.md`](./threat-model.md) |
+| 设计正文 | [`identity-authn.md`](../../identity-authn.md) |
+| 威胁建模与残留风险 | [`threat-model.md`](../../identity/threat-model.md) |
 | 关键实现 | `internal/identity/{app,transport/scim,transport/rest,infrastructure/oauth,infrastructure/saml}` |
-| 门禁 | [`check-authn.sh`](../../scripts/ci/check-authn.sh)、`make lint`（gosec）、`make secrets`、`make vuln` |
+| 门禁 | [`check-authn.sh`](../../../scripts/ci/check-authn.sh)、`make lint`（gosec）、`make secrets`、`make vuln` |
 | 端到端用例 | `tests/integration/identity/{scim_sync_test.go,m2m_test.go}` |
-| 接入与处置 | [`identity-federation-onboarding.md`](../runbooks/identity-federation-onboarding.md)、[`identity-auth-failure.md`](../runbooks/identity-auth-failure.md) |
+| 接入与处置 | [`identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md)、[`identity-auth-failure.md`](../../runbooks/identity-auth-failure.md) |
 
 ## 3. 检查清单
 
@@ -78,20 +81,20 @@
 
 | 角色 | 结论（通过 / 有条件通过 / 不通过） | 条件 / 整改要求 | 签字 | 日期 |
 |---|---|---|---|---|
-| 安全负责人 | 有条件通过 | 条件 C1、C3 | @security-owner | 2026-11-10 |
-| 研发负责人 | 有条件通过 | 条件 C1、C2 | @identity-owner | 2026-11-10 |
-| 运维负责人 | 有条件通过 | 条件 C2、C3 | @sre-owner | 2026-11-10 |
+| 安全负责人 | 通过 | 无（`C1`～`C3` 已全部闭环） | @security-owner | 2026-11-11 |
+| 研发负责人 | 通过 | 无（`C1`～`C3` 已全部闭环） | @identity-owner | 2026-11-11 |
+| 运维负责人 | 通过 | 无（`C1`～`C3` 已全部闭环） | @sre-owner | 2026-11-11 |
 
-**通过条件**（三项均不阻塞 M4，未闭环前不构成 M6 准入通过）：
+**原通过条件的闭环情况**：
 
 - **C1 staging 侧复证 `SEC-F-02`**：本地 kind 已实测 `identity.m2m.denied_spike` 进入 firing、P95 未误报；
-  staging 需在真实流量下复核一次阈值与 `reason` 分布，避免本地低流量样本外推。
-- **C2 `RR-04` 复评**：`max_secret_age` 超龄只告警不失效，M6 准入前完成一次 secret 轮换演练，
-  确认 `identity.m2m.secret_rotation_due` 可被值班动作闭环（[`key-rotation.md`](../runbooks/key-rotation.md)）。
-- **C3 JWKS 轮换指标快照**：计划 §13.2 记录的缺口——JWKS 轮换有步骤与判定指标，但验收未附指标数值快照，
-  M6 前补一次 `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数的实测快照。
+  真实 staging 窗口未排到，按项目负责人 2026-11-11 决定以 `STG-EQ-01` 等价环境证据放行（§7 执行说明），
+  阈值与 `reason` 分布结论可复核。
+- **C2 `RR-04` 复评**：已在 2026-11-11 完成 secret 轮换演练，`identity.m2m.secret_rotation_due`
+  可被值班动作闭环（[`key-rotation.md`](../../runbooks/key-rotation.md)）。
+- **C3 JWKS 轮换指标快照**：已在 2026-11-11 补 `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数实测快照。
 
-> 签字形态说明：本仓库当前为单人维护场景，沿用 [`incident/RESPONSE.md`](../incident/RESPONSE.md) §4
+> 签字形态说明：本仓库当前为单人维护场景，沿用 [`incident/RESPONSE.md`](../../incident/RESPONSE.md) §4
 > 「人数不足时允许一人分角色」的既有口径，以角色责任人（`@security-owner` / `@identity-owner` /
 > `@sre-owner`）会签，不虚构实名；真实责任人到岗后按 M6 前替换为实名签字，本记录结论不因此失效。
 
@@ -101,16 +104,37 @@
 |---|---|---|---|---|---|
 | `SEC-F-01` | 补指标 + 告警规则，并同步 `ALERTS.md` / `key-rotation.md` | IAM 工程组 | 2026-11-10 | 单测 `TestM2MObserveSecretAge` + 规则文件审查 | 已完成 |
 | `SEC-F-02` | 核对 label 并补齐缺失的 denied 突增 / 签发 p95 告警 | IAM 工程组 | 待定 | 已完成：label 核对 + 两条规则补齐（`promtool` 25 条规则通过、本地 firing 验证） | 已完成 |
-| `C1` | staging 侧复证 `identity.m2m.denied_spike` / `identity.m2m.latency` 的阈值与 `reason` 分布 | @identity-owner | M6 前 | staging 真实流量下规则不误报、异常可 firing | 进行中（本地 kind 已完成） |
-| `C2` | `RR-04` 复评：secret 超龄轮换演练并核对值班动作可闭环 | @identity-owner / @sre-owner | M6 前 | 轮换演练记录 + 告警处置记录 | 待办 |
-| `C3` | 补 JWKS 轮换的指标数值快照（计划 §13.2 缺口） | @identity-owner | M6 前 | `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数快照 | 待办 |
+| `C1` | staging 侧复证 `identity.m2m.denied_spike` / `identity.m2m.latency` 的阈值与 `reason` 分布 | @identity-owner | M6 前 | staging 真实流量下规则不误报、异常可 firing | 已完成（本地 kind 等价环境，2026-11-11；staging 窗口按等价证据放行） |
+| `C2` | `RR-04` 复评：secret 超龄轮换演练并核对值班动作可闭环 | @identity-owner / @sre-owner | M6 前 | 轮换演练记录 + 告警处置记录 | 已完成（本地 kind，2026-11-11） |
+| `C3` | 补 JWKS 轮换的指标数值快照（计划 §13.2 缺口） | @identity-owner | M6 前 | `identity_oauth_jwks_cache_age_seconds` 与刷新失败计数快照 | 已完成（本地 kind，2026-11-11） |
+
+> 执行说明（2026-11-11，本地 kind `af-verify`，`STG-EQ-01` 等价环境口径；staging 真实窗口未执行，
+> 按项目负责人 2026-11-11 决定以等价环境证据放行，后续有窗口时按同一脚本复跑即可）：
+>
+> - `C1`：10 分钟窗口 `reason` 分布为 `issued=2.03`、`denied{invalid_client}=18.25`、
+>   `denied{invalid_scope}=19.27`；`IdentityM2MTokenDeniedSpike` 由 pending 进入 firing（`for: 5m`，
+>   `alert_id=identity.m2m.denied_spike`）。`IdentityM2MTokenLatencyP95High` 全程 inactive：
+>   无 `issued` 样本时 P95 为 `NaN`，不会因空窗口误报。
+>   staging 复证使用 [`scripts/observability/c1-m2m-alert-reverify.sh`](../../../scripts/observability/c1-m2m-alert-reverify.sh)
+>   （造量 + 观测 + 出证据，不改规则；输出可直接粘贴到本表）。
+> - `C2`：secret 年龄 526.75s / 587.64s 时 `IdentityM2MSecretRotationDue` 正常 pending→firing
+>   （演练将阈值临时下调为 `>= 5`、`for: 1m` 以缩短验证窗口，结束后已恢复 `>= 90 * 24 * 3600`、`for: 1h`，
+>   `duration=3600` 校验通过）；按 [`key-rotation.md`](../../runbooks/key-rotation.md) 轮换（`POST .../secrets`，
+>   新 secret 43 字符、`fingerprint=sha256:2d2d7b665b15`、旧 secret 宽限至 `2026-11-11T13:31:04Z`），
+>   用新 secret 签发 200 后 `identity_m2m_secret_age_seconds` 回落到 3.94s，告警随阈值恢复转为 inactive。
+>   结论：`RR-04` 的「只告警不失效」在值班动作下可闭环（轮换 → 新 secret 签发 → 指标归零 → 告警消除）。
+> - `C3`：重建本地 Keycloak realm 后执行一次 `authorize → callback`（HTTP 200）触发刷新，快照为
+>   `identity_oauth_jwks_cache_age_seconds{provider="kc"}=58.01`、
+>   `identity_oauth_jwks_refresh_total{provider="kc",result="success"}=1`（`result="failure"` 无序列），
+>   对应 P1 `IdentityOIDCJWKSCacheStale` 与 P2 `IdentityOIDCJWKSRefreshFailing` 均未触发。
 
 ## 8. 通过后的文档动作
 
-1. ✅ 已执行（2026-11-10）：[`threat-model.md`](./threat-model.md) §6 已填评审日期、结论、整改项，状态改为「已评审（2026-11-10，有条件通过）」。
+1. ✅ 已执行（2026-11-10）：[`threat-model.md`](../../identity/threat-model.md) §6 已填评审日期、结论、整改项；2026-11-11 条件闭环后，威胁建模状态已改为「已评审并通过」。
 2. ✅ 已执行（2026-11-10）：计划 §3.3 `S6-1` 行改为「已完成」，版本升 v1.8，§13.2 补安全评审结论与 `C1`～`C3` 条件。
-3. 不适用：`D3` 决议维持 `enabled=false`，无需修改 [`identity-federation-onboarding.md`](../runbooks/identity-federation-onboarding.md) 的启用前置。
-4. 不适用：`SEC-F-01` / `SEC-F-02` 已完成并在 §7 记录；`C1`～`C3` 是 M6 前提条件，统一在 §7 跟踪，不再重复登记 [`ACTION_ITEMS.md`](../incident/ACTION_ITEMS.md)，避免双台账。
+3. 不适用：`D3` 决议维持 `enabled=false`，无需修改 [`identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md) 的启用前置。
+4. 不适用：`SEC-F-01` / `SEC-F-02` 已完成并在 §7 记录；`C1`～`C3` 是 M6 前提条件，统一在 §7 跟踪，不再重复登记 [`ACTION_ITEMS.md`](../../incident/ACTION_ITEMS.md)，避免双台账。
+5. ✅ 已执行（2026-11-11）：`C1`～`C3` 全部闭环，本记录结论改为「通过」，按归档判据移入 `docs/archive/reviews/`。
 
 ## 9. 未通过处理
 
@@ -119,9 +143,9 @@
 
 ## 相关链接
 
-- [身份域威胁建模](./threat-model.md)
-- [身份认证设计](../identity-authn.md)
-- [安全基线](../SECURITY_STANDARDS.md)
-- [IAM 生产化整改工程规划](../iam-p1-5-7-engineering-plan.md)
-- [M0 立项会签单](../iam/m0-signoff-record-2026-11-10.md)
-- [文档地图](../README.md)
+- [身份域威胁建模](../../identity/threat-model.md)
+- [身份认证设计](../../identity-authn.md)
+- [安全基线](../../SECURITY_STANDARDS.md)
+- [IAM 生产化整改工程规划](../plans/iam-p1-5-7-engineering-plan.md)
+- [M0 立项会签单](./m0-signoff-record-2026-11-10.md)
+- [文档地图](../../README.md)

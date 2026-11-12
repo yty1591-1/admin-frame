@@ -68,7 +68,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 
 ---
 
-## 四、一次性评审（4 份）
+## 四、一次性评审与会签（7 份）
 
 | 文档 | 归档理由 | 遗留 |
 |------|----------|------|
@@ -76,6 +76,9 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 | [FRONTEND_ARCHITECTURE_UX_REVIEW.md](./reviews/FRONTEND_ARCHITECTURE_UX_REVIEW.md) | 前端架构 / 交互 / 视觉评审（评分 + 优化路线），评审时点 2026-10-31 | 优化路线未排期 |
 | [platform-architecture-review.md](./reviews/platform-architecture-review.md) | `internal/platform` 架构评审（P0/P1 清单 → 整改），v0.2 复评已把 3 项「不达标」改为「达标」，度量表补 v0.2 列；结论已并入 `ARCHITECTURE.md` §5.6 / §6.1 与 `check-layering.sh` | 无（P0/P1 全关闭） |
 | [platform-shared-security-review.md](./reviews/platform-shared-security-review.md) | `platform` / `shared` / `security` 三目录边界与安全评审（G1–G8），v1.0；G1–G8 全部关闭，选层决策表已并入 `ARCHITECTURE.md` §3.4 | 无（G1–G8 全关闭） |
+| [m0-signoff-record-2026-11-10.md](./reviews/m0-signoff-record-2026-11-10.md) | IAM 生产化整改立项会签（M0），2026-11-11 三位批准人（研发 / 安全 / 运维，单人分角色）均签「同意」，D1～D5 冻结 | 无（结论已回写计划 §3.1 `M0` 与 §13.4） |
+| [s6-1-security-review-record-2026-11-10.md](./reviews/s6-1-security-review-record-2026-11-10.md) | 身份域安全评审（S6-1），2026-11-11 由「有条件通过」转「通过」；`C1`～`C3` 闭环，staging 项按 `STG-EQ-01` 等价环境放行 | 无（结论已回写 `identity-authn.md` §21 与计划 §13.2） |
+| [p1-7-acceptance-report.md](./reviews/p1-7-acceptance-report.md) | P1-7 访问复核验收（S7-5），2026-11-11 安全 / 平台双评审签字通过；ADR-0012 评审 Accept，staging 实战按等价环境放行 | 无（结论已回写 `rbac-iam.md` §10.3 与计划 §13.3） |
 
 > **重要**：前两份前端评审里的未闭环 GAP **当前没有对应的活跃计划文档跟踪**。
 > 如果要推进，请新建 `docs/frontend-remediation-plan.md`（L3 活跃计划）并在 `docs/README.md` §3.2 登记，
@@ -99,7 +102,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 
 ---
 
-## 六、已实施计划（2 份）
+## 六、已实施计划（3 份）
 
 领域规划的落地凭证。规划期约束已转化为 ADR 与设计文档，因此不再作为排期依据。
 
@@ -107,6 +110,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 |------|----------|----------|
 | [feature-flag-plan.md](./plans/feature-flag-plan.md) | ENT-11 特性开关规划（FF-01～FF-08 全部落地） | [`adr/0009`](../adr/0009-featureflag-inprocess-evaluation.md)（进程内评估决策）、`ARCHITECTURE.md` §17.3（flag 硬约束）、`check-featureflag.sh` |
 | [notification-center-plan.md](./plans/notification-center-plan.md) | ENT-10 通知中心规划（NT-01～NT-10 全部落地） | [`adr/0008`](../adr/0008-notification-event-driven.md)（编排决策）、[`notification-channels.md`](../notification-channels.md)（渠道驱动契约）、`check-notification.sh` |
+| [iam-p1-5-7-engineering-plan.md](./plans/iam-p1-5-7-engineering-plan.md) | IAM P1-5/6/7 生产化整改执行基线（M0～M6 全部完成，2026-11-11 关闭） | [`adr/0012`](../adr/0012-certification-export-limit.md)（容量与导出口径）、`identity-authn.md` §21（SCIM / M2M 契约）、`rbac-iam.md` §10.3（访问复核）、`runbooks/identity-federation-onboarding.md`、`check-iam-coverage.sh` / `check-authn.sh` |
 
 > 两份计划的「生产渠道驱动装配」仍依赖渠道凭据，属环境配置项，不构成计划未闭环；
 > 若后续要改编排语义，按规则 §一.5 新建 L3 计划，不要搬回归档文件。
@@ -120,7 +124,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 | 文档 | 归档理由 | 结论去向 |
 |------|----------|----------|
 | [tenant-enterprise-review.md](./tenant/tenant-enterprise-review.md) | 租户域企业级差距评审 + B1～B4 分批计划，2026-11-05 全部收口（评审时的 3 个 P0 缺陷已修复，6 项文档回写清单全部落地） | `ENT-09` 状态（[`production-readiness-implementation-plan.md`](../production-readiness-implementation-plan.md) §十二）、[`tenant-data-lifecycle.md`](../tenant-data-lifecycle.md)、[`adr/0006`](../adr/0006-tenant-as-isolation-boundary.md) / [`adr/0007`](../adr/0007-tenant-member-iam-binding.md)、`scripts/ci/check-tenant.sh` |
-| [iam-audit-report-2026-11-05.md](./iam/iam-audit-report-2026-11-05.md) | 2026-11-05 一次性 IAM 审计（总覆盖率 57.2%、门禁与架构评估），结论已被下游引用 | [`iam-p1-5-7-engineering-plan.md`](../iam-p1-5-7-engineering-plan.md)（P1-5/6/7 的输入依据）、[`rbac-iam.md`](../rbac-iam.md) |
+| [iam-audit-report-2026-11-05.md](./iam/iam-audit-report-2026-11-05.md) | 2026-11-05 一次性 IAM 审计（总覆盖率 57.2%、门禁与架构评估），结论已被下游引用 | [`iam-p1-5-7-engineering-plan.md`](./plans/iam-p1-5-7-engineering-plan.md)（P1-5/6/7 的输入依据）、[`rbac-iam.md`](../rbac-iam.md) |
 
 > 租户评审的 B1～B4 执行记录留在归档正文 §6.2～§6.4；若租户域再起整改，按 §一.5 新建 L3 计划并在
 > [`docs/README.md`](../README.md) §3.2 登记，不要搬回本目录。

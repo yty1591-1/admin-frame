@@ -1,6 +1,6 @@
 # IAM 模块生产级代码审计与架构评估报告
 
-> **归档**：本文件已于 2026-11-08 归档，只读不再维护；审计结论已沉淀到 [`iam-p1-5-7-engineering-plan.md`../../iam-p1-5-7-engineering-plan.md)（L3 排期）与 [`rbac-iam.md`../../rbac-iam.md)（L2 设计），归档索引见 [`archive/README.md`](../README.md)。
+> **归档**：本文件已于 2026-11-08 归档，只读不再维护；审计结论已沉淀到 [`iam-p1-5-7-engineering-plan.md`](../plans/iam-p1-5-7-engineering-plan.md)（L3 排期）与 [`rbac-iam.md`](../../rbac-iam.md)（L2 设计），归档索引见 [`archive/README.md`](../README.md)。
 
 | 项目 | 内容 |
 |------|------|

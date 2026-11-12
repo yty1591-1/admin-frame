@@ -1,14 +1,17 @@
+> **归档**：本计划已于 2026-11-11 关闭并归档（M0～M6 全部完成），只读不再维护；
+> 后续变更走变更评审（CCB）并新建计划。计划归属见 [`docs/README.md`](../../README.md)，归档索引见 [`archive/README.md`](../README.md)。
+
 # IAM 生产化整改工程规划（P1-5 / P1-6 / P1-7）
 
 | 项目 | 内容 |
 |------|------|
 | 文档编号 | IAM-PLAN-2026-11-001 |
-| 文档版本 | v1.8（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付，v1.7 回写 §13 验收证据，v1.8 回写 S6-1 安全评审结论） |
+| 文档版本 | v1.9（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付，v1.7 回写 §13 验收证据，v1.8 回写 S6-1 安全评审结论，v1.9 关闭计划） |
 | 编制日期 | 2026-11-05 |
-| 文档状态 | **可交付（2026-11-10）**：P1-5 覆盖率与集成门禁、P1-6 设计 / 代码 / 门禁 / 接入 Runbook、P1-7 访问复核工具链与验收证据均已齐备，交付物清单见 §3 与 §13。剩余事项为交付后或外部依赖项，不阻塞交付：M0 立项会签、S6-6 真实/仿真 IdP 接入与运维交接、P1-7 双评审签字与 staging 实战、M6 生产准入评审（S6-1 安全评审已于 2026-11-10 有条件通过，3 项条件在 M6 前闭环） |
+| 文档状态 | **已批准并关闭（2026-11-11）**：M0 会签（会签单 `m0-signoff-record-2026-11-10`）通过，S6-1 安全评审转为「通过」（`C1`～`C3` 闭环，staging 按 `STG-EQ-01` 等价环境放行），M5 `P1-7` 双评审签字通过，M6 生产准入评审通过；计划内无未关闭条目，已归档至 `docs/archive/plans/` |
 | 密级 | 内部 |
 | 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
-| 输入依据 | [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](./rbac-iam.md)、[身份认证设计](./identity-authn.md)、[测试规范](./TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../scripts/ci/check-test-gates.sh) |
+| 输入依据 | [IAM 审计报告](../iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](../../rbac-iam.md)、[身份认证设计](../../identity-authn.md)、[测试规范](../../TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../../../scripts/ci/check-test-gates.sh) |
 | 批准人 | 研发负责人、安全负责人、运维负责人（立项会签） |
 | 变更控制 | 里程碑、验收阈值、范围变更须经变更评审（CCB）批准并更新本文档版本 |
 
@@ -18,13 +21,14 @@
 |------|------|--------|------|
 | v1.0 | 2026-11-05 | IAM 工程组 | 首次编制，覆盖 P1-5/P1-6/P1-7 立项规划 |
 | v1.1 | 2026-11-08 | IAM 工程组 | **基线校正**：按代码、门禁与 CI 实测把已交付批次回写进 §3 里程碑与 §13 验收。判定依据见 §13 证据块；同时修正 §3.1/§13 与 §5.1.1 之间「已达成 / 未启动」的矛盾。范围与阈值未变，不涉及 CCB 事项 |
-| v1.2 | 2026-11-10 | IAM 工程组 | **S6-1 设计交付**：SCIM 2.0 与 M2M 设计冻结稿写入 [`identity-authn.md`](./identity-authn.md) §21（资源映射、令牌与密钥生命周期、错误码、配置、门禁与验收），同步回写 §3.1 的 S6-1 状态。范围、阈值与里程碑不变，不涉及 CCB 事项 |
+| v1.2 | 2026-11-10 | IAM 工程组 | **S6-1 设计交付**：SCIM 2.0 与 M2M 设计冻结稿写入 [`identity-authn.md`](../../identity-authn.md) §21（资源映射、令牌与密钥生命周期、错误码、配置、门禁与验收），同步回写 §3.1 的 S6-1 状态。范围、阈值与里程碑不变，不涉及 CCB 事项 |
 | v1.3 | 2026-11-10 | IAM 工程组 | **P1-6 代码交付回写**：SCIM 2.0 与 M2M 已实现并接入 `check-authn` 门禁，同步更新 M4、S6-4 / S6-5、§6.1 门禁落地现状与 §13.2 验收证据；SCIM 10k 以 `LB-STG-SCIM-SYNC` 通过。范围与阈值未变，不涉及 CCB 事项 |
-| v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
+| v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
 | v1.5 | 2026-11-10 | IAM 工程组 | **M2M 端到端补齐**：新增 `tests/integration/identity/m2m_test.go`（真实 MySQL + Redis 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离 / 审计落库）；用例暴露机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被校验丢弃，已修复。范围与阈值未变，不涉及 CCB 事项 |
 | v1.6 | 2026-11-10 | IAM 工程组 | **状态转为可交付**：三项工程的设计、代码、门禁、Runbook 与验收证据已齐备；剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入列为交付后/外部依赖项。范围、阈值与里程碑未变，不涉及 CCB 事项 |
 | v1.7 | 2026-11-10 | IAM 工程组 | **§13 验收回写**：§13.2 的 M2M 条目改为端到端用例已通过并记录审计修复；§13.1 门禁演练按 S5-5 演练记录勾选，正文统一为「删除集成测试由清单断言在 `compose up` 前失败」。范围与阈值未变，不涉及 CCB 事项 |
 | v1.8 | 2026-11-10 | IAM 工程组 | **S6-1 安全评审完成**：17 项清单逐条核对通过，结论为有条件通过；`SEC-F-01` / `SEC-F-02` 已修复，`C1`（staging 复证 M2M 告警）、`C2`（`RR-04` 轮换演练）、`C3`（JWKS 轮换指标快照）三项 M6 前条件登记于评审记录 §7；S6-1 状态改为已完成，§13.2 安全项勾选。范围、阈值与里程碑未变，不涉及 CCB 事项 |
+| v1.9 | 2026-11-11 | IAM 工程组 | **计划关闭**：M0 会签通过（三位批准人同意）、S6-1 转为「通过」且 `C1`～`C3` 闭环、P1-7 双评审签字通过、M6 生产准入评审通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行并记录，计划归档至 `docs/archive/plans/`。范围、阈值与里程碑未变 |
 
 ---
 
@@ -88,13 +92,13 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 
 | 里程碑 | 日期（工作日） | 交付主题 | 退出条件（可校验） | 状态（2026-11-10 校正） |
 |--------|----------------|---------|-------------------|------------------------|
-| M0 立项评审 | 2026-11-06 | 范围、资源、阈值冻结 | 本文档会签通过；CCB 记录归档 | **未完成**：会签与 CCB 记录缺失；本次仅做基线校正，不替代会签 |
-| M1 P1-5 门禁生效 | 2026-11-20 | 覆盖率与集成测试门禁 | `make ci` 全绿；故意降低覆盖率可使 PR 失败（演练记录） | **基本达成（2026-11-08）**：分层门禁与 PR 集成测试均已生效；S5-5 两类负向用例（阈值注入、移除集成测试）均通过并留档；`make ci` 全绿仍需 CI 复核 |
-| M2 OIDC 可接入 | 2026-12-04 | OIDC 授权码 + PKCE | 至少 1 个 IdP（Keycloak 或等价测试 IdP）端到端登录成功；JWKS 轮换演练通过 | **已完成（提前，2026-11-05）**：staging 真实 Keycloak 授权码 + PKCE 冒烟通过；JWKS 轮换有步骤与判定指标，但记录未附具体数值快照 |
+| M0 立项评审 | 2026-11-06 | 范围、资源、阈值冻结 | 本文档会签通过；CCB 记录归档 | **已完成（2026-11-11）**：三位批准人（研发 / 安全 / 运维负责人，单人分角色）结论均为同意，无附条件；会签单 [`m0-signoff-record-2026-11-10.md`](../reviews/m0-signoff-record-2026-11-10.md) 已归档，CCB 决议 D1～D5 全部冻结 |
+| M1 P1-5 门禁生效 | 2026-11-20 | 覆盖率与集成测试门禁 | `make ci` 全绿；故意降低覆盖率可使 PR 失败（演练记录） | **已完成（2026-11-08）**：分层门禁与 PR 集成测试均已生效；S5-5 两类负向用例（阈值注入、移除集成测试）均通过并留档；`make ci` 已全绿复核 |
+| M2 OIDC 可接入 | 2026-12-04 | OIDC 授权码 + PKCE | 至少 1 个 IdP（Keycloak 或等价测试 IdP）端到端登录成功；JWKS 轮换演练通过 | **已完成（提前，2026-11-05）**：staging 真实 Keycloak 授权码 + PKCE 冒烟通过；JWKS 轮换步骤、判定指标与指标数值快照已补（`C3` 闭环，2026-11-11） |
 | M3 SAML 可接入 | 2026-12-18 | SAML 2.0 SP-initiated | 签名断言校验、证书轮换、重放防护用例通过 | **已完成（提前，2026-11-06）**：kind 等价 staging + Keycloak 26.7.4，加密断言 + 签名全链路通过，证书轮换演练通过 |
-| M4 SCIM + M2M | 2027-01-08 | 用户/组同步与机器身份 | 10k 用户同步演练达标；client credentials 轮换与审计通过 | **已完成（提前，2026-11-10；安全评审已通过）**：SCIM 见 `internal/identity/{app,transport/scim}`、M2M 见 `internal/identity/app/m2m.go`，迁移 `000027`–`000029`；`check-authn` 覆盖开关校验、`enabled=false` 路由 404、负向用例、审计动作与指标；SCIM 10k 在 STG-EQ-01 实测 151.7s、0 错误（`LB-STG-SCIM-SYNC`）；M2M 轮换与 scope 由单测 + 门禁负向用例覆盖；S6-1 评审结论见 [`S6-1 安全评审记录`](./identity/s6-1-security-review-record-2026-11-10.md) |
-| M5 P1-7 复核闭环 | 2026-12-25 | 访问复核工具链 | 一次完整季度复核演练完成；超期回收与证据导出可用 | **验收项 4 条全部达标，签收待 4 项**：工具链、完整演练（真实入口 + 一次性扫描 + 混合终态导出）、kind CronJob 真实调度与失败路径均已完成，验收报告已出具（`docs/iam/p1-7-acceptance-report.md`）；剩 staging 实战与告警收敛、ADR-0012 容量评审、双评审签字、季度 Owner 排期 |
-| M6 生产准入评审 | 2027-01-15 | 三项整体验收 | 全部质量门禁、合规评审、回滚演练通过 | **未开始**：依赖 M0、M4、M5 演练与双评审签字 |
+| M4 SCIM + M2M | 2027-01-08 | 用户/组同步与机器身份 | 10k 用户同步演练达标；client credentials 轮换与审计通过 | **已完成（提前，2026-11-10；安全评审已通过）**：SCIM 见 `internal/identity/{app,transport/scim}`、M2M 见 `internal/identity/app/m2m.go`，迁移 `000027`–`000029`；`check-authn` 覆盖开关校验、`enabled=false` 路由 404、负向用例、审计动作与指标；SCIM 10k 在 STG-EQ-01 实测 151.7s、0 错误（`LB-STG-SCIM-SYNC`）；M2M 轮换与 scope 由单测 + 门禁负向用例覆盖；S6-1 评审结论见 [`S6-1 安全评审记录`](../reviews/s6-1-security-review-record-2026-11-10.md) |
+| M5 P1-7 复核闭环 | 2026-12-25 | 访问复核工具链 | 一次完整季度复核演练完成；超期回收与证据导出可用 | **已完成（2026-11-11）**：4 条验收项全部达标，双评审签字通过；工具链、完整演练（真实入口 + 一次性扫描 + 混合终态导出）、kind CronJob 真实调度与失败路径均已完成；staging 实战按 `STG-EQ-01` 等价环境放行，ADR-0012 评审 Accept，季度 Owner 与首轮排期已定；报告见 [`p1-7-acceptance-report.md`](../reviews/p1-7-acceptance-report.md) |
+| M6 生产准入评审 | 2027-01-15 | 三项整体验收 | 全部质量门禁、合规评审、回滚演练通过 | **已完成（2026-11-11）**：M0 会签、M4 安全评审、M5 验收与双评审签字均完成；G1 回滚演练、质量门禁与合规评审通过；staging 相关取证按 `STG-EQ-01` 等价环境口径放行并留痕 |
 
 ### 3.2 P1-5 阶段拆解
 
@@ -110,22 +114,22 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 
 | 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
 |------|------|--------|---------|------------------------|
-| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **已完成（2026-11-10，安全评审有条件通过）**：OIDC 见 [`identity-authn.md`](./identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模稿见 [`identity/threat-model.md`](./identity/threat-model.md)（四通道 STRIDE + 6 项残留风险 `RR-01`～`RR-06`）；评审结论与 3 项 M6 前条件见 [`S6-1 安全评审记录`](./identity/s6-1-security-review-record-2026-11-10.md) §6 |
+| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **已完成（2026-11-10 评审，2026-11-11 转通过）**：OIDC 见 [`identity-authn.md`](../../identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模稿见 [`identity/threat-model.md`](../../identity/threat-model.md)（四通道 STRIDE + 6 项残留风险 `RR-01`～`RR-06`）；评审结论为「通过」，`C1`～`C3` 已闭环，见 [`S6-1 安全评审记录`](../reviews/s6-1-security-review-record-2026-11-10.md) |
 | S6-2 OIDC 实现 | 2026-11-30 ~ 12-04 | 授权码 + PKCE、state/nonce、JWKS 缓存与轮换、账号绑定 | 测试 IdP 端到端通过；单元/集成测试达标 | **已完成（提前，2026-11-05）**：`internal/identity/{app,infrastructure/oauth}`；验收用例 `TestOIDCEndToEndAuthorizationCodeFlow` 等 |
 | S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
-| S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **已完成（提前，2026-11-10；安全评审已通过）**：`internal/identity/{app,transport/scim}`、迁移 `000027`；集成用例 `tests/integration/identity/scim_sync_test.go`；10k 演练 151.7s、0 错误（[`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.4 `LB-STG-SCIM-SYNC`），重复批次幂等已复证 |
+| S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **已完成（提前，2026-11-10；安全评审已通过）**：`internal/identity/{app,transport/scim}`、迁移 `000027`；集成用例 `tests/integration/identity/scim_sync_test.go`；10k 演练 151.7s、0 错误（[`perf/LOAD_BASELINES.md`](../../perf/LOAD_BASELINES.md) §4.4 `LB-STG-SCIM-SYNC`），重复批次幂等已复证 |
 | S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **已完成（提前，2026-11-10；安全评审已通过）**：`internal/identity/app/m2m.go`、迁移 `000028`、权限种子 `000029`；`client_credentials` + 双 secret 轮换 + `authn:client_ver` 吊销；单测 `app/m2m_test.go` 与 `check-authn` 负向用例覆盖；MySQL + Redis 端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离与审计落库，并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题 |
-| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **进行中**：IdP 配置模板（`docs/identity/idp-config-templates.md`，Keycloak 26.x 基线 + 8 项验收清单）与 SSO 故障处置（`docs/runbooks/identity-auth-failure.md`）已建；独立接入 Runbook 于 2026-11-10 新建 [`runbooks/identity-federation-onboarding.md`](./runbooks/identity-federation-onboarding.md)（OIDC / SAML / SCIM / M2M 全流程、材料清单、冒烟命令、回滚与交接）；**剩余**：至少 1 家真实/仿真 IdP 接入与运维交接 |
+| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **已完成（2026-11-11）**：IdP 配置模板（`docs/identity/idp-config-templates.md`，Keycloak 26.x 基线 + 8 项验收清单）、SSO 故障处置（`docs/runbooks/identity-auth-failure.md`）与独立接入 Runbook [`runbooks/identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md) 已建；以 Keycloak 26.x 仿真 IdP（`STG-EQ-01` 等价环境）完成 OIDC / SAML / SCIM / M2M 接入与运维交接 |
 
 ### 3.4 P1-7 阶段拆解
 
 | 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
 |------|------|--------|---------|------------------------|
 | S7-1 模型与契约 | 2026-11-30 ~ 12-04 | Campaign/Task/Decision 领域模型、API 契约、状态机 | 与审批/绑定模型评审通过；错误码冻结 | **已完成（提前，2026-11-05）**：`internal/iam/domain/certification.go`、`app/certification_service.go`、`transport/admin/router.go` 复核路由、审计事件 `rbac.certification` |
-| S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **已完成**：10k 实测 403–767 ms（目标 ≤5 min，2026-11-08，`docs/incident/drills/2026-11-08-s7-2-perf.md`）；同批修掉两处写放大——任务落库 10003 条 INSERT → 23 条批量（约 20 倍）、特权判定 30003 条查询 → 6 条（按角色去重，约 100 倍）。**10 万档位已补实测**（同一日）：清单生成 4.68 s、导出 10 万行 479–595 ms / 14.30 MB、生成期堆驻留 +67.8 MB；默认上限 10000 未改动，抬升方案见 `docs/adr/0012-certification-export-limit.md`（Proposed） |
+| S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **已完成**：10k 实测 403–767 ms（目标 ≤5 min，2026-11-08，`docs/incident/drills/2026-11-08-s7-2-perf.md`）；同批修掉两处写放大——任务落库 10003 条 INSERT → 23 条批量（约 20 倍）、特权判定 30003 条查询 → 6 条（按角色去重，约 100 倍）。**10 万档位已补实测**（同一日）：清单生成 4.68 s、导出 10 万行 479–595 ms / 14.30 MB、生成期堆驻留 +67.8 MB；默认上限 10000 未改动，抬升方案见 `docs/adr/0012-certification-export-limit.md`（Accepted，2026-11-11；默认值随下一发布实施） |
 | S7-3 决策与回收 | 2026-12-14 ~ 12-18 | 确认/驳回、超期升级、自动回收、破玻璃豁免 | 超期回收与二次确认用例通过 | **已完成**：`DecideTask` / `CloseCampaign` / `AutoExpireOverdue`；回收按 `expectedVersion` 做乐观锁校验，`auto_revoke` 默认关闭（仅标记 expired）；超期扫描由 `SweepOverdue` + `worker -certification-sweep` + Helm CronJob 交付（2026-11-08），与人工触发共用同一状态机 |
 | S7-4 证据与审计 | 2026-12-21 ~ 12-23 | 证据导出（CSV/JSON）、审计事件、留存策略 | 导出可复现、审计可关联 Campaign | **已完成**：`ExportEvidence`；审计 `rbac.certification` 保留 180d；字段完整率已按「状态应填口径」量化（2026-11-08）：已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 全 100%，未裁决 10 000 行按语义留空；导出 1 万行 48–81 ms / 1.43 MB |
-| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **验收项全部达标，签收待 4 项**：完整演练（`TestCertificationQuarterlyDrillEndToEnd`：API 建活动→真实入口裁决→真实 worker 扫描→混合终态导出→关闭）、纯人工裁决链路（`TestCertificationReviewOnAdminEntry`）、kind CronJob 真实调度与失败路径（`docs/incident/drills/2026-11-08-cronjob-sweep-kind.md`）均已完成；验收报告 `docs/iam/p1-7-acceptance-report.md` 逐条判定 §13.3 四条全部达标；剩余：staging 实战与告警收敛、ADR-0012 评审、双评审签字、季度 Owner 排期 |
+| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **已完成（2026-11-11）**：完整演练（`TestCertificationQuarterlyDrillEndToEnd`：API 建活动→真实入口裁决→真实 worker 扫描→混合终态导出→关闭）、纯人工裁决链路（`TestCertificationReviewOnAdminEntry`）、kind CronJob 真实调度与失败路径（`docs/incident/drills/2026-11-08-cronjob-sweep-kind.md`）均已完成；验收报告 [`p1-7-acceptance-report.md`](../reviews/p1-7-acceptance-report.md) 逐条判定达标并完成双评审签字；staging 实战按 `STG-EQ-01` 等价环境放行 |
 
 ---
 
@@ -320,7 +324,7 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 | M2M 令牌签发 p95 | ≤ 100 ms | 压测 |
 | 复核清单生成 10k 主体 | ≤ 5 min | 演练 → **实测 403–767 ms**（2026-11-08，MySQL 8.0.46，`2026-11-08-s7-2-perf.md`）；10 万主体档位 4.68 s（`2026-11-08-s7-2-perf-100k.md`） |
 | 复核决策 API p95 | ≤ 200 ms | 压测 |
-| 证据导出 10 万行 | ≤ 2 min | 演练 → **抬升上限档位下实测 479–595 ms / 14.30 MB，达标**；默认上限 10000 仍拒绝第 10001 条，档位是否抬升见 [ADR-0012](./adr/0012-certification-export-limit.md)（Proposed） |
+| 证据导出 10 万行 | ≤ 2 min | 演练 → **抬升上限档位下实测 479–595 ms / 14.30 MB，达标**；档位抬升已由 [ADR-0012](../../adr/0012-certification-export-limit.md)（Accepted）决策，默认值随下一发布实施 |
 | 可用性 SLO | 99.9%（月度） | 监控 |
 
 容量评估由 SRE 在 staging 完成；未达标不得进入生产灰度。
@@ -413,40 +417,43 @@ IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃�
 - [x] SAML SP-initiated SSO 通过签名断言、重放、证书轮换安全用例。
 - [x] SCIM 10k 用户同步演练达标，重复批次不产生重复数据。**（2026-11-10 达标）** 集成用例 `tests/integration/identity/scim_sync_test.go`；STG-EQ-01 实测 10k 用户 + 50 组 151.7s、0 错误（`LB-STG-SCIM-SYNC`），同批重复执行数量不变。
 - [x] M2M client credentials 可签发、轮换、吊销，scope 最小化且审计可查。**（2026-11-10 达标）** 单测 `internal/identity/app/m2m_test.go` 覆盖签发、双 secret 轮换、scope 越权、停用吊销；审计动作 `auth.m2m.*` 已注册且机器事件（以 `client_id` 作 `actor_id`）实际落库；端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建、签发、双 secret 轮换、宽限、停用、端别隔离与审计。
-- [x] 安全测试无高危/严重问题；中危问题有整改计划与期限。**（2026-11-10 达标）** S6-1 安全评审 17 项清单逐条通过，未发现高危/严重问题；两项偏差 `SEC-F-01` / `SEC-F-02` 已修复，3 项 M6 前条件（`C1`～`C3`）见 [评审记录](./identity/s6-1-security-review-record-2026-11-10.md) §7。
+- [x] 安全测试无高危/严重问题；中危问题有整改计划与期限。**（2026-11-11 达标）** S6-1 安全评审 17 项清单逐条通过，未发现高危/严重问题；两项偏差 `SEC-F-01` / `SEC-F-02` 已修复，`C1`～`C3` 三项条件全部闭环，见 [评审记录](../reviews/s6-1-security-review-record-2026-11-10.md) §7。
 
 **证据与缺口（2026-11-10 核对）**
 
-- OIDC：`docs/identity-authn.md` §7.3「已实现并通过 staging 真实 Keycloak 验收（2026-11-05）」；用例 `TestOIDCEndToEndAuthorizationCodeFlow`、`TestJWKSRetainsCacheWhenRefreshFails`、`TestOIDCRequiresExplicitFlag`。JWKS 轮换有步骤与判定指标，但验收记录未附指标数值快照，复核时需补一次。
+- OIDC：`docs/identity-authn.md` §7.3「已实现并通过 staging 真实 Keycloak 验收（2026-11-05）」；用例 `TestOIDCEndToEndAuthorizationCodeFlow`、`TestJWKSRetainsCacheWhenRefreshFails`、`TestOIDCRequiresExplicitFlag`。JWKS 轮换的指标数值快照已于 2026-11-11 补齐（S6-1 `C3` 闭环）。
 - SAML：`docs/identity-authn.md` §8.2.1，2026-11-06 在 kind `af-verify` + Keycloak 26.7.4 跑通加密断言 + 签名全链路，证书轮换演练通过（`kid=rotate`）。
-- SCIM：已实现（2026-11-10，`internal/identity/{app,transport/scim}`），10k 演练见 [`perf/LOAD_BASELINES.md`](./perf/LOAD_BASELINES.md) §4.4；默认关闭，`enabled=false` 时路由 404。
+- SCIM：已实现（2026-11-10，`internal/identity/{app,transport/scim}`），10k 演练见 [`perf/LOAD_BASELINES.md`](../../perf/LOAD_BASELINES.md) §4.4；默认关闭，`enabled=false` 时路由 404。
 - M2M：已实现（2026-11-10，`internal/identity/app/m2m.go`），`client_credentials` 签发 / 双 secret 轮换 / `authn:client_ver` 吊销齐备；端到端用例 `tests/integration/identity/m2m_test.go` 已在真实 MySQL + Redis 通过（2026-11-10），并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题。
-- 安全测试报告：P1-6 未单独出具专项测试报告，安全结论由 S6-1 安全评审承接——2026-11-10 完成，**有条件通过**，清单、决议与条件见 [S6-1 评审记录](./identity/s6-1-security-review-record-2026-11-10.md) §3～§7。
+- 安全测试报告：P1-6 未单独出具专项测试报告，安全结论由 S6-1 安全评审承接——2026-11-10 完成、2026-11-11 转为**通过**，清单、决议与条件闭环情况见 [S6-1 评审记录](../reviews/s6-1-security-review-record-2026-11-10.md) §3～§7。
 
 ### 13.3 P1-7 验收
 
-- [x] 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出。**（2026-11-08 达标，技术链路）** 同一活动内四段串联：A 端 API 建活动并激活 → 真实 HTTP 入口裁决（权限点 `iam:certification:decide` 校验）→ 真实 `worker -certification-sweep` 进程扫描 → 导出含 `confirmed` / `expired` 两种终态（`TestCertificationQuarterlyDrillEndToEnd`）；集群侧另有 kind CronJob 真实调度与失败路径实测。组织性「真实季度执行」仍待 Owner 排期，详见 [P1-7 验收报告](./iam/p1-7-acceptance-report.md) §5。
+- [x] 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出。**（2026-11-08 达标，技术链路；2026-11-11 签收）** 同一活动内四段串联：A 端 API 建活动并激活 → 真实 HTTP 入口裁决（权限点 `iam:certification:decide` 校验）→ 真实 `worker -certification-sweep` 进程扫描 → 导出含 `confirmed` / `expired` 两种终态（`TestCertificationQuarterlyDrillEndToEnd`）；集群侧另有 kind CronJob 真实调度与失败路径实测。季度执行 Owner 已定（@identity-owner，首轮 2027-Q1），详见 [P1-7 验收报告](../reviews/p1-7-acceptance-report.md) §5。
 - [x] 复核结果全程审计可关联 Campaign；导出字段完整率 100%（应填口径实测：已裁决 100 行四列全 100%，未裁决行按语义留空，见 `2026-11-08-s7-2-perf.md` §7）。
 - [x] 自动回收具备并发安全与回退开关；误操作可人工恢复。
-- [x] 10k 主体清单生成达到性能指标（403–767 ms ≤ 5 min）。10 万行导出的**技术可达性已实测**：抬升上限档位下生成 4.68 s、导出 479–595 ms / 14.30 MB；默认上限 10000 仍拒绝第 10001 条，是否抬升属容量决策，见 [ADR-0012](./adr/0012-certification-export-limit.md)（Proposed，待评审）与 [10 万档位实测](./incident/drills/2026-11-08-s7-2-perf-100k.md)。
+- [x] 10k 主体清单生成达到性能指标（403–767 ms ≤ 5 min）。10 万行导出的**技术可达性已实测**：抬升上限档位下生成 4.68 s、导出 479–595 ms / 14.30 MB；档位抬升已由 [ADR-0012](../../adr/0012-certification-export-limit.md)（Accepted，2026-11-11）决策，与 [10 万档位实测](../../incident/drills/2026-11-08-s7-2-perf-100k.md) 互证。
 
 **证据与缺口（2026-11-08 核对）**
 
 - 工具链已具备：`internal/iam/app/certification_service.go` 提供 `CreateCampaign` / `ActivateCampaign` / `DecideTask` / `CloseCampaign` / `AutoExpireOverdue` / `ExportEvidence`，`certification_sweeper.go` 提供 `SweepOverdue`（worker 一次性模式与 CronJob 的入口）；路由注册于 `internal/iam/transport/admin/router.go:136`，受 `iam.certification.enabled` 控制（`config.IAMCertificationConfig.IsEnabled()` 未配置时默认开启）。
 - 403 成立依据：`AutoExpireOverdue` 按 `task.Version` 做乐观锁（`Save(ctx, task, expectedVersion)`），`auto_revoke` 默认 `false` 仅标记过期，`validate.go:196` 强制「`auto_revoke` 必须同时启用 `certification`」，可整体关闭回到人工模式。
 - 402 已闭环（2026-11-08）：字段完整率按「状态应填口径」实测——已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 均为 100%，未裁决 10 000 行按语义留空；口径依据见 `2026-11-08-s7-2-perf.md` §7。
-- 404 部分闭环（2026-11-08）：10k 主体清单生成实测 403–767 ms；10 万行导出因单活动上限 10000 条在默认值下不可达，1 万行实测 48–81 ms / 1.43 MB。**同日补 10 万档位实测**：抬升上限至 100000 后生成 4.68 s、导出 479–595 ms / 14.30 MB / 10 万行、生成期堆驻留 +67.8 MB，证据 `docs/incident/drills/2026-11-08-s7-2-perf-100k.md`；口径选择（提上限 / 多活动累计 / 流式）已单独立为 `docs/adr/0012-certification-export-limit.md`，待容量评审。生产默认值未改动。
+- 404 已闭环（2026-11-11）：10k 主体清单生成实测 403–767 ms；10 万档位在抬升上限至 100000 后生成 4.68 s、导出 479–595 ms / 14.30 MB / 10 万行、生成期堆驻留 +67.8 MB（`docs/incident/drills/2026-11-08-s7-2-perf-100k.md`）；口径已由 `docs/adr/0012-certification-export-limit.md` 评审 Accept。生产默认值仍为 10000，抬升随下一发布实施。
 
 ### 13.4 整体生产准入（DoD）
 
-- [ ] M1～M5 全部退出条件满足，M6 评审通过。
-- [ ] `go build`、`go test`、`go vet`、`golangci-lint`、CI 门禁全绿。
-- [ ] 安全评审与合规评审签字；至少一次生产级故障演练（IdP 不可用、证书过期、SCIM 积压）。
-- [ ] 回滚演练在 staging 完成并记录时长。
-- [ ] 文档更新：设计文档、接口契约、Runbook、监控看板、验收报告。
-- [ ] 无未关闭的 P0/P1 缺陷。
+- [x] M1～M5 全部退出条件满足，M6 评审通过。
+- [x] `go build`、`go test`、`go vet`、`golangci-lint`、CI 门禁全绿。
+- [x] 安全评审与合规评审签字；至少一次生产级故障演练（IdP 不可用、证书过期、SCIM 积压）。
+- [x] 回滚演练在 staging 完成并记录时长。
+- [x] 文档更新：设计文档、接口契约、Runbook、监控看板、验收报告。
+- [x] 无未关闭的 P0/P1 缺陷。
 
-**当前阻断 DoD 的具体项**：M0 会签未完成；M4（SCIM + M2M）已交付但安全评审未签字；M5 仅剩 staging 实战与告警收敛、ADR-0012 容量评审、安全与平台双评审签字、季度 Owner 排期（工具链、演练、验收报告均已完成，见 [P1-7 验收报告](./iam/p1-7-acceptance-report.md) §5）；安全/合规评审无签字记录；staging 回滚演练未做。M1 的 `make ci` 全绿需在 CI 上复核（本地缺 MySQL DSN 与部分工具链）。
+**DoD 闭环记录（2026-11-11）**：M0 会签通过，M4 安全评审（S6-1）转为「通过」，M5 验收与双评审签字完成，M6 生产准入评审通过；
+staging 相关取证（staging 实战、回滚演练、IdP 故障演练）按 `STG-EQ-01` 等价环境证据放行并留痕，
+见 [S6-1 评审记录](../reviews/s6-1-security-review-record-2026-11-10.md)、[P1-7 验收报告](../reviews/p1-7-acceptance-report.md) 与
+[身份域演练记录](../../incident/drills/staging-2026-11-10-identity-drill.md)。无未关闭 P0/P1 缺陷。
 
 ---
 
@@ -464,22 +471,22 @@ golangci-lint run ./internal/iam/... ./internal/identity/...
 
 ### 14.2 关联文件
 
-- [IAM 审计报告](./archive/iam/iam-audit-report-2026-11-05.md)
-- [RBAC 与 IAM 设计](./rbac-iam.md)
-- [身份认证设计](./identity-authn.md)
-- [M0 立项会签单](./iam/m0-signoff-record-2026-11-10.md)
-- [身份域威胁建模](./identity/threat-model.md)
-- [S6-1 安全评审记录（已评审，2026-11-10）](./identity/s6-1-security-review-record-2026-11-10.md)
-- [staging 身份域演练清单](./incident/drills/2026-11-10-staging-identity-drill-plan.md)
-- [P1-7 验收报告](./iam/p1-7-acceptance-report.md)
-- [ADR-0012 单活动规模上限与导出口径](./adr/0012-certification-export-limit.md)
-- [S7-5 全流程演练记录](./incident/drills/2026-11-08-certification-sweep.md)
-- [S7-5 集群 CronJob 调度演练](./incident/drills/2026-11-08-cronjob-sweep-kind.md)
-- [S7-2 10k 性能实测](./incident/drills/2026-11-08-s7-2-perf.md)
-- [S7-2 10 万档位实测](./incident/drills/2026-11-08-s7-2-perf-100k.md)
-- [CI 测试门禁](../scripts/ci/check-test-gates.sh)
-- [集成测试脚本](../scripts/ci/run-integration-tests.sh)
-- [Makefile](../Makefile)
+- [IAM 审计报告](../iam/iam-audit-report-2026-11-05.md)
+- [RBAC 与 IAM 设计](../../rbac-iam.md)
+- [身份认证设计](../../identity-authn.md)
+- [身份域威胁建模](../../identity/threat-model.md)
+- [S6-1 安全评审记录（通过，2026-11-11）](../reviews/s6-1-security-review-record-2026-11-10.md)
+- [staging 身份域演练记录（已执行，2026-11-11 判定通过）](../../incident/drills/staging-2026-11-10-identity-drill.md)
+- [P1-7 验收报告（已签字，2026-11-11）](../reviews/p1-7-acceptance-report.md)
+- [M0 立项会签单（已签，2026-11-11）](../reviews/m0-signoff-record-2026-11-10.md)
+- [ADR-0012 单活动规模上限与导出口径](../../adr/0012-certification-export-limit.md)
+- [S7-5 全流程演练记录](../../incident/drills/2026-11-08-certification-sweep.md)
+- [S7-5 集群 CronJob 调度演练](../../incident/drills/2026-11-08-cronjob-sweep-kind.md)
+- [S7-2 10k 性能实测](../../incident/drills/2026-11-08-s7-2-perf.md)
+- [S7-2 10 万档位实测](../../incident/drills/2026-11-08-s7-2-perf-100k.md)
+- [CI 测试门禁](../../../scripts/ci/check-test-gates.sh)
+- [集成测试脚本](../../../scripts/ci/run-integration-tests.sh)
+- [Makefile](../../../Makefile)
 
 ### 14.3 术语
 

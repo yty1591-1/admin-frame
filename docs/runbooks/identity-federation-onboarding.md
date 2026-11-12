@@ -145,4 +145,4 @@ SCIM 与 M2M 的验收口径（10k 同步、幂等、轮换、吊销时效）见
 - 密钥轮换：[key-rotation.md](./key-rotation.md)；泄露应急：[key-compromise.md](./key-compromise.md)
 - 告警目录：[ALERTS.md](./ALERTS.md)
 - 性能基线：[perf/LOAD_BASELINES.md](../perf/LOAD_BASELINES.md)
-- 工程计划：[iam-p1-5-7-engineering-plan.md](../iam-p1-5-7-engineering-plan.md) `S6-6`
+- 工程计划：[iam-p1-5-7-engineering-plan.md](../archive/plans/iam-p1-5-7-engineering-plan.md) `S6-6`（已关闭归档）

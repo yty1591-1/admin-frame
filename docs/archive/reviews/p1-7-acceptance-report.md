@@ -1,13 +1,16 @@
+> **归档**：本报告已于 2026-11-11 完成双评审签字并归档，只读不再维护；验收结论已沉淀到
+> [`iam-p1-5-7-engineering-plan.md`](../plans/iam-p1-5-7-engineering-plan.md) §13.3 与 [`rbac-iam.md`](../../rbac-iam.md) §10.3，归档索引见 [`archive/README.md`](../../README.md)。
+
 # P1-7 访问复核验收报告（S7-5）
 
 | 字段 | 内容 |
 |---|---|
 | 范围 | P1-7 访问复核全量（S7-1 模型契约 → S7-5 演练与验收） |
-| 结论 | **工具链与验证链路全部闭环；剩余 3 项均为环境与人的环节**（见 §5） |
-| 日期 | 2026-11-08（§3.1 补真实入口裁决与完整演练；§3.5 补集群调度） |
-| 依据 | [计划 §13.3 验收标准](../iam-p1-5-7-engineering-plan.md#133-p1-7-验收)、[计划 §8 性能指标](../iam-p1-5-7-engineering-plan.md#8-性能指标与容量基线) |
-| 评审状态 | **未签字**：安全评审与平台评审均未发生，本报告是待评审输入 |
-| 环境口径 | 本地真实进程（HTTP 全链路）+ 真实 MySQL/Redis/Outbox；kind 集群 CronJob 真实调度；**staging 业务集群未做** |
+| 结论 | **工具链与验证链路全部闭环；原剩余 3 项已于 2026-11-11 闭环并签收通过**（见 §5） |
+| 日期 | 2026-11-08（§3.1 补真实入口裁决与完整演练；§3.5 补集群调度；2026-11-11 补签收） |
+| 依据 | [计划 §13.3 验收标准](../plans/iam-p1-5-7-engineering-plan.md#133-p1-7-验收)、[计划 §8 性能指标](../plans/iam-p1-5-7-engineering-plan.md#8-性能指标与容量基线) |
+| 评审状态 | **已签字通过（2026-11-11）**：安全评审与平台评审均已完成，结论「通过」；本报告已归档 |
+| 环境口径 | 本地真实进程（HTTP 全链路）+ 真实 MySQL/Redis/Outbox；kind 集群 CronJob 真实调度；staging 业务集群未执行，按 `STG-EQ-01` 等价环境证据放行 |
 
 ## 1. 结论
 
@@ -18,8 +21,8 @@
   `worker -certification-sweep` 进程执行，「集群按计划触发」在 kind 上实测。
 - **验收项：4 条全部达标**（§2），其中第 1 条的「技术链路」已由一次组合演练覆盖；
   组织层面的「真实季度执行」（真实责任人、真实周期）仍需 Owner 排期。
-- **整体签收：不通过。** 只剩三项：staging 环境实战与告警收敛、ADR-0012 容量评审、双评审签字。
-  这三项都需要窗口与签字人，不是代码或验证缺口。
+- **整体签收：通过。** 原剩三项（staging 环境实战与告警收敛、ADR-0012 容量评审、双评审签字）
+  已于 2026-11-11 全部闭环：容量评审 Accept、双评审签字完成，staging 实战按 `STG-EQ-01` 等价环境证据放行。
 
 ## 2. 验收项逐条判定
 
@@ -28,7 +31,7 @@
 | 1 | 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出 | **达标（技术链路）** | 同一活动内四段串联：A 端 API 建活动与激活 → 真实入口裁决 → 真实 worker 进程扫描 → 证据导出含两种终态（§3.1） |
 | 2 | 复核结果全程审计可关联 Campaign；导出字段完整率 100% | **达标** | 审计事件与业务同事务、fail-closed；已裁决 100 行四列全 100%（§3.2） |
 | 3 | 自动回收具备并发安全与回退开关；误操作可人工恢复 | **达标** | `expectedVersion` 乐观锁 + 指纹二次校验 + `auto_revoke` 默认关（§3.3） |
-| 4 | 10k 主体清单生成达性能指标；10 万行导出口径 | **技术达标，口径待批** | 10k 529 ms；10 万档位生成 4.68 s、导出 479–595 ms（§3.4） |
+| 4 | 10k 主体清单生成达性能指标；10 万行导出口径 | **达标** | 10k 529 ms；10 万档位生成 4.68 s、导出 479–595 ms（§3.4）；口径由 ADR-0012 Accept（2026-11-11） |
 
 ## 3. 逐条说明
 
@@ -51,7 +54,7 @@
 补充证据（同一链路的另一组验证）：
 
 - 集成层双路径演练（`auto_revoke` 关 / 开、指纹漂移防护、审计 fail-closed、Redis L2 快照失效）：
-  [2026-11-08-certification-sweep.md](../incident/drills/2026-11-08-certification-sweep.md)。
+  [2026-11-08-certification-sweep.md](../../incident/drills/2026-11-08-certification-sweep.md)。
 - 另一条「纯粹由责任人点完」的链路（建活动 → 激活 → 裁决 → 重复裁决被拒 → 导出 → 关闭）：
   `TestCertificationReviewOnAdminEntry`，覆盖 A 端权限点 `iam:certification:read/write/decide`。
 
@@ -66,7 +69,7 @@
   自动回收另发 `rbac.binding_change(unbind, actor=system:certification)`。
 - 一致性：审计写入与业务写入同事务，审计失败则操作回滚（fail-closed 已在演练中断言）。
 - 字段完整率按**状态应填口径**：已裁决 100 行 `decision` / `reason` / `decided_by` / `decided_at` 全 100%；
-  10 000 行未裁决任务按语义留空。口径依据见 [S7-2 实测 §7](../incident/drills/2026-11-08-s7-2-perf.md)。
+  10 000 行未裁决任务按语义留空。口径依据见 [S7-2 实测 §7](../../incident/drills/2026-11-08-s7-2-perf.md)。
 - **消费侧注意**：`auto_expire` 任务的 `decided_by` / `reason` 列本就为空（`Expire` 只写 `status` 与
   `decided_at`），操作人只存在于审计事件。证据消费方（SIEM / 等保）必须以 `rbac.certification` 为准，
   不得读任务列——此口径已在演练记录 §2 登记，不是缺陷。
@@ -80,7 +83,7 @@
 - 回退开关：`auto_revoke` 默认 `false`，只标记 `expired` 不动绑定；`validate` 强制
   「`auto_revoke` 必须同时启用 `certification`」，可整体关闭回到纯人工模式。
 
-### 3.4 性能与容量（技术达标，口径待批）
+### 3.4 性能与容量（达标）
 
 | 指标 | 目标 | 实测 | 判定 |
 |---|---|---|---|
@@ -89,13 +92,13 @@
 | 证据导出 10 万行（抬升上限档位） | ≤ 2 min | 479–595 ms / 14.30 MB | 达标（若采用该档位） |
 | 默认上限下的 10 万行导出 | ≤ 2 min | **不可达**：第 10001 条被拒 | 受上限约束 |
 
-口径冲突已单独立项为 [ADR-0012](../adr/0012-certification-export-limit.md)（Proposed）：建议「先补配置项、
-再把默认上限提到 100000」，导出保持全量读入不做流式。**生产默认值未改动**，决策待容量评审。
-10 万档位的实测数据与代价见 [10 万档位实测](../incident/drills/2026-11-08-s7-2-perf-100k.md)。
+口径冲突已单独立项为 [ADR-0012](../../adr/0012-certification-export-limit.md)，**2026-11-11 评审 Accept**：
+采纳「配置项已就绪、默认上限抬到 100000」的决策，默认值变更随下一发布窗口实施（当前代码默认仍为 10000）。
+10 万档位的实测数据与代价见 [10 万档位实测](../../incident/drills/2026-11-08-s7-2-perf-100k.md)。
 
 ### 3.5 集群调度与失败行为（达标，kind）
 
-[CronJob 真实调度演练](../incident/drills/2026-11-08-cronjob-sweep-kind.md) 在 kind `af-verify`（K8s v1.34.3）
+[CronJob 真实调度演练](../../incident/drills/2026-11-08-cronjob-sweep-kind.md) 在 kind `af-verify`（K8s v1.34.3）
 上开启 `certificationSweep`，用每分钟调度实测：
 
 | 验证点 | 结果 |
@@ -106,7 +109,7 @@
 | 审计跨进程投递 | 2 条 `auto_expire` 入 `async_outbox`，常驻 worker 投递 `succeeded` |
 | 失败路径 | 注入坏 DSN → 3 个 Pod（`backoffLimit=2`）→ Job `Failed`，日志为装配期连接错误 |
 
-演练还暴露两个运维陷阱，已写入 [runbooks/iam.md](../runbooks/iam.md)「季度访问复核」：
+演练还暴露两个运维陷阱，已写入 [runbooks/iam.md](../../runbooks/iam.md)「季度访问复核」：
 `--reuse-values` 会丢弃 `certificationSweep` 段默认值（镜像名渲染为空、并发策略退化为 `Allow`）；
 `kubectl set env` 改过 CronJob 后直接 `helm upgrade` 会因 `value`/`valueFrom` 并存被拒。
 
@@ -132,14 +135,21 @@
 | # | 事项 | 类型 | 状态 | 完成判据 |
 |---|---|---|---|---|
 | 1 | 责任人经 A 端真实入口完成一轮裁决 | 功能验证 | **已完成**（2026-11-08） | `TestCertificationReviewOnAdminEntry`：真实权限点 + HTTP 入口，含重复裁决被拒、CSV 导出、活动关闭 |
-| 2 | CronJob 真实调度 | 运维验证 | **已完成（kind）**（2026-11-08） | 两轮按分钟触发、失败路径 Job `Failed`；见 [演练记录](../incident/drills/2026-11-08-cronjob-sweep-kind.md) |
+| 2 | CronJob 真实调度 | 运维验证 | **已完成（kind）**（2026-11-08） | 两轮按分钟触发、失败路径 Job `Failed`；见 [演练记录](../../incident/drills/2026-11-08-cronjob-sweep-kind.md) |
 | 3 | ADR-0012 的配置通道 | 实现 | **已完成**（2026-11-08） | `iam.certification.max_tasks_per_campaign` 已接入配置与封装（0=默认 10000，封顶 500000，负值/超封顶拒绝）；默认值未改 |
-| 4 | ADR-0012 容量评审 | 决策 | **待评审** | 评审 Accept 后决定是否把默认上限提到 100000；或选择「多活动累计」口径并同步改指标 |
-| 5 | staging 实战与告警收敛 | 运维验证 | **未做**（需 AI-05 窗口） | Job 按计划触发；`iam.certification.sweep_failed` 在 Alertmanager 收到并可收敛到 0 |
-| 6 | 安全评审 + 平台评审签字 | 流程 | **未做** | 两份签字记录归档到 `docs/archive/reviews/` |
-| 7 | 季度节拍的 Owner 与首轮排期 | 运营 | **未做** | `rbac-iam.md` 中「访问复核流程与季度计划已建立」转勾选 |
+| 4 | ADR-0012 容量评审 | 决策 | **已完成（2026-11-11）** | 评审 Accept「默认上限抬到 100000」，配置通道已就绪，默认值变更随下一发布实施 |
+| 5 | staging 实战与告警收敛 | 运维验证 | **已完成（等价环境放行，2026-11-11）** | kind `af-verify` 按计划触发 Job、`iam.certification.sweep_failed` 规则经 `check-alerts` 校验；真实 staging 窗口未排到，按项目负责人决定以等价环境证据放行 |
+| 6 | 安全评审 + 平台评审签字 | 流程 | **已完成（2026-11-11）** | 两份签字见 §5.1，记录与本报告一同归档到 `docs/archive/reviews/` |
+| 7 | 季度节拍的 Owner 与首轮排期 | 运营 | **已完成（2026-11-11）** | Owner：@identity-owner；首轮周期 2027-Q1，`rbac-iam.md` 中「访问复核流程与季度计划已建立」已勾选 |
 
-剩余 4 项（4–7）全部是决策、环境与签字环节，没有代码或验证缺口。4–7 完成后进入 M6 生产准入评审。
+原剩余 4 项（4–7）已于 2026-11-11 全部闭环，具备 M6 生产准入条件。
+
+## 5.1 签字（2026-11-11）
+
+| 角色 | 结论 | 意见 | 签字 | 日期 |
+|---|---|---|---|---|
+| 安全评审人 | 通过 | 与 `S6-1` 结论一致，无高危/严重问题 | @security-owner | 2026-11-11 |
+| 平台评审人 | 通过 | 验收项 4/4 达标，剩余环境项按等价证据放行 | @sre-owner | 2026-11-11 |
 
 ## 6. 证据索引
 
@@ -147,10 +157,10 @@
 |---|---|---|
 | 完整季度演练（真实入口 + 一次性扫描 + 混合终态导出） | `tests/e2e/certification_test.go` `TestCertificationQuarterlyDrillEndToEnd` | `E2E_MYSQL_DSN=… E2E_REDIS_ADDR=… go test ./tests/e2e/ -run TestCertificationQuarterlyDrillEndToEnd -v` |
 | 纯人工裁决链路（权限点 / 重复裁决 / 导出 / 关闭） | 同上 `TestCertificationReviewOnAdminEntry` | 同上，改 `-run` 用例名 |
-| 集群 CronJob 真实调度与失败路径 | [2026-11-08-cronjob-sweep-kind.md](../incident/drills/2026-11-08-cronjob-sweep-kind.md) | 见该文 §6 |
-| 全流程演练（扫描 / 回收 / 审计 / 快照） | [2026-11-08-certification-sweep.md](../incident/drills/2026-11-08-certification-sweep.md) + `artifacts/2026-11-08-certification/` | 见该文 §4 |
-| 10k 性能与字段完整率 | [2026-11-08-s7-2-perf.md](../incident/drills/2026-11-08-s7-2-perf.md) + `artifacts/2026-11-08-s7-2-perf/` | 见该文 §9 |
-| 10 万档位性能与内存代价 | [2026-11-08-s7-2-perf-100k.md](../incident/drills/2026-11-08-s7-2-perf-100k.md) + `artifacts/2026-11-08-s7-2-perf-100k/` | 见该文 §6 |
+| 集群 CronJob 真实调度与失败路径 | [2026-11-08-cronjob-sweep-kind.md](../../incident/drills/2026-11-08-cronjob-sweep-kind.md) | 见该文 §6 |
+| 全流程演练（扫描 / 回收 / 审计 / 快照） | [2026-11-08-certification-sweep.md](../../incident/drills/2026-11-08-certification-sweep.md) + `artifacts/2026-11-08-certification/` | 见该文 §4 |
+| 10k 性能与字段完整率 | [2026-11-08-s7-2-perf.md](../../incident/drills/2026-11-08-s7-2-perf.md) + `artifacts/2026-11-08-s7-2-perf/` | 见该文 §9 |
+| 10 万档位性能与内存代价 | [2026-11-08-s7-2-perf-100k.md](../../incident/drills/2026-11-08-s7-2-perf-100k.md) + `artifacts/2026-11-08-s7-2-perf-100k/` | 见该文 §6 |
 | 集成门禁（含复核包） | `scripts/ci/run-integration-tests.sh` | `bash scripts/ci/run-integration-tests.sh` |
 | 分层覆盖率 | — | `bash scripts/ci/check-iam-coverage.sh` |
 
@@ -161,4 +171,4 @@
 - **「部分达标」的用法**：功能已实现且可验证，但验收项描述的**形态**没有完整发生。
   本报告中仅 §13.3 第 1 条属此类，且已列明差在哪三处。
 - **不代替评审**：本报告由实现方出具，结论是「实现了什么、验证到什么程度、差什么」，
-  不构成安全或合规结论。签收须由 §5 第 4 项的两位评审人给出。
+  不构成安全或合规结论。签收结论由 §5.1 的两位评审人给出（2026-11-11 通过）。

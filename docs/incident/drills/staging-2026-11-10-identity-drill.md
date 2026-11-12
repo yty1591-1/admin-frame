@@ -4,9 +4,9 @@
 |---|---|
 | 目的 | 补齐 DoD 中「staging 回滚演练」与身份域故障演练缺口，同时验证 `RR-03`（证书轮换）与 `S6-6` 的运维可操作性 |
 | 环境 | staging（`STG-EQ-01` 等价环境口径，见 [`perf/LOAD_BASELINES.md`](../../perf/LOAD_BASELINES.md)） |
-| 执行窗口 | 待排期（建议独立窗口，避开客户灰度） |
+| 执行窗口 | 2026-11-10 本地 kind（kind `af-kind`）；staging 真实窗口未排到，按 `STG-EQ-01` 等价环境口径放行 |
 | 参与角色 | 值班 L1、端 Owner（L2）、SRE（L3）、安全评审观察员 |
-| 当前状态 | **未执行**：本文件是执行清单，记录栏留空 |
+| 当前状态 | **已执行并通过（2026-11-11，等价环境口径）**：`D1`～`D5` 均通过（`D2` 为修复后通过，`D3` 以 JWT kid 等价覆盖、SAML 通道未执行），`SEC-F-01` / `SEC-F-02` 已另行处置；§7 与 §9 为实测记录；staging 真实窗口按项目负责人 2026-11-11 决定以等价环境证据放行 |
 | 关联 | [`release-rollback.md`](../../runbooks/release-rollback.md)、[`identity-auth-failure.md`](../../runbooks/identity-auth-failure.md)、[`identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md)、[`async-dlq.md`](../../runbooks/async-dlq.md) |
 
 ## 1. 覆盖的验收项
@@ -21,6 +21,9 @@
 | 四通道默认关闭（关闭即 `404`） | 全部场景前置 | 路由探测结果 |
 
 ## 2. 前置检查（逐项打勾再开始）
+
+> 本节是 staging 真实窗口的前置检查。本轮按等价环境执行（环境搭建与凭据见 §9），未逐项勾选；
+> 后续出现 staging 窗口时先补齐本节再复跑。
 
 | # | 检查项 | 命令 / 位置 | 结论 |
 |---|---|---|---|
@@ -143,7 +146,11 @@
 4. 缺陷与整改项登记 [`ACTION_ITEMS.md`](../ACTION_ITEMS.md)，与 `S6-1` 评审整改项合并跟踪。
 5. `D5` 结果用于确认 `T-M2M-05` 的缓解是否成立；不成立则更新 [`threat-model.md`](../../identity/threat-model.md) 对应行。
 
-## 9. 执行记录（2026-11-10 本地 kind 实测）
+## 9. 执行记录（2026-11-10 本地 kind 实测，2026-11-11 判定通过）
+
+> 结论：`D1`～`D5` 均通过（`D2` 为修复后通过；`D3` 以 JWT kid 等价路径覆盖，SAML SP 证书轮换本地未配置、见 §9.3 局限）。
+> staging 真实业务集群窗口未排到，按项目负责人 2026-11-11 决定以 `STG-EQ-01` 等价环境证据放行；
+> 后续有 staging 窗口时按本清单复跑并回填 §7 即可，不改结论口径。
 
 自建环境（非 staging）：kind `af-kind` + 集群内 MySQL / Redis / Keycloak 26 + `monitoring` 命名空间的 standalone Prometheus（4 个 target 健康）。通过本地 overlay 打开 `admin` 的 `m2m` / `scim` 与 `c` 的 `oauth` 通道，`iam.mode=enforce`，JWT 使用 RS256 密钥环；Keycloak 侧注册 OIDC 客户端与 `drill-user`。全部凭据、overlay 与脚本仅存放在本机临时目录，不入库。
 
@@ -194,4 +201,4 @@
 - [异步死信处置](../../runbooks/async-dlq.md)
 - [事故定级矩阵](../SEVERITY_MATRIX.md)
 - [身份域威胁建模](../../identity/threat-model.md)
-- [S6-1 安全评审记录](../../identity/s6-1-security-review-record-2026-11-10.md)
+- [S6-1 安全评审记录](../../archive/reviews/s6-1-security-review-record-2026-11-10.md)

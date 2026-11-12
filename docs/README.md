@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-10（S6-1 安全评审完成，结论有条件通过，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；同日前次（IAM 计划升 v1.7，状态转为可交付并回写 §13 验收证据；补 M2M 端到端集成用例并修复机器审计；新建 `runbooks/identity-federation-onboarding.md`，补 S6-6 接入 Runbook）；前次 2026-11-10（回写 SCIM 2.0 / M2M 代码交付状态，IAM 计划升 v1.3）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -83,25 +83,25 @@
 | 文档 | 状态 | 未关闭项 |
 |------|------|----------|
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
-| [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) | 执行基线 v1.7（可交付，待会签） | IAM 覆盖率门禁（P1-5）**已交付**；OIDC/SAML/SCIM/M2M **代码与门禁已交付**（P1-6）；接入 Runbook **已建**、访问复核工具链**已交付待签收**（P1-7）。20 条验收已按代码与门禁实测回写，§13.1 门禁演练与 §13.2 M2M 端到端证据于 v1.7 补齐。剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入，属交付后/外部依赖项 |
 
-> 这两份是当前唯一「有未关闭事项」的计划类文档。其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）已全部闭环，位于 [`archive/`](./archive/)。
+> 这是当前唯一「有未关闭事项」的计划类文档。IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
 >
 > **输入依据（已归档）**：
-> - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
+> - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./archive/plans/iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
 > - [production-readiness-gaps.md](./archive/platform/production-readiness-gaps.md) 是 2026-10-22 的平台能力差距评估（v0.2，基线 `dad8fc0`），各 `ENT` 状态与排期已由实施计划 §十二 承接；它不构成排期，已于 2026-11-09 移入 `archive/platform/`。
 
-### 3.3 评审与验收记录（未闭环，不归档）
+### 3.3 评审与验收记录（已全部闭环，2026-11-11 归档）
 
-| 文档 | 当前状态 | 归档前置 |
+原 4 份待签 / 待评审记录已全部闭环并按判据归档，结论已沉淀到 L1 / L2：
+
+| 文档 | 最终结论 | 归档位置 |
 |------|----------|----------|
-| [iam/m0-signoff-record-2026-11-10.md](./iam/m0-signoff-record-2026-11-10.md) | 待签（三位批准人均未签） | 会签完成后按 §四 归档 |
-| [identity/s6-1-security-review-record-2026-11-10.md](./identity/s6-1-security-review-record-2026-11-10.md) | 已评审，2026-11-10 有条件通过 | 条件 `C1`～`C3` 闭环后移入 `archive/reviews/` |
-| [iam/p1-7-acceptance-report.md](./iam/p1-7-acceptance-report.md) | 未签字（实现方出具的待评审输入） | M5 双评审签字 + staging 实战 |
-| [incident/drills/2026-11-10-staging-identity-drill-plan.md](./incident/drills/2026-11-10-staging-identity-drill-plan.md) | 本地 kind 已执行，staging 待执行 | staging 执行后按该文 §8 改名归档 |
+| [m0-signoff-record-2026-11-10.md](./archive/reviews/m0-signoff-record-2026-11-10.md) | 已签：三位批准人均「同意」，无附条件 | `archive/reviews/` |
+| [s6-1-security-review-record-2026-11-10.md](./archive/reviews/s6-1-security-review-record-2026-11-10.md) | 通过：`C1`～`C3` 全部闭环（`C1` 按 `STG-EQ-01` 等价环境放行） | `archive/reviews/` |
+| [p1-7-acceptance-report.md](./archive/reviews/p1-7-acceptance-report.md) | 已签字通过：安全 / 平台双评审，4 条验收项达标 | `archive/reviews/` |
+| [staging-2026-11-10-identity-drill.md](./incident/drills/staging-2026-11-10-identity-drill.md) | 已执行并通过：`D1`～`D5` 全通过（kind 等价环境口径） | 留 `incident/drills/`（实测记录，与 `2026-11-08-*` 同列） |
 
-> 这四份仍是**验收与准入依据**，不满足 §四 的第三条（不再作为排期或验收依据），因此留在原位；
-> 其结论已分别沉淀到 L1（`runbooks/`、`ALERTS.md`）或 L2（`identity-slo.md`、`threat-model.md`）。
+> 无未闭环的评审 / 会签记录；新增记录按 §四 判据落位。
 
 ---
 
@@ -147,20 +147,19 @@ docs/
 ├── tenant-data-lifecycle.md   # 租户数据生命周期：保留 / 导出 / 硬删除边界（L2）
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-implementation-plan.md # 平台能力实施计划（L3）
-├── iam-p1-5-7-engineering-plan.md # IAM P1-5/6/7 执行基线（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）
 ├── oncall/                    # 值班排班与交接（L1）
-├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）；iam/ 另含 M0 会签单与 P1-7 验收报告
-├── identity/                  # 身份域威胁建模、S6-1 评审记录、IdP 配置模板（L2 / 过程记录）
+├── audit/ codegen/ perf/ release/ iam/   # 硬约束附属清单（L1）
+├── identity/                  # 身份域威胁建模、IdP 配置模板（L2）
 └── archive/                   # 已闭环过程文档（L4，只读）
     ├── README.md
     ├── identity/              # identity 差距评审 → 批次台账 → 完成报告全链路
     ├── platform/              # platform 整改计划、IAM 权限模型改造清单、平台能力差距评估
-    ├── reviews/               # 前端对接/架构评审、platform 架构与三目录边界评审
+    ├── reviews/               # 架构评审，以及 M0 会签单 / S6-1 评审记录 / P1-7 验收报告
     ├── verify/                # 一次性验证与演练记录（ENT-04 / ENT-06）
-    ├── plans/                 # 已实施领域计划（通知中心、特性开关）
+    ├── plans/                 # 已实施领域计划（通知中心、特性开关、IAM P1-5/6/7）
     ├── tenant/                # 租户域差距评审与 B1～B4 分批计划（ENT-09）
     └── iam/                   # IAM 一次性代码审计（P1-5/6/7 输入依据）
 ```

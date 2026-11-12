@@ -91,7 +91,7 @@ campaign 900000000000000001  active  task_count=2
 
 - **绑定未被回收**：`auto_revoke=false` 只标记 `expired`；活动保持 `active` 等待人工关闭，不是自动关闭。
 - **`decided_by` 为空**：`Expire` 只写 `status` 与 `decided_at`，操作人只存在于审计事件
-  （`auto_expire` 的 actor 是 `system:certification`）——这正是 [验收报告 §3.2](../../iam/p1-7-acceptance-report.md)
+  （`auto_expire` 的 actor 是 `system:certification`）——这正是 [验收报告 §3.2](../../archive/reviews/p1-7-acceptance-report.md)
   登记的口径，证据消费方必须读审计事件而不是任务列。
 
 ### 3.3 审计事件（跨进程投递）
