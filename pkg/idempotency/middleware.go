@@ -22,6 +22,11 @@ type Config struct {
 	Store Store
 	// TTL 记录存活时间；≤0 时 24h。
 	TTL time.Duration
+	// TTLSource 非空时在每次写请求上取当前 TTL，覆盖 TTL（ADR-0015 热更）。
+	//
+	// 只影响**新写入**的记录；已存在的记录沿用其写入时的过期时间，
+	// 避免缩短 TTL 让在途请求的可重放窗口突然消失。
+	TTLSource func() time.Duration
 	// Header 幂等键头名；空则 Idempotency-Key。
 	Header string
 	// Required 为 true 时，适用方法缺少键则拒绝（API-11）；默认 false（由调用方显式打开）。
@@ -53,6 +58,21 @@ func (c Config) normalize() Config {
 		c.MaxBodyBytes = defaultMaxBody
 	}
 	return c
+}
+
+// effectiveTTL 返回本次请求使用的记录存活时间。
+//
+// TTLSource 返回非法值（≤0）时回落到配置值，避免一次坏热更让记录永不过期。
+func (c Config) effectiveTTL() time.Duration {
+	if c.TTLSource != nil {
+		if ttl := c.TTLSource(); ttl > 0 {
+			return ttl
+		}
+	}
+	if c.TTL <= 0 {
+		return defaultTTL
+	}
+	return c.TTL
 }
 
 // Middleware 对配置的写方法应用幂等键去重与响应回放。
@@ -102,8 +122,11 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 			}
 			storeKey := CompositeKey(scope, clientKey)
 			fp := FingerprintRequest(r, body)
+			// 同一请求的 Begin 与 Complete 必须用同一个 TTL：
+			// 中途热更不应让「创建」和「回写」落在不同过期时间上。
+			ttl := cfg.effectiveTTL()
 
-			rec, created, err := cfg.Store.Begin(r.Context(), storeKey, fp, cfg.TTL)
+			rec, created, err := cfg.Store.Begin(r.Context(), storeKey, fp, ttl)
 			if err != nil {
 				degradeOrFail(cfg, w, r, next, err)
 				return
@@ -134,7 +157,7 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 				capture.flush()
 				return
 			}
-			if cerr := cfg.Store.Complete(r.Context(), storeKey, fp, status, capture.Header(), capture.buf.Bytes(), cfg.TTL); cerr != nil {
+			if cerr := cfg.Store.Complete(r.Context(), storeKey, fp, status, capture.Header(), capture.buf.Bytes(), ttl); cerr != nil {
 				_ = cfg.Store.Release(r.Context(), storeKey, fp)
 				if cfg.DegradeOnError && stderrors.Is(cerr, ErrStoreUnavailable) {
 					// 业务已执行成功，不能因回写失败把 2xx 改写成 5xx；放行原响应并标记。
