@@ -1,6 +1,6 @@
 # ADR-0015：配置热更新采用「白名单 + 不可变视图原子替换」
 
-- 状态：Proposed（草案，2026-11-13，待架构 Owner 评审）
+- 状态：Accepted（2026-11-13；H1 / H2 已决，实施进行中——热更通道与 `log.level` 已上线，其余 12 键待改造消费点）
 - 日期：2026-11-13
 - 关联：[`../config-center-plan.md`](../config-center-plan.md)（§3.4 读取协议、§6.8 配置优先级与热更白名单、AC-CC-02）、[ADR-0013](0013-config-center-in-process-snapshot.md)（进程内快照与 MySQL 事实源）、[ADR-0009](0009-featureflag-inprocess-evaluation.md)（布尔开关边界）、[ADR-0014](0014-secret-management-envelope-encryption.md)（密钥解析）、[`../ARCHITECTURE.md`](../ARCHITECTURE.md) §5.6、[`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md)（CFG-07）
 
@@ -89,16 +89,36 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 
 ## 后续行动
 
-1. 架构 Owner 评审本 ADR；通过后状态改 `Accepted` 并回写 §10.5 范围变更记录。
-2. 通过后实施顺序：`pkg/hotconfig` 视图与指标 → 四进程接线（复用 `configclient.RefreshEvent`）→ 逐键改造读点 → AC-CC-02 用例（改 hot 键 ≤5s 生效、改 startup 键不生效且打点、回滚 ≤30s）。
-3. 同步收紧 `async.*.concurrency` 的 `reloadable`，并更新 `CONFIG_STANDARDS.md` / `ARCHITECTURE.md` §5.6 的白名单指向本 ADR。
-4. `docs/runbooks/config-center.md` 增「热更生效验证」：改 `rate_limit.burst` → 观察 `config_hot_view_version` 递增与 `config_hot_key_applied_total` 计数。
+1. ~~架构 Owner 评审本 ADR~~ **已完成（2026-11-13）**，状态 `Accepted`；§10.5 范围变更记录随后回写。
+2. 实施进度（2026-11-13）：
+   - `pkg/hotconfig` 视图 / Holder / 指标通道 **已完成**；
+   - 四进程接线（`Runtime.Hot`，复用 `configclient.RefreshEvent`）**已完成**；
+   - 消费点改造 **1 / 13**：`log.level`（`slog.LevelVar`）已生效，其余 12 键仍在装配期捕获，逐键改造；
+   - AC-CC-02 用例待消费点改完后补（改 hot 键 ≤5s 生效、改 startup 键不生效且打点、回滚 ≤30s）。
+3. ~~同步收紧 `async.*.concurrency` 的 `reloadable`~~ **已完成**；`CONFIG_STANDARDS.md` / `ARCHITECTURE.md` §5.6 指向本 ADR 的回写 **待做**。
+4. `docs/runbooks/config-center.md` 增「热更生效验证」：改 `log.level` 观察 `config_hot_view_version` 递增与 `config_hot_key_applied_total` 计数（其余键改造后逐条补）。
+
+## 评审记录
+
+| 日期 | 决策 | 备注 |
+|------|------|------|
+| 2026-11-13 | H1 接受：`log.level` 使用全局 `LevelVar`；H2 保留：`async.outbox.lease` 留在首批，白名单 13 键 | 决策来自本次评审；签署留痕由评审系统保存，本文不代签 |
+
+## 实施进度（滚动更新）
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| 视图通道 | `pkg/hotconfig`（Build / Holder / 校验）、`spec.HotKeys` 白名单、`config_hot_*` 指标 | 已完成 |
+| 进程接线 | `configcenterruntime` 合并快照并原子替换，`Runtime.Hot` 暴露给消费方 | 已完成 |
+| 消费点 | `log.level`（LevelVar） | 已完成 |
+| 消费点 | `rate_limit.rps/burst/idle_ttl/degrade_on_failure`、`worker.poll_interval`、`idempotency.ttl`、`async.outbox.*`（4 键）、`async.consumer.*`（2 键） | 待改造 |
+| 验收 | AC-CC-02 用例与 runbook 验证步骤 | 待补 |
 
 ## 未决问题
 
-| ID | 问题 | 建议 |
+| ID | 问题 | 结论 |
 |----|------|------|
-| H1 | `log.level` 用全局 `LevelVar` 会影响所有 logger，是否可接受？ | 接受；这是运维最常用的热更键，且级别变更本就应该全局一致 |
-| H2 | `async.outbox.lease` 进首批是否过于激进？ | 建议保留但加变更窗口约束；若评审认为风险高，可移到 P1，首批降为 12 键 |
-| H3 | 视图构建 panic 的兜底策略？ | `recover` 后保留旧视图并计 `rejected`，同时触发告警；不做进程退出 |
+| H1 | `log.level` 用全局 `LevelVar` 会影响所有 logger，是否可接受？ | **已决（2026-11-13）**：接受。级别变更本就应该全局一致，且这是运维最常用的热更键 |
+| H2 | `async.outbox.lease` 进首批是否过于激进？ | **已决（2026-11-13）**：保留在首批，白名单维持 13 键；变更需在 runbook 标注窗口约束 |
+| H3 | 视图构建 panic 的兜底策略？ | 倾向「保留旧视图 + `rejected` + 告警，不退出进程」；实现以错误返回为主，panic 兜底随首个消费点改造补齐 |
 | H4 | 是否需要在 M1 提供「热更 explain」？ | 不提供；P1 与灰度 explain 一起做 |

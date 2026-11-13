@@ -109,6 +109,30 @@
 - MySQL 模式下 admin-api / biz-api / c-api / worker 都会启动刷新客户端，暴露快照版本、年龄与 stale 指标；内存模式不启动。刷新值目前不回写运行期配置，热更需先立白名单 ADR。
 - Helm 使用 `configCenter.*`：`enabled`、`secretName`（存放快照文件的 Secret）、`mountPath`、`snapshotFiles`（逗号分隔文件名）、`enabledNamespaces`、`allowMissingConfig`、`publicKeys.secretName/key`；渲染后自动生成上述环境变量并挂载只读快照目录。
 
+### 本机 staging 跑 soak
+
+1. `docker compose -f docker-compose.integration.yml up -d mysql redis`（MinIO 仅在需要对象存储时起）。
+2. `make build` 产物在 `bin/`；迁移用 `make migrate-up`（DSN 指向本机 MySQL）。
+3. 生成快照签名密钥：`go run ./scripts/local/gen-configcenter-keys -kid k1`，把输出的三行 `export` 注入当前 shell。
+   **仅限本机 / staging**；生产密钥必须走 KMS / Vault 的 key ceremony，禁止使用本工具产物。
+4. 按 `configs/dev/.env` 注入其余变量后启动 `admin-api`；首次启动会按代码默认值播种基线 Release 并签名。
+5. 启动 `biz-api` / `c-api`，确认日志出现 `config dual-read periodic enabled`（30s 采样）。
+6. 发布一个 Release，确认 30s 内 `config_dual_read_mismatch` 仍为 0、`config_hot_view_version` 递增。
+7. 之后按上一节 PromQL 每日巡检，满 7 天取证。
+
+> 本机跑通 ≠ staging 验收：环境差异（多副本、Secret 挂载、刷新抖动）仍需在预发复证；正式 7 天计量以预发为准。
+
+### 热更生效验证
+
+- **hot 键**：把 `log.level` 改为 `debug` 并发布 → 一个刷新周期内日志级别变化，
+  `config_hot_view_version` +1、`config_hot_key_applied_total{key="log.level"}` 递增。
+- **startup 键**：改 `server.addr` 并发布 → 不生效（需重启），
+  `config_hot_ignored_total{key="server.addr"}` 递增，用于发现「以为会热更」的误用。
+- **非法值**：把 `rate_limit.rps` 改成 `abc` 并发布 → `config_hot_reload_total{result="rejected"}` 递增，
+  旧视图继续生效，日志出现 `configcenter hot view rejected`。
+- 当前只有 `log.level` 的消费点已改造；其余 12 个白名单键在改造完成前不会真正改变运行行为，
+  即使 `config_hot_key_applied_total` 已在递增。
+
 ## 升级路径
 
 - P1（`client_stale` / `publish_failure` / `rollback`）：15 分钟内未恢复，升级至平台负责人与安全负责人；
