@@ -60,6 +60,14 @@
 | `slo.availability.burn_slow` | P2 | 可用性错误预算持续燃烧（1h+6h > 6x） | [slo-error-budget.md](./slo-error-budget.md) |
 | `slo.latency.p99_high` | P2 | P99 时延持续超过 1s（SLO） | [slo-error-budget.md](./slo-error-budget.md) |
 | `backup.failed` | P2 | 数据库备份 CronJob 连续失败或校验不通过，RPO 有风险 | [backup-restore.md](./backup-restore.md) |
+| `config.client_stale` | P1 | 客户端快照超过 5 分钟未成功刷新（`config_client_snapshot_age_seconds > 300`），进程继续使用上一份已验签快照 | [config-center.md](./config-center.md) |
+| `config.publish_failure` | P1 | 配置发布失败率超过 5%（`config_release_publish_total{result="fail"}`），指针 CAS 或签名链路异常 | [config-center.md](./config-center.md) |
+| `config.rollback` | P1 | 触发配置回滚（`config_release_rollback_total{result="success"}` 增长），需确认影响面与审计 | [config-center.md](./config-center.md) |
+| `config.fetch_error` | P2 | 配置快照拉取失败率超过 1%（`config_client_fetch_total{result="fail"}`），客户端降级使用本地快照 | [config-center.md](./config-center.md) |
+| `config.pending_approval` | P2 | 存在超过 24 小时未处理的配置发布审批（`config_release_pending_approval > 0`） | [config-center.md](./config-center.md) |
+| `config.db_latency` | P2 | 配置管理面 P99 延迟超过 200ms（`config_admin_request_duration_seconds`） | [config-center.md](./config-center.md) |
+| `config.snapshot_corrupt` | P2 | 快照验签或完整性校验失败（`config_client_snapshot_corrupt_total` 增长），客户端拒绝装载 | [config-center.md](./config-center.md) |
+| `config.cold_start_degraded` | P2 | 进程冷启动无可信快照，回退代码默认值（`config_client_cold_start_degraded_total` 增长） | [config-center.md](./config-center.md) |
 
 P3 示例（鼓励登记，CI 不强制链接）：
 

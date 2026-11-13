@@ -1275,6 +1275,8 @@ Service → mTLS/SPIFFE → config-api
 | **M3 删除与演练** | 删除剩余密钥文件；CI 禁止 `configs/*.yaml`；KEK 轮换 / 恢复演练；30 天 SLO；全链路故障注入；签名密钥轮换 | `AC-CC-10` 通过；无文件 + 无中心 + KMS 故障演练；安全 / 合规评审；30 天 SLO 达标 | M2 |
 | **M4 规模化（按需）** | 普通配置读收敛到 `config-api` 评估、读副本 / 多区域、多语言 SDK、B 端自助、配置依赖图、HSM | 拆分触发条件满足；容量 / 成本评审 | M3 |
 
+> **M1 进度（2026-11-13）**：表 / 领域 / 管理面 / OpenAPI / 权限与审计 / SDK 签名快照 / 首次播种 / 四进程启动期快照接入已完成；指标、告警、runbook 与 `check-configcenter` 门禁已补齐（`make ci` 已纳入）；四进程启动期双读已接线（文件基线 vs 签名快照，指标 `config_dual_read_mismatch` / `config_dual_read_degraded`）；无文件启动开关已支持（`CONFIGCENTER_ALLOW_MISSING_CONFIG`，需快照非空）；业务域键声明已补齐（identity / audit / tenant / notification + IAM，逐键排除密钥、浮点与部署项，默认值有一致性测试守护）；业务 namespace 快照消费与接管开关已实现（`CONFIGCENTER_SNAPSHOT_FILES` 多文件 + `CONFIGCENTER_ENABLED_NAMESPACES`，SDK 按开关逐 namespace 拉取并合并，双读逐 namespace 对比）；Helm `configCenter.*` 已注入快照 Secret 挂载与接管开关；修复平台 `server.addr` / `server.shutdown_timeout` 到顶层 yaml 字段的绑定别名（此前快照播种但运行期不生效）；SDK `Watch` 已实现（非阻塞订阅 + `config_client_watch_dropped_total`）；biz-api / c-api / worker 已接入刷新观测客户端（MySQL 模式，提供快照可用性与 stale 指标）。剩余：前端 4 页（§8.2-6）、热更值回写（需先立可热更白名单 ADR）、7 天双读零差异与无文件启动 / 回滚演练（需环境执行）、非密钥 `configs` 基线收缩。
+
 ### 8.2 MVP 详细范围
 
 **M1 必须交付**：
