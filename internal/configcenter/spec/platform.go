@@ -25,14 +25,51 @@ const (
 	ownerIAM      = "team-iam"
 )
 
+// yamlPathAliases 是配置中心逻辑键到配置文件 yaml 路径的别名。
+//
+// 平台键遵循 <domain>.<name>（CFG-02 / Q6），但历史配置文件把监听地址与
+// 关停超时放在顶层 addr / shutdown_timeout；装载器据此把快照键映射到
+// 实际字段路径，避免「键已播种但运行期不生效」。
+var yamlPathAliases = map[string]string{
+	"server.addr":             "addr",
+	"server.shutdown_timeout": "shutdown_timeout",
+}
+
+// YAMLPath 返回配置键对应的文件路径；无别名时与键一致。
+func YAMLPath(key string) string {
+	if path, ok := yamlPathAliases[key]; ok {
+		return path
+	}
+	return key
+}
+
+// ValueAliases 返回别名副本，供 pkg/config 装载器应用快照覆盖。
+func ValueAliases() map[string]string {
+	aliases := make(map[string]string, len(yamlPathAliases))
+	for key, path := range yamlPathAliases {
+		aliases[key] = path
+	}
+	return aliases
+}
+
 // Platform 返回已盘点的代码键声明注册表。
+//
+// 注册表覆盖平台段、IAM 与身份 / 审计 / 租户 / 通知四个业务域；业务域键
+// 的默认值与各域 ApplyDefaults / Normalize 的生效值一致。
 func Platform() (*Registry, error) {
 	registry := NewRegistry()
-	if err := registry.Register(platformSpecs()...); err != nil {
-		return nil, err
+	groups := [][]domain.KeySpec{
+		platformSpecs(),
+		iamSpecs(),
+		identityKeySpecs(),
+		auditKeySpecs(),
+		tenantKeySpecs(),
+		notificationKeySpecs(),
 	}
-	if err := registry.Register(iamSpecs()...); err != nil {
-		return nil, err
+	for _, specs := range groups {
+		if err := registry.Register(specs...); err != nil {
+			return nil, err
+		}
 	}
 	return registry, nil
 }
@@ -40,7 +77,7 @@ func Platform() (*Registry, error) {
 // platformSpecs 返回平台段键声明（顺序按用途分组，List 会按 key 排序）。
 func platformSpecs() []domain.KeySpec {
 	return []domain.KeySpec{
-		// 进程与入口。
+		// 进程与入口。键名遵循 <domain>.<name>；server.* 在配置文件中为历史顶层键。
 		stringKey("server.addr", ":8080", "HTTP 监听地址", false),
 		durationKey("server.shutdown_timeout", "15s", "优雅关停超时", false),
 
@@ -134,7 +171,10 @@ func platformSpecs() []domain.KeySpec {
 }
 
 // iamSpecs 返回 IAM 治理键声明；模式由部署显式声明，不播种默认值。
+//
+// 排除项：breakglass.allowed_subjects 为部署主体白名单（列表值随环境配置）。
 func iamSpecs() []domain.KeySpec {
+	keys := namespaceSpecs{namespace: NamespaceIAM, owner: ownerIAM}
 	return []domain.KeySpec{
 		{
 			Namespace:   NamespaceIAM,
@@ -144,6 +184,27 @@ func iamSpecs() []domain.KeySpec {
 			Owner:       ownerIAM,
 			Enum:        []string{"off", "shadow", "enforce"},
 		},
+		keys.duration("iam.load_timeout", "300ms", "IAM 快照回源 DB 超时上限"),
+		keys.enum("iam.cache.driver", "memory", "IAM 快照缓存驱动", "memory", "redis"),
+		keys.duration("iam.cache.l1_ttl", "3s", "IAM 进程内快照 TTL"),
+		keys.duration("iam.cache.l2_ttl", "5m", "IAM Redis 快照 TTL"),
+		keys.duration("iam.cache.negative_ttl", "30s", "IAM 空快照 TTL"),
+		keys.str("iam.cache.key_prefix", "iam", "IAM 缓存域段"),
+		keys.integer("iam.cache.l1_max_entries", 10000, "IAM 进程内快照最大条目数"),
+		keys.integer("iam.limits.max_roles_per_subject", 20, "单主体最大生效角色数"),
+		keys.integer("iam.limits.max_permissions_per_role", 200, "单角色最大权限点数"),
+		keys.integer("iam.limits.max_bindings_per_subject", 50, "单主体最大绑定数"),
+		keys.integer("iam.limits.max_custom_roles_per_merchant", 50, "B 端自定义角色数上限"),
+		keys.boolean("iam.security.allow_wildcard", false, "是否允许快照携带通配符"),
+		keys.boolean("iam.security.require_reason", false, "高风险变更是否强制填写原因"),
+		keys.boolean("iam.breakglass.enabled", false, "是否启用破玻璃授权"),
+		keys.boolean("iam.approval.enabled", false, "高风险直写是否强制转审批"),
+		keys.enum("iam.constraints.mode", "shadow", "RBAC2 约束落库模式",
+			"off", "shadow", "enforce"),
+		keys.boolean("iam.certification.enabled", true, "是否启用访问复核 API 与到期扫描"),
+		keys.boolean("iam.certification.auto_revoke", false, "复核到期后是否自动回收绑定"),
+		keys.integer("iam.certification.max_tasks_per_campaign", 0,
+			"单活动任务上限；0 表示使用服务内置默认"),
 	}
 }
 

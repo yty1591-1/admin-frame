@@ -13,36 +13,81 @@ func TestPlatformCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("platform registry: %v", err)
 	}
-	if got := registry.Namespaces(); len(got) != 2 ||
-		got[0] != spec.NamespaceIAM || got[1] != spec.NamespacePlatform {
-		t.Fatalf("unexpected namespaces: %v", got)
+	wantNamespaces := []string{
+		spec.NamespaceAudit, spec.NamespaceIAM, spec.NamespaceIdentity,
+		spec.NamespaceNotification, spec.NamespacePlatform, spec.NamespaceTenant,
+	}
+	gotNamespaces := registry.Namespaces()
+	if len(gotNamespaces) != len(wantNamespaces) {
+		t.Fatalf("unexpected namespaces: %v", gotNamespaces)
+	}
+	for i, want := range wantNamespaces {
+		if gotNamespaces[i] != want {
+			t.Fatalf("namespace[%d] = %q, want %q", i, gotNamespaces[i], want)
+		}
 	}
 
 	platformKeys := registry.List(spec.NamespacePlatform)
 	if len(platformKeys) < 50 {
 		t.Fatalf("platform catalog too small: %d keys", len(platformKeys))
 	}
-	for _, keySpec := range platformKeys {
-		if err := keySpec.Validate(); err != nil {
-			t.Fatalf("invalid key spec: %v", err)
-		}
-		if keySpec.Sensitive {
-			t.Fatalf("sensitive key %s must not enter M1 catalog", keySpec.Key)
-		}
-		if keySpec.Default != "" {
-			if err := keySpec.ValidateValue(keySpec.Default); err != nil {
-				t.Fatalf("default of %s is invalid: %v", keySpec.Key, err)
-			}
-		}
+	for _, keySpec := range registry.List(spec.NamespacePlatform) {
+		assertKeySpec(t, keySpec)
 	}
 
 	iamKeys := registry.List(spec.NamespaceIAM)
-	if len(iamKeys) != 1 || iamKeys[0].Key != "iam.mode" {
-		t.Fatalf("unexpected iam keys: %+v", iamKeys)
+	if len(iamKeys) < 15 {
+		t.Fatalf("iam catalog too small: %d keys", len(iamKeys))
 	}
-	if iamKeys[0].Default != "" || iamKeys[0].Required {
-		t.Fatalf("iam.mode must stay undeclared by default: %+v", iamKeys[0])
+	mode, ok := findKey(iamKeys, "iam.mode")
+	if !ok {
+		t.Fatal("iam.mode must be declared")
 	}
+	if mode.Default != "" || mode.Required {
+		t.Fatalf("iam.mode must stay undeclared by default: %+v", mode)
+	}
+
+	minimum := map[string]int{
+		spec.NamespaceIdentity:     50,
+		spec.NamespaceAudit:        10,
+		spec.NamespaceTenant:       4,
+		spec.NamespaceNotification: 5,
+	}
+	for namespace, want := range minimum {
+		keys := registry.List(namespace)
+		if len(keys) < want {
+			t.Fatalf("%s catalog too small: %d keys, want >= %d", namespace, len(keys), want)
+		}
+		for _, keySpec := range keys {
+			assertKeySpec(t, keySpec)
+		}
+	}
+}
+
+// assertKeySpec 校验单个声明可注册且默认值合法。
+func assertKeySpec(t *testing.T, keySpec domain.KeySpec) {
+	t.Helper()
+	if err := keySpec.Validate(); err != nil {
+		t.Fatalf("invalid key spec: %v", err)
+	}
+	if keySpec.Sensitive {
+		t.Fatalf("sensitive key %s must not enter M1 catalog", keySpec.Key)
+	}
+	if keySpec.Default != "" {
+		if err := keySpec.ValidateValue(keySpec.Default); err != nil {
+			t.Fatalf("default of %s is invalid: %v", keySpec.Key, err)
+		}
+	}
+}
+
+// findKey 在声明列表中按 key 查找。
+func findKey(keys []domain.KeySpec, key string) (domain.KeySpec, bool) {
+	for _, keySpec := range keys {
+		if keySpec.Key == key {
+			return keySpec, true
+		}
+	}
+	return domain.KeySpec{}, false
 }
 
 func TestPlatformCatalogExcludesSecrets(t *testing.T) {
