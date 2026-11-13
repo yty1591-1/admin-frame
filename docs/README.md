@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-13（[config-center-plan.md](./config-center-plan.md) 升至 v0.4：M1 范围收敛为「仅全量发布」，百分比 / 租户 / 渠道 / 实例灰度整体降级 P1，服务端对非 `all` 策略返回 `40000`；同期修复 `000031` 迁移 MySQL 保留字缺陷并补齐仓储集成测试与管理面列表覆盖率）；前次 2026-11-12（[config-center-plan.md](./config-center-plan.md) 升至 v0.3 并关闭 8 个 M0 前置条件：ADR-0013 / ADR-0014 转 Accepted，CFG-04 收敛为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动默认值初始化与密钥规则生成，完成权限点 / 审计事件等契约冻结；可进入 M1 编码）；前次 2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-13（配置中心 M1 推进：双读改为启动 + 每 30s 周期采样并补 7 天 soak 步骤，[ADR-0015](./adr/0015-config-hot-reload-whitelist.md) 热更白名单草案（Proposed）起草；同日 [config-center-plan.md](./config-center-plan.md) 升至 v0.4：M1 范围收敛为「仅全量发布」，百分比 / 租户 / 渠道 / 实例灰度整体降级 P1，服务端对非 `all` 策略返回 `40000`；同期修复 `000031` 迁移 MySQL 保留字缺陷并补齐仓储集成测试与管理面列表覆盖率）；前次 2026-11-12（[config-center-plan.md](./config-center-plan.md) 升至 v0.3 并关闭 8 个 M0 前置条件：ADR-0013 / ADR-0014 转 Accepted，CFG-04 收敛为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动默认值初始化与密钥规则生成，完成权限点 / 审计事件等契约冻结；可进入 M1 编码）；前次 2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -45,7 +45,7 @@
 
 **附属清单**（被门禁脚本直接读取，改动需同步脚本）：
 
-- [adr/](./adr/) — 架构决策记录（ADR-0001～0014）
+- [adr/](./adr/) — 架构决策记录（ADR-0001～0015）
 - [runbooks/](./runbooks/) — 值班手册（`ALERTS.md` 与 `deploy/observability` 告警规则双向校验）
 - [incident/](./incident/) — 事故定级 / 响应 / 复盘 / 演练（RB-08，`check-oncall` OC-02/OC-04）
 - [oncall/ROTATION.md](./oncall/ROTATION.md) — 排班、交接与呼叫链路验证（RB-09，`check-oncall` OC-05/OC-06）
