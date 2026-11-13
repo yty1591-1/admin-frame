@@ -75,7 +75,7 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	cfg := &appCfg.Config
-	logger := platformobservability.NewLogger(cfg)
+	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -114,7 +114,8 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		return fmt.Errorf("id generator: %w", err)
 	}
 
-	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met, IDs: ids}
+	deps := &platform.Deps{Config: cfg, Logger: logger, LogLevel: logLevel,
+		Database: database, Metrics: met, IDs: ids}
 	// worker 也要对象存储：审计异步导出的文件由 worker 生成并上传（ENT-04 T5）。
 	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {

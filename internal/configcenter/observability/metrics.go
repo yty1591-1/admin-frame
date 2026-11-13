@@ -49,6 +49,11 @@ type Metrics struct {
 	clientColdStart   prometheus.Counter
 	clientWatchDrop   prometheus.Counter
 
+	hotViewVersion *prometheus.GaugeVec
+	hotReload      *prometheus.CounterVec
+	hotKeyApplied  *prometheus.CounterVec
+	hotIgnored     *prometheus.CounterVec
+
 	mu          sync.Mutex
 	lastSuccess map[string]time.Time
 }
@@ -104,12 +109,29 @@ func New(registerer prometheus.Registerer) (*Metrics, error) {
 			Name: "config_client_watch_dropped_total",
 			Help: "Watch 订阅者积压导致的事件丢弃次数（消费过慢）。",
 		}),
+		hotViewVersion: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "config_hot_view_version",
+			Help: "当前热更视图版本（按 namespace）；不递增表示发布未生效。",
+		}, []string{"namespace"}),
+		hotReload: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "config_hot_reload_total",
+			Help: "热更视图构建结果（result：applied / unchanged / rejected）。",
+		}, []string{"result"}),
+		hotKeyApplied: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "config_hot_key_applied_total",
+			Help: "按 key 统计热更生效次数（不含取值）。",
+		}, []string{"key"}),
+		hotIgnored: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "config_hot_ignored_total",
+			Help: "已声明但不在热更白名单的键发生变更的次数（只记录 key）。",
+		}, []string{"key"}),
 		lastSuccess: make(map[string]time.Time),
 	}
 	for _, c := range []prometheus.Collector{
 		m.adminRequests, m.adminDuration, m.publishTotal, m.rollbackTotal, m.pending,
 		m.clientFetch, m.clientSnapshotAge, m.clientVersion, m.clientCorrupt, m.clientColdStart,
 		m.clientWatchDrop,
+		m.hotViewVersion, m.hotReload, m.hotKeyApplied, m.hotIgnored,
 	} {
 		if err := registerer.Register(c); err != nil {
 			return nil, fmt.Errorf("configcenter observability: register collector: %w", err)
@@ -228,4 +250,36 @@ func isSnapshotCorrupt(err error) bool {
 		}
 	}
 	return false
+}
+
+// SetHotViewVersion 更新某 namespace 的热更视图版本。
+func (m *Metrics) SetHotViewVersion(namespace string, version int64) {
+	if m == nil || namespace == "" {
+		return
+	}
+	m.hotViewVersion.WithLabelValues(namespace).Set(float64(version))
+}
+
+// ObserveHotReload 记录一次视图构建结果（applied / unchanged / rejected）。
+func (m *Metrics) ObserveHotReload(result string) {
+	if m == nil || result == "" {
+		return
+	}
+	m.hotReload.WithLabelValues(result).Inc()
+}
+
+// ObserveHotKeyApplied 记录某个 key 的热更生效。
+func (m *Metrics) ObserveHotKeyApplied(key string) {
+	if m == nil || key == "" {
+		return
+	}
+	m.hotKeyApplied.WithLabelValues(key).Inc()
+}
+
+// ObserveHotIgnored 记录某个已声明但不可热更的 key 发生了变更。
+func (m *Metrics) ObserveHotIgnored(key string) {
+	if m == nil || key == "" {
+		return
+	}
+	m.hotIgnored.WithLabelValues(key).Inc()
 }

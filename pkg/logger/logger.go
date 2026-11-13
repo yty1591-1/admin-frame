@@ -12,9 +12,17 @@ func New(cfg Config) (*slog.Logger, error) {
 		return nil, err
 	}
 
+	level := parseLevel(cfg.Level)
+	// 配置了 LevelVar 时以它为级别来源：初始化写入一次，运行期可热更。
+	if cfg.LevelVar != nil {
+		cfg.LevelVar.Set(level)
+	}
 	opts := &slog.HandlerOptions{
-		Level:     parseLevel(cfg.Level),
+		Level:     level,
 		AddSource: cfg.AddSource,
+	}
+	if cfg.LevelVar != nil {
+		opts.Level = cfg.LevelVar
 	}
 	var h slog.Handler
 	if strings.EqualFold(cfg.Format, "text") {

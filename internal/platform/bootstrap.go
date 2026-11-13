@@ -33,11 +33,13 @@ import (
 // 只暴露“平台能力”，不暴露 repo / bus 等业务对象，避免变成 god object；
 // 业务依赖由 cmd 在 Register 回调内自行构造。
 type Deps struct {
-	Config  *platformconfig.Config
-	Logger  *slog.Logger
-	Metrics *metrics.Metrics
-	Tracer  *tracing.Provider
-	Storage *platformstorage.Set
+	Config *platformconfig.Config
+	Logger *slog.Logger
+	// LogLevel 是日志级别的运行期开关；非 nil 时可由配置热更直接 Set（ADR-0015）。
+	LogLevel *slog.LevelVar
+	Metrics  *metrics.Metrics
+	Tracer   *tracing.Provider
+	Storage  *platformstorage.Set
 	// Database 是进程数据库；db.driver=memory 时为 nil（业务使用内存实现）。
 	Database *db.DB
 	// Redis 是共享缓存客户端；未配置 redis.addr 时为 nil。

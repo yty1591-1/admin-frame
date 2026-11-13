@@ -157,8 +157,9 @@ func platformSpecs() []domain.KeySpec {
 		intKey("async.outbox.batch_size", 100, "Outbox 单轮认领上限", true, int64Ptr(1), int64Ptr(500)),
 		durationKey("async.outbox.lease", "30s", "Outbox processing 租约", true),
 		intKey("async.outbox.max_attempts", 10, "Outbox 最大投递次数", true, int64Ptr(1), int64Ptr(20)),
-		intKey("async.outbox.concurrency", 2, "Outbox Relay 并发 worker 数", true, int64Ptr(1), int64Ptr(16)),
-		intKey("async.consumer.concurrency", 4, "消费并发度", true, int64Ptr(1), int64Ptr(32)),
+		// 并发度不热更（ADR-0015 决策 7）：扩缩 worker 池涉及在途任务与租约迁移，留待 P1。
+		intKey("async.outbox.concurrency", 2, "Outbox Relay 并发 worker 数", false, int64Ptr(1), int64Ptr(16)),
+		intKey("async.consumer.concurrency", 4, "消费并发度", false, int64Ptr(1), int64Ptr(32)),
 		durationKey("async.consumer.visibility_timeout", "60s", "消费幂等记录接管窗口", true),
 		stringKeyWithEnum("async.consumer.retry_backoff", "exponential", "消费重试退避策略", true,
 			"exponential", "fixed"),

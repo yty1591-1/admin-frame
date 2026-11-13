@@ -31,6 +31,7 @@ import (
 type infraState struct {
 	cfg        *platformconfig.Config
 	logger     *slog.Logger
+	logLevel   *slog.LevelVar
 	nodeID     int64
 	build      httpserver.BuildInfo
 	metrics    *metrics.Metrics
@@ -69,8 +70,9 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 		cfg = loaded
 	}
 	infra.cfg = cfg
-	logger := platformobservability.NewLogger(cfg)
+	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
 	infra.logger = logger
+	infra.logLevel = logLevel
 
 	ids, nodeID, err := NewIDGenerator(cfg.ID)
 	if err != nil {
@@ -142,6 +144,7 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 	deps := &Deps{
 		Config:     cfg,
 		Logger:     logger,
+		LogLevel:   logLevel,
 		Metrics:    met,
 		Tracer:     tp,
 		Storage:    stores,

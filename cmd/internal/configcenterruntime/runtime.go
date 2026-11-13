@@ -31,6 +31,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/hotconfig"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -65,6 +66,10 @@ type Runtime struct {
 	Client *configclient.Client
 	// Metrics 是配置中心指标；deps.Metrics 缺失时为 nil（不观测）。
 	Metrics *observability.Metrics
+	// Hot 是进程级热更视图（ADR-0015）；未启用动态刷新时为 nil。
+	//
+	// 消费方应每次使用读当前视图，不要把取值缓存到局部变量。
+	Hot *hotconfig.Holder
 
 	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
 	clientEnv        string
@@ -161,7 +166,11 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 
 	// M1-7：管理面进程内动态刷新。未配置可信公钥时关闭刷新（继续使用
 	// 启动期签名快照 / 文件配置）；配置了公钥则每 5s 拉取、验签并原子落盘。
-	client, err := newRefreshClient(deps, snapshots, metrics)
+	hot, err := newHotState()
+	if err != nil {
+		return nil, err
+	}
+	client, err := newRefreshClient(deps, snapshots, metrics, hot)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +183,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Snapshots:        snapshots,
 		Client:           client,
 		Metrics:          metrics,
+		Hot:              hotHolder(client, hot),
 		clientEnv:        deps.Config.Env,
 		clientNamespaces: snapshotconfig.EnabledNamespaces(),
 	}, nil
@@ -203,7 +213,11 @@ func NewRefresh(deps *platform.Deps) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
 	}
-	client, err := newRefreshClient(deps, snapshots, metrics)
+	hot, err := newHotState()
+	if err != nil {
+		return nil, err
+	}
+	client, err := newRefreshClient(deps, snapshots, metrics, hot)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +228,7 @@ func NewRefresh(deps *platform.Deps) (*Runtime, error) {
 		Snapshots:        snapshots,
 		Client:           client,
 		Metrics:          metrics,
+		Hot:              hotHolder(client, hot),
 		clientEnv:        deps.Config.Env,
 		clientNamespaces: snapshotconfig.EnabledNamespaces(),
 	}, nil
@@ -221,7 +236,15 @@ func NewRefresh(deps *platform.Deps) (*Runtime, error) {
 
 // newRefreshClient 构造按开关加载 namespace 的刷新客户端；未配置公钥返回 nil。
 func newRefreshClient(deps *platform.Deps, source configclient.Source,
-	metrics *observability.Metrics) (*configclient.Client, error) {
+	metrics *observability.Metrics, hot *hotState) (*configclient.Client, error) {
+	observer := clientRefreshObserver(deps.Logger, metrics)
+	// 观测与热更共用同一个 OnRefresh：热更失败不影响观测，反之亦然。
+	onRefresh := func(event configclient.RefreshEvent) {
+		if observer != nil {
+			observer(event)
+		}
+		hot.onEvent(event, deps.Logger, metrics, deps.LogLevel)
+	}
 	client, err := NewRefreshClient(RefreshConfig{
 		Source:           source,
 		PublicKeys:       os.Getenv(snapshotconfig.PublicKeysEnv),
@@ -230,7 +253,7 @@ func newRefreshClient(deps *platform.Deps, source configclient.Source,
 		Namespace:        spec.NamespacePlatform,
 		Namespaces:       snapshotconfig.EnabledNamespaces(),
 		PrimaryNamespace: spec.NamespacePlatform,
-		OnRefresh:        clientRefreshObserver(deps.Logger, metrics),
+		OnRefresh:        onRefresh,
 		OnWatchDropped: func() {
 			if metrics != nil {
 				metrics.ClientWatchDropped()
@@ -397,4 +420,13 @@ func buildEmitter(deps *platform.Deps) audit.Emitter {
 		}
 	}
 	return slogEmitter
+}
+
+// hotHolder 在启用动态刷新时返回热更视图持有者；客户端未启用时返回 nil，
+// 避免调用方误以为存在可读视图。
+func hotHolder(client *configclient.Client, hot *hotState) *hotconfig.Holder {
+	if client == nil || hot == nil {
+		return nil
+	}
+	return hot.holder
 }
