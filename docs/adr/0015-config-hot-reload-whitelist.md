@@ -116,7 +116,8 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 | 消费点 | `async.outbox.poll_interval/batch_size/lease/max_attempts`（`RelayOptions.Params`） | 已完成 |
 | 消费点 | `async.consumer.visibility_timeout`（`IdempotentOptions.Visibility`）、`retry_backoff`（`Params.Backoff`） | 已完成 |
 | 消费点 | `worker.poll_interval` | **阻塞**：全仓无消费点（仅键声明与启动日志打印），接线等于凭空发明语义，待定「接线 or 移出白名单」 |
-| 验收 | AC-CC-02 用例与 runbook 验证步骤 | 待补（需 staging 环境） |
+| 验收 | AC-CC-02 用例（hot 键发布立即生效、startup 键不生效） | 已完成（单测级取证，见 `accc02_test.go`） |
+| 验收 | 回滚 ≤30s 与 staging 环境取证 | 待补（需环境执行，本机单元测试无法覆盖） |
 
 > 消费点改造 12 / 13 已完成（2026-11-13）。第 13 项 `worker.poll_interval` 不是实现难度问题，
 > 而是**没有读点**：仓库里没有任何循环以它为间隔。要么把它接到某个具体后台循环（例如
