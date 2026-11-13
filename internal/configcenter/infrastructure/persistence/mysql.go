@@ -91,8 +91,10 @@ func NewItemRepository(sqlDB *sql.DB) (*ItemRepository, error) {
 }
 
 // itemColumns 与 scanItem 一一对齐。
+//
+// sensitive 是 MySQL 8.0 保留字，所有引用处必须加反引号，否则建表与查询都会报 1064。
 const itemColumns = "id, env, namespace, `key`, value_type, description, owner, status, " +
-	"current_version, version, sensitive, validation_json, expires_at, " +
+	"current_version, version, `sensitive`, validation_json, expires_at, " +
 	"created_by, updated_by, created_at, updated_at"
 
 // Create 写入配置键元数据；ID 或 (env, namespace, key) 冲突返回 ErrDuplicateKey。
@@ -179,7 +181,7 @@ func (r *ItemRepository) UpdateCAS(ctx context.Context, item domain.Item, expect
 	res, err := execFrom(ctx, r.db).ExecContext(ctx,
 		`UPDATE config_item SET env = ?, namespace = ?, `+"`key`"+` = ?, value_type = ?,
 		 description = ?, owner = ?, status = ?, current_version = ?, version = ?,
-		 sensitive = ?, validation_json = ?, expires_at = ?, updated_by = ?, updated_at = ?
+		 `+"`sensitive`"+` = ?, validation_json = ?, expires_at = ?, updated_by = ?, updated_at = ?
 		 WHERE id = ? AND version = ?`,
 		item.Env, item.Namespace, item.Key, string(item.ValueType),
 		item.Description, item.Owner, string(item.Status), item.CurrentVersion,

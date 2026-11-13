@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS config_item (
     status          VARCHAR(16)  NOT NULL DEFAULT 'draft' COMMENT '治理状态：draft/active/deprecated/archived；archived 为终态不可复活',
     current_version BIGINT       NOT NULL DEFAULT 0 COMMENT '当前版本号，指向 config_item_version.version；0=尚未写入任何值',
     version         BIGINT       NOT NULL DEFAULT 1 COMMENT '元数据乐观锁：更新 CAS expectedVersion，发布推进 current_version 时同步 +1',
-    sensitive       TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1=敏感项标记；敏感值不得写入本表族，必须走 config_secret 子域（M2）',
+    `sensitive`     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1=敏感项标记；敏感值不得写入本表族，必须走 config_secret 子域（M2）。列名是 MySQL 8.0 保留字，必须加反引号',
     validation_json JSON         NULL COMMENT '值校验规则 JSON（如 min/max/enum/pattern）；NULL=不做值校验',
     expires_at      DATETIME(3)  NULL COMMENT '到期时间（UTC）；NULL=长期有效，非 NULL 由治理任务扫描',
     created_by      VARCHAR(64)  NOT NULL COMMENT '创建主体：操作者 ID 或系统标识',
