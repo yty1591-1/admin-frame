@@ -34,36 +34,39 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	approve := perm(string(iam.PermConfigApprove))
 	publish := perm(string(iam.PermConfigPublish))
 
-	handle(mux, observer, RouteNamespaces, "GET /admin/v1/configs/namespaces",
-		authMW(read(http.HandlerFunc(h.ListNamespaces))))
+	// 路由必须以 mux.Handle("METHOD /path", ...) 字面量注册：
+	// tests/contract 的静态扫描依赖该字面量比对实现与 OpenAPI 契约，
+	// 换成变量或辅助函数会让契约测试判定为「死契约」。
+	mux.Handle("GET /admin/v1/configs/namespaces",
+		observed(observer, RouteNamespaces, authMW(read(http.HandlerFunc(h.ListNamespaces)))))
 
-	handle(mux, observer, RouteItemsList, "GET /admin/v1/configs/items",
-		authMW(read(http.HandlerFunc(h.ListItems))))
-	handle(mux, observer, RouteItemsCreate, "POST /admin/v1/configs/items",
-		authMW(write(http.HandlerFunc(h.CreateItem))))
-	handle(mux, observer, RouteItemsGet, "GET /admin/v1/configs/items/{id}",
-		authMW(read(http.HandlerFunc(h.GetItem))))
-	handle(mux, observer, RouteItemsUpdate, "PUT /admin/v1/configs/items/{id}",
-		authMW(write(http.HandlerFunc(h.UpdateValue))))
-	handle(mux, observer, RouteVersionsList, "GET /admin/v1/configs/items/{id}/versions",
-		authMW(read(http.HandlerFunc(h.ListVersions))))
-	handle(mux, observer, RouteVersionsGet, "GET /admin/v1/configs/items/{id}/versions/{version}",
-		authMW(read(http.HandlerFunc(h.GetVersion))))
+	mux.Handle("GET /admin/v1/configs/items",
+		observed(observer, RouteItemsList, authMW(read(http.HandlerFunc(h.ListItems)))))
+	mux.Handle("POST /admin/v1/configs/items",
+		observed(observer, RouteItemsCreate, authMW(write(http.HandlerFunc(h.CreateItem)))))
+	mux.Handle("GET /admin/v1/configs/items/{id}",
+		observed(observer, RouteItemsGet, authMW(read(http.HandlerFunc(h.GetItem)))))
+	mux.Handle("PUT /admin/v1/configs/items/{id}",
+		observed(observer, RouteItemsUpdate, authMW(write(http.HandlerFunc(h.UpdateValue)))))
+	mux.Handle("GET /admin/v1/configs/items/{id}/versions",
+		observed(observer, RouteVersionsList, authMW(read(http.HandlerFunc(h.ListVersions)))))
+	mux.Handle("GET /admin/v1/configs/items/{id}/versions/{version}",
+		observed(observer, RouteVersionsGet, authMW(read(http.HandlerFunc(h.GetVersion)))))
 
-	handle(mux, observer, RouteReleasesCreate, "POST /admin/v1/configs/releases",
-		authMW(write(http.HandlerFunc(h.CreateRelease))))
-	handle(mux, observer, RouteReleasesList, "GET /admin/v1/configs/releases",
-		authMW(read(http.HandlerFunc(h.ListReleases))))
-	handle(mux, observer, RouteReleasesGet, "GET /admin/v1/configs/releases/{id}",
-		authMW(read(http.HandlerFunc(h.GetRelease))))
-	handle(mux, observer, RouteReleasesSubmit, "POST /admin/v1/configs/releases/{id}/submit",
-		authMW(write(http.HandlerFunc(h.SubmitRelease))))
-	handle(mux, observer, RouteReleasesApprove, "POST /admin/v1/configs/releases/{id}/approve",
-		authMW(approve(http.HandlerFunc(h.ApproveRelease))))
-	handle(mux, observer, RouteReleasesPublish, "POST /admin/v1/configs/releases/{id}/publish",
-		authMW(publish(http.HandlerFunc(h.PublishRelease))))
-	handle(mux, observer, RouteReleasesRollback, "POST /admin/v1/configs/releases/{id}/rollback",
-		authMW(publish(http.HandlerFunc(h.RollbackRelease))))
+	mux.Handle("POST /admin/v1/configs/releases",
+		observed(observer, RouteReleasesCreate, authMW(write(http.HandlerFunc(h.CreateRelease)))))
+	mux.Handle("GET /admin/v1/configs/releases",
+		observed(observer, RouteReleasesList, authMW(read(http.HandlerFunc(h.ListReleases)))))
+	mux.Handle("GET /admin/v1/configs/releases/{id}",
+		observed(observer, RouteReleasesGet, authMW(read(http.HandlerFunc(h.GetRelease)))))
+	mux.Handle("POST /admin/v1/configs/releases/{id}/submit",
+		observed(observer, RouteReleasesSubmit, authMW(write(http.HandlerFunc(h.SubmitRelease)))))
+	mux.Handle("POST /admin/v1/configs/releases/{id}/approve",
+		observed(observer, RouteReleasesApprove, authMW(approve(http.HandlerFunc(h.ApproveRelease)))))
+	mux.Handle("POST /admin/v1/configs/releases/{id}/publish",
+		observed(observer, RouteReleasesPublish, authMW(publish(http.HandlerFunc(h.PublishRelease)))))
+	mux.Handle("POST /admin/v1/configs/releases/{id}/rollback",
+		observed(observer, RouteReleasesRollback, authMW(publish(http.HandlerFunc(h.RollbackRelease)))))
 }
 
 // 路由标签与 observability 包保持一致（低基数、稳定）。
@@ -92,12 +95,12 @@ func NewRouter(h *rest.Handler, authMW func(http.Handler) http.Handler, perm aut
 	return mux
 }
 
-// handle 按需包裹观测中间件后注册路由。
-func handle(mux *http.ServeMux, observer RequestObserver, route, pattern string, next http.Handler) {
-	if observer != nil {
-		next = observe(observer, route, next)
+// observed 按需包裹观测中间件；observer 为 nil 时原样返回，行为与未接入观测一致。
+func observed(observer RequestObserver, route string, next http.Handler) http.Handler {
+	if observer == nil {
+		return next
 	}
-	mux.Handle(pattern, next)
+	return observe(observer, route, next)
 }
 
 // observe 记录请求状态码与耗时；不改变响应体。

@@ -45,13 +45,11 @@ func TestObserveRecordsStatus(t *testing.T) {
 // TestObserveNilObserverPassthrough 验证未装配观测时行为不变。
 func TestObserveNilObserverPassthrough(t *testing.T) {
 	var observer RequestObserver
-	if observer != nil {
-		t.Fatal("nil observer must stay nil")
-	}
 	mux := http.NewServeMux()
-	handle(mux, observer, "items.list", "GET /admin/v1/configs/items", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	mux.Handle("GET /admin/v1/configs/items", observed(observer, "items.list",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})))
 
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/configs/items", nil))
