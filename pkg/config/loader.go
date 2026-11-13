@@ -52,6 +52,16 @@ type Options[T any] struct {
 	// 未出现在快照中的键保持文件/环境变量/默认值，便于迁移期只接管已声明键。
 	// nil 表示不接入配置中心；返回错误则整体加载失败。
 	Values func() (map[string]string, error)
+	// AllowMissingFiles 允许 opts.Files 中的文件不存在（无文件启动演练）。
+	//
+	// 仅跳过顶层文件缺失；include 缺失仍然报错，避免静默丢模块。开启后
+	// 文件层不参与取值，由默认值 / 环境变量 / 配置中心快照提供。
+	AllowMissingFiles bool
+	// ValueAliases 把配置中心键映射到配置文件 yaml 路径。
+	//
+	// 用于键名遵循 <domain>.<name>、但历史配置字段在顶层的场景
+	// （如 server.addr → addr）；别名只影响快照覆盖，不改变对外键名。
+	ValueAliases map[string]string
 	// Defaults 在解码文件前写入默认值；可为 nil。
 	Defaults func(*T)
 	// Normalize 在环境变量覆盖之后、Validate 之前执行；可为 nil。
@@ -150,6 +160,9 @@ func (l *Loader[T]) Load() (cfg *T, err error) {
 	}
 	for _, path := range l.opts.Files {
 		if err := l.loadFile(path, &value); err != nil {
+			if l.opts.AllowMissingFiles && errors.Is(err, ErrMissingFile) {
+				continue
+			}
 			return nil, err
 		}
 	}
@@ -163,7 +176,7 @@ func (l *Loader[T]) Load() (cfg *T, err error) {
 		if err != nil {
 			return nil, normalizeError(err)
 		}
-		if err := BindValues(&value, values); err != nil {
+		if err := BindValues(&value, applyValueAliases(values, l.opts.ValueAliases)); err != nil {
 			return nil, err
 		}
 	}

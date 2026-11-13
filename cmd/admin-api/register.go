@@ -83,7 +83,12 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 		deps.Logger.Warn("configcenter runtime unavailable, config management disabled", "error", cerr)
 	}
 	if configRT != nil && configRT.Handler != nil {
-		configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
+		if configRT.Metrics != nil {
+			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission,
+				configRT.Metrics)
+		} else {
+			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
+		}
 	}
 	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
 	if configRT != nil {

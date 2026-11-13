@@ -39,6 +39,23 @@ func BindValues(target any, values map[string]string) error {
 	return err
 }
 
+// applyValueAliases 把配置中心键按别名补充为 yaml 路径；不修改入参。
+func applyValueAliases(values map[string]string, aliases map[string]string) map[string]string {
+	if len(aliases) == 0 || len(values) == 0 {
+		return values
+	}
+	copied := make(map[string]string, len(values)+len(aliases))
+	for key, value := range values {
+		copied[key] = value
+	}
+	for key, path := range aliases {
+		if value, ok := values[key]; ok {
+			copied[path] = value
+		}
+	}
+	return copied
+}
+
 // valueBinder 承载一次快照覆盖所需的不可变状态。
 type valueBinder struct {
 	values map[string]string

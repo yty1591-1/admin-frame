@@ -16,12 +16,14 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/persistence"
+	"github.com/admin-frame/admin-frame/internal/configcenter/observability"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	configcenterrest "github.com/admin-frame/admin-frame/internal/configcenter/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -61,10 +63,12 @@ type Runtime struct {
 	Snapshots *app.SnapshotService
 	// Client 是进程内动态刷新客户端；nil 表示未配置公钥，动态刷新关闭。
 	Client *configclient.Client
+	// Metrics 是配置中心指标；deps.Metrics 缺失时为 nil（不观测）。
+	Metrics *observability.Metrics
 
-	// clientEnv / clientNamespace 记录刷新归属，仅用于启动日志。
-	clientEnv       string
-	clientNamespace string
+	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
+	clientEnv        string
+	clientNamespaces []string
 }
 
 // Options 是装配参数。
@@ -112,6 +116,10 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics, err := buildMetrics(deps)
+	if err != nil {
+		return nil, err
+	}
 	appOpts := app.Options{Service: service, Signer: signer}
 
 	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, appOpts)
@@ -153,27 +161,86 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 
 	// M1-7：管理面进程内动态刷新。未配置可信公钥时关闭刷新（继续使用
 	// 启动期签名快照 / 文件配置）；配置了公钥则每 5s 拉取、验签并原子落盘。
-	client, err := NewRefreshClient(RefreshConfig{
-		Source:       snapshots,
-		PublicKeys:   os.Getenv(snapshotconfig.PublicKeysEnv),
-		SnapshotFile: os.Getenv(snapshotconfig.FileEnv),
-		Env:          deps.Config.Env,
-		Namespace:    spec.NamespacePlatform,
-		OnRefresh:    refreshLogger(deps.Logger),
-	})
+	client, err := newRefreshClient(deps, snapshots, metrics)
 	if err != nil {
-		return nil, fmt.Errorf("configcenter refresh client: %w", err)
+		return nil, err
 	}
 	if client == nil && deps.Logger != nil {
 		deps.Logger.Warn("configcenter dynamic refresh disabled; set " + snapshotconfig.PublicKeysEnv)
 	}
+	startPendingApprovalGauge(deps, repos, registry, metrics)
 	return &Runtime{
-		Handler:         handler,
-		Snapshots:       snapshots,
-		Client:          client,
-		clientEnv:       deps.Config.Env,
-		clientNamespace: spec.NamespacePlatform,
+		Handler:          handler,
+		Snapshots:        snapshots,
+		Client:           client,
+		Metrics:          metrics,
+		clientEnv:        deps.Config.Env,
+		clientNamespaces: snapshotconfig.EnabledNamespaces(),
 	}, nil
+}
+
+// NewRefresh 只装配动态刷新客户端与客户端指标，不注册管理面、不播种。
+//
+// 供 biz-api / c-api / worker 在 MySQL 模式下观测配置中心可用性；内存模式
+// 没有中心持久化数据，直接返回 (nil, nil)。刷新值目前不写回配置（热更需
+// 先补 ADR 与白名单），这里只提供快照可用性、版本与 stale 指标。
+func NewRefresh(deps *platform.Deps) (*Runtime, error) {
+	if deps == nil || deps.Config == nil {
+		return nil, fmt.Errorf("configcenter refresh runtime requires platform deps")
+	}
+	if deps.Database == nil {
+		return nil, nil
+	}
+	repos, _, err := buildRepositories(deps)
+	if err != nil {
+		return nil, err
+	}
+	metrics, err := buildMetrics(deps)
+	if err != nil {
+		return nil, err
+	}
+	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
+	}
+	client, err := newRefreshClient(deps, snapshots, metrics)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, nil
+	}
+	return &Runtime{
+		Snapshots:        snapshots,
+		Client:           client,
+		Metrics:          metrics,
+		clientEnv:        deps.Config.Env,
+		clientNamespaces: snapshotconfig.EnabledNamespaces(),
+	}, nil
+}
+
+// newRefreshClient 构造按开关加载 namespace 的刷新客户端；未配置公钥返回 nil。
+func newRefreshClient(deps *platform.Deps, source configclient.Source,
+	metrics *observability.Metrics) (*configclient.Client, error) {
+	client, err := NewRefreshClient(RefreshConfig{
+		Source:           source,
+		PublicKeys:       os.Getenv(snapshotconfig.PublicKeysEnv),
+		SnapshotFile:     os.Getenv(snapshotconfig.FileEnv),
+		Env:              deps.Config.Env,
+		Namespace:        spec.NamespacePlatform,
+		Namespaces:       snapshotconfig.EnabledNamespaces(),
+		PrimaryNamespace: spec.NamespacePlatform,
+		OnRefresh:        clientRefreshObserver(deps.Logger, metrics),
+		OnWatchDropped: func() {
+			if metrics != nil {
+				metrics.ClientWatchDropped()
+			}
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configcenter refresh client: %w", err)
+	}
+	return client, nil
 }
 
 // buildSigner 从部署注入的密钥材料构造快照签名器。
@@ -267,6 +334,53 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 		releases: repos.Releases,
 		pointers: repos.Pointers,
 	}, sqlDB, nil
+}
+
+// buildMetrics 构造配置中心指标；进程未装配指标时不观测（测试形态）。
+func buildMetrics(deps *platform.Deps) (*observability.Metrics, error) {
+	if deps.Metrics == nil {
+		return nil, nil
+	}
+	metrics, err := observability.New(deps.Metrics.Registerer())
+	if err != nil {
+		return nil, fmt.Errorf("configcenter metrics: %w", err)
+	}
+	return metrics, nil
+}
+
+// startPendingApprovalGauge 周期刷新待审批数量（M1 审批积压告警）。
+//
+// 只在装配了后台任务的进程注册；查询失败保留上一次值，不阻断主流程。
+func startPendingApprovalGauge(deps *platform.Deps, repos repositories,
+	registry *spec.Registry, metrics *observability.Metrics) {
+	if deps.Background == nil || metrics == nil {
+		return
+	}
+	env := deps.Config.Env
+	namespaces := registry.Namespaces()
+	deps.Background(func(ctx context.Context) error {
+		refresh := func() {
+			for _, namespace := range namespaces {
+				_, total, err := repos.releases.List(ctx, env, namespace,
+					domain.ReleaseStatusPendingReview, 1, 0)
+				if err != nil {
+					continue
+				}
+				metrics.SetPendingApproval(namespace, total)
+			}
+		}
+		refresh()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	})
 }
 
 // buildEmitter 审计出口：优先 Outbox（与业务事务同源），退回双出口

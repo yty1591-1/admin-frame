@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
@@ -44,13 +45,17 @@ func main() {
 // （NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
 	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
+	startup, err := snapshotconfig.Load(context.Background())
 	if err != nil {
 		log.Printf("c-api: config snapshot ignored: %v", err)
 	}
-	appCfg, err := appconfig.LoadWithValues(configPath, func() (map[string]string, error) {
+	var snapshotValues map[string]string
+	if startup != nil {
+		snapshotValues = startup.Values
+	}
+	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
 		return snapshotValues, nil
-	})
+	}, snapshotconfig.AllowMissingConfig(snapshotValues))
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -83,6 +88,17 @@ func run(configPath string) error {
 			built, err := buildIdentity(deps)
 			if err != nil {
 				return err
+			}
+			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
+			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
+				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
+				deps.Logger.Warn("configcenter dual read failed", "err", err)
+			}
+			// 动态刷新只提供快照可用性 / stale 指标；热更值回写尚未启用。
+			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
+				deps.Logger.Warn("configcenter refresh unavailable", "err", rerr)
+			} else if refreshRT != nil {
+				refreshRT.StartRefresh(deps, 0)
 			}
 			return registerRoutes(deps, mux, built)
 		},

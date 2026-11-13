@@ -45,13 +45,17 @@ func main() {
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
 	// M1：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
+	startup, err := snapshotconfig.Load(context.Background())
 	if err != nil {
 		log.Printf("admin-api: config snapshot ignored: %v", err)
 	}
-	appCfg, err := appconfig.LoadWithValues(configPath, func() (map[string]string, error) {
+	var snapshotValues map[string]string
+	if startup != nil {
+		snapshotValues = startup.Values
+	}
+	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
 		return snapshotValues, nil
-	})
+	}, snapshotconfig.AllowMissingConfig(snapshotValues))
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -118,6 +122,11 @@ func run(configPath string) error {
 			identityBuilt, err := buildIdentity(deps)
 			if err != nil {
 				return err
+			}
+			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
+			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
+				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
+				deps.Logger.Warn("configcenter dual read failed", "err", err)
 			}
 			return registerRoutes(deps, mux, built, identityBuilt, appCfg)
 		},

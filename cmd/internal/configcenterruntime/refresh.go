@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/admin-frame/admin-frame/internal/configcenter/observability"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
@@ -24,8 +25,14 @@ type RefreshConfig struct {
 	// Env 与 Namespace 是消费的快照归属；必填。
 	Env       string
 	Namespace string
+	// Namespaces 是按开关启用的 namespace；非空时优先于 Namespace。
+	Namespaces []string
+	// PrimaryNamespace 是本地落盘与兼容读取的主 namespace；建议显式传 platform。
+	PrimaryNamespace string
 	// OnRefresh 可选回调，用于运行期日志与指标。
 	OnRefresh func(configclient.RefreshEvent)
+	// OnWatchDropped 可选回调，用于 Watch 慢消费者丢事件指标。
+	OnWatchDropped func()
 }
 
 // NewRefreshClient 构造进程内动态刷新客户端。
@@ -53,12 +60,15 @@ func NewRefreshClient(cfg RefreshConfig) (*configclient.Client, error) {
 		}
 	}
 	return configclient.NewClient(configclient.ClientConfig{
-		Source:    cfg.Source,
-		Verifier:  verifier,
-		Env:       cfg.Env,
-		Namespace: cfg.Namespace,
-		Store:     store,
-		OnRefresh: cfg.OnRefresh,
+		Source:           cfg.Source,
+		Verifier:         verifier,
+		Env:              cfg.Env,
+		Namespace:        cfg.Namespace,
+		Namespaces:       cfg.Namespaces,
+		PrimaryNamespace: cfg.PrimaryNamespace,
+		Store:            store,
+		OnRefresh:        cfg.OnRefresh,
+		OnWatchDropped:   cfg.OnWatchDropped,
 	})
 }
 
@@ -77,11 +87,33 @@ func (r *Runtime) StartRefresh(deps *platform.Deps, interval time.Duration) {
 	logger := deps.Logger
 	if logger != nil {
 		logger.Info("configcenter dynamic refresh enabled",
-			"env", r.clientEnv, "namespace", r.clientNamespace, "interval", interval)
+			"env", r.clientEnv, "namespaces", strings.Join(r.clientNamespaces, ","),
+			"interval", interval)
 	}
 	deps.Background(func(ctx context.Context) error {
 		return runRefresh(ctx, client, interval, logger)
 	})
+}
+
+// StartRefreshContext 在调用方提供的 ctx 上启动刷新。
+//
+// 供不走 platform.Run 的长驻进程（worker）使用；一次性 CLI 模式不应调用。
+func (r *Runtime) StartRefreshContext(ctx context.Context, logger *slog.Logger, interval time.Duration) {
+	if r == nil || r.Client == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = configclient.DefaultRefreshInterval
+	}
+	client := r.Client
+	if logger != nil {
+		logger.Info("configcenter dynamic refresh enabled",
+			"env", r.clientEnv, "namespaces", strings.Join(r.clientNamespaces, ","),
+			"interval", interval)
+	}
+	go func() {
+		_ = runRefresh(ctx, client, interval, logger)
+	}()
 }
 
 // runRefresh 持续刷新直到 ctx 取消；正常关停不视为任务失败。
@@ -94,6 +126,32 @@ func runRefresh(ctx context.Context, client *configclient.Client, interval time.
 		return nil
 	}
 	return err
+}
+
+// clientRefreshObserver 组合刷新日志与指标。
+//
+// 冷启动降级只在首次事件「无可用快照且刷新失败」时计数一次；指标与日志
+// 都只含元数据，不记录取值。
+func clientRefreshObserver(logger *slog.Logger, metrics *observability.Metrics) func(configclient.RefreshEvent) {
+	log := refreshLogger(logger)
+	if log == nil && metrics == nil {
+		return nil
+	}
+	var coldStart sync.Once
+	return func(event configclient.RefreshEvent) {
+		if log != nil {
+			log(event)
+		}
+		if metrics == nil {
+			return
+		}
+		coldStart.Do(func() {
+			if !event.Loaded && event.Err != nil {
+				metrics.ClientColdStartDegraded()
+			}
+		})
+		metrics.ObserveClientRefresh(event)
+	}
 }
 
 // refreshLogger 构造刷新状态日志。

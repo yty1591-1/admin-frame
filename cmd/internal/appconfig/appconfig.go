@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	iamcatalog "github.com/admin-frame/admin-frame/internal/iam/catalog"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
@@ -110,13 +111,36 @@ func NewLoader(path string) (*config.Loader[Config], error) {
 // values 返回已验签快照的扁平取值（yaml 路径 → 字符串）；nil 表示不接入。
 func NewLoaderWithValues(path string, values func() (map[string]string, error)) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:     []string{path},
-		EnvPrefix: platformconfig.EnvPrefix,
-		Values:    values,
-		Defaults:  (*Config).ApplyDefaults,
-		Normalize: (*Config).Normalize,
-		Validate:  (*Config).Validate,
+		Files:        []string{path},
+		EnvPrefix:    platformconfig.EnvPrefix,
+		Values:       values,
+		ValueAliases: spec.ValueAliases(),
+		Defaults:     (*Config).ApplyDefaults,
+		Normalize:    (*Config).Normalize,
+		Validate:     (*Config).Validate,
 	})
+}
+
+// LoadWithValuesAllowMissing 在允许缺失配置文件时加载（无文件启动演练）。
+//
+// 仅当调用方确认已有可信签名快照时才应传 allowMissing=true；否则缺失文件
+// 会退化为代码默认值，可能掩盖部署错误。
+func LoadWithValuesAllowMissing(path string, values func() (map[string]string, error),
+	allowMissing bool) (*Config, error) {
+	loader, err := config.NewLoader(config.Options[Config]{
+		Files:             []string{path},
+		EnvPrefix:         platformconfig.EnvPrefix,
+		Values:            values,
+		ValueAliases:      spec.ValueAliases(),
+		Defaults:          (*Config).ApplyDefaults,
+		Normalize:         (*Config).Normalize,
+		Validate:          (*Config).Validate,
+		AllowMissingFiles: allowMissing,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return loader.Load()
 }
 
 // Load 从 YAML 文件加载完整配置，应用默认值与环境变量覆盖后校验。

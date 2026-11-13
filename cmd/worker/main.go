@@ -14,6 +14,7 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
@@ -59,13 +60,17 @@ func main() {
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
 func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
+	startup, err := snapshotconfig.Load(context.Background())
 	if err != nil {
 		log.Printf("worker: config snapshot ignored: %v", err)
 	}
-	appCfg, err := appconfig.LoadWithValues(configPath, func() (map[string]string, error) {
+	var snapshotValues map[string]string
+	if startup != nil {
+		snapshotValues = startup.Values
+	}
+	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
 		return snapshotValues, nil
-	})
+	}, snapshotconfig.AllowMissingConfig(snapshotValues))
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -94,6 +99,10 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	})
 	if err != nil {
 		return fmt.Errorf("metrics: %w", err)
+	}
+	// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
+	if err := snapshotconfig.ReportWithMetrics(ctx, configPath, cfg.Env, startup, logger, met); err != nil {
+		logger.Warn("configcenter dual read failed", "err", err)
 	}
 	// 进程级 ID 生成器：审计保留服务用它写 audit.retention_purge 元审计事件，
 	// 缺失时 NewRetentionService 直接拒绝构造，worker 启动即失败。
@@ -132,6 +141,13 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 			deps.Async = asyncRuntime
 		}
 		return runCertificationSweep(ctx, deps, appCfg.IAM, logger)
+	}
+
+	// 动态刷新只提供快照可用性 / stale 指标；热更值回写尚未启用。
+	if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
+		logger.Warn("configcenter refresh unavailable", "err", rerr)
+	} else if refreshRT != nil {
+		refreshRT.StartRefreshContext(ctx, logger, 0)
 	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)
