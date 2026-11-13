@@ -267,9 +267,10 @@ components:
         strategy:
           type: string
           enum: [all, percentage, tenant_list, channel_list, instance_list]
+          description: M1 只产生 all（发布即全量生效）；其余取值保留给 P1，当前服务端不会签发。
         target_rule_json:
           type: string
-          description: 灰度规则 JSON；strategy=all 时可为空。
+          description: 灰度规则 JSON；M1 恒为空，为 P1 预留。
         snapshot_hash:
           type: string
         snapshot_size:
@@ -369,11 +370,12 @@ components:
           type: string
         strategy:
           type: string
-          enum: [all, percentage, tenant_list, channel_list, instance_list]
+          enum: [all]
           default: all
+          description: M1 仅支持 all（全量发布）；percentage / tenant_list / channel_list / instance_list 为 P1，传入即 40000。
         target_rule_json:
           type: string
-          description: strategy != all 时必填。
+          description: 灰度规则 JSON；M1 不接受，仅为 P1 预留字段。
         entries:
           type: array
           minItems: 1

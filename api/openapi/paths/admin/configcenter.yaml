@@ -360,6 +360,7 @@ admin-v1-configs-releases:
     description: |
       需要 `config:write`。快照条目必须属于同一 env + namespace，且版本存在；
       快照摘要不可变。写 `config.change` 审计。
+      M1 只接受 `strategy=all`（全量发布）；灰度策略为 P1，传入即返回 40000。
     operationId: adminCreateConfigRelease
     security:
       - bearerAuth: []
