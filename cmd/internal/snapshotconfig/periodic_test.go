@@ -147,3 +147,23 @@ func TestStartPeriodicRegistersBackgroundTask(t *testing.T) {
 	// 未提供注册器时为空操作，不 panic。
 	snapshotconfig.StartPeriodic(nil, snapshotconfig.PeriodicConfig{})
 }
+
+// TestRunPeriodicNeverFailsProcess 验证基线不可读时也只降级为不采样，
+// 不把错误抛给进程生命周期（双读是观察工具，不应影响业务）。
+func TestRunPeriodicNeverFailsProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broken.yaml")
+	if err := os.WriteFile(path, []byte("addr: [unclosed\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	reader := &countingReader{namespace: []string{"platform"}, snapshots: map[string]configclient.Snapshot{}}
+	if err := snapshotconfig.RunPeriodic(context.Background(), snapshotconfig.PeriodicConfig{
+		ConfigPath: path,
+		Env:        "dev",
+		Reader:     reader,
+	}); err != nil {
+		t.Fatalf("RunPeriodic(broken baseline) error = %v, want nil (must degrade silently)", err)
+	}
+	if calls := reader.callCount(); calls != 0 {
+		t.Fatalf("sampling must not start with unreadable baseline, got %d call(s)", calls)
+	}
+}

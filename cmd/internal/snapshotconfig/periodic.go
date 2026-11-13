@@ -74,7 +74,9 @@ func RunPeriodic(ctx context.Context, cfg PeriodicConfig) error {
 	}
 	reporter, err := NewReporter(cfg.ConfigPath, cfg.Env, logger, registerer)
 	if err != nil {
-		return err
+		// 双读是迁移期观察工具，装配失败不得拖垮业务进程。
+		logger.Warn("config dual-read periodic disabled", "err", err)
+		return nil
 	}
 	// 先确认基线存在：无文件时应直接退出，而不是每个周期都报一次缺失。
 	if _, err := reporter.flat(); err != nil {
@@ -83,7 +85,8 @@ func RunPeriodic(ctx context.Context, cfg PeriodicConfig) error {
 				"path", cfg.ConfigPath)
 			return nil
 		}
-		return err
+		logger.Warn("config dual-read periodic disabled: baseline unreadable", "err", err)
+		return nil
 	}
 
 	interval := cfg.Interval
