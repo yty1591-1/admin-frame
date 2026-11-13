@@ -402,3 +402,170 @@ func TestReleaseLifecycle(t *testing.T) {
 		t.Fatalf("release detail must include items and reviews: %v", detailData)
 	}
 }
+
+func TestListNamespacesAndItems(t *testing.T) {
+	f := newFixture(t)
+	f.createItem(t, "u1", `{"env":"prod","namespace":"platform","key":"log.level","value":"info","owner":"team-platform"}`)
+
+	nsRequest := adminRequestAs("u1", http.MethodGet, "/admin/v1/configs/namespaces", "")
+	nsRecorder := httptest.NewRecorder()
+	f.handler.ListNamespaces(nsRecorder, nsRequest)
+	if nsRecorder.Code != http.StatusOK {
+		t.Fatalf("list namespaces status = %d (body=%s)", nsRecorder.Code, nsRecorder.Body.String())
+	}
+	var nsData struct {
+		Items []struct {
+			Namespace string `json:"namespace"`
+			KeyCount  int    `json:"key_count"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, nsRecorder).Data, &nsData); err != nil {
+		t.Fatalf("decode namespaces: %v", err)
+	}
+	if nsData.Total != len(nsData.Items) || nsData.Total == 0 {
+		t.Fatalf("namespace total mismatch: total=%d items=%d", nsData.Total, len(nsData.Items))
+	}
+	var platformKeys int
+	for _, entry := range nsData.Items {
+		if entry.Namespace == "platform" {
+			platformKeys = entry.KeyCount
+		}
+	}
+	if platformKeys != 2 {
+		t.Fatalf("platform key_count = %d, want 2 (fixture registry)", platformKeys)
+	}
+
+	// 列表按 env / namespace / status 过滤，并回显分页参数。
+	listRequest := adminRequestAs("u1", http.MethodGet,
+		"/admin/v1/configs/items?env=prod&namespace=platform&status=draft&page=1&page_size=10", "")
+	listRecorder := httptest.NewRecorder()
+	f.handler.ListItems(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list items status = %d (body=%s)", listRecorder.Code, listRecorder.Body.String())
+	}
+	var listData struct {
+		Items    []map[string]any `json:"items"`
+		Total    int              `json:"total"`
+		Page     int              `json:"page"`
+		PageSize int              `json:"page_size"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &listData); err != nil {
+		t.Fatalf("decode items: %v", err)
+	}
+	if listData.Total != 1 || len(listData.Items) != 1 || listData.Page != 1 || listData.PageSize != 10 {
+		t.Fatalf("item list mismatch: total=%d page=%d size=%d items=%+v",
+			listData.Total, listData.Page, listData.PageSize, listData.Items)
+	}
+	// 列表只回显元数据；值必须走详情端点，避免批量泄漏。
+	if _, exists := listData.Items[0]["value"]; exists {
+		t.Fatalf("item list must not expose value: %+v", listData.Items[0])
+	}
+
+	// 无命中时 items 必须是空数组而不是 null，前端可直接渲染空态。
+	emptyRequest := adminRequestAs("u1", http.MethodGet,
+		"/admin/v1/configs/items?env=prod&namespace=platform&status=active", "")
+	emptyRecorder := httptest.NewRecorder()
+	f.handler.ListItems(emptyRecorder, emptyRequest)
+	if emptyRecorder.Code != http.StatusOK {
+		t.Fatalf("empty list status = %d", emptyRecorder.Code)
+	}
+	if !strings.Contains(emptyRecorder.Body.String(), `"items":[]`) {
+		t.Fatalf("empty list must render []: %s", emptyRecorder.Body.String())
+	}
+}
+
+func TestReleaseListAndInvalidRequests(t *testing.T) {
+	f := newFixture(t)
+	item := f.createItem(t, "u1", `{"env":"prod","namespace":"platform","key":"log.level","value":"info","owner":"team-platform"}`)
+	itemID := int64(item["id"].(float64))
+
+	releaseBody := `{"env":"prod","namespace":"platform","name":"list release","strategy":"all","entries":[{"item_id":` +
+		strconv.FormatInt(itemID, 10) + `,"item_version":1}]}`
+	createRequest := adminRequestAs("u1", http.MethodPost, "/admin/v1/configs/releases", releaseBody)
+	createRecorder := httptest.NewRecorder()
+	f.handler.CreateRelease(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create release status = %d (body=%s)", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created map[string]any
+	if err := json.Unmarshal(decodeEnvelope(t, createRecorder).Data, &created); err != nil {
+		t.Fatalf("decode release: %v", err)
+	}
+	releaseID := int64(created["id"].(float64))
+
+	listRequest := adminRequestAs("u1", http.MethodGet,
+		"/admin/v1/configs/releases?env=prod&namespace=platform&status=draft&page=1&page_size=5", "")
+	listRecorder := httptest.NewRecorder()
+	f.handler.ListReleases(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list releases status = %d (body=%s)", listRecorder.Code, listRecorder.Body.String())
+	}
+	var listData struct {
+		Items    []map[string]any `json:"items"`
+		Total    int              `json:"total"`
+		Page     int              `json:"page"`
+		PageSize int              `json:"page_size"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, listRecorder).Data, &listData); err != nil {
+		t.Fatalf("decode releases: %v", err)
+	}
+	if listData.Total != 1 || len(listData.Items) != 1 || listData.Page != 1 || listData.PageSize != 5 {
+		t.Fatalf("release list mismatch: total=%d page=%d size=%d items=%+v",
+			listData.Total, listData.Page, listData.PageSize, listData.Items)
+	}
+	if listData.Items[0]["status"] != "draft" || int64(listData.Items[0]["id"].(float64)) != releaseID {
+		t.Fatalf("release list item mismatch: %+v", listData.Items[0])
+	}
+
+	// 非法与不存在的路径参数：400 与 404 必须区分，便于前端提示。
+	cases := []struct {
+		name   string
+		id     string
+		status int
+	}{
+		{name: "非数字 id", id: "abc", status: http.StatusBadRequest},
+		{name: "零 id", id: "0", status: http.StatusBadRequest},
+		{name: "不存在的 id", id: "999999", status: http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := adminRequestAs("u1", http.MethodGet, "/admin/v1/configs/releases/"+tc.id, "")
+			request.SetPathValue("id", tc.id)
+			recorder := httptest.NewRecorder()
+			f.handler.GetRelease(recorder, request)
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d, want %d (body=%s)", recorder.Code, tc.status, recorder.Body.String())
+			}
+		})
+	}
+
+	// 空发布单必须 400：没有条目就没有快照语义。
+	emptyEntries := adminRequestAs("u1", http.MethodPost, "/admin/v1/configs/releases",
+		`{"env":"prod","namespace":"platform","name":"empty","strategy":"all","entries":[]}`)
+	emptyRecorder := httptest.NewRecorder()
+	f.handler.CreateRelease(emptyRecorder, emptyEntries)
+	if emptyRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("empty entries status = %d (body=%s)", emptyRecorder.Code, emptyRecorder.Body.String())
+	}
+
+	// 陈旧 expected_version 必须 409，提示前端刷新后重试。
+	staleRequest := adminRequestAs("u1", http.MethodPut, "/admin/v1/configs/items/1",
+		`{"value":"debug","expected_version":99}`)
+	staleRequest.SetPathValue("id", strconv.FormatInt(itemID, 10))
+	staleRecorder := httptest.NewRecorder()
+	f.handler.UpdateValue(staleRecorder, staleRequest)
+	if staleRecorder.Code != http.StatusConflict {
+		t.Fatalf("stale update status = %d (body=%s)", staleRecorder.Code, staleRecorder.Body.String())
+	}
+
+	// 不存在的版本号返回 404。
+	missingVersion := adminRequestAs("u1", http.MethodGet, "/admin/v1/configs/items/1/versions/9", "")
+	missingVersion.SetPathValue("id", strconv.FormatInt(itemID, 10))
+	missingVersion.SetPathValue("version", "9")
+	missingRecorder := httptest.NewRecorder()
+	f.handler.GetVersion(missingRecorder, missingVersion)
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("missing version status = %d (body=%s)", missingRecorder.Code, missingRecorder.Body.String())
+	}
+}

@@ -9,8 +9,11 @@ package configcenter_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -107,6 +110,22 @@ func mustRepos(t *testing.T, sqlDB *sql.DB) *persistence.Repositories {
 	return repos
 }
 
+// sameJSON 比较两段 JSON 文本的语义是否相等。
+//
+// MySQL JSON 列会重排键序并规范化空白（写入 {"min":"1s","max":"60s"} 读回为
+// {"max": "60s", "min": "1s"}），因此不能按字节比较；语义相等才是契约要求。
+func sameJSON(t *testing.T, want, got string) bool {
+	t.Helper()
+	var wantValue, gotValue any
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("decode want json %q: %v", want, err)
+	}
+	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
+		t.Fatalf("decode got json %q: %v", got, err)
+	}
+	return reflect.DeepEqual(wantValue, gotValue)
+}
+
 func newItem(id int64, key string) domain.Item {
 	return domain.Item{
 		ID:          id,
@@ -159,7 +178,7 @@ func TestItemRepositoryCRUDAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get by key: %v", err)
 	}
-	if got.ValueType != item.ValueType || got.ValidationJSON != item.ValidationJSON ||
+	if got.ValueType != item.ValueType || !sameJSON(t, item.ValidationJSON, got.ValidationJSON) ||
 		got.ExpiresAt == nil || !got.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("roundtrip mismatch: %+v", got)
 	}
@@ -246,7 +265,7 @@ func TestReleaseRepositorySnapshotAndTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get by no: %v", err)
 	}
-	if loaded.Strategy != domain.StrategyTenantList || loaded.TargetRuleJSON != release.TargetRuleJSON {
+	if loaded.Strategy != domain.StrategyTenantList || !sameJSON(t, release.TargetRuleJSON, loaded.TargetRuleJSON) {
 		t.Fatalf("release roundtrip mismatch: %+v", loaded)
 	}
 
@@ -361,5 +380,120 @@ func TestPointerCompareAndSwap(t *testing.T) {
 	stored, err := repos.Pointers.Get(ctx, pointer.Env, pointer.Namespace)
 	if err != nil || stored.Version != 2 || stored.ActiveReleaseID < 10 {
 		t.Fatalf("stored pointer mismatch: %v %+v", err, stored)
+	}
+}
+
+// TestItemVersionListAndPagination 覆盖版本历史的分页、总数与不存在键的空列表语义。
+func TestItemVersionListAndPagination(t *testing.T) {
+	sqlDB := testDB(t)
+	repos := mustRepos(t, sqlDB)
+	ctx := context.Background()
+
+	item := newItem(9401, "notify.retry_times")
+	if err := repos.Items.Create(ctx, item); err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	loaded, err := repos.Items.GetByID(ctx, item.ID)
+	if err != nil || loaded.Key != item.Key || loaded.Sensitive {
+		t.Fatalf("get by id mismatch: %v %+v", err, loaded)
+	}
+
+	for version := int64(1); version <= 3; version++ {
+		value := strconv.FormatInt(version, 10)
+		record := domain.ItemVersion{
+			ID:            9400 + version,
+			ItemID:        item.ID,
+			Version:       version,
+			ValueText:     value,
+			ValueHash:     domain.HashValue(value),
+			ChangeSummary: "批量写入",
+			CreatedBy:     "admin-1",
+			CreatedAt:     testNow.Add(time.Duration(version) * time.Minute),
+		}
+		if err := repos.Items.AppendVersion(ctx, record); err != nil {
+			t.Fatalf("append version %d: %v", version, err)
+		}
+	}
+
+	firstPage, total, err := repos.Items.ListVersions(ctx, item.ID, 2, 0)
+	if err != nil || total != 3 || len(firstPage) != 2 ||
+		firstPage[0].Version != 1 || firstPage[1].Version != 2 {
+		t.Fatalf("first page mismatch: %v total=%d page=%+v", err, total, firstPage)
+	}
+	secondPage, total, err := repos.Items.ListVersions(ctx, item.ID, 2, 2)
+	if err != nil || total != 3 || len(secondPage) != 1 || secondPage[0].Version != 3 {
+		t.Fatalf("second page mismatch: %v total=%d page=%+v", err, total, secondPage)
+	}
+
+	// 不存在的键返回空列表而不是错误，便于管理面直接渲染空态。
+	empty, total, err := repos.Items.ListVersions(ctx, 999999, 10, 0)
+	if err != nil || total != 0 || len(empty) != 0 {
+		t.Fatalf("missing item versions must be empty: %v total=%d page=%+v", err, total, empty)
+	}
+}
+
+// TestReleaseListSignatureAndActivation 覆盖发布列表过滤、快照签名幂等写入与生效时间落库。
+func TestReleaseListSignatureAndActivation(t *testing.T) {
+	sqlDB := testDB(t)
+	repos := mustRepos(t, sqlDB)
+	ctx := context.Background()
+
+	draft := newRelease(9501, 1)
+	pending := newRelease(9502, 2)
+	for _, release := range []domain.Release{draft, pending} {
+		if err := repos.Releases.Create(ctx, release, nil); err != nil {
+			t.Fatalf("create release %d: %v", release.ID, err)
+		}
+	}
+	if err := repos.Releases.Transition(ctx, pending.ID, domain.ReleaseStatusDraft,
+		domain.ReleaseStatusPendingReview, "submitter", testNow); err != nil {
+		t.Fatalf("submit pending release: %v", err)
+	}
+
+	// 列表按 release_no 倒序，并支持状态过滤。
+	all, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 10, 0)
+	if err != nil || total != 2 || len(all) != 2 || all[0].ReleaseNo != 2 {
+		t.Fatalf("list all mismatch: %v total=%d releases=%+v", err, total, all)
+	}
+	drafts, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, domain.ReleaseStatusDraft, 10, 0)
+	if err != nil || total != 1 || len(drafts) != 1 || drafts[0].ID != draft.ID {
+		t.Fatalf("status filter mismatch: %v total=%d releases=%+v", err, total, drafts)
+	}
+	page, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 1, 1)
+	if err != nil || total != 2 || len(page) != 1 || page[0].ReleaseNo != 1 {
+		t.Fatalf("pagination mismatch: %v total=%d releases=%+v", err, total, page)
+	}
+
+	// 快照签名写入：首次写入、重复写入幂等、发布单不存在返回 ErrNotFound。
+	signedAt := testNow.Add(3 * time.Minute)
+	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
+		t.Fatalf("update signature: %v", err)
+	}
+	signed, err := repos.Releases.Get(ctx, pending.ID)
+	if err != nil || signed.SnapshotSignature != "sig-b64" || signed.SnapshotKeyID != "kid-1" ||
+		!signed.UpdatedAt.Equal(signedAt) {
+		t.Fatalf("signature roundtrip mismatch: %v %+v", err, signed)
+	}
+	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
+		t.Fatalf("repeated signature must be idempotent: %v", err)
+	}
+	if err := repos.Releases.UpdateSnapshotSignature(ctx, 999999, "sig", "kid", signedAt); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing release signature must be ErrNotFound, got %v", err)
+	}
+
+	// approved → active 必须写入 published_at（回滚审计依赖该时间点）。
+	if err := repos.Releases.Transition(ctx, pending.ID, domain.ReleaseStatusPendingReview,
+		domain.ReleaseStatusApproved, "reviewer", signedAt); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	publishedAt := signedAt.Add(time.Minute)
+	if err := repos.Releases.Transition(ctx, pending.ID, domain.ReleaseStatusApproved,
+		domain.ReleaseStatusActive, "publisher", publishedAt); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	active, err := repos.Releases.Get(ctx, pending.ID)
+	if err != nil || active.Status != domain.ReleaseStatusActive ||
+		active.PublishedAt == nil || !active.PublishedAt.Equal(publishedAt) {
+		t.Fatalf("active release mismatch: %v %+v", err, active)
 	}
 }
