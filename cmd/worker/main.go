@@ -17,6 +17,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
@@ -57,7 +58,14 @@ func main() {
 // -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
 func run(configPath, replayDLQ string, sweepCertifications bool) error {
-	appCfg, err := appconfig.Load(configPath)
+	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
+	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
+	if err != nil {
+		log.Printf("worker: config snapshot ignored: %v", err)
+	}
+	appCfg, err := appconfig.LoadWithValues(configPath, func() (map[string]string, error) {
+		return snapshotValues, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

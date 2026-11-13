@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
+	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
@@ -42,7 +43,14 @@ func main() {
 // 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
 // （NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
-	appCfg, err := appconfig.Load(configPath)
+	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
+	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
+	if err != nil {
+		log.Printf("c-api: config snapshot ignored: %v", err)
+	}
+	appCfg, err := appconfig.LoadWithValues(configPath, func() (map[string]string, error) {
+		return snapshotValues, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
-	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
@@ -45,7 +45,7 @@ func main() {
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
 	// M1：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	snapshotValues, err := configcenterruntime.StartupValues(context.Background())
+	snapshotValues, err := snapshotconfig.StartupValues(context.Background())
 	if err != nil {
 		log.Printf("admin-api: config snapshot ignored: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
@@ -154,8 +155,8 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	// 启动期签名快照 / 文件配置）；配置了公钥则每 5s 拉取、验签并原子落盘。
 	client, err := NewRefreshClient(RefreshConfig{
 		Source:       snapshots,
-		PublicKeys:   os.Getenv(snapshotPublicKeysEnv),
-		SnapshotFile: os.Getenv(snapshotFileEnv),
+		PublicKeys:   os.Getenv(snapshotconfig.PublicKeysEnv),
+		SnapshotFile: os.Getenv(snapshotconfig.FileEnv),
 		Env:          deps.Config.Env,
 		Namespace:    spec.NamespacePlatform,
 		OnRefresh:    refreshLogger(deps.Logger),
@@ -164,7 +165,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter refresh client: %w", err)
 	}
 	if client == nil && deps.Logger != nil {
-		deps.Logger.Warn("configcenter dynamic refresh disabled; set " + snapshotPublicKeysEnv)
+		deps.Logger.Warn("configcenter dynamic refresh disabled; set " + snapshotconfig.PublicKeysEnv)
 	}
 	return &Runtime{
 		Handler:         handler,

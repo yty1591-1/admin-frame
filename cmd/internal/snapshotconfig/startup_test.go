@@ -1,4 +1,4 @@
-package configcenterruntime
+package snapshotconfig
 
 import (
 	"context"
@@ -59,7 +59,7 @@ func writeSignedSnapshot(t *testing.T, path string, values map[string]string) st
 }
 
 func TestStartupValuesWithoutFile(t *testing.T) {
-	t.Setenv(snapshotFileEnv, "")
+	t.Setenv(FileEnv, "")
 	values, err := StartupValues(context.Background())
 	if err != nil || values != nil {
 		t.Fatalf("startup values = %v, %v; want nil, nil", values, err)
@@ -69,8 +69,8 @@ func TestStartupValuesWithoutFile(t *testing.T) {
 func TestStartupValuesLoadsVerifiedSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	publicKeys := writeSignedSnapshot(t, path, map[string]string{"server.addr": ":9000", "log.level": "debug"})
-	t.Setenv(snapshotFileEnv, path)
-	t.Setenv(snapshotPublicKeysEnv, publicKeys)
+	t.Setenv(FileEnv, path)
+	t.Setenv(PublicKeysEnv, publicKeys)
 
 	values, err := StartupValues(context.Background())
 	if err != nil {
@@ -84,10 +84,34 @@ func TestStartupValuesLoadsVerifiedSnapshot(t *testing.T) {
 func TestStartupValuesRequiresPublicKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	writeSignedSnapshot(t, path, map[string]string{"server.addr": ":9000"})
-	t.Setenv(snapshotFileEnv, path)
-	t.Setenv(snapshotPublicKeysEnv, "")
+	t.Setenv(FileEnv, path)
+	t.Setenv(PublicKeysEnv, "")
 
 	if _, err := StartupValues(context.Background()); err == nil {
 		t.Fatal("missing public keys must fail")
+	}
+}
+
+// TestStartupValuesRejectsTamperedSnapshot 确保签名快照被改写后不会作为可信取值。
+func TestStartupValuesRejectsTamperedSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	publicKeys := writeSignedSnapshot(t, path, map[string]string{"server.addr": ":9000"})
+	store, err := configclient.NewFileStore(path)
+	if err != nil {
+		t.Fatalf("new file store: %v", err)
+	}
+	snapshot, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	snapshot.Values["server.addr"] = ":6666"
+	if err := store.Save(context.Background(), snapshot); err != nil {
+		t.Fatalf("save tampered snapshot: %v", err)
+	}
+	t.Setenv(FileEnv, path)
+	t.Setenv(PublicKeysEnv, publicKeys)
+
+	if _, err := StartupValues(context.Background()); err == nil {
+		t.Fatal("tampered snapshot must be rejected")
 	}
 }
