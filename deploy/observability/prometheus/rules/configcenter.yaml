@@ -1,0 +1,105 @@
+# 配置中心 M1 告警（规划 §5.6 / 附录 C）。
+# 指标来源：internal/configcenter/observability（管理面）与 pkg/configclient 刷新回调。
+groups:
+  - name: admin-frame-configcenter
+    rules:
+      - alert: ConfigClientStale
+        expr: max(config_client_snapshot_age_seconds) > 300
+        for: 10m
+        labels:
+          severity: P1
+          alert_id: config.client_stale
+        annotations:
+          summary: "客户端快照超过 5 分钟未成功刷新"
+          description: "动态刷新连续失败，进程仍在使用上一份已验签快照；检查 MySQL / 网络 / admin-api 与 SDK 日志。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigPublishFailure
+        expr: |
+          (
+            sum(rate(config_release_publish_total{result="fail"}[5m]))
+            /
+            clamp_min(sum(rate(config_release_publish_total[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: config.publish_failure
+        annotations:
+          summary: "配置发布失败率超过 5%"
+          description: "查看 admin-api 日志、DB 与审计事件；确认指针 CAS 冲突或快照签名异常。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSnapshotFetchError
+        expr: |
+          (
+            sum(rate(config_client_fetch_total{result="fail"}[5m]))
+            /
+            clamp_min(sum(rate(config_client_fetch_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: config.fetch_error
+        annotations:
+          summary: "配置快照拉取失败率超过 1%"
+          description: "检查 DB 连接池、快照大小与网络；客户端应继续服务本地快照。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigPendingApproval
+        expr: max(config_release_pending_approval) > 0
+        for: 24h
+        labels:
+          severity: P2
+          alert_id: config.pending_approval
+        annotations:
+          summary: "存在超过 24 小时未处理的配置发布审批"
+          description: "通知审批人处理；确认发布单是否被遗忘或审批流程阻塞。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigDBLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(config_admin_request_duration_seconds_bucket[5m]))
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: config.db_latency
+        annotations:
+          summary: "配置管理面 P99 延迟超过 200ms"
+          description: "检查慢查询、连接池与锁竞争；确认是否影响发布时效。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigRollback
+        expr: increase(config_release_rollback_total{result="success"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: config.rollback
+        annotations:
+          summary: "触发配置回滚"
+          description: "确认回滚原因、影响范围与对应审计事件；通知业务负责人。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSnapshotCorrupt
+        expr: increase(config_client_snapshot_corrupt_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          alert_id: config.snapshot_corrupt
+        annotations:
+          summary: "快照验签或完整性校验失败"
+          description: "检查快照文件、公钥 key_id 与签名服务；客户端已拒绝装载该快照。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigColdStartDegraded
+        expr: increase(config_client_cold_start_degraded_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          alert_id: config.cold_start_degraded
+        annotations:
+          summary: "进程冷启动无可信快照，已回退代码默认值"
+          description: "检查启动期 DB / 快照文件可用性；确认该进程是否允许以默认值启动。"
+          runbook_url: docs/runbooks/config-center.md

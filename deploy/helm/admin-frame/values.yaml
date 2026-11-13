@@ -122,6 +122,25 @@ identitySecrets:
   hashKeyKey: hash_key
   mfaSecretKey: mfa_secret_key
 
+# 配置中心迁移期快照（可选）。启用后把已签名快照 Secret 挂载到所有 workload，
+# 并注入 namespace 接管开关；快照文件由发布流水线写入 Secret。
+configCenter:
+  enabled: false
+  # 包含 platform.json / identity.json 等已签名快照的 Secret。
+  secretName: ""
+  # 挂载目录；CONFIGCENTER_SNAPSHOT_FILES 由 mountPath + 文件名拼接。
+  mountPath: /etc/configcenter
+  # 逗号分隔的快照文件名，如 "platform.json,identity.json"。
+  snapshotFiles: ""
+  # 接管开关：platform / platform,identity / all。
+  enabledNamespaces: platform
+  # 无文件启动演练；仅在已加载非空快照时生效。
+  allowMissingConfig: false
+  # 可信验签公钥；建议由 Secret 注入（kid=base64,...）。
+  publicKeys:
+    secretName: ""
+    key: ""
+
 # 额外环境变量（Secret 引用示例见 values-prod.yaml）。
 env: []
 envFrom: []

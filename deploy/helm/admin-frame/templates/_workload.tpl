@@ -84,7 +84,7 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $w.resources | nindent 12 }}
-          {{- if or $root.Values.env $root.Values.identitySecrets.enabled }}
+          {{- if or $root.Values.env $root.Values.identitySecrets.enabled (and $root.Values.configCenter.enabled $root.Values.configCenter.secretName) }}
           env:
             {{- with $root.Values.env }}
             {{- toYaml . | nindent 12 }}
@@ -100,6 +100,25 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.identitySecrets.secretName }}
                   key: {{ $root.Values.identitySecrets.mfaSecretKey }}
+            {{- end }}
+            {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
+            {{- with $root.Values.configCenter.snapshotFiles }}
+            - name: CONFIGCENTER_SNAPSHOT_FILES
+              value: "{{- range $i, $file := splitList "," . }}{{ if $i }},{{ end }}{{ $root.Values.configCenter.mountPath }}/{{ trim $file }}{{- end }}"
+            {{- end }}
+            - name: CONFIGCENTER_ENABLED_NAMESPACES
+              value: {{ $root.Values.configCenter.enabledNamespaces | quote }}
+            {{- if $root.Values.configCenter.allowMissingConfig }}
+            - name: CONFIGCENTER_ALLOW_MISSING_CONFIG
+              value: "1"
+            {{- end }}
+            {{- if $root.Values.configCenter.publicKeys.secretName }}
+            - name: CONFIGCENTER_SNAPSHOT_PUBLIC_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.configCenter.publicKeys.secretName }}
+                  key: {{ $root.Values.configCenter.publicKeys.key }}
+            {{- end }}
             {{- end }}
           {{- end }}
           {{- with $root.Values.envFrom }}
@@ -120,6 +139,11 @@ spec:
             {{- if (($root.Values.secretMounts | default dict).enabled) }}
             - name: app-secrets
               mountPath: {{ $root.Values.secretMounts.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
+            - name: configcenter-snapshots
+              mountPath: {{ $root.Values.configCenter.mountPath }}
               readOnly: true
             {{- end }}
       volumes:
@@ -155,6 +179,13 @@ spec:
                   items:
                     {{- toYaml .items | nindent 20 }}
               {{- end }}
+        {{- end }}
+        {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
+        # 配置中心签名快照；Secret 缺失时 Pod 仍可启动并降级为文件配置。
+        - name: configcenter-snapshots
+          secret:
+            secretName: {{ $root.Values.configCenter.secretName }}
+            optional: true
         {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
