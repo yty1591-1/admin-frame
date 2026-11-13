@@ -144,10 +144,12 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		return runCertificationSweep(ctx, deps, appCfg.IAM, logger)
 	}
 
-	// 动态刷新只提供快照可用性 / stale 指标；热更值回写尚未启用。
-	if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
+	// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
+	var refreshRT *configcenterruntime.Runtime
+	if built, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
 		logger.Warn("configcenter refresh unavailable", "err", rerr)
-	} else if refreshRT != nil {
+	} else if built != nil {
+		refreshRT = built
 		refreshRT.StartRefreshContext(ctx, logger, 0)
 		// 迁移期双读：worker 不走 platform.Run，用同一 ctx 起周期采样。
 		if refreshRT.Client != nil {
@@ -173,6 +175,11 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		return fmt.Errorf("worker requires async.enabled=true")
 	}
 	deps.Async = asyncRuntime
+	// ADR-0015：async 运行时此时才装配完成，接线放在这里才能覆盖
+	// relay 参数（async.outbox.*）与消费租约（async.consumer.*）。
+	if refreshRT != nil {
+		refreshRT.ApplyRuntimeParams(deps)
+	}
 	if err := iamruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register async handlers: %w", err)
 	}

@@ -128,11 +128,13 @@ func run(configPath string) error {
 				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
 				deps.Logger.Warn("configcenter dual read failed", "err", err)
 			}
-			// 动态刷新只提供快照可用性 / stale 指标；热更值回写尚未启用。
+			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
 			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
 				deps.Logger.Warn("configcenter refresh unavailable", "err", rerr)
 			} else if refreshRT != nil {
 				refreshRT.StartRefresh(deps, 0)
+				// ADR-0015：入口限流跟随热更视图，`rate_limit.*` 发布后无需重启。
+				refreshRT.ApplyRuntimeParams(deps)
 				// 迁移期双读：每 30s 跟随快照刷新采样一次，支撑 7 天零差异取证。
 				if refreshRT.Client != nil {
 					snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{

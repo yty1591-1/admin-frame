@@ -96,6 +96,10 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 	if configRT != nil {
 		configRT.StartRefresh(deps, 0)
 	}
+	// ADR-0015：把热更视图接到运行时参数（限流 / 幂等 TTL / 异步 relay）。
+	if configRT != nil {
+		configRT.ApplyRuntimeParams(deps)
+	}
 	// 迁移期双读：启动时对比一次（main 的 Register 回调），之后跟随快照刷新周期采样，
 	// 否则「7 天零差异」只能靠每次重启抽样，取证不成立。
 	if configRT != nil && configRT.Client != nil {
