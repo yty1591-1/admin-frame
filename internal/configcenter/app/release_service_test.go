@@ -346,3 +346,39 @@ func TestSnapshotHashIsOrderIndependent(t *testing.T) {
 		t.Fatal("snapshot hash must change when item version changes")
 	}
 }
+
+// TestCreateReleaseRejectsGradualStrategy 守护 M1「仅全量发布」的边界。
+//
+// 非 all 策略必须在校验阶段就被拒绝：M1 读路径只认 env+namespace 的生效指针，
+// 若允许策略落库，客户端会全量拿到本该灰度的值，形成静默错配。
+func TestCreateReleaseRejectsGradualStrategy(t *testing.T) {
+	service, repos, _ := newReleaseService(t)
+	ctx := context.Background()
+	itemID := seedItem(t, repos, 1001, "http.timeout", "10s")
+
+	for _, strategy := range []domain.ReleaseStrategy{
+		domain.StrategyPercentage, domain.StrategyTenantList, domain.StrategyChannelList,
+	} {
+		_, err := service.CreateRelease(ctx, app.CreateReleaseInput{
+			Env: "dev", Namespace: "platform", Name: "灰度发布", Strategy: strategy,
+			TargetRuleJSON: `{"percentage":5000}`,
+			Entries:        []app.SnapshotEntry{{ItemID: itemID, ItemVersion: 1}},
+			Actor:          testActor,
+		})
+		if err == nil {
+			t.Fatalf("strategy %q must be rejected in M1", strategy)
+		}
+		var apiErr *apperr.AppError
+		if !errors.As(err, &apiErr) || apiErr.Code != apperr.CodeBadRequest {
+			t.Fatalf("strategy %q must fail with bad request, got %v", strategy, err)
+		}
+	}
+
+	// 全量策略仍然可用。
+	if _, err := service.CreateRelease(ctx, app.CreateReleaseInput{
+		Env: "dev", Namespace: "platform", Name: "全量发布", Strategy: domain.StrategyAll,
+		Entries: []app.SnapshotEntry{{ItemID: itemID, ItemVersion: 1}}, Actor: testActor,
+	}); err != nil {
+		t.Fatalf("strategy=all must be accepted: %v", err)
+	}
+}

@@ -89,6 +89,12 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, in CreateReleaseInpu
 	if len(in.Entries) == 0 {
 		return domain.Release{}, apperr.BadRequest("release must contain at least one config entry")
 	}
+	// M1 只支持全量发布：读路径按 env+namespace 的生效指针取值，不做目标匹配。
+	// 非 all 策略在此显式拒绝，避免「规则已入库但客户端全量生效」的静默错配。
+	if in.Strategy != domain.StrategyAll {
+		return domain.Release{}, apperr.BadRequest(
+			"M1 supports strategy=all only; gradual rollout is P1 (config-center-plan §4.2.2)")
+	}
 	releaseItems, err := s.resolveEntries(ctx, in.Env, in.Namespace, in.Entries)
 	if err != nil {
 		return domain.Release{}, err

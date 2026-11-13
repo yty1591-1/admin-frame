@@ -58,7 +58,11 @@ func (s ReleaseStatus) CanTransitionTo(target ReleaseStatus) bool {
 	return false
 }
 
-// ReleaseStrategy 是灰度策略。
+// ReleaseStrategy 是发布策略。
+//
+// M1 只实现 StrategyAll：发布即切换 env+namespace 的生效指针，读路径不做目标匹配。
+// 其余取值是 P1 的契约占位（config-center-plan §4.2.2 / §6.6），服务端不会签发；
+// 保留枚举是为了让 P1 上线时只做加法，不破坏已生成的客户端类型。
 type ReleaseStrategy string
 
 // 灰度策略枚举。

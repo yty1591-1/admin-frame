@@ -569,3 +569,23 @@ func TestReleaseListAndInvalidRequests(t *testing.T) {
 		t.Fatalf("missing version status = %d (body=%s)", missingRecorder.Code, missingRecorder.Body.String())
 	}
 }
+
+// TestCreateReleaseRejectsGradualStrategy 守护 M1 契约：接口只接受全量发布。
+func TestCreateReleaseRejectsGradualStrategy(t *testing.T) {
+	f := newFixture(t)
+	item := f.createItem(t, "u1", `{"env":"prod","namespace":"platform","key":"log.level","value":"info","owner":"team-platform"}`)
+	itemID := int64(item["id"].(float64))
+
+	body := `{"env":"prod","namespace":"platform","name":"灰度","strategy":"percentage",` +
+		`"target_rule_json":"{\"percentage\":5000}","entries":[{"item_id":` +
+		strconv.FormatInt(itemID, 10) + `,"item_version":1}]}`
+	request := adminRequestAs("u1", http.MethodPost, "/admin/v1/configs/releases", body)
+	recorder := httptest.NewRecorder()
+	f.handler.CreateRelease(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("gradual strategy status = %d (body=%s)", recorder.Code, recorder.Body.String())
+	}
+	if code := decodeEnvelope(t, recorder).Code; code != 40000 {
+		t.Fatalf("gradual strategy code = %d, want 40000", code)
+	}
+}
