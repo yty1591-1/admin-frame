@@ -9,6 +9,7 @@ import (
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	snapshotconfig "github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
@@ -28,7 +29,8 @@ import (
 // rt 由 NewAuthorizer 阶段构造并复用：IAM 管理端与鉴权中间件必须看到同一份
 // 角色 / 绑定数据，否则本地内存模式下会出现「刚授权的角色不生效」。
 // identityRT 用于注册身份域（登录 / 刷新 / 登出 / 会话管理）路由。
-func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
+func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
+	identityRT *identityruntime.Runtime, appCfg *appconfig.Config, configPath string) error {
 	if rt != nil && rt.Handler != nil {
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}
@@ -93,6 +95,17 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
 	if configRT != nil {
 		configRT.StartRefresh(deps, 0)
+	}
+	// 迁移期双读：启动时对比一次（main 的 Register 回调），之后跟随快照刷新周期采样，
+	// 否则「7 天零差异」只能靠每次重启抽样，取证不成立。
+	if configRT != nil && configRT.Client != nil {
+		snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
+			ConfigPath: configPath,
+			Env:        appCfg.Config.Env,
+			Reader:     configRT.Client,
+			Logger:     deps.Logger,
+			Metrics:    deps.Metrics,
+		})
 	}
 	if services != nil {
 		if tenantRT != nil {

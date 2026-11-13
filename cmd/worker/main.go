@@ -148,6 +148,20 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		logger.Warn("configcenter refresh unavailable", "err", rerr)
 	} else if refreshRT != nil {
 		refreshRT.StartRefreshContext(ctx, logger, 0)
+		// 迁移期双读：worker 不走 platform.Run，用同一 ctx 起周期采样。
+		if refreshRT.Client != nil {
+			go func() {
+				if err := snapshotconfig.RunPeriodic(ctx, snapshotconfig.PeriodicConfig{
+					ConfigPath: configPath,
+					Env:        appCfg.Config.Env,
+					Reader:     refreshRT.Client,
+					Logger:     logger,
+					Metrics:    deps.Metrics,
+				}); err != nil {
+					logger.Warn("configcenter dual read periodic failed", "err", err)
+				}
+			}()
+		}
 	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)

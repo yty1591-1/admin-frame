@@ -99,6 +99,16 @@ func run(configPath string) error {
 				deps.Logger.Warn("configcenter refresh unavailable", "err", rerr)
 			} else if refreshRT != nil {
 				refreshRT.StartRefresh(deps, 0)
+				// 迁移期双读：每 30s 跟随快照刷新采样一次，支撑 7 天零差异取证。
+				if refreshRT.Client != nil {
+					snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
+						ConfigPath: configPath,
+						Env:        appCfg.Config.Env,
+						Reader:     refreshRT.Client,
+						Logger:     deps.Logger,
+						Metrics:    deps.Metrics,
+					})
+				}
 			}
 			return registerRoutes(deps, mux, built)
 		},

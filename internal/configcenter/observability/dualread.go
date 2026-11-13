@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -16,26 +17,43 @@ type DualReadMetrics struct {
 }
 
 // NewDualRead 构造并注册双读指标；registerer 为 nil 返回错误。
+//
+// 同一进程内可重复构造：同名已注册时复用既有采集器，使启动期一次性对比与
+// 运行期周期对比写同一组指标，而不是因重复注册直接失败。
 func NewDualRead(registerer prometheus.Registerer) (*DualReadMetrics, error) {
 	if registerer == nil {
 		return nil, fmt.Errorf("configcenter dual-read observability: registerer is required")
 	}
-	m := &DualReadMetrics{
-		mismatch: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "config_dual_read_mismatch",
-			Help: "迁移期文件基线与配置中心取值差异（1 差异 / 0 一致），按 namespace + key。",
-		}, []string{"namespace", "key"}),
-		degraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "config_dual_read_degraded",
-			Help: "配置中心不可用、双读降级为基线取值（1 降级 / 0 正常）。",
-		}, []string{"namespace"}),
+	mismatch, err := registerGaugeVec(registerer, prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "config_dual_read_mismatch",
+		Help: "迁移期文件基线与配置中心取值差异（1 差异 / 0 一致），按 namespace + key。",
+	}, []string{"namespace", "key"}))
+	if err != nil {
+		return nil, fmt.Errorf("configcenter dual-read observability: register mismatch: %w", err)
 	}
-	for _, collector := range []prometheus.Collector{m.mismatch, m.degraded} {
-		if err := registerer.Register(collector); err != nil {
-			return nil, fmt.Errorf("configcenter dual-read observability: register collector: %w", err)
+	degraded, err := registerGaugeVec(registerer, prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "config_dual_read_degraded",
+		Help: "配置中心不可用、双读降级为基线取值（1 降级 / 0 正常）。",
+	}, []string{"namespace"}))
+	if err != nil {
+		return nil, fmt.Errorf("configcenter dual-read observability: register degraded: %w", err)
+	}
+	return &DualReadMetrics{mismatch: mismatch, degraded: degraded}, nil
+}
+
+// registerGaugeVec 注册采集器；同名已注册时复用已有实例（同一 registry 内只应有一份）。
+func registerGaugeVec(registerer prometheus.Registerer,
+	collector *prometheus.GaugeVec) (*prometheus.GaugeVec, error) {
+	if err := registerer.Register(collector); err != nil {
+		var already prometheus.AlreadyRegisteredError
+		if errors.As(err, &already) {
+			if existing, ok := already.ExistingCollector.(*prometheus.GaugeVec); ok {
+				return existing, nil
+			}
 		}
+		return nil, err
 	}
-	return m, nil
+	return collector, nil
 }
 
 // SetMismatch 更新单键差异状态。

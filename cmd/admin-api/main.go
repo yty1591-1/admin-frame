@@ -128,7 +128,7 @@ func run(configPath string) error {
 				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
 				deps.Logger.Warn("configcenter dual read failed", "err", err)
 			}
-			return registerRoutes(deps, mux, built, identityBuilt, appCfg)
+			return registerRoutes(deps, mux, built, identityBuilt, appCfg, configPath)
 		},
 	})
 }

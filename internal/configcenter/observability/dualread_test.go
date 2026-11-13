@@ -30,3 +30,23 @@ func TestNewDualReadRequiresRegisterer(t *testing.T) {
 		t.Fatal("NewDualRead(nil) error = nil, want error")
 	}
 }
+
+// TestNewDualReadReusesRegisteredCollectors 验证同一 registry 重复构造不报错，
+// 且两组实例写入的是同一份采集器（启动期 + 运行期共用）。
+func TestNewDualReadReusesRegisteredCollectors(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	first, err := observability.NewDualRead(registry)
+	if err != nil {
+		t.Fatalf("first NewDualRead: %v", err)
+	}
+	second, err := observability.NewDualRead(registry)
+	if err != nil {
+		t.Fatalf("second NewDualRead must reuse collectors: %v", err)
+	}
+	first.SetMismatch("platform", "server.addr", true)
+	second.SetMismatch("platform", "server.addr", false)
+
+	families := gatherFamilies(t, registry)
+	// 后写入覆盖先写入，说明两者指向同一 GaugeVec；重复注册不会产生两条序列。
+	assertMetric(t, families, "config_dual_read_mismatch", 0)
+}
