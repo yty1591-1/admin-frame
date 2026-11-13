@@ -70,11 +70,34 @@
 
 ### 双读差异
 
-- 双读在四个进程启动期执行：把配置文件展平后，与**每个启用 namespace** 的签名快照逐键比对；只记录 key 与哈希，不记录取值。
+- 双读在四个进程**启动期执行一次**，之后**每 30s 跟随快照刷新采样**：把配置文件展平后，与**每个启用 namespace** 的签名快照逐键比对；只记录 key 与哈希，不记录取值。
 - 差异指标：`config_dual_read_mismatch{namespace,key}`（1 差异 / 0 一致）、`config_dual_read_degraded{namespace}`（1 表示中心不可用、已回落基线）；日志检索 `config dual-read`。
 - 出现差异时，以配置中心值为准，记录差异 key 与文件来源，禁止直接修改快照。
 - 差异未归零前不得删除对应 `configs` 文件，也不得关闭双读；`missing_in_center > 0` 表示迁移未覆盖，同样阻断切换。
 - 未登记 spec 的业务域键暂不参与比对，需先补齐键声明再纳入观察。
+- 采样日志已去重：`config dual-read mismatch` 只在差异集合变化时输出，`config dual-read summary` 只在计数或版本变化时输出；指标每 30s 刷新一次，可直接用于巡检。
+
+### 7 天双读 soak（AC-CC-11 取证）
+
+前置：
+
+1. staging 开启 `configCenter.enabled=true`，快照 Secret 与验签公钥已下发。
+2. `CONFIGCENTER_ENABLED_NAMESPACES` 覆盖本轮待迁移的全部 namespace（不要只开 `platform` 就宣称全覆盖）。
+3. 四个进程为含「双读周期采样」的镜像；启动日志应出现 `config dual-read periodic enabled`。
+
+每日巡检（PromQL）：
+
+- 差异键数量：`sum(config_dual_read_mismatch) by (namespace)` 必须恒为 0。
+- 降级：`sum(config_dual_read_degraded) by (namespace)` 必须恒为 0；出现 1 说明中心不可用，本轮 soak 暂停并记录原因。
+- 采样未中断：日志中当天仍有 `config dual-read summary`（计数变化时输出）或指标序列持续存在。
+
+达标口径：
+
+- 连续 7 天每日指标为 0，且期间至少完成一轮「发布 → 生效 → 回滚」，差异仍为 0。
+- 出现 `missing_in_center > 0` 需补齐键声明或迁移后**重新计时**，不可累计。
+- 任一差异、降级或采样中断即视为本轮失败，修复后从零重新计 7 天。
+
+退出条件：双读归零并满 7 天后，才可进入非密钥 `configs` 基线收缩；删除文件后需再做一次无文件启动演练。
 
 ### namespace 接管开关
 
