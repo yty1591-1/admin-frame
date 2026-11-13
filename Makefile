@@ -15,7 +15,7 @@ PYTHON ?= python3
 	check-ci-paths check-ci-parity \
 	check-git check-release check-sbom check-runbooks check-oncall check-audit \
         check-license check-codegen check-perf check-idempotency check-outbox secrets \
-        check-authn check-deploy check-alerts check-backup check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal \
+        check-authn check-deploy check-alerts check-backup check-configcenter check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal \
         ci-full ci-strict ci-race image-scan
 
 build: build-admin build-biz build-c build-worker build-migrate
@@ -275,6 +275,10 @@ check-deploy:
 check-alerts:
 	bash scripts/ci/check-alerts.sh
 
+# 配置中心 M1：迁移 / 权限 / 审计 / OpenAPI / 敏感项 / 验签 / 观测资产不变量。
+check-configcenter:
+	bash scripts/ci/check-configcenter.sh
+
 # ENT-08：备份脚本、CronJob、RPO/RTO 与演练 runbook。
 check-backup:
 	bash scripts/ci/check-backup.sh
@@ -299,7 +303,7 @@ gitee-job:
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。
-ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-ci-parity check-debug secrets check-no-static-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
+ci: fmt-check tidy-check lint test-ci vuln check-deps check-transport check-layering check-ci-paths check-ci-parity check-debug secrets check-no-static-config check-migrations check-reliability check-observability check-git check-release check-sbom check-runbooks check-oncall check-audit check-license check-codegen check-perf check-openapi check-idempotency check-outbox check-authn check-alerts check-backup check-configcenter check-secret-provider check-tenant check-authz check-featureflag check-resilience check-notification check-load-baseline check-migration-gate build
 
 # CI-16：workflow job ↔ 本地入口一致性（防「某个 job 在本地根本没有入口」）。
 check-ci-parity:
