@@ -109,10 +109,44 @@ func (b *TokenBucket) WaitN(ctx context.Context, n int) error {
 }
 
 // Rate 返回每秒令牌补充速率。
-func (b *TokenBucket) Rate() float64 { return b.rate }
+func (b *TokenBucket) Rate() float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.rate
+}
 
 // Burst 返回桶容量。
-func (b *TokenBucket) Burst() int { return int(b.burst) }
+func (b *TokenBucket) Burst() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return int(b.burst)
+}
+
+// Configure 运行期调整速率与容量（ADR-0015 热更）。
+//
+// 语义：
+//   - 先按旧速率把时间推进到当前，再替换参数，避免新速率回溯到过去的时间段；
+//   - 已累积的令牌保留，不因参数变更退还已消耗的配额；
+//   - 容量下调时把当前令牌截断到新容量，不凭空产生超出新 burst 的突发。
+//
+// 与「重建桶」相比，Configure 不会把桶重置为满桶，避免一次热更等于额外放行一批突发。
+func (b *TokenBucket) Configure(rate float64, burst int) error {
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return fmt.Errorf("ratelimit: rate must be > 0")
+	}
+	if burst < 1 {
+		return fmt.Errorf("ratelimit: burst must be >= 1")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refillLocked(b.clock.Now())
+	b.rate = rate
+	b.burst = float64(burst)
+	if b.tokens > b.burst {
+		b.tokens = b.burst
+	}
+	return nil
+}
 
 func (b *TokenBucket) refillLocked(now time.Time) {
 	if now.Before(b.last) {
