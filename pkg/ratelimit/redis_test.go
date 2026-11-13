@@ -138,3 +138,50 @@ func TestRedisKeyedDegradesAfterConsecutiveFailures(t *testing.T) {
 		}
 	}
 }
+
+// TestRedisKeyedConfigureAppliesToNextRequest 验证热更参数对下一个请求生效，
+// 且不清空已存在的键（令牌延续，不重置为满桶）。
+//
+// 断言用 RetryAfter 反推生效速率：同一个「缺 1 个令牌」的请求，rps=1 时约 1s，
+// rps=100 时约 10ms。若实现改了参数但重置了桶，第二个请求会直接放行。
+func TestRedisKeyedConfigureAppliesToNextRequest(t *testing.T) {
+	keyed, _ := newRedisKeyed(t, ratelimit.RedisKeyedConfig{RPS: 1, Burst: 1, IdleTTL: time.Minute})
+
+	if !keyed.Allow("k").Allowed {
+		t.Fatal("first request must pass")
+	}
+	limited := keyed.Allow("k")
+	if limited.Allowed {
+		t.Fatal("second request must be limited at rps=1 burst=1")
+	}
+	if limited.RetryAfter < 900*time.Millisecond {
+		t.Fatalf("retry after = %v, want ~1s at rps=1", limited.RetryAfter)
+	}
+
+	// 热更：rps 提升到 100，burst 100。
+	if err := keyed.Configure(ratelimit.Params{RPS: 100, Burst: 100}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	heated := keyed.Allow("k")
+	if heated.Allowed {
+		t.Fatal("hot change must not refill the bucket")
+	}
+	if heated.RetryAfter > 100*time.Millisecond {
+		t.Fatalf("retry after = %v, want ~10ms at rps=100 (hot rps must apply)", heated.RetryAfter)
+	}
+}
+
+// TestRedisKeyedConfigureRejectsInvalidParams 验证非法热更值被拒绝且不改动既有参数。
+func TestRedisKeyedConfigureRejectsInvalidParams(t *testing.T) {
+	keyed, _ := newRedisKeyed(t, ratelimit.RedisKeyedConfig{RPS: 10, Burst: 5})
+	if err := keyed.Configure(ratelimit.Params{RPS: 0, Burst: 5}); err == nil {
+		t.Fatal("rps=0 must be rejected")
+	}
+	if err := keyed.Configure(ratelimit.Params{RPS: 10, Burst: 0}); err == nil {
+		t.Fatal("burst=0 must be rejected")
+	}
+	// 参数未变：原配置仍生效。
+	if !keyed.Allow("k").Allowed {
+		t.Fatal("rejected Configure must not break the limiter")
+	}
+}
