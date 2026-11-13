@@ -44,7 +44,7 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 | # | key | 类型 | 默认 | 当前读点 | 改造要点 |
 |---|-----|------|------|----------|----------|
 | 1 | `log.level` | enum(debug/info/warn/error) | `info` | 构造期固定 | 改为 `slog.LevelVar`，热更直接 `Set` |
-| 2 | `worker.poll_interval` | duration | `5s` | worker 主循环 | 每轮读视图，下一轮生效 |
+| 2 | `worker.poll_interval` | duration | `5s` | **无消费点**（仅声明 + 启动日志） | 待定：接线到具体后台循环，或移出白名单 |
 | 3 | `idempotency.ttl` | duration | `24h` | 幂等中间件构造期 | 写入幂等记录时读当前 TTL |
 | 4 | `rate_limit.rps` | string(数字) | `0` | 管线构造期 | 每次限流决策读当前值 |
 | 5 | `rate_limit.burst` | int | `0` | 管线构造期 | 同上；变更时不清空已有令牌桶 |
@@ -111,8 +111,29 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 | 视图通道 | `pkg/hotconfig`（Build / Holder / 校验）、`spec.HotKeys` 白名单、`config_hot_*` 指标 | 已完成 |
 | 进程接线 | `configcenterruntime` 合并快照并原子替换，`Runtime.Hot` 暴露给消费方 | 已完成 |
 | 消费点 | `log.level`（LevelVar） | 已完成 |
-| 消费点 | `rate_limit.rps/burst/idle_ttl/degrade_on_failure`、`worker.poll_interval`、`idempotency.ttl`、`async.outbox.*`（4 键）、`async.consumer.*`（2 键） | 待改造 |
-| 验收 | AC-CC-02 用例与 runbook 验证步骤 | 待补 |
+| 消费点 | `rate_limit.rps/burst/idle_ttl/degrade_on_failure`（Adaptive 注册表 + Redis `Configure`） | 已完成 |
+| 消费点 | `idempotency.ttl`（`Config.TTLSource`，Begin/Complete 同值） | 已完成 |
+| 消费点 | `async.outbox.poll_interval/batch_size/lease/max_attempts`（`RelayOptions.Params`） | 已完成 |
+| 消费点 | `async.consumer.visibility_timeout`（`IdempotentOptions.Visibility`）、`retry_backoff`（`Params.Backoff`） | 已完成 |
+| 消费点 | `worker.poll_interval` | **阻塞**：全仓无消费点（仅键声明与启动日志打印），接线等于凭空发明语义，待定「接线 or 移出白名单」 |
+| 验收 | AC-CC-02 用例与 runbook 验证步骤 | 待补（需 staging 环境） |
+
+> 消费点改造 12 / 13 已完成（2026-11-13）。第 13 项 `worker.poll_interval` 不是实现难度问题，
+> 而是**没有读点**：仓库里没有任何循环以它为间隔。要么把它接到某个具体后台循环（例如
+> 身份域清理或审计保留期的调度粒度），要么从白名单移除并同步 §附录 A——两种都需要决策，
+> 现状是声明了却没有效果，属于「假热更」，不应算作已交付。
+
+## 运行期语义（实施时确定）
+
+| 场景 | 行为 |
+|------|------|
+| 限流参数变更 | 调整既有令牌桶：已消耗令牌不退还，容量下调截断当前令牌；不重建桶 |
+| 限流参数源短暂不可用 | 沿用上一份已知参数，不把流量打成 429 |
+| 幂等 TTL 变更 | 只影响新写入记录；同一请求的 Begin / Complete 使用同一 TTL |
+| relay `lease` 变更 | 新认领使用新租约；已发出租约按其自身时长过期，不追溯 |
+| `max_attempts` 下调 | 对下一次投递判定立即生效（已存在事件也会更快进死信） |
+| 越界值（如 `batch_size=0`、`max_attempts=9999`） | 按装配期 normalize 规则收敛或忽略，不清零参数 |
+| 视图整体构建失败 | 保留旧视图（不回落代码默认值） |
 
 ## 未决问题
 

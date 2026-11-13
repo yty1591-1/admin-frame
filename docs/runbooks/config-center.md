@@ -124,14 +124,32 @@
 
 ### 热更生效验证
 
-- **hot 键**：把 `log.level` 改为 `debug` 并发布 → 一个刷新周期内日志级别变化，
-  `config_hot_view_version` +1、`config_hot_key_applied_total{key="log.level"}` 递增。
+逐键验证「改了真的生效」，不要只看 `config_hot_key_applied_total` 递增——它只说明视图里
+的值变了，不说明消费方读了新值（`worker.poll_interval` 就是反例：无消费点）。
+
+| 键 | 验证动作 | 期望 |
+|----|----------|------|
+| `log.level` | 改为 `debug` 并发布 | 一个刷新周期内出现 debug 日志；`config_hot_view_version` +1 |
+| `rate_limit.rps` / `burst` | 把 `burst` 调到明显偏小（如 2） | 持续压测在第 3 个请求开始返回 429；调回后恢复 |
+| `rate_limit.idle_ttl` | 调到 `1m` | 空闲桶在一个周期后被回收（内存驱动下观察堆 / 桶数） |
+| `rate_limit.degrade_on_failure` | `fail_closed` + 停掉 Redis | 打开后请求带 `X-RateLimit-Degraded` 放行；关闭后直接 429 |
+| `idempotency.ttl` | 调到 `1m`，重复提交同一 `Idempotency-Key` | 1 分钟内回放首次响应；超时后重新执行 |
+| `async.outbox.poll_interval` | 调到 `5s` | 发布一条事件，worker 侧投递延迟从 1s 量级升到 5s 量级 |
+| `async.outbox.batch_size` | 调到 `500`，积压 1000 条 | 单轮认领量上升，积压消退加快 |
+| `async.outbox.lease` | 调到 `5m`，杀掉 worker 副本 | 在途事件在 5m 后才被其它副本回收（不再 30s 回收） |
+| `async.outbox.max_attempts` | 调到 `1`，让 handler 必然失败 | 首次失败即进 `async_dlq`，不再重试 |
+| `async.consumer.visibility_timeout` | 调到 `10s` | 长任务被其它副本接管的时间窗口收窄到 10s |
+| `async.consumer.retry_backoff` | 改为 `fixed` | 连续失败的重试间隔变为固定值而非指数增长 |
+| `worker.poll_interval` | — | **当前无消费点**，改了不会有任何行为变化（见 ADR-0015 §实施进度） |
+
+通用断言：
+
 - **startup 键**：改 `server.addr` 并发布 → 不生效（需重启），
   `config_hot_ignored_total{key="server.addr"}` 递增，用于发现「以为会热更」的误用。
 - **非法值**：把 `rate_limit.rps` 改成 `abc` 并发布 → `config_hot_reload_total{result="rejected"}` 递增，
   旧视图继续生效，日志出现 `configcenter hot view rejected`。
-- 当前只有 `log.level` 的消费点已改造；其余 12 个白名单键在改造完成前不会真正改变运行行为，
-  即使 `config_hot_key_applied_total` 已在递增。
+- **越界值**：把 `async.outbox.batch_size` 改成 `0` 或 `99999` → 分别按「忽略」与「收敛到 500」
+  处理，`relay` 不会空转或一次性拉满。
 
 ## 升级路径
 
