@@ -134,7 +134,10 @@ func run(configPath string) error {
 				deps.Logger.Warn("secretclient unavailable", "err", serr)
 			} else if secretClient != nil {
 				deps.Logger.Info("secretclient enabled", "base", "CONFIG_API_URL")
-				_ = secretClient // 业务域按需注入；此处完成端到端接线与可观测启动日志
+				if ferr := secretruntime.WarmDemoHMAC(context.Background(), secretClient,
+					appCfg.Config.Env, deps.Logger); ferr != nil {
+					deps.Logger.Warn("demo hmac secret warm failed", "err", ferr)
+				}
 			}
 			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
 			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
