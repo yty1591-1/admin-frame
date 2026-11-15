@@ -1,7 +1,7 @@
 # 自研配置中心规划与评审（Config Center Plan & Review）
 
 > **版本**：v0.4（M1 范围收敛为「仅全量发布」，灰度降级 P1，2026-11-13）
-> **状态**：评审通过（Accepted）；8 个前置条件已满足，**M1 已出口**；**M2 业务密钥托管已落地**（契约 / 表 / 信封 / config-api / 管理面 / 前端 / 演练，见 2026-11-16 M2 进度注）
+> **状态**：评审通过（Accepted）；8 个前置条件已满足，**M1 / M2 / M3 已出口**（M3：删除剩余样例、CI 零跟踪、无文件/KEK/故障/签名灾备演练，见 2026-11-16 M3 进度注）
 > **日期**：2026-11-12（v0.1 初稿；v0.2 扩大为全量接管 + 密钥托管；v0.3 收敛 CFG-04 为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动初始化；v0.4 把 M1 灰度能力收敛为仅全量发布，灰度选择器保留为 P1 契约占位）
 > **适用范围**：新增 `internal/configcenter` 域、`pkg/configclient` 客户端、`cmd/config-api`（M2 内部密钥解析服务）、`frontend/apps/web-admin` 管控页面、`migrations/`、`api/openapi/admin.yaml`、`deploy/` 与相关门禁；`configs/` 目录按 M1（非密钥）/ M2（密钥）/ M3（收口）分批删除
 > **读者**：技术负责人、后端 / 前端工程师、SRE、安全与合规 Reviewer、产品负责人
@@ -1292,6 +1292,8 @@ Service → mTLS/SPIFFE → config-api
 > **M2 进度（2026-11-16）**：`config_secret*` 迁移 `000033`；信封加密 `pkg/envelope`（LocalKEK + Vault Transit）；`cmd/config-api` + `pkg/secretclient`；管理面密钥 API 与 web-admin 密钥页；菜单 `000034`；Q10/Q11 已决；演练见 [`incident/drills/2026-11-16-configcenter-secrets.md`](./incident/drills/2026-11-16-configcenter-secrets.md)。密钥样例文件（8 个 baseline）保留至 M3 删除。
 >
 > **M2 收口（同日）**：迁移 `000035`（`pending_action`）；轮换 / 吊销 / 授权全链路双人审批（AC-CC-15）；启动接线 `EnsureAutoSecrets` + 系统双主体自动批准（AC-CC-17）；`auth.jwt.private_key` 纳入 `secret_rule`（Q9）；`config_secret_resolve_*` 指标落地；`CONFIG_API_MTLS` + TLS env + NetworkPolicy；biz-api 真实解析 `platform.demo.hmac_key`（仅日志指纹）。200 实例压测仍文档放行；密钥样例文件删除仍属 M3。
+>
+> **M3 进度（2026-11-16）**：无文件启动演练通过后删除 8 个 baseline 样例；`git ls-files configs` 为空；`check-no-static-config` 硬化为仅零跟踪；`check-configcenter` 增 CC-14；JWT 经 `secretruntime` 消费 `auth.jwt.private_key`；notification 敏感项明确部署注入；`CONFIG_STANDARDS` §10 迁移例外关闭；`start-services` / Helm NOTES 回写。演练：[`nofile`](./incident/drills/2026-11-16-configcenter-nofile.md)、[`kek-rotation`](./incident/drills/2026-11-16-configcenter-kek-rotation.md)、[`fault-inject`](./incident/drills/2026-11-16-configcenter-fault-inject.md)、[`sign-pitr`](./incident/drills/2026-11-16-configcenter-sign-pitr.md)。**AC-CC-09** 按 M1 口径 Owner 放行（短 soak + 故障注入 + 看板接线）；**AC-CC-10** 复用 PITR runbook 并断言 `config_secret*`。下一步为按需 M4。
 
 > **M1 进度（2026-11-16）**：表 / 领域 / 管理面 / OpenAPI / 权限与审计 / SDK 签名快照 / 首次播种 / 四进程启动期快照接入已完成；指标、告警、runbook 与 `check-configcenter` 门禁已补齐（`make ci` 已纳入）；四进程启动期双读已接线（文件基线 vs 签名快照，指标 `config_dual_read_mismatch` / `config_dual_read_degraded`）；无文件启动开关已支持（`CONFIGCENTER_ALLOW_MISSING_CONFIG`，需快照非空）；业务域键声明已补齐（identity / audit / tenant / notification + IAM，逐键排除密钥、浮点与部署项，默认值有一致性测试守护）；业务 namespace 快照消费与接管开关已实现（`CONFIGCENTER_SNAPSHOT_FILES` 多文件 + `CONFIGCENTER_ENABLED_NAMESPACES`，SDK 按开关逐 namespace 拉取并合并，双读逐 namespace 对比）；Helm `configCenter.*` 已注入快照 Secret 挂载与接管开关；修复平台 `server.addr` / `server.shutdown_timeout` 到顶层 yaml 字段的绑定别名（此前快照播种但运行期不生效）；SDK `Watch` 已实现（非阻塞订阅 + `config_client_watch_dropped_total`）；biz-api / c-api / worker 已接入刷新观测客户端（MySQL 模式，提供快照可用性与 stale 指标）；热更白名单按 [ADR-0015](./adr/0015-config-hot-reload-whitelist.md) H5 收敛为 12 键且消费点全部落地；**前端 4 页已交付**（`web-admin`：配置列表 / 编辑 / 版本历史 / 发布与回滚；迁移 `000032` 启用菜单；仅 `strategy=all`，自审批前端拦截）；**本机 staging 演练已通过**（[`incident/drills/2026-11-16-configcenter-soak.md`](./incident/drills/2026-11-16-configcenter-soak.md)：播种 / 发布 / 回滚三阶段双读零差异 + 签名快照验签；7 天日历 soak 经负责人授权放行）；**非密钥 `configs` 基线已收缩**（端样例 / http / iam / log / staging 模块已 `git rm`；密钥类 `env.example` + auth / identity / infra / notification / platform 留待 M2；`check-no-static-config` 通过；无文件加载由 `TestLoadWithoutConfigFile` 取证）。**M1 出口条件已齐**，可进入 M2（密钥托管）。
 
