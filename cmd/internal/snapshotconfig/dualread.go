@@ -129,7 +129,7 @@ func Report(ctx context.Context, configPath, env string, startup *Startup,
 	if err != nil {
 		return err
 	}
-	// 无文件启动是 M1 演练目标：没有基线可对比，不视为启动错误。
+	// 无文件启动是 M3 目标态：没有基线可对比，不视为启动错误；双读在此场景下退役。
 	if _, err := reporter.flat(); err != nil {
 		if errors.Is(err, platformconfig.ErrMissingFile) {
 			return nil

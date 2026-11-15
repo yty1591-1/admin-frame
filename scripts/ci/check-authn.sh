@@ -291,21 +291,15 @@ if command -v go >/dev/null 2>&1; then
   fi
 fi
 
-echo "==> ENT-01: no hardcoded secrets in example configs"
-shopt -s nullglob
-for file in configs/*.yaml.example; do
-  while IFS= read -r entry; do
-    [[ -z "${entry}" ]] && continue
-    value="${entry#*:}"
-    value="$(echo "${value}" | sed -E "s/^[[:space:]]+//; s/[[:space:]]+$//; s/^[\"']//; s/[\"']$//")"
-    [[ -z "${value}" ]] && continue
-    if echo "${value}" | grep -qiE 'changeme|placeholder|your-|example|<[^>]+>|\$\{'; then
-      continue
-    fi
-    echo "ERROR: ${file} contains hardcoded secret: ${entry}" >&2
-    FAIL=1
-  done < <(grep -E '^[[:space:]]*(secret_key|client_secret)[[:space:]]*:' "${file}" || true)
-done
+echo "==> ENT-01: no tracked configs/ secrets (M3)"
+# M3 删除样例后：git ls-files configs 为空即视为无硬编码样例密钥。
+tracked_configs="$(git ls-files 'configs' 2>/dev/null || true)"
+if [[ -n "${tracked_configs}" ]]; then
+  echo "ERROR: tracked configs/ files remain after M3; refuse hardcoded-secret scan fallback" >&2
+  FAIL=1
+else
+  echo "    OK: no tracked configs/ (hardcoded example secrets N/A)"
+fi
 
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "authn check failed (ENT-01)" >&2

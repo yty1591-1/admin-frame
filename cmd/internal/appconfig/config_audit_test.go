@@ -26,6 +26,10 @@ func memoryBlock() string {
 // loadAuditConfig 写入并加载配置，走真实「defaults → Validate」路径。
 func loadAuditConfig(t *testing.T, yaml string) (*appconfig.Config, error) {
 	t.Helper()
+	// 清掉本机可能残留的 ADMIN_FRAME_*，避免环境覆盖 yaml 断言。
+	t.Setenv("ADMIN_FRAME_DB_DRIVER", "")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "")
+	t.Setenv("ADMIN_FRAME_AUDIT_STORE", "")
 	path := writeConfig(t, "audit.yaml", auditBaseConfig+yaml)
 	return appconfig.Load(path)
 }

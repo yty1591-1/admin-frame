@@ -143,16 +143,17 @@ func LoadWithValuesAllowMissing(path string, values func() (map[string]string, e
 	return loader.Load()
 }
 
-// Load 从 YAML 文件加载完整配置，应用默认值与环境变量覆盖后校验。
+// Load 从可选 YAML 文件加载完整配置，应用默认值与环境变量后校验。
 //
-// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// M3（CFG-04）：业务取值以「配置中心快照 > 代码默认值」为准；无 Values 时
+// 文件 / 环境变量仅作引导与基础设施注入，不得作为业务配置事实源。
 func Load(path string) (*Config, error) {
 	return LoadWithValues(path, nil)
 }
 
 // LoadWithValues 加载配置并应用配置中心快照取值。
 //
-// 优先级：配置中心快照 > 环境变量 > 配置文件 > 默认值（CFG-04）。
+// 优先级：配置中心快照 > 环境变量 / 文件（引导） > 代码默认值（CFG-04）。
 func LoadWithValues(path string, values func() (map[string]string, error)) (*Config, error) {
 	loader, err := NewLoaderWithValues(path, values)
 	if err != nil {

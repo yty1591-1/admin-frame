@@ -85,7 +85,11 @@ type Options[T any] struct {
 	AllowUnknownFields bool
 }
 
-// Loader 按「默认值 → 文件 → 环境变量 → 配置中心快照 → 校验」加载 T 类型配置。
+// Loader 按「默认值 →（可选）文件 → 环境变量 → 配置中心快照 → 校验」加载 T。
+//
+// M3 目标态（CFG-04）：业务配置以「配置中心快照 > 代码默认值」为准；
+// AllowMissingFiles=true 时跳过缺失文件，文件层不参与取值。基础设施口令
+// 仍可通过 EnvPrefix / Secret Provider 注入，不属于业务配置层。
 //
 // 构造后只读，可并发调用 Load；每次调用返回独立副本。
 type Loader[T any] struct {

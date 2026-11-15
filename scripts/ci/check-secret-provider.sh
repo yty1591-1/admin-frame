@@ -70,20 +70,11 @@ for testName in TestVaultProviderForbiddenDoesNotFallBack TestVaultProviderMissi
   fi
 done
 
-echo "==> ENT-07: prod config declares managed source"
-PLATFORM_EXAMPLE="configs/prod/modules/platform.yaml.example"
-if [[ ! -f "${PLATFORM_EXAMPLE}" ]]; then
-  fail "${PLATFORM_EXAMPLE} 缺失"
-else
-  if ! grep -q "^secrets:" "${PLATFORM_EXAMPLE}"; then
-    fail "${PLATFORM_EXAMPLE} 缺少 secrets 段（生产不得依赖隐式环境变量注入）"
-  fi
-  if ! grep -qE "^[[:space:]]+providers:[[:space:]]*\[.*file.*\]" "${PLATFORM_EXAMPLE}"; then
-    fail "${PLATFORM_EXAMPLE} 的 secrets.providers 未声明 file 来源"
-  fi
-  if ! grep -qE "^[[:space:]]+dir:[[:space:]]*\"/var/run/secrets/" "${PLATFORM_EXAMPLE}"; then
-    fail "${PLATFORM_EXAMPLE} 的 secrets.file.dir 未指向 Secret 挂载目录"
-  fi
+echo "==> ENT-07: managed secret source declared in platform defaults / Helm"
+# M3：configs/ 样例已删除；生产托管来源改查代码默认值与 Helm 挂载。
+if ! grep -qE 'SecretProviderFile|providers:.*"file"|ProviderFile|"file"' \
+  internal/platform/config/secrets.go internal/platform/config/defaults.go; then
+  fail "platform secrets 未声明 file Provider（生产不得只靠隐式环境变量）"
 fi
 
 echo "==> ENT-07: helm mounts secrets as files"
@@ -98,23 +89,6 @@ else
     fail "${VALUES_PROD} 缺少 secretMounts（仍只以环境变量注入密钥）"
   fi
 fi
-
-echo "==> ENT-07: no plaintext secrets in prod examples"
-# 生产样例中这些字段必须留空（由 Provider 注入），出现非空值即视为明文泄露。
-check_empty_field() {
-  local file="$1" key="$2"
-  [[ -f "${file}" ]] || return 0
-  # 提取 yaml 中该键的值；去掉行尾注释与空白后必须为空或空字符串。
-  local value
-  value="$(grep -E "^[[:space:]]*${key}:" "${file}" | head -1 | sed -E "s/^[[:space:]]*${key}:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^\"\"$//; s/^''$//" || true)"
-  if [[ -n "${value}" ]]; then
-    fail "${file} 的 ${key} 存在明文取值（生产必须由密钥托管注入）"
-  fi
-}
-check_empty_field "configs/prod/modules/platform.yaml.example" "dsn"
-check_empty_field "configs/prod/modules/auth.yaml.example" "secret"
-check_empty_field "configs/prod/modules/identity.yaml.example" "hash_key"
-check_empty_field "configs/prod/modules/identity.yaml.example" "secret_key"
 
 echo "==> ENT-07: local prod-*.yaml must not reuse published samples"
 # configs/prod-<role>.yaml 不入库，但常被开发者当作「生产配置」复制使用。

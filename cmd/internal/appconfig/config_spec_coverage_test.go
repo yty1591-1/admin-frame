@@ -154,6 +154,10 @@ func TestPlatformKeyCoverage(t *testing.T) {
 	t.Logf("platform coverage: %d yaml paths, %d declared keys", len(paths), len(declared))
 	for _, namespace := range registry.Namespaces() {
 		for _, keySpec := range registry.List(namespace) {
+			// M2/M3：密钥子域只进 config_secret，不要求 yaml 字段镜像。
+			if keySpec.Sensitive && keySpec.SecretRule != nil {
+				continue
+			}
 			if !containsPath(paths, spec.YAMLPath(keySpec.Key)) {
 				t.Errorf("declared key %q has no matching yaml field", keySpec.Key)
 			}

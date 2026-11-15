@@ -83,25 +83,23 @@ if [[ -f "${DOWN}" ]]; then
   done
 fi
 
-echo "==> ENT-03: async config sample must be complete"
-# M1 已删除非密钥端样例；async 段仍以 platform.yaml.example 为契约样本（至 M2）。
-ASYNC_SAMPLE="configs/prod/modules/platform.yaml.example"
-if [[ ! -f "${ASYNC_SAMPLE}" ]]; then
-  echo "ERROR: missing ${ASYNC_SAMPLE} (ENT-03)" >&2
-  FAIL=1
-elif ! grep -qE '^async:' "${ASYNC_SAMPLE}"; then
-  echo "ERROR: ${ASYNC_SAMPLE} must declare async section (ENT-03)" >&2
+echo "==> ENT-03: async config keys must be declared in platform key spec"
+# M3：configs/ 样例已删除；契约改查代码 key spec（CFG-07）。
+SPEC="internal/configcenter/spec/platform.go"
+if [[ ! -f "${SPEC}" ]]; then
+  echo "ERROR: missing ${SPEC} (ENT-03)" >&2
   FAIL=1
 else
-  for key in 'driver:' 'publish_in_api:' 'lease:' 'max_attempts:' 'visibility_timeout:'; do
-    if ! grep -q "${key}" "${ASYNC_SAMPLE}"; then
-      echo "ERROR: ${ASYNC_SAMPLE} missing async key ${key}" >&2
+  for key in 'async.driver' 'async.outbox.publish_in_api' 'async.outbox.lease' \
+    'async.outbox.max_attempts' 'async.consumer.visibility_timeout'; do
+    if ! grep -q "${key}" "${SPEC}"; then
+      echo "ERROR: ${SPEC} missing async key ${key} (ENT-03)" >&2
       FAIL=1
     fi
   done
 fi
 if [[ "${FAIL}" -eq 0 ]]; then
-  echo "    OK: async config sample complete"
+  echo "    OK: async config keys declared in key spec"
 fi
 
 echo "==> ENT-03: async driver must reject unimplemented brokers"
