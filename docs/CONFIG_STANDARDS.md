@@ -1,6 +1,6 @@
 # 工程化配置与多环境规范（硬约束）
 
-> **状态**：已批准（Approved，目标态）；M1 双读、M2 密钥迁移、M3 删除 `configs/` 后全面生效；迁移期例外见 §10
+> **状态**：已批准（Approved）；M3 已删除 `configs/` 跟踪文件并关闭迁移期样例例外；见 §10
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：配置 key spec、配置中心加载、首次启动初始化、业务密钥托管、多环境与迁移门禁
 > **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)
@@ -18,7 +18,7 @@
 4. **密钥明文不入库**：业务密钥信封加密后入库，KEK 外部托管；明文不落库、不落快照、不落日志、不回显前端。
 5. **优先级清晰**：仅「配置中心 > 代码默认值」，行为可预期、可测试。
 
-**阶段说明**：本文描述 M3 完成后的目标态。M1 迁移期允许文件双读用于对比，但文件**不得**作为运行时取值来源；M3 删除 `configs/` 后不再保留文件或环境变量配置层。
+**阶段说明**：M3 已完成。业务配置优先级为「配置中心签名快照 > 代码默认值」；基础设施口令仅部署 Secret / 本地未跟踪 `.env` 注入。仓库 `git ls-files configs` 必须为空。
 
 ---
 
@@ -229,11 +229,11 @@ make ci
 
 ## 10. 例外
 
-1. **迁移期双读**：M1 允许文件双读对比，但文件不得参与取值；差异清零后关闭。
+1. **迁移期双读 / 样例基线（已关闭）**：M1/M2 临时例外已在 M3 关闭；`configs-legacy-baseline.txt` 仅保留注释，`check-no-static-config.sh` 要求零跟踪。
 2. **紧急热修**：仅限故障止血；24h 内补齐 key spec / Validate / 审计，并轮换可能泄露的凭据。
 3. **配置中心故障**：使用签名快照或代码默认值；`required` 缺失时 fail-fast，禁止静默降级。
 4. **密钥轮换窗口**：允许旧版本 grace；超过 grace 仍未切换的调用方须登记整改。
-5. **迁移期样例基线**：M3 前遗留的 `configs/**/*.example` 登记在 `scripts/ci/configs-legacy-baseline.txt`，只减不增（删除文件须同 MR 收缩基线）；新增任何 `configs/` 文件（含样例）均被 `check-no-static-config.sh` 拒绝。
+5. **本地调试文件**：允许未跟踪的 `configs/**/*.yaml` / `.env` 仅用于本机；不得 `git add`，门禁拒绝入库。
 
 ---
 

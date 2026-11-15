@@ -7,15 +7,14 @@
 # 选项：
 #   --no-build          跳过 go build，直接使用 bin/ 下已有二进制
 #   --skip-health       启动后不等待 /readyz 就绪（仅用于排障）
-#   --env-file <path>   环境变量文件；默认 configs/prod/.env，缺失时回退 env.example
+#   --env-file <path>   环境变量文件；默认 configs/prod/.env（本地未跟踪；无回退样例）
 #
 # 说明：
-#   1. 配置优先级：configs/prod-<role>.yaml > configs/prod/<role>.yaml.example。
-#      前者不入库（.gitignore 已忽略 configs/*.yaml），用于放真实主机与密钥占位；
-#      后者仅用于演练，主机名需通过环境变量覆盖。
-#   2. 密钥只从环境变量读取；脚本会逐行 export，不执行 source，避免 DSN 中的 & 被解释。
+#   1. M3 起业务配置仅「签名快照 + 代码默认值」；仓库不再跟踪 configs/*.example。
+#      可选本地未跟踪文件 configs/prod-<role>.yaml 仅作调试覆盖，不得入库。
+#   2. 基础设施口令只从 --env-file / 部署 Secret 注入；脚本逐行 export，不执行 source。
 #   3. 迁移不在本脚本内自动执行；生产必须先跑独立 migrate Job：
-#        go run ./cmd/migrate -config configs/prod-admin.yaml -action up
+#        go run ./cmd/migrate -dsn "$ADMIN_FRAME_DB_DSN" -action up
 #   4. 启动顺序固定为 worker -> admin -> biz -> c，worker 负责 Outbox Relay。
 #   5. PIDs 与日志写入 bin/run/（已被 /bin/ 忽略），不会污染工作区。
 #   6. Windows 下若 bash 来自 WSL，脚本会自动切到 Git Bash：WSL 启动原生 Windows
@@ -27,6 +26,7 @@
 #      CTRL_CLOSE_EVENT（Go 运行时映射为 SIGTERM）并被优雅停机，日志表现为启动成功
 #      后立刻出现 "shutdown requested" → "server stopped"。stop/status 不受此限制；
 #      WSL 下的自动切换只能保住环境变量，无法保住进程生命周期。
+#   9. 无本地 yaml 时导出 CONFIGCENTER_ALLOW_MISSING_CONFIG=1，依赖签名快照启动。
 
 set -euo pipefail
 
@@ -130,12 +130,7 @@ parse_args() {
 load_env() {
   local file="$ENV_FILE"
   if [[ ! -f "$file" ]]; then
-    if [[ -f "configs/prod/env.example" ]]; then
-      file="configs/prod/env.example"
-      warn "未找到 $ENV_FILE，回退到 configs/prod/env.example（其中为随机演练值，不可用于真实生产）"
-    else
-      die "环境变量文件不存在：$ENV_FILE"
-    fi
+    die "环境变量文件不存在：$ENV_FILE（M3 已删除 env.example；请自建未跟踪的 .env 或传入 --env-file）"
   fi
   local line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -169,13 +164,10 @@ resolve_config() {
     printf '%s' "$real"
     return 0
   fi
-  local example="configs/prod/${key}.yaml.example"
-  if [[ -f "$example" ]]; then
-    warn "未找到 $real，使用示例配置 $example（主机名/密钥需由环境变量覆盖）"
-    printf '%s' "$example"
-    return 0
-  fi
-  die "缺少配置：$real（M1 已删除非密钥 yaml.example；请用配置中心快照 / 代码默认值，或本地自建 $real）"
+  # M3：无本地 yaml 时仍返回约定路径；启动前导出 ALLOW_MISSING，走快照/默认值。
+  export CONFIGCENTER_ALLOW_MISSING_CONFIG=1
+  warn "未找到 $real；已设置 CONFIGCENTER_ALLOW_MISSING_CONFIG=1（依赖签名快照 + 代码默认值）"
+  printf '%s' "$real"
 }
 
 # build_output 是构建产物的目标路径；Windows 下统一带 .exe 后缀。

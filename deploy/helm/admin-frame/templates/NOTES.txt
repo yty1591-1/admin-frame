@@ -6,6 +6,11 @@ WARNING: serviceMonitor.enabled=true，但本集群没有 monitoring.coreos.com/
 {{- end }}
 admin-frame 已部署到命名空间 {{ .Release.Namespace }}（release: {{ .Release.Name }}）。
 
+配置面（M3）：
+  - 业务配置：仅签名快照 + 代码默认值（无 ConfigMap 业务 yaml）
+  - 基础设施口令：Secret / envFrom；JWT 等业务密钥经 config-api resolve
+  - 生产建议：config-api 开启 mTLS（CONFIG_API_MTLS=require）
+
 检查就绪状态：
   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "admin-frame.fullname" . }}-admin --timeout=120s
