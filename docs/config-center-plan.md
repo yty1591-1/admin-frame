@@ -1,7 +1,7 @@
 # 自研配置中心规划与评审（Config Center Plan & Review）
 
 > **版本**：v0.4（M1 范围收敛为「仅全量发布」，灰度降级 P1，2026-11-13）
-> **状态**：评审通过（Accepted）；8 个前置条件已满足，M1 编码进行中（关闭记录见 §10.3）
+> **状态**：评审通过（Accepted）；8 个前置条件已满足，**M1 已出口**（关闭记录见 §10.3；环境演练与非密钥基线收缩见 2026-11-16 进度注）
 > **日期**：2026-11-12（v0.1 初稿；v0.2 扩大为全量接管 + 密钥托管；v0.3 收敛 CFG-04 为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动初始化；v0.4 把 M1 灰度能力收敛为仅全量发布，灰度选择器保留为 P1 契约占位）
 > **适用范围**：新增 `internal/configcenter` 域、`pkg/configclient` 客户端、`cmd/config-api`（M2 内部密钥解析服务）、`frontend/apps/web-admin` 管控页面、`migrations/`、`api/openapi/admin.yaml`、`deploy/` 与相关门禁；`configs/` 目录按 M1（非密钥）/ M2（密钥）/ M3（收口）分批删除
 > **读者**：技术负责人、后端 / 前端工程师、SRE、安全与合规 Reviewer、产品负责人
@@ -1289,9 +1289,9 @@ Service → mTLS/SPIFFE → config-api
 | **M3 删除与演练** | 删除剩余密钥文件；CI 禁止 `configs/*.yaml`；KEK 轮换 / 恢复演练；30 天 SLO；全链路故障注入；签名密钥轮换 | `AC-CC-10` 通过；无文件 + 无中心 + KMS 故障演练；安全 / 合规评审；30 天 SLO 达标 | M2 |
 | **M4 规模化（按需）** | 普通配置读收敛到 `config-api` 评估、读副本 / 多区域、多语言 SDK、B 端自助、配置依赖图、HSM | 拆分触发条件满足；容量 / 成本评审 | M3 |
 
-> **M1 进度（2026-11-13）**：表 / 领域 / 管理面 / OpenAPI / 权限与审计 / SDK 签名快照 / 首次播种 / 四进程启动期快照接入已完成；指标、告警、runbook 与 `check-configcenter` 门禁已补齐（`make ci` 已纳入）；四进程启动期双读已接线（文件基线 vs 签名快照，指标 `config_dual_read_mismatch` / `config_dual_read_degraded`）；无文件启动开关已支持（`CONFIGCENTER_ALLOW_MISSING_CONFIG`，需快照非空）；业务域键声明已补齐（identity / audit / tenant / notification + IAM，逐键排除密钥、浮点与部署项，默认值有一致性测试守护）；业务 namespace 快照消费与接管开关已实现（`CONFIGCENTER_SNAPSHOT_FILES` 多文件 + `CONFIGCENTER_ENABLED_NAMESPACES`，SDK 按开关逐 namespace 拉取并合并，双读逐 namespace 对比）；Helm `configCenter.*` 已注入快照 Secret 挂载与接管开关；修复平台 `server.addr` / `server.shutdown_timeout` 到顶层 yaml 字段的绑定别名（此前快照播种但运行期不生效）；SDK `Watch` 已实现（非阻塞订阅 + `config_client_watch_dropped_total`）；biz-api / c-api / worker 已接入刷新观测客户端（MySQL 模式，提供快照可用性与 stale 指标）。剩余：前端 4 页（§8.2-6）、热更消费点改造（[ADR-0015](./adr/0015-config-hot-reload-whitelist.md) 已 Accepted：视图通道 / 四进程接线 / 12 个键的消费点已落地；仅 `worker.poll_interval` 因全仓无读点而阻塞，需决策「接线 or 移出白名单」）、7 天双读零差异与无文件启动 / 回滚演练（需环境执行）、非密钥 `configs` 基线收缩。
+> **M1 进度（2026-11-16）**：表 / 领域 / 管理面 / OpenAPI / 权限与审计 / SDK 签名快照 / 首次播种 / 四进程启动期快照接入已完成；指标、告警、runbook 与 `check-configcenter` 门禁已补齐（`make ci` 已纳入）；四进程启动期双读已接线（文件基线 vs 签名快照，指标 `config_dual_read_mismatch` / `config_dual_read_degraded`）；无文件启动开关已支持（`CONFIGCENTER_ALLOW_MISSING_CONFIG`，需快照非空）；业务域键声明已补齐（identity / audit / tenant / notification + IAM，逐键排除密钥、浮点与部署项，默认值有一致性测试守护）；业务 namespace 快照消费与接管开关已实现（`CONFIGCENTER_SNAPSHOT_FILES` 多文件 + `CONFIGCENTER_ENABLED_NAMESPACES`，SDK 按开关逐 namespace 拉取并合并，双读逐 namespace 对比）；Helm `configCenter.*` 已注入快照 Secret 挂载与接管开关；修复平台 `server.addr` / `server.shutdown_timeout` 到顶层 yaml 字段的绑定别名（此前快照播种但运行期不生效）；SDK `Watch` 已实现（非阻塞订阅 + `config_client_watch_dropped_total`）；biz-api / c-api / worker 已接入刷新观测客户端（MySQL 模式，提供快照可用性与 stale 指标）；热更白名单按 [ADR-0015](./adr/0015-config-hot-reload-whitelist.md) H5 收敛为 12 键且消费点全部落地；**前端 4 页已交付**（`web-admin`：配置列表 / 编辑 / 版本历史 / 发布与回滚；迁移 `000032` 启用菜单；仅 `strategy=all`，自审批前端拦截）；**本机 staging 演练已通过**（[`incident/drills/2026-11-16-configcenter-soak.md`](./incident/drills/2026-11-16-configcenter-soak.md)：播种 / 发布 / 回滚三阶段双读零差异 + 签名快照验签；7 天日历 soak 经负责人授权放行）；**非密钥 `configs` 基线已收缩**（端样例 / http / iam / log / staging 模块已 `git rm`；密钥类 `env.example` + auth / identity / infra / notification / platform 留待 M2；`check-no-static-config` 通过；无文件加载由 `TestLoadWithoutConfigFile` 取证）。**M1 出口条件已齐**，可进入 M2（密钥托管）。
 
-> **热更消费点改造（2026-11-13）**：白名单 13 键中 12 键已真正改变运行行为——入口限流（`rate_limit.*` 走 Adaptive 注册表，改参不重建桶、已消耗令牌不退还）、幂等 TTL（`idempotency.ttl`，Begin/Complete 同值）、Outbox relay（`async.outbox.*`，越界值按装配期规则收敛）、消费租约与退避（`async.consumer.visibility_timeout` / `retry_backoff`）。接线统一收敛到 `configcenterruntime.ApplyRuntimeParams`，worker 因 async 运行时后装配而单独在 `deps.Async` 就绪后调用。**`worker.poll_interval` 暂未接线**：仓库内没有任何循环以它为间隔（仅键声明与启动日志），接入等于凭空发明语义，需决策后处理。
+> **热更消费点改造（2026-11-16）**：白名单 12 键均已真正改变运行行为——入口限流（`rate_limit.*` 走 Adaptive 注册表，改参不重建桶、已消耗令牌不退还）、幂等 TTL（`idempotency.ttl`，Begin/Complete 同值）、Outbox relay（`async.outbox.*`，越界值按装配期规则收敛）、消费租约与退避（`async.consumer.visibility_timeout` / `retry_backoff`）。接线统一收敛到 `configcenterruntime.ApplyRuntimeParams`，worker 因 async 运行时后装配而单独在 `deps.Async` 就绪后调用。**H5**：`worker.poll_interval` 已移出白名单并收紧为 startup（全仓无消费循环，保留会造成假热更）。
 
 > **双读周期化（2026-11-13）**：双读此前只在启动时执行一次，「7 天零差异」只能靠重启抽样取证；已改为启动一次 + 每 30s 跟随快照刷新采样（`snapshotconfig.RunPeriodic`），日志按差异集合去重，四个进程均已接线，soak 步骤见 [`runbooks/config-center.md`](./runbooks/config-center.md)「7 天双读 soak」
 
@@ -1533,7 +1533,7 @@ ADR-0013 与 ADR-0014 的核心决议与本文 §1.2 一致，状态均为 Accep
 |----|------|------|--------|------------|
 | 灰度能力 | M1「全量与基础灰度」→ **仅全量发布**；百分比 / 租户 / 渠道 / 实例整体顺延 P1 | 读路径只有 `env + namespace` 单一生效指针，没有目标匹配；允许策略落库会让规则「配置成功但全量生效」，属于静默错配 | `internal/configcenter`（拒绝非 `all`）、`api/openapi/schemas/admin/configcenter.yaml`（请求枚举收紧）、前端配置 4 页不做灰度控件、AC-CC 不含灰度项 | v0.4，2026-11-13；架构 Owner 确认后生效 |
 | 契约保留 | `strategy` 枚举与 `target_rule_json` 字段保留，仅 `all` 可用 | P1 恢复时不破坏已生成的客户端类型，只做加法 | 无行为影响 | 同上 |
-| 热更白名单 | 新增 ADR-0015（Accepted）：13 键白名单、不可变视图原子替换、失败保留旧值；两个 concurrency 键收紧为不可热更 | ARCH §5.6 要求热更前定义白名单并补 ADR；此前刷新只打点不回写，AC-CC-02 不成立 | `pkg/hotconfig`、`spec.HotKeys`、`Runtime.Hot`、`config_hot_*` 指标；其余 12 键消费点待改 | 2026-11-13；H1 / H2 已决 |
+| 热更白名单 | 新增 ADR-0015（Accepted）：不可变视图原子替换、失败保留旧值；两个 concurrency 键收紧为不可热更；H5 后白名单 12 键 | ARCH §5.6 要求热更前定义白名单并补 ADR；此前刷新只打点不回写，AC-CC-02 不成立 | `pkg/hotconfig`、`spec.HotKeys`、`Runtime.Hot`、`config_hot_*` 指标；12 键消费点已落地 | 2026-11-13；H1 / H2 已决；H5（2026-11-16）移出 `worker.poll_interval` |
 | 迁移缺陷 | `000031` 的 `sensitive` 加反引号 | MySQL 8.0 保留字，未加引号导致建表 1064、M1 无法在任何环境落库 | 迁移可执行性；列名与冻结契约不变 | 2026-11-13 修复 |
 
 > 本节记录改变 M1 出口标准的事项；P1 恢复灰度时必须回到 §4.2.2 / §6.6 重新评审，并补齐 AC-CC 灰度验收项。

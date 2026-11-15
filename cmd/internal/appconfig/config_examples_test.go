@@ -26,7 +26,8 @@ func TestLoadConfigExampleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(files) == 0 {
-		t.Fatal("no example configs found")
+		// M1 已删除非密钥端样例；加载契约改由 key spec / configcenter 演练覆盖。
+		t.Skip("M1: prod channel yaml.example removed; covered by configcenter drill")
 	}
 	for _, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) {

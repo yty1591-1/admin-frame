@@ -175,7 +175,7 @@ resolve_config() {
     printf '%s' "$example"
     return 0
   fi
-  die "缺少配置：$real（可复制 $example 后修改）"
+  die "缺少配置：$real（M1 已删除非密钥 yaml.example；请用配置中心快照 / 代码默认值，或本地自建 $real）"
 }
 
 # build_output 是构建产物的目标路径；Windows 下统一带 .exe 后缀。

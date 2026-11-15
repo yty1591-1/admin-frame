@@ -1,27 +1,13 @@
 # CFG-01 迁移期基线：只允许删除，不允许新增。
 # 每删除一个 configs/ 下的文件，必须在同一 MR 移除对应行；清空后本文件保留为空。
 # 新增任何 configs/ 文件（含 *.example）都会被 check-no-static-config.sh 判定失败。
-configs/dev/admin.yaml.example
-configs/dev/biz.yaml.example
-configs/dev/c.yaml.example
+#
+# M1（2026-11-16）：非密钥样例已收缩；下列为密钥 / 凭据注入类，留待 M2 删除。
 configs/dev/env.example
-configs/dev/worker.yaml.example
-configs/prod/admin.yaml.example
-configs/prod/biz.yaml.example
-configs/prod/c.yaml.example
 configs/prod/env.example
 configs/prod/modules/auth.yaml.example
-configs/prod/modules/http.yaml.example
-configs/prod/modules/iam.yaml.example
 configs/prod/modules/identity.yaml.example
 configs/prod/modules/infra.yaml.example
-configs/prod/modules/log.yaml.example
 configs/prod/modules/notification.yaml.example
 configs/prod/modules/platform.yaml.example
-configs/prod/worker.yaml.example
-configs/staging/admin.yaml.example
-configs/staging/biz.yaml.example
-configs/staging/c.yaml.example
 configs/staging/env.example
-configs/staging/modules/staging.yaml.example
-configs/staging/worker.yaml.example

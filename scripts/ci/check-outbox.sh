@@ -83,16 +83,8 @@ if [[ -f "${DOWN}" ]]; then
   done
 fi
 
-echo "==> ENT-03: async config samples must be complete"
-# 配置按端拆分后 async 段收敛到公共模块；端样例入库为
-# configs/prod/<channel>.yaml.example，本地运行配置 configs/prod-<channel>.yaml
-# 被 .gitignore 排除，仅存在本地，CI 不得依赖。
-for sample in configs/prod/admin.yaml.example configs/prod/biz.yaml.example configs/prod/c.yaml.example configs/prod/worker.yaml.example; do
-  if [[ ! -f "${sample}" ]]; then
-    echo "ERROR: missing ${sample} (ENT-03)" >&2
-    FAIL=1
-  fi
-done
+echo "==> ENT-03: async config sample must be complete"
+# M1 已删除非密钥端样例；async 段仍以 platform.yaml.example 为契约样本（至 M2）。
 ASYNC_SAMPLE="configs/prod/modules/platform.yaml.example"
 if [[ ! -f "${ASYNC_SAMPLE}" ]]; then
   echo "ERROR: missing ${ASYNC_SAMPLE} (ENT-03)" >&2
@@ -109,7 +101,7 @@ else
   done
 fi
 if [[ "${FAIL}" -eq 0 ]]; then
-  echo "    OK: async config samples complete"
+  echo "    OK: async config sample complete"
 fi
 
 echo "==> ENT-03: async driver must reject unimplemented brokers"
