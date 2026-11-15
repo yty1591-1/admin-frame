@@ -10,7 +10,11 @@
     "role": "Roles",
     "menu": "Menus",
     "audit": "Audit Log",
-    "config": "System Config"
+    "config": "Config Center",
+    "configItems": "Config Items",
+    "configEdit": "Edit Config",
+    "configVersions": "Version History",
+    "configReleases": "Releases"
   },
   "iam": {
     "title": "Permissions",

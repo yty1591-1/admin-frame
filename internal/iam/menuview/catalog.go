@@ -15,6 +15,10 @@ import (
 //
 // 新增页面时在此追加，并在同一变更中创建对应 .vue 文件，否则测试失败。
 var adminComponents = []string{
+	"/system/config/edit/index.vue",
+	"/system/config/items/index.vue",
+	"/system/config/releases/index.vue",
+	"/system/config/versions/index.vue",
 	"/system/role/index.vue",
 }
 

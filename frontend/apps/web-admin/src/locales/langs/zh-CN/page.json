@@ -10,7 +10,11 @@
     "role": "角色管理",
     "menu": "菜单管理",
     "audit": "审计日志",
-    "config": "系统配置"
+    "config": "配置中心",
+    "configItems": "配置列表",
+    "configEdit": "配置编辑",
+    "configVersions": "版本历史",
+    "configReleases": "发布与回滚"
   },
   "iam": {
     "title": "权限管理",
