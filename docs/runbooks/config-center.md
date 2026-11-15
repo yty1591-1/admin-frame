@@ -120,12 +120,14 @@
 6. 发布一个 Release，确认 30s 内 `config_dual_read_mismatch` 仍为 0、`config_hot_view_version` 递增。
 7. 之后按上一节 PromQL 每日巡检，满 7 天取证。
 
-> 本机跑通 ≠ staging 验收：环境差异（多副本、Secret 挂载、刷新抖动）仍需在预发复证；正式 7 天计量以预发为准。
+> 本机跑通默认 ≠ 远程预发验收。若项目明确「staging=本机」且负责人授权，可用单轮零差异 +
+> [`incident/drills/2026-11-16-configcenter-soak.md`](../incident/drills/2026-11-16-configcenter-soak.md)
+> 放行 7 天日历等待；多副本抖动仍建议在真实预发补测。
 
 ### 热更生效验证
 
 逐键验证「改了真的生效」，不要只看 `config_hot_key_applied_total` 递增——它只说明视图里
-的值变了，不说明消费方读了新值（`worker.poll_interval` 就是反例：无消费点）。
+的值变了，不说明消费方读了新值。
 
 | 键 | 验证动作 | 期望 |
 |----|----------|------|
@@ -140,12 +142,11 @@
 | `async.outbox.max_attempts` | 调到 `1`，让 handler 必然失败 | 首次失败即进 `async_dlq`，不再重试 |
 | `async.consumer.visibility_timeout` | 调到 `10s` | 长任务被其它副本接管的时间窗口收窄到 10s |
 | `async.consumer.retry_backoff` | 改为 `fixed` | 连续失败的重试间隔变为固定值而非指数增长 |
-| `worker.poll_interval` | — | **当前无消费点**，改了不会有任何行为变化（见 ADR-0015 §实施进度） |
 
 通用断言：
 
-- **startup 键**：改 `server.addr` 并发布 → 不生效（需重启），
-  `config_hot_ignored_total{key="server.addr"}` 递增，用于发现「以为会热更」的误用。
+- **startup 键**：改 `server.addr` 或 `worker.poll_interval` 并发布 → 不生效（需重启），
+  `config_hot_ignored_total` 对应 key 递增，用于发现「以为会热更」的误用。
 - **非法值**：把 `rate_limit.rps` 改成 `abc` 并发布 → `config_hot_reload_total{result="rejected"}` 递增，
   旧视图继续生效，日志出现 `configcenter hot view rejected`。
 - **越界值**：把 `async.outbox.batch_size` 改成 `0` 或 `99999` → 分别按「忽略」与「收敛到 500」
