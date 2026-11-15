@@ -95,13 +95,15 @@ func platformSpecs() []domain.KeySpec {
 			"debug", "info", "warn", "error"),
 		stringKeyWithEnum("log.format", "json", "日志输出格式", false, "json", "text"),
 
-		// 鉴权启动参数；密钥与密钥环不进入配置中心（SEC-01 / M2）。
+		// 鉴权启动参数；JWT 签名私钥走密钥子域（Q9 / M2），口令类仍不入库。
 		stringKeyWithEnum("auth.mode", "", "鉴权模式；空值按环境回退", false, "demo", "jwt"),
 		stringKeyWithEnum("auth.expected_channel", "", "期望端别；空值跟随 channel", false,
 			"admin", "biz", "c"),
 		stringKeyWithEnum("auth.jwt.alg", "", "JWT 签名算法", false, "HS256", "RS256"),
 		requiredKey("auth.jwt.issuer", domain.ValueTypeString, "JWT 期望 issuer"),
 		requiredKey("auth.jwt.audience", domain.ValueTypeJSON, "JWT 期望 audience 列表（JSON 数组）"),
+		sensitiveAutoKey("auth.jwt.private_key", "JWT 签名私钥（M2 密钥子域；首次按 secret_rule 生成）",
+			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 
 		// 数据源与缓存：连接串与口令不进配置中心。
 		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql", "postgres"),

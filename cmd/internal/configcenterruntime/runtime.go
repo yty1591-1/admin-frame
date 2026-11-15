@@ -128,7 +128,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	appOpts := app.Options{Service: service, Signer: signer}
+	appOpts := app.Options{Service: service, Signer: signer, SecretObserver: metrics}
 
 	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, appOpts)
 	if err != nil {
@@ -166,6 +166,9 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		kek, emitter, deps.IDs, appOpts)
 	if err != nil {
 		return nil, fmt.Errorf("configcenter secret service: %w", err)
+	}
+	if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
+		return nil, err
 	}
 
 	handler, err := configcenterrest.NewHandler(configcenterrest.HandlerConfig{
@@ -231,9 +234,13 @@ func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics, err := buildMetrics(deps)
+	if err != nil {
+		return nil, err
+	}
 	secretService, err := app.NewSecretService(
 		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
-		kek, emitter, deps.IDs, app.Options{Service: service})
+		kek, emitter, deps.IDs, app.Options{Service: service, SecretObserver: metrics})
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +265,7 @@ func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{Handler: handler, Secrets: secretService}, nil
+	return &Runtime{Handler: handler, Secrets: secretService, Metrics: metrics}, nil
 }
 
 // buildKEK 按环境选择 LocalKEK 或 Vault Transit；prod 禁止 LocalKEK。
@@ -443,6 +450,26 @@ func bootstrap(deps *platform.Deps, service *app.BootstrapService,
 		}); err != nil {
 			return fmt.Errorf("configcenter bootstrap namespace %q: %w", namespace, err)
 		}
+	}
+	return nil
+}
+
+// bootstrapSecrets 按 secret_rule 幂等生成并激活业务密钥（AC-CC-17）。
+func bootstrapSecrets(deps *platform.Deps, service *app.SecretService,
+	registry *spec.Registry, sqlDB *sql.DB) error {
+	if service == nil || registry == nil {
+		return nil
+	}
+	actor := app.Actor{
+		SubjectID: bootstrapSubject,
+		ActorType: "system",
+		Channel:   "admin",
+		TraceID:   bootstrapTrace,
+	}
+	if err := withinTx(context.Background(), sqlDB, func(ctx context.Context) error {
+		return service.EnsureAutoSecrets(ctx, deps.Config.Env, registry, actor)
+	}); err != nil {
+		return fmt.Errorf("configcenter bootstrap secrets: %w", err)
 	}
 	return nil
 }

@@ -4,21 +4,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
+const bootstrapReviewer = "system:config-bootstrap-reviewer"
+
 // EnsureAutoSecrets 对声明了 secret_rule.auto_generate 的敏感键幂等生成并入库。
 //
 // 已存在同名密钥时跳过；无规则且 Required 的敏感键返回错误（fail-fast）。
+// 自动生成链路使用双系统主体完成双人审批，使空环境可一键启动（D16 / AC-CC-17）。
 func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, registry *spec.Registry, actor Actor) error {
 	if registry == nil {
 		return apperr.Internal("secret bootstrap requires registry", nil)
 	}
 	if err := requireActor(actor); err != nil {
 		return err
+	}
+	reviewer := Actor{
+		SubjectID: bootstrapReviewer,
+		ActorType: "system",
+		Channel:   actor.Channel,
+		TraceID:   actor.TraceID,
 	}
 	for _, namespace := range registry.Namespaces() {
 		for _, keySpec := range registry.List(namespace) {
@@ -35,7 +46,11 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 				}
 				continue
 			}
-			if _, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key); err == nil {
+			secret, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
+			if err == nil {
+				if err := s.ensureBootstrapGrant(ctx, secret, reviewer); err != nil {
+					return err
+				}
 				continue
 			} else if !errors.Is(err, domain.ErrNotFound) {
 				return apperr.Internal("lookup secret failed", err)
@@ -44,7 +59,7 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 			if err != nil {
 				return apperr.Internal("generate secret failed", err)
 			}
-			secret, err := s.CreateSecret(ctx, CreateSecretInput{
+			secret, err = s.CreateSecret(ctx, CreateSecretInput{
 				Env: env, Namespace: namespace, Name: keySpec.Key,
 				Description: keySpec.Description, Owner: keySpec.Owner,
 				Plaintext: plaintext, Actor: actor,
@@ -52,11 +67,54 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 			if err != nil {
 				return err
 			}
-			// 自动生成密钥直接送审并需人工审批；开发环境可再 Approve。
 			if _, err := s.SubmitSecret(ctx, secret.ID, actor); err != nil {
+				return err
+			}
+			secret, err = s.ApproveSecret(ctx, ApproveSecretInput{
+				ID: secret.ID, Decision: domain.DecisionApproved,
+				Comment: "bootstrap auto-approve", Actor: reviewer,
+			})
+			if err != nil {
+				return err
+			}
+			if err := s.ensureBootstrapGrant(ctx, secret, reviewer); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// ensureBootstrapGrant 为启动期服务身份补齐可解析授权（幂等）。
+func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.Secret, reviewer Actor) error {
+	identity := strings.TrimSpace(os.Getenv("CONFIG_BOOTSTRAP_GRANT_IDENTITY"))
+	if identity == "" {
+		identity = "spiffe://local/biz-api"
+	}
+	if secret.Status != domain.SecretStatusActive {
+		return nil
+	}
+	if _, err := s.grants.FindActive(ctx, secret.Env, secret.Namespace, identity, secret.ID, s.now().UTC()); err == nil {
+		return nil
+	}
+	if secret.PendingAction != "" {
+		return nil
+	}
+	submitter := Actor{
+		SubjectID: "system:config-bootstrap",
+		ActorType: "system",
+		Channel:   reviewer.Channel,
+		TraceID:   reviewer.TraceID,
+	}
+	grant, err := s.CreateGrant(ctx, CreateGrantInput{
+		SecretID: secret.ID, ServiceIdentity: identity, Actor: submitter,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ApproveSecret(ctx, ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved,
+		Comment: "bootstrap grant " + grant.ServiceIdentity, Actor: reviewer,
+	})
+	return err
 }

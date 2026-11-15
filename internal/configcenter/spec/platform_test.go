@@ -97,6 +97,10 @@ func TestPlatformCatalogExcludesSecrets(t *testing.T) {
 	}
 	forbidden := []string{"password", "secret", "private_key", "credential", "token", "dsn"}
 	for _, keySpec := range registry.List(spec.NamespacePlatform) {
+		// 密钥子域（Sensitive + secret_rule）允许出现敏感词；值不进 config_item。
+		if keySpec.Sensitive && keySpec.SecretRule != nil {
+			continue
+		}
 		for _, needle := range forbidden {
 			if strings.Contains(keySpec.Key, needle) {
 				t.Fatalf("key %s must not be declared in the config center", keySpec.Key)
