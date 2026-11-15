@@ -3,7 +3,7 @@
 
 # 构建阶段固定在 BUILDPLATFORM（runner 原生架构），按 TARGETOS/TARGETARCH 交叉编译，
 # 多架构（amd64/arm64）构建无需逐架构 QEMU 编译 Go 代码。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.24 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine3.24 AS builder
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
