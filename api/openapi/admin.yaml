@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.6.0
+  version: 8.6.1
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -49,6 +49,7 @@ info:
     读、写、审批、发布四权分离（`config:read` / `config:write` / `config:approve` /
     `config:publish`）；敏感项（`sensitive=true`）只返回 `value_hash`，不返回明文；
     快照不可变，生效只切换释放指针（纯增量）。
+    8.6.1：密钥轮换 / 吊销 / 授权改为双人审批（pending_action）；纯增量。
     8.6.0：配置中心业务密钥管理面（M2 / ADR-0014）——新增 `/admin/v1/configs/secrets*`；
     `config:secret:read/write/approve` 三权分离；列表 / 详情仅指纹，明文只允许创建与轮换一次性输入（纯增量）。
 servers:
