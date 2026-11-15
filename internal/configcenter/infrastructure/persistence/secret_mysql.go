@@ -46,11 +46,13 @@ func (r *secretMySQL) Create(ctx context.Context, secret domain.Secret, version 
 	_, err := q.ExecContext(ctx, `
 INSERT INTO config_secret (
   id, env, namespace, name, description, owner, status, active_version, version,
-  rotate_interval_days, dual_version, submitted_by, expires_at, created_by, updated_by, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  rotate_interval_days, dual_version, submitted_by, pending_action, pending_payload,
+  expires_at, created_by, updated_by, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		secret.ID, secret.Env, secret.Namespace, secret.Name, secret.Description, secret.Owner,
 		string(secret.Status), secret.ActiveVersion, secret.Version, secret.RotateIntervalDays,
-		boolToTiny(secret.DualVersion), secret.SubmittedBy, nullTime(secret.ExpiresAt),
+		boolToTiny(secret.DualVersion), secret.SubmittedBy, secret.PendingAction, secret.PendingPayload,
+		nullTime(secret.ExpiresAt),
 		secret.CreatedBy, secret.UpdatedBy, secret.CreatedAt, secret.UpdatedAt)
 	if err != nil {
 		if isDuplicate(err) {
@@ -80,7 +82,8 @@ func (r *secretMySQL) GetByName(ctx context.Context, env, namespace, name string
 }
 
 const secretSelectCols = `id, env, namespace, name, description, owner, status, active_version, version,
- rotate_interval_days, dual_version, submitted_by, expires_at, created_by, updated_by, created_at, updated_at`
+ rotate_interval_days, dual_version, submitted_by, pending_action, pending_payload,
+ expires_at, created_by, updated_by, created_at, updated_at`
 
 func (r *secretMySQL) scanOne(ctx context.Context, query string, args ...any) (domain.Secret, error) {
 	row := r.conn(ctx).QueryRowContext(ctx, query, args...)
@@ -131,10 +134,12 @@ func (r *secretMySQL) List(ctx context.Context, env, namespace string, status do
 func (r *secretMySQL) UpdateCAS(ctx context.Context, secret domain.Secret, expectedVersion int64) error {
 	res, err := r.conn(ctx).ExecContext(ctx, `
 UPDATE config_secret SET status=?, active_version=?, version=?, rotate_interval_days=?, dual_version=?,
-  submitted_by=?, expires_at=?, updated_by=?, updated_at=?, description=?, owner=?
+  submitted_by=?, pending_action=?, pending_payload=?, expires_at=?, updated_by=?, updated_at=?,
+  description=?, owner=?
  WHERE id=? AND version=?`,
 		string(secret.Status), secret.ActiveVersion, secret.Version, secret.RotateIntervalDays,
-		boolToTiny(secret.DualVersion), secret.SubmittedBy, nullTime(secret.ExpiresAt),
+		boolToTiny(secret.DualVersion), secret.SubmittedBy, secret.PendingAction, secret.PendingPayload,
+		nullTime(secret.ExpiresAt),
 		secret.UpdatedBy, secret.UpdatedAt, secret.Description, secret.Owner,
 		secret.ID, expectedVersion)
 	if err != nil {
@@ -322,7 +327,8 @@ func (r *grantMySQL) FindActive(ctx context.Context, env, namespace, serviceIden
 	row := r.conn(ctx).QueryRowContext(ctx, `
 SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, created_by, created_at, revoked_at
   FROM config_secret_grant
- WHERE env=? AND namespace=? AND service_identity=? AND secret_id=? AND revoked_at IS NULL
+ WHERE env=? AND namespace=? AND service_identity=? AND secret_id=? AND permission='resolve'
+   AND revoked_at IS NULL
    AND (expires_at IS NULL OR expires_at > ?)
  LIMIT 1`, env, namespace, serviceIdentity, secretID, now)
 	g, err := scanGrant(row)
@@ -330,6 +336,20 @@ SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, 
 		return domain.SecretGrant{}, domain.ErrNotFound
 	}
 	return g, err
+}
+
+func (r *grantMySQL) Activate(ctx context.Context, id int64) error {
+	res, err := r.conn(ctx).ExecContext(ctx, `
+UPDATE config_secret_grant SET permission='resolve'
+ WHERE id=? AND permission='pending' AND revoked_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return domain.ErrStateConflict
+	}
+	return nil
 }
 
 func (r *grantMySQL) Revoke(ctx context.Context, id int64, at time.Time) error {
@@ -385,7 +405,8 @@ func scanSecret(row secretScanner) (domain.Secret, error) {
 	var dual int
 	var expires sql.NullTime
 	err := row.Scan(&s.ID, &s.Env, &s.Namespace, &s.Name, &s.Description, &s.Owner, &status,
-		&active, &s.Version, &s.RotateIntervalDays, &dual, &s.SubmittedBy, &expires,
+		&active, &s.Version, &s.RotateIntervalDays, &dual, &s.SubmittedBy,
+		&s.PendingAction, &s.PendingPayload, &expires,
 		&s.CreatedBy, &s.UpdatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return domain.Secret{}, err

@@ -20,15 +20,22 @@ const (
 	ResourceTypeGrant  = "config_secret_grant"
 )
 
+// SecretResolveObserver 观测密钥解析结果（低基数；不含明文）。
+type SecretResolveObserver interface {
+	ObserveSecretResolve(result string, elapsed time.Duration)
+	ObserveSecretPlaintextLeak()
+}
+
 // SecretService 是业务密钥管理与解析用例。
 type SecretService struct {
-	secrets domain.SecretRepository
-	grants  domain.SecretGrantRepository
-	access  domain.SecretAccessRepository
-	kek     envelope.KEKProvider
-	audit   auditContext
-	ids     id.Generator
-	now     func() time.Time
+	secrets  domain.SecretRepository
+	grants   domain.SecretGrantRepository
+	access   domain.SecretAccessRepository
+	kek      envelope.KEKProvider
+	audit    auditContext
+	ids      id.Generator
+	now      func() time.Time
+	observer SecretResolveObserver
 	// LeaseTTL 默认租约；上限 15m。
 	LeaseTTL time.Duration
 }
@@ -67,6 +74,7 @@ func NewSecretService(
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
+		observer: opts.SecretObserver,
 		LeaseTTL: 5 * time.Minute,
 	}, nil
 }
@@ -177,7 +185,7 @@ type ApproveSecretInput struct {
 	Actor    Actor
 }
 
-// ApproveSecret 双人审批；提交人不得自批。
+// ApproveSecret 双人审批；提交人不得自批。覆盖创建 / 轮换 / 吊销 / 授权。
 func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput) (domain.Secret, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return domain.Secret{}, err
@@ -194,6 +202,9 @@ func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput
 	}
 	if secret.SubmittedBy == in.Actor.SubjectID {
 		return domain.Secret{}, apperr.Forbidden("submitter cannot review their own secret change")
+	}
+	if secret.PendingAction != "" {
+		return s.approvePendingChange(ctx, secret, in)
 	}
 	expected := secret.Version
 	now := s.now().UTC()
@@ -220,6 +231,148 @@ func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput
 	return secret, nil
 }
 
+func (s *SecretService) approvePendingChange(ctx context.Context, secret domain.Secret, in ApproveSecretInput) (domain.Secret, error) {
+	now := s.now().UTC()
+	action := secret.PendingAction
+	reviewAction := domain.SecretReviewAction(action)
+	if in.Decision == domain.DecisionRejected {
+		if err := s.rejectPendingChange(ctx, secret, now); err != nil {
+			return domain.Secret{}, err
+		}
+		expected := secret.Version
+		secret.PendingAction = ""
+		secret.PendingPayload = ""
+		secret.SubmittedBy = ""
+		secret.UpdatedBy = in.Actor.SubjectID
+		secret.UpdatedAt = now
+		secret.Version++
+		if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
+			return domain.Secret{}, mapSecretErr(err)
+		}
+		reviewID, _ := s.ids.Next()
+		_ = s.secrets.AppendReview(ctx, domain.SecretReview{
+			ID: reviewID, SecretID: secret.ID, Action: reviewAction,
+			Reviewer: in.Actor.SubjectID, Decision: in.Decision, Comment: in.Comment, CreatedAt: now,
+		})
+		return secret, nil
+	}
+	switch action {
+	case domain.PendingActionRotate:
+		if err := s.applyPendingRotate(ctx, &secret, now, in.Actor); err != nil {
+			return domain.Secret{}, err
+		}
+	case domain.PendingActionRevoke:
+		if err := s.applyRevoke(ctx, &secret, now, in.Actor, in.Comment); err != nil {
+			return domain.Secret{}, err
+		}
+	case domain.PendingActionGrant:
+		if err := s.applyPendingGrant(ctx, &secret); err != nil {
+			return domain.Secret{}, err
+		}
+	default:
+		return domain.Secret{}, apperr.Conflict("unknown pending action")
+	}
+	expected := secret.Version
+	secret.PendingAction = ""
+	secret.PendingPayload = ""
+	secret.SubmittedBy = ""
+	secret.UpdatedBy = in.Actor.SubjectID
+	secret.UpdatedAt = now
+	secret.Version++
+	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
+		return domain.Secret{}, mapSecretErr(err)
+	}
+	reviewID, _ := s.ids.Next()
+	_ = s.secrets.AppendReview(ctx, domain.SecretReview{
+		ID: reviewID, SecretID: secret.ID, Action: reviewAction,
+		Reviewer: in.Actor.SubjectID, Decision: in.Decision, Comment: in.Comment, CreatedAt: now,
+	})
+	return secret, nil
+}
+
+func (s *SecretService) rejectPendingChange(ctx context.Context, secret domain.Secret, now time.Time) error {
+	switch secret.PendingAction {
+	case domain.PendingActionRotate:
+		pending, err := s.findPendingVersion(ctx, secret.ID)
+		if err != nil {
+			return mapSecretErr(err)
+		}
+		return mapSecretErr(s.secrets.UpdateVersionStatus(ctx, secret.ID, pending.Version,
+			domain.SecretVersionPending, domain.SecretVersionDestroyed, now))
+	case domain.PendingActionGrant:
+		grantID, err := strconv.ParseInt(secret.PendingPayload, 10, 64)
+		if err != nil {
+			return apperr.Internal("invalid pending grant id", err)
+		}
+		return mapSecretErr(s.grants.Revoke(ctx, grantID, now))
+	case domain.PendingActionRevoke:
+		return nil
+	default:
+		return apperr.Conflict("unknown pending action")
+	}
+}
+
+func (s *SecretService) applyPendingRotate(ctx context.Context, secret *domain.Secret, now time.Time, actor Actor) error {
+	pending, err := s.findPendingVersion(ctx, secret.ID)
+	if err != nil {
+		return mapSecretErr(err)
+	}
+	oldVersion := int64(0)
+	if secret.ActiveVersion != nil {
+		oldVersion = *secret.ActiveVersion
+	}
+	if err := s.secrets.UpdateVersionStatus(ctx, secret.ID, pending.Version,
+		domain.SecretVersionPending, domain.SecretVersionActive, now); err != nil {
+		return mapSecretErr(err)
+	}
+	if oldVersion > 0 {
+		_ = s.secrets.UpdateVersionStatus(ctx, secret.ID, oldVersion,
+			domain.SecretVersionActive, domain.SecretVersionGrace, now)
+	}
+	secret.ActiveVersion = &pending.Version
+	secret.Fingerprint = pending.ValueHash
+	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "approved", map[string]string{
+			"name": secret.Name, "old_version": strconv.FormatInt(oldVersion, 10),
+			"new_version": strconv.FormatInt(pending.Version, 10), "fingerprint": pending.ValueHash,
+		})
+	return nil
+}
+
+func (s *SecretService) applyRevoke(ctx context.Context, secret *domain.Secret, now time.Time, actor Actor, comment string) error {
+	if secret.ActiveVersion != nil {
+		_ = s.secrets.UpdateVersionStatus(ctx, secret.ID, *secret.ActiveVersion,
+			domain.SecretVersionActive, domain.SecretVersionRevoked, now)
+	}
+	secret.Status = domain.SecretStatusRevoked
+	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, comment, map[string]string{
+			"name": secret.Name,
+		})
+	return nil
+}
+
+func (s *SecretService) applyPendingGrant(ctx context.Context, secret *domain.Secret) error {
+	grantID, err := strconv.ParseInt(secret.PendingPayload, 10, 64)
+	if err != nil {
+		return apperr.Internal("invalid pending grant id", err)
+	}
+	return mapSecretErr(s.grants.Activate(ctx, grantID))
+}
+
+func (s *SecretService) findPendingVersion(ctx context.Context, secretID int64) (domain.SecretVersion, error) {
+	versions, _, err := s.secrets.ListVersions(ctx, secretID, 50, 0)
+	if err != nil {
+		return domain.SecretVersion{}, err
+	}
+	for _, meta := range versions {
+		if meta.Status == domain.SecretVersionPending {
+			return s.secrets.GetVersion(ctx, secretID, meta.Version)
+		}
+	}
+	return domain.SecretVersion{}, domain.ErrNotFound
+}
+
 // RotateSecretInput 轮换入参。
 type RotateSecretInput struct {
 	ID        int64
@@ -228,7 +381,7 @@ type RotateSecretInput struct {
 	Actor     Actor
 }
 
-// RotateSecret 写入新版本并令旧版本进入 grace。
+// RotateSecret 提交轮换：写入 pending 版本，待双人审批后再生效。
 func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) (domain.Secret, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return domain.Secret{}, err
@@ -262,18 +415,15 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 		ID: versionID, SecretID: secret.ID, Version: newVersionNo,
 		Ciphertext: blob.Ciphertext, Nonce: blob.Nonce, WrappedDEK: blob.WrappedDEK,
 		KEKKeyID: blob.KEKKeyID, Algorithm: blob.Algorithm, ValueHash: blob.ValueHash,
-		Status: domain.SecretVersionActive, CreatedBy: in.Actor.SubjectID, CreatedAt: now,
+		Status: domain.SecretVersionPending, CreatedBy: in.Actor.SubjectID, CreatedAt: now,
 	}
 	if err := s.secrets.AppendVersion(ctx, version); err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	if oldVersion > 0 {
-		_ = s.secrets.UpdateVersionStatus(ctx, secret.ID, oldVersion,
-			domain.SecretVersionActive, domain.SecretVersionGrace, now)
-	}
 	expected := secret.Version
-	secret.ActiveVersion = &newVersionNo
-	secret.Fingerprint = blob.ValueHash
+	secret.PendingAction = domain.PendingActionRotate
+	secret.PendingPayload = strconv.FormatInt(newVersionNo, 10)
+	secret.SubmittedBy = in.Actor.SubjectID
 	secret.UpdatedBy = in.Actor.SubjectID
 	secret.UpdatedAt = now
 	secret.Version++
@@ -281,14 +431,14 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 		return domain.Secret{}, mapSecretErr(err)
 	}
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
-		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, in.Comment, map[string]string{
-			"name": secret.Name, "old_version": strconv.FormatInt(oldVersion, 10),
-			"new_version": strconv.FormatInt(newVersionNo, 10), "fingerprint": blob.ValueHash,
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "submitted:"+in.Comment, map[string]string{
+			"name": secret.Name, "pending_version": strconv.FormatInt(newVersionNo, 10),
+			"fingerprint": blob.ValueHash,
 		})
 	return secret, nil
 }
 
-// RevokeSecret 吊销密钥。
+// RevokeSecret 提交吊销：进入待审，审批通过后再生效。
 func (s *SecretService) RevokeSecret(ctx context.Context, id int64, comment string, actor Actor) (domain.Secret, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Secret{}, err
@@ -301,12 +451,10 @@ func (s *SecretService) RevokeSecret(ctx context.Context, id int64, comment stri
 		return domain.Secret{}, apperr.Conflict("secret cannot be revoked in current status")
 	}
 	now := s.now().UTC()
-	if secret.ActiveVersion != nil {
-		_ = s.secrets.UpdateVersionStatus(ctx, secret.ID, *secret.ActiveVersion,
-			domain.SecretVersionActive, domain.SecretVersionRevoked, now)
-	}
 	expected := secret.Version
-	secret.Status = domain.SecretStatusRevoked
+	secret.PendingAction = domain.PendingActionRevoke
+	secret.PendingPayload = comment
+	secret.SubmittedBy = actor.SubjectID
 	secret.UpdatedBy = actor.SubjectID
 	secret.UpdatedAt = now
 	secret.Version++
@@ -314,7 +462,7 @@ func (s *SecretService) RevokeSecret(ctx context.Context, id int64, comment stri
 		return domain.Secret{}, mapSecretErr(err)
 	}
 	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
-		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, comment, map[string]string{
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "submitted:"+comment, map[string]string{
 			"name": secret.Name,
 		})
 	return secret, nil
@@ -365,7 +513,7 @@ type CreateGrantInput struct {
 	Actor           Actor
 }
 
-// CreateGrant 新增服务授权。
+// CreateGrant 提交服务授权（pending）；审批通过后才可解析。
 func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (domain.SecretGrant, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return domain.SecretGrant{}, err
@@ -373,6 +521,9 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 	secret, err := s.secrets.GetByID(ctx, in.SecretID)
 	if err != nil {
 		return domain.SecretGrant{}, mapSecretErr(err)
+	}
+	if !secret.CanGrant() {
+		return domain.SecretGrant{}, apperr.Conflict("secret cannot accept grant in current status")
 	}
 	grantID, err := s.ids.Next()
 	if err != nil {
@@ -382,7 +533,7 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 	grant := domain.SecretGrant{
 		ID: grantID, Env: secret.Env, Namespace: secret.Namespace,
 		ServiceIdentity: strings.TrimSpace(in.ServiceIdentity), SecretID: secret.ID,
-		Permission: "resolve", ExpiresAt: in.ExpiresAt,
+		Permission: "pending", ExpiresAt: in.ExpiresAt,
 		CreatedBy: in.Actor.SubjectID, CreatedAt: now,
 	}
 	if err := grant.Validate(); err != nil {
@@ -394,8 +545,18 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 		}
 		return domain.SecretGrant{}, apperr.Internal("create grant failed", err)
 	}
+	expected := secret.Version
+	secret.PendingAction = domain.PendingActionGrant
+	secret.PendingPayload = strconv.FormatInt(grantID, 10)
+	secret.SubmittedBy = in.Actor.SubjectID
+	secret.UpdatedBy = in.Actor.SubjectID
+	secret.UpdatedAt = now
+	secret.Version++
+	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
+		return domain.SecretGrant{}, mapSecretErr(err)
+	}
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
-		strconv.FormatInt(grantID, 10), audit.OutcomeSuccess, "", map[string]string{
+		strconv.FormatInt(grantID, 10), audit.OutcomeSuccess, "submitted", map[string]string{
 			"secret_id": strconv.FormatInt(secret.ID, 10),
 			"service_identity": grant.ServiceIdentity, "op": "create",
 		})
@@ -447,10 +608,18 @@ type ResolveResult struct {
 
 // Resolve 校验 grant 后解密；单次 ≤ 20 key。
 func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]ResolveResult, error) {
+	start := s.now()
+	observe := func(result string) {
+		if s.observer != nil {
+			s.observer.ObserveSecretResolve(result, s.now().Sub(start))
+		}
+	}
 	if strings.TrimSpace(in.ServiceIdentity) == "" {
+		observe("denied")
 		return nil, apperr.Forbidden("service identity required")
 	}
 	if len(in.Names) == 0 || len(in.Names) > 20 {
+		observe("error")
 		return nil, apperr.BadRequest("names must contain 1..20 items")
 	}
 	now := s.now().UTC()
@@ -464,10 +633,12 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 		secret, err := s.secrets.GetByName(ctx, in.Env, in.Namespace, name)
 		if err != nil {
 			s.recordAccess(ctx, in, name, 0, "not_found")
+			observe("error")
 			return nil, apperr.NotFound(fmt.Sprintf("secret %q not found", name))
 		}
 		if secret.Status != domain.SecretStatusActive || secret.ActiveVersion == nil {
 			s.recordAccess(ctx, in, name, 0, "not_found")
+			observe("error")
 			return nil, apperr.NotFound(fmt.Sprintf("secret %q is not active", name))
 		}
 		if _, err := s.grants.FindActive(ctx, in.Env, in.Namespace, in.ServiceIdentity, secret.ID, now); err != nil {
@@ -477,10 +648,12 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 				audit.OutcomeDenied, "missing grant", map[string]string{
 					"name": name, "service_identity": in.ServiceIdentity,
 				})
+			observe("denied")
 			return nil, apperr.Forbidden("secret resolve denied")
 		}
 		version, err := s.secrets.GetVersion(ctx, secret.ID, *secret.ActiveVersion)
 		if err != nil {
+			observe("error")
 			return nil, apperr.Internal("load secret version failed", err)
 		}
 		plain, err := envelope.Open(s.kek, envelope.Blob{
@@ -489,6 +662,7 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 		}, envelope.AAD(secret.Env, secret.Namespace, secret.Name, version.Version))
 		if err != nil {
 			s.recordAccess(ctx, in, name, version.Version, "kms_unavailable")
+			observe("unavailable")
 			return nil, apperr.Unavailable("secret decryption unavailable")
 		}
 		item := ResolveResult{
@@ -516,6 +690,7 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 				"service_identity": in.ServiceIdentity,
 			})
 	}
+	observe("ok")
 	return out, nil
 }
 
@@ -582,6 +757,9 @@ func (s *SecretService) ListAccesses(ctx context.Context, id int64, limit, offse
 }
 
 func mapSecretErr(err error) error {
+	if err == nil {
+		return nil
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		return apperr.NotFound("secret not found")

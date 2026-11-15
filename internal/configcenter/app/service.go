@@ -47,6 +47,8 @@ type Options struct {
 	// Signer 对发布快照签名（Ed25519）；nil 表示本进程未配置签名密钥，
 	// 发布不写签名字段，客户端会拒绝未签名快照并回退代码默认值。
 	Signer *configclient.Signer
+	// SecretObserver 密钥解析指标；nil 表示不打点。
+	SecretObserver SecretResolveObserver
 }
 
 type auditContext struct {

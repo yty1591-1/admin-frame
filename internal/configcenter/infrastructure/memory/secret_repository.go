@@ -264,11 +264,26 @@ func (r *secretGrantRepository) FindActive(_ context.Context, env, namespace, se
 	defer r.store.mu.RUnlock()
 	for _, g := range r.store.grants {
 		if g.Env == env && g.Namespace == namespace && g.ServiceIdentity == serviceIdentity &&
-			g.SecretID == secretID && g.Active(now) {
+			g.SecretID == secretID && g.Permission == "resolve" && g.Active(now) {
 			return g, nil
 		}
 	}
 	return domain.SecretGrant{}, domain.ErrNotFound
+}
+
+func (r *secretGrantRepository) Activate(_ context.Context, id int64) error {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	g, ok := r.store.grants[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if g.Permission != "pending" || g.RevokedAt != nil {
+		return domain.ErrStateConflict
+	}
+	g.Permission = "resolve"
+	r.store.grants[id] = g
+	return nil
 }
 
 func (r *secretGrantRepository) Revoke(_ context.Context, id int64, at time.Time) error {
