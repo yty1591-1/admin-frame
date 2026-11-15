@@ -2,7 +2,9 @@ package rest
 
 import (
 	"context"
+	"crypto/x509"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +28,8 @@ type secretResponse struct {
 	Fingerprint        string  `json:"fingerprint"`
 	RotateIntervalDays int     `json:"rotate_interval_days"`
 	DualVersion        bool    `json:"dual_version"`
+	PendingAction      string  `json:"pending_action,omitempty"`
+	SubmittedBy        string  `json:"submitted_by,omitempty"`
 	ExpiresAt          *string `json:"expires_at"`
 	CreatedBy          string  `json:"created_by"`
 	UpdatedBy          string  `json:"updated_by"`
@@ -46,6 +50,7 @@ func toSecretView(s domain.Secret) secretResponse {
 		Description: s.Description, Owner: s.Owner, Status: string(s.Status),
 		ActiveVersion: s.ActiveVersion, Version: s.Version, Fingerprint: s.Fingerprint,
 		RotateIntervalDays: s.RotateIntervalDays, DualVersion: s.DualVersion,
+		PendingAction: s.PendingAction, SubmittedBy: s.SubmittedBy,
 		ExpiresAt: formatTimePtr(s.ExpiresAt),
 		CreatedBy: s.CreatedBy, UpdatedBy: s.UpdatedBy,
 		CreatedAt: formatTime(s.CreatedAt), UpdatedAt: formatTime(s.UpdatedAt),
@@ -506,9 +511,10 @@ func (h *Handler) ResolveSecrets(w http.ResponseWriter, r *http.Request) {
 		apiresp.FromError(w, apperr.Internal("secret service unavailable", nil), traceID)
 		return
 	}
-	identity := strings.TrimSpace(r.Header.Get("X-Service-Identity"))
-	if identity == "" && r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		identity = r.TLS.PeerCertificates[0].Subject.CommonName
+	identity, err := resolveServiceIdentity(r)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
 	}
 	var body struct {
 		Env       string   `json:"env"`
@@ -540,6 +546,59 @@ func (h *Handler) ResolveSecrets(w http.ResponseWriter, r *http.Request) {
 		views = append(views, row)
 	}
 	apiresp.OK(w, map[string]any{"items": views}, traceID)
+}
+
+// resolveServiceIdentity 按 Q11：优先证书 SAN；mTLS=require 时禁止裸 header。
+func resolveServiceIdentity(r *http.Request) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("CONFIG_API_MTLS")))
+	if mode == "" {
+		mode = "off"
+	}
+	headerID := strings.TrimSpace(r.Header.Get("X-Service-Identity"))
+	certID := ""
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		certID = identityFromCertificate(r.TLS.PeerCertificates[0])
+	}
+	switch mode {
+	case "require":
+		if certID == "" {
+			return "", apperr.Forbidden("client certificate required")
+		}
+		return certID, nil
+	case "optional":
+		if certID != "" {
+			return certID, nil
+		}
+		if headerID == "" {
+			return "", apperr.Forbidden("service identity required")
+		}
+		return headerID, nil
+	default: // off：本机 / 演练允许 header
+		if headerID != "" {
+			return headerID, nil
+		}
+		if certID != "" {
+			return certID, nil
+		}
+		return "", apperr.Forbidden("service identity required")
+	}
+}
+
+func identityFromCertificate(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	for _, uri := range cert.URIs {
+		if uri != nil && uri.String() != "" {
+			return uri.String()
+		}
+	}
+	for _, dns := range cert.DNSNames {
+		if strings.TrimSpace(dns) != "" {
+			return dns
+		}
+	}
+	return strings.TrimSpace(cert.Subject.CommonName)
 }
 
 func (h *Handler) mutateSecret(w http.ResponseWriter, r *http.Request,

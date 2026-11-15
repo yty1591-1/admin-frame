@@ -26,7 +26,7 @@ func TestNewHTTPServerHardening(t *testing.T) {
 		},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := newHTTPServer(ctx, cfg, http.NewServeMux(), logger)
+	srv := newHTTPServer(ctx, cfg, http.NewServeMux(), logger, nil)
 
 	if srv.ReadHeaderTimeout != time.Second || srv.ReadTimeout != 2*time.Second ||
 		srv.WriteTimeout != 3*time.Second || srv.IdleTimeout != 4*time.Second {
@@ -83,7 +83,7 @@ func TestServeReturnsOnListenerClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Addr: ln.Addr().String(), ShutdownTimeout: time.Second}
-	srv := newHTTPServer(context.Background(), cfg, http.NewServeMux(), nil)
+	srv := newHTTPServer(context.Background(), cfg, http.NewServeMux(), nil, nil)
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
 	}

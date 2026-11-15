@@ -14,6 +14,7 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
@@ -56,9 +57,15 @@ func run(configPath string) error {
 	}
 	appCfg.Service = "config-api"
 
+	tlsCfg, err := secretruntime.LoadServerTLSFromEnv()
+	if err != nil {
+		return fmt.Errorf("load tls: %w", err)
+	}
+
 	return platform.Run(context.Background(), platform.Options{
-		Config: &appCfg.Config,
-		Build:  httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Config:    &appCfg.Config,
+		Build:     httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		TLSConfig: tlsCfg,
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
 			rt, err := configcenterruntime.NewSecretResolve(deps, configcenterruntime.Options{Service: "config-api"})
 			if err != nil {

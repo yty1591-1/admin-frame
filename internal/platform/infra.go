@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"time"
@@ -42,6 +43,7 @@ type infraState struct {
 	health     *health.Handler
 	clientIP   *pkghttpx.ClientIPResolver
 	background *lifecycle.Tasks
+	tlsConfig  *tls.Config
 	deps       *Deps
 }
 
@@ -70,6 +72,7 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 		cfg = loaded
 	}
 	infra.cfg = cfg
+	infra.tlsConfig = opts.TLSConfig
 	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
 	infra.logger = logger
 	infra.logLevel = logLevel
