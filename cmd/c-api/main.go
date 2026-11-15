@@ -13,6 +13,7 @@ import (
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
@@ -58,6 +59,9 @@ func run(configPath string) error {
 	}, snapshotconfig.AllowMissingConfig(snapshotValues))
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
+		log.Printf("c-api: jwt secret from config center ignored: %v", jerr)
 	}
 	var (
 		identityOnce sync.Once

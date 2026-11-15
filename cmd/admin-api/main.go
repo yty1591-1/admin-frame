@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -58,6 +59,10 @@ func run(configPath string) error {
 	}, snapshotconfig.AllowMissingConfig(snapshotValues))
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	// M3：JWT 签名密钥可从配置中心密钥子域补齐（Q9）；未配置 secretclient 时保持 ENT-07。
+	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
+		log.Printf("admin-api: jwt secret from config center ignored: %v", jerr)
 	}
 	var (
 		iamOnce     sync.Once

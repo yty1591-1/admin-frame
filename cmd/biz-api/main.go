@@ -63,6 +63,9 @@ func run(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
+		log.Printf("biz-api: jwt secret from config center ignored: %v", jerr)
+	}
 	var (
 		iamOnce     sync.Once
 		iamRT       *iamruntime.Runtime
