@@ -22,13 +22,15 @@
 
 ## 轮换
 
-1. Vault 创建新密钥版本
-2. 后台任务逐条 `unwrap(old) → wrap(new)` 重包裹 DEK（M3 完整演练）
+1. Vault 创建新密钥版本（本机用双 LocalKEK `local/1`→`local/2` 模拟，见演练）
+2. 后台任务逐条 `unwrap(old) → wrap(new)` 重包裹 DEK
 3. 验证 resolve 成功后再停用旧版本
+
+本机取证：[`docs/incident/drills/2026-11-16-configcenter-kek-rotation.md`](../incident/drills/2026-11-16-configcenter-kek-rotation.md)。
 
 ## 检查清单
 
-- [ ] KEK 不在 MySQL / git / 日志
-- [ ] wrap / unwrap 权限分离
-- [ ] prod 未启用 LocalKEK
-- [ ] 恢复演练计划已登记（M3）
+- [x] KEK 不在 MySQL / git / 日志（门禁 + LocalKEK env-only）
+- [x] wrap / unwrap 权限分离（admin seal / config-api open）
+- [x] prod 未启用 LocalKEK（`RejectLocalKEKInProd`）
+- [x] 恢复演练已登记（M3 CC-F-55 / AC-CC-10）

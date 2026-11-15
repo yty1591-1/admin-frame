@@ -120,6 +120,50 @@ func TestVerifierRejectsTamperedSignature(t *testing.T) {
 	}
 }
 
+// TestVerifierDualKeyRotationWindow 覆盖 M3 签名钥轮换：双钥验签窗口内新旧 key_id 均可通过。
+func TestVerifierDualKeyRotationWindow(t *testing.T) {
+	oldPub, oldPriv := testKey(t)
+	newPub, newPriv := testKey(t)
+	verifier, err := NewVerifier(map[string]ed25519.PublicKey{
+		"k-old": oldPub,
+		"k-new": newPub,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{"http.timeout": "5s"}
+	signWith := func(kid string, priv ed25519.PrivateKey) Snapshot {
+		t.Helper()
+		signer, serr := NewSigner(kid, priv)
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		snap, _ := buildSignedSnapshot(t, values)
+		snap.KeyID = ""
+		snap.Signature = ""
+		id, sig, serr := signer.Sign(snap)
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		snap.KeyID, snap.Signature = id, sig
+		return snap
+	}
+	if err := verifier.Verify(signWith("k-old", oldPriv)); err != nil {
+		t.Fatalf("old key window: %v", err)
+	}
+	if err := verifier.Verify(signWith("k-new", newPriv)); err != nil {
+		t.Fatalf("new key window: %v", err)
+	}
+	// 吊销旧钥后仅保留新钥。
+	revoked, err := NewVerifier(map[string]ed25519.PublicKey{"k-new": newPub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revoked.Verify(signWith("k-old", oldPriv)); !errors.Is(err, ErrSnapshotUnknownKeyID) {
+		t.Fatalf("revoked old key = %v, want ErrSnapshotUnknownKeyID", err)
+	}
+}
+
 func TestHashItemsIsOrderIndependent(t *testing.T) {
 	first := []Item{
 		{ConfigKey: "b.key", ItemID: 2, ItemVersion: 1, ValueHash: hashValue("b")},
