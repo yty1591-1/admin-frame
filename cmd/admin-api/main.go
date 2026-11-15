@@ -130,7 +130,7 @@ func run(configPath string) error {
 			}
 			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
 			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
-				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
+				appCfg.Env, startup, deps.Logger, deps.Metrics); err != nil {
 				deps.Logger.Warn("configcenter dual read failed", "err", err)
 			}
 			return registerRoutes(deps, mux, built, identityBuilt, appCfg, configPath)

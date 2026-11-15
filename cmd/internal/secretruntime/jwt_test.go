@@ -20,7 +20,7 @@ func TestApplyJWTSecretFillsEmpty(t *testing.T) {
 			"data": map[string]any{
 				"items": []map[string]any{{
 					"name": "auth.jwt.private_key", "version": 1,
-					"value": "0123456789abcdef0123456789abcdef",
+					"value":            "0123456789abcdef0123456789abcdef",
 					"lease_expires_at": time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339Nano),
 				}},
 			},

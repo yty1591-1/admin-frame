@@ -11,12 +11,12 @@ type SecretStatus string
 
 // 密钥治理状态枚举。
 const (
-	SecretStatusDraft          SecretStatus = "draft"
-	SecretStatusPendingReview  SecretStatus = "pending_review"
-	SecretStatusActive         SecretStatus = "active"
-	SecretStatusRejected       SecretStatus = "rejected"
-	SecretStatusRevoked        SecretStatus = "revoked"
-	SecretStatusDestroyed      SecretStatus = "destroyed"
+	SecretStatusDraft         SecretStatus = "draft"
+	SecretStatusPendingReview SecretStatus = "pending_review"
+	SecretStatusActive        SecretStatus = "active"
+	SecretStatusRejected      SecretStatus = "rejected"
+	SecretStatusRevoked       SecretStatus = "revoked"
+	SecretStatusDestroyed     SecretStatus = "destroyed"
 )
 
 // Valid 判断密钥状态枚举合法性。

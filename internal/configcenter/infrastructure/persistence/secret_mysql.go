@@ -41,6 +41,7 @@ func (r *secretMySQL) conn(ctx context.Context) db.Querier {
 	return r.db
 }
 
+// Create 写入密钥元数据与首个密文版本。
 func (r *secretMySQL) Create(ctx context.Context, secret domain.Secret, version domain.SecretVersion) error {
 	q := r.conn(ctx)
 	_, err := q.ExecContext(ctx, `
@@ -72,10 +73,12 @@ INSERT INTO config_secret_version (
 	return err
 }
 
+// GetByID 按主键读取密钥元数据。
 func (r *secretMySQL) GetByID(ctx context.Context, id int64) (domain.Secret, error) {
 	return r.scanOne(ctx, `SELECT `+secretSelectCols+` FROM config_secret WHERE id = ?`, id)
 }
 
+// GetByName 按环境 / namespace / 名称读取密钥元数据。
 func (r *secretMySQL) GetByName(ctx context.Context, env, namespace, name string) (domain.Secret, error) {
 	return r.scanOne(ctx, `SELECT `+secretSelectCols+` FROM config_secret WHERE env=? AND namespace=? AND name=?`,
 		env, namespace, name)
@@ -102,6 +105,7 @@ func (r *secretMySQL) scanOne(ctx context.Context, query string, args ...any) (d
 	return secret, nil
 }
 
+// List 分页列出密钥元数据。
 func (r *secretMySQL) List(ctx context.Context, env, namespace string, status domain.SecretStatus, limit, offset int) ([]domain.Secret, int, error) {
 	q := r.conn(ctx)
 	where := `WHERE env=? AND namespace=?`
@@ -131,6 +135,7 @@ func (r *secretMySQL) List(ctx context.Context, env, namespace string, status do
 	return out, total, rows.Err()
 }
 
+// UpdateCAS 按期望版本号条件更新密钥元数据。
 func (r *secretMySQL) UpdateCAS(ctx context.Context, secret domain.Secret, expectedVersion int64) error {
 	res, err := r.conn(ctx).ExecContext(ctx, `
 UPDATE config_secret SET status=?, active_version=?, version=?, rotate_interval_days=?, dual_version=?,
@@ -152,6 +157,7 @@ UPDATE config_secret SET status=?, active_version=?, version=?, rotate_interval_
 	return nil
 }
 
+// AppendVersion 追加一条密钥密文版本。
 func (r *secretMySQL) AppendVersion(ctx context.Context, version domain.SecretVersion) error {
 	_, err := r.conn(ctx).ExecContext(ctx, `
 INSERT INTO config_secret_version (
@@ -168,6 +174,7 @@ INSERT INTO config_secret_version (
 	return err
 }
 
+// GetVersion 读取指定密文版本（含密文字段）。
 func (r *secretMySQL) GetVersion(ctx context.Context, secretID, version int64) (domain.SecretVersion, error) {
 	row := r.conn(ctx).QueryRowContext(ctx, `
 SELECT id, secret_id, version, ciphertext, nonce, wrapped_dek, kek_key_id, algorithm,
@@ -190,6 +197,7 @@ SELECT id, secret_id, version, ciphertext, nonce, wrapped_dek, kek_key_id, algor
 	return v, nil
 }
 
+// ListVersions 分页列出密文版本元数据（不含密文）。
 func (r *secretMySQL) ListVersions(ctx context.Context, secretID int64, limit, offset int) ([]domain.SecretVersion, int, error) {
 	q := r.conn(ctx)
 	var total int
@@ -220,6 +228,7 @@ SELECT id, secret_id, version, kek_key_id, algorithm, value_hash, status, create
 	return out, total, rows.Err()
 }
 
+// UpdateVersionStatus 条件迁移密文版本状态，销毁时清空密文。
 func (r *secretMySQL) UpdateVersionStatus(ctx context.Context, secretID, version int64, from, to domain.SecretVersionStatus, at time.Time) error {
 	res, err := r.conn(ctx).ExecContext(ctx, `
 UPDATE config_secret_version SET status=?, revoked_at=CASE WHEN ?='revoked' THEN ? ELSE revoked_at END,
@@ -240,6 +249,7 @@ UPDATE config_secret_version SET status=?, revoked_at=CASE WHEN ?='revoked' THEN
 	return nil
 }
 
+// AppendReview 追加一条密钥审批记录。
 func (r *secretMySQL) AppendReview(ctx context.Context, review domain.SecretReview) error {
 	_, err := r.conn(ctx).ExecContext(ctx, `
 INSERT INTO config_secret_review (id, secret_id, action, reviewer, decision, comment, created_at)
@@ -249,6 +259,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	return err
 }
 
+// ListReviews 列出密钥审批记录。
 func (r *secretMySQL) ListReviews(ctx context.Context, secretID int64) ([]domain.SecretReview, error) {
 	rows, err := r.conn(ctx).QueryContext(ctx, `
 SELECT id, secret_id, action, reviewer, decision, comment, created_at
@@ -280,6 +291,7 @@ func (r *grantMySQL) conn(ctx context.Context) db.Querier {
 	return r.db
 }
 
+// Create 写入密钥授权记录。
 func (r *grantMySQL) Create(ctx context.Context, grant domain.SecretGrant) error {
 	_, err := r.conn(ctx).ExecContext(ctx, `
 INSERT INTO config_secret_grant (
@@ -293,6 +305,7 @@ INSERT INTO config_secret_grant (
 	return err
 }
 
+// GetByID 按主键读取授权。
 func (r *grantMySQL) GetByID(ctx context.Context, id int64) (domain.SecretGrant, error) {
 	row := r.conn(ctx).QueryRowContext(ctx, `
 SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, created_by, created_at, revoked_at
@@ -304,6 +317,7 @@ SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, 
 	return g, err
 }
 
+// ListBySecret 列出密钥的全部授权。
 func (r *grantMySQL) ListBySecret(ctx context.Context, secretID int64) ([]domain.SecretGrant, error) {
 	rows, err := r.conn(ctx).QueryContext(ctx, `
 SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, created_by, created_at, revoked_at
@@ -323,6 +337,7 @@ SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, 
 	return out, rows.Err()
 }
 
+// FindActive 查找服务主体对密钥的有效 resolve 授权。
 func (r *grantMySQL) FindActive(ctx context.Context, env, namespace, serviceIdentity string, secretID int64, now time.Time) (domain.SecretGrant, error) {
 	row := r.conn(ctx).QueryRowContext(ctx, `
 SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, created_by, created_at, revoked_at
@@ -338,6 +353,7 @@ SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, 
 	return g, err
 }
 
+// Activate 将待审授权转为可 resolve。
 func (r *grantMySQL) Activate(ctx context.Context, id int64) error {
 	res, err := r.conn(ctx).ExecContext(ctx, `
 UPDATE config_secret_grant SET permission='resolve'
@@ -352,6 +368,7 @@ UPDATE config_secret_grant SET permission='resolve'
 	return nil
 }
 
+// Revoke 吊销授权。
 func (r *grantMySQL) Revoke(ctx context.Context, id int64, at time.Time) error {
 	res, err := r.conn(ctx).ExecContext(ctx, `UPDATE config_secret_grant SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, at, id)
 	if err != nil {
@@ -368,6 +385,7 @@ type memoryAccessRepo struct {
 	items []domain.SecretAccess
 }
 
+// Append 追加密钥访问审计到进程内缓冲。
 func (r *memoryAccessRepo) Append(_ context.Context, access domain.SecretAccess) error {
 	r.items = append(r.items, access)
 	if len(r.items) > 1000 {
@@ -376,6 +394,7 @@ func (r *memoryAccessRepo) Append(_ context.Context, access domain.SecretAccess)
 	return nil
 }
 
+// ListBySecretName 按密钥名分页列出访问审计。
 func (r *memoryAccessRepo) ListBySecretName(_ context.Context, _, _, name string, limit, offset int) ([]domain.SecretAccess, int, error) {
 	var matched []domain.SecretAccess
 	for i := len(r.items) - 1; i >= 0; i-- {

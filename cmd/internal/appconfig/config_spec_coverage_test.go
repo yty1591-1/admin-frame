@@ -215,15 +215,6 @@ func walkYAMLPaths(t reflect.Type, prefix string, out *[]string) {
 	}
 }
 
-func hasAnyPrefix(path string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 func matchedPrefix(path string, prefixes map[string]string) bool {
 	for prefix := range prefixes {
 		if strings.HasPrefix(path, prefix) {

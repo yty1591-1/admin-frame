@@ -156,7 +156,7 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 			go func() {
 				if err := snapshotconfig.RunPeriodic(ctx, snapshotconfig.PeriodicConfig{
 					ConfigPath: configPath,
-					Env:        appCfg.Config.Env,
+					Env:        appCfg.Env,
 					Reader:     refreshRT.Client,
 					Logger:     logger,
 					Metrics:    deps.Metrics,

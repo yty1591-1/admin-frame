@@ -129,7 +129,8 @@ func do(t *testing.T, method, target, subject string, scopes []string, body any)
 		request.Header.Set("X-Test-Subject", subject)
 	}
 	request.Header.Set("X-Test-Scopes", strings.Join(scopes, ","))
-	response, err := http.DefaultClient.Do(request)
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}

@@ -15,11 +15,11 @@ import (
 //
 // 注意：这与 internal/platform/secrets 的 KV Get 语义不同，禁止混用。
 type VaultTransit struct {
-	addr   string
-	token  string
+	addr    string
+	token   string
 	keyName string
-	client *http.Client
-	keyID  string
+	client  *http.Client
+	keyID   string
 }
 
 // NewVaultTransit 构造 Transit 客户端；keyID 形如 transit/<keyName>。

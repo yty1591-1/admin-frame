@@ -557,7 +557,7 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 	}
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
 		strconv.FormatInt(grantID, 10), audit.OutcomeSuccess, "submitted", map[string]string{
-			"secret_id": strconv.FormatInt(secret.ID, 10),
+			"secret_id":        strconv.FormatInt(secret.ID, 10),
 			"service_identity": grant.ServiceIdentity, "op": "create",
 		})
 	return grant, nil

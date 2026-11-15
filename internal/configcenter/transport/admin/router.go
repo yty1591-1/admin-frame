@@ -101,20 +101,20 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 
 // 路由标签与 observability 包保持一致（低基数、稳定）。
 const (
-	RouteNamespaces       = "namespaces"
-	RouteItemsList        = "items.list"
-	RouteItemsCreate      = "items.create"
-	RouteItemsGet         = "items.get"
-	RouteItemsUpdate      = "items.update"
-	RouteVersionsList     = "versions.list"
-	RouteVersionsGet      = "versions.get"
-	RouteReleasesCreate   = "releases.create"
-	RouteReleasesList     = "releases.list"
-	RouteReleasesGet      = "releases.get"
-	RouteReleasesSubmit   = "releases.submit"
-	RouteReleasesApprove  = "releases.approve"
-	RouteReleasesPublish  = "releases.publish"
-	RouteReleasesRollback = "releases.rollback"
+	RouteNamespaces          = "namespaces"
+	RouteItemsList           = "items.list"
+	RouteItemsCreate         = "items.create"
+	RouteItemsGet            = "items.get"
+	RouteItemsUpdate         = "items.update"
+	RouteVersionsList        = "versions.list"
+	RouteVersionsGet         = "versions.get"
+	RouteReleasesCreate      = "releases.create"
+	RouteReleasesList        = "releases.list"
+	RouteReleasesGet         = "releases.get"
+	RouteReleasesSubmit      = "releases.submit"
+	RouteReleasesApprove     = "releases.approve"
+	RouteReleasesPublish     = "releases.publish"
+	RouteReleasesRollback    = "releases.rollback"
 	RouteSecretsList         = "secrets.list"
 	RouteSecretsCreate       = "secrets.create"
 	RouteSecretsGet          = "secrets.get"
@@ -162,6 +162,7 @@ type statusRecorder struct {
 	status int
 }
 
+// WriteHeader 记录并转发响应状态码。
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)

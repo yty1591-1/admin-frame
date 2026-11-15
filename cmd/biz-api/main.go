@@ -129,7 +129,7 @@ func run(configPath string) error {
 			}
 			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
 			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
-				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
+				appCfg.Env, startup, deps.Logger, deps.Metrics); err != nil {
 				deps.Logger.Warn("configcenter dual read failed", "err", err)
 			}
 			// M2：可选密钥解析客户端（CONFIG_API_URL + CONFIG_SERVICE_IDENTITY）。
@@ -138,7 +138,7 @@ func run(configPath string) error {
 			} else if secretClient != nil {
 				deps.Logger.Info("secretclient enabled", "base", "CONFIG_API_URL")
 				if ferr := secretruntime.WarmDemoHMAC(context.Background(), secretClient,
-					appCfg.Config.Env, deps.Logger); ferr != nil {
+					appCfg.Env, deps.Logger); ferr != nil {
 					deps.Logger.Warn("demo hmac secret warm failed", "err", ferr)
 				}
 			}
@@ -153,7 +153,7 @@ func run(configPath string) error {
 				if refreshRT.Client != nil {
 					snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
 						ConfigPath: configPath,
-						Env:        appCfg.Config.Env,
+						Env:        appCfg.Env,
 						Reader:     refreshRT.Client,
 						Logger:     deps.Logger,
 						Metrics:    deps.Metrics,

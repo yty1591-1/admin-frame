@@ -105,7 +105,7 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 	if configRT != nil && configRT.Client != nil {
 		snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
 			ConfigPath: configPath,
-			Env:        appCfg.Config.Env,
+			Env:        appCfg.Env,
 			Reader:     configRT.Client,
 			Logger:     deps.Logger,
 			Metrics:    deps.Metrics,
