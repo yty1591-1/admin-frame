@@ -190,13 +190,13 @@ async function onApprove(row: ConfigSecret, decision: 'approved' | 'rejected') {
 
 async function onRotate(row: ConfigSecret) {
   Modal.confirm({
-    title: '轮换密钥',
-    content: '请在下一提示中输入新明文；旧版本将进入 grace。',
+    title: '提交轮换',
+    content: '请在下一提示中输入新明文；需另一审批人批准后旧版本才进入 grace。',
     async onOk() {
       const plaintext = window.prompt('新明文（不会回显到列表）');
       if (!plaintext) return;
       await rotateConfigSecretApi(row.id, { plaintext });
-      message.success('已轮换');
+      message.success('已提交轮换，待审批');
       await loadRows();
     },
   });
@@ -204,11 +204,11 @@ async function onRotate(row: ConfigSecret) {
 
 async function onRevoke(row: ConfigSecret) {
   Modal.confirm({
-    title: '吊销密钥',
-    content: `确认吊销 ${row.name}？旧租约最长存活一个 TTL。`,
+    title: '提交吊销',
+    content: `确认提交吊销 ${row.name}？需另一审批人批准后生效；旧租约最长存活一个 TTL。`,
     async onOk() {
       await revokeConfigSecretApi(row.id, { comment: 'ui revoke' });
-      message.success('已吊销');
+      message.success('已提交吊销，待审批');
       await loadRows();
     },
   });
@@ -219,7 +219,8 @@ async function onGrant(row: ConfigSecret) {
   if (!identity) return;
   try {
     await createConfigSecretGrantApi(row.id, { service_identity: identity });
-    message.success('已授权');
+    message.success('已提交授权，待审批');
+    await loadRows();
   } catch (error) {
     message.error(getConfigErrorMessage(error, '授权失败'));
   }
@@ -261,6 +262,9 @@ onMounted(async () => {
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'status'">
           <Tag>{{ record.status }}</Tag>
+          <Tag v-if="record.pending_action" color="orange">
+            pending:{{ record.pending_action }}
+          </Tag>
         </template>
         <template v-else-if="column.key === 'actions'">
           <Space wrap>

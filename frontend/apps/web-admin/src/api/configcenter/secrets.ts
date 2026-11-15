@@ -23,6 +23,8 @@ export interface ConfigSecret {
   fingerprint: string;
   rotate_interval_days: number;
   dual_version: boolean;
+  pending_action?: string;
+  submitted_by?: string;
   created_by: string;
   updated_by: string;
   created_at: string;
