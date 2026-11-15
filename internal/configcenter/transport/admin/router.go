@@ -67,6 +67,36 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		observed(observer, RouteReleasesPublish, authMW(publish(http.HandlerFunc(h.PublishRelease)))))
 	mux.Handle("POST /admin/v1/configs/releases/{id}/rollback",
 		observed(observer, RouteReleasesRollback, authMW(publish(http.HandlerFunc(h.RollbackRelease)))))
+
+	secretRead := perm(string(iam.PermConfigSecretRead))
+	secretWrite := perm(string(iam.PermConfigSecretWrite))
+	secretApprove := perm(string(iam.PermConfigSecretApprove))
+	mux.Handle("GET /admin/v1/configs/secrets",
+		observed(observer, RouteSecretsList, authMW(secretRead(http.HandlerFunc(h.ListSecrets)))))
+	mux.Handle("POST /admin/v1/configs/secrets",
+		observed(observer, RouteSecretsCreate, authMW(secretWrite(http.HandlerFunc(h.CreateSecret)))))
+	mux.Handle("GET /admin/v1/configs/secrets/{id}",
+		observed(observer, RouteSecretsGet, authMW(secretRead(http.HandlerFunc(h.GetSecret)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/submit",
+		observed(observer, RouteSecretsSubmit, authMW(secretWrite(http.HandlerFunc(h.SubmitSecret)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/approve",
+		observed(observer, RouteSecretsApprove, authMW(secretApprove(http.HandlerFunc(h.ApproveSecret)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/rotate",
+		observed(observer, RouteSecretsRotate, authMW(secretWrite(http.HandlerFunc(h.RotateSecret)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/revoke",
+		observed(observer, RouteSecretsRevoke, authMW(secretWrite(http.HandlerFunc(h.RevokeSecret)))))
+	mux.Handle("GET /admin/v1/configs/secrets/{id}/versions",
+		observed(observer, RouteSecretsVersions, authMW(secretRead(http.HandlerFunc(h.ListSecretVersions)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/versions/{version}/activate",
+		observed(observer, RouteSecretsActivate, authMW(secretWrite(http.HandlerFunc(h.ActivateSecretVersion)))))
+	mux.Handle("GET /admin/v1/configs/secrets/{id}/grants",
+		observed(observer, RouteSecretsGrantsList, authMW(secretRead(http.HandlerFunc(h.ListSecretGrants)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/grants",
+		observed(observer, RouteSecretsGrantsCreate, authMW(secretWrite(http.HandlerFunc(h.CreateSecretGrant)))))
+	mux.Handle("POST /admin/v1/configs/secrets/{id}/grants/{grant_id}/revoke",
+		observed(observer, RouteSecretsGrantsRevoke, authMW(secretWrite(http.HandlerFunc(h.RevokeSecretGrant)))))
+	mux.Handle("GET /admin/v1/configs/secrets/{id}/accesses",
+		observed(observer, RouteSecretsAccesses, authMW(secretRead(http.HandlerFunc(h.ListSecretAccesses)))))
 }
 
 // 路由标签与 observability 包保持一致（低基数、稳定）。
@@ -85,6 +115,19 @@ const (
 	RouteReleasesApprove  = "releases.approve"
 	RouteReleasesPublish  = "releases.publish"
 	RouteReleasesRollback = "releases.rollback"
+	RouteSecretsList         = "secrets.list"
+	RouteSecretsCreate       = "secrets.create"
+	RouteSecretsGet          = "secrets.get"
+	RouteSecretsSubmit       = "secrets.submit"
+	RouteSecretsApprove      = "secrets.approve"
+	RouteSecretsRotate       = "secrets.rotate"
+	RouteSecretsRevoke       = "secrets.revoke"
+	RouteSecretsVersions     = "secrets.versions"
+	RouteSecretsActivate     = "secrets.activate"
+	RouteSecretsGrantsList   = "secrets.grants.list"
+	RouteSecretsGrantsCreate = "secrets.grants.create"
+	RouteSecretsGrantsRevoke = "secrets.grants.revoke"
+	RouteSecretsAccesses     = "secrets.accesses"
 )
 
 // NewRouter 注册 A 端配置中心路由并挂接鉴权与权限中间件（测试用）。

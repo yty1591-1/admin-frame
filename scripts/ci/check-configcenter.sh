@@ -18,6 +18,7 @@
 #   CC-10 业务域键声明：四个域 spec、默认值一致性测试、无整段 deferred
 #   CC-11 多 namespace 消费与开关：文件列表、启用列表、SDK 与双读接线
 #   CC-12 Helm 部署接线：values 默认值、环境变量与快照 Secret 挂载
+#   CC-13 M2 密钥契约：secret 表迁移、OpenAPI、权限、审计、信封与 config-api
 #
 # 用法: bash scripts/ci/check-configcenter.sh
 set -euo pipefail
@@ -176,8 +177,39 @@ require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
 require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
   "configcenter-snapshots" "Helm 挂载快照 Secret"
 
+echo "==> CC-13: M2 secret hosting contract"
+require_file "migrations/000033_create_config_secrets.up.sql" "密钥表迁移 up"
+require_file "migrations/000033_create_config_secrets.down.sql" "密钥表迁移 down"
+if [[ -f "migrations/000033_create_config_secrets.up.sql" ]]; then
+  for table in config_secret config_secret_version config_secret_grant config_secret_review; do
+    require_grep "migrations/000033_create_config_secrets.up.sql" \
+      "CREATE TABLE IF NOT EXISTS ${table}" "建表 ${table}"
+  done
+fi
+for permission in 'config:secret:read' 'config:secret:write' 'config:secret:approve'; do
+  if grep -REq "'${permission}'" migrations/*.up.sql; then
+    ok "权限点 ${permission}"
+  else
+    fail "权限点 ${permission} 未在迁移中播种"
+  fi
+done
+for action in config.secret.create config.secret.rotate config.secret.revoke \
+  config.secret.grant config.secret.resolve; do
+  require_grep "internal/shared/audit/actions.go" "\"${action}\"" "审计动作 ${action}"
+done
+require_file "api/openapi/paths/admin/secrets.yaml" "密钥管理 OpenAPI 路径"
+require_file "api/openapi/schemas/admin/secrets.yaml" "密钥管理 OpenAPI schema"
+require_file "api/openapi/internal.yaml" "config-api 内部 OpenAPI"
+require_file "api/openapi/paths/internal/secrets.yaml" "内部 resolve 路径"
+require_grep "api/openapi/admin.yaml" "paths/admin/secrets.yaml" "admin.yaml 引用密钥路径"
+require_file "pkg/envelope/envelope.go" "信封加密实现"
+require_file "pkg/secretclient/client.go" "密钥解析 SDK"
+require_file "cmd/config-api/main.go" "config-api 入口"
+require_file "docs/runbooks/secret-management.md" "密钥 runbook"
+require_file "docs/runbooks/key-ceremony.md" "key ceremony"
+
 if [[ "${FAIL}" -ne 0 ]]; then
-  echo "配置中心门禁失败（CC-01～CC-12）" >&2
+  echo "配置中心门禁失败（CC-01～CC-13）" >&2
   exit 1
 fi
 

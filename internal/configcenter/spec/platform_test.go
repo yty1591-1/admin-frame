@@ -70,8 +70,8 @@ func assertKeySpec(t *testing.T, keySpec domain.KeySpec) {
 	if err := keySpec.Validate(); err != nil {
 		t.Fatalf("invalid key spec: %v", err)
 	}
-	if keySpec.Sensitive {
-		t.Fatalf("sensitive key %s must not enter M1 catalog", keySpec.Key)
+	if keySpec.Sensitive && keySpec.SecretRule == nil {
+		t.Fatalf("sensitive key %s must declare secret_rule (M2)", keySpec.Key)
 	}
 	if keySpec.Default != "" {
 		if err := keySpec.ValidateValue(keySpec.Default); err != nil {

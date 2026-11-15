@@ -42,6 +42,8 @@ type KeySpec struct {
 	Pattern string
 	// Deprecated 标记键已废弃；仅用于治理展示，不阻断读取。
 	Deprecated bool
+	// SecretRule 是敏感键生成规则；仅 Sensitive=true 时有意义（M2）。
+	SecretRule *SecretRule
 }
 
 // Validate 校验声明本身的一致性；装配期（Registry.Register）失败即拒绝启动。
@@ -63,6 +65,14 @@ func (s KeySpec) Validate() error {
 	}
 	if s.Sensitive && s.Default != "" {
 		return fmt.Errorf("configcenter: key spec %s is sensitive and must not carry a default value", s.Key)
+	}
+	if s.SecretRule != nil {
+		if !s.Sensitive {
+			return fmt.Errorf("configcenter: key spec %s secret_rule requires sensitive=true", s.Key)
+		}
+		if err := s.SecretRule.Validate(); err != nil {
+			return fmt.Errorf("configcenter: key spec %s: %w", s.Key, err)
+		}
 	}
 	if s.Required && s.Default != "" {
 		return fmt.Errorf("configcenter: key spec %s cannot be required and carry a default value", s.Key)

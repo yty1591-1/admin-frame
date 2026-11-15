@@ -14,7 +14,8 @@
     "configItems": "Config Items",
     "configEdit": "Edit Config",
     "configVersions": "Version History",
-    "configReleases": "Releases"
+    "configReleases": "Releases",
+    "configSecrets": "Secrets"
   },
   "iam": {
     "title": "Permissions",

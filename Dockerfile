@@ -37,5 +37,6 @@ FROM runtime AS admin-api
 FROM runtime AS biz-api
 FROM runtime AS c-api
 FROM runtime AS worker
+FROM runtime AS config-api
 # 迁移 Job 专用镜像（ENT-05 T7）；与 API 共用运行时基座与迁移文件。
 FROM runtime AS migrate

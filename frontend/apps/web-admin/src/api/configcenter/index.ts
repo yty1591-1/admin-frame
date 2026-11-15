@@ -21,6 +21,23 @@ export {
   submitConfigReleaseApi,
 } from './releases';
 export type { ConfigReleaseListParams } from './releases';
+export {
+  approveConfigSecretApi,
+  createConfigSecretApi,
+  createConfigSecretGrantApi,
+  getConfigSecretApi,
+  listConfigSecretGrantsApi,
+  listConfigSecretsApi,
+  revokeConfigSecretApi,
+  rotateConfigSecretApi,
+  submitConfigSecretApi,
+} from './secrets';
+export type {
+  ConfigSecret,
+  ConfigSecretGrant,
+  ConfigSecretListResult,
+  ConfigSecretStatus,
+} from './secrets';
 export type {
   ConfigEnv,
   ConfigItem,

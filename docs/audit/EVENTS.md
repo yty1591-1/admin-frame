@@ -62,11 +62,11 @@
 | `config.release.publish` | A | 配置 Release 发布（含灰度范围、release_id、变更键数量） | 配置 | 180d | planned |
 | `config.release.rollback` | A | 配置 Release 回滚（含源 / 目标 release_id、操作者、原因） | 配置 | 180d | planned |
 | `config.release.approve` | A | 配置发布审批；记录提交人与审批人，二者必须不同 | 配置 | 180d | planned |
-| `config.secret.create` | A | 创建业务密钥；只记录 key、版本、指纹，不记录明文 / 密文 | 配置 | 180d | planned |
-| `config.secret.rotate` | A | 轮换业务密钥；记录新旧版本与 grace，不记录密钥材料 | 配置 | 180d | planned |
-| `config.secret.revoke` | A | 吊销业务密钥；记录原因与影响服务，不记录密钥材料 | 配置 | 180d | planned |
-| `config.secret.grant` | A | 变更密钥解析授权（env / namespace / service_identity / secret） | 配置 | 180d | planned |
-| `config.secret.resolve` | A | 服务身份解析密钥；记录服务身份、key、版本、结果与 trace_id，不记录明文 | 配置 | 180d | planned |
+| `config.secret.create` | A | 创建业务密钥；只记录 key、版本、指纹，不记录明文 / 密文 | 配置 | 180d | active |
+| `config.secret.rotate` | A | 轮换业务密钥；记录新旧版本与 grace，不记录密钥材料 | 配置 | 180d | active |
+| `config.secret.revoke` | A | 吊销业务密钥；记录原因与影响服务，不记录密钥材料 | 配置 | 180d | active |
+| `config.secret.grant` | A | 变更密钥解析授权（env / namespace / service_identity / secret） | 配置 | 180d | active |
+| `config.secret.resolve` | A | 服务身份解析密钥；记录服务身份、key、版本、结果与 trace_id，不记录明文 | 配置 | 180d | active |
 | `data.export` | A/B | 数据导出（含 PII 须记范围摘要）；同步 `GET /admin/v1/audit/events/export`、异步任务完成与下载（`attrs.mode=async` / `async-download`）均记录导出人、时间窗、条数、过滤条件名称与 `export_id` | 导出 | 365d | active |
 | `audit.query` | A | 审计事件查询；`GET /admin/v1/audit/events` 每次查询记录操作者、时间窗、命中条数与过滤条件名称 | 权限 | 180d | active |
 | `audit.retention_purge` | worker | 审计到期清理（元审计：记录 cutoff / 到期数 / 归档数 / 删除数 / 批次数；配置 `archive_prefix` 时先落归档对象再删除） | 权限 | 180d | active |

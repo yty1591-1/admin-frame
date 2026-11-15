@@ -122,6 +122,9 @@ func platformSpecs() []domain.KeySpec {
 		// 后台任务与追踪。
 		// startup：全仓无以该间隔运转的循环；列入热更会造成假热更（ADR-0015 H5）。
 		durationKey("worker.poll_interval", "5s", "后台 worker 轮询间隔", false),
+		// M2：演示敏感键；值走 config_secret，首次按 secret_rule 自动生成。
+		sensitiveAutoKey("platform.demo.hmac_key", "演示用 HMAC 密钥（M2 自动生成）",
+			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 		stringKeyWithEnum("tracing.exporter", "none", "追踪导出器", false,
 			"none", "otlp", "stdout", "noop"),
 		stringKey("tracing.endpoint", "", "OTLP/HTTP 端点；exporter=otlp 时必填", false),
@@ -211,6 +214,13 @@ func iamSpecs() []domain.KeySpec {
 }
 
 // stringKey 构造字符串键声明。
+func sensitiveAutoKey(key, description string, rule *domain.SecretRule) domain.KeySpec {
+	return domain.KeySpec{
+		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeString,
+		Description: description, Owner: ownerPlatform, Sensitive: true, SecretRule: rule,
+	}
+}
+
 func stringKey(key, defaultValue, description string, reloadable bool) domain.KeySpec {
 	return domain.KeySpec{
 		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeString,

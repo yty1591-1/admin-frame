@@ -31,6 +31,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/db"
+	"github.com/admin-frame/admin-frame/pkg/envelope"
 	"github.com/admin-frame/admin-frame/pkg/hotconfig"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -70,6 +71,8 @@ type Runtime struct {
 	//
 	// 消费方应每次使用读当前视图，不要把取值缓存到局部变量。
 	Hot *hotconfig.Holder
+	// Secrets 是业务密钥用例（M2）；管理面 wrap / config-api unwrap。
+	Secrets *app.SecretService
 
 	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
 	clientEnv        string
@@ -150,9 +153,25 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
 	}
 
+	secretRepos, err := buildSecretRepositories(sqlDB)
+	if err != nil {
+		return nil, err
+	}
+	kek, err := buildKEK(deps.Config.Env, deps.Logger)
+	if err != nil {
+		return nil, err
+	}
+	secretService, err := app.NewSecretService(
+		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
+		kek, emitter, deps.IDs, appOpts)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter secret service: %w", err)
+	}
+
 	handler, err := configcenterrest.NewHandler(configcenterrest.HandlerConfig{
 		Items:    itemService,
 		Releases: releaseService,
+		Secrets:  secretService,
 		Specs:    registry,
 		PageLimits: pagination.Config{
 			DefaultPageSize: defaultPageSize,
@@ -184,9 +203,108 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Client:           client,
 		Metrics:          metrics,
 		Hot:              hotHolder(client, hot),
+		Secrets:          secretService,
 		clientEnv:        deps.Config.Env,
 		clientNamespaces: snapshotconfig.EnabledNamespaces(),
 	}, nil
+}
+
+// NewSecretResolve 装配仅含密钥解析的运行时（cmd/config-api）。
+func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
+	if deps == nil || deps.Config == nil || deps.IDs == nil {
+		return nil, fmt.Errorf("configcenter secret resolve requires platform deps")
+	}
+	emitter := buildEmitter(deps)
+	service := opts.Service
+	if service == "" {
+		service = deps.Config.Service
+	}
+	kek, err := buildKEK(deps.Config.Env, deps.Logger)
+	if err != nil {
+		return nil, err
+	}
+	repos, sqlDB, err := buildRepositories(deps)
+	if err != nil {
+		return nil, err
+	}
+	secretRepos, err := buildSecretRepositories(sqlDB)
+	if err != nil {
+		return nil, err
+	}
+	secretService, err := app.NewSecretService(
+		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
+		kek, emitter, deps.IDs, app.Options{Service: service})
+	if err != nil {
+		return nil, err
+	}
+	registry, err := spec.Platform()
+	if err != nil {
+		return nil, err
+	}
+	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, app.Options{Service: service})
+	if err != nil {
+		return nil, err
+	}
+	releaseService, err := app.NewReleaseService(repos.items, repos.releases, repos.pointers,
+		emitter, deps.IDs, app.Options{Service: service})
+	if err != nil {
+		return nil, err
+	}
+	handler, err := configcenterrest.NewHandler(configcenterrest.HandlerConfig{
+		Items: itemService, Releases: releaseService, Secrets: secretService, Specs: registry,
+		PageLimits: pagination.Config{DefaultPageSize: defaultPageSize, MaxPageSize: maxPageSize},
+		SQLDB:      sqlDB,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{Handler: handler, Secrets: secretService}, nil
+}
+
+// buildKEK 按环境选择 LocalKEK 或 Vault Transit；prod 禁止 LocalKEK。
+func buildKEK(env string, logger *slog.Logger) (envelope.KEKProvider, error) {
+	driver := strings.TrimSpace(os.Getenv("CONFIGCENTER_KEK_DRIVER"))
+	if driver == "" {
+		driver = "local"
+	}
+	switch strings.ToLower(driver) {
+	case "local":
+		kek, err := envelope.NewLocalKEKFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("configcenter local kek: %w", err)
+		}
+		if err := envelope.RejectLocalKEKInProd(env, kek); err != nil {
+			return nil, err
+		}
+		if logger != nil {
+			logger.Info("configcenter kek provider", "driver", "local", "key_id", kek.KeyID())
+		}
+		return kek, nil
+	case "vault", "vault_transit":
+		kek, err := envelope.NewVaultTransit(
+			os.Getenv("VAULT_ADDR"),
+			os.Getenv("VAULT_TOKEN"),
+			firstNonEmpty(os.Getenv("CONFIGCENTER_VAULT_TRANSIT_KEY"), "configcenter"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("configcenter vault transit: %w", err)
+		}
+		if logger != nil {
+			logger.Info("configcenter kek provider", "driver", "vault_transit", "key_id", kek.KeyID())
+		}
+		return kek, nil
+	default:
+		return nil, fmt.Errorf("configcenter unknown kek driver %q", driver)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // NewRefresh 只装配动态刷新客户端与客户端指标，不注册管理面、不播种。
@@ -357,6 +475,24 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 		releases: repos.Releases,
 		pointers: repos.Pointers,
 	}, sqlDB, nil
+}
+
+type secretRepos struct {
+	Secrets domain.SecretRepository
+	Grants  domain.SecretGrantRepository
+	Access  domain.SecretAccessRepository
+}
+
+func buildSecretRepositories(sqlDB *sql.DB) (secretRepos, error) {
+	if sqlDB == nil {
+		mem := memory.NewSecrets()
+		return secretRepos{Secrets: mem.Secrets, Grants: mem.Grants, Access: mem.Access}, nil
+	}
+	repos, err := persistence.NewSecrets(sqlDB)
+	if err != nil {
+		return secretRepos{}, err
+	}
+	return secretRepos{Secrets: repos.Secrets, Grants: repos.Grants, Access: repos.Access}, nil
 }
 
 // buildMetrics 构造配置中心指标；进程未装配指标时不观测（测试形态）。

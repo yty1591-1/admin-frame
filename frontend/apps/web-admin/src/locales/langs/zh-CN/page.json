@@ -14,7 +14,8 @@
     "configItems": "配置列表",
     "configEdit": "配置编辑",
     "configVersions": "版本历史",
-    "configReleases": "发布与回滚"
+    "configReleases": "发布与回滚",
+    "configSecrets": "密钥管理"
   },
   "iam": {
     "title": "权限管理",

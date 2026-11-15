@@ -308,6 +308,42 @@ workloads:
     ingress:
       enabled: false
 
+  # M2：内部密钥解析；无公网 Ingress；KEK / mTLS 证书由 envFrom / secretMounts 注入。
+  config:
+    enabled: false
+    serviceName: config-api
+    channel: internal
+    nodeID: 5
+    image:
+      repository: config-api
+    port: 8085
+    replicas: 2
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    probes:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: true
+      minAvailable: 1
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+
 # 迁移 Job：post-install/post-upgrade 执行，失败阻断（需 helm --atomic --wait）。
 migrate:
   enabled: false

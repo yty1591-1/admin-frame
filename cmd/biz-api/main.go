@@ -14,6 +14,7 @@ import (
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
@@ -127,6 +128,13 @@ func run(configPath string) error {
 			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
 				appCfg.Config.Env, startup, deps.Logger, deps.Metrics); err != nil {
 				deps.Logger.Warn("configcenter dual read failed", "err", err)
+			}
+			// M2：可选密钥解析客户端（CONFIG_API_URL + CONFIG_SERVICE_IDENTITY）。
+			if secretClient, serr := secretruntime.NewFromEnv(); serr != nil {
+				deps.Logger.Warn("secretclient unavailable", "err", serr)
+			} else if secretClient != nil {
+				deps.Logger.Info("secretclient enabled", "base", "CONFIG_API_URL")
+				_ = secretClient // 业务域按需注入；此处完成端到端接线与可观测启动日志
 			}
 			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
 			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {

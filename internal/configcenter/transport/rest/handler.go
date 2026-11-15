@@ -37,6 +37,7 @@ const maxBodyBytes = 64 << 10
 type Handler struct {
 	items    *app.ItemService
 	releases *app.ReleaseService
+	secrets  *app.SecretService
 	specs    *spec.Registry
 	pageCfg  pagination.Config
 	sqlDB    *sql.DB
@@ -48,6 +49,8 @@ type HandlerConfig struct {
 	Items *app.ItemService
 	// Releases 发布用例；必填。
 	Releases *app.ReleaseService
+	// Secrets 业务密钥用例；M2 可选，nil 时密钥端点返回 500。
+	Secrets *app.SecretService
 	// Specs 代码键声明注册表；用于 namespace 列表与键数量。
 	Specs *spec.Registry
 	// PageLimits 分页默认值与上限（page_size ≤ 100）。
@@ -69,6 +72,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	return &Handler{
 		items:    cfg.Items,
 		releases: cfg.Releases,
+		secrets:  cfg.Secrets,
 		specs:    cfg.Specs,
 		pageCfg:  cfg.PageLimits,
 		sqlDB:    cfg.SQLDB,

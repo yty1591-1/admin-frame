@@ -18,6 +18,7 @@ var adminComponents = []string{
 	"/system/config/edit/index.vue",
 	"/system/config/items/index.vue",
 	"/system/config/releases/index.vue",
+	"/system/config/secrets/index.vue",
 	"/system/config/versions/index.vue",
 	"/system/role/index.vue",
 }

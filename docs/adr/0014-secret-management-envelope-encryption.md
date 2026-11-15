@@ -113,6 +113,6 @@ Service → mTLS / SPIFFE → config-api
 
 1. ~~本 ADR 转「已接受」前，完成 `docs/config-center-plan.md` §10.2 的 `Q9`～`Q12` 与安全会签。~~ 已完成（2026-11-12）：ADR 转「已接受」，Q9 / Q12 已决，Q10 选型在 M2 实施前关闭。
 2. ~~回写 `SECURITY_STANDARDS.md`（密钥明文不入库、信封加密、KEK 外部）与 `CONFIG_STANDARDS.md`（键分类、业务密钥边界、CFG-04 仅「配置中心 > 代码默认值」、首次启动默认值与密钥生成规则）。~~ 已完成（2026-11-12）。
-3. 新增 `docs/runbooks/secret-management.md` 与 `docs/runbooks/key-ceremony.md`。
-4. M2 前完成 KEK 选型（Vault Transit / 云 KMS / HSM）与 `config-api` mTLS / SPIFFE 证书方案。
+3. ~~新增 `docs/runbooks/secret-management.md` 与 `docs/runbooks/key-ceremony.md`。~~ **已完成（2026-11-16）**。
+4. ~~M2 前完成 KEK 选型与 `config-api` 证书方案。~~ **已完成（2026-11-16）**：LocalKEK（本机/CI）+ Vault Transit（生产）；证书 SAN / 显式 service_identity；SPIFFE 不阻塞。
 5. M2 完成后复评是否需要把普通配置读也收敛到 `config-api`。

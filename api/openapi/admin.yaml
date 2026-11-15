@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.5.0
+  version: 8.6.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
@@ -49,6 +49,8 @@ info:
     读、写、审批、发布四权分离（`config:read` / `config:write` / `config:approve` /
     `config:publish`）；敏感项（`sensitive=true`）只返回 `value_hash`，不返回明文；
     快照不可变，生效只切换释放指针（纯增量）。
+    8.6.0：配置中心业务密钥管理面（M2 / ADR-0014）——新增 `/admin/v1/configs/secrets*`；
+    `config:secret:read/write/approve` 三权分离；列表 / 详情仅指纹，明文只允许创建与轮换一次性输入（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -297,6 +299,28 @@ paths:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-publish'
   /admin/v1/configs/releases/{id}/rollback:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-rollback'
+  /admin/v1/configs/secrets:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets'
+  /admin/v1/configs/secrets/{id}:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id'
+  /admin/v1/configs/secrets/{id}/submit:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-submit'
+  /admin/v1/configs/secrets/{id}/approve:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-approve'
+  /admin/v1/configs/secrets/{id}/rotate:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-rotate'
+  /admin/v1/configs/secrets/{id}/revoke:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-revoke'
+  /admin/v1/configs/secrets/{id}/versions:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-versions'
+  /admin/v1/configs/secrets/{id}/versions/{version}/activate:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-versions-by-version-activate'
+  /admin/v1/configs/secrets/{id}/grants:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-grants'
+  /admin/v1/configs/secrets/{id}/grants/{grant_id}/revoke:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-grants-by-grant-id-revoke'
+  /admin/v1/configs/secrets/{id}/accesses:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-accesses'
   /admin/v1/notifications:
     $ref: './paths/admin/notification.yaml#/admin-v1-notifications'
   /admin/v1/notifications/{id}:

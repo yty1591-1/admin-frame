@@ -1,0 +1,30 @@
+openapi: 3.0.3
+info:
+  title: Config API (internal)
+  version: 1.0.0
+  description: |
+    配置中心内部密钥解析服务（M2 / ADR-0014）。仅集群内 mTLS 可达；
+    不承载管理面。破坏性变更须提升 major。
+    1.0.0：新增 `POST /internal/v1/configs/secrets/resolve`。
+servers:
+  - url: http://localhost:8085
+    description: 本地 config-api
+paths:
+  /internal/v1/configs/secrets/resolve:
+    $ref: './paths/internal/secrets.yaml#/internal-v1-configs-secrets-resolve'
+  /healthz:
+    get:
+      tags: [probe]
+      summary: liveness
+      operationId: internalHealthz
+      responses:
+        "200":
+          description: ok
+  /readyz:
+    get:
+      tags: [probe]
+      summary: readiness
+      operationId: internalReadyz
+      responses:
+        "200":
+          description: ok

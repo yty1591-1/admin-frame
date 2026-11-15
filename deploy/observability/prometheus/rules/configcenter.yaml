@@ -103,3 +103,30 @@ groups:
           summary: "进程冷启动无可信快照，已回退代码默认值"
           description: "检查启动期 DB / 快照文件可用性；确认该进程是否允许以默认值启动。"
           runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSecretAPIUnavailable
+        expr: |
+          (
+            sum(rate(config_secret_resolve_total{result="error"}[5m]))
+            /
+            clamp_min(sum(rate(config_secret_resolve_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: config.secret_api_unavailable
+        annotations:
+          summary: "config-api 密钥解析失败率超过 1%"
+          description: "检查 config-api、KEK / Vault、网络策略与 grant。"
+          runbook_url: docs/runbooks/secret-management.md
+
+      - alert: ConfigSecretPlaintextLeak
+        expr: increase(config_secret_plaintext_leak_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: P0
+          alert_id: config.secret_plaintext_leak
+        annotations:
+          summary: "检测到密钥明文旁路"
+          description: "立即止血：吊销相关密钥、轮换 KEK 访问、排查日志 / 导出 / 前端响应。"
+          runbook_url: docs/runbooks/secret-management.md
