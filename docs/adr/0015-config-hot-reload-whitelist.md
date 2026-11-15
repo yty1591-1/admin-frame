@@ -1,6 +1,6 @@
 # ADR-0015：配置热更新采用「白名单 + 不可变视图原子替换」
 
-- 状态：Accepted（2026-11-13；H1 / H2 已决，实施进行中——热更通道与 `log.level` 已上线，其余 12 键待改造消费点）
+- 状态：Accepted（2026-11-13；H1 / H2 / H5 已决；白名单 12 键消费点全部落地，staging 回滚取证仍待环境执行）
 - 日期：2026-11-13
 - 关联：[`../config-center-plan.md`](../config-center-plan.md)（§3.4 读取协议、§6.8 配置优先级与热更白名单、AC-CC-02）、[ADR-0013](0013-config-center-in-process-snapshot.md)（进程内快照与 MySQL 事实源）、[ADR-0009](0009-featureflag-inprocess-evaluation.md)（布尔开关边界）、[ADR-0014](0014-secret-management-envelope-encryption.md)（密钥解析）、[`../ARCHITECTURE.md`](../ARCHITECTURE.md) §5.6、[`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md)（CFG-07）
 
@@ -34,31 +34,31 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 4. **同值不重建**：以 Release 条目的 `value_hash` 判断，若 `hot` 键取值全部未变则不构建新视图、不推进视图版本（避免 5s 轮询制造无谓唤醒与抖动）。
 5. **失败保留旧值**：验签失败、类型 / 枚举 / 范围校验失败、视图构建 panic 一律保留上一份视图并告警，**绝不回落到代码默认值**——默认值只属于启动期语义。
 6. **生效窗口**：发布后 ≤ 1 个刷新周期（默认 5s）+ 视图构建时间；不重启进程、不重建连接池、不重置计数器。
-7. **首批白名单 13 键**（附录 A），并**明确排除** `async.outbox.concurrency` 与 `async.consumer.concurrency`：动态扩缩 worker 池涉及在途任务与租约，风险与 M1 收益不匹配，留待 P1 单独评估；本 ADR 通过后把这两个键的 `reloadable` 收紧为 `false`。
+7. **首批白名单现为 12 键**（附录 A；原 13 键经 H5 移除无消费点的 `worker.poll_interval`），并**明确排除** `async.outbox.concurrency` 与 `async.consumer.concurrency`：动态扩缩 worker 池涉及在途任务与租约，风险与 M1 收益不匹配，留待 P1 单独评估；本 ADR 通过后把这两个键的 `reloadable` 收紧为 `false`。
 8. **观测**：`config_hot_view_version{namespace}`、`config_hot_reload_total{result="applied|rejected|unchanged"}`、`config_hot_key_applied_total{key}`、`config_hot_ignored_total{key}`（`startup` 键收到热更事件时计数）。日志只记 key 与版本，不记取值。
 9. **边界不变**：布尔开关 / kill switch 仍走 `internal/featureflag`（ADR-0009）；灰度与租户覆盖仍在 P1；密钥解析仍只经 `cmd/config-api`（ADR-0014），`hot` 视图**不含密钥**。
 10. **回滚**：回滚发布 = 指针回退 + 下一次刷新构建旧视图，等价一次普通热更；不保留历史视图，也不支持「按进程回滚到某个旧视图」。
 
-## 附录 A：首批热更白名单（13 键）
+## 附录 A：首批热更白名单（12 键）
 
 | # | key | 类型 | 默认 | 当前读点 | 改造要点 |
 |---|-----|------|------|----------|----------|
 | 1 | `log.level` | enum(debug/info/warn/error) | `info` | 构造期固定 | 改为 `slog.LevelVar`，热更直接 `Set` |
-| 2 | `worker.poll_interval` | duration | `5s` | **无消费点**（仅声明 + 启动日志） | 待定：接线到具体后台循环，或移出白名单 |
-| 3 | `idempotency.ttl` | duration | `24h` | 幂等中间件构造期 | 写入幂等记录时读当前 TTL |
-| 4 | `rate_limit.rps` | string(数字) | `0` | 管线构造期 | 每次限流决策读当前值 |
-| 5 | `rate_limit.burst` | int | `0` | 管线构造期 | 同上；变更时不清空已有令牌桶 |
-| 6 | `rate_limit.idle_ttl` | duration | `10m` | 桶回收任务 | 每轮回收读当前值 |
-| 7 | `rate_limit.degrade_on_failure` | bool | `false` | 限流失败判定 | 判定时读当前值 |
-| 8 | `async.outbox.poll_interval` | duration | `1s` | relay 构造期 | 每轮休眠读当前值 |
-| 9 | `async.outbox.batch_size` | int | `100` | relay 构造期 | 每轮认领读当前值（上限 500） |
-| 10 | `async.outbox.lease` | duration | `30s` | relay 构造期 | 认领时读当前值；**加租约随读取值走**，避免新旧租约混用 |
-| 11 | `async.outbox.max_attempts` | int | `10` | relay 构造期 | 判定重试上限时读当前值 |
-| 12 | `async.consumer.visibility_timeout` | duration | `60s` | consumer 构造期 | 认领时读当前值 |
-| 13 | `async.consumer.retry_backoff` | enum(exponential/fixed) | `exponential` | consumer 构造期 | 计算退避时读当前值 |
+| 2 | `idempotency.ttl` | duration | `24h` | 幂等中间件构造期 | 写入幂等记录时读当前 TTL |
+| 3 | `rate_limit.rps` | string(数字) | `0` | 管线构造期 | 每次限流决策读当前值 |
+| 4 | `rate_limit.burst` | int | `0` | 管线构造期 | 同上；变更时不清空已有令牌桶 |
+| 5 | `rate_limit.idle_ttl` | duration | `10m` | 桶回收任务 | 每轮回收读当前值 |
+| 6 | `rate_limit.degrade_on_failure` | bool | `false` | 限流失败判定 | 判定时读当前值 |
+| 7 | `async.outbox.poll_interval` | duration | `1s` | relay 构造期 | 每轮休眠读当前值 |
+| 8 | `async.outbox.batch_size` | int | `100` | relay 构造期 | 每轮认领读当前值（上限 500） |
+| 9 | `async.outbox.lease` | duration | `30s` | relay 构造期 | 认领时读当前值；**加租约随读取值走**，避免新旧租约混用 |
+| 10 | `async.outbox.max_attempts` | int | `10` | relay 构造期 | 判定重试上限时读当前值 |
+| 11 | `async.consumer.visibility_timeout` | duration | `60s` | consumer 构造期 | 认领时读当前值 |
+| 12 | `async.consumer.retry_backoff` | enum(exponential/fixed) | `exponential` | consumer 构造期 | 计算退避时读当前值 |
 
 **排除项**（保持 `startup`）：
 
+- `worker.poll_interval`：全仓无以该间隔运转的循环；H5 移出白名单并收紧 `reloadable=false`，避免假热更。
 - `async.outbox.concurrency` / `async.consumer.concurrency`：动态调整池规模需要优雅缩容与在途任务迁移，M1 不做。
 - 所有 `addr` / `db.*` / `redis.*` / `storage.driver` / `auth.mode` / `tracing.*` / `iam.mode`：影响进程装配，热更即等于隐式重启。
 - 密钥类：不在 `hot` 视图内（ADR-0014）。
@@ -90,19 +90,20 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 ## 后续行动
 
 1. ~~架构 Owner 评审本 ADR~~ **已完成（2026-11-13）**，状态 `Accepted`；§10.5 范围变更记录随后回写。
-2. 实施进度（2026-11-13）：
+2. 实施进度（2026-11-13～2026-11-16）：
    - `pkg/hotconfig` 视图 / Holder / 指标通道 **已完成**；
    - 四进程接线（`Runtime.Hot`，复用 `configclient.RefreshEvent`）**已完成**；
-   - 消费点改造 **1 / 13**：`log.level`（`slog.LevelVar`）已生效，其余 12 键仍在装配期捕获，逐键改造；
-   - AC-CC-02 用例待消费点改完后补（改 hot 键 ≤5s 生效、改 startup 键不生效且打点、回滚 ≤30s）。
+   - 消费点改造 **12 / 12**：白名单全部有真实读点；H5 已移出无消费点的 `worker.poll_interval`；
+   - AC-CC-02 单测级取证已补（`accc02_test.go`）；staging 回滚 ≤30s 仍待环境执行。
 3. ~~同步收紧 `async.*.concurrency` 的 `reloadable`~~ **已完成**；`CONFIG_STANDARDS.md` / `ARCHITECTURE.md` §5.6 指向本 ADR 的回写 **待做**。
-4. `docs/runbooks/config-center.md` 增「热更生效验证」：改 `log.level` 观察 `config_hot_view_version` 递增与 `config_hot_key_applied_total` 计数（其余键改造后逐条补）。
+4. `docs/runbooks/config-center.md`「热更生效验证」已覆盖 12 个白名单键；`worker.poll_interval` 按 H5 归为 startup。
 
 ## 评审记录
 
 | 日期 | 决策 | 备注 |
 |------|------|------|
-| 2026-11-13 | H1 接受：`log.level` 使用全局 `LevelVar`；H2 保留：`async.outbox.lease` 留在首批，白名单 13 键 | 决策来自本次评审；签署留痕由评审系统保存，本文不代签 |
+| 2026-11-13 | H1 接受：`log.level` 使用全局 `LevelVar`；H2 保留：`async.outbox.lease` 留在首批，白名单当时 13 键 | 决策来自本次评审；签署留痕由评审系统保存，本文不代签 |
+| 2026-11-16 | H5：移出 `worker.poll_interval`；白名单收敛为 12 键；`reloadable=false` | 全仓无消费循环，保留会造成假热更；若未来出现真实读点可再提案回白名单 |
 
 ## 实施进度（滚动更新）
 
@@ -115,14 +116,12 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 | 消费点 | `idempotency.ttl`（`Config.TTLSource`，Begin/Complete 同值） | 已完成 |
 | 消费点 | `async.outbox.poll_interval/batch_size/lease/max_attempts`（`RelayOptions.Params`） | 已完成 |
 | 消费点 | `async.consumer.visibility_timeout`（`IdempotentOptions.Visibility`）、`retry_backoff`（`Params.Backoff`） | 已完成 |
-| 消费点 | `worker.poll_interval` | **阻塞**：全仓无消费点（仅键声明与启动日志打印），接线等于凭空发明语义，待定「接线 or 移出白名单」 |
+| 白名单收敛 | `worker.poll_interval` 移出 HotKeys，声明收紧为 startup（H5） | 已完成 |
 | 验收 | AC-CC-02 用例（hot 键发布立即生效、startup 键不生效） | 已完成（单测级取证，见 `accc02_test.go`） |
 | 验收 | 回滚 ≤30s 与 staging 环境取证 | 待补（需环境执行，本机单元测试无法覆盖） |
 
-> 消费点改造 12 / 13 已完成（2026-11-13）。第 13 项 `worker.poll_interval` 不是实现难度问题，
-> 而是**没有读点**：仓库里没有任何循环以它为间隔。要么把它接到某个具体后台循环（例如
-> 身份域清理或审计保留期的调度粒度），要么从白名单移除并同步 §附录 A——两种都需要决策，
-> 现状是声明了却没有效果，属于「假热更」，不应算作已交付。
+> 消费点改造 12 / 12 已完成（2026-11-16）。原第 13 项 `worker.poll_interval` 按 H5 移出白名单：
+> 仓库里没有任何循环以它为间隔，接线等于凭空发明语义；键仍保留在 platform 声明中供启动期读取。
 
 ## 运行期语义（实施时确定）
 
@@ -141,6 +140,7 @@ M1 已完成发布 / 回滚 / 指针 CAS / Ed25519 签名快照 / 进程内 SDK 
 | ID | 问题 | 结论 |
 |----|------|------|
 | H1 | `log.level` 用全局 `LevelVar` 会影响所有 logger，是否可接受？ | **已决（2026-11-13）**：接受。级别变更本就应该全局一致，且这是运维最常用的热更键 |
-| H2 | `async.outbox.lease` 进首批是否过于激进？ | **已决（2026-11-13）**：保留在首批，白名单维持 13 键；变更需在 runbook 标注窗口约束 |
+| H2 | `async.outbox.lease` 进首批是否过于激进？ | **已决（2026-11-13）**：保留在首批；变更需在 runbook 标注窗口约束 |
 | H3 | 视图构建 panic 的兜底策略？ | 倾向「保留旧视图 + `rejected` + 告警，不退出进程」；实现以错误返回为主，panic 兜底随首个消费点改造补齐 |
 | H4 | 是否需要在 M1 提供「热更 explain」？ | 不提供；P1 与灰度 explain 一起做 |
+| H5 | `worker.poll_interval` 无消费点，接线还是移出？ | **已决（2026-11-16）**：移出白名单并 `reloadable=false`；避免假热更；未来有真实读点再提案 |

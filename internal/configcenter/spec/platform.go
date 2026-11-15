@@ -120,7 +120,8 @@ func platformSpecs() []domain.KeySpec {
 		durationKey("storage.presign_get_ttl", "0s", "预签名下载有效期", false),
 
 		// 后台任务与追踪。
-		durationKey("worker.poll_interval", "5s", "后台 worker 轮询间隔", true),
+		// startup：全仓无以该间隔运转的循环；列入热更会造成假热更（ADR-0015 H5）。
+		durationKey("worker.poll_interval", "5s", "后台 worker 轮询间隔", false),
 		stringKeyWithEnum("tracing.exporter", "none", "追踪导出器", false,
 			"none", "otlp", "stdout", "noop"),
 		stringKey("tracing.endpoint", "", "OTLP/HTTP 端点；exporter=otlp 时必填", false),

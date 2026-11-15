@@ -131,15 +131,15 @@ func TestHotStateMergesNamespaces(t *testing.T) {
 	}, nil, metrics, level)
 	hot.onEvent(configclient.RefreshEvent{
 		Namespace: "identity", Loaded: true,
-		Snapshot: configclient.Snapshot{ReleaseID: 2, Values: map[string]string{"worker.poll_interval": "9s"}},
+		Snapshot: configclient.Snapshot{ReleaseID: 2, Values: map[string]string{"idempotency.ttl": "2h"}},
 	}, nil, metrics, level)
 
 	view := hot.holder.Current()
 	if view.Int("rate_limit.rps", 0) != 50 {
 		t.Fatalf("rps lost after identity refresh: %d", view.Int("rate_limit.rps", 0))
 	}
-	if view.Duration("worker.poll_interval", 0).Seconds() != 9 {
-		t.Fatalf("poll interval = %v", view.Duration("worker.poll_interval", 0))
+	if view.Duration("idempotency.ttl", 0).Hours() != 2 {
+		t.Fatalf("idempotency ttl = %v", view.Duration("idempotency.ttl", 0))
 	}
 }
 

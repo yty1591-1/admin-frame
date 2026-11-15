@@ -14,7 +14,6 @@ import (
 // 也只走「发布 + 重启」。新增或移除键必须同步 ADR-0015 与本切片。
 var HotKeys = []string{
 	"log.level",
-	"worker.poll_interval",
 	"idempotency.ttl",
 	"rate_limit.rps",
 	"rate_limit.burst",

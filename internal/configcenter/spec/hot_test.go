@@ -36,6 +36,24 @@ func TestHotKeysExcludeConcurrency(t *testing.T) {
 	}
 }
 
+// TestHotKeysExcludeWorkerPollInterval 守护 ADR-0015 H5：无消费点的键不得留在白名单。
+func TestHotKeysExcludeWorkerPollInterval(t *testing.T) {
+	if _, ok := spec.HotKeySet()["worker.poll_interval"]; ok {
+		t.Fatal("worker.poll_interval must not be hot: no consumer loop exists")
+	}
+	registry, err := spec.Platform()
+	if err != nil {
+		t.Fatalf("Platform: %v", err)
+	}
+	keySpec, ok := registry.Lookup("platform", "worker.poll_interval")
+	if !ok {
+		t.Fatal("worker.poll_interval must remain declared as a startup key")
+	}
+	if keySpec.Reloadable {
+		t.Fatal("worker.poll_interval Reloadable must be false after H5")
+	}
+}
+
 // TestHotKeySetMatchesList 守护集合与切片的对应关系。
 func TestHotKeySetMatchesList(t *testing.T) {
 	set := spec.HotKeySet()
