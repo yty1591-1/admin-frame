@@ -16,8 +16,10 @@ import (
 )
 
 const (
+	// ResourceTypeSecret 是密钥审计资源类型。
 	ResourceTypeSecret = "config_secret"
-	ResourceTypeGrant  = "config_secret_grant"
+	// ResourceTypeGrant 是密钥授权审计资源类型。
+	ResourceTypeGrant = "config_secret_grant"
 )
 
 // SecretResolveObserver 观测密钥解析结果（低基数；不含明文）。
@@ -154,11 +156,11 @@ func (s *SecretService) CreateSecret(ctx context.Context, in CreateSecretInput) 
 }
 
 // SubmitSecret 送审：draft/rejected → pending_review。
-func (s *SecretService) SubmitSecret(ctx context.Context, id int64, actor Actor) (domain.Secret, error) {
+func (s *SecretService) SubmitSecret(ctx context.Context, secretID int64, actor Actor) (domain.Secret, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Secret{}, err
 	}
-	secret, err := s.secrets.GetByID(ctx, id)
+	secret, err := s.secrets.GetByID(ctx, secretID)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
@@ -439,11 +441,11 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 }
 
 // RevokeSecret 提交吊销：进入待审，审批通过后再生效。
-func (s *SecretService) RevokeSecret(ctx context.Context, id int64, comment string, actor Actor) (domain.Secret, error) {
+func (s *SecretService) RevokeSecret(ctx context.Context, secretID int64, comment string, actor Actor) (domain.Secret, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Secret{}, err
 	}
-	secret, err := s.secrets.GetByID(ctx, id)
+	secret, err := s.secrets.GetByID(ctx, secretID)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
@@ -469,15 +471,15 @@ func (s *SecretService) RevokeSecret(ctx context.Context, id int64, comment stri
 }
 
 // ActivateVersion 回滚激活指定版本。
-func (s *SecretService) ActivateVersion(ctx context.Context, id, version int64, actor Actor) (domain.Secret, error) {
+func (s *SecretService) ActivateVersion(ctx context.Context, secretID, version int64, actor Actor) (domain.Secret, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Secret{}, err
 	}
-	secret, err := s.secrets.GetByID(ctx, id)
+	secret, err := s.secrets.GetByID(ctx, secretID)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	target, err := s.secrets.GetVersion(ctx, id, version)
+	target, err := s.secrets.GetVersion(ctx, secretID, version)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
@@ -486,11 +488,11 @@ func (s *SecretService) ActivateVersion(ctx context.Context, id, version int64, 
 	}
 	now := s.now().UTC()
 	if secret.ActiveVersion != nil && *secret.ActiveVersion != version {
-		_ = s.secrets.UpdateVersionStatus(ctx, id, *secret.ActiveVersion,
+		_ = s.secrets.UpdateVersionStatus(ctx, secretID, *secret.ActiveVersion,
 			domain.SecretVersionActive, domain.SecretVersionGrace, now)
 	}
 	if target.Status != domain.SecretVersionActive {
-		_ = s.secrets.UpdateVersionStatus(ctx, id, version, target.Status, domain.SecretVersionActive, now)
+		_ = s.secrets.UpdateVersionStatus(ctx, secretID, version, target.Status, domain.SecretVersionActive, now)
 	}
 	expected := secret.Version
 	secret.ActiveVersion = &version
@@ -717,36 +719,39 @@ func (s *SecretService) recordAccess(ctx context.Context, in ResolveInput, name 
 	})
 }
 
-// Get / List / ListVersions / ListGrants / ListAccesses 只读查询。
-
-func (s *SecretService) Get(ctx context.Context, id int64) (domain.Secret, error) {
-	secret, err := s.secrets.GetByID(ctx, id)
+// Get 按主键读取密钥元数据。
+func (s *SecretService) Get(ctx context.Context, secretID int64) (domain.Secret, error) {
+	secret, err := s.secrets.GetByID(ctx, secretID)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
 	return secret, nil
 }
 
+// List 分页列出密钥元数据。
 func (s *SecretService) List(ctx context.Context, env, namespace string, status domain.SecretStatus, limit, offset int) ([]domain.Secret, int, error) {
 	return s.secrets.List(ctx, env, namespace, status, limit, offset)
 }
 
-func (s *SecretService) ListVersions(ctx context.Context, id int64, limit, offset int) ([]domain.SecretVersion, int, error) {
-	if _, err := s.secrets.GetByID(ctx, id); err != nil {
+// ListVersions 分页列出密文版本元数据。
+func (s *SecretService) ListVersions(ctx context.Context, secretID int64, limit, offset int) ([]domain.SecretVersion, int, error) {
+	if _, err := s.secrets.GetByID(ctx, secretID); err != nil {
 		return nil, 0, mapSecretErr(err)
 	}
-	return s.secrets.ListVersions(ctx, id, limit, offset)
+	return s.secrets.ListVersions(ctx, secretID, limit, offset)
 }
 
-func (s *SecretService) ListGrants(ctx context.Context, id int64) ([]domain.SecretGrant, error) {
-	if _, err := s.secrets.GetByID(ctx, id); err != nil {
+// ListGrants 列出密钥授权。
+func (s *SecretService) ListGrants(ctx context.Context, secretID int64) ([]domain.SecretGrant, error) {
+	if _, err := s.secrets.GetByID(ctx, secretID); err != nil {
 		return nil, mapSecretErr(err)
 	}
-	return s.grants.ListBySecret(ctx, id)
+	return s.grants.ListBySecret(ctx, secretID)
 }
 
-func (s *SecretService) ListAccesses(ctx context.Context, id int64, limit, offset int) ([]domain.SecretAccess, int, error) {
-	secret, err := s.secrets.GetByID(ctx, id)
+// ListAccesses 分页列出密钥访问审计。
+func (s *SecretService) ListAccesses(ctx context.Context, secretID int64, limit, offset int) ([]domain.SecretAccess, int, error) {
+	secret, err := s.secrets.GetByID(ctx, secretID)
 	if err != nil {
 		return nil, 0, mapSecretErr(err)
 	}

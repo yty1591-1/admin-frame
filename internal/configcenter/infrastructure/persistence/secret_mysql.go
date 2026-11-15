@@ -84,6 +84,7 @@ func (r *secretMySQL) GetByName(ctx context.Context, env, namespace, name string
 		env, namespace, name)
 }
 
+//nolint:gosec // G101: SQL 列清单常量，非凭据。
 const secretSelectCols = `id, env, namespace, name, description, owner, status, active_version, version,
  rotate_interval_days, dual_version, submitted_by, pending_action, pending_payload,
  expires_at, created_by, updated_by, created_at, updated_at`
@@ -123,7 +124,7 @@ func (r *secretMySQL) List(ctx context.Context, env, namespace string, status do
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.Secret
 	for rows.Next() {
 		secret, err := scanSecret(rows)
@@ -210,7 +211,7 @@ SELECT id, secret_id, version, kek_key_id, algorithm, value_hash, status, create
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.SecretVersion
 	for rows.Next() {
 		var v domain.SecretVersion
@@ -267,7 +268,7 @@ SELECT id, secret_id, action, reviewer, decision, comment, created_at
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.SecretReview
 	for rows.Next() {
 		var rev domain.SecretReview
@@ -325,7 +326,7 @@ SELECT id, env, namespace, service_identity, secret_id, permission, expires_at, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []domain.SecretGrant
 	for rows.Next() {
 		g, err := scanGrant(rows)

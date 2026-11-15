@@ -86,7 +86,7 @@ type dualReadReport struct {
 
 func run(outDir, envName, namespace, dsn string) error {
 	started := time.Now().UTC()
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		return err
 	}
 
@@ -94,7 +94,7 @@ func run(outDir, envName, namespace, dsn string) error {
 	if err != nil {
 		return fmt.Errorf("open mysql: %w", err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 	sqlDB.SetMaxOpenConns(10)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -343,7 +343,7 @@ func run(outDir, envName, namespace, dsn string) error {
 		return err
 	}
 	evidencePath := filepath.Join(outDir, "evidence.json")
-	if err := os.WriteFile(evidencePath, payload, 0o644); err != nil {
+	if err := os.WriteFile(evidencePath, payload, 0o600); err != nil {
 		return err
 	}
 

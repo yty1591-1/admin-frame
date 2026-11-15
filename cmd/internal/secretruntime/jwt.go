@@ -10,7 +10,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/secretclient"
 )
 
-const jwtSigningSecretName = "auth.jwt.private_key"
+const jwtSigningSecretName = "auth.jwt.private_key" //nolint:gosec // G101: 配置中心密钥名，非凭据值。
 
 // ApplyJWTSecret 在 auth.jwt.secret 为空时，从配置中心密钥子域补齐 HS256 签名密钥（Q9 / M3）。
 //

@@ -39,7 +39,7 @@ func LoadServerTLSFromEnv() (*tls.Config, error) {
 		mode = "off"
 	}
 	if caFile != "" {
-		pem, err := os.ReadFile(caFile)
+		pem, err := os.ReadFile(caFile) //nolint:gosec // G304: 路径来自运维注入的 CONFIG_API_TLS_CLIENT_CA。
 		if err != nil {
 			return nil, fmt.Errorf("secretruntime: read client ca: %w", err)
 		}

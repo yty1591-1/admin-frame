@@ -95,6 +95,7 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 		"config_item",
 	}
 	for _, table := range tables {
+		//nolint:gosec // G202: table 来自白名单常量切片，非用户输入。
 		if _, err := sqlDB.Exec("DELETE FROM " + table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}

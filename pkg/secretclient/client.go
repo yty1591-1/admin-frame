@@ -142,7 +142,7 @@ func (c *Client) fetch(ctx context.Context, env, namespace string, names []strin
 	if err != nil {
 		return nil, fmt.Errorf("secretclient: resolve transport: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err

@@ -166,6 +166,7 @@ type staticProvider struct {
 	values map[string]string
 }
 
+// Snapshot 返回静态已验签快照取值。
 func (p staticProvider) Snapshot(context.Context, string, string) (app.Snapshot, error) {
 	return app.Snapshot{Values: p.values}, nil
 }
@@ -182,6 +183,7 @@ type dualReadReporter struct {
 	lastLog map[string]string
 }
 
+// ReportDualRead 把双读差异写入指标，并在集合变化时打日志。
 func (r *dualReadReporter) ReportDualRead(_ context.Context, _, namespace string,
 	result app.DualReadResult) {
 	mismatched := make(map[string]struct{}, len(result.Mismatches)+len(result.MissingInCenter))

@@ -68,17 +68,18 @@ func TestStartupValuesWithoutFile(t *testing.T) {
 }
 
 // testKeypair 生成一份签名器与公钥配置串。
-func testKeypair(t *testing.T) (*configclient.Signer, string) {
+func testKeypair(t *testing.T) (signer *configclient.Signer, publicKeysEnv string) {
 	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	signer, err := configclient.NewSigner("k1", privateKey)
+	signer, err = configclient.NewSigner("k1", privateKey)
 	if err != nil {
 		t.Fatalf("new signer: %v", err)
 	}
-	return signer, "k1=" + base64.StdEncoding.EncodeToString(publicKey)
+	publicKeysEnv = "k1=" + base64.StdEncoding.EncodeToString(publicKey)
+	return signer, publicKeysEnv
 }
 
 // writeSnapshotFor 生成指定 namespace 的签名快照文件。

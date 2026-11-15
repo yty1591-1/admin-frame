@@ -53,7 +53,7 @@ type vaultCipherResp struct {
 }
 
 // Wrap 调用 transit/encrypt。
-func (v *VaultTransit) Wrap(dek []byte) ([]byte, string, error) {
+func (v *VaultTransit) Wrap(dek []byte) (wrapped []byte, keyID string, err error) {
 	body, _ := json.Marshal(vaultEncryptReq{Plaintext: base64.StdEncoding.EncodeToString(dek)})
 	raw, err := v.post("/v1/transit/encrypt/"+v.keyName, body)
 	if err != nil {
@@ -101,7 +101,7 @@ func (v *VaultTransit) post(path string, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err

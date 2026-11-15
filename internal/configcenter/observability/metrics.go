@@ -225,14 +225,15 @@ func (m *Metrics) ObserveClientRefresh(event configclient.RefreshEvent) {
 		return
 	}
 	age := time.Duration(0)
-	if event.Err == nil {
+	switch {
+	case event.Err == nil:
 		m.clientVersion.WithLabelValues(namespace).Set(float64(event.Snapshot.ReleaseNo))
-	} else if !last.IsZero() {
+	case !last.IsZero():
 		age = event.At.Sub(last)
 		if age < 0 {
 			age = 0
 		}
-	} else {
+	default:
 		// 从未成功刷新：不写年龄，避免用进程启动时长污染 stale 告警。
 		return
 	}

@@ -27,11 +27,12 @@ import (
 // （如 mux.Handle("GET /admin/v1/iam/roles", ...)）。
 var routeExpr = regexp.MustCompile(`mux\.(?:Handle|HandleFunc)\(\s*"(GET|POST|PUT|PATCH|DELETE) (/[^"]+)"`)
 
-// specFiles 是三端契约文件（与 check-openapi.sh 的 SPECS 对齐）。
+// specFiles 是业务契约文件（与 check-openapi.sh 的 SPECS 对齐）+ 内部 config-api。
 var specFiles = []string{
 	"api/openapi/admin.yaml",
 	"api/openapi/biz.yaml",
 	"api/openapi/c.yaml",
+	"api/openapi/internal.yaml",
 }
 
 // scanRoots 是路由注册的扫描范围（internal 传输层 + cmd 装配层）。
