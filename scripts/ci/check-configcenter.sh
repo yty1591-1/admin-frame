@@ -19,6 +19,7 @@
 #   CC-11 多 namespace 消费与开关：文件列表、启用列表、SDK 与双读接线
 #   CC-12 Helm 部署接线：values 默认值、环境变量与快照 Secret 挂载
 #   CC-13 M2 密钥契约：secret 表迁移、OpenAPI、权限、审计、信封与 config-api
+#   CC-14 M3 无 tracked configs、无文件启动开关与密钥 resolve 冒烟
 #
 # 用法: bash scripts/ci/check-configcenter.sh
 set -euo pipefail
@@ -208,8 +209,36 @@ require_file "cmd/config-api/main.go" "config-api 入口"
 require_file "docs/runbooks/secret-management.md" "密钥 runbook"
 require_file "docs/runbooks/key-ceremony.md" "key ceremony"
 
+echo "==> CC-14: M3 zero tracked configs + nofile + JWT secret consume"
+tracked="$(git ls-files 'configs' 2>/dev/null || true)"
+if [[ -z "${tracked}" ]]; then
+  ok "git ls-files configs 为空"
+else
+  fail "M3 后仍有 tracked configs/ 文件"
+  printf '%s\n' "${tracked}" >&2
+fi
+require_grep "pkg/config/loader.go" "AllowMissingFiles" "Loader 支持无文件启动"
+require_grep "cmd/internal/secretruntime/jwt.go" "auth.jwt.private_key" "JWT 密钥消费 secretclient"
+require_file "docs/incident/drills/2026-11-16-configcenter-nofile.md" "无文件启动演练记录"
+GO_BIN=""
+if command -v go >/dev/null 2>&1; then
+  GO_BIN="go"
+elif command -v go.exe >/dev/null 2>&1; then
+  GO_BIN="go.exe"
+fi
+if [[ -n "${GO_BIN}" ]]; then
+  if "${GO_BIN}" test -count=1 ./cmd/internal/secretruntime/ -run 'TestApplyJWTSecret' >/dev/null; then
+    ok "JWT secret resolve 冒烟"
+  else
+    fail "JWT secret resolve 冒烟失败"
+  fi
+else
+  require_grep "cmd/internal/secretruntime/jwt_test.go" "TestApplyJWTSecret" \
+    "JWT resolve 冒烟用例存在（本机 PATH 无 go，跳过执行）"
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
-  echo "配置中心门禁失败（CC-01～CC-13）" >&2
+  echo "配置中心门禁失败（CC-01～CC-14）" >&2
   exit 1
 fi
 
