@@ -68,6 +68,9 @@
 | `config.db_latency` | P2 | 配置管理面 P99 延迟超过 200ms（`config_admin_request_duration_seconds`） | [config-center.md](./config-center.md) |
 | `config.snapshot_corrupt` | P2 | 快照验签或完整性校验失败（`config_client_snapshot_corrupt_total` 增长），客户端拒绝装载 | [config-center.md](./config-center.md) |
 | `config.cold_start_degraded` | P2 | 进程冷启动无可信快照，回退代码默认值（`config_client_cold_start_degraded_total` 增长） | [config-center.md](./config-center.md) |
+| `config.secret_api_unavailable` | P1 | 密钥解析失败率超过 1%（`config_secret_resolve_total{result="error"}`），检查 config-api / KEK / NetworkPolicy | [secret-management.md](./secret-management.md) |
+| `config.secret_plaintext_leak` | P0 | 检测到密钥明文旁路（`config_secret_plaintext_leak_total` 增长），立即止血并轮换 | [secret-management.md](./secret-management.md) |
+| `config.secret_resolve_denied` | P2 | 密钥解析拒绝率偏高（`config_secret_resolve_total{result="denied"}`），检查 grant / mTLS 身份 | [secret-management.md](./secret-management.md) |
 
 P3 示例（鼓励登记，CI 不强制链接）：
 

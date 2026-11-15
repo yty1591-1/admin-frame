@@ -130,3 +130,14 @@ groups:
           summary: "检测到密钥明文旁路"
           description: "立即止血：吊销相关密钥、轮换 KEK 访问、排查日志 / 导出 / 前端响应。"
           runbook_url: docs/runbooks/secret-management.md
+
+      - alert: ConfigSecretResolveDenied
+        expr: rate(config_secret_resolve_total{result="denied"}[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: config.secret_resolve_denied
+        annotations:
+          summary: "密钥解析拒绝率偏高"
+          description: "检查 grant / 服务身份与 mTLS；确认是否越权探测。"
+          runbook_url: docs/runbooks/secret-management.md
