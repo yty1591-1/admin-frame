@@ -30,3 +30,11 @@
 - [`2026-11-16-configcenter-fault-inject.md`](./2026-11-16-configcenter-fault-inject.md)
 - [`2026-11-16-configcenter-sign-pitr.md`](./2026-11-16-configcenter-sign-pitr.md)
 - [`artifacts/2026-11-16-configcenter-m3/evidence.json`](./artifacts/2026-11-16-configcenter-m3/evidence.json)
+
+## 三段耗时（OC-05）
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 检测用时 | **N/A** | 本机 staging 契约/单测取证，未注入生产告警链路 |
+| 确认用时 | **N/A** | 无人工 ack；门禁与用例结果即确证 |
+| 缓解用时 | **N/A** | 非故障注入事故；缓解步骤见对应 runbook / 演练判定 |

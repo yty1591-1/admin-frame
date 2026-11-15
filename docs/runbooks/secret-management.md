@@ -3,7 +3,7 @@
 | 字段 | 内容 |
 |------|------|
 | 告警 ID | `ConfigSecretAPIUnavailable` / `ConfigSecretPlaintextLeak` |
-| 级别 | P1 / P0（明文泄露） |
+| 级别 | P1（明文泄露按安全优先） |
 | 服务 / 端 | config-api / admin-api / 业务进程 secretclient |
 | 最后更新 | 2026-11-16 |
 
@@ -59,7 +59,7 @@ M3 起无 tracked 配置文件；口令与 JWT 走部署 Secret / secretclient�
 ## 升级
 
 - P1：resolve 大面积失败 15 分钟未收敛 → L2。
-- P0：确认明文泄露 → 立即轮换密钥、吊销 grant、升级安全 Owner。
+- 明文泄露（P1）：立即轮换密钥、吊销 grant、升级安全 Owner。
 
 ## 相关链接
 

@@ -34,3 +34,11 @@ go test ./pkg/envelope/ -run 'TestLocalKEKRotationRewrap|TestRejectLocalKEKInPro
 ## 判定
 
 - 本机 CC-F-55 达标；prod 必须以 Vault Transit 演练清单为准，禁止把 LocalKEK 带入 prod。
+
+## 三段耗时（OC-05）
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| 检测用时 | **N/A** | 本机 staging 契约/单测取证，未注入生产告警链路 |
+| 确认用时 | **N/A** | 无人工 ack；门禁与用例结果即确证 |
+| 缓解用时 | **N/A** | 非故障注入事故；缓解步骤见对应 runbook / 演练判定 |

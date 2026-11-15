@@ -124,7 +124,8 @@ groups:
         expr: increase(config_secret_plaintext_leak_total[5m]) > 0
         for: 0m
         labels:
-          severity: P0
+          # 矩阵仅 P1–P3；密钥明文旁路按安全优先归入 P1（SEVERITY_MATRIX）。
+          severity: P1
           alert_id: config.secret_plaintext_leak
         annotations:
           summary: "检测到密钥明文旁路"
