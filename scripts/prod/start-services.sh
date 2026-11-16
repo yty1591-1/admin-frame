@@ -29,7 +29,7 @@
 #      CTRL_CLOSE_EVENT（Go 运行时映射为 SIGTERM）并被优雅停机，日志表现为启动成功
 #      后立刻出现 "shutdown requested" → "server stopped"。stop/status 不受此限制；
 #      WSL 下的自动切换只能保住环境变量，无法保住进程生命周期。
-#   9. 无本地 yaml 时使用 unused 路径；业务进程 configboot.Load 拉取失败且无缓存则退出。
+#   9. 业务进程无 -config；configboot.Load 拉取失败且无缓存则退出。
 
 set -euo pipefail
 
@@ -73,12 +73,6 @@ C_API_PORT="${C_API_PORT:-8083}"
 CONFIG_API_PORT="${CONFIG_API_PORT:-8085}"
 
 ROLES=(config-api worker admin-api biz-api c-api)
-# role -> 配置中的端别，用于拼接默认配置文件名。
-ROLE_KEY_config_api="config"
-ROLE_KEY_worker="worker"
-ROLE_KEY_admin_api="admin"
-ROLE_KEY_biz_api="biz"
-ROLE_KEY_c_api="c"
 
 EXE=""
 case "$(uname -s)" in
@@ -160,20 +154,6 @@ load_env() {
   log "已加载环境变量：$file"
 }
 
-resolve_config() {
-  local role="$1" key
-  key="ROLE_KEY_${role//-/_}"
-  key="${!key}"
-  local real="configs/prod-${key}.yaml"
-  if [[ -f "$real" ]]; then
-    printf '%s' "$real"
-    return 0
-  fi
-  # 无本地 yaml：返回占位路径；业务进程经 configboot 从 config-api 拉取。
-  warn "未找到 $real；将依赖 CONFIG_API_URL 拉取（无 yaml 回退）"
-  printf '%s' "unused.yaml"
-}
-
 # build_output 是构建产物的目标路径；Windows 下统一带 .exe 后缀。
 build_output() {
   printf '%s/%s%s' "$BIN_DIR" "$1" "$EXE"
@@ -217,8 +197,7 @@ read_pid() {
 
 start_role() {
   local role="$1"
-  local config bin pidfile logfile pid
-  config="$(resolve_config "$role")"
+  local bin pidfile logfile pid
   bin="$(binary_path "$role")"
   [[ -f "$bin" ]] || die "二进制不存在：$bin（先执行 make build 或去掉 --no-build）"
   pidfile="$PID_DIR/$role.pid"
@@ -230,7 +209,7 @@ start_role() {
   fi
 
   printf '\n=== %s start %s ===\n' "$role" "$(date '+%Y-%m-%d %H:%M:%S')" >>"$logfile"
-  nohup "$bin" -config "$config" </dev/null >>"$logfile" 2>&1 &
+  nohup "$bin" </dev/null >>"$logfile" 2>&1 &
   pid=$!
   printf '%s' "$pid" >"$pidfile"
 
@@ -241,7 +220,7 @@ start_role() {
     rm -f "$pidfile"
     return 1
   fi
-  log "$role 已启动（pid=$pid, config=$config, log=$logfile）"
+  log "$role 已启动（pid=$pid, log=$logfile）"
 }
 
 health_one() {
@@ -340,7 +319,7 @@ do_status() {
   local role pid
   for role in "${ROLES[@]}"; do
     if pid="$(read_pid "$role")"; then
-      printf '%-10s running  pid=%-8s config=%s\n' "$role" "$pid" "$(resolve_config "$role" 2>/dev/null || echo '?')"
+      printf '%-10s running  pid=%-8s\n' "$role" "$pid"
     else
       printf '%-10s stopped\n' "$role"
     fi

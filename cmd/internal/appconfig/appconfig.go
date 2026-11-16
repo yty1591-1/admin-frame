@@ -123,23 +123,19 @@ func NewLoaderWithValues(path string, values func() (map[string]string, error)) 
 	})
 }
 
-// LoadWithValuesAllowMissing 在允许缺失配置文件时加载（无文件启动）。
+// LoadFromValues 无 YAML 文件启动：代码默认值 → Values → 白名单环境变量。
 //
-// allowMissing 只控制 yaml 文件是否可缺；业务取值必须由调用方提供的签名
-// 快照 Values 覆盖，不得把「无快照」误读为允许仅用代码默认值启动。
-// 环境变量仅放行 db/redis。
-func LoadWithValuesAllowMissing(path string, values func() (map[string]string, error),
-	allowMissing bool) (*Config, error) {
+// 业务取值必须由调用方提供的配置中心快照 / 进程补齐 Values 覆盖，不得把
+// 「无文件」误读为允许仅用代码默认值启动。环境变量仅放行 db/redis。
+func LoadFromValues(values func() (map[string]string, error)) (*Config, error) {
 	loader, err := config.NewLoader(config.Options[Config]{
-		Files:             []string{path},
-		EnvPrefix:         platformconfig.EnvPrefix,
-		EnvPathAllowlist:  platformconfig.InfraEnvPathAllowlist,
-		Values:            values,
-		ValueAliases:      spec.ValueAliases(),
-		Defaults:          (*Config).ApplyDefaults,
-		Normalize:         (*Config).Normalize,
-		Validate:          (*Config).Validate,
-		AllowMissingFiles: allowMissing,
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
 	})
 	if err != nil {
 		return nil, err

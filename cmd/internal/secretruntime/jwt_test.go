@@ -83,6 +83,44 @@ func TestApplyJWTSecretRequiresClient(t *testing.T) {
 	}
 }
 
+func TestResolveJWTSecretReturnsPlaintext(t *testing.T) {
+	const want = "resolved-jwt-secret-value-32bytes!"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"items": []map[string]any{{
+					"name": "auth.jwt.private_key", "version": 1,
+					"value":            want,
+					"lease_expires_at": time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339Nano),
+				}},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := secretclient.New(secretclient.Config{
+		BaseURL: srv.URL, ServiceIdentity: "spiffe://local/test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := secretruntime.ResolveJWTSecret(context.Background(), "dev", client)
+	if err != nil {
+		t.Fatalf("ResolveJWTSecret: %v", err)
+	}
+	if got != want {
+		t.Fatalf("secret = %q, want %q", got, want)
+	}
+}
+
+func TestResolveJWTSecretRequiresClient(t *testing.T) {
+	_, err := secretruntime.ResolveJWTSecret(context.Background(), "dev", nil)
+	if err == nil || !strings.Contains(err.Error(), "secretclient is required") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestNewFromEnvRequiresBoth(t *testing.T) {
 	t.Setenv("CONFIG_API_URL", "")
 	t.Setenv("CONFIG_SERVICE_IDENTITY", "")

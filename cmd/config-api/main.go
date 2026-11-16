@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,24 +22,22 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "unused.yaml", "optional unused config path")
-	flag.Parse()
-	if err := run(*configPath); err != nil {
+	if err := run(); err != nil {
 		log.Printf("config-api: %v", err)
 		os.Exit(1)
 	}
 }
 
-func run(configPath string) error {
+func run() error {
 	// ADR-0016：config-api 自举，不依赖签名快照；仅代码默认值 + db/redis env。
 	// service/channel 是平台进程身份证，内部服务写死，须在 Validate 前注入。
-	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		return map[string]string{
 			"service": "config-api",
 			"channel": "internal",
 			"addr":    ":8085",
 		}, nil
-	}, true)
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,9 +31,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
-	flag.Parse()
-	if err := run(*configPath); err != nil {
+	if err := run(); err != nil {
 		log.Printf("c-api: %v", err)
 		os.Exit(1)
 	}
@@ -44,24 +41,29 @@ func main() {
 //
 // 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
 // （NewSessionValidator），路由注册复用同一实例。
-func run(configPath string) error {
-	boot, err := configboot.Load(context.Background())
+func run() error {
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
 	}
-	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+	// 先 Resolve 再 Validate：JWT 明文只来自 secretclient。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		return fmt.Errorf("jwt secret: %w", err)
+	}
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
 			Service: "c-api", Channel: "c", Addr: ":8083",
-		}), nil
-	}, true)
+		})
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		return values, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if boot.Env != "" {
 		appCfg.Env = boot.Env
-	}
-	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
-		return fmt.Errorf("jwt secret: %w", jerr)
 	}
 	var (
 		identityOnce sync.Once

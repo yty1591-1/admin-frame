@@ -40,8 +40,6 @@ spec:
               image: {{ include "admin-frame.image" (dict "root" . "workload" (dict "image" .Values.certificationSweep.image)) }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               args:
-                - -config
-                - /etc/admin-frame/config.yaml
                 - -certification-sweep
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}

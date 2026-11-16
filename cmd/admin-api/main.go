@@ -1,8 +1,7 @@
-﻿package main
+package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,9 +32,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
-	flag.Parse()
-	if err := run(*configPath); err != nil {
+	if err := run(); err != nil {
 		log.Printf("admin-api: %v", err)
 		os.Exit(1)
 	}
@@ -45,14 +42,20 @@ func main() {
 //
 // IAM 与身份域运行时各自在装配期构造一次：身份域的撤销检查器必须在 AuthMW
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
-func run(configPath string) error {
-	boot, err := configboot.Load(context.Background())
+func run() error {
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
 	}
-	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
+	// 先 Resolve 再 Validate：JWT 明文只来自 secretclient，禁止源码占位密钥。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		return fmt.Errorf("jwt secret: %w", err)
+	}
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
-		// 且 JWT 明文密钥在 Validate 之后才由 secretclient 注入，故进程级补齐。
+		// 故进程级补齐非密钥项；密钥已由 secretclient 解析。
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
 			Service: "admin-api", Channel: "admin", Addr: ":8081",
 		})
@@ -61,18 +64,14 @@ func run(configPath string) error {
 		values["auth.jwt.alg"] = "HS256"
 		values["auth.jwt.issuer"] = "admin-frame"
 		values["auth.jwt.audience"] = "admin"
-		// 占位满足 Validate；随即被 secretruntime.ApplyJWTSecretFromEnv 覆盖。
-		values["auth.jwt.secret"] = "smoke-placeholder-jwt-secret-32bytes!!"
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
 		return values, nil
-	}, true)
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if boot.Env != "" {
 		appCfg.Env = boot.Env
-	}
-	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
-		return fmt.Errorf("jwt secret: %w", jerr)
 	}
 	// 本地/冒烟：配置中心不托管 identity.hash_key / subject.keys，缺省则注入固定非样例密钥，
 	// 供 EnsureAdmin 与登录 PII 索引（非生产路径；生产须经 secrets.providers）。
@@ -141,7 +140,7 @@ func run(configPath string) error {
 			if err != nil {
 				return err
 			}
-			return registerRoutes(deps, mux, built, identityBuilt, appCfg, configPath)
+			return registerRoutes(deps, mux, built, identityBuilt, appCfg)
 		},
 	})
 }

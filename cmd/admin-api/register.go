@@ -29,7 +29,7 @@ import (
 // 角色 / 绑定数据，否则本地内存模式下会出现「刚授权的角色不生效」。
 // identityRT 用于注册身份域（登录 / 刷新 / 登出 / 会话管理）路由。
 func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
-	identityRT *identityruntime.Runtime, appCfg *appconfig.Config, configPath string) error {
+	identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
 	if rt != nil && rt.Handler != nil {
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}

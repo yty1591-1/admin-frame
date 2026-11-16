@@ -53,7 +53,6 @@ spec:
         - name: {{ $key }}
           image: {{ include "admin-frame.image" (dict "root" $root "workload" $w) }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
-          args: ["-config", "/etc/admin-frame/config.yaml"]
           ports:
             - name: http
               containerPort: {{ $w.port }}

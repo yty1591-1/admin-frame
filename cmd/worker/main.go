@@ -13,8 +13,8 @@ import (
 	"time"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
-	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
@@ -42,12 +42,11 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
 	sweepCertifications := flag.Bool("certification-sweep", false,
 		"run one access-certification expiry sweep and exit")
 	flag.Parse()
-	if err := run(*configPath, *replayDLQ, *sweepCertifications); err != nil {
+	if err := run(*replayDLQ, *sweepCertifications); err != nil {
 		log.Printf("worker: %v", err)
 		os.Exit(1)
 	}
@@ -58,12 +57,12 @@ func main() {
 // worker 是 Outbox Relay 的独占宿主：注册业务 topic handler 后运行 Relay；
 // -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
-func run(configPath, replayDLQ string, sweepCertifications bool) error {
+func run(replayDLQ string, sweepCertifications bool) error {
 	boot, err := configboot.Load(context.Background())
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
 	}
-	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
 		// 与 service/channel/addr 同属进程身份证，不依赖配置中心默认值。
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
@@ -71,7 +70,7 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 		})
 		values["async.enabled"] = "true"
 		return values, nil
-	}, true)
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
