@@ -8,7 +8,8 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 PYTHON ?= python3
 
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
-	run-admin run-biz run-c run-worker \
+	run-admin run-biz run-c run-worker run-config \
+	local-deps local-env local-migrate local-start local-stop local-restart local-status local-up \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-no-static-config \
 	check-migrations check-reliability check-observability \
@@ -40,7 +41,7 @@ build-migrate:
 
 # 业务进程按 ADR-0016 从 config-api 拉取；先起 config-api，再导出
 # CONFIG_API_URL / CONFIG_SERVICE_IDENTITY / CONFIGCENTER_ENV 与 ADMIN_FRAME_DB_* /
-# ADMIN_FRAME_REDIS_*（见 README 快速开始）。
+# ADMIN_FRAME_REDIS_*（见 docs/local-development.md）。
 run-config: build-config
 	./$(BIN_DIR)/config-api
 
@@ -55,6 +56,35 @@ run-c: build-c
 
 run-worker: build-worker
 	./$(BIN_DIR)/worker
+
+# ---------- 本地开发编排（五进程 + 依赖）----------
+# 文档：docs/local-development.md
+# Windows 原生 PowerShell 可用：pwsh -File scripts/local/dev-services.ps1 <action>
+
+local-deps:
+	docker compose -f docker-compose.integration.yml up -d mysql redis
+
+local-env:
+	@bash -c 'test -f scripts/local/.env || cp scripts/local/env.example scripts/local/.env; echo "OK: scripts/local/.env"'
+
+local-migrate: local-env build-migrate
+	@bash -c 'set -a; . scripts/local/.env; set +a; exec ./$(BIN_DIR)/migrate -dir migrations -action up'
+
+local-start: local-env
+	bash scripts/local/dev-services.sh start
+
+local-stop:
+	bash scripts/local/dev-services.sh stop
+
+local-restart: local-env
+	bash scripts/local/dev-services.sh restart
+
+local-status:
+	bash scripts/local/dev-services.sh status
+
+# 一键：依赖 → env → 迁移 → 启动（首次本机推荐）
+local-up: local-deps local-env
+	bash scripts/local/dev-services.sh start --migrate
 
 test:
 	$(GO) test ./...

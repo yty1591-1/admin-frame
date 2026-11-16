@@ -74,6 +74,7 @@
 | [data-inventory.md](./data-inventory.md) | 数据资产清单、PII 分类分级与删除边界（ENT-15 登记） |
 | [tenant-data-lifecycle.md](./tenant-data-lifecycle.md) | 租户数据保留期、导出窗口与硬删除边界 |
 | [deploy-kind-verify.md](./deploy-kind-verify.md) | 用 kind 验证 Helm Chart：渲染 → 部署 → 冒烟 → 回滚 → 迁移失败阻断 |
+| [local-development.md](./local-development.md) | 本机依赖、五进程 start/stop/restart、`make local-*` 与 dotenv |
 | [pkg-roadmap.md](./pkg-roadmap.md) | `pkg/` 公共能力包规划与落地状态 |
 | [identity/threat-model.md](./identity/threat-model.md) | 身份域威胁建模：四通道 STRIDE、残留风险 `RR-01`～`RR-06`、评审记录 |
 | [identity/idp-config-templates.md](./identity/idp-config-templates.md) | 企业 IdP 配置模板（Keycloak 26.x 基线 + 八项验收清单） |

@@ -4,39 +4,39 @@ A/B/C 三端业务的 Go 模块化单体骨架，实现见 [docs/ARCHITECTURE.md
 
 | 进程 | 端口（默认） | 说明 |
 |---|---|---|
+| `config-api` | `:8085` | 配置/密钥拉取入口（须最先启动） |
 | `admin-api` | `:8081` | A 平台运营 |
 | `biz-api` | `:8082` | B 商家/企业 |
 | `c-api` | `:8083` | C 消费者 |
-| `worker` | — | 后台任务：Outbox Relay、通知投递、审计导出等（已有独立异步运行时） |
+| `worker` | `:8090` | Outbox Relay、通知投递、审计导出等 |
 | `migrate` | — | 迁移脚本执行器（唯一 schema 变更入口） |
 
 ## 快速开始
 
 业务进程按 [ADR-0016](docs/adr/0016-config-service-pull-model.md) 从 **config-api 拉取**配置（本地缓存灾备）；远端与缓存都不可用则 fail-fast。`ADMIN_FRAME_*` 仅 DB/Redis；JWT 等业务密钥经 secretclient。
 
+完整说明见 **[docs/local-development.md](docs/local-development.md)**。
+
 ```bash
-# 1. 依赖：MySQL 8.0 + Redis 7
-docker compose -f docker-compose.integration.yml up -d mysql redis
+# 推荐：一键（依赖 MySQL/Redis → 生成本地 .env → 迁移 → 起五进程）
+make local-deps
+make local-up
 
-# 2. 基础设施口令（仅允许这些 ADMIN_FRAME_*）
-export ADMIN_FRAME_DB_DRIVER=mysql
-export ADMIN_FRAME_DB_DSN='user:pass@tcp(127.0.0.1:3306)/admin_frame?parseTime=true&loc=Local'
-# 可选：ADMIN_FRAME_REDIS_ADDR / ADMIN_FRAME_REDIS_PASSWORD
-
-# 3. 建库与迁移
-make migrate-up
-
-# 4. 先起 config-api（播种基线；唯一读配置库）
-make build
-make run-config   # 或 go run ./cmd/config-api
-
-# 5. 业务进程引导变量后启动（见 docs/runbooks/config-center.md）
-export CONFIG_API_URL=http://127.0.0.1:8085
-export CONFIG_SERVICE_IDENTITY=admin-api
-export CONFIGCENTER_ENV=dev
-# 可选：CONFIGCENTER_CACHE_DIR / CONFIGCENTER_NAMESPACES
-make run-admin   # 或 make run-biz / run-c / run-worker
+# 日常
+make local-status
+make local-restart
+make local-stop
 ```
+
+Windows 原生 PowerShell：
+
+```powershell
+Copy-Item scripts\local\env.example scripts\local\.env
+docker compose -f docker-compose.integration.yml up -d mysql redis
+pwsh -File scripts/local/dev-services.ps1 start -Migrate
+```
+
+单进程排障仍可用 `make run-config` / `run-admin` 等（须自行 export 引导变量与 `CONFIG_SERVICE_IDENTITY`）。
 
 ## 鉴权
 

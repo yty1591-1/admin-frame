@@ -1,6 +1,12 @@
-﻿# 本机冒烟：固定 LocalKEK → 重置密钥 → 起五进程 → healthz/readyz + admin 登录
+﻿# 本机冒烟（破坏性）：固定 LocalKEK → TRUNCATE 密钥表 → 起五进程 → healthz + 登录。
+# 日常联调请用：
+#   pwsh -File scripts/local/dev-services.ps1 start
+#   或 make local-start（Git Bash）
 $ErrorActionPreference = "Stop"
-$Root = "D:\MyDocument\admin-frame"
+$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not (Test-Path (Join-Path $Root "go.mod"))) {
+  $Root = (Get-Location).Path
+}
 Set-Location $Root
 
 $env:ADMIN_FRAME_DB_DRIVER = "mysql"
