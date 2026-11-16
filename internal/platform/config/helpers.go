@@ -46,17 +46,18 @@ func isProdLikeEnv(env string) bool {
 // （CONFIG_STANDARDS §9）。保持导出是为了让未来的长驻进程复用同一套校验。
 func NewConfigLoader(path string) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:     []string{path},
-		EnvPrefix: envPrefix,
-		Defaults:  (*Config).applyDefaults,
-		Normalize: (*Config).normalize,
-		Validate:  (*Config).Validate,
+		Files:            []string{path},
+		EnvPrefix:        envPrefix,
+		EnvPathAllowlist: InfraEnvPathAllowlist,
+		Defaults:         (*Config).applyDefaults,
+		Normalize:        (*Config).normalize,
+		Validate:         (*Config).Validate,
 	})
 }
 
-// LoadConfig 从 YAML 文件加载配置，应用默认值与环境变量覆盖后校验。
+// LoadConfig 从 YAML 文件加载配置，应用默认值与白名单环境变量后校验。
 //
-// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// 优先级：配置中心快照（若接入）> ADMIN_FRAME_DB_*/REDIS_* > 文件 > 默认值。
 // 环境变量无法解析（如非法 duration/bool）时返回错误，不再静默忽略；
 // 错误只包含字段路径与变量名，不含取值（SEC-05）。
 func LoadConfig(path string) (*Config, error) {
@@ -81,6 +82,7 @@ type dbOnlyConfig struct {
 func LoadDBConfig(path string) (DBConfig, error) {
 	opts := config.Options[dbOnlyConfig]{
 		EnvPrefix:          envPrefix,
+		EnvPathAllowlist:   []string{"db"},
 		AllowUnknownFields: true,
 	}
 	if path != "" {

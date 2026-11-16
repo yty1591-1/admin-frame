@@ -257,12 +257,9 @@ func adminResult(status int) string {
 // isSnapshotCorrupt 判断错误是否属于快照本身不可信（而非中心不可用）。
 func isSnapshotCorrupt(err error) bool {
 	for _, target := range []error{
-		configclient.ErrSnapshotUnsigned,
-		configclient.ErrSnapshotUnknownKeyID,
 		configclient.ErrSnapshotHashMismatch,
 		configclient.ErrSnapshotSizeMismatch,
 		configclient.ErrSnapshotValueMismatch,
-		configclient.ErrSnapshotSignatureInvalid,
 	} {
 		if errors.Is(err, target) {
 			return true

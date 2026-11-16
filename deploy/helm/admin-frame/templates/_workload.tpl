@@ -84,7 +84,8 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $w.resources | nindent 12 }}
-          {{- if or $root.Values.env $root.Values.identitySecrets.enabled (and $root.Values.configCenter.enabled $root.Values.configCenter.secretName) }}
+          {{- $ccEnabled := and $root.Values.configCenter.enabled (ne $key "config") }}
+          {{- if or $root.Values.env $root.Values.identitySecrets.enabled $ccEnabled }}
           env:
             {{- with $root.Values.env }}
             {{- toYaml . | nindent 12 }}
@@ -101,24 +102,23 @@ spec:
                   name: {{ $root.Values.identitySecrets.secretName }}
                   key: {{ $root.Values.identitySecrets.mfaSecretKey }}
             {{- end }}
-            {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
-            {{- with $root.Values.configCenter.snapshotFiles }}
-            - name: CONFIGCENTER_SNAPSHOT_FILES
-              value: "{{- range $i, $file := splitList "," . }}{{ if $i }},{{ end }}{{ $root.Values.configCenter.mountPath }}/{{ trim $file }}{{- end }}"
+            {{- if $ccEnabled }}
+            - name: CONFIG_API_URL
+              {{- if $root.Values.configCenter.apiURL }}
+              value: {{ $root.Values.configCenter.apiURL | quote }}
+              {{- else }}
+              value: "http://{{ include "admin-frame.fullname" $root }}-config:{{ (($root.Values.workloads.config.service).port | default 80) }}"
+              {{- end }}
+            - name: CONFIG_SERVICE_IDENTITY
+              value: {{ ($w.serviceName | default $key) | quote }}
+            - name: CONFIGCENTER_ENV
+              value: {{ $root.Values.configCenter.env | quote }}
+            {{- with $root.Values.configCenter.namespaces }}
+            - name: CONFIGCENTER_NAMESPACES
+              value: {{ . | quote }}
             {{- end }}
-            - name: CONFIGCENTER_ENABLED_NAMESPACES
-              value: {{ $root.Values.configCenter.enabledNamespaces | quote }}
-            {{- if $root.Values.configCenter.allowMissingConfig }}
-            - name: CONFIGCENTER_ALLOW_MISSING_CONFIG
-              value: "1"
-            {{- end }}
-            {{- if $root.Values.configCenter.publicKeys.secretName }}
-            - name: CONFIGCENTER_SNAPSHOT_PUBLIC_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $root.Values.configCenter.publicKeys.secretName }}
-                  key: {{ $root.Values.configCenter.publicKeys.key }}
-            {{- end }}
+            - name: CONFIGCENTER_CACHE_DIR
+              value: {{ $root.Values.configCenter.cacheDir | quote }}
             {{- end }}
           {{- end }}
           {{- with $root.Values.envFrom }}
@@ -141,10 +141,9 @@ spec:
               mountPath: {{ $root.Values.secretMounts.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
-            - name: configcenter-snapshots
-              mountPath: {{ $root.Values.configCenter.mountPath }}
-              readOnly: true
+            {{- if and $ccEnabled $root.Values.configCenter.cacheVolume }}
+            - name: configcenter-cache
+              mountPath: {{ $root.Values.configCenter.cacheDir }}
             {{- end }}
       volumes:
         - name: config
@@ -180,12 +179,10 @@ spec:
                     {{- toYaml .items | nindent 20 }}
               {{- end }}
         {{- end }}
-        {{- if and $root.Values.configCenter.enabled $root.Values.configCenter.secretName }}
-        # 配置中心签名快照；Secret 缺失时 Pod 仍可启动并降级为文件配置。
-        - name: configcenter-snapshots
-          secret:
-            secretName: {{ $root.Values.configCenter.secretName }}
-            optional: true
+        {{- if and $ccEnabled $root.Values.configCenter.cacheVolume }}
+        # ADR-0016：本地配置缓存；仅灾备，首次部署须先起 config-api。
+        - name: configcenter-cache
+          emptyDir: {}
         {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1

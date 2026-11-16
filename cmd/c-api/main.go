@@ -10,11 +10,11 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
@@ -32,7 +32,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/c.yaml", "config file path")
+	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("c-api: %v", err)
@@ -45,23 +45,23 @@ func main() {
 // 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
 // （NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
-	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	startup, err := snapshotconfig.Load(context.Background())
+	boot, err := configboot.Load(context.Background())
 	if err != nil {
-		log.Printf("c-api: config snapshot ignored: %v", err)
-	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
+		return fmt.Errorf("config boot: %w", err)
 	}
 	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+		return configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "c-api", Channel: "c", Addr: ":8083",
+		}), nil
+	}, true)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if boot.Env != "" {
+		appCfg.Env = boot.Env
+	}
 	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
-		log.Printf("c-api: jwt secret from config center ignored: %v", jerr)
+		return fmt.Errorf("jwt secret: %w", jerr)
 	}
 	var (
 		identityOnce sync.Once
@@ -93,11 +93,6 @@ func run(configPath string) error {
 			if err != nil {
 				return err
 			}
-			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
-			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
-				appCfg.Env, startup, deps.Logger, deps.Metrics); err != nil {
-				deps.Logger.Warn("configcenter dual read failed", "err", err)
-			}
 			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
 			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
 				deps.Logger.Warn("configcenter refresh unavailable", "err", rerr)
@@ -105,16 +100,6 @@ func run(configPath string) error {
 				refreshRT.StartRefresh(deps, 0)
 				// ADR-0015：入口限流跟随热更视图，`rate_limit.*` 发布后无需重启。
 				refreshRT.ApplyRuntimeParams(deps)
-				// 迁移期双读：每 30s 跟随快照刷新采样一次，支撑 7 天零差异取证。
-				if refreshRT.Client != nil {
-					snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
-						ConfigPath: configPath,
-						Env:        appCfg.Env,
-						Reader:     refreshRT.Client,
-						Logger:     deps.Logger,
-						Metrics:    deps.Metrics,
-					})
-				}
 			}
 			return registerRoutes(deps, mux, built)
 		},

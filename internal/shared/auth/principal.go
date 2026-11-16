@@ -17,6 +17,8 @@ const (
 	ChannelBiz Channel = "biz"
 	// ChannelC 消费者端（C 端）。
 	ChannelC Channel = "c"
+	// ChannelInternal 内部服务通道（如 config-api）；不对外签发用户令牌。
+	ChannelInternal Channel = "internal"
 )
 
 // PermissionMiddleware 是权限中间件工厂：给定权限点返回 HTTP 中间件。

@@ -40,7 +40,7 @@ func TestMetricsExposeM1Series(t *testing.T) {
 			Namespace: "platform",
 			ReleaseNo: 7,
 		},
-		Err: configclient.ErrSnapshotSignatureInvalid,
+		Err: configclient.ErrSnapshotHashMismatch,
 	})
 	metrics.ClientColdStartDegraded()
 	metrics.ClientWatchDropped()

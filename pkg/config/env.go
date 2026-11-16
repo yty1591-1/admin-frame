@@ -28,7 +28,9 @@ var (
 	textUnmarshaler = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 )
 
-// BindEnv 按结构体标签把环境变量写入 target。
+// BindEnv 按结构体标签把环境变量写入 target（无路径白名单）。
+//
+// 业务进程应使用 Options.EnvPathAllowlist 或 BindEnvFiltered，仅放行 db/redis。
 //
 // 命名规则（以 EnvPrefix="APP" 为例）：
 //   - 字段路径由 yaml 标签优先、否则由字段名的 SNAKE_CASE 推导，
@@ -49,6 +51,16 @@ var (
 // lookup 为 nil 时使用 os.LookupEnv。返回错误均为 ErrInvalidConfig +
 // ErrEnvOverride 的子集；错误文本不包含变量取值。
 func BindEnv(target any, prefix string, lookup func(key string) (value string, ok bool)) error {
+	return BindEnvFiltered(target, prefix, nil, lookup)
+}
+
+// BindEnvFiltered 与 BindEnv 相同，但仅绑定 yaml 根段落在 allowPaths 内的字段。
+//
+// allowPaths 为空表示不限制；非空时路径段经 normalizeSegment 后与字段 yaml
+// 根段比较（如 "db"/"redis" → DB/REDIS）。显式 `env:"NAME"` 叶子若位于
+// 未放行分支则跳过，避免业务密钥经绝对变量名旁路。
+func BindEnvFiltered(target any, prefix string, allowPaths []string,
+	lookup func(key string) (value string, ok bool)) error {
 	if target == nil {
 		return invalidConfig("environment target must not be nil")
 	}
@@ -67,7 +79,11 @@ func BindEnv(target any, prefix string, lookup func(key string) (value string, o
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
-	binder := &envBinder{prefix: normalized, lookup: lookup}
+	allowRoots, err := normalizeAllowPaths(allowPaths)
+	if err != nil {
+		return err
+	}
+	binder := &envBinder{prefix: normalized, lookup: lookup, allowRoots: allowRoots}
 	if _, err := binder.walk(value, nil, nil); err != nil {
 		return err
 	}
@@ -76,8 +92,9 @@ func BindEnv(target any, prefix string, lookup func(key string) (value string, o
 
 // envBinder 承载一次绑定所需的不可变状态。
 type envBinder struct {
-	prefix string
-	lookup func(key string) (value string, ok bool)
+	prefix     string
+	lookup     func(key string) (value string, ok bool)
+	allowRoots map[string]struct{}
 }
 
 // walk 递归绑定结构体字段；返回值表示是否有字段被环境变量覆盖。
@@ -104,6 +121,10 @@ func (b *envBinder) walk(value reflect.Value, envPath, fieldPath []string) (appl
 			if !inlineField(structField) {
 				nextEnvPath = appendSegment(envPath, fieldSegment(structField))
 			}
+			// 内联嵌入尚未形成 yaml 根段，不能按空路径拒绝，否则会跳过整棵平台段。
+			if len(nextEnvPath) > 0 && !b.rootAllowed(nextEnvPath) {
+				continue
+			}
 			hit, walkErr := b.walkBranch(fieldValue, nextEnvPath, currentPath)
 			if walkErr != nil {
 				return false, walkErr
@@ -112,6 +133,10 @@ func (b *envBinder) walk(value reflect.Value, envPath, fieldPath []string) (appl
 			continue
 		}
 
+		leafPath := appendSegment(envPath, fieldSegment(structField))
+		if !b.rootAllowed(leafPath) {
+			continue
+		}
 		key := b.keyFor(structField, explicit, envPath)
 		if err := validateEnvKey(key, strings.Join(currentPath, ".")); err != nil {
 			return false, err
@@ -129,6 +154,40 @@ func (b *envBinder) walk(value reflect.Value, envPath, fieldPath []string) (appl
 		applied = applied || hit
 	}
 	return applied, nil
+}
+
+// rootAllowed 报告 envPath 的 yaml 根段是否在白名单内；无白名单时一律放行。
+func (b *envBinder) rootAllowed(envPath []string) bool {
+	if len(b.allowRoots) == 0 {
+		return true
+	}
+	if len(envPath) == 0 {
+		return false
+	}
+	_, ok := b.allowRoots[envPath[0]]
+	return ok
+}
+
+// normalizeAllowPaths 把调用方路径段规范为大写根段集合。
+func normalizeAllowPaths(paths []string) (map[string]struct{}, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			return nil, invalidConfig("env path allowlist entry must not be empty")
+		}
+		// 只取首段：调用方写 "db" 或 "db.dsn" 均按根段 db 放行整棵子树。
+		root, _, _ := strings.Cut(trimmed, ".")
+		segment := normalizeSegment(root)
+		if segment == "" {
+			return nil, invalidConfig("env path allowlist entry %q has empty root", path)
+		}
+		out[segment] = struct{}{}
+	}
+	return out, nil
 }
 
 // walkBranch 进入嵌套结构体；指针分支仅在确有覆盖时才分配，保持零值语义。

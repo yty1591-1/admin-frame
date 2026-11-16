@@ -263,3 +263,68 @@ func TestBindEnvRejectsOversizedKey(t *testing.T) {
 		t.Fatalf("err=%v want ErrInvalidConfig", err)
 	}
 }
+
+func TestBindEnvFilteredAllowlist(t *testing.T) {
+	type nested struct {
+		DSN   string `yaml:"dsn"`
+		Level string `yaml:"level"`
+	}
+	type root struct {
+		DB    nested `yaml:"db"`
+		Log   nested `yaml:"log"`
+		Redis nested `yaml:"redis"`
+	}
+	cfg := root{
+		DB:    nested{DSN: "file-dsn", Level: "keep"},
+		Log:   nested{Level: "info"},
+		Redis: nested{DSN: "file-redis"},
+	}
+	lookup := envLookup(map[string]string{
+		"APP_DB_DSN":      "env-dsn",
+		"APP_LOG_LEVEL":   "debug",
+		"APP_REDIS_DSN":   "env-redis",
+		"APP_AUTH_SECRET": "should-ignore",
+	})
+	if err := config.BindEnvFiltered(&cfg, "APP", []string{"db", "redis"}, lookup); err != nil {
+		t.Fatalf("BindEnvFiltered: %v", err)
+	}
+	if cfg.DB.DSN != "env-dsn" {
+		t.Fatalf("db.dsn=%q want env-dsn", cfg.DB.DSN)
+	}
+	if cfg.Redis.DSN != "env-redis" {
+		t.Fatalf("redis.dsn=%q want env-redis", cfg.Redis.DSN)
+	}
+	if cfg.Log.Level != "info" {
+		t.Fatalf("log.level=%q want unchanged info", cfg.Log.Level)
+	}
+}
+
+func TestBindEnvFilteredInlineEmbed(t *testing.T) {
+	type platform struct {
+		DB  struct {
+			DSN string `yaml:"dsn"`
+		} `yaml:"db"`
+		Log struct {
+			Level string `yaml:"level"`
+		} `yaml:"log"`
+	}
+	type root struct {
+		platform `yaml:",inline"`
+	}
+	cfg := root{}
+	cfg.DB.DSN = "file"
+	cfg.Log.Level = "info"
+	lookup := envLookup(map[string]string{
+		"APP_DB_DSN":    "env-dsn",
+		"APP_LOG_LEVEL": "debug",
+	})
+	if err := config.BindEnvFiltered(&cfg, "APP", []string{"db"}, lookup); err != nil {
+		t.Fatalf("BindEnvFiltered: %v", err)
+	}
+	if cfg.DB.DSN != "env-dsn" {
+		t.Fatalf("inline db.dsn=%q want env-dsn", cfg.DB.DSN)
+	}
+	if cfg.Log.Level != "info" {
+		t.Fatalf("inline log.level=%q want unchanged", cfg.Log.Level)
+	}
+}

@@ -12,18 +12,29 @@ A/B/C 三端业务的 Go 模块化单体骨架，实现见 [docs/ARCHITECTURE.md
 
 ## 快速开始
 
+业务进程按 [ADR-0016](docs/adr/0016-config-service-pull-model.md) 从 **config-api 拉取**配置（本地缓存灾备）；远端与缓存都不可用则 fail-fast。`ADMIN_FRAME_*` 仅 DB/Redis；JWT 等业务密钥经 secretclient。
+
 ```bash
-# 1. 依赖：MySQL 8.0 + Redis 7（本地可用 compose 一键起）
+# 1. 依赖：MySQL 8.0 + Redis 7
 docker compose -f docker-compose.integration.yml up -d mysql redis
 
-# 2. 配置：无需复制配置文件；首次启动按代码默认值自动初始化（CFG-04 / CFG-09）
-#    业务密钥由配置中心密钥子域托管，明文不入库、不落盘
-# 3. 建库与迁移（驱动只支持 MySQL；见 docs/migration-guide.md）
-make migrate-up
-# 等价于：go run ./cmd/migrate -driver mysql -dsn "$ADMIN_FRAME_DB_DSN" -action up
+# 2. 基础设施口令（仅允许这些 ADMIN_FRAME_*）
+export ADMIN_FRAME_DB_DRIVER=mysql
+export ADMIN_FRAME_DB_DSN='user:pass@tcp(127.0.0.1:3306)/admin_frame?parseTime=true&loc=Local'
+# 可选：ADMIN_FRAME_REDIS_ADDR / ADMIN_FRAME_REDIS_PASSWORD
 
-# 4. 编译并启动
+# 3. 建库与迁移
+make migrate-up
+
+# 4. 先起 config-api（播种基线；唯一读配置库）
 make build
+make run-config   # 或 go run ./cmd/config-api
+
+# 5. 业务进程引导变量后启动（见 docs/runbooks/config-center.md）
+export CONFIG_API_URL=http://127.0.0.1:8085
+export CONFIG_SERVICE_IDENTITY=admin-api
+export CONFIGCENTER_ENV=dev
+# 可选：CONFIGCENTER_CACHE_DIR / CONFIGCENTER_NAMESPACES
 make run-admin   # 或 make run-biz / run-c / run-worker
 ```
 

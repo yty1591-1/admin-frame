@@ -9,7 +9,6 @@ import (
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
-	snapshotconfig "github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
@@ -99,17 +98,6 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 	// ADR-0015：把热更视图接到运行时参数（限流 / 幂等 TTL / 异步 relay）。
 	if configRT != nil {
 		configRT.ApplyRuntimeParams(deps)
-	}
-	// 迁移期双读：启动时对比一次（main 的 Register 回调），之后跟随快照刷新周期采样，
-	// 否则「7 天零差异」只能靠每次重启抽样，取证不成立。
-	if configRT != nil && configRT.Client != nil {
-		snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
-			ConfigPath: configPath,
-			Env:        appCfg.Env,
-			Reader:     configRT.Client,
-			Logger:     deps.Logger,
-			Metrics:    deps.Metrics,
-		})
 	}
 	if services != nil {
 		if tenantRT != nil {

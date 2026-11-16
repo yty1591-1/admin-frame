@@ -109,27 +109,31 @@ func NewLoader(path string) (*config.Loader[Config], error) {
 // NewLoaderWithValues 构造带配置中心快照覆盖的加载器。
 //
 // values 返回已验签快照的扁平取值（yaml 路径 → 字符串）；nil 表示不接入。
+// 环境变量仅放行 db/redis（InfraEnvPathAllowlist）。
 func NewLoaderWithValues(path string, values func() (map[string]string, error)) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:        []string{path},
-		EnvPrefix:    platformconfig.EnvPrefix,
-		Values:       values,
-		ValueAliases: spec.ValueAliases(),
-		Defaults:     (*Config).ApplyDefaults,
-		Normalize:    (*Config).Normalize,
-		Validate:     (*Config).Validate,
+		Files:            []string{path},
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
 	})
 }
 
-// LoadWithValuesAllowMissing 在允许缺失配置文件时加载（无文件启动演练）。
+// LoadWithValuesAllowMissing 在允许缺失配置文件时加载（无文件启动）。
 //
-// 仅当调用方确认已有可信签名快照时才应传 allowMissing=true；否则缺失文件
-// 会退化为代码默认值，可能掩盖部署错误。
+// allowMissing 只控制 yaml 文件是否可缺；业务取值必须由调用方提供的签名
+// 快照 Values 覆盖，不得把「无快照」误读为允许仅用代码默认值启动。
+// 环境变量仅放行 db/redis。
 func LoadWithValuesAllowMissing(path string, values func() (map[string]string, error),
 	allowMissing bool) (*Config, error) {
 	loader, err := config.NewLoader(config.Options[Config]{
 		Files:             []string{path},
 		EnvPrefix:         platformconfig.EnvPrefix,
+		EnvPathAllowlist:  platformconfig.InfraEnvPathAllowlist,
 		Values:            values,
 		ValueAliases:      spec.ValueAliases(),
 		Defaults:          (*Config).ApplyDefaults,
@@ -143,17 +147,18 @@ func LoadWithValuesAllowMissing(path string, values func() (map[string]string, e
 	return loader.Load()
 }
 
-// Load 从可选 YAML 文件加载完整配置，应用默认值与环境变量后校验。
+// Load 从可选 YAML 文件加载完整配置，应用默认值与白名单环境变量后校验。
 //
-// M3（CFG-04）：业务取值以「配置中心快照 > 代码默认值」为准；无 Values 时
-// 文件 / 环境变量仅作引导与基础设施注入，不得作为业务配置事实源。
+// CFG-04：业务取值以「配置中心快照 > 代码默认值」为准；无 Values 时仅文件与
+// db/redis 环境变量参与，不得把 ADMIN_FRAME_* 业务键当作事实源。
 func Load(path string) (*Config, error) {
 	return LoadWithValues(path, nil)
 }
 
 // LoadWithValues 加载配置并应用配置中心快照取值。
 //
-// 优先级：配置中心快照 > 环境变量 / 文件（引导） > 代码默认值（CFG-04）。
+// 优先级：配置中心快照 > 可选文件 > 代码默认值；ADMIN_FRAME_DB_*/REDIS_*
+// 作为基础设施补充通道在快照之后覆盖（CFG-04）。
 func LoadWithValues(path string, values func() (map[string]string, error)) (*Config, error) {
 	loader, err := NewLoaderWithValues(path, values)
 	if err != nil {

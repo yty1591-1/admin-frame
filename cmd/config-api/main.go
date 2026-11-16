@@ -1,6 +1,3 @@
-// Command config-api 是配置中心内部密钥解析服务（M2 / ADR-0014）。
-//
-// 仅暴露 /internal/v1/configs/secrets/resolve 与健康检查；不承载管理面。
 package main
 
 import (
@@ -15,7 +12,6 @@ import (
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 )
@@ -27,7 +23,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/admin.yaml", "config file path (shared platform bootstrap)")
+	configPath := flag.String("config", "unused.yaml", "optional unused config path")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("config-api: %v", err)
@@ -36,26 +32,24 @@ func main() {
 }
 
 func run(configPath string) error {
-	startup, err := snapshotconfig.Load(context.Background())
-	if err != nil {
-		log.Printf("config-api: config snapshot ignored: %v", err)
-	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
-	}
+	// ADR-0016：config-api 自举，不依赖签名快照；仅代码默认值 + db/redis env。
+	// service/channel 是平台进程身份证，内部服务写死，须在 Validate 前注入。
 	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+		return map[string]string{
+			"service": "config-api",
+			"channel": "internal",
+			"addr":    ":8085",
+		}, nil
+	}, true)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if env := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV")); env != "" {
+		appCfg.Env = env
+	}
 	if addr := strings.TrimSpace(os.Getenv("CONFIG_API_ADDR")); addr != "" {
 		appCfg.Addr = addr
-	} else if appCfg.Addr == "" || appCfg.Addr == ":8081" || appCfg.Addr == ":8080" {
-		appCfg.Addr = ":8085"
 	}
-	appCfg.Service = "config-api"
 
 	tlsCfg, err := secretruntime.LoadServerTLSFromEnv()
 	if err != nil {
@@ -67,15 +61,19 @@ func run(configPath string) error {
 		Build:     httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
 		TLSConfig: tlsCfg,
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
-			rt, err := configcenterruntime.NewSecretResolve(deps, configcenterruntime.Options{Service: "config-api"})
+			rt, err := configcenterruntime.NewConfigAPI(deps, configcenterruntime.Options{Service: "config-api"})
 			if err != nil {
 				return err
 			}
-			if rt == nil || rt.Handler == nil {
-				return fmt.Errorf("config-api secret runtime unavailable")
+			if rt == nil || rt.Internal == nil {
+				return fmt.Errorf("config-api internal runtime unavailable")
 			}
+			mux.Handle("GET /internal/v1/configs/{env}/{namespace}",
+				http.HandlerFunc(rt.Internal.GetNamespaceConfig))
+			mux.Handle("GET /internal/v1/configs/notifications",
+				http.HandlerFunc(rt.Internal.Notifications))
 			mux.Handle("POST /internal/v1/configs/secrets/resolve",
-				http.HandlerFunc(rt.Handler.ResolveSecrets))
+				http.HandlerFunc(rt.Internal.ResolveSecrets))
 			return nil
 		},
 	})

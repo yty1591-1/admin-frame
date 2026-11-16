@@ -2,29 +2,18 @@ package configclient
 
 import (
 	"context"
-	"crypto/ed25519"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// TestClientWatchReceivesEvents 验证 Watch 订阅刷新事件并在取消后关闭。
 func TestClientWatchReceivesEvents(t *testing.T) {
-	publicKey, privateKey := testKey(t)
-	signer, err := NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
 	source := &namespaceSource{
 		snapshots: map[string]Snapshot{
-			"platform": buildSignedFor(t, signer, "platform", map[string]string{"addr": ":9000"}),
+			"platform": buildFor(t, "platform", map[string]string{"addr": ":9000"}),
 		},
 	}
-	client, err := NewClient(ClientConfig{Source: source, Verifier: verifier, Env: "dev", Namespace: "platform"})
+	client, err := NewClient(ClientConfig{Source: source, Env: "dev", Namespace: "platform"})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -57,25 +46,15 @@ func TestClientWatchReceivesEvents(t *testing.T) {
 	}
 }
 
-// TestClientWatchDropsSlowConsumer 验证慢消费者丢事件并触发回调。
 func TestClientWatchDropsSlowConsumer(t *testing.T) {
-	publicKey, privateKey := testKey(t)
-	signer, err := NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
 	source := &namespaceSource{
 		snapshots: map[string]Snapshot{
-			"platform": buildSignedFor(t, signer, "platform", map[string]string{"addr": ":9000"}),
+			"platform": buildFor(t, "platform", map[string]string{"addr": ":9000"}),
 		},
 	}
 	var dropped atomic.Int64
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform",
+		Source: source, Env: "dev", Namespace: "platform",
 		OnWatchDropped: func() { dropped.Add(1) },
 	})
 	if err != nil {

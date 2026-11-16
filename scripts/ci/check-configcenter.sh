@@ -10,7 +10,7 @@
 #   CC-02 权限种子包含读 / 写 / 审批 / 发布四点
 #   CC-03 审计动作包含配置变更、播种、发布、回滚、审批
 #   CC-04 管理面 OpenAPI 文件存在且被 admin.yaml 引用
-#   CC-05 快照构建跳过敏感项，SDK 装载前必须验签
+#   CC-05 快照/拉取构建跳过敏感项，SDK 经 HTTP 拉取（ADR-0016）
 #   CC-06 未声明键拒绝写入（spec 注册表校验存在）
 #   CC-07 指标 / 告警 / runbook 资产存在
 #   CC-08 双读运行时接线：展平、对比入口、差异指标、四进程接入
@@ -96,13 +96,13 @@ if [[ -f "api/openapi/admin.yaml" ]]; then
   fi
 fi
 
-echo "==> CC-05: snapshot excludes sensitive values and verifies signature"
+echo "==> CC-05: pull excludes sensitive values (ADR-0016)"
 require_grep "internal/configcenter/app/snapshot_service.go" \
-  "item\.Sensitive" "快照构建识别敏感项"
+  "item\.Sensitive" "拉取构建识别敏感项"
 require_grep "internal/configcenter/app/snapshot_service.go" \
-  "continue" "敏感项不写入快照"
-require_grep "pkg/configclient/client.go" \
-  "verifier\.Verify" "SDK 装载前验签"
+  "continue" "敏感项不写入拉取响应"
+require_grep "pkg/configclient/http_source.go" \
+  "NewHTTPSource" "SDK HTTP 拉取源"
 
 echo "==> CC-06: undeclared keys are rejected"
 require_grep "internal/configcenter/spec/registry.go" \
@@ -114,27 +114,24 @@ require_file "deploy/observability/prometheus/rules/configcenter.yaml" "配置�
 require_file "docs/runbooks/config-center.md" "配置中心 runbook"
 require_grep "docs/runbooks/ALERTS.md" "config\.client_stale" "告警目录登记 client_stale"
 
-echo "==> CC-08: dual-read runtime wiring"
-require_file "pkg/config/flat.go" "配置文件展平（双读基线）"
-require_file "cmd/internal/snapshotconfig/dualread.go" "双读对比入口"
-require_grep "internal/configcenter/observability/dualread.go" \
-  "config_dual_read_mismatch" "双读差异指标"
-wired="$(grep -l "ReportWithMetrics" cmd/*/main.go 2>/dev/null | wc -l | tr -d ' ')"
-if [[ "${wired}" -ge 4 ]]; then
-  ok "四个进程均接入启动期双读（${wired}）"
-else
-  fail "仅 ${wired} 个进程接入双读，期望 4 个"
-fi
+echo "==> CC-08: config-api pull model (ADR-0016)"
+require_file "pkg/configclient/http_source.go" "HTTP 配置源"
+require_file "pkg/configclient/long_poll.go" "长轮询客户端"
+require_file "pkg/configclient/dir_cache.go" "本地缓存目录"
+require_file "cmd/internal/configboot/load.go" "业务进程启动拉取"
+require_grep "internal/configcenter/transport/rest/internal_handler.go" \
+  "GetNamespaceConfig" "内部拉取 Handler"
+require_grep "internal/configcenter/app/release_watcher.go" \
+  "ReleaseWatcher" "pointer 变更扫描器"
 
-echo "==> CC-09: no-file startup support"
+echo "==> CC-09: boot via configboot"
 require_grep "pkg/config/loader.go" "AllowMissingFiles" "无文件启动开关"
-require_grep "cmd/internal/snapshotconfig/startup.go" \
-  "CONFIGCENTER_ALLOW_MISSING_CONFIG" "无文件启动演练环境变量"
-allowed="$(grep -l "LoadWithValuesAllowMissing" cmd/*/main.go 2>/dev/null | wc -l | tr -d ' ')"
-if [[ "${allowed}" -ge 4 ]]; then
-  ok "四个进程均支持无文件启动（${allowed}）"
+require_grep "cmd/internal/configboot/load.go" "CONFIG_API_URL" "启动引导变量"
+booted="$(grep -l "configboot.Load" cmd/*/main.go 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${booted}" -ge 4 ]]; then
+  ok "四个业务进程均使用 configboot.Load（${booted}）"
 else
-  fail "仅 ${allowed} 个进程支持无文件启动，期望 4 个"
+  fail "仅 ${booted} 个进程使用 configboot.Load，期望 4 个"
 fi
 
 echo "==> CC-10: business domain key specs"
@@ -148,35 +145,36 @@ else
   ok "业务域已逐键声明或登记排除"
 fi
 
-echo "==> CC-11: multi-namespace consumption and switch"
-require_grep "cmd/internal/snapshotconfig/startup.go" \
-  "CONFIGCENTER_SNAPSHOT_FILES" "多 namespace 启动快照列表"
-require_grep "cmd/internal/snapshotconfig/startup.go" \
-  "CONFIGCENTER_ENABLED_NAMESPACES" "namespace 接管开关"
+echo "==> CC-11: multi-namespace + long poll"
 require_grep "pkg/configclient/client.go" \
   "Namespaces \[\]string" "SDK 多 namespace 配置"
 require_grep "cmd/internal/configcenterruntime/runtime.go" \
-  "EnabledNamespaces\(\)" "刷新客户端按开关加载 namespace"
-require_grep "cmd/internal/snapshotconfig/dualread.go" \
-  "ByNamespace" "双读按 namespace 对比"
+  "enabledNamespaces\(\)" "刷新客户端 namespace 解析"
 require_grep "pkg/configclient/client.go" \
   "func \(c \*Client\) Watch" "SDK Watch 订阅"
+require_grep "pkg/configclient/client.go" \
+  "runLongPoll" "SDK 长轮询驱动"
 require_grep "internal/configcenter/observability/metrics.go" \
   "config_client_watch_dropped_total" "Watch 丢事件指标"
-require_grep "cmd/internal/configcenterruntime/runtime.go" \
-  "OnWatchDropped" "Watch 指标接入运行时"
 for process in biz-api c-api worker; do
   require_grep "cmd/${process}/main.go" "NewRefresh" "${process} 动态刷新观测"
 done
+require_grep "cmd/config-api/main.go" "NewConfigAPI" "config-api 自举入口"
+require_grep "cmd/config-api/main.go" \
+  "/internal/v1/configs/notifications" "config-api 注册长轮询"
+require_grep "api/openapi/internal.yaml" \
+  "paths/internal/configs.yaml" "internal OpenAPI 登记拉取路径"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"
 require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
-  "CONFIGCENTER_SNAPSHOT_FILES" "Helm 注入快照文件列表"
+  "CONFIG_API_URL" "Helm 注入 config-api URL"
 require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
-  "CONFIGCENTER_ENABLED_NAMESPACES" "Helm 注入 namespace 开关"
+  "CONFIG_SERVICE_IDENTITY" "Helm 注入服务身份"
 require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
-  "configcenter-snapshots" "Helm 挂载快照 Secret"
+  "CONFIGCENTER_ENV" "Helm 注入配置环境"
+require_grep "deploy/helm/admin-frame/templates/_workload.tpl" \
+  "configcenter-cache" "Helm 挂载本地缓存 emptyDir"
 
 echo "==> CC-13: M2 secret hosting contract"
 require_file "migrations/000033_create_config_secrets.up.sql" "密钥表迁移 up"
@@ -209,7 +207,7 @@ require_file "cmd/config-api/main.go" "config-api 入口"
 require_file "docs/runbooks/secret-management.md" "密钥 runbook"
 require_file "docs/runbooks/key-ceremony.md" "key ceremony"
 
-echo "==> CC-14: M3 zero tracked configs + nofile + JWT secret consume"
+echo "==> CC-14: zero tracked configs + EnvAllowlist + configboot + JWT secretclient"
 tracked="$(git ls-files 'configs' 2>/dev/null || true)"
 if [[ -z "${tracked}" ]]; then
   ok "git ls-files configs 为空"
@@ -217,9 +215,30 @@ else
   fail "M3 后仍有 tracked configs/ 文件"
   printf '%s\n' "${tracked}" >&2
 fi
-require_grep "pkg/config/loader.go" "AllowMissingFiles" "Loader 支持无文件启动"
+require_grep "pkg/config/loader.go" "EnvPathAllowlist" "Loader 支持环境变量路径白名单"
+require_grep "pkg/config/env.go" "BindEnvFiltered" "BindEnv 支持白名单过滤"
+require_grep "internal/platform/config/config.go" "InfraEnvPathAllowlist" "基础设施 env 白名单常量"
+require_grep "cmd/internal/appconfig/appconfig.go" "InfraEnvPathAllowlist" "业务 Loader 挂载 EnvAllowlist"
+require_grep "cmd/admin-api/main.go" "configboot.Load" "admin-api 拉取启动"
+require_grep "cmd/biz-api/main.go" "configboot.Load" "biz-api 拉取启动"
+require_grep "cmd/c-api/main.go" "configboot.Load" "c-api 拉取启动"
+require_grep "cmd/worker/main.go" "configboot.Load" "worker 拉取启动"
+if grep -RIn --exclude-dir=.git --exclude='check-configcenter.sh' --exclude='_*' \
+  -E 'snapshotconfig\.RequireLoad|CONFIGCENTER_SNAPSHOT_|CONFIGCENTER_ALLOW_MISSING_CONFIG' \
+  cmd pkg internal scripts/local docs/CONFIG_STANDARDS.md docs/ARCHITECTURE.md 2>/dev/null \
+  | grep -vE 'ADR-0016|deprecated|已移除|BREAKING|升级说明' >/dev/null; then
+  fail "仍存在快照签名启动残留"
+  grep -RIn --exclude-dir=.git --exclude='check-configcenter.sh' --exclude='_*' \
+    -E 'snapshotconfig\.RequireLoad|CONFIGCENTER_SNAPSHOT_|CONFIGCENTER_ALLOW_MISSING_CONFIG' \
+    cmd pkg internal scripts/local docs/CONFIG_STANDARDS.md docs/ARCHITECTURE.md 2>/dev/null | head -n 40 >&2 || true
+else
+  ok "无 RequireLoad / 快照签名环境变量残留"
+fi
 require_grep "cmd/internal/secretruntime/jwt.go" "auth.jwt.private_key" "JWT 密钥消费 secretclient"
-require_file "docs/incident/drills/2026-11-16-configcenter-nofile.md" "无文件启动演练记录"
+require_grep "cmd/internal/secretruntime/resolve.go" "CONFIG_API_URL and CONFIG_SERVICE_IDENTITY are required" \
+  "secretclient 引导变量必填"
+require_grep "cmd/admin-api/main.go" "jwt secret:" "admin-api JWT fail-fast"
+require_file "docs/adr/0016-config-service-pull-model.md" "ADR-0016 拉取模型"
 GO_BIN=""
 if command -v go >/dev/null 2>&1; then
   GO_BIN="go"
@@ -227,7 +246,7 @@ elif command -v go.exe >/dev/null 2>&1; then
   GO_BIN="go.exe"
 fi
 if [[ -n "${GO_BIN}" ]]; then
-  if "${GO_BIN}" test -count=1 ./cmd/internal/secretruntime/ -run 'TestApplyJWTSecret' >/dev/null; then
+  if "${GO_BIN}" test -count=1 ./cmd/internal/secretruntime/ -run 'TestApplyJWTSecret|TestNewFromEnv' >/dev/null; then
     ok "JWT secret resolve 冒烟"
   else
     fail "JWT secret resolve 冒烟失败"

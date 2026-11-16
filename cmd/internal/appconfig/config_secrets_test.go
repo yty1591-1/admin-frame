@@ -52,25 +52,27 @@ func TestSecretsDisabledKeepsEnvInjection(t *testing.T) {
 	}
 }
 
-// TestSecretsEnvProviderUsesDefaultPrefix 验证默认 env 前缀带分隔符：
-// identity_hash_key 必须命中 ADMIN_FRAME_IDENTITY_HASH_KEY，
-// 而不是前缀与密钥名粘连的变量名。
-func TestSecretsEnvProviderUsesDefaultPrefix(t *testing.T) {
+// TestSecretsEnvProviderDeniesIdentityKeys 验证 env Provider 不再回源 identity 业务密钥。
+func TestSecretsEnvProviderDeniesIdentityKeys(t *testing.T) {
 	hashKey := strings.Repeat("ab", 32)
 	t.Setenv("ADMIN_FRAME_IDENTITY_HASH_KEY", hashKey)
+	t.Setenv("ADMIN_FRAME_DB_DSN", "svc:pass@tcp(127.0.0.1:3306)/admin_frame")
 
 	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n    secret: \"" + strings.Repeat("s", 32) + "\"\n" +
-		"db:\n  driver: memory\n" +
+		"db:\n  driver: mysql\n" +
 		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
 		"identity:\n  enabled: true\n" +
 		"secrets:\n  providers: [env]\n"
-	cfg, err := appconfig.Load(writeConfig(t, "secrets-env-prefix.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-env-deny.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.Identity.HashKey != hashKey {
-		t.Fatalf("identity.hash_key 未命中 ADMIN_FRAME_ 前缀变量")
+	if cfg.Identity.HashKey == hashKey {
+		t.Fatal("identity.hash_key must not be filled from env Provider")
+	}
+	if cfg.DB.DSN != "svc:pass@tcp(127.0.0.1:3306)/admin_frame" {
+		t.Fatalf("db.dsn should still resolve via env Provider / BindEnv, got %q", cfg.DB.DSN)
 	}
 }
 

@@ -374,6 +374,19 @@ func (r *pointerRepository) Get(_ context.Context, env, namespace string) (domai
 	return pointer, nil
 }
 
+// ListByEnv 返回某环境下全部生效指针。
+func (r *pointerRepository) ListByEnv(_ context.Context, env string) ([]domain.Pointer, error) {
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
+	out := make([]domain.Pointer, 0, 8)
+	for _, pointer := range r.store.pointers {
+		if pointer.Env == env {
+			out = append(out, pointer)
+		}
+	}
+	return out, nil
+}
+
 // Create 初始化指针；已存在返回 domain.ErrDuplicateKey。
 func (r *pointerRepository) Create(_ context.Context, pointer domain.Pointer) error {
 	r.store.mu.Lock()

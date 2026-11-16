@@ -47,6 +47,8 @@ type ReleaseRepository interface {
 // Create 只在 (env, namespace) 首次初始化时调用，冲突返回 ErrDuplicateKey。
 type PointerRepository interface {
 	Get(ctx context.Context, env, namespace string) (Pointer, error)
+	// ListByEnv 返回某环境下全部生效指针；无记录时返回空切片。
+	ListByEnv(ctx context.Context, env string) ([]Pointer, error)
 	Create(ctx context.Context, pointer Pointer) error
 	CompareAndSwap(ctx context.Context, env, namespace string, expectedVersion, activeReleaseID int64, now time.Time) (Pointer, error)
 }

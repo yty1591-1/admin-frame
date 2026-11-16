@@ -25,7 +25,6 @@ type ReleaseService struct {
 	audit    auditContext
 	ids      id.Generator
 	now      func() time.Time
-	signer   *configclient.Signer
 }
 
 // NewReleaseService 构造发布用例；三个仓储、审计出口与 ID 生成器必填。
@@ -55,7 +54,6 @@ func NewReleaseService(items domain.ItemRepository, releases domain.ReleaseRepos
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
-		signer:   opts.Signer,
 	}, nil
 }
 
@@ -281,7 +279,7 @@ func (s *ReleaseService) Publish(ctx context.Context, releaseID int64, expectedP
 	if SnapshotHash(items) != release.SnapshotHash {
 		return domain.Release{}, apperr.Internal("release snapshot hash mismatch", nil)
 	}
-	signed, err := applySignature(s.signer, release)
+	signed, err := applySignature(nil, release)
 	if err != nil {
 		return domain.Release{}, err
 	}
@@ -411,7 +409,7 @@ func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain
 	if SnapshotHash(newItems) != target.SnapshotHash {
 		return domain.Release{}, apperr.Internal("rollback snapshot hash mismatch", nil)
 	}
-	signed, err := applySignature(s.signer, newRelease)
+	signed, err := applySignature(nil, newRelease)
 	if err != nil {
 		return domain.Release{}, err
 	}

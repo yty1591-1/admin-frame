@@ -2,7 +2,6 @@ package configclient
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"sync"
 	"testing"
@@ -36,50 +35,23 @@ func (s *namespaceSource) set(namespace string, snapshot Snapshot, err error) {
 	s.errs[namespace] = err
 }
 
-// buildSignedFor 生成指定 namespace 的签名快照。
-func buildSignedFor(t *testing.T, signer *Signer, namespace string, values map[string]string) Snapshot {
+func buildFor(t *testing.T, namespace string, values map[string]string) Snapshot {
 	t.Helper()
-	items := make([]Item, 0, len(values))
-	for key, value := range values {
-		items = append(items, Item{
-			ConfigKey: key, ItemID: int64(len(items) + 1), ItemVersion: 1,
-			ValueHash: hashValue(value),
-		})
-	}
-	snapshot := Snapshot{
-		Env: "dev", Namespace: namespace, ReleaseID: 1, ReleaseNo: 1,
-		SnapshotHash: HashItems(items), SnapshotSize: len(items),
-		Items: items, Values: values,
-	}
-	keyID, signature, err := signer.Sign(snapshot)
-	if err != nil {
-		t.Fatalf("sign snapshot: %v", err)
-	}
-	snapshot.KeyID = keyID
-	snapshot.Signature = signature
-	return snapshot
+	snap := buildSnapshot(t, values)
+	snap.Namespace = namespace
+	return snap
 }
 
-// TestClientMultiNamespaceMergesValues 验证多 namespace 合并取值与逐 namespace 事件。
 func TestClientMultiNamespaceMergesValues(t *testing.T) {
-	publicKey, privateKey := testKey(t)
-	signer, err := NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
 	source := &namespaceSource{
 		snapshots: map[string]Snapshot{
-			"platform": buildSignedFor(t, signer, "platform", map[string]string{"server.addr": ":9000"}),
-			"identity": buildSignedFor(t, signer, "identity", map[string]string{"identity.enabled": "true"}),
+			"platform": buildFor(t, "platform", map[string]string{"server.addr": ":9000"}),
+			"identity": buildFor(t, "identity", map[string]string{"identity.enabled": "true"}),
 		},
 	}
 	var events []RefreshEvent
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev",
+		Source: source, Env: "dev",
 		Namespaces: []string{"identity", "platform"}, PrimaryNamespace: "platform",
 		OnRefresh: func(event RefreshEvent) { events = append(events, event) },
 	})
@@ -111,26 +83,16 @@ func TestClientMultiNamespaceMergesValues(t *testing.T) {
 	}
 }
 
-// TestClientMultiNamespacePartialFailureKeepsOld 验证单 namespace 失败不影响其它 namespace。
 func TestClientMultiNamespacePartialFailureKeepsOld(t *testing.T) {
-	publicKey, privateKey := testKey(t)
-	signer, err := NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
 	source := &namespaceSource{
 		snapshots: map[string]Snapshot{
-			"platform": buildSignedFor(t, signer, "platform", map[string]string{"server.addr": ":9000"}),
-			"identity": buildSignedFor(t, signer, "identity", map[string]string{"identity.enabled": "true"}),
+			"platform": buildFor(t, "platform", map[string]string{"server.addr": ":9000"}),
+			"identity": buildFor(t, "identity", map[string]string{"identity.enabled": "true"}),
 		},
 		errs: map[string]error{},
 	}
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev",
+		Source: source, Env: "dev",
 		Namespaces: []string{"platform", "identity"},
 	})
 	if err != nil {
@@ -141,7 +103,7 @@ func TestClientMultiNamespacePartialFailureKeepsOld(t *testing.T) {
 	}
 
 	source.set("platform",
-		buildSignedFor(t, signer, "platform", map[string]string{"server.addr": ":9100"}),
+		buildFor(t, "platform", map[string]string{"server.addr": ":9100"}),
 		nil)
 	source.set("identity", Snapshot{}, errors.New("db unavailable"))
 

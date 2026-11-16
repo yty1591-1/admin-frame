@@ -10,12 +10,15 @@
 #   --env-file <path>   环境变量文件；默认 configs/prod/.env（本地未跟踪；无回退样例）
 #
 # 说明：
-#   1. M3 起业务配置仅「签名快照 + 代码默认值」；仓库不再跟踪 configs/*.example。
-#      可选本地未跟踪文件 configs/prod-<role>.yaml 仅作调试覆盖，不得入库。
-#   2. 基础设施口令只从 --env-file / 部署 Secret 注入；脚本逐行 export，不执行 source。
+#   1. 业务配置按 ADR-0016 从 config-api 拉取 + 本地缓存；仓库不跟踪 configs/。
+#   2. --env-file 只应导出：ADMIN_FRAME_DB_* / ADMIN_FRAME_REDIS_*、
+#      CONFIG_API_URL / CONFIG_SERVICE_IDENTITY / CONFIGCENTER_ENV（及可选
+#      CONFIGCENTER_CACHE_DIR / CONFIGCENTER_NAMESPACES）、CONFIG_API_* TLS/mTLS。
+#      禁止导出 ADMIN_FRAME_AUTH_JWT_SECRET 等业务密钥或业务配置覆盖。
 #   3. 迁移不在本脚本内自动执行；生产必须先跑独立 migrate Job：
 #        go run ./cmd/migrate -dsn "$ADMIN_FRAME_DB_DSN" -action up
-#   4. 启动顺序固定为 worker -> admin -> biz -> c，worker 负责 Outbox Relay。
+#   4. 启动顺序固定为 config-api -> worker -> admin -> biz -> c；
+#      首次部署必须先起 config-api（播种 + 拉取入口）。
 #   5. PIDs 与日志写入 bin/run/（已被 /bin/ 忽略），不会污染工作区。
 #   6. Windows 下若 bash 来自 WSL，脚本会自动切到 Git Bash：WSL 启动原生 Windows
 #      进程时只透传 WSLENV 白名单，导出的 ADMIN_FRAME_* 会丢失。
@@ -26,7 +29,7 @@
 #      CTRL_CLOSE_EVENT（Go 运行时映射为 SIGTERM）并被优雅停机，日志表现为启动成功
 #      后立刻出现 "shutdown requested" → "server stopped"。stop/status 不受此限制；
 #      WSL 下的自动切换只能保住环境变量，无法保住进程生命周期。
-#   9. 无本地 yaml 时导出 CONFIGCENTER_ALLOW_MISSING_CONFIG=1，依赖签名快照启动。
+#   9. 无本地 yaml 时使用 unused 路径；业务进程 configboot.Load 拉取失败且无缓存则退出。
 
 set -euo pipefail
 
@@ -67,9 +70,11 @@ API_HOST="${API_HOST:-127.0.0.1}"
 ADMIN_API_PORT="${ADMIN_API_PORT:-8081}"
 BIZ_API_PORT="${BIZ_API_PORT:-8082}"
 C_API_PORT="${C_API_PORT:-8083}"
+CONFIG_API_PORT="${CONFIG_API_PORT:-8085}"
 
-ROLES=(worker admin-api biz-api c-api)
+ROLES=(config-api worker admin-api biz-api c-api)
 # role -> 配置中的端别，用于拼接默认配置文件名。
+ROLE_KEY_config_api="config"
 ROLE_KEY_worker="worker"
 ROLE_KEY_admin_api="admin"
 ROLE_KEY_biz_api="biz"
@@ -164,10 +169,9 @@ resolve_config() {
     printf '%s' "$real"
     return 0
   fi
-  # M3：无本地 yaml 时仍返回约定路径；启动前导出 ALLOW_MISSING，走快照/默认值。
-  export CONFIGCENTER_ALLOW_MISSING_CONFIG=1
-  warn "未找到 $real；已设置 CONFIGCENTER_ALLOW_MISSING_CONFIG=1（依赖签名快照 + 代码默认值）"
-  printf '%s' "$real"
+  # 无本地 yaml：返回占位路径；业务进程经 configboot 从 config-api 拉取。
+  warn "未找到 $real；将依赖 CONFIG_API_URL 拉取（无 yaml 回退）"
+  printf '%s' "unused.yaml"
 }
 
 # build_output 是构建产物的目标路径；Windows 下统一带 .exe 后缀。
@@ -254,6 +258,7 @@ wait_ready() {
   local i
   for ((i = 1; i <= HEALTH_TIMEOUT; i++)); do
     local ok=1
+    health_one "http://$API_HOST:$CONFIG_API_PORT/readyz" || ok=0
     read_pid worker >/dev/null || ok=0
     health_one "http://$API_HOST:$ADMIN_API_PORT/readyz" || ok=0
     health_one "http://$API_HOST:$BIZ_API_PORT/readyz" || ok=0

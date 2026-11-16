@@ -33,12 +33,19 @@ func (f *fakeSource) set(snapshot Snapshot, err error) {
 	f.err = err
 }
 
-// newTestClient 用给定验签器构造客户端，时钟可推进。
-func newTestClient(t *testing.T, source Source, verifier *Verifier) (*Client, *time.Time) {
+func sampleSnapshot(t *testing.T) Snapshot {
+	t.Helper()
+	return buildSnapshot(t, map[string]string{
+		"http.timeout": "10s",
+		"log.level":    "info",
+	})
+}
+
+func newTestClient(t *testing.T, source Source) (*Client, *time.Time) {
 	t.Helper()
 	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform",
+		Source: source, Env: "dev", Namespace: "platform",
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -48,13 +55,13 @@ func newTestClient(t *testing.T, source Source, verifier *Verifier) (*Client, *t
 }
 
 func TestClientRefreshAndTypedGetters(t *testing.T) {
-	snapshot, verifier := buildSignedSnapshot(t, map[string]string{
+	snapshot := buildSnapshot(t, map[string]string{
 		"http.timeout": "10s",
 		"http.enabled": "true",
 		"http.retries": "5",
 	})
 	source := &fakeSource{}
-	client, now := newTestClient(t, source, verifier)
+	client, now := newTestClient(t, source)
 	source.set(snapshot, nil)
 
 	if err := client.Refresh(context.Background()); err != nil {
@@ -85,9 +92,9 @@ func TestClientRefreshAndTypedGetters(t *testing.T) {
 }
 
 func TestClientRefreshKeepsLastGoodSnapshot(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	source := &fakeSource{}
-	client, _ := newTestClient(t, source, verifier)
+	client, _ := newTestClient(t, source)
 	source.set(snapshot, nil)
 	if err := client.Refresh(context.Background()); err != nil {
 		t.Fatalf("first refresh: %v", err)
@@ -112,10 +119,10 @@ func TestClientRefreshKeepsLastGoodSnapshot(t *testing.T) {
 }
 
 func TestClientRejectsInvalidSnapshot(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	snapshot.Values["log.level"] = "debug"
 	source := &fakeSource{}
-	client, _ := newTestClient(t, source, verifier)
+	client, _ := newTestClient(t, source)
 	source.set(snapshot, nil)
 
 	err := client.Refresh(context.Background())
@@ -128,11 +135,11 @@ func TestClientRejectsInvalidSnapshot(t *testing.T) {
 }
 
 func TestClientNotifiesRefreshEvents(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	source := &fakeSource{}
 	var events []RefreshEvent
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform",
+		Source: source, Env: "dev", Namespace: "platform",
 		OnRefresh: func(event RefreshEvent) { events = append(events, event) },
 	})
 	if err != nil {
@@ -163,18 +170,12 @@ func TestClientNotifiesRefreshEvents(t *testing.T) {
 }
 
 func TestClientRequiresConfiguration(t *testing.T) {
-	_, verifier := signedSnapshot(t)
-	base := ClientConfig{Source: &fakeSource{}, Verifier: verifier, Env: "dev", Namespace: "platform"}
+	base := ClientConfig{Source: &fakeSource{}, Env: "dev", Namespace: "platform"}
 
 	noSource := base
 	noSource.Source = nil
 	if _, err := NewClient(noSource); err == nil {
 		t.Fatal("client without source must be rejected")
-	}
-	noVerifier := base
-	noVerifier.Verifier = nil
-	if _, err := NewClient(noVerifier); err == nil {
-		t.Fatal("client without verifier must be rejected")
 	}
 	noEnv := base
 	noEnv.Env = ""

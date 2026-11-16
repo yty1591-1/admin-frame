@@ -86,18 +86,12 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 }
 
 // ensureBootstrapGrant 为启动期服务身份补齐可解析授权（幂等）。
+//
+// 默认覆盖 admin/biz/c/worker 短名与 spiffe://local/*；可用
+// CONFIG_BOOTSTRAP_GRANT_IDENTITY 覆盖（逗号分隔）。JWT 等密钥须被
+// 各业务进程 CONFIG_SERVICE_IDENTITY 命中，否则 resolve 返回 forbidden。
 func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.Secret, reviewer Actor) error {
-	identity := strings.TrimSpace(os.Getenv("CONFIG_BOOTSTRAP_GRANT_IDENTITY"))
-	if identity == "" {
-		identity = "spiffe://local/biz-api"
-	}
 	if secret.Status != domain.SecretStatusActive {
-		return nil
-	}
-	if _, err := s.grants.FindActive(ctx, secret.Env, secret.Namespace, identity, secret.ID, s.now().UTC()); err == nil {
-		return nil
-	}
-	if secret.PendingAction != "" {
 		return nil
 	}
 	submitter := Actor{
@@ -106,15 +100,60 @@ func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.
 		Channel:   reviewer.Channel,
 		TraceID:   reviewer.TraceID,
 	}
-	grant, err := s.CreateGrant(ctx, CreateGrantInput{
-		SecretID: secret.ID, ServiceIdentity: identity, Actor: submitter,
-	})
-	if err != nil {
-		return err
+	for _, identity := range bootstrapGrantIdentities() {
+		if _, err := s.grants.FindActive(ctx, secret.Env, secret.Namespace, identity, secret.ID, s.now().UTC()); err == nil {
+			continue
+		}
+		current, err := s.secrets.GetByID(ctx, secret.ID)
+		if err != nil {
+			return apperr.Internal("reload secret for bootstrap grant failed", err)
+		}
+		if current.PendingAction != "" {
+			return apperr.Conflict(fmt.Sprintf(
+				"secret %s.%s has pending action %q; cannot bootstrap grant for %s",
+				current.Namespace, current.Name, current.PendingAction, identity))
+		}
+		grant, err := s.CreateGrant(ctx, CreateGrantInput{
+			SecretID: secret.ID, ServiceIdentity: identity, Actor: submitter,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := s.ApproveSecret(ctx, ApproveSecretInput{
+			ID: secret.ID, Decision: domain.DecisionApproved,
+			Comment: "bootstrap grant " + grant.ServiceIdentity, Actor: reviewer,
+		}); err != nil {
+			return err
+		}
 	}
-	_, err = s.ApproveSecret(ctx, ApproveSecretInput{
-		ID: secret.ID, Decision: domain.DecisionApproved,
-		Comment: "bootstrap grant " + grant.ServiceIdentity, Actor: reviewer,
-	})
-	return err
+	return nil
+}
+
+// bootstrapGrantIdentities 返回启动期应获得 resolve 授权的服务身份列表。
+func bootstrapGrantIdentities() []string {
+	raw := strings.TrimSpace(os.Getenv("CONFIG_BOOTSTRAP_GRANT_IDENTITY"))
+	if raw != "" {
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		seen := make(map[string]struct{}, len(parts))
+		for _, part := range parts {
+			id := strings.TrimSpace(part)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{
+		"admin-api", "biz-api", "c-api", "worker",
+		"spiffe://local/admin-api", "spiffe://local/biz-api",
+		"spiffe://local/c-api", "spiffe://local/worker",
+	}
 }

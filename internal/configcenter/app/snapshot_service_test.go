@@ -2,33 +2,13 @@ package app_test
 
 import (
 	"context"
-	"crypto/ed25519"
 	"testing"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
-	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
-
-// newSigner 生成测试密钥并返回签名器与验签器。
-func newSigner(t *testing.T) (*configclient.Signer, *configclient.Verifier) {
-	t.Helper()
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generate ed25519 key: %v", err)
-	}
-	signer, err := configclient.NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := configclient.NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
-	return signer, verifier
-}
 
 // seedSensitiveItem 写入一个敏感配置键与版本 1。
 func seedSensitiveItem(t *testing.T, repos *memory.Repositories, id int64, key, value string) int64 {
@@ -52,12 +32,11 @@ func seedSensitiveItem(t *testing.T, repos *memory.Repositories, id int64, key, 
 	return item.ID
 }
 
-func TestPublishSignsSnapshotAndClientVerifies(t *testing.T) {
+func TestPublishExcludesSensitiveAndClientLoads(t *testing.T) {
 	repos := memory.New()
-	signer, verifier := newSigner(t)
 	service, err := app.NewReleaseService(repos.Items, repos.Releases, repos.Pointers,
 		&fakeEmitter{}, newIDs(), app.Options{
-			Service: "admin-api", Now: func() time.Time { return testNow }, Signer: signer,
+			Service: "admin-api", Now: func() time.Time { return testNow },
 		})
 	if err != nil {
 		t.Fatalf("new release service: %v", err)
@@ -67,7 +46,7 @@ func TestPublishSignsSnapshotAndClientVerifies(t *testing.T) {
 	sensitiveID := seedSensitiveItem(t, repos, 1002, "smtp.password", "secret")
 
 	release, err := service.CreateRelease(ctx, app.CreateReleaseInput{
-		Env: "dev", Namespace: "platform", Name: "签名发布", Strategy: domain.StrategyAll,
+		Env: "dev", Namespace: "platform", Name: "拉取发布", Strategy: domain.StrategyAll,
 		Entries: []app.SnapshotEntry{
 			{ItemID: itemID, ItemVersion: 1},
 			{ItemID: sensitiveID, ItemVersion: 1},
@@ -83,16 +62,8 @@ func TestPublishSignsSnapshotAndClientVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if published.SnapshotKeyID != "k1" || published.SnapshotSignature == "" {
-		t.Fatalf("publish must record signature: %+v", published)
-	}
-	stored, err := repos.Releases.Get(ctx, release.ID)
-	if err != nil {
-		t.Fatalf("get release: %v", err)
-	}
-	if stored.SnapshotSignature != published.SnapshotSignature ||
-		stored.SnapshotKeyID != published.SnapshotKeyID {
-		t.Fatalf("signature not persisted: %+v", stored)
+	if published.SnapshotSignature != "" || published.SnapshotKeyID != "" {
+		t.Fatalf("publish must leave signature empty: %+v", published)
 	}
 
 	snapshots, err := app.NewSnapshotService(repos.Items, repos.Releases, repos.Pointers)
@@ -103,8 +74,8 @@ func TestPublishSignsSnapshotAndClientVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load snapshot: %v", err)
 	}
-	if err := verifier.Verify(snapshot); err != nil {
-		t.Fatalf("verify snapshot: %v", err)
+	if err := snapshot.ValidateIntegrity(); err != nil {
+		t.Fatalf("validate snapshot: %v", err)
 	}
 	if got := snapshot.Values["http.timeout"]; got != "15s" {
 		t.Fatalf("snapshot value = %q, want 15s", got)
@@ -114,18 +85,5 @@ func TestPublishSignsSnapshotAndClientVerifies(t *testing.T) {
 	}
 	if len(snapshot.Items) != 2 || snapshot.SnapshotSize != 2 {
 		t.Fatalf("snapshot items = %d size = %d, want 2", len(snapshot.Items), snapshot.SnapshotSize)
-	}
-}
-
-func TestSnapshotServiceRequiresRepositories(t *testing.T) {
-	repos := memory.New()
-	if _, err := app.NewSnapshotService(nil, repos.Releases, repos.Pointers); err == nil {
-		t.Fatal("snapshot service without item repository must be rejected")
-	}
-	if _, err := app.NewSnapshotService(repos.Items, nil, repos.Pointers); err == nil {
-		t.Fatal("snapshot service without release repository must be rejected")
-	}
-	if _, err := app.NewSnapshotService(repos.Items, repos.Releases, nil); err == nil {
-		t.Fatal("snapshot service without pointer repository must be rejected")
 	}
 }

@@ -10,12 +10,12 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -35,7 +35,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/biz.yaml", "config file path")
+	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("biz-api: %v", err)
@@ -48,23 +48,23 @@ func main() {
 // IAM 与身份域运行时各自在装配期构造一次：身份域的撤销检查器必须在 AuthMW
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
-	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	startup, err := snapshotconfig.Load(context.Background())
+	boot, err := configboot.Load(context.Background())
 	if err != nil {
-		log.Printf("biz-api: config snapshot ignored: %v", err)
-	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
+		return fmt.Errorf("config boot: %w", err)
 	}
 	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+		return configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "biz-api", Channel: "biz", Addr: ":8082",
+		}), nil
+	}, true)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if boot.Env != "" {
+		appCfg.Env = boot.Env
+	}
 	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
-		log.Printf("biz-api: jwt secret from config center ignored: %v", jerr)
+		return fmt.Errorf("jwt secret: %w", jerr)
 	}
 	var (
 		iamOnce     sync.Once
@@ -127,20 +127,14 @@ func run(configPath string) error {
 			if err != nil {
 				return err
 			}
-			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
-			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
-				appCfg.Env, startup, deps.Logger, deps.Metrics); err != nil {
-				deps.Logger.Warn("configcenter dual read failed", "err", err)
+			secretClient, serr := secretruntime.NewFromEnv()
+			if serr != nil {
+				return fmt.Errorf("secretclient: %w", serr)
 			}
-			// M2：可选密钥解析客户端（CONFIG_API_URL + CONFIG_SERVICE_IDENTITY）。
-			if secretClient, serr := secretruntime.NewFromEnv(); serr != nil {
-				deps.Logger.Warn("secretclient unavailable", "err", serr)
-			} else if secretClient != nil {
-				deps.Logger.Info("secretclient enabled", "base", "CONFIG_API_URL")
-				if ferr := secretruntime.WarmDemoHMAC(context.Background(), secretClient,
-					appCfg.Env, deps.Logger); ferr != nil {
-					deps.Logger.Warn("demo hmac secret warm failed", "err", ferr)
-				}
+			deps.Logger.Info("secretclient enabled")
+			if ferr := secretruntime.WarmDemoHMAC(context.Background(), secretClient,
+				appCfg.Env, deps.Logger); ferr != nil {
+				deps.Logger.Warn("demo hmac secret warm failed", "err", ferr)
 			}
 			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
 			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
@@ -149,16 +143,6 @@ func run(configPath string) error {
 				refreshRT.StartRefresh(deps, 0)
 				// ADR-0015：入口限流跟随热更视图，`rate_limit.*` 发布后无需重启。
 				refreshRT.ApplyRuntimeParams(deps)
-				// 迁移期双读：每 30s 跟随快照刷新采样一次，支撑 7 天零差异取证。
-				if refreshRT.Client != nil {
-					snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
-						ConfigPath: configPath,
-						Env:        appCfg.Env,
-						Reader:     refreshRT.Client,
-						Logger:     deps.Logger,
-						Metrics:    deps.Metrics,
-					})
-				}
 			}
 			return registerRoutes(deps, mux, built, identityBuilt)
 		},

@@ -18,7 +18,7 @@ PYTHON ?= python3
         check-authn check-deploy check-alerts check-backup check-configcenter check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal \
         ci-full ci-strict ci-race image-scan
 
-build: build-admin build-biz build-c build-worker build-migrate
+build: build-admin build-biz build-c build-worker build-config build-migrate
 
 build-admin:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/admin-api ./cmd/admin-api
@@ -32,20 +32,29 @@ build-c:
 build-worker:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/worker ./cmd/worker
 
+build-config:
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/config-api ./cmd/config-api
+
 build-migrate:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/migrate ./cmd/migrate
 
+# 业务进程按 ADR-0016 从 config-api 拉取；先起 config-api，再导出
+# CONFIG_API_URL / CONFIG_SERVICE_IDENTITY / CONFIGCENTER_ENV 与 ADMIN_FRAME_DB_* /
+# ADMIN_FRAME_REDIS_*（见 README 快速开始）。
+run-config: build-config
+	./$(BIN_DIR)/config-api
+
 run-admin: build-admin
-	./$(BIN_DIR)/admin-api -config configs/dev/admin.yaml
+	./$(BIN_DIR)/admin-api
 
 run-biz: build-biz
-	./$(BIN_DIR)/biz-api -config configs/dev/biz.yaml
+	./$(BIN_DIR)/biz-api
 
 run-c: build-c
-	./$(BIN_DIR)/c-api -config configs/dev/c.yaml
+	./$(BIN_DIR)/c-api
 
 run-worker: build-worker
-	./$(BIN_DIR)/worker -config configs/dev/worker.yaml
+	./$(BIN_DIR)/worker
 
 test:
 	$(GO) test ./...

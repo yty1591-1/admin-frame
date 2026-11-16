@@ -58,12 +58,13 @@ const secretResolveTimeout = 10 * time.Second
 
 // SecretsConfig 是密钥托管配置（yaml: secrets）。
 //
-// 未配置 providers 时完全不启用 Provider，密钥仍由 ADMIN_FRAME_* 环境变量
-// 经 BindEnv 注入 —— 保证既有部署升级后行为不变。显式配置后，Provider
-// 命中的值**覆盖**配置文件与环境变量的值，使「密钥来自托管源」可被验证。
+// 未配置 providers 时不启用 Provider：基础设施口令可经 BindEnv 白名单
+//（db/redis）注入；JWT / identity 业务密钥必须由 secretclient 解析。
+// 显式配置 providers 后，命中值覆盖既有字段；env Provider 对业务密钥名
+// 返回未找到（见 envProviderDeniedSecrets）。
 type SecretsConfig struct {
 	// Providers 密钥来源顺序；按序尝试，首个命中的值生效。
-	// 取值 env | file | vault；空表示不启用 Provider（回落到纯环境变量注入）。
+	// 取值 env | file | vault；空表示不启用 Provider。
 	Providers []string `yaml:"providers"`
 	// Env 环境变量来源参数。
 	Env SecretsEnvConfig `yaml:"env"`
@@ -195,7 +196,9 @@ func buildSecretProvider(cfg SecretsConfig) (secrets.Provider, error) {
 	for _, name := range names {
 		switch name {
 		case SecretProviderEnv:
-			providers = append(providers, secrets.NewEnvProvider(cfg.effectiveEnvPrefix()))
+			// JWT / identity 业务密钥禁止经 env Provider 回源（走 secretclient）。
+			providers = append(providers, secrets.NewEnvProviderWithDeny(
+				cfg.effectiveEnvPrefix(), envProviderDeniedSecrets()))
 		case SecretProviderFile:
 			providers = append(providers, secrets.NewFileProvider(cfg.File.Dir))
 		case SecretProviderVault:
@@ -226,6 +229,21 @@ func buildSecretProvider(cfg SecretsConfig) (secrets.Provider, error) {
 		return providers[0], nil
 	}
 	return secrets.NewChain(providers...)
+}
+
+// envProviderDeniedSecrets 返回禁止经 env Provider 解析的业务密钥逻辑名。
+//
+// DB DSN / Redis 口令 / 对象存储 AK/SK 仍可走 env；JWT 与 identity 敏感键
+// 必须由 secretclient → config-api 或 file/vault 提供。
+func envProviderDeniedSecrets() []string {
+	return []string{
+		SecretAuthJWTSecret,
+		SecretAuthJWTSecrets,
+		SecretIdentityHashKey,
+		SecretIdentityMFASecretKey,
+		SecretIdentitySAMLSPPrivateKey,
+		SecretIdentitySAMLSPPrivateKeyNext,
+	}
 }
 
 // SecretTarget 描述一个逻辑密钥最终写入的配置位置。

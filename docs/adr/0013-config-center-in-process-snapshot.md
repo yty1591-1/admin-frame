@@ -1,8 +1,8 @@
 # ADR-0013：配置中心采用进程内快照与 MySQL 事实源，不引入外部配置平台
 
-- 状态：Accepted（已接受，2026-11-12 评审通过）
+- 状态：Accepted（已接受，2026-11-12）；**决策 4 / 10 已被 [ADR-0016](0016-config-service-pull-model.md) 取代（2026-11-16）**
 - 日期：2026-11-12
-- 关联：[`../config-center-plan.md`](../config-center-plan.md)（规划与评审）、[ADR-0009](0009-featureflag-inprocess-evaluation.md)（进程内评估先例）、[ADR-0014](0014-secret-management-envelope-encryption.md)（业务密钥托管）、[`../ARCHITECTURE.md`](../ARCHITECTURE.md) §4.4 / §5.6 / §17、[`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md)（CFG-01 / CFG-02 / CFG-04 / CFG-07）
+- 关联：[`../config-center-plan.md`](../config-center-plan.md)（规划与评审）、[ADR-0009](0009-featureflag-inprocess-evaluation.md)、[ADR-0014](0014-secret-management-envelope-encryption.md)、[ADR-0016](0016-config-service-pull-model.md)、[`../ARCHITECTURE.md`](../ARCHITECTURE.md) §4.4 / §5.6 / §17、[`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md)
 
 ## 背景
 
@@ -28,13 +28,13 @@
 1. **自研模块，不引入外部配置平台**：新增 `internal/configcenter` 域，管理面挂 `admin-api`；M1 不新增独立可执行文件。M2 因业务密钥解析新增 `cmd/config-api`（仅内部解析，不承载管理面），理由见 ADR-0014；普通配置读仍直连 MySQL，达到拆分触发条件（管理 QPS 独立增长、多区域、客户端 > 500 实例、多语言接入、团队独立）再评估是否统一收敛。
 2. **MySQL 为唯一事实源**：新增 `config_item` / `config_item_version` / `config_release` / `config_release_item` / `config_release_pointer` / `config_release_review`，以及 M2 的 `config_secret` / `config_secret_version` / `config_secret_grant` / `config_secret_review`；复用 `audit_event` 与 `async_outbox`，不建第二套审计 / 事件表。
 3. **发布模型为不可变快照 + 指针 CAS**：一个 Release 是一组配置项版本的不可变快照；发布在单事务内更新 Release 状态、`config_release_pointer`（CAS）、Outbox 与审计。客户端永不读取半发布状态；回滚 = 以历史快照创建新 Release，不修改历史。**密钥版本不进入 Release 快照**，只按名称引用。
-4. **客户端进程内读取 + 版本轮询 + 本地签名快照**：`pkg/configclient` 提供缓存、类型化读取、Watch 与签名快照落盘；`internal/configcenter/infrastructure/client` 提供 MySQL 只读源。默认 5s 轮询（1s～60s 可配，±20% 抖动），业务进程以只读账号直连 MySQL，**不通过 HTTP 调用 admin-api**（遵守 ARCHITECTURE §4.4）。中心 / DB 故障时继续使用本地签名快照；首次启动无快照时使用初始化生成的基线 Release 或代码默认值；无有效快照且 `required` 键缺失才拒绝启动。
+4. ~~**客户端进程内读取 + 版本轮询 + 本地签名快照**~~：**已被 ADR-0016 取代**。业务进程经 `cmd/config-api` HTTP 拉取 + 长轮询；本地缓存目录作灾备；不再直连配置库、不再要求启动前挂载签名快照。
 5. **配置优先级只有「配置中心 > 代码默认值」**：删除环境变量与文件配置层，M1 起生效。首次启动空库时按代码 key spec 默认值播种基线 Release；声明了 `secret_rule` 的密钥用 `crypto/rand` 按长度 / 编码 / 算法规则生成并信封加密入库；初始化幂等、不覆盖已有值，**不产出引导配置清单与配置中心导入清单**。配置中心自身地址、环境、服务身份、CA 与 DB / Redis 连接参数使用代码默认值承载；自身口令与 KEK 访问凭据不入配置库。启动期配置（`addr`、`db.host/port/name/user`、`redis.addr`、`storage.driver`、`auth.issuer/audience/mode`、`async.*`、`iam.mode`、`http.*`）由配置中心提供但只在启动期读取，变更需重启；DB / Redis 口令由基础设施注入，不属于业务配置层。
 6. **灰度只做白名单选择器**：百分比 / 租户 / 渠道 / 实例；使用 `release_id + salt + target_id` 稳定哈希，同一目标稳定命中；不做表达式、ABAC、A/B 实验。**2026-11-13 范围变更（v0.4）**：M1 读路径只有单一 effective pointer，没有目标匹配，因此 M1 只支持 `strategy=all`，非 `all` 策略由服务端直接返回 `40000`；选择器与 `target_rule_json` 保留为 P1 契约占位，详见 [`../config-center-plan.md`](../config-center-plan.md) §10.5。
 7. **权限三权分离与审计**：`config:write`（草稿）/ `config:publish`（发布）/ `config:approve`（审批）；密钥另有 `config:secret:read/write/approve` 与服务身份 `config:secret:resolve`；生产默认双人复核，密钥操作强制双人；紧急变更走 break-glass 并强制事后审计。
 8. **与 featureflag 分治**：布尔开关、kill switch、规则灰度继续归 `internal/featureflag`（ADR-0009）；配置中心只存结构化值与版本发布，不新增布尔评估语义。
 9. **业务密钥信封加密（ADR-0014）**：只托管业务密钥，明文不落库；每版本独立 DEK + AES-256-GCM，KEK 放外部 KMS / Vault / HSM；业务进程不接触 KEK，统一经 `cmd/config-api` 解析并获取短租约。
-10. **签名快照作为冷启动与灾备兜底**：Release 快照用 Ed25519 签名，客户端内嵌公钥验签；快照不含密钥明文，不作为事实源；验签失败拒绝装载。
+10. ~~**签名快照作为冷启动与灾备兜底**~~：**已被 ADR-0016 取代**。信任改靠 TLS + 服务身份；本地缓存不签名。
 
 ## 备选方案
 
@@ -78,4 +78,4 @@
 2. ~~回写 `CONFIG_STANDARDS.md` CFG-01 / CFG-02 / CFG-04 与配置中心章节；CFG-04 只保留「配置中心 > 代码默认值」，删除引导 / 导入清单；回写 `ARCHITECTURE.md` §4.4 / §5.6 / §17。~~ 已完成（2026-11-12）。
 3. 更新 `.trae/rules/git-commit-message.md` 与 `.cursor/rules` 镜像，新增 `configcenter` scope。
 4. 按 `config-center-plan.md` §8.1 的 M0～M3 执行；M1 完成全量配置接管与首次启动初始化，M2 完成业务密钥托管与按规则生成，M3 删除剩余 `configs` 文件并演练。
-5. M2 完成后复评普通配置读是否收敛到 `cmd/config-api`。
+5. ~~M2 完成后复评普通配置读是否收敛到 `cmd/config-api`。~~ 已完成（2026-11-16）：见 ADR-0016。

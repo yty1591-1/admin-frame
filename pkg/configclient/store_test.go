@@ -8,7 +8,7 @@ import (
 )
 
 func TestFileStoreRoundTrip(t *testing.T) {
-	snapshot, _ := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "snapshot.json"))
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
@@ -20,7 +20,7 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load snapshot: %v", err)
 	}
-	if loaded.SnapshotHash != snapshot.SnapshotHash || loaded.Signature != snapshot.Signature {
+	if loaded.SnapshotHash != snapshot.SnapshotHash {
 		t.Fatalf("loaded snapshot mismatch: %+v", loaded)
 	}
 	if loaded.Values["http.timeout"] != "10s" {
@@ -29,7 +29,7 @@ func TestFileStoreRoundTrip(t *testing.T) {
 }
 
 func TestLoadFromStoreVerifiesSnapshot(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "snapshot.json"))
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
@@ -37,7 +37,7 @@ func TestLoadFromStoreVerifiesSnapshot(t *testing.T) {
 	if err := store.Save(context.Background(), snapshot); err != nil {
 		t.Fatalf("save snapshot: %v", err)
 	}
-	loaded, err := LoadFromStore(context.Background(), store, verifier)
+	loaded, err := LoadFromStore(context.Background(), store)
 	if err != nil {
 		t.Fatalf("load from store: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestLoadFromStoreVerifiesSnapshot(t *testing.T) {
 	if err := store.Save(context.Background(), tampered); err != nil {
 		t.Fatalf("save tampered snapshot: %v", err)
 	}
-	if _, err := LoadFromStore(context.Background(), store, verifier); err == nil {
+	if _, err := LoadFromStore(context.Background(), store); err == nil {
 		t.Fatal("tampered snapshot must be rejected")
 	}
 }
@@ -62,7 +62,7 @@ func TestFileStoreRejectsEmptyPath(t *testing.T) {
 }
 
 func TestClientFallsBackToLocalSnapshot(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "snapshot.json"))
 	if err != nil {
 		t.Fatalf("new file store: %v", err)
@@ -74,7 +74,7 @@ func TestClientFallsBackToLocalSnapshot(t *testing.T) {
 	source := &fakeSource{}
 	source.set(Snapshot{}, errors.New("mysql unavailable"))
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform", Store: store,
+		Source: source, Env: "dev", Namespace: "platform", Store: store,
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
@@ -99,7 +99,7 @@ func TestClientFallsBackToLocalSnapshot(t *testing.T) {
 }
 
 func TestClientRejectsLocalSnapshotForOtherNamespace(t *testing.T) {
-	snapshot, verifier := signedSnapshot(t)
+	snapshot := sampleSnapshot(t)
 	snapshot.Namespace = "iam"
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "snapshot.json"))
 	if err != nil {
@@ -112,7 +112,7 @@ func TestClientRejectsLocalSnapshotForOtherNamespace(t *testing.T) {
 	source := &fakeSource{}
 	source.set(Snapshot{}, errors.New("mysql unavailable"))
 	client, err := NewClient(ClientConfig{
-		Source: source, Verifier: verifier, Env: "dev", Namespace: "platform", Store: store,
+		Source: source, Env: "dev", Namespace: "platform", Store: store,
 	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)

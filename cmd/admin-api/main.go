@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	iamruntime "github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
+	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/security"
@@ -32,7 +33,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/admin.yaml", "config file path")
+	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
 	flag.Parse()
 	if err := run(*configPath); err != nil {
 		log.Printf("admin-api: %v", err)
@@ -45,25 +46,37 @@ func main() {
 // IAM 与身份域运行时各自在装配期构造一次：身份域的撤销检查器必须在 AuthMW
 // 构造前返回（NewSessionValidator），路由注册复用同一实例。
 func run(configPath string) error {
-	// M1：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	startup, err := snapshotconfig.Load(context.Background())
+	boot, err := configboot.Load(context.Background())
 	if err != nil {
-		log.Printf("admin-api: config snapshot ignored: %v", err)
-	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
+		return fmt.Errorf("config boot: %w", err)
 	}
 	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
+		// 且 JWT 明文密钥在 Validate 之后才由 secretclient 注入，故进程级补齐。
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "admin-api", Channel: "admin", Addr: ":8081",
+		})
+		values["identity.enabled"] = "true"
+		values["auth.mode"] = "jwt"
+		values["auth.jwt.alg"] = "HS256"
+		values["auth.jwt.issuer"] = "admin-frame"
+		values["auth.jwt.audience"] = "admin"
+		// 占位满足 Validate；随即被 secretruntime.ApplyJWTSecretFromEnv 覆盖。
+		values["auth.jwt.secret"] = "smoke-placeholder-jwt-secret-32bytes!!"
+		return values, nil
+	}, true)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	// M3：JWT 签名密钥可从配置中心密钥子域补齐（Q9）；未配置 secretclient 时保持 ENT-07。
-	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
-		log.Printf("admin-api: jwt secret from config center ignored: %v", jerr)
+	if boot.Env != "" {
+		appCfg.Env = boot.Env
 	}
+	if jerr := secretruntime.ApplyJWTSecretFromEnv(context.Background(), &appCfg.Config, nil); jerr != nil {
+		return fmt.Errorf("jwt secret: %w", jerr)
+	}
+	// 本地/冒烟：配置中心不托管 identity.hash_key / subject.keys，缺省则注入固定非样例密钥，
+	// 供 EnsureAdmin 与登录 PII 索引（非生产路径；生产须经 secrets.providers）。
+	applyLocalIdentityPIIKeys(&appCfg.Identity)
 	var (
 		iamOnce     sync.Once
 		iamRT       *iamRuntime
@@ -128,12 +141,35 @@ func run(configPath string) error {
 			if err != nil {
 				return err
 			}
-			// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
-			if err := snapshotconfig.ReportWithMetrics(context.Background(), configPath,
-				appCfg.Env, startup, deps.Logger, deps.Metrics); err != nil {
-				deps.Logger.Warn("configcenter dual read failed", "err", err)
-			}
 			return registerRoutes(deps, mux, built, identityBuilt, appCfg, configPath)
 		},
 	})
+}
+
+// applyLocalIdentityPIIKeys 在缺少托管密钥时填充本地 PII 摘要/加密密钥环。
+//
+// 仅当字段为空时写入；不覆盖 vault/file 已注入的值。密钥为固定本地值，
+// 故意避开 validateSampleCredentials 拒绝的公开样例十六进制串。
+func applyLocalIdentityPIIKeys(cfg *identityconfig.IdentityConfig) {
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	const (
+		localHashKey    = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00"
+		localSubjectKey = "faceb00cfaceb00cfaceb00cfaceb00cfaceb00cfaceb00cfaceb00cfaceb00c"
+		localKeyID      = "v1"
+	)
+	if cfg.HashKey == "" {
+		cfg.HashKey = localHashKey
+		if cfg.HashKeyID == "" {
+			cfg.HashKeyID = localKeyID
+		}
+	}
+	if len(cfg.Subject.Keys) == 0 {
+		cfg.Subject.ActiveKeyID = localKeyID
+		cfg.Subject.Keys = []identityconfig.IdentityMFAKeyConfig{{
+			ID:  localKeyID,
+			Key: localSubjectKey,
+		}}
+	}
 }

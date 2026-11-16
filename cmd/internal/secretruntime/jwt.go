@@ -12,19 +12,16 @@ import (
 
 const jwtSigningSecretName = "auth.jwt.private_key" //nolint:gosec // G101: 配置中心密钥名，非凭据值。
 
-// ApplyJWTSecret 在 auth.jwt.secret 为空时，从配置中心密钥子域补齐 HS256 签名密钥（Q9 / M3）。
+// ApplyJWTSecret 从配置中心密钥子域解析 HS256 签名密钥并写入配置（fail-fast）。
 //
-// 优先保留 ENT-07 Provider / 环境变量已注入的值；仅在仍为空且 secretclient 可用时回源。
-// 失败返回错误，由调用方决定是否 fail-fast（jwt 模式必填）。
+// 忽略配置中已有 Secret（禁止 env / 文件明文作为正式路径）；client 与
+// Resolve 失败一律返回错误。日志只记录逻辑名与字节长度，不打印明文。
 func ApplyJWTSecret(ctx context.Context, cfg *platformconfig.Config, client *secretclient.Client, logger *slog.Logger) error {
 	if cfg == nil {
-		return nil
-	}
-	if strings.TrimSpace(cfg.Auth.JWT.Secret) != "" {
-		return nil
+		return fmt.Errorf("secretruntime: config is required")
 	}
 	if client == nil {
-		return nil
+		return fmt.Errorf("secretruntime: secretclient is required for %s", jwtSigningSecretName)
 	}
 	env := strings.TrimSpace(cfg.Env)
 	if env == "" {
@@ -45,14 +42,11 @@ func ApplyJWTSecret(ctx context.Context, cfg *platformconfig.Config, client *sec
 	return nil
 }
 
-// ApplyJWTSecretFromEnv 构造可选 secretclient 并尝试补齐 JWT 密钥；未配置客户端时返回 nil。
+// ApplyJWTSecretFromEnv 强制构造 secretclient 并解析 JWT 密钥；任一失败则返回错误。
 func ApplyJWTSecretFromEnv(ctx context.Context, cfg *platformconfig.Config, logger *slog.Logger) error {
 	client, err := NewFromEnv()
 	if err != nil {
 		return err
-	}
-	if client == nil {
-		return nil
 	}
 	return ApplyJWTSecret(ctx, cfg, client, logger)
 }

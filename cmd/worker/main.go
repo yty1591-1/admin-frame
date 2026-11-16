@@ -13,12 +13,12 @@ import (
 	"time"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
@@ -42,7 +42,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/worker.yaml", "config file path")
+	configPath := flag.String("config", "unused.yaml", "optional config file (ignored when signed snapshot is set)")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
 	sweepCertifications := flag.Bool("certification-sweep", false,
 		"run one access-certification expiry sweep and exit")
@@ -59,20 +59,24 @@ func main() {
 // -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
 func run(configPath, replayDLQ string, sweepCertifications bool) error {
-	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	startup, err := snapshotconfig.Load(context.Background())
+	boot, err := configboot.Load(context.Background())
 	if err != nil {
-		log.Printf("worker: config snapshot ignored: %v", err)
-	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
+		return fmt.Errorf("config boot: %w", err)
 	}
 	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
+		// 与 service/channel/addr 同属进程身份证，不依赖配置中心默认值。
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "worker", Channel: "worker", Addr: ":8090",
+		})
+		values["async.enabled"] = "true"
+		return values, nil
+	}, true)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if boot.Env != "" {
+		appCfg.Env = boot.Env
 	}
 	cfg := &appCfg.Config
 	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
@@ -99,10 +103,6 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	})
 	if err != nil {
 		return fmt.Errorf("metrics: %w", err)
-	}
-	// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
-	if err := snapshotconfig.ReportWithMetrics(ctx, configPath, cfg.Env, startup, logger, met); err != nil {
-		logger.Warn("configcenter dual read failed", "err", err)
 	}
 	// 进程级 ID 生成器：审计保留服务用它写 audit.retention_purge 元审计事件，
 	// 缺失时 NewRetentionService 直接拒绝构造，worker 启动即失败。
@@ -151,20 +151,6 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	} else if built != nil {
 		refreshRT = built
 		refreshRT.StartRefreshContext(ctx, logger, 0)
-		// 迁移期双读：worker 不走 platform.Run，用同一 ctx 起周期采样。
-		if refreshRT.Client != nil {
-			go func() {
-				if err := snapshotconfig.RunPeriodic(ctx, snapshotconfig.PeriodicConfig{
-					ConfigPath: configPath,
-					Env:        appCfg.Env,
-					Reader:     refreshRT.Client,
-					Logger:     logger,
-					Metrics:    deps.Metrics,
-				}); err != nil {
-					logger.Warn("configcenter dual read periodic failed", "err", err)
-				}
-			}()
-		}
 	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)

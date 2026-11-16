@@ -240,10 +240,11 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 		t.Fatalf("async defaults = %+v", cfg.Async)
 	}
 
-	t.Setenv("ADMIN_FRAME_IAM_MODE", "shadow")
-	cfg, err = appconfig.Load(path)
+	cfg, err = appconfig.LoadWithValues(path, func() (map[string]string, error) {
+		return map[string]string{"iam.mode": "shadow"}, nil
+	})
 	if err != nil {
-		t.Fatalf("load with env: %v", err)
+		t.Fatalf("load with snapshot values: %v", err)
 	}
 	if cfg.IAM.Mode != iamconfig.IAMModeShadow {
 		t.Fatalf("iam.mode = %q, want shadow", cfg.IAM.Mode)
