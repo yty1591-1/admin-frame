@@ -16,6 +16,8 @@ configs/**/*.env
 /.venv/
 # 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
 /tmp*
+# 本地运行时缓存与调试产物（配置中心拉取缓存等）
+/var/
 .idea/
 .vscode/
 # 本地智能体工作记忆，不得入库
