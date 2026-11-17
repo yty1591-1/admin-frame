@@ -82,8 +82,16 @@
 - **startup 键**：改 `server.addr` 并发布 → 不生效（需重启），`config_hot_ignored_total` 递增。
 - **非法值**：`config_hot_reload_total{result="rejected"}` 递增，旧视图保留。
 
-## 升级说明（破坏性）
+## 升级
 
 已移除：`CONFIGCENTER_SNAPSHOT_FILE(S)`、`CONFIGCENTER_SNAPSHOT_PUBLIC_KEYS`、
 `CONFIGCENTER_SNAPSHOT_SIGNING_KEY*`、`CONFIGCENTER_ENABLED_NAMESPACES`、
 `CONFIGCENTER_ALLOW_MISSING_CONFIG`。请改用上述拉取引导变量，并先起 config-api。
+
+## 相关链接
+
+- [ALERTS.md](./ALERTS.md)
+- [secret-management.md](./secret-management.md)
+- [CONFIG_STANDARDS.md](../CONFIG_STANDARDS.md)
+- [ADR-0016](../adr/0016-config-service-pull-model.md)
+- [config-center-plan.md](../config-center-plan.md)

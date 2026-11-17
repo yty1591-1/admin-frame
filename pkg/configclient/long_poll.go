@@ -79,7 +79,7 @@ func (p *LongPoller) Wait(ctx context.Context, env string, versions map[string]i
 	q.Set("namespaces", strings.Join(parts, ","))
 	q.Set("timeout", p.timeout.String())
 	endpoint := p.baseURL + "/internal/v1/configs/notifications?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (p *LongPoller) Wait(ctx context.Context, env string, versions map[string]i
 	if err != nil {
 		return nil, fmt.Errorf("configclient: notifications: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotModified {
 		return nil, nil
 	}

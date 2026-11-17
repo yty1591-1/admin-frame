@@ -94,7 +94,7 @@ func (d *DirCache) SaveNamespace(_ context.Context, snapshot Snapshot) error {
 }
 
 // Load 实现 SnapshotStore：读取目录中任意一个 json（兼容单文件 Store 接口时不使用）。
-func (d *DirCache) Load(ctx context.Context) (Snapshot, error) {
+func (d *DirCache) Load(_ context.Context) (Snapshot, error) {
 	return Snapshot{}, fmt.Errorf("configclient: DirCache.Load requires LoadNamespace")
 }
 

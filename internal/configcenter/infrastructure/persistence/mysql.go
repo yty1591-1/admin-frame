@@ -555,7 +555,7 @@ func (r *PointerRepository) ListByEnv(ctx context.Context, env string) ([]domain
 	if err != nil {
 		return nil, fmt.Errorf("configcenter: list pointers: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]domain.Pointer, 0, 8)
 	for rows.Next() {
 		var pointer domain.Pointer

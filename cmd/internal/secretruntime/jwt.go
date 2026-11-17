@@ -13,7 +13,7 @@ import (
 const (
 	jwtSigningSecretName = "auth.jwt.private_key" //nolint:gosec // G101: 配置中心密钥名，非凭据值。
 	// JWTSecretValueKey 是注入 appconfig Values 的扁平路径（与 yaml 字段对齐）。
-	JWTSecretValueKey = "auth.jwt.secret"
+	JWTSecretValueKey = "auth.jwt.secret" //nolint:gosec // G101: Values 扁平路径名，非凭据值。
 )
 
 // ResolveJWTSecret 从配置中心密钥子域解析 HS256 签名密钥明文（fail-fast）。

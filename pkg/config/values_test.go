@@ -100,6 +100,8 @@ func TestLoaderSnapshotOverridesEnvAndFile(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "app.yaml", "addr: \":9090\"\nlog:\n  level: warn\n")
 	opts := testOptions(path)
+	// 与生产一致：仅放行基础设施段；业务键 APP_ADDR 不得压过配置中心快照（CFG-04）。
+	opts.EnvPathAllowlist = []string{"db", "redis"}
 	opts.LookupEnv = envLookup(map[string]string{"APP_ADDR": ":7070"})
 	opts.Values = func() (map[string]string, error) {
 		return map[string]string{"addr": ":6060"}, nil

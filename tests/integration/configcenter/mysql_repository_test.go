@@ -465,18 +465,21 @@ func TestReleaseListSignatureAndActivation(t *testing.T) {
 		t.Fatalf("pagination mismatch: %v total=%d releases=%+v", err, total, page)
 	}
 
-	// 快照签名写入：首次写入、重复写入幂等、发布单不存在返回 ErrNotFound。
+	// ADR-0016：UpdateSnapshotSignature 仅校验发布存在，不再落库签名列。
 	signedAt := testNow.Add(3 * time.Minute)
+	before, err := repos.Releases.Get(ctx, pending.ID)
+	if err != nil {
+		t.Fatalf("get before signature noop: %v", err)
+	}
 	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
 		t.Fatalf("update signature: %v", err)
 	}
 	signed, err := repos.Releases.Get(ctx, pending.ID)
-	if err != nil || signed.SnapshotSignature != "sig-b64" || signed.SnapshotKeyID != "kid-1" ||
-		!signed.UpdatedAt.Equal(signedAt) {
-		t.Fatalf("signature roundtrip mismatch: %v %+v", err, signed)
+	if err != nil || signed.SnapshotSignature != "" || signed.SnapshotKeyID != "" {
+		t.Fatalf("signature must stay empty after noop: %v %+v", err, signed)
 	}
-	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
-		t.Fatalf("repeated signature must be idempotent: %v", err)
+	if !signed.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("noop signature must not bump updated_at: before=%v after=%v", before.UpdatedAt, signed.UpdatedAt)
 	}
 	if err := repos.Releases.UpdateSnapshotSignature(ctx, 999999, "sig", "kid", signedAt); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing release signature must be ErrNotFound, got %v", err)

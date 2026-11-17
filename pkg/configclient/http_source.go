@@ -76,7 +76,7 @@ func (s *HTTPSource) Load(ctx context.Context, env, namespace string) (Snapshot,
 	if releaseKey != "" {
 		endpoint += "?release_key=" + url.QueryEscape(releaseKey)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -87,7 +87,7 @@ func (s *HTTPSource) Load(ctx context.Context, env, namespace string) (Snapshot,
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("configclient: pull config: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotModified {
 		s.mu.Lock()
 		prev, ok := s.lastSnaps[cacheKey]

@@ -99,6 +99,7 @@ IAM_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   TENANT_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   NOTIFY_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   FEATUREFLAG_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+  CONFIGCENTER_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   CI_STRICT=1 bash scripts/ci/ci-run.sh ci
 
 if [[ "${SKIP_INTEGRATION}" -eq 0 ]]; then
@@ -106,6 +107,10 @@ if [[ "${SKIP_INTEGRATION}" -eq 0 ]]; then
   # 对齐 scripts/ci/run-integration-tests.sh 的 env：只有这一步才注入 Redis / S3。
   TEST_MYSQL_DSN="${MYSQL_DSN}" \
     IAM_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    TENANT_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    NOTIFY_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    FEATUREFLAG_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    CONFIGCENTER_TEST_MYSQL_DSN="${MYSQL_DSN}" \
     TEST_REDIS_ADDR="${REDIS_ADDR}" \
     TEST_S3_ENDPOINT="${S3_ENDPOINT}" \
     TEST_S3_ACCESS_KEY="minioadmin" \

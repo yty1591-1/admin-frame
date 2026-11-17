@@ -146,9 +146,9 @@ func EnsureAdmin(ctx context.Context, sqlDB *sql.DB, protector persistence.Subje
 // 仅按索引查会误判为「不存在」并撞固定主键）；若索引/密文与当前保护器不一致则回写。
 func ensureAccount(ctx context.Context, tx *sql.Tx, protector persistence.SubjectProtector, accountID int64, index, subject string, now time.Time) (bool, error) {
 	var (
-		existingID      int64
-		existingIndex   string
-		deletedAt       sql.NullTime
+		existingID    int64
+		existingIndex string
+		deletedAt     sql.NullTime
 	)
 	err := tx.QueryRowContext(ctx, `SELECT id, subject_index, deleted_at FROM identity_account
 		WHERE id = ? LIMIT 1`, accountID).Scan(&existingID, &existingIndex, &deletedAt)

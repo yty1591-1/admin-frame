@@ -27,8 +27,9 @@ if [[ -z "${go_version}" ]]; then
   echo "error: 无法从 go.mod 解析 go 版本" >&2
   exit 1
 fi
-go_minor="$(printf '%s' "${go_version}" | awk -F. '{print $1"."$2}')"
-image="${RACE_IMAGE:-golang:${go_minor}}"
+# 钉扎到 go.mod 完整补丁号。仅用 major.minor（如 golang:1.26）时镜像可能滞后
+# 一个补丁，在 GOTOOLCHAIN=local 下会直接拒绝编译（go 1.26.10 < go 1.26.11）。
+image="${RACE_IMAGE:-golang:${go_version}}"
 
 pkgs="${*:-${RACE_PKGS:-./...}}"
 
@@ -45,6 +46,7 @@ docker run --rm \
   -w /src \
   -e CGO_ENABLED=1 \
   -e GOFLAGS="${GOFLAGS:-}" \
+  -e GOTOOLCHAIN=local \
   "${image}" \
   go test -race -count=1 ${pkgs}
 

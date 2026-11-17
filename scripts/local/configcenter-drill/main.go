@@ -229,7 +229,7 @@ func run(outDir, envName, namespace, dsn string) error {
 		return err
 	}
 	outFile := filepath.Join(outDir, "evidence.json")
-	if err := os.WriteFile(outFile, raw, 0o640); err != nil {
+	if err := os.WriteFile(outFile, raw, 0o600); err != nil {
 		return err
 	}
 	fmt.Printf("configcenter-drill %s → %s\n", ev.Result, outFile)

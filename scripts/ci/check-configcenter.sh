@@ -162,8 +162,9 @@ done
 require_grep "cmd/config-api/main.go" "NewConfigAPI" "config-api 自举入口"
 require_grep "cmd/config-api/main.go" \
   "/internal/v1/configs/notifications" "config-api 注册长轮询"
+require_file "api/openapi/paths/internal/configs.yaml" "internal OpenAPI 拉取路径"
 require_grep "api/openapi/internal.yaml" \
-  "paths/internal/configs.yaml" "internal OpenAPI 登记拉取路径"
+  "internal-v1-configs-env-namespace" "internal OpenAPI 登记拉取路径"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"

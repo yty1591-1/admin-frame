@@ -24,7 +24,7 @@ func buildSnapshot(t *testing.T, values map[string]string) Snapshot {
 		Env: "dev", Namespace: "platform", ReleaseID: 1, ReleaseNo: 1,
 		SnapshotHash: HashItems(items), SnapshotSize: len(items),
 		GeneratedAt: time.Unix(1_700_000_000, 0).UTC(),
-		Items: items, Values: values,
+		Items:       items, Values: values,
 	}
 }
 

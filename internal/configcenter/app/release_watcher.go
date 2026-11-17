@@ -64,9 +64,8 @@ func (w *ReleaseWatcher) Run(ctx context.Context) error {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
-		if err := w.scan(ctx); err != nil && ctx.Err() == nil {
-			// 扫描失败不退出：下一轮重试；调用方可观察日志。
-		}
+		// 扫描失败不退出：下一轮重试；调用方可观察日志。
+		_ = w.scan(ctx)
 		select {
 		case <-ctx.Done():
 			return nil

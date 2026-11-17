@@ -301,7 +301,7 @@ func TestBindEnvFilteredAllowlist(t *testing.T) {
 
 func TestBindEnvFilteredInlineEmbed(t *testing.T) {
 	type platform struct {
-		DB  struct {
+		DB struct {
 			DSN string `yaml:"dsn"`
 		} `yaml:"db"`
 		Log struct {

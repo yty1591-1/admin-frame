@@ -148,8 +148,8 @@ func TestLoadConfigAsyncSnapshotOverride(t *testing.T) {
 		"db:\n  driver: mysql\n  dsn: \"iam:iam@tcp(127.0.0.1:3306)/iam\"\n")
 	cfg, err := appconfig.LoadWithValues(path, func() (map[string]string, error) {
 		return map[string]string{
-			"async.enabled":               "true",
-			"async.outbox.batch_size":     "50",
+			"async.enabled":                "true",
+			"async.outbox.batch_size":      "50",
 			"async.consumer.retry_backoff": platformconfig.AsyncBackoffFixed,
 		}, nil
 	})

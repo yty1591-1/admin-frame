@@ -59,7 +59,7 @@ const secretResolveTimeout = 10 * time.Second
 // SecretsConfig 是密钥托管配置（yaml: secrets）。
 //
 // 未配置 providers 时不启用 Provider：基础设施口令可经 BindEnv 白名单
-//（db/redis）注入；JWT / identity 业务密钥必须由 secretclient 解析。
+// （db/redis）注入；JWT / identity 业务密钥必须由 secretclient 解析。
 // 显式配置 providers 后，命中值覆盖既有字段；env Provider 对业务密钥名
 // 返回未找到（见 envProviderDeniedSecrets）。
 type SecretsConfig struct {
