@@ -71,8 +71,10 @@ func run() error {
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
 			Service: "admin-api", Channel: "admin", Env: boot.Env, Addr: ":8081",
 		})
-		// 仅补齐快照缺失项；不覆盖配置中心已发布的 issuer/mode 等（CC-R-15）。
-		configboot.SetIfEmpty(values, "identity.enabled", "true")
+		// identity.enabled 与 channel/addr 同属进程能力：A 端进程必须启用登录路由；
+		// 共享快照默认 false（且 worker 禁止启用），不能走 SetIfEmpty，否则冒烟 404。
+		values["identity.enabled"] = "true"
+		// issuer/mode/alg/audience：仅补齐快照缺失项（CC-R-15）。
 		configboot.SetIfEmpty(values, "auth.mode", "jwt")
 		configboot.SetIfEmpty(values, "auth.jwt.alg", "HS256")
 		configboot.SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")

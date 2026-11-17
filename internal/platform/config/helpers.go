@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 
+	"github.com/admin-frame/admin-frame/internal/shared/deployenv"
 	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
@@ -27,36 +28,20 @@ func redactDSN(dsn string) string {
 }
 
 // IsProdEnv 报告是否为生产环境，供平台装配层复用同一判定。
-func IsProdEnv(env string) bool { return isProdEnv(env) }
+func IsProdEnv(env string) bool { return deployenv.IsProd(env) }
 
 // IsProdLikeEnv 报告环境是否按生产标准校验（prod / staging）。
-func IsProdLikeEnv(env string) bool { return isProdLikeEnv(env) }
+func IsProdLikeEnv(env string) bool { return deployenv.IsProdLike(env) }
 
 // IsLocalDevEnv 报告是否为允许本地开发回退的环境（local / dev / test）。
 //
 // staging/prod 以及未声明（空）一律返回 false，避免「Validate 后补 Env」或
 // 漏注入时误开源码内固定密钥（CC-R-02）。
-func IsLocalDevEnv(env string) bool { return isLocalDevEnv(env) }
+func IsLocalDevEnv(env string) bool { return deployenv.IsLocalDev(env) }
 
-// isProdEnv 报告环境是否为生产。
-func isProdEnv(env string) bool {
-	return strings.EqualFold(strings.TrimSpace(env), "prod")
-}
-
-// isProdLikeEnv 报告环境是否按生产标准校验（prod / staging）。
-func isProdLikeEnv(env string) bool {
-	return isProdEnv(env) || strings.EqualFold(strings.TrimSpace(env), "staging")
-}
-
-// isLocalDevEnv 报告是否为本地/开发/测试环境。
-func isLocalDevEnv(env string) bool {
-	switch strings.ToLower(strings.TrimSpace(env)) {
-	case "local", "dev", "test":
-		return true
-	default:
-		return false
-	}
-}
+// 内部别名：历史调用点仍用小写名。
+func isProdEnv(env string) bool     { return deployenv.IsProd(env) }
+func isProdLikeEnv(env string) bool { return deployenv.IsProdLike(env) }
 
 // NewConfigLoader 构造进程配置加载器。
 //

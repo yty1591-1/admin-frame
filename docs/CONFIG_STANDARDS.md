@@ -72,8 +72,8 @@ config-api 拉取结果 > 本地缓存目录 > 代码默认值（key spec / appl
 | 部署身份 | `env` / `service` / `channel` / `addr` / `id.node_id` | `WithProcessIdentity` 或编排 |
 | 基础设施口令 | `db.dsn` / `redis.password` | 仅 `ADMIN_FRAME_DB_*` / `REDIS_*` |
 | 密钥环与列表 | `identity.subject.keys` / `previous_hash_keys` / `mfa.keys` / JWT keys | 密钥子域或本地回退 |
-| 云厂商连接参数 | `storage.s3.*` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider |
-| CORS / 本地路径 | `cors.*` / `storage.local.*` | 网关与节点部署 |
+| 云厂商连接参数 | `storage.s3/oss/cos/obs.*` / `storage.lifecycle.*` / `storage.buckets` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider；凭据另走密钥子域 |
+| CORS / 本地路径 | `cors.*` / `storage.local.*` | 网关与节点部署；不进 Item 播种 |
 
 浮点速率与采样率须以 **string + pattern**（或未来 float ValueType）登记进 KeySpec，不得长期排除。
 

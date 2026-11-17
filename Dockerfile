@@ -25,7 +25,7 @@ RUN adduser -D -u 10001 appuser \
   && mkdir -p /app/configs
 WORKDIR /app
 COPY --from=builder /out/app /app/app
-COPY configs/*.yaml.example /app/configs/
+# M3：configs/ 已零跟踪（CFG-01）；保留空目录供运维挂载调试文件，不打包样例。
 COPY migrations /app/migrations
 USER appuser
 EXPOSE 8080

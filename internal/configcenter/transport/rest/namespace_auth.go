@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/deployenv"
 )
 
 // CONFIG_API_NAMESPACE_ALLOWLIST 格式：
@@ -85,7 +85,7 @@ func authorizeNamespace(env, serviceIdentity, namespace string) error {
 		return err
 	}
 	if list == nil {
-		if platformconfig.IsProdLikeEnv(env) {
+		if deployenv.IsProdLike(env) {
 			return apperr.Forbidden(namespaceAllowlistEnv + " required when env=" + strings.TrimSpace(env))
 		}
 		return nil

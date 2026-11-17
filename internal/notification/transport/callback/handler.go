@@ -21,9 +21,9 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/deployenv"
 	pkgwebhook "github.com/admin-frame/admin-frame/pkg/webhook"
 )
 
@@ -68,7 +68,7 @@ func NewHandler(receipts *app.ReceiptService, secret string) (*Handler, error) {
 // LoadCallbackSecretFromEnv 仅允许 local/dev/test 从裸 env 读取回调密钥。
 func LoadCallbackSecretFromEnv() (string, error) {
 	deployEnv := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV"))
-	if platformconfig.IsProdLikeEnv(deployEnv) {
+	if deployenv.IsProdLike(deployEnv) {
 		return "", fmt.Errorf("notification callback: bare env %s forbidden when env=%s; use secretclient (CC-R-03)",
 			EnvCallbackSecret, deployEnv)
 	}

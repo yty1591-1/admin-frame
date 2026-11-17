@@ -3,6 +3,7 @@ package secretruntime
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
@@ -10,16 +11,24 @@ import (
 )
 
 const (
-	identityHashKeySecretName    = "identity.hash_key"         //nolint:gosec // G101: 配置中心密钥名
+	identityHashKeySecretName    = "identity.hash_key"
 	identityMFASecretKeyName     = "identity.mfa.secret_key"   //nolint:gosec // G101: 配置中心密钥名
 	identitySAMLPrivateKeyName   = "identity.saml.private_key" //nolint:gosec // G101: 配置中心密钥名
-	identitySubjectKeySecretName = "identity.subject.key"      //nolint:gosec // G101: 配置中心密钥名
-	identityNamespace            = "identity"
-	identitySubjectActiveKeyID   = "v1"
+	identitySubjectKeySecretName = "identity.subject.key"
+	// IdentitySMSAliyunAccessKeyIDName 是 C 端短信阿里云 AccessKeyId 的密钥名。
+	IdentitySMSAliyunAccessKeyIDName = "identity.sms.aliyun.access_key_id"
+	// IdentitySMSAliyunAccessKeySecretName 是 C 端短信阿里云 AccessKeySecret 的密钥名。
+	IdentitySMSAliyunAccessKeySecretName = "identity.sms.aliyun.access_key_secret" //nolint:gosec // G101: 密钥名
+	// AliyunSMSAccessKeyIDEnv 是 local/dev/test 回退用的 AccessKeyId 环境变量名。
+	AliyunSMSAccessKeyIDEnv = "ALIYUN_SMS_ACCESS_KEY_ID"
+	// AliyunSMSAccessKeySecretEnv 是 local/dev/test 回退用的 AccessKeySecret 环境变量名。
+	AliyunSMSAccessKeySecretEnv = "ALIYUN_SMS_ACCESS_KEY_SECRET" //nolint:gosec // G101: 环境变量名
+	identityNamespace           = "identity"
+	identitySubjectActiveKeyID  = "v1"
 	// IdentityHashKeyValueKey 是注入 appconfig Values 的扁平路径。
 	IdentityHashKeyValueKey = "identity.hash_key"
 	// IdentityMFASecretValueKey 是注入 appconfig Values 的扁平路径。
-	IdentityMFASecretValueKey = "identity.mfa.secret_key"
+	IdentityMFASecretValueKey = "identity.mfa.secret_key" //nolint:gosec // G101: Values 扁平路径
 	// IdentitySAMLPrivateKeyValueKey 是注入 appconfig Values 的扁平路径。
 	IdentitySAMLPrivateKeyValueKey = "identity.saml.private_key"
 )
@@ -99,6 +108,39 @@ func ApplyIdentitySubjectKey(cfg *identityconfig.IdentityConfig, plaintext strin
 		ID:  identitySubjectActiveKeyID,
 		Key: plaintext,
 	}}
+}
+
+// ResolveIdentitySMSAliyunOrEnv 解析 C 端短信阿里云 AK（优先 secretclient；CC-R-05）。
+//
+// local/dev/test 在密钥子域缺失时可回退 ALIYUN_SMS_*；staging/prod 禁止裸 env。
+func ResolveIdentitySMSAliyunOrEnv(ctx context.Context, env string) (accessKeyID, accessKeySecret string, err error) {
+	accessKeyID, err = resolveIdentitySecretOrEnv(ctx, env,
+		IdentitySMSAliyunAccessKeyIDName, AliyunSMSAccessKeyIDEnv)
+	if err != nil {
+		return "", "", err
+	}
+	accessKeySecret, err = resolveIdentitySecretOrEnv(ctx, env,
+		IdentitySMSAliyunAccessKeySecretName, AliyunSMSAccessKeySecretEnv)
+	if err != nil {
+		return "", "", err
+	}
+	return accessKeyID, accessKeySecret, nil
+}
+
+func resolveIdentitySecretOrEnv(ctx context.Context, env, secretName, envVar string) (string, error) {
+	value, err := resolveIdentitySecretFromEnv(ctx, env, secretName)
+	if err == nil {
+		return value, nil
+	}
+	if bareErr := RejectBareSecretEnv(env, envVar); bareErr != nil {
+		return "", fmt.Errorf("%s: resolve failed (%v); %w", secretName, err, bareErr)
+	}
+	fallback := strings.TrimSpace(os.Getenv(strings.TrimSpace(envVar)))
+	if fallback == "" {
+		return "", fmt.Errorf("%s: resolve failed (%v) and environment variable %s is empty",
+			secretName, err, envVar)
+	}
+	return fallback, nil
 }
 
 func resolveIdentitySecret(ctx context.Context, env string, client *secretclient.Client, name string) (string, error) {

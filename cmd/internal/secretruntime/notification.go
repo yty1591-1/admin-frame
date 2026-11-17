@@ -10,11 +10,15 @@ import (
 )
 
 const (
-	notificationBlacklistSaltName      = "notification.blacklist_salt"
-	notificationCallbackSecretName     = "notification.callback_secret"
-	NotificationSMTPPasswordName       = "notification.smtp.password"
-	NotificationAliyunAccessKeySecret  = "notification.sms.aliyun.access_key_secret"
-	NotificationAPNSPrivateKeyName     = "notification.push.apns.private_key"
+	notificationBlacklistSaltName  = "notification.blacklist_salt"
+	notificationCallbackSecretName = "notification.callback_secret"
+	// NotificationSMTPPasswordName 是 SMTP 密码的配置中心密钥名。
+	NotificationSMTPPasswordName = "notification.smtp.password"
+	// NotificationAliyunAccessKeySecret 是通知域阿里云短信 AccessKeySecret 密钥名。
+	NotificationAliyunAccessKeySecret = "notification.sms.aliyun.access_key_secret"
+	// NotificationAPNSPrivateKeyName 是 APNs 私钥 PEM 的配置中心密钥名。
+	NotificationAPNSPrivateKeyName = "notification.push.apns.private_key"
+	// NotificationFCMCredentialsJSONName 是 FCM 服务账号 JSON 的配置中心密钥名。
 	NotificationFCMCredentialsJSONName = "notification.push.fcm.credentials_json"
 	notificationNamespace              = "notification"
 )

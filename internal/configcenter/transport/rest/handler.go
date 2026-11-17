@@ -147,17 +147,17 @@ func (h *Handler) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 }
 
 type declaredKeyView struct {
-	Key           string   `json:"key"`
-	ValueType     string   `json:"value_type"`
-	Default       string   `json:"default,omitempty"`
-	Description   string   `json:"description"`
-	Owner         string   `json:"owner"`
-	ReloadMode    string   `json:"reload_mode"`
-	HotWhitelist  bool     `json:"hot_whitelist"`
-	Sensitive     bool     `json:"sensitive"`
-	Required      bool     `json:"required"`
-	Deprecated    bool     `json:"deprecated"`
-	Enum          []string `json:"enum,omitempty"`
+	Key          string   `json:"key"`
+	ValueType    string   `json:"value_type"`
+	Default      string   `json:"default,omitempty"`
+	Description  string   `json:"description"`
+	Owner        string   `json:"owner"`
+	ReloadMode   string   `json:"reload_mode"`
+	HotWhitelist bool     `json:"hot_whitelist"`
+	Sensitive    bool     `json:"sensitive"`
+	Required     bool     `json:"required"`
+	Deprecated   bool     `json:"deprecated"`
+	Enum         []string `json:"enum,omitempty"`
 }
 
 type declaredKeyListResponse struct {

@@ -24,3 +24,25 @@ func TestSecretRuleMatchPlaintext(t *testing.T) {
 		t.Fatalf("short key: %v", err)
 	}
 }
+
+func TestSecretRuleRawPreservesWhitespaceBytes(t *testing.T) {
+	t.Parallel()
+	rule := SecretRule{MinLen: 32, Encoding: "raw", AutoGenerate: true}
+	// 首尾各放一个 TrimSpace 会吃掉的字节，回归「生成 32 → 校验成 31」。
+	plain := " \n" + strings.Repeat("a", 28) + "\t "
+	if len(plain) != 32 {
+		t.Fatalf("fixture len=%d", len(plain))
+	}
+	if err := rule.MatchPlaintext(plain); err != nil {
+		t.Fatalf("raw must not trim whitespace bytes: %v", err)
+	}
+	for i := 0; i < 64; i++ {
+		got, err := rule.Generate()
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		if err := rule.MatchPlaintext(got); err != nil {
+			t.Fatalf("generated raw must match (iter %d): %v", i, err)
+		}
+	}
+}

@@ -372,14 +372,11 @@ func (s *SecretService) applyPendingRotate(ctx context.Context, secret *domain.S
 	}
 	secret.ActiveVersion = &pending.Version
 	secret.Fingerprint = pending.ValueHash
-	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
+	return s.requireAudit(ctx, actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "approved", map[string]string{
 			"name": secret.Name, "old_version": strconv.FormatInt(oldVersion, 10),
 			"new_version": strconv.FormatInt(pending.Version, 10), "fingerprint": pending.ValueHash,
-		}); err != nil {
-		return err
-	}
-	return nil
+		})
 }
 
 func (s *SecretService) applyRevoke(ctx context.Context, secret *domain.Secret, now time.Time, actor Actor, comment string) error {
@@ -388,13 +385,10 @@ func (s *SecretService) applyRevoke(ctx context.Context, secret *domain.Secret, 
 			domain.SecretVersionActive, domain.SecretVersionRevoked, now)
 	}
 	secret.Status = domain.SecretStatusRevoked
-	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
+	return s.requireAudit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, comment, map[string]string{
 			"name": secret.Name,
-		}); err != nil {
-		return err
-	}
-	return nil
+		})
 }
 
 func (s *SecretService) applyPendingGrant(ctx context.Context, secret *domain.Secret) error {

@@ -74,7 +74,16 @@ func (r SecretRule) MatchPlaintext(value string) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
-	raw := strings.TrimSpace(value)
+	encoding := strings.ToLower(strings.TrimSpace(r.Encoding))
+	if encoding == "" {
+		encoding = "base64url"
+	}
+	// raw 是不透明字节序列：禁止 TrimSpace，否则自动生成的首尾空白字节会被截掉
+	// （冒烟曾出现 length 31 < min 32）。hex/base64url 仍 trim，方便粘贴。
+	raw := value
+	if encoding != "raw" {
+		raw = strings.TrimSpace(value)
+	}
 	if raw == "" {
 		return fmt.Errorf("configcenter: secret plaintext is empty")
 	}
@@ -84,10 +93,6 @@ func (r SecretRule) MatchPlaintext(value string) error {
 			return fmt.Errorf("configcenter: secret plaintext missing required prefix")
 		}
 		raw = strings.TrimPrefix(raw, prefix)
-	}
-	encoding := strings.ToLower(strings.TrimSpace(r.Encoding))
-	if encoding == "" {
-		encoding = "base64url"
 	}
 	var decoded []byte
 	switch encoding {

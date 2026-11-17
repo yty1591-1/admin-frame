@@ -2,6 +2,7 @@ package secretruntime
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
@@ -39,5 +40,30 @@ func TestResolveIdentitySecretRequiresClient(t *testing.T) {
 	_, err = ResolveIdentitySubjectKey(context.Background(), "dev", nil)
 	if err == nil {
 		t.Fatal("nil client must fail for subject key")
+	}
+}
+
+func TestResolveIdentitySMSAliyunOrEnvLocalFallback(t *testing.T) {
+	t.Setenv(AliyunSMSAccessKeyIDEnv, "ak-id-local")
+	t.Setenv(AliyunSMSAccessKeySecretEnv, "ak-secret-local")
+	t.Cleanup(func() {
+		_ = os.Unsetenv(AliyunSMSAccessKeyIDEnv)
+		_ = os.Unsetenv(AliyunSMSAccessKeySecretEnv)
+	})
+	id, secret, err := ResolveIdentitySMSAliyunOrEnv(context.Background(), "local")
+	if err != nil {
+		t.Fatalf("local fallback: %v", err)
+	}
+	if id != "ak-id-local" || secret != "ak-secret-local" {
+		t.Fatalf("id=%q secret=%q", id, secret)
+	}
+}
+
+func TestResolveIdentitySMSAliyunOrEnvProdRejectsBareEnv(t *testing.T) {
+	t.Setenv(AliyunSMSAccessKeyIDEnv, "ak-id")
+	t.Setenv(AliyunSMSAccessKeySecretEnv, "ak-secret")
+	_, _, err := ResolveIdentitySMSAliyunOrEnv(context.Background(), "prod")
+	if err == nil {
+		t.Fatal("prod must not fall back to bare ALIYUN_SMS_*")
 	}
 }

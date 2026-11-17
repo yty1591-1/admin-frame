@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -26,12 +25,6 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/httpclient"
 	pkgsms "github.com/admin-frame/admin-frame/pkg/sms"
-)
-
-// C 端短信驱动凭证的环境变量名；禁止写入 YAML（D7）。
-const (
-	aliyunSMSAccessKeyIDEnv     = "ALIYUN_SMS_ACCESS_KEY_ID"
-	aliyunSMSAccessKeySecretEnv = "ALIYUN_SMS_ACCESS_KEY_SECRET" //nolint:gosec // G101: 环境变量名，不是凭证值
 )
 
 // buildChannelC 装配 C 端短信 / OAuth 登录栈并构造 C 端 Handler。
@@ -103,17 +96,13 @@ func buildSMSLoginService(
 	accessKeyID := ""
 	accessKeySecret := ""
 	if strings.EqualFold(strings.TrimSpace(smsCfg.Driver), "aliyun") {
-		if err := secretruntime.RejectBareSecretEnv(cfg.Env, aliyunSMSAccessKeySecretEnv); err != nil {
-			return nil, apperr.Internal("identity sms credentials", err)
+		resolvedID, resolvedSecret, resolveErr := secretruntime.ResolveIdentitySMSAliyunOrEnv(
+			context.Background(), cfg.Env)
+		if resolveErr != nil {
+			return nil, apperr.Internal("identity sms credentials", resolveErr)
 		}
-		accessKeyID = strings.TrimSpace(os.Getenv(aliyunSMSAccessKeyIDEnv))
-		accessKeySecret = strings.TrimSpace(os.Getenv(aliyunSMSAccessKeySecretEnv))
-		if accessKeyID == "" || accessKeySecret == "" {
-			return nil, apperr.Internal(
-				"identity sms aliyun requires "+aliyunSMSAccessKeyIDEnv+" and "+aliyunSMSAccessKeySecretEnv+" (empty credentials refused)",
-				nil,
-			)
-		}
+		accessKeyID = resolvedID
+		accessKeySecret = resolvedSecret
 	}
 
 	smsDriverCfg := pkgsms.Config{

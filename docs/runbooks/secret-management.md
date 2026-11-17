@@ -7,7 +7,7 @@
 | 服务 / 端 | config-api / admin-api / 业务进程 secretclient |
 | 最后更新 | 2026-11-17 |
 
-关联：[ADR-0014](../adr/0014-secret-management-envelope-encryption.md)、[config-center-plan.md](../config-center-plan.md)、[key-ceremony.md](./key-ceremony.md)、[config-center-remediation-plan.md](../config-center-remediation-plan.md)（CC-R-03/05）。
+关联：[ADR-0014](../adr/0014-secret-management-envelope-encryption.md)、[config-center-plan.md](../config-center-plan.md)、[key-ceremony.md](./key-ceremony.md)、[config-center-remediation-plan.md](../archive/plans/config-center-remediation-plan.md)（已归档；CC-R-03/05）。
 
 ## 症状
 
@@ -62,6 +62,7 @@ M3 起无 tracked 配置文件；口令与 JWT 走部署 Secret / secretclient�
 
 - config-api：`CONFIG_API_MTLS=require` + TLS 证书/私钥/客户端 CA；`CONFIG_API_NAMESPACE_ALLOWLIST` 必填。
 - 业务密钥禁止裸 `ALIYUN_SMS_*` / `ADMIN_FRAME_NOTIFICATION_*` / OAuth `client_secret_env`；须经 secretclient → config-api（完整登记见 remediation 附录 A / CC-R-05）。
+- C 端短信阿里云：密钥名 `identity.sms.aliyun.access_key_id` / `identity.sms.aliyun.access_key_secret`（namespace=`identity`）；仅 local/dev/test 可回退 `ALIYUN_SMS_*`。
 - `CONFIGCENTER_ENV` 必须在 `Validate` 前注入进程身份证。
 
 ## 升级

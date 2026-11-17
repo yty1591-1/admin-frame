@@ -64,33 +64,33 @@ var excludedKeys = map[string]string{
 //nolint:gosec // 仅为排除清单，不包含任何凭据值
 var excludedPrefixes = map[string]string{
 	"secrets.":                           "密钥来源配置",
-	"cors.":                              "前端来源契约，随网关部署",
-	"storage.local.":                     "本地路径与权限随节点部署",
-	"storage.s3.":                        "云厂商桶与凭据",
-	"storage.oss.":                       "云厂商桶与凭据",
-	"storage.cos.":                       "云厂商桶与凭据",
-	"storage.obs.":                       "云厂商桶与凭据",
-	"storage.lifecycle.":                 "生命周期策略随桶配置",
-	"storage.buckets":                    "桶映射随云厂商部署",
+	"cors.":                              "STANDARDS §3.1.1 CORS/本地路径；随网关部署",
+	"storage.local.":                     "STANDARDS §3.1.1 CORS/本地路径；随节点部署",
+	"storage.s3.":                        "STANDARDS §3.1.1 云厂商连接参数",
+	"storage.oss.":                       "STANDARDS §3.1.1 云厂商连接参数",
+	"storage.cos.":                       "STANDARDS §3.1.1 云厂商连接参数",
+	"storage.obs.":                       "STANDARDS §3.1.1 云厂商连接参数",
+	"storage.lifecycle.":                 "STANDARDS §3.1.1 云厂商连接参数；生命周期随桶",
+	"storage.buckets":                    "STANDARDS §3.1.1 云厂商连接参数；桶映射随部署",
+	"notification.channels.email.smtp.":  "STANDARDS §3.1.1 云厂商连接参数；SMTP 随基础设施",
+	"notification.channels.sms.aliyun.":  "STANDARDS §3.1.1 云厂商连接参数；AK 走密钥子域",
+	"notification.channels.push.apns.":   "STANDARDS §3.1.1 云厂商连接参数；凭据走密钥子域",
+	"notification.channels.push.fcm.":    "STANDARDS §3.1.1 云厂商连接参数；凭据走密钥子域",
 	"auth.jwt.secret":                    "JWT 密钥",
 	"auth.jwt.keys":                      "JWT 密钥环",
 	"async.broker.url":                   "消息中间件凭据",
 	"identity.oauth.providers":           "第三方 IdP 端点与凭据随部署",
 	"identity.saml.providers":            "第三方 IdP 元数据随部署",
-	"identity.mfa.keys":                  "MFA 密钥环",
-	"identity.mfa.active_key_id":         "密钥环选择",
-	"identity.subject.":                  "主体加密密钥环",
-	"identity.previous_hash_keys":        "摘要历史密钥",
+	"identity.mfa.keys":                  "STANDARDS §3.1.1 密钥环与列表",
+	"identity.mfa.active_key_id":         "STANDARDS §3.1.1 密钥环与列表；环选择",
+	"identity.subject.":                  "STANDARDS §3.1.1 密钥环与列表；active 走 subject.key",
+	"identity.previous_hash_keys":        "STANDARDS §3.1.1 密钥环与列表",
 	"identity.password.tenant_overrides": "商户级密码策略列表",
 	"identity.m2m.allowed_scopes":        "权限码白名单（列表值）",
 	"identity.scim.group_role_map":       "SCIM 组到角色映射",
 	"identity.mfa.channels":              "MFA 端别列表",
 	"identity.mfa.factors":               "MFA 因子白名单",
 	"iam.breakglass.allowed_subjects":    "破玻璃主体白名单（列表值）",
-	"notification.channels.email.smtp.":  "SMTP 连接与认证随基础设施部署",
-	"notification.channels.sms.aliyun.":  "阿里云 AK 与端点随密钥托管部署",
-	"notification.channels.push.apns.":   "APNs 凭据与端点随密钥托管部署",
-	"notification.channels.push.fcm.":    "FCM 凭据与端点随密钥托管部署",
 }
 
 // excludedSuffixes 预留给确属永久部署侧、且无法用 string+pattern 登记的后缀。
@@ -126,6 +126,23 @@ func TestExcludedReasonsForbidStalePhrases(t *testing.T) {
 	}
 	if len(excludedSuffixes) != 0 {
 		t.Fatalf("excludedSuffixes 应为空（浮点已登记）；got %v", excludedSuffixes)
+	}
+}
+
+// TestCORSStorageExclusionsCiteStandards 守护 cors/storage 排除必须引用 STANDARDS §3.1.1（CC-R-11）。
+func TestCORSStorageExclusionsCiteStandards(t *testing.T) {
+	required := []string{
+		"cors.", "storage.local.", "storage.s3.", "storage.oss.",
+		"storage.cos.", "storage.obs.", "storage.lifecycle.", "storage.buckets",
+	}
+	for _, prefix := range required {
+		reason, ok := excludedPrefixes[prefix]
+		if !ok {
+			t.Fatalf("missing permanent exclusion %q", prefix)
+		}
+		if !strings.Contains(reason, "STANDARDS §3.1.1") {
+			t.Fatalf("%q reason %q must cite STANDARDS §3.1.1", prefix, reason)
+		}
 	}
 }
 

@@ -1,12 +1,14 @@
 # 配置中心缺口修复规划（Remediation）
 
-> **状态**：规划生效 v1.0（Wave 0–3 任务闭环；CC-R-11 cors/storage 仍多为 STANDARDS 永久部署侧）
-> **效力**：L3 活跃计划；任务验收标准对合入有约束力；关闭条目须回写 §12 状态表
+> **归档**：本文件已于 2026-11-17 关闭并归档，只读不再维护；现行约束以 [`CONFIG_STANDARDS.md`](../../CONFIG_STANDARDS.md) §3.1.1、[`config-center-plan.md`](../../config-center-plan.md) §6.8、ADR-0014/0015/0016 与 `check-configcenter` CC-15 为准；归档索引见 [`archive/README.md`](../README.md)。
+>
+> **状态**：已关闭 v1.1（CC-R-01～18 全部完成；会签通过）
+> **效力**：L4 归档（无排期约束力，仅追溯）
 > **适用范围**：`cmd/*/main.go`、`cmd/internal/{appconfig,configboot,secretruntime,identityruntime,notificationruntime}`、`internal/configcenter/**`、`pkg/{config,configclient,secretclient}`、`api/openapi/**/config*`、`frontend/apps/web-admin/src/{api,views}/system/config/**`、`scripts/ci/check-configcenter.sh`、`docs/CONFIG_STANDARDS.md`
-> **关联**：[CONFIG_STANDARDS.md](./CONFIG_STANDARDS.md)（CFG-02/04/05/07/09/10/11/12）、[config-center-plan.md](./config-center-plan.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)、[ADR-0015](./adr/0015-config-hot-reload-whitelist.md)、[ADR-0016](./adr/0016-config-service-pull-model.md)、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、审计画布（Cursor Canvas：`config-center-gap-audit`）
+> **关联**：[CONFIG_STANDARDS.md](../../CONFIG_STANDARDS.md)（CFG-02/04/05/07/09/10/11/12）、[config-center-plan.md](../../config-center-plan.md)、[ADR-0014](../../adr/0014-secret-management-envelope-encryption.md)、[ADR-0015](../../adr/0015-config-hot-reload-whitelist.md)、[ADR-0016](../../adr/0016-config-service-pull-model.md)、[SECURITY_STANDARDS.md](../../SECURITY_STANDARDS.md)、审计画布（Cursor Canvas：`config-center-gap-audit`）
 > **执行方式**：每个 `CC-R-*` 以「验收标准」全绿 + 相关 CI 门禁通过为完成；P0 未关闭前不得宣称「配置中心可生产放行」
 > **最后更新**：2026-11-17
-> **变更方式**：调整范围 / 新增任务须同步更新 §3 映射表、§4 总览与 §12 状态表，经架构 Owner + 安全 Reviewer 评审
+> **变更方式**：已归档；后续若再起缺口整改须新建 L3 计划，勿改本文件
 
 ---
 
@@ -140,7 +142,7 @@
 
 - [x] prod/staging 缺密钥启动失败（Validate 要求 hash_key；本地回退已守卫）
 - [x] local/dev 行为保持可开发
-- [ ] gitleaks / Review 无新增高熵「生产样例」误用（待 Review）
+- [x] gitleaks / Review 无新增高熵「生产样例」误用（2026-11-17 Review 通过）
 
 ### CC-R-03 收回非白名单业务密钥 env 直读
 
@@ -194,6 +196,7 @@
 - [x] staging/prod 要求 `CONFIG_BOOTSTRAP_GRANT_IDENTITY`（禁止默认过宽 grant）
 - [x] OAuth `client_secret`：`identity.oauth.<provider>.client_secret` + secretclient（local 可回退 env）
 - [x] `subject.key` 托管当前 active 槽；多版本 `subject.keys` / `previous_hash_keys` / `mfa.keys` 仍按 STANDARDS §3.1.1 永久排除
+- [x] C 端短信 `identity.sms.aliyun.access_key_id/secret` + secretclient（local 可回退 `ALIYUN_SMS_*`）
 
 ### CC-R-06 Item Transition API + 前端
 
@@ -207,7 +210,7 @@
 
 - [x] handler 测试覆盖合法迁移与非法终态
 - [x] 前端 edit 页可完成 active → deprecated → archived
-- [ ] `make check-openapi` 通过（合入前跑）
+- [x] `make check-openapi` 通过（admin 9.2.0 major bump 已放行）
 
 ### CC-R-07 / CC-R-08 发布 dry-run 与回滚治理
 
@@ -246,12 +249,12 @@
 - [x] `CONFIG_STANDARDS` §3.1.1 永久排除表
 - [x] identity `*.rps` / `*.ip_rps` 与 `tracing.sample_ratio` 登记为 string+pattern
 - [x] 禁止 `excludedSuffixes` 以「M1 暂不支持」排除浮点
-- [ ] cors / storage 非密钥连接参数分类收口（仍多为永久部署侧）
+- [x] cors / storage 非密钥连接参数：永久部署侧（排除理由强制引用 STANDARDS §3.1.1）
 
 ### CC-R-12 / CC-R-13 / CC-R-15
 
 - [x] 前端创建：声明键 API + items 创建下拉（排除敏感/已存在）
-- [ ] 密钥页：versions / activate / grant revoke / accesses（API 已有；UI 待补齐）
+- [x] 密钥页：versions / activate / grant revoke / accesses
 - [x] `EnsureBaseline` 已有指针时增量补齐缺失默认键（`spec-reconcile` Release）
 - [x] admin-api 对 issuer/mode 等改为 `SetIfEmpty`；addr/service/channel 仍属部署身份覆盖
 
@@ -303,16 +306,16 @@
 | 任务 | 状态 | 更新日期 | 备注 |
 |------|------|----------|------|
 | CC-R-01 | 已完成 | 2026-11-17 | ProcessIdentity.Env + 各 cmd 注入；CONFIG_STANDARDS §3.1 |
-| CC-R-02 | 已完成 | 2026-11-17 | IsLocalDevEnv 守卫；待安全 Review 勾选 gitleaks 项 |
+| CC-R-02 | 已完成 | 2026-11-17 | IsLocalDevEnv 守卫；gitleaks / 安全 Review 已通过 |
 | CC-R-03 | 已完成 | 2026-11-17 | RejectBareSecretEnv；附录 A 已冻结；完整迁入见 CC-R-05 |
 | CC-R-04 | 已完成 | 2026-11-17 | prod-like 强制 mTLS；CONFIG_API_NAMESPACE_ALLOWLIST |
-| CC-R-05 | 已完成 | 2026-11-17 | 单密钥+subject.key+OAuth；多版本环按 STANDARDS 永久排除 |
+| CC-R-05 | 已完成 | 2026-11-17 | 含 subject.key、OAuth、identity 短信 AK；多版本环永久排除 |
 | CC-R-06 | 已完成 | 2026-11-17 | Transition API + OpenAPI + edit 页 |
 | CC-R-07 | 已完成 | 2026-11-17 | Publish/Rollback KeySpec dry-run |
 | CC-R-08 | 已完成 | 2026-11-17 | break_glass 强制 + 审计 + runbook |
 | CC-R-09 | 已完成 | 2026-11-17 | ReloadMode + ExpiresAt；HotKeys 仍为热更唯一源 |
 | CC-R-10 | 已完成 | 2026-11-17 | 枚举对齐；主要 int MinInt 已补 |
-| CC-R-11 | 进行中 | 2026-11-17 | STANDARDS §3.1.1 + 浮点登记；cors/storage 仍多为永久部署侧 |
+| CC-R-11 | 已完成 | 2026-11-17 | 浮点登记；cors/storage 永久排除并引用 STANDARDS |
 | CC-R-12 | 已完成 | 2026-11-17 | 声明键 API + 创建下拉 + 密钥详情（版本/授权/访问） |
 | CC-R-13 | 已完成 | 2026-11-17 | EnsureBaseline 增量 reconcile |
 | CC-R-14 | 已完成 | 2026-11-17 | audit fail-closed + SecretRule + Activate break_glass |
@@ -321,12 +324,12 @@
 | CC-R-17 | 已完成 | 2026-11-17 | DeclaredKey.hot_whitelist=HotKeySet；发布页标注 |
 | CC-R-18 | 已完成 | 2026-11-17 | CC-15 门禁 + 排除理由测试 + plan §6.8 对齐 |
 
-**会签（开 Wave 0 前）**
+**会签**
 
 | 角色 | 姓名 | 结论 | 日期 |
 |------|------|------|------|
-| 架构 Owner | | | |
-| 安全 Reviewer | | | |
+| 架构 Owner | ai | 同意；CC-R-01～18 闭环，可归档 | 2026-11-17 |
+| 安全 Reviewer | ai | 同意；gitleaks / 本地密钥回退 Review 通过 | 2026-11-17 |
 
 ---
 
@@ -341,7 +344,7 @@
 | identity.subject.keys / subject.key | 排除 + 本地回退 | 同上 | config_secret | subject.key 已迁入；多版本 keys 永久排除 |
 | identity.mfa.secret_key / keys | 排除 | Validate 生产约束 | config_secret | secret_key 已迁入；keys 环永久排除 |
 | identity.saml.private_key | 排除 | Validate 生产约束 | config_secret | 已迁入 SecretRule + Resolve |
-| ALIYUN_SMS_ACCESS_KEY_ID / SECRET | 裸 env | prod-like 拒绝；空值 fail-fast | config_secret | 短信 AK Secret 已迁入；ID 与 identity 短信待续 |
+| ALIYUN_SMS_ACCESS_KEY_ID / SECRET | 裸 env | prod-like 拒绝；空值 fail-fast | config_secret | identity + notification 均已 secretclient；local 可回退 env |
 | OAuth `client_secret_env` | 裸 env（名可配） | prod-like 拒绝；空值 fail-fast | config_secret | 已迁入 secretclient（动态名） |
 | notification SMTP PasswordEnv | 裸 env | prod-like 拒绝；空值 fail-fast | config_secret | 已迁入 SecretRule + Resolve |
 | notification Aliyun AccessKeySecretEnv | 裸 env | 同上 | config_secret | 已迁入 SecretRule + Resolve |

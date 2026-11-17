@@ -102,7 +102,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 
 ---
 
-## 六、已实施计划（3 份）
+## 六、已实施计划（4 份）
 
 领域规划的落地凭证。规划期约束已转化为 ADR 与设计文档，因此不再作为排期依据。
 
@@ -111,6 +111,7 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 | [feature-flag-plan.md](./plans/feature-flag-plan.md) | ENT-11 特性开关规划（FF-01～FF-08 全部落地） | [`adr/0009`](../adr/0009-featureflag-inprocess-evaluation.md)（进程内评估决策）、`ARCHITECTURE.md` §17.3（flag 硬约束）、`check-featureflag.sh` |
 | [notification-center-plan.md](./plans/notification-center-plan.md) | ENT-10 通知中心规划（NT-01～NT-10 全部落地） | [`adr/0008`](../adr/0008-notification-event-driven.md)（编排决策）、[`notification-channels.md`](../notification-channels.md)（渠道驱动契约）、`check-notification.sh` |
 | [iam-p1-5-7-engineering-plan.md](./plans/iam-p1-5-7-engineering-plan.md) | IAM P1-5/6/7 生产化整改执行基线（M0～M6 全部完成，2026-11-11 关闭） | [`adr/0012`](../adr/0012-certification-export-limit.md)（容量与导出口径）、`identity-authn.md` §21（SCIM / M2M 契约）、`rbac-iam.md` §10.3（访问复核）、`runbooks/identity-federation-onboarding.md`、`check-iam-coverage.sh` / `check-authn.sh` |
+| [config-center-remediation-plan.md](./plans/config-center-remediation-plan.md) | 配置中心缺口修复（CC-R-01～18，Wave 0～3，2026-11-17 关闭并会签） | [`CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md) §3.1.1、[`config-center-plan.md`](../config-center-plan.md) §6.8、ADR-0014/0015/0016、`check-configcenter.sh` CC-15、`runbooks/secret-management.md` |
 
 > 两份计划的「生产渠道驱动装配」仍依赖渠道凭据，属环境配置项，不构成计划未闭环；
 > 若后续要改编排语义，按规则 §一.5 新建 L3 计划，不要搬回归档文件。
