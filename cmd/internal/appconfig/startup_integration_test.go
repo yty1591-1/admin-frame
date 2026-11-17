@@ -13,6 +13,7 @@ func TestValuesOverrideConfig(t *testing.T) {
 	values := map[string]string{
 		"service":                       "admin-api",
 		"channel":                       "admin",
+		"env":                           "dev",
 		"server.addr":                   ":9090",
 		"identity.lockout.max_failures": "99",
 	}

@@ -347,12 +347,12 @@
 | ALIYUN_SMS_ACCESS_KEY_ID / SECRET | 裸 env | prod-like 拒绝；空值 fail-fast | config_secret | identity + notification 均已 secretclient；local 可回退 env |
 | OAuth `client_secret_env` | 裸 env（名可配） | prod-like 拒绝；空值 fail-fast | config_secret | 已迁入 secretclient（动态名） |
 | notification SMTP PasswordEnv | 裸 env | prod-like 拒绝；空值 fail-fast | config_secret | 已迁入 SecretRule + Resolve |
-| notification Aliyun AccessKeySecretEnv | 裸 env | 同上 | config_secret | 已迁入 SecretRule + Resolve |
+| notification Aliyun AccessKeyId/Secret | 裸 env / 明文 | 同上 | config_secret | AccessKeyId+Secret 均已 SecretRule + Resolve |
 | notification APNS PrivateKeyEnv | 裸 env | 同上 | config_secret | 已迁入 SecretRule + Resolve |
 | notification FCM CredentialsJSONEnv | 裸 env | 同上 | config_secret | 已迁入 SecretRule + Resolve |
-| ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT | 非白名单 env | prod-like 拒绝；空值 fail-fast | config_secret | 已迁入 SecretRule + Resolve（local 可回退 env） |
-| ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET | 非白名单 env | prod-like 拒绝；长度不足 32 字节 fail-fast | config_secret | 已迁入 SecretRule + Resolve（local 可回退 env） |
-| iam.breakglass.allowed_subjects | 排除 | 非密钥 | JSON KeySpec + 双人发布 | 待 CC-R-05/11 |
+| ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT | 非白名单 env | 非 local/dev/test 拒绝；空值 fail-fast | config_secret | 已迁入 SecretRule + Resolve（local 可回退 env） |
+| ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET | 非白名单 env | 非 local/dev/test 拒绝；长度不足 32 字节 fail-fast | config_secret | 已迁入 SecretRule + Resolve（local 可回退 env） |
+| iam.breakglass.allowed_subjects | 排除 | 非密钥 | 列表值永久排除（STANDARDS） | 已按列表值排除，不迁 KeySpec |
 
 ## 附录 B — 排除项分类原则
 

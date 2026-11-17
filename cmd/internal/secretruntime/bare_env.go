@@ -4,23 +4,26 @@ import (
 	"fmt"
 	"strings"
 
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/shared/deployenv"
 )
 
-// RejectBareSecretEnv 在 staging/prod 拒绝业务密钥走裸环境变量（CC-R-03）。
+// RejectBareSecretEnv 仅允许 local/dev/test 经裸环境变量注入业务密钥（CC-R-03）。
 //
-// Wave 0：先禁止静默/直读成功；完整迁入 secretclient 见 CC-R-05。
-// local/dev/test 仍允许装配期 env 注入以便本机冒烟。
+// 空 env、staging、prod 一律拒绝：空值不再视为「非 prod-like」而放行。
 func RejectBareSecretEnv(env, secretName string) error {
-	if !platformconfig.IsProdLikeEnv(env) {
+	if deployenv.IsLocalDev(env) {
 		return nil
 	}
 	name := strings.TrimSpace(secretName)
 	if name == "" {
 		name = "business secret"
 	}
+	shown := strings.TrimSpace(env)
+	if shown == "" {
+		shown = "<empty>"
+	}
 	return fmt.Errorf(
 		"secretruntime: bare env secret %q is forbidden when env=%s; resolve via secretclient/config-api (CC-R-03)",
-		name, strings.TrimSpace(env),
+		name, shown,
 	)
 }

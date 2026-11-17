@@ -45,6 +45,7 @@ func TestValidateAcceptsInternalChannel(t *testing.T) {
 	cfg := &platformconfig.Config{
 		Service: "config-api",
 		Channel: "internal",
+		Env:     "dev",
 		Addr:    ":8085",
 		Auth:    platformconfig.AuthConfig{ExpectedChannel: "internal"},
 		DB:      platformconfig.DBConfig{Driver: "memory"},
@@ -52,6 +53,21 @@ func TestValidateAcceptsInternalChannel(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("internal channel should be valid: %v", err)
+	}
+}
+
+func TestValidateRejectsEmptyEnv(t *testing.T) {
+	cfg := &platformconfig.Config{
+		Service: "config-api",
+		Channel: "internal",
+		Addr:    ":8085",
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "internal"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "env is required") {
+		t.Fatalf("err=%v want env is required", err)
 	}
 }
 
@@ -179,12 +195,13 @@ func writeConfig(t *testing.T, name, content string) string {
 // minimalConfig 是最小的可用服务配置（不含 auth.expected_channel，由 normalize 派生）。
 const minimalConfig = "service: c-api\n" +
 	"channel: c\n" +
+	"env: dev\n" +
 	"addr: \":8083\"\n" +
 	"db:\n" +
 	"  driver: memory\n"
 
 func TestLoadConfigAppliesDefaults(t *testing.T) {
-	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\n")
+	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\nenv: dev\n")
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)

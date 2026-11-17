@@ -66,11 +66,16 @@ func NewHandler(receipts *app.ReceiptService, secret string) (*Handler, error) {
 }
 
 // LoadCallbackSecretFromEnv 仅允许 local/dev/test 从裸 env 读取回调密钥。
-func LoadCallbackSecretFromEnv() (string, error) {
-	deployEnv := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV"))
-	if deployenv.IsProdLike(deployEnv) {
+//
+// deployEnv 应传进程 Config.Env；空值与 staging/prod 一律拒绝（与 RejectBareSecretEnv 对齐）。
+func LoadCallbackSecretFromEnv(deployEnv string) (string, error) {
+	if !deployenv.IsLocalDev(deployEnv) {
+		shown := strings.TrimSpace(deployEnv)
+		if shown == "" {
+			shown = "<empty>"
+		}
 		return "", fmt.Errorf("notification callback: bare env %s forbidden when env=%s; use secretclient (CC-R-03)",
-			EnvCallbackSecret, deployEnv)
+			EnvCallbackSecret, shown)
 	}
 	secret := strings.TrimSpace(os.Getenv(EnvCallbackSecret))
 	if len(secret) < 32 {

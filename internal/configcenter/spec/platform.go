@@ -106,7 +106,7 @@ func platformSpecs() []domain.KeySpec {
 			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 
 		// 数据源与缓存：连接串与口令不进配置中心。
-		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql", "postgres"),
+		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql"),
 		intKey("db.max_open_conns", 0, "连接池上限；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		intKey("db.max_idle_conns", 0, "空闲连接数；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		durationKey("db.conn_max_lifetime", "0s", "连接最长存活时间；0 沿用默认值", false),

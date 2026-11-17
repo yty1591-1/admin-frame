@@ -214,7 +214,7 @@ func TestValidateIAMRejectsUnsupportedChannel(t *testing.T) {
 }
 
 func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
-	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\n")
+	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\nenv: dev\n")
 	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)

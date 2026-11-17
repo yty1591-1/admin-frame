@@ -241,8 +241,12 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter release watcher: %w", err)
 	}
+	deployEnv := ""
+	if deps != nil && deps.Config != nil {
+		deployEnv = deps.Config.Env
+	}
 	internal, err := configcenterrest.NewInternalHandler(configcenterrest.InternalHandlerConfig{
-		Snapshots: snapshots, Watcher: watcher, Secrets: secretService,
+		Snapshots: snapshots, Watcher: watcher, Secrets: secretService, DeployEnv: deployEnv,
 	})
 	if err != nil {
 		return nil, err

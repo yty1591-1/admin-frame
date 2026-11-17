@@ -60,7 +60,7 @@ func resolveNotificationCallbackSecret(deps *platform.Deps) (string, error) {
 	if err == nil {
 		return secret, nil
 	}
-	fallback, ferr := notificationcallback.LoadCallbackSecretFromEnv()
+	fallback, ferr := notificationcallback.LoadCallbackSecretFromEnv(env)
 	if ferr != nil {
 		return "", fmt.Errorf("notification callback secret: resolve failed (%v); bare env: %w", err, ferr)
 	}

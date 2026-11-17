@@ -105,8 +105,24 @@ func buildSMSSenders(ctx context.Context, env string, cfg notificationconfig.SMS
 			channel.NewSMSSender(pkgsms.NewMemory(pkgsms.MemoryConfig{AllowRawContent: true}), "", ""),
 		}, nil
 	case notificationconfig.DriverAliyun:
+		accessKeyID, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationAliyunAccessKeyID, secretruntime.NotificationAliyunAccessKeyIDEnv)
+		if err != nil {
+			// local/dev/test：允许回退配置树明文 AccessKeyID（非 env）。
+			if bareErr := secretruntime.RejectBareSecretEnv(env, "notification.sms.aliyun.access_key_id"); bareErr != nil {
+				return nil, fmt.Errorf("notification sms: aliyun access key id: %w", err)
+			}
+			accessKeyID = strings.TrimSpace(cfg.Aliyun.AccessKeyID)
+			if accessKeyID == "" {
+				return nil, fmt.Errorf("notification sms: aliyun access key id: %w", err)
+			}
+		}
+		secretEnv := strings.TrimSpace(cfg.Aliyun.AccessKeySecretEnv)
+		if secretEnv == "" {
+			secretEnv = secretruntime.AliyunSMSAccessKeySecretEnv
+		}
 		secret, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
-			secretruntime.NotificationAliyunAccessKeySecret, cfg.Aliyun.AccessKeySecretEnv)
+			secretruntime.NotificationAliyunAccessKeySecret, secretEnv)
 		if err != nil {
 			return nil, fmt.Errorf("notification sms: aliyun access key secret: %w", err)
 		}
@@ -119,7 +135,7 @@ func buildSMSSenders(ctx context.Context, env string, cfg notificationconfig.SMS
 			Aliyun: pkgsms.AliyunConfig{
 				Endpoint:        cfg.Aliyun.Endpoint,
 				Region:          cfg.Aliyun.Region,
-				AccessKeyID:     cfg.Aliyun.AccessKeyID,
+				AccessKeyID:     accessKeyID,
 				AccessKeySecret: secret,
 				SignName:        signName,
 			},

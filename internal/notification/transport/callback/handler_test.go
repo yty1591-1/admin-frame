@@ -143,10 +143,15 @@ func TestCallbackSaltMissingFailsClosed(t *testing.T) {
 	if _, err := NewHandler(nil, ""); err == nil {
 		t.Fatal("empty secret must fail construction")
 	}
-	t.Setenv("CONFIGCENTER_ENV", "prod")
 	t.Setenv(EnvCallbackSecret, testSecret)
-	if _, err := LoadCallbackSecretFromEnv(); err == nil {
+	if _, err := LoadCallbackSecretFromEnv("prod"); err == nil {
 		t.Fatal("prod-like bare env must fail")
+	}
+	if _, err := LoadCallbackSecretFromEnv(""); err == nil {
+		t.Fatal("empty deploy env must fail")
+	}
+	if _, err := LoadCallbackSecretFromEnv("local"); err != nil {
+		t.Fatalf("local bare env must allow: %v", err)
 	}
 	_ = os.Unsetenv(EnvCallbackSecret)
 }

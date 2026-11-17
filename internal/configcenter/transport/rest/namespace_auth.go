@@ -71,7 +71,10 @@ func loadNamespaceAllowlist() (map[string]map[string]struct{}, error) {
 }
 
 // authorizeNamespace 校验服务身份是否可拉取指定 namespace（CC-R-04）。
-func authorizeNamespace(env, serviceIdentity, namespace string) error {
+//
+// deployEnv 必须是进程部署环境（CONFIGCENTER_ENV / deps.Config.Env），
+// 不得用请求 path/query 里的数据 env，否则 prod 部署可用 env=dev 绕过空 allowlist。
+func authorizeNamespace(deployEnv, serviceIdentity, namespace string) error {
 	identity := strings.TrimSpace(serviceIdentity)
 	ns := strings.TrimSpace(namespace)
 	if identity == "" {
@@ -85,8 +88,13 @@ func authorizeNamespace(env, serviceIdentity, namespace string) error {
 		return err
 	}
 	if list == nil {
-		if deployenv.IsProdLike(env) {
-			return apperr.Forbidden(namespaceAllowlistEnv + " required when env=" + strings.TrimSpace(env))
+		// 仅 local/dev/test 允许空 allowlist；空部署 env 也拒绝。
+		if !deployenv.IsLocalDev(deployEnv) {
+			shown := strings.TrimSpace(deployEnv)
+			if shown == "" {
+				shown = "<empty>"
+			}
+			return apperr.Forbidden(namespaceAllowlistEnv + " required when deploy env=" + shown)
 		}
 		return nil
 	}

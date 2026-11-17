@@ -538,6 +538,11 @@ func (h *Handler) ResolveSecrets(w http.ResponseWriter, r *http.Request) {
 		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
 		return
 	}
+	// 与配置 pull 同一套 namespace allowlist（按部署 env 判严）。
+	if err := authorizeNamespace(h.deployEnv, identity, body.Namespace); err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
 	items, err := h.secrets.Resolve(r.Context(), app.ResolveInput{
 		Env: body.Env, Namespace: body.Namespace, Names: body.Names,
 		ServiceIdentity: identity, TraceID: traceID,

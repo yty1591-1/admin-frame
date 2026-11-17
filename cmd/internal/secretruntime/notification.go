@@ -14,8 +14,12 @@ const (
 	notificationCallbackSecretName = "notification.callback_secret"
 	// NotificationSMTPPasswordName 是 SMTP 密码的配置中心密钥名。
 	NotificationSMTPPasswordName = "notification.smtp.password"
+	// NotificationAliyunAccessKeyID 是通知域阿里云短信 AccessKeyId 密钥名。
+	NotificationAliyunAccessKeyID = "notification.sms.aliyun.access_key_id"
 	// NotificationAliyunAccessKeySecret 是通知域阿里云短信 AccessKeySecret 密钥名。
 	NotificationAliyunAccessKeySecret = "notification.sms.aliyun.access_key_secret"
+	// NotificationAliyunAccessKeyIDEnv 是 local/dev/test 回退用的 AccessKeyId 环境变量名。
+	NotificationAliyunAccessKeyIDEnv = "ALIYUN_SMS_ACCESS_KEY_ID"
 	// NotificationAPNSPrivateKeyName 是 APNs 私钥 PEM 的配置中心密钥名。
 	NotificationAPNSPrivateKeyName = "notification.push.apns.private_key"
 	// NotificationFCMCredentialsJSONName 是 FCM 服务账号 JSON 的配置中心密钥名。
@@ -74,7 +78,7 @@ func resolveNotificationSecret(ctx context.Context, env string, client *secretcl
 	}
 	resolvedEnv := strings.TrimSpace(env)
 	if resolvedEnv == "" {
-		resolvedEnv = "dev"
+		return "", fmt.Errorf("secretruntime: env is required to resolve %s", name)
 	}
 	value, err := client.Resolve(ctx, resolvedEnv, notificationNamespace, name)
 	if err != nil {

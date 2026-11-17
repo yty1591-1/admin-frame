@@ -33,6 +33,9 @@ func TestAuthorizeNamespaceProdRequiresAllowlist(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), namespaceAllowlistEnv) {
 		t.Fatalf("err=%v want allowlist required", err)
 	}
+	if err := authorizeNamespace("", "admin-api", "platform"); err == nil {
+		t.Fatal("empty deploy env must require allowlist")
+	}
 	if err := authorizeNamespace("local", "admin-api", "platform"); err != nil {
 		t.Fatalf("local without allowlist ok: %v", err)
 	}

@@ -149,7 +149,7 @@ func resolveIdentitySecret(ctx context.Context, env string, client *secretclient
 	}
 	resolvedEnv := strings.TrimSpace(env)
 	if resolvedEnv == "" {
-		resolvedEnv = "dev"
+		return "", fmt.Errorf("secretruntime: env is required to resolve %s", name)
 	}
 	value, err := client.Resolve(ctx, resolvedEnv, identityNamespace, name)
 	if err != nil {

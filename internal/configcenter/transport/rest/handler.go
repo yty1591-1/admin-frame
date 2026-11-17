@@ -53,12 +53,13 @@ func namespaceFromPath(r *http.Request) string {
 
 // Handler 是配置中心管理 Handler。
 type Handler struct {
-	items    *app.ItemService
-	releases *app.ReleaseService
-	secrets  *app.SecretService
-	specs    *spec.Registry
-	pageCfg  pagination.Config
-	sqlDB    *sql.DB
+	items     *app.ItemService
+	releases  *app.ReleaseService
+	secrets   *app.SecretService
+	specs     *spec.Registry
+	pageCfg   pagination.Config
+	sqlDB     *sql.DB
+	deployEnv string // 仅 internal resolve 授权使用；管理面可空
 }
 
 // HandlerConfig 是 Handler 的装配参数。

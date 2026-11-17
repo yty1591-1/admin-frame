@@ -16,6 +16,7 @@ type InternalHandler struct {
 	snapshots *app.SnapshotService
 	watcher   *app.ReleaseWatcher
 	secrets   *app.SecretService
+	deployEnv string
 }
 
 // InternalHandlerConfig 是 InternalHandler 的装配参数。
@@ -23,6 +24,8 @@ type InternalHandlerConfig struct {
 	Snapshots *app.SnapshotService
 	Watcher   *app.ReleaseWatcher
 	Secrets   *app.SecretService
+	// DeployEnv 进程部署环境（决定 allowlist / 裸密钥门禁强度），非请求数据 env。
+	DeployEnv string
 }
 
 // NewInternalHandler 构造内部 Handler；Snapshots 与 Watcher 必填。
@@ -37,6 +40,7 @@ func NewInternalHandler(cfg InternalHandlerConfig) (*InternalHandler, error) {
 		snapshots: cfg.Snapshots,
 		watcher:   cfg.Watcher,
 		secrets:   cfg.Secrets,
+		deployEnv: strings.TrimSpace(cfg.DeployEnv),
 	}, nil
 }
 
@@ -50,7 +54,7 @@ func (h *InternalHandler) GetNamespaceConfig(w http.ResponseWriter, r *http.Requ
 	}
 	env := strings.TrimSpace(r.PathValue("env"))
 	namespace := strings.TrimSpace(r.PathValue("namespace"))
-	if err := authorizeNamespace(env, identity, namespace); err != nil {
+	if err := authorizeNamespace(h.deployEnv, identity, namespace); err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
@@ -91,7 +95,7 @@ func (h *InternalHandler) Notifications(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	for ns := range known {
-		if authErr := authorizeNamespace(env, identity, ns); authErr != nil {
+		if authErr := authorizeNamespace(h.deployEnv, identity, ns); authErr != nil {
 			apiresp.FromError(w, authErr, traceID)
 			return
 		}
@@ -124,8 +128,8 @@ func (h *InternalHandler) ResolveSecrets(w http.ResponseWriter, r *http.Request)
 		apiresp.FromError(w, apperr.Internal("secret service unavailable", nil), traceID)
 		return
 	}
-	// 复用同包 Handler 的 ResolveSecrets 逻辑：临时委托。
-	delegate := &Handler{secrets: h.secrets}
+	// 复用同包 Handler 的 ResolveSecrets 逻辑；传入部署 env 做 namespace 授权。
+	delegate := &Handler{secrets: h.secrets, deployEnv: h.deployEnv}
 	delegate.ResolveSecrets(w, r)
 }
 
