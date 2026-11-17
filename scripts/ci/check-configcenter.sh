@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# 配置中心 M1 门禁：契约、权限、审计、敏感项与快照验签不得回退。
+# 配置中心门禁：契约、权限、审计、敏感项与拉取模型不得回退。
 #
-# 背景：M0 冻结了附录 A 数据模型、§6.7 OpenAPI、权限点与审计事件；M1 落地
-# 管理面与 SDK。本脚本把这些「已冻结契约」变成可机器校验的门禁，避免后续
-# 改动删表、删权限、漏审计或让敏感值进入快照。
+# 背景：M0 冻结了附录 A 数据模型、§6.7 OpenAPI、权限点与审计事件；M1～M3
+# 落地管理面、密钥子域与 ADR-0016 拉取模型。本脚本把「已冻结契约」变成
+# 可机器校验的门禁，避免后续改动删表、删权限、漏审计或让敏感值进入拉取响应。
 #
 # 检查项：
 #   CC-01 迁移 up / down 成对，六张 config_* 表齐全
 #   CC-02 权限种子包含读 / 写 / 审批 / 发布四点
 #   CC-03 审计动作包含配置变更、播种、发布、回滚、审批
 #   CC-04 管理面 OpenAPI 文件存在且被 admin.yaml 引用
-#   CC-05 快照/拉取构建跳过敏感项，SDK 经 HTTP 拉取（ADR-0016）
+#   CC-05 拉取构建跳过敏感项，SDK 经 HTTP 拉取（ADR-0016）
 #   CC-06 未声明键拒绝写入（spec 注册表校验存在）
 #   CC-07 指标 / 告警 / runbook 资产存在
-#   CC-08 双读运行时接线：展平、对比入口、差异指标、四进程接入
-#   CC-09 无文件启动：Loader 开关、演练环境变量、四进程接线
+#   CC-08 config-api 拉取模型：HTTP 源、长轮询、本地缓存、ReleaseWatcher
+#   CC-09 无文件启动：configboot + AllowMissingFiles；四进程接线
 #   CC-10 业务域键声明：四个域 spec、默认值一致性测试、无整段 deferred
-#   CC-11 多 namespace 消费与开关：文件列表、启用列表、SDK 与双读接线
-#   CC-12 Helm 部署接线：values 默认值、环境变量与快照 Secret 挂载
+#   CC-11 多 namespace 消费与 Watch / 长轮询接线
+#   CC-12 Helm 部署接线：values 默认值、环境变量与缓存挂载
 #   CC-13 M2 密钥契约：secret 表迁移、OpenAPI、权限、审计、信封与 config-api
-#   CC-14 M3 无 tracked configs、无文件启动开关与密钥 resolve 冒烟
+#   CC-14 M3 无 tracked configs、EnvAllowlist、JWT secretclient 冒烟
+#   CC-15 排除理由对齐 CONFIG_STANDARDS §3.1.1；禁止过时「M1 暂不支持」；
+#        HotKeySet / 声明键 hot_whitelist / Cancel 路由契约存在（CC-R-18）
 #
 # 用法: bash scripts/ci/check-configcenter.sh
 set -euo pipefail
@@ -257,8 +259,47 @@ else
     "JWT resolve 冒烟用例存在（本机 PATH 无 go，跳过执行）"
 fi
 
+echo "==> CC-15: exclusion reasons + Wave3 contracts (CC-R-18)"
+require_grep "docs/CONFIG_STANDARDS.md" "3\.1\.1 永久排除" "CONFIG_STANDARDS 永久排除表"
+require_grep "internal/configcenter/spec/hot.go" "var HotKeys" "ADR-0015 HotKeys 白名单"
+require_grep "internal/configcenter/transport/rest/handler.go" "HotWhitelist" \
+  "声明键响应含 hot_whitelist"
+require_grep "api/openapi/schemas/admin/configcenter.yaml" "hot_whitelist" \
+  "OpenAPI ConfigDeclaredKey.hot_whitelist"
+require_grep "api/openapi/paths/admin/configcenter.yaml" \
+  "admin-v1-configs-releases-by-id-cancel" "OpenAPI Release Cancel"
+require_grep "internal/configcenter/transport/admin/router.go" \
+  "releases/{id}/cancel" "管理面 Cancel 路由"
+# 只扫 excludedKeys / excludedPrefixes 映射体，避开测试用例自身的禁止短语字面量。
+if awk '
+  /^var excluded(Keys|Prefixes)/ {in_map=1}
+  in_map {
+    print
+    if (/^}$/) {in_map=0}
+  }
+' cmd/internal/appconfig/config_spec_coverage_test.go \
+  | grep -Eq 'M1 暂不支持|暂不支持 float|当前值类型不支持|值类型不支持'; then
+  fail "排除清单含过时理由（禁止 M1 暂不支持 / 值类型不支持 等）"
+else
+  ok "排除清单无过时理由"
+fi
+if [[ -n "${GO_BIN:-}" ]] || command -v go >/dev/null 2>&1 || command -v go.exe >/dev/null 2>&1; then
+  if [[ -z "${GO_BIN:-}" ]]; then
+    if command -v go >/dev/null 2>&1; then GO_BIN="go"; else GO_BIN="go.exe"; fi
+  fi
+  if "${GO_BIN}" test -count=1 ./cmd/internal/appconfig/ \
+    -run 'TestExcludedReasonsForbidStalePhrases|TestPlatformKeyCoverage' >/dev/null; then
+    ok "覆盖率与排除理由测试"
+  else
+    fail "覆盖率与排除理由测试失败"
+  fi
+else
+  require_grep "cmd/internal/appconfig/config_spec_coverage_test.go" \
+    "TestExcludedReasonsForbidStalePhrases" "排除理由测试存在（本机 PATH 无 go，跳过执行）"
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
-  echo "配置中心门禁失败（CC-01～CC-14）" >&2
+  echo "配置中心门禁失败（CC-01～CC-15）" >&2
   exit 1
 fi
 

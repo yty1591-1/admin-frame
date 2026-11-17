@@ -73,18 +73,26 @@ func Load(ctx context.Context) (*Result, error) {
 }
 
 // ProcessIdentity 是进程身份证；按规范不进配置中心，须由各 cmd 写死注入。
+//
+// Env 必须在此注入（来自 CONFIGCENTER_ENV / boot.Env），保证 LoadFromValues 的
+// Normalize/Validate 看到真实环境（CC-R-01）；禁止 Load 成功后再赋值 Env。
 type ProcessIdentity struct {
 	Service string
 	Channel string
+	// Env 部署环境：local/dev/test/staging/prod；空则不覆盖（由调用方保证）。
+	Env string
 	// Addr 可选；非空时覆盖共享 platform 快照中的监听地址（多进程同 namespace）。
 	Addr string
 }
 
 // WithProcessIdentity 把进程身份证合并进拉取结果；须在 Validate 前调用。
 func WithProcessIdentity(values map[string]string, id ProcessIdentity) map[string]string {
-	out := make(map[string]string, len(values)+4)
+	out := make(map[string]string, len(values)+5)
 	for key, value := range values {
 		out[key] = value
+	}
+	if env := strings.TrimSpace(id.Env); env != "" {
+		out["env"] = env
 	}
 	if service := strings.TrimSpace(id.Service); service != "" {
 		out["service"] = service
@@ -96,10 +104,21 @@ func WithProcessIdentity(values map[string]string, id ProcessIdentity) map[strin
 		}
 	}
 	if addr := strings.TrimSpace(id.Addr); addr != "" {
+		// 监听地址属部署身份：进程声明优先于快照（附录 B）。
 		out["addr"] = addr
 		out["server.addr"] = addr
 	}
 	return out
+}
+
+// SetIfEmpty 仅在快照未提供时写入进程默认值（CC-R-15）。
+func SetIfEmpty(values map[string]string, key, value string) {
+	if values == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	if strings.TrimSpace(values[key]) == "" {
+		values[key] = value
+	}
 }
 
 func namespacesFromEnv() []string {

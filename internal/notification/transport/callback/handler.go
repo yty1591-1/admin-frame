@@ -12,6 +12,7 @@ package callback
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -20,12 +21,15 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	pkgwebhook "github.com/admin-frame/admin-frame/pkg/webhook"
 )
 
 // EnvCallbackSecret 是回执验签密钥的环境变量名（≥32 字节；ENT-07）。
+//
+// staging/prod 禁止经此裸 env 成功；须由装配层经 secretclient 注入（CC-R-03/05）。
 const EnvCallbackSecret = "ADMIN_FRAME_NOTIFICATION_CALLBACK_SECRET"
 
 // defaultTolerance 是签名时间窗。
@@ -37,16 +41,18 @@ type Handler struct {
 	verifier *pkgwebhook.Verifier
 }
 
-// NewHandler 构造回调 Handler；验签密钥取环境变量，缺失返回错误
-// （装配期即失败，不允许出现无验签的公开写端点）。
-func NewHandler(receipts *app.ReceiptService) (*Handler, error) {
+// NewHandler 使用已解析的验签密钥构造 Handler（≥32 字节）。
+//
+// 装配层优先 secretclient.Resolve(notification.callback_secret)；local/dev/test
+// 可回退 LoadCallbackSecretFromEnv。
+func NewHandler(receipts *app.ReceiptService, secret string) (*Handler, error) {
 	if receipts == nil {
 		return nil, apperr.Internal("notification callback handler requires a receipt service", nil)
 	}
-	secret := strings.TrimSpace(os.Getenv(EnvCallbackSecret))
+	secret = strings.TrimSpace(secret)
 	if len(secret) < 32 {
 		return nil, apperr.Internal(
-			"notification callback requires env "+EnvCallbackSecret+" (>=32 bytes); unsigned callbacks are rejected (fail closed)", nil)
+			"notification callback secret must be >=32 bytes; unsigned callbacks are rejected (fail closed)", nil)
 	}
 	verifier, err := pkgwebhook.NewVerifier(pkgwebhook.Config{
 		Keys:      [][]byte{[]byte(secret)},
@@ -54,9 +60,23 @@ func NewHandler(receipts *app.ReceiptService) (*Handler, error) {
 		Nonce:     pkgwebhook.NewMemoryNonceStore(pkgwebhook.MemoryNonceStoreConfig{}),
 	})
 	if err != nil {
-		return nil, apperr.Internal("notification callback verifier: %v", err)
+		return nil, apperr.Internal("notification callback verifier: "+err.Error(), err)
 	}
 	return &Handler{receipts: receipts, verifier: verifier}, nil
+}
+
+// LoadCallbackSecretFromEnv 仅允许 local/dev/test 从裸 env 读取回调密钥。
+func LoadCallbackSecretFromEnv() (string, error) {
+	deployEnv := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV"))
+	if platformconfig.IsProdLikeEnv(deployEnv) {
+		return "", fmt.Errorf("notification callback: bare env %s forbidden when env=%s; use secretclient (CC-R-03)",
+			EnvCallbackSecret, deployEnv)
+	}
+	secret := strings.TrimSpace(os.Getenv(EnvCallbackSecret))
+	if len(secret) < 32 {
+		return "", fmt.Errorf("notification callback requires env %s (>=32 bytes)", EnvCallbackSecret)
+	}
+	return secret, nil
 }
 
 // Receipt 处理 POST /v1/notification-callbacks/receipt。

@@ -30,25 +30,28 @@ func main() {
 
 func run() error {
 	// ADR-0016：config-api 自举，不依赖签名快照；仅代码默认值 + db/redis env。
-	// service/channel 是平台进程身份证，内部服务写死，须在 Validate 前注入。
+	// service/channel/env 是平台进程身份证，内部服务写死，须在 Validate 前注入（CC-R-01）。
+	env := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV"))
+	addr := strings.TrimSpace(os.Getenv("CONFIG_API_ADDR"))
+	if addr == "" {
+		addr = ":8085"
+	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
-		return map[string]string{
+		values := map[string]string{
 			"service": "config-api",
 			"channel": "internal",
-			"addr":    ":8085",
-		}, nil
+			"addr":    addr,
+		}
+		if env != "" {
+			values["env"] = env
+		}
+		return values, nil
 	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if env := strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV")); env != "" {
-		appCfg.Env = env
-	}
-	if addr := strings.TrimSpace(os.Getenv("CONFIG_API_ADDR")); addr != "" {
-		appCfg.Addr = addr
-	}
 
-	tlsCfg, err := secretruntime.LoadServerTLSFromEnv()
+	tlsCfg, err := secretruntime.LoadServerTLSFromEnvFor(appCfg.Env)
 	if err != nil {
 		return fmt.Errorf("load tls: %w", err)
 	}

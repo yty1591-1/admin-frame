@@ -31,6 +31,41 @@ admin-v1-configs-namespaces:
       "403":
         $ref: "../../components.yaml#/components/responses/Forbidden"
 
+admin-v1-configs-namespaces-by-namespace-keys:
+  get:
+    tags: [config]
+    summary: 查询命名空间已声明的配置键
+    description: |
+      需要 `config:read`。返回代码 key spec 中该 namespace 的全部声明键，
+      供管理面创建下拉与未使用键过滤（CC-R-12）。
+    operationId: adminListConfigDeclaredKeys
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: namespace
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigDeclaredKeyListData"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
 admin-v1-configs-items:
   get:
     tags: [config]
@@ -206,6 +241,52 @@ admin-v1-configs-items-by-id:
       "403":
         $ref: "../../components.yaml#/components/responses/Forbidden"
 
+admin-v1-configs-items-by-id-transition:
+  post:
+    tags: [config]
+    summary: 迁移配置键治理状态
+    description: |
+      需要 `config:write`。按状态机迁移 draft/active/deprecated/archived；
+      非法迁移返回 40900。写 `config.change` 审计（action=transition）。
+    operationId: adminTransitionConfigItem
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          format: int64
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigItemTransition"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigItem"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
 admin-v1-configs-items-by-id-versions:
   get:
     tags: [config]
@@ -325,6 +406,24 @@ admin-v1-configs-releases:
         schema:
           type: string
           enum: [draft, pending_review, approved, active, superseded, rolled_back, rejected, cancelled]
+      - in: query
+        name: keyword
+        schema:
+          type: string
+          maxLength: 128
+        description: 按发布名称或说明模糊检索（大小写不敏感）。
+      - in: query
+        name: owner
+        schema:
+          type: string
+          maxLength: 128
+        description: 按创建人（created_by）精确过滤；与 created_by 等价，优先取 owner。
+      - in: query
+        name: created_by
+        schema:
+          type: string
+          maxLength: 128
+        description: owner 的别名；owner 为空时生效。
       - in: query
         name: page
         schema:
@@ -583,6 +682,52 @@ admin-v1-configs-releases-by-id-rollback:
         application/json:
           schema:
             $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigReleaseRollback"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigRelease"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+admin-v1-configs-releases-by-id-cancel:
+  post:
+    tags: [config]
+    summary: 取消未生效发布单
+    description: |
+      需要 `config:write`。仅 draft / pending_review / approved 可取消；已生效
+      或终态返回 40900。写 `config.change` 审计，reason 必填。
+    operationId: adminCancelConfigRelease
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          format: int64
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../../schemas/admin/configcenter.yaml#/components/schemas/ConfigReleaseCancel"
     responses:
       "200":
         description: ok

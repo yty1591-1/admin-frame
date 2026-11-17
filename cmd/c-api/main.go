@@ -15,6 +15,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
 	// 注册全部云存储驱动；C 端如需独立裁剪可只 import 所需驱动。
@@ -47,24 +48,41 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
 	}
-	// 先 Resolve 再 Validate：JWT 明文只来自 secretclient。
+	// 先 Resolve 再 Validate：JWT / identity 明文只来自 secretclient。
 	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
 	if err != nil {
 		return fmt.Errorf("jwt secret: %w", err)
 	}
+	hashKey, mfaSecret, err := secretruntime.ResolveIdentitySecretsFromEnv(ctx, boot.Env)
+	if err != nil {
+		if !platformconfig.IsLocalDevEnv(boot.Env) {
+			return fmt.Errorf("identity secrets: %w", err)
+		}
+		hashKey, mfaSecret = "", ""
+	}
+	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
+	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		// Env 必须在此注入，供 Normalize/Validate 使用（CC-R-01）。
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
-			Service: "c-api", Channel: "c", Addr: ":8083",
+			Service: "c-api", Channel: "c", Env: boot.Env, Addr: ":8083",
 		})
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if hashKey != "" {
+			values[secretruntime.IdentityHashKeyValueKey] = hashKey
+		}
+		if mfaSecret != "" {
+			values[secretruntime.IdentityMFASecretValueKey] = mfaSecret
+		}
+		if samlPrivateKey != "" {
+			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
+		}
 		return values, nil
 	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if boot.Env != "" {
-		appCfg.Env = boot.Env
-	}
+	secretruntime.ApplyIdentitySubjectKey(&appCfg.Identity, subjectKey)
 	var (
 		identityOnce sync.Once
 		identityRT   *identityruntime.Runtime

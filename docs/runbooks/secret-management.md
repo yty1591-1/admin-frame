@@ -5,9 +5,9 @@
 | 告警 ID | `ConfigSecretAPIUnavailable` / `ConfigSecretPlaintextLeak` |
 | 级别 | P1（明文泄露按安全优先） |
 | 服务 / 端 | config-api / admin-api / 业务进程 secretclient |
-| 最后更新 | 2026-11-16 |
+| 最后更新 | 2026-11-17 |
 
-关联：[ADR-0014](../adr/0014-secret-management-envelope-encryption.md)、[config-center-plan.md](../config-center-plan.md)、[key-ceremony.md](./key-ceremony.md)。
+关联：[ADR-0014](../adr/0014-secret-management-envelope-encryption.md)、[config-center-plan.md](../config-center-plan.md)、[key-ceremony.md](./key-ceremony.md)、[config-center-remediation-plan.md](../config-center-remediation-plan.md)（CC-R-03/05）。
 
 ## 症状
 
@@ -43,6 +43,7 @@
 export CONFIGCENTER_KEK_DRIVER=local
 export CONFIGCENTER_LOCAL_KEK_HEX=<64 hex>
 export CONFIG_API_ADDR=:8085
+export CONFIGCENTER_ENV=local
 # admin-api 与 config-api 共用同一 MySQL；先执行 migrations 000033/000034
 go run ./cmd/config-api
 ```
@@ -52,9 +53,16 @@ go run ./cmd/config-api
 ```bash
 export CONFIG_API_URL=http://127.0.0.1:8085
 export CONFIG_SERVICE_IDENTITY=spiffe://local/biz-api
+export CONFIGCENTER_ENV=local
 ```
 
 M3 起无 tracked 配置文件；口令与 JWT 走部署 Secret / secretclient。
+
+### staging / prod 引导（CC-R-03 / CC-R-04）
+
+- config-api：`CONFIG_API_MTLS=require` + TLS 证书/私钥/客户端 CA；`CONFIG_API_NAMESPACE_ALLOWLIST` 必填。
+- 业务密钥禁止裸 `ALIYUN_SMS_*` / `ADMIN_FRAME_NOTIFICATION_*` / OAuth `client_secret_env`；须经 secretclient → config-api（完整登记见 remediation 附录 A / CC-R-05）。
+- `CONFIGCENTER_ENV` 必须在 `Validate` 前注入进程身份证。
 
 ## 升级
 

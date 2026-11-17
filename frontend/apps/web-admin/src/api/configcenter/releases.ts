@@ -2,6 +2,7 @@ import type {
   ConfigEnv,
   ConfigRelease,
   ConfigReleaseApprovePayload,
+  ConfigReleaseCancelPayload,
   ConfigReleaseCreatePayload,
   ConfigReleaseListData,
   ConfigReleasePublishPayload,
@@ -16,7 +17,9 @@ import { toPageQuery } from './types';
 
 export interface ConfigReleaseListParams extends PageQuery {
   env: ConfigEnv;
+  keyword?: string;
   namespace: string;
+  owner?: string;
   status?: ConfigReleaseStatus;
 }
 
@@ -70,6 +73,16 @@ export async function rollbackConfigReleaseApi(
 ): Promise<ConfigRelease> {
   return requestClient.post<ConfigRelease>(
     `/configs/releases/${id}/rollback`,
+    payload,
+  );
+}
+
+export async function cancelConfigReleaseApi(
+  id: number,
+  payload: ConfigReleaseCancelPayload,
+): Promise<ConfigRelease> {
+  return requestClient.post<ConfigRelease>(
+    `/configs/releases/${id}/cancel`,
     payload,
   );
 }

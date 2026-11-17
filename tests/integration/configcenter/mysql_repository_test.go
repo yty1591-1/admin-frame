@@ -452,15 +452,21 @@ func TestReleaseListSignatureAndActivation(t *testing.T) {
 	}
 
 	// 列表按 release_no 倒序，并支持状态过滤。
-	all, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 10, 0)
+	all, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace,
+	}, 10, 0)
 	if err != nil || total != 2 || len(all) != 2 || all[0].ReleaseNo != 2 {
 		t.Fatalf("list all mismatch: %v total=%d releases=%+v", err, total, all)
 	}
-	drafts, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, domain.ReleaseStatusDraft, 10, 0)
+	drafts, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace, Status: domain.ReleaseStatusDraft,
+	}, 10, 0)
 	if err != nil || total != 1 || len(drafts) != 1 || drafts[0].ID != draft.ID {
 		t.Fatalf("status filter mismatch: %v total=%d releases=%+v", err, total, drafts)
 	}
-	page, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 1, 1)
+	page, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace,
+	}, 1, 1)
 	if err != nil || total != 2 || len(page) != 1 || page[0].ReleaseNo != 1 {
 		t.Fatalf("pagination mismatch: %v total=%d releases=%+v", err, total, page)
 	}

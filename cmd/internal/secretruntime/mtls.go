@@ -6,19 +6,53 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 )
 
-// LoadServerTLSFromEnv 按环境变量装配 config-api TLS / mTLS。
+// LoadServerTLSFromEnv 按环境变量装配 config-api TLS / mTLS（env 未声明时不强制）。
 //
 // 环境变量：
 //   - CONFIG_API_TLS_CERT / CONFIG_API_TLS_KEY：服务端证书
 //   - CONFIG_API_TLS_CLIENT_CA：客户端 CA（启用后按 CONFIG_API_MTLS 决定校验强度）
-//   - CONFIG_API_MTLS：off | optional | require（默认 off）
+//   - CONFIG_API_MTLS：off | optional | require（默认 off；staging/prod 必须 require）
 //
-// 未配置证书时返回 (nil, nil)，保持本机明文演练能力。
+// 未配置证书且非 prod-like 时返回 (nil, nil)，保持本机明文演练能力。
 func LoadServerTLSFromEnv() (*tls.Config, error) {
+	return LoadServerTLSFromEnvFor(strings.TrimSpace(os.Getenv("CONFIGCENTER_ENV")))
+}
+
+// LoadServerTLSFromEnvFor 与 LoadServerTLSFromEnv 相同，但使用显式部署环境（CC-R-04）。
+func LoadServerTLSFromEnvFor(env string) (*tls.Config, error) {
 	certFile := strings.TrimSpace(os.Getenv("CONFIG_API_TLS_CERT"))
 	keyFile := strings.TrimSpace(os.Getenv("CONFIG_API_TLS_KEY"))
+	caFile := strings.TrimSpace(os.Getenv("CONFIG_API_TLS_CLIENT_CA"))
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("CONFIG_API_MTLS")))
+	if mode == "" {
+		mode = "off"
+	}
+
+	if platformconfig.IsProdLikeEnv(env) {
+		if mode != "require" {
+			return nil, fmt.Errorf(
+				"secretruntime: CONFIG_API_MTLS must be require when env=%s (got %q); CC-R-04",
+				strings.TrimSpace(env), mode,
+			)
+		}
+		if certFile == "" || keyFile == "" {
+			return nil, fmt.Errorf(
+				"secretruntime: CONFIG_API_TLS_CERT/KEY required when env=%s and mTLS=require",
+				strings.TrimSpace(env),
+			)
+		}
+		if caFile == "" {
+			return nil, fmt.Errorf(
+				"secretruntime: CONFIG_API_TLS_CLIENT_CA required when env=%s and mTLS=require",
+				strings.TrimSpace(env),
+			)
+		}
+	}
+
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
@@ -32,11 +66,6 @@ func LoadServerTLSFromEnv() (*tls.Config, error) {
 	cfg := &tls.Config{
 		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
-	}
-	caFile := strings.TrimSpace(os.Getenv("CONFIG_API_TLS_CLIENT_CA"))
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv("CONFIG_API_MTLS")))
-	if mode == "" {
-		mode = "off"
 	}
 	if caFile != "" {
 		pem, err := os.ReadFile(caFile) //nolint:gosec // G304: 路径来自运维注入的 CONFIG_API_TLS_CLIENT_CA。

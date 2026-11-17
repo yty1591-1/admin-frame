@@ -64,18 +64,15 @@ func run(replayDLQ string, sweepCertifications bool) error {
 	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
-		// 与 service/channel/addr 同属进程身份证，不依赖配置中心默认值。
+		// 与 service/channel/addr/env 同属进程身份证，须在 Validate 前注入（CC-R-01）。
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
-			Service: "worker", Channel: "worker", Addr: ":8090",
+			Service: "worker", Channel: "worker", Env: boot.Env, Addr: ":8090",
 		})
 		values["async.enabled"] = "true"
 		return values, nil
 	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-	}
-	if boot.Env != "" {
-		appCfg.Env = boot.Env
 	}
 	cfg := &appCfg.Config
 	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)

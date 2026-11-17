@@ -114,7 +114,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	appOpts := app.Options{Service: service, SecretObserver: metrics}
+	appOpts := app.Options{Service: service, SecretObserver: metrics, Specs: registry}
 
 	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, appOpts)
 	if err != nil {
@@ -201,7 +201,7 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	appOpts := app.Options{Service: service}
+	appOpts := app.Options{Service: service, Specs: registry}
 	bootstrapService, err := app.NewBootstrapService(repos.items, repos.releases, repos.pointers,
 		registry, emitter, deps.IDs, appOpts)
 	if err != nil {
@@ -225,7 +225,7 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}
 	secretService, err := app.NewSecretService(
 		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
-		kek, emitter, deps.IDs, app.Options{Service: service, SecretObserver: metrics})
+		kek, emitter, deps.IDs, app.Options{Service: service, SecretObserver: metrics, Specs: registry})
 	if err != nil {
 		return nil, err
 	}
@@ -570,8 +570,11 @@ func startPendingApprovalGauge(deps *platform.Deps, repos repositories,
 	deps.Background(func(ctx context.Context) error {
 		refresh := func() {
 			for _, namespace := range namespaces {
-				_, total, err := repos.releases.List(ctx, env, namespace,
-					domain.ReleaseStatusPendingReview, 1, 0)
+				_, total, err := repos.releases.List(ctx, domain.ReleaseListFilter{
+					Env:       env,
+					Namespace: namespace,
+					Status:    domain.ReleaseStatusPendingReview,
+				}, 1, 0)
 				if err != nil {
 					continue
 				}

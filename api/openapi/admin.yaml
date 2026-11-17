@@ -1,10 +1,15 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.6.1
+  version: 9.2.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
+    9.2.0：发布单取消端点与列表 keyword/owner 过滤（CC-R-16）；声明键增补
+    `hot_whitelist`（ADR-0015 HotKeySet；CC-R-17）（纯增量）。
+    9.1.0：新增 `GET /admin/v1/configs/namespaces/{namespace}/keys` 声明键列表（纯增量；CC-R-12）。
+    9.0.0：配置发布回滚与密钥版本激活强制 `break_glass` + `break_glass_reason`（破坏性；CC-R-08/14）；
+    密钥激活端点新增必填 requestBody。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
     3.0.0：移除历史订单契约（破坏性）。
     3.1.0：登录新增 `MFABindingRequired` 分支与 `mfa_setup_ticket`（§7.2.1）。
@@ -280,10 +285,14 @@ paths:
     $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key-status'
   /admin/v1/configs/namespaces:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-namespaces'
+  /admin/v1/configs/namespaces/{namespace}/keys:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-namespaces-by-namespace-keys'
   /admin/v1/configs/items:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items'
   /admin/v1/configs/items/{id}:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id'
+  /admin/v1/configs/items/{id}/transition:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-transition'
   /admin/v1/configs/items/{id}/versions:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-versions'
   /admin/v1/configs/items/{id}/versions/{version}:
@@ -300,6 +309,8 @@ paths:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-publish'
   /admin/v1/configs/releases/{id}/rollback:
     $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-rollback'
+  /admin/v1/configs/releases/{id}/cancel:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-cancel'
   /admin/v1/configs/secrets:
     $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets'
   /admin/v1/configs/secrets/{id}:

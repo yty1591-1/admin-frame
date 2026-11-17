@@ -253,6 +253,7 @@ func TestRollbackCreatesNewRelease(t *testing.T) {
 
 	rolled, err := service.Rollback(ctx, app.RollbackInput{
 		TargetReleaseID: target.ID, Actor: testActor,
+		BreakGlass: true, BreakGlassReason: "incident rollback drill",
 	})
 	if err != nil {
 		t.Fatalf("rollback: %v", err)
@@ -295,13 +296,21 @@ func TestRollbackCreatesNewRelease(t *testing.T) {
 
 	if _, err := service.Rollback(ctx, app.RollbackInput{
 		TargetReleaseID: rolled.ID, Actor: testActor,
+		BreakGlass: true, BreakGlassReason: "should conflict",
 	}); !errors.Is(err, apperr.ErrConflict) {
 		t.Fatalf("rolling back to active release must conflict, got %v", err)
+	}
+
+	if _, err := service.Rollback(ctx, app.RollbackInput{
+		TargetReleaseID: target.ID, Actor: testActor,
+	}); !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("rollback without break_glass must be bad request, got %v", err)
 	}
 
 	draft := createDraftRelease(t, service, itemID, "从未发布")
 	if _, err := service.Rollback(ctx, app.RollbackInput{
 		TargetReleaseID: draft.ID, Actor: testActor,
+		BreakGlass: true, BreakGlassReason: "never published",
 	}); !errors.Is(err, apperr.ErrBadRequest) {
 		t.Fatalf("rolling back to never-published release must be bad request, got %v", err)
 	}
@@ -313,6 +322,9 @@ func TestCancelRelease(t *testing.T) {
 	itemID := seedItem(t, repos, 1001, "http.timeout", "10s")
 	release := createDraftRelease(t, service, itemID, "待取消")
 
+	if _, err := service.Cancel(ctx, release.ID, "  ", testActor); err == nil {
+		t.Fatal("empty cancel reason must be rejected")
+	}
 	cancelled, err := service.Cancel(ctx, release.ID, "需求变更", testActor)
 	if err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -325,6 +337,33 @@ func TestCancelRelease(t *testing.T) {
 	}
 	if _, err := service.Cancel(ctx, release.ID, "再次取消", testActor); err == nil {
 		t.Fatal("cancelled release must not be cancelled twice")
+	}
+}
+
+func TestListReleasesKeywordAndOwner(t *testing.T) {
+	service, repos, _ := newReleaseService(t)
+	ctx := context.Background()
+	itemID := seedItem(t, repos, 1001, "http.timeout", "10s")
+	first := createDraftRelease(t, service, itemID, "alpha-rollout")
+	_ = createDraftRelease(t, service, itemID, "beta-hotfix")
+
+	matched, total, err := service.List(ctx, domain.ReleaseListFilter{
+		Env: first.Env, Namespace: first.Namespace, Keyword: "ALPHA",
+	}, 10, 0)
+	if err != nil || total != 1 || len(matched) != 1 || matched[0].ID != first.ID {
+		t.Fatalf("keyword filter: err=%v total=%d matched=%+v", err, total, matched)
+	}
+	owned, total, err := service.List(ctx, domain.ReleaseListFilter{
+		Env: first.Env, Namespace: first.Namespace, Owner: testActor.SubjectID,
+	}, 10, 0)
+	if err != nil || total != 2 || len(owned) != 2 {
+		t.Fatalf("owner filter: err=%v total=%d owned=%+v", err, total, owned)
+	}
+	none, total, err := service.List(ctx, domain.ReleaseListFilter{
+		Env: first.Env, Namespace: first.Namespace, Owner: "nobody",
+	}, 10, 0)
+	if err != nil || total != 0 || len(none) != 0 {
+		t.Fatalf("owner miss: err=%v total=%d none=%+v", err, total, none)
 	}
 }
 
@@ -344,6 +383,22 @@ func TestSnapshotHashIsOrderIndependent(t *testing.T) {
 	}
 	if app.SnapshotHash(items) == app.SnapshotHash(changed) {
 		t.Fatal("snapshot hash must change when item version changes")
+	}
+}
+
+func TestPublishDryRunRejectsInvalidValue(t *testing.T) {
+	service, repos, _ := newReleaseService(t)
+	ctx := context.Background()
+	// 直接播种非法枚举，绕过 CreateItem 校验，模拟脏数据进入快照。
+	itemID := seedItem(t, repos, 2001, "log.level", "verbose")
+	release := createDraftRelease(t, service, itemID, "脏值发布")
+	approveRelease(t, service, release.ID)
+	_, err := service.Publish(ctx, release.ID, nil, testActor)
+	if err == nil || !errors.Is(err, apperr.ErrBadRequest) {
+		t.Fatalf("dry-run must reject invalid enum, got %v", err)
+	}
+	if _, getErr := repos.Pointers.Get(ctx, "dev", "platform"); !errors.Is(getErr, domain.ErrNotFound) {
+		t.Fatalf("pointer must not advance after dry-run failure: %v", getErr)
 	}
 }
 

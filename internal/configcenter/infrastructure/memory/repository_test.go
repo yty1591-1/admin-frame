@@ -224,7 +224,9 @@ func TestReleaseRepositoryCreateAndQuery(t *testing.T) {
 		t.Fatalf("mismatched release item must be ErrStateConflict, got %v", err)
 	}
 
-	listed, total, err := repos.Releases.List(ctx, release.Env, release.Namespace, "", 20, 0)
+	listed, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: release.Env, Namespace: release.Namespace,
+	}, 20, 0)
 	if err != nil || total != 1 || len(listed) != 1 {
 		t.Fatalf("list releases: %v total=%d %+v", err, total, listed)
 	}

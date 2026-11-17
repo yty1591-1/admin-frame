@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	identityrest "github.com/admin-frame/admin-frame/internal/identity/transport/rest"
 	notificationcallback "github.com/admin-frame/admin-frame/internal/notification/transport/callback"
@@ -34,11 +37,32 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, identityRT *identit
 		return err
 	}
 	if services != nil {
-		callbackHandler, cerr := notificationcallback.NewHandler(services.Receipts)
+		secret, serr := resolveNotificationCallbackSecret(deps)
+		if serr != nil {
+			return serr
+		}
+		callbackHandler, cerr := notificationcallback.NewHandler(services.Receipts, secret)
 		if cerr != nil {
 			return cerr
 		}
 		mux.Handle("POST /v1/notification-callbacks/receipt", http.HandlerFunc(callbackHandler.Receipt))
 	}
 	return nil
+}
+
+// resolveNotificationCallbackSecret 优先 secretclient，local/dev/test 可回退裸 env。
+func resolveNotificationCallbackSecret(deps *platform.Deps) (string, error) {
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	secret, err := secretruntime.ResolveNotificationCallbackSecretFromEnv(context.Background(), env)
+	if err == nil {
+		return secret, nil
+	}
+	fallback, ferr := notificationcallback.LoadCallbackSecretFromEnv()
+	if ferr != nil {
+		return "", fmt.Errorf("notification callback secret: resolve failed (%v); bare env: %w", err, ferr)
+	}
+	return fallback, nil
 }

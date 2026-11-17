@@ -108,7 +108,7 @@ func newReleaseService(t *testing.T) (*app.ReleaseService, *memory.Repositories,
 	repos := memory.New()
 	emitter := &fakeEmitter{}
 	service, err := app.NewReleaseService(repos.Items, repos.Releases, repos.Pointers, emitter, newIDs(),
-		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }, Specs: testSpecs(t)})
 	if err != nil {
 		t.Fatalf("new release service: %v", err)
 	}

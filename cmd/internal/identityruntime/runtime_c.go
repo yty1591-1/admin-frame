@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -99,11 +100,27 @@ func buildSMSLoginService(
 		return nil, nil
 	}
 
+	accessKeyID := ""
+	accessKeySecret := ""
+	if strings.EqualFold(strings.TrimSpace(smsCfg.Driver), "aliyun") {
+		if err := secretruntime.RejectBareSecretEnv(cfg.Env, aliyunSMSAccessKeySecretEnv); err != nil {
+			return nil, apperr.Internal("identity sms credentials", err)
+		}
+		accessKeyID = strings.TrimSpace(os.Getenv(aliyunSMSAccessKeyIDEnv))
+		accessKeySecret = strings.TrimSpace(os.Getenv(aliyunSMSAccessKeySecretEnv))
+		if accessKeyID == "" || accessKeySecret == "" {
+			return nil, apperr.Internal(
+				"identity sms aliyun requires "+aliyunSMSAccessKeyIDEnv+" and "+aliyunSMSAccessKeySecretEnv+" (empty credentials refused)",
+				nil,
+			)
+		}
+	}
+
 	smsDriverCfg := pkgsms.Config{
 		Driver: smsCfg.Driver,
 		Aliyun: pkgsms.AliyunConfig{
-			AccessKeyID:     os.Getenv(aliyunSMSAccessKeyIDEnv),
-			AccessKeySecret: os.Getenv(aliyunSMSAccessKeySecretEnv),
+			AccessKeyID:     accessKeyID,
+			AccessKeySecret: accessKeySecret,
 			SignName:        smsCfg.SignName,
 		},
 	}
@@ -249,10 +266,11 @@ func buildOAuthService(
 	providers := make(map[string]app.OAuthProvider, len(providerCfgs))
 	for _, providerCfg := range providerCfgs {
 		secretEnv := strings.TrimSpace(providerCfg.ClientSecretEnv)
-		secret := os.Getenv(secretEnv)
-		if secretEnv == "" || strings.TrimSpace(secret) == "" {
+		secret, err := secretruntime.ResolveOAuthClientSecretOrEnv(
+			context.Background(), cfg.Env, providerCfg.Name, secretEnv)
+		if err != nil {
 			return nil, apperr.Internal(
-				"identity oauth provider "+providerCfg.Name+": client secret env "+secretEnv+" is empty", nil)
+				"identity oauth provider "+providerCfg.Name+" credentials", err)
 		}
 		oauthCfg := identityoauth.Config{
 			Name:                   providerCfg.Name,

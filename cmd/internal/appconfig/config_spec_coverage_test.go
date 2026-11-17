@@ -9,8 +9,8 @@ import (
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 )
 
-// excludedKeys 是明确不进入配置中心的平台键及原因（密钥、部署身份、
-// 后端专属配置、当前值类型不支持等）。
+// excludedKeys 是明确不进入配置中心的平台键及原因。
+// 理由须对齐 docs/CONFIG_STANDARDS.md §3.1.1；禁止「M1 暂不支持」等过时表述（CC-R-18）。
 //
 //nolint:gosec // 仅为排除清单，不包含任何凭据值
 var excludedKeys = map[string]string{
@@ -27,7 +27,6 @@ var excludedKeys = map[string]string{
 	"redis.password":                       "含缓存凭据",
 	"redis.key_prefix":                     "缓存域段",
 	"tracing.enabled":                      "可空开关，由 exporter 推断",
-	"tracing.sample_ratio":                 "浮点采样率，M1 值类型暂不支持",
 	"id.node_id":                           "部署身份",
 	"identity.hash_key_id":                 "随摘要密钥派生",
 	"identity.revocation.state_ttl":        "派生值：默认随 access_ttl 计算",
@@ -50,6 +49,7 @@ var excludedKeys = map[string]string{
 	"identity.saml.login_redirect_url":     "部署地址",
 	"identity.saml.certificate_pem":        "SP 证书随部署与轮换",
 	"identity.saml.certificate_next_pem":   "SP 证书随部署与轮换",
+	"identity.saml.private_key_next":       "SAML 轮换私钥；随密钥子域 dual_version 待续",
 	"identity.refresh_rate_limit.ip_burst": "0 表示运行期默认 40",
 	"identity.oauth.rate_limit.ip_burst":   "0 表示运行期默认 40",
 	"identity.saml.rate_limit.ip_burst":    "0 表示运行期默认 40",
@@ -78,12 +78,9 @@ var excludedPrefixes = map[string]string{
 	"identity.oauth.providers":           "第三方 IdP 端点与凭据随部署",
 	"identity.saml.providers":            "第三方 IdP 元数据随部署",
 	"identity.mfa.keys":                  "MFA 密钥环",
-	"identity.mfa.secret_key":            "MFA 主密钥",
 	"identity.mfa.active_key_id":         "密钥环选择",
 	"identity.subject.":                  "主体加密密钥环",
 	"identity.previous_hash_keys":        "摘要历史密钥",
-	"identity.hash_key":                  "PII / 短信码摘要主密钥",
-	"identity.saml.private_key":          "SAML 私钥",
 	"identity.password.tenant_overrides": "商户级密码策略列表",
 	"identity.m2m.allowed_scopes":        "权限码白名单（列表值）",
 	"identity.scim.group_role_map":       "SCIM 组到角色映射",
@@ -96,8 +93,41 @@ var excludedPrefixes = map[string]string{
 	"notification.channels.push.fcm.":    "FCM 凭据与端点随密钥托管部署",
 }
 
-// excludedSuffixes 是按后缀排除的键（M1 暂不支持浮点值类型）。
-var excludedSuffixes = []string{".rps", ".ip_rps"}
+// excludedSuffixes 预留给确属永久部署侧、且无法用 string+pattern 登记的后缀。
+// 浮点速率（*.rps / *.ip_rps）已按 CC-R-11 登记为 string+pattern，不得再排除。
+var excludedSuffixes = []string{}
+
+// TestExcludedReasonsForbidStalePhrases 守护排除理由不得再用「M1 暂不支持」等过时表述（CC-R-18）。
+func TestExcludedReasonsForbidStalePhrases(t *testing.T) {
+	forbidden := []string{
+		"M1 暂不支持",
+		"暂不支持 float",
+		"值类型不支持",
+		"当前值类型不支持",
+	}
+	check := func(kind, key, reason string) {
+		t.Helper()
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("%s %q 缺少排除理由", kind, key)
+			return
+		}
+		for _, phrase := range forbidden {
+			if strings.Contains(reason, phrase) {
+				t.Errorf("%s %q 理由 %q 含禁止表述 %q；须对齐 CONFIG_STANDARDS §3.1.1",
+					kind, key, reason, phrase)
+			}
+		}
+	}
+	for key, reason := range excludedKeys {
+		check("excludedKeys", key, reason)
+	}
+	for prefix, reason := range excludedPrefixes {
+		check("excludedPrefixes", prefix, reason)
+	}
+	if len(excludedSuffixes) != 0 {
+		t.Fatalf("excludedSuffixes 应为空（浮点已登记）；got %v", excludedSuffixes)
+	}
+}
 
 // TestPlatformKeyCoverage 保证平台段新增配置字段必须显式声明或登记排除，
 // 防止配置中心 key spec 与代码默认值脱节（CC-F-41 遗漏率 0）。

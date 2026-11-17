@@ -62,6 +62,25 @@ export interface ConfigNamespaceListData {
   total: number;
 }
 
+export interface ConfigDeclaredKey {
+  default?: string;
+  deprecated: boolean;
+  description: string;
+  enum?: string[];
+  hot_whitelist: boolean;
+  key: string;
+  owner: string;
+  reload_mode: 'hot' | 'startup';
+  required: boolean;
+  sensitive: boolean;
+  value_type: ConfigValueType;
+}
+
+export interface ConfigDeclaredKeyListData {
+  items: ConfigDeclaredKey[];
+  total: number;
+}
+
 export interface ConfigItem {
   created_at: string;
   created_by: string;
@@ -106,6 +125,11 @@ export interface ConfigItemUpdatePayload {
   change_summary?: string;
   expected_version?: number;
   value: string;
+}
+
+export interface ConfigItemTransitionPayload {
+  expected_version?: number;
+  to: ConfigItemStatus;
 }
 
 export interface ConfigItemVersion {
@@ -201,8 +225,14 @@ export interface ConfigReleasePublishPayload {
 }
 
 export interface ConfigReleaseRollbackPayload {
+  break_glass: boolean;
+  break_glass_reason: string;
   comment?: string;
   expected_pointer_version?: null | number;
+}
+
+export interface ConfigReleaseCancelPayload {
+  reason: string;
 }
 
 export const CONFIG_ENV_OPTIONS: { label: string; value: ConfigEnv }[] = [

@@ -246,17 +246,29 @@ func (r *releaseRepository) GetByNo(_ context.Context, env, namespace string, re
 	return cloneRelease(r.store.releases[id]), nil
 }
 
-// List 按状态过滤列出发布，按 release_no 降序稳定分页。
-func (r *releaseRepository) List(_ context.Context, env, namespace string, status domain.ReleaseStatus, limit, offset int) ([]domain.Release, int, error) {
+// List 按过滤条件列出发布，按 release_no 降序稳定分页。
+func (r *releaseRepository) List(_ context.Context, filter domain.ReleaseListFilter, limit, offset int) ([]domain.Release, int, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
+	keyword := strings.ToLower(strings.TrimSpace(filter.Keyword))
+	owner := strings.TrimSpace(filter.Owner)
 	all := make([]domain.Release, 0, len(r.store.releases))
 	for _, release := range r.store.releases {
-		if release.Env != env || release.Namespace != namespace {
+		if release.Env != filter.Env || release.Namespace != filter.Namespace {
 			continue
 		}
-		if status != "" && release.Status != status {
+		if filter.Status != "" && release.Status != filter.Status {
 			continue
+		}
+		if owner != "" && release.CreatedBy != owner {
+			continue
+		}
+		if keyword != "" {
+			name := strings.ToLower(release.Name)
+			desc := strings.ToLower(release.Description)
+			if !strings.Contains(name, keyword) && !strings.Contains(desc, keyword) {
+				continue
+			}
 		}
 		all = append(all, cloneRelease(release))
 	}

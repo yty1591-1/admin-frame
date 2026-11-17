@@ -54,13 +54,20 @@
 2. 业务进程设置：
    - `CONFIG_API_URL`
    - `CONFIG_SERVICE_IDENTITY`
-   - `CONFIGCENTER_ENV`
+   - `CONFIGCENTER_ENV`（必须在 Validate 前注入进程身份证；禁止 Load 后再补写）
    - 可选 `CONFIGCENTER_NAMESPACES` / `CONFIGCENTER_CACHE_DIR`
-3. 确认拉取成功后再挂流量。
+3. **config-api（staging/prod）额外强制（CC-R-04）**：
+   - `CONFIG_API_MTLS=require`
+   - `CONFIG_API_TLS_CERT` / `CONFIG_API_TLS_KEY` / `CONFIG_API_TLS_CLIENT_CA`
+   - `CONFIG_API_NAMESPACE_ALLOWLIST`（例：`admin-api:platform,identity;biz-api:platform,identity;*:platform`）
+4. 确认拉取成功后再挂流量。
+5. staging/prod 禁止业务密钥裸 env（短信 AK、通知盐/回调密钥、OAuth client_secret_env 等）；须走 secretclient（CC-R-03/05）。
 
 ### 回滚
 
-- 管理面回滚到最近 `published` Release；观察长轮询 1s 量级唤醒与 `config_hot_view_version`。
+- 管理面回滚到历史 Release 须显式 `break_glass=true` + `break_glass_reason`（CC-R-08；绕过双人审批）。
+- 审计事件 `config.release.rollback` 含破玻璃标记；**24h 内**由第二人补审并留痕。
+- 观察长轮询 1s 量级唤醒与 `config_hot_view_version`。
 
 ### Helm 引导
 

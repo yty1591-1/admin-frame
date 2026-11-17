@@ -10,6 +10,12 @@ export type ConfigSecretStatus =
   | 'revoked'
   | 'destroyed';
 
+export type ConfigSecretVersionStatus =
+  | 'active'
+  | 'grace'
+  | 'revoked'
+  | 'destroyed';
+
 export interface ConfigSecret {
   id: number;
   env: string;
@@ -36,6 +42,16 @@ export interface ConfigSecretListResult {
   total: number;
 }
 
+export interface ConfigSecretVersion {
+  version: number;
+  fingerprint: string;
+  status: ConfigSecretVersionStatus;
+  algorithm: string;
+  created_by: string;
+  created_at: string;
+  revoked_at?: string | null;
+}
+
 export interface ConfigSecretGrant {
   id: number;
   env: string;
@@ -45,6 +61,16 @@ export interface ConfigSecretGrant {
   created_by: string;
   created_at: string;
   revoked_at?: string | null;
+  expires_at?: string | null;
+}
+
+export interface ConfigSecretAccess {
+  occurred_at: string;
+  service_identity: string;
+  secret_name: string;
+  secret_version: number;
+  result: string;
+  trace_id: string;
 }
 
 export async function listConfigSecretsApi(params: Recordable<any>) {
@@ -97,6 +123,23 @@ export async function revokeConfigSecretApi(
   );
 }
 
+export async function listConfigSecretVersionsApi(id: number) {
+  return requestClient.get<{ items: ConfigSecretVersion[]; total: number }>(
+    `/admin/v1/configs/secrets/${id}/versions`,
+  );
+}
+
+export async function activateConfigSecretVersionApi(
+  id: number,
+  version: number,
+  data: { break_glass: boolean; break_glass_reason: string },
+) {
+  return requestClient.post<ConfigSecret>(
+    `/admin/v1/configs/secrets/${id}/versions/${version}/activate`,
+    data,
+  );
+}
+
 export async function listConfigSecretGrantsApi(id: number) {
   return requestClient.get<{ items: ConfigSecretGrant[]; total: number }>(
     `/admin/v1/configs/secrets/${id}/grants`,
@@ -110,5 +153,17 @@ export async function createConfigSecretGrantApi(
   return requestClient.post<ConfigSecretGrant>(
     `/admin/v1/configs/secrets/${id}/grants`,
     data,
+  );
+}
+
+export async function revokeConfigSecretGrantApi(id: number, grantId: number) {
+  return requestClient.post(
+    `/admin/v1/configs/secrets/${id}/grants/${grantId}/revoke`,
+  );
+}
+
+export async function listConfigSecretAccessesApi(id: number) {
+  return requestClient.get<{ items: ConfigSecretAccess[]; total: number }>(
+    `/admin/v1/configs/secrets/${id}/accesses`,
   );
 }

@@ -11,6 +11,7 @@ import { Button, Descriptions, Input, message, Space, Tag } from 'ant-design-vue
 import {
   getConfigErrorMessage,
   getConfigItemApi,
+  transitionConfigItemApi,
   updateConfigItemValueApi,
 } from '#/api';
 
@@ -21,14 +22,21 @@ const router = useRouter();
 
 const loading = ref(false);
 const saving = ref(false);
+const transitioning = ref(false);
 const item = ref<ConfigItem>();
 const value = ref('');
 const changeSummary = ref('');
 
 const itemId = computed(() => Number(route.query.id || 0));
 
-const canEdit = computed(
-  () => !!item.value && !item.value.sensitive && itemId.value > 0,
+const canEdit = computed(() => !!item.value && !item.value.sensitive && itemId.value > 0);
+
+const canDeprecate = computed(() => item.value?.status === 'active');
+const canArchive = computed(
+  () =>
+    item.value?.status === 'active' ||
+    item.value?.status === 'deprecated' ||
+    item.value?.status === 'draft',
 );
 
 async function loadItem() {
@@ -71,6 +79,25 @@ async function save() {
     message.error(getConfigErrorMessage(error, '保存失败'));
   } finally {
     saving.value = false;
+  }
+}
+
+async function transitionTo(to: 'active' | 'archived' | 'deprecated') {
+  if (!item.value) {
+    return;
+  }
+  transitioning.value = true;
+  try {
+    const updated = await transitionConfigItemApi(item.value.id, {
+      expected_version: item.value.version,
+      to,
+    });
+    item.value = updated;
+    message.success(`状态已迁移为 ${updated.status}`);
+  } catch (error) {
+    message.error(getConfigErrorMessage(error, '状态迁移失败'));
+  } finally {
+    transitioning.value = false;
   }
 }
 
@@ -142,12 +169,8 @@ onMounted(loadItem);
         placeholder="写入后追加为新版本"
       />
       <div class="mb-2 mt-4 font-medium">变更摘要</div>
-      <Input
-        v-model:value="changeSummary"
-        :disabled="!canEdit || loading"
-        placeholder="可选"
-      />
-      <Space class="mt-4">
+      <Input v-model:value="changeSummary" :disabled="!canEdit || loading" placeholder="可选" />
+      <Space class="mt-4" wrap>
         <Button
           v-access:code="'config:write'"
           :disabled="!canEdit"
@@ -156,6 +179,31 @@ onMounted(loadItem);
           @click="save"
         >
           保存新版本
+        </Button>
+        <Button
+          v-if="item?.status === 'draft'"
+          v-access:code="'config:write'"
+          :loading="transitioning"
+          @click="transitionTo('active')"
+        >
+          启用
+        </Button>
+        <Button
+          v-if="canDeprecate"
+          v-access:code="'config:write'"
+          :loading="transitioning"
+          @click="transitionTo('deprecated')"
+        >
+          废弃
+        </Button>
+        <Button
+          v-if="canArchive"
+          v-access:code="'config:write'"
+          :loading="transitioning"
+          danger
+          @click="transitionTo('archived')"
+        >
+          归档
         </Button>
         <Button @click="goVersions">查看版本历史</Button>
         <Button @click="goBack">返回列表</Button>

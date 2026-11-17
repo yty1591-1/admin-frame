@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/id"
@@ -45,6 +46,8 @@ type Options struct {
 	Now func() time.Time
 	// SecretObserver 密钥解析指标；nil 表示不打点。
 	SecretObserver SecretResolveObserver
+	// Specs 键声明注册表；Release/Secret 发布与入库校验使用（CC-R-07/14）。
+	Specs *spec.Registry
 }
 
 type auditContext struct {

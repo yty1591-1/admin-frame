@@ -16,6 +16,7 @@ import (
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 	"github.com/admin-frame/admin-frame/internal/security"
 
@@ -48,34 +49,53 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
 	}
-	// 先 Resolve 再 Validate：JWT 明文只来自 secretclient，禁止源码占位密钥。
+	// 先 Resolve 再 Validate：JWT / identity 明文只来自 secretclient。
 	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
 	if err != nil {
 		return fmt.Errorf("jwt secret: %w", err)
 	}
+	hashKey, mfaSecret, err := secretruntime.ResolveIdentitySecretsFromEnv(ctx, boot.Env)
+	if err != nil {
+		if !platformconfig.IsLocalDevEnv(boot.Env) {
+			return fmt.Errorf("identity secrets: %w", err)
+		}
+		// local/dev/test：允许回退到 applyLocalIdentityPIIKeys（CC-R-02）。
+		hashKey, mfaSecret = "", ""
+	}
+	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
+	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
 		// 故进程级补齐非密钥项；密钥已由 secretclient 解析。
+		// Env 必须在此注入，供 Normalize/Validate 使用（CC-R-01）。
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
-			Service: "admin-api", Channel: "admin", Addr: ":8081",
+			Service: "admin-api", Channel: "admin", Env: boot.Env, Addr: ":8081",
 		})
-		values["identity.enabled"] = "true"
-		values["auth.mode"] = "jwt"
-		values["auth.jwt.alg"] = "HS256"
-		values["auth.jwt.issuer"] = "admin-frame"
-		values["auth.jwt.audience"] = "admin"
+		// 仅补齐快照缺失项；不覆盖配置中心已发布的 issuer/mode 等（CC-R-15）。
+		configboot.SetIfEmpty(values, "identity.enabled", "true")
+		configboot.SetIfEmpty(values, "auth.mode", "jwt")
+		configboot.SetIfEmpty(values, "auth.jwt.alg", "HS256")
+		configboot.SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")
+		configboot.SetIfEmpty(values, "auth.jwt.audience", "admin")
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if hashKey != "" {
+			values[secretruntime.IdentityHashKeyValueKey] = hashKey
+		}
+		if mfaSecret != "" {
+			values[secretruntime.IdentityMFASecretValueKey] = mfaSecret
+		}
+		if samlPrivateKey != "" {
+			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
+		}
 		return values, nil
 	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if boot.Env != "" {
-		appCfg.Env = boot.Env
-	}
-	// 本地/冒烟：配置中心不托管 identity.hash_key / subject.keys，缺省则注入固定非样例密钥，
-	// 供 EnsureAdmin 与登录 PII 索引（非生产路径；生产须经 secrets.providers）。
-	applyLocalIdentityPIIKeys(&appCfg.Identity)
+	// 主体加密：优先 secretclient 的 identity.subject.key；仍空时才本地回退（CC-R-05）。
+	secretruntime.ApplyIdentitySubjectKey(&appCfg.Identity, subjectKey)
+	// 仅 local/dev/test：配置中心未托管 hash_key / subject.keys 时注入固定开发密钥（CC-R-02）。
+	applyLocalIdentityPIIKeys(appCfg.Env, &appCfg.Identity)
 	var (
 		iamOnce     sync.Once
 		iamRT       *iamRuntime
@@ -147,10 +167,13 @@ func run() error {
 
 // applyLocalIdentityPIIKeys 在缺少托管密钥时填充本地 PII 摘要/加密密钥环。
 //
-// 仅当字段为空时写入；不覆盖 vault/file 已注入的值。密钥为固定本地值，
-// 故意避开 validateSampleCredentials 拒绝的公开样例十六进制串。
-func applyLocalIdentityPIIKeys(cfg *identityconfig.IdentityConfig) {
+// 仅 local/dev/test 且字段为空时写入；staging/prod/未声明环境一律跳过（CC-R-02）。
+// 密钥为固定本地值，故意避开 validateSampleCredentials 拒绝的公开样例十六进制串。
+func applyLocalIdentityPIIKeys(env string, cfg *identityconfig.IdentityConfig) {
 	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	if !platformconfig.IsLocalDevEnv(env) {
 		return
 	}
 	const (

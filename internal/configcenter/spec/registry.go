@@ -29,6 +29,9 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(specs ...domain.KeySpec) error {
 	pending := make(map[string]domain.KeySpec, len(specs))
 	for _, keySpec := range specs {
+		if err := keySpec.Normalize(); err != nil {
+			return err
+		}
 		if err := keySpec.Validate(); err != nil {
 			return err
 		}

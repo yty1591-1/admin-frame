@@ -39,6 +39,8 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	// 换成变量或辅助函数会让契约测试判定为「死契约」。
 	mux.Handle("GET /admin/v1/configs/namespaces",
 		observed(observer, RouteNamespaces, authMW(read(http.HandlerFunc(h.ListNamespaces)))))
+	mux.Handle("GET /admin/v1/configs/namespaces/{namespace}/keys",
+		observed(observer, RouteDeclaredKeys, authMW(read(http.HandlerFunc(h.ListDeclaredKeys)))))
 
 	mux.Handle("GET /admin/v1/configs/items",
 		observed(observer, RouteItemsList, authMW(read(http.HandlerFunc(h.ListItems)))))
@@ -48,6 +50,8 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		observed(observer, RouteItemsGet, authMW(read(http.HandlerFunc(h.GetItem)))))
 	mux.Handle("PUT /admin/v1/configs/items/{id}",
 		observed(observer, RouteItemsUpdate, authMW(write(http.HandlerFunc(h.UpdateValue)))))
+	mux.Handle("POST /admin/v1/configs/items/{id}/transition",
+		observed(observer, RouteItemsTransition, authMW(write(http.HandlerFunc(h.TransitionItem)))))
 	mux.Handle("GET /admin/v1/configs/items/{id}/versions",
 		observed(observer, RouteVersionsList, authMW(read(http.HandlerFunc(h.ListVersions)))))
 	mux.Handle("GET /admin/v1/configs/items/{id}/versions/{version}",
@@ -67,6 +71,8 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 		observed(observer, RouteReleasesPublish, authMW(publish(http.HandlerFunc(h.PublishRelease)))))
 	mux.Handle("POST /admin/v1/configs/releases/{id}/rollback",
 		observed(observer, RouteReleasesRollback, authMW(publish(http.HandlerFunc(h.RollbackRelease)))))
+	mux.Handle("POST /admin/v1/configs/releases/{id}/cancel",
+		observed(observer, RouteReleasesCancel, authMW(write(http.HandlerFunc(h.CancelRelease)))))
 
 	secretRead := perm(string(iam.PermConfigSecretRead))
 	secretWrite := perm(string(iam.PermConfigSecretWrite))
@@ -102,10 +108,12 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 // 路由标签与 observability 包保持一致（低基数、稳定）。
 const (
 	RouteNamespaces          = "namespaces"
+	RouteDeclaredKeys        = "namespaces.keys"
 	RouteItemsList           = "items.list"
 	RouteItemsCreate         = "items.create"
 	RouteItemsGet            = "items.get"
 	RouteItemsUpdate         = "items.update"
+	RouteItemsTransition     = "items.transition"
 	RouteVersionsList        = "versions.list"
 	RouteVersionsGet         = "versions.get"
 	RouteReleasesCreate      = "releases.create"
@@ -115,6 +123,7 @@ const (
 	RouteReleasesApprove     = "releases.approve"
 	RouteReleasesPublish     = "releases.publish"
 	RouteReleasesRollback    = "releases.rollback"
+	RouteReleasesCancel      = "releases.cancel"
 	RouteSecretsList         = "secrets.list"
 	RouteSecretsCreate       = "secrets.create"
 	RouteSecretsGet          = "secrets.get"

@@ -185,9 +185,11 @@ func run(outDir, envName, namespace, dsn string) error {
 	if err := db.WithinUnitOfWork(ctx, sqlDB, nil, func(txCtx context.Context) error {
 		var rerr error
 		rollback, rerr = releases.Rollback(txCtx, app.RollbackInput{
-			TargetReleaseID: seedResult.ReleaseID,
-			Name:            "drill-rollback",
-			Actor:           writer,
+			TargetReleaseID:  seedResult.ReleaseID,
+			Name:             "drill-rollback",
+			BreakGlass:       true,
+			BreakGlassReason: "configcenter local drill",
+			Actor:            writer,
 		})
 		return rerr
 	}); err != nil {

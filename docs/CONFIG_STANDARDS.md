@@ -61,6 +61,21 @@ config-api 拉取结果 > 本地缓存目录 > 代码默认值（key spec / appl
 - 远端与本地缓存都不可用时业务进程 **fail-fast**。
 - 启动期业务键由 config-api 当前生效 Release 提供；热更只允许显式 `reloadable=hot` 的键。
 - 热更配置只允许显式 `reloadable=hot` 的键；`addr` / `auth` / `storage.driver` 等需重建资源的键必须排除。
+- **`CONFIGCENTER_ENV` / 进程 `env` 必须在 `Validate` 前可见**（经 `configboot.WithProcessIdentity` 或自举 Values 注入）。禁止 `LoadFromValues` / `Validate` 成功后再赋值 `appCfg.Env` 却不重新校验；否则 CFG-05 生产门禁被绕过（CC-R-01）。
+
+#### 3.1.1 永久排除（不得进配置中心 Item 播种）
+
+以下类别保持排除；`config_spec_coverage_test` 必须给出与本表一致的理由，**禁止**写「M1 暂不支持」：
+
+| 分类 | 示例 | 注入方式 |
+|------|------|----------|
+| 部署身份 | `env` / `service` / `channel` / `addr` / `id.node_id` | `WithProcessIdentity` 或编排 |
+| 基础设施口令 | `db.dsn` / `redis.password` | 仅 `ADMIN_FRAME_DB_*` / `REDIS_*` |
+| 密钥环与列表 | `identity.subject.keys` / `previous_hash_keys` / `mfa.keys` / JWT keys | 密钥子域或本地回退 |
+| 云厂商连接参数 | `storage.s3.*` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider |
+| CORS / 本地路径 | `cors.*` / `storage.local.*` | 网关与节点部署 |
+
+浮点速率与采样率须以 **string + pattern**（或未来 float ValueType）登记进 KeySpec，不得长期排除。
 
 ### 3.2 迁移期优先级
 
@@ -158,8 +173,10 @@ value_hash  = SHA-256(plaintext)[:8]（仅比对，不可逆）
 ```text
 引导变量（CONFIG_API_* / CONFIGCENTER_ENV）→ SDK 拉取 config-api（约 3s）
 → 成功写本地缓存 / 失败读缓存 / 都没有 fail-fast
-→ 合并 Values 到 Loader → normalize → Validate → 装配
+→ 合并 Values + 进程身份证（service/channel/env/addr）→ normalize → Validate → 装配
 ```
+
+`env` 属于进程身份证，与 `service` / `channel` 一并在进入 Loader 前注入；不得在 Validate 通过后补写。
 
 config-api 自身启动：代码默认值 + db/redis 环境变量 → 播种基线（空库）→ 装配拉取 / 长轮询 / 密钥 resolve。
 

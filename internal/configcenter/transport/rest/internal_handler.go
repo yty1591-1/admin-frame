@@ -43,12 +43,17 @@ func NewInternalHandler(cfg InternalHandlerConfig) (*InternalHandler, error) {
 // GetNamespaceConfig 处理 GET /internal/v1/configs/{env}/{namespace}?release_key=。
 func (h *InternalHandler) GetNamespaceConfig(w http.ResponseWriter, r *http.Request) {
 	traceID := apiresp.TraceIDFromContext(r.Context())
-	if _, err := resolveServiceIdentity(r); err != nil {
+	identity, err := resolveServiceIdentity(r)
+	if err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
 	env := strings.TrimSpace(r.PathValue("env"))
 	namespace := strings.TrimSpace(r.PathValue("namespace"))
+	if err := authorizeNamespace(env, identity, namespace); err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
 	snap, err := h.snapshots.Load(r.Context(), env, namespace)
 	if err != nil {
 		apiresp.FromError(w, err, traceID)
@@ -74,7 +79,8 @@ func (h *InternalHandler) GetNamespaceConfig(w http.ResponseWriter, r *http.Requ
 // Notifications 处理 GET /internal/v1/configs/notifications?env=&namespaces=platform:12,identity:5。
 func (h *InternalHandler) Notifications(w http.ResponseWriter, r *http.Request) {
 	traceID := apiresp.TraceIDFromContext(r.Context())
-	if _, err := resolveServiceIdentity(r); err != nil {
+	identity, err := resolveServiceIdentity(r)
+	if err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
@@ -83,6 +89,12 @@ func (h *InternalHandler) Notifications(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
+	}
+	for ns := range known {
+		if authErr := authorizeNamespace(env, identity, ns); authErr != nil {
+			apiresp.FromError(w, authErr, traceID)
+			return
+		}
 	}
 	timeout := app.DefaultLongPollTimeout
 	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {

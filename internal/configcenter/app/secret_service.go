@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/envelope"
@@ -34,6 +35,7 @@ type SecretService struct {
 	grants   domain.SecretGrantRepository
 	access   domain.SecretAccessRepository
 	kek      envelope.KEKProvider
+	specs    *spec.Registry
 	audit    auditContext
 	ids      id.Generator
 	now      func() time.Time
@@ -73,12 +75,42 @@ func NewSecretService(
 		grants:   grants,
 		access:   access,
 		kek:      kek,
+		specs:    opts.Specs,
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
 		observer: opts.SecretObserver,
 		LeaseTTL: 5 * time.Minute,
 	}, nil
+}
+
+// enforceSecretRule 按 Registry 中的 SecretRule 校验明文（CC-R-14）。
+//
+// Specs 未注入或键未声明 Sensitive 时放行（兼容手工密钥名）；已声明则必须匹配。
+func (s *SecretService) enforceSecretRule(namespace, name, plaintext string) error {
+	if s.specs == nil {
+		return nil
+	}
+	keySpec, ok := s.specs.Lookup(namespace, name)
+	if !ok || !keySpec.Sensitive {
+		return nil
+	}
+	if keySpec.SecretRule == nil {
+		return apperr.BadRequest(fmt.Sprintf("sensitive key %s.%s missing secret_rule", namespace, name))
+	}
+	if err := keySpec.SecretRule.MatchPlaintext(plaintext); err != nil {
+		return apperr.BadRequest(err.Error())
+	}
+	return nil
+}
+
+// requireAudit 写审计；失败则返回错误（CC-R-14 fail-closed，对齐 Item/Release）。
+func (s *SecretService) requireAudit(ctx context.Context, actor Actor, action, resourceType, resourceID string,
+	outcome audit.Outcome, reason string, attrs map[string]string) error {
+	if err := s.audit.emit(ctx, actor, action, resourceType, resourceID, outcome, reason, attrs); err != nil {
+		return apperr.Internal("emit config secret audit failed", err)
+	}
+	return nil
 }
 
 // CreateSecretInput 创建密钥入参。
@@ -102,6 +134,9 @@ func (s *SecretService) CreateSecret(ctx context.Context, in CreateSecretInput) 
 	}
 	if strings.TrimSpace(in.Plaintext) == "" {
 		return domain.Secret{}, apperr.BadRequest("plaintext is required")
+	}
+	if err := s.enforceSecretRule(in.Namespace, in.Name, in.Plaintext); err != nil {
+		return domain.Secret{}, err
 	}
 	if in.RotateIntervalDays == 0 {
 		in.RotateIntervalDays = 90
@@ -147,11 +182,13 @@ func (s *SecretService) CreateSecret(ctx context.Context, in CreateSecretInput) 
 		}
 		return domain.Secret{}, apperr.Internal("create secret failed", err)
 	}
-	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretCreate, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretCreate, ResourceTypeSecret,
 		strconv.FormatInt(secretID, 10), audit.OutcomeSuccess, "", map[string]string{
 			"env": in.Env, "namespace": in.Namespace, "name": in.Name,
 			"version": "1", "fingerprint": blob.ValueHash,
-		})
+		}); err != nil {
+		return domain.Secret{}, err
+	}
 	return secret, nil
 }
 
@@ -226,10 +263,12 @@ func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput
 		ID: reviewID, SecretID: secret.ID, Action: domain.SecretReviewCreate,
 		Reviewer: in.Actor.SubjectID, Decision: in.Decision, Comment: in.Comment, CreatedAt: now,
 	})
-	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretCreate, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretCreate, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, string(in.Decision), map[string]string{
 			"name": secret.Name, "decision": string(in.Decision),
-		})
+		}); err != nil {
+		return domain.Secret{}, err
+	}
 	return secret, nil
 }
 
@@ -333,11 +372,13 @@ func (s *SecretService) applyPendingRotate(ctx context.Context, secret *domain.S
 	}
 	secret.ActiveVersion = &pending.Version
 	secret.Fingerprint = pending.ValueHash
-	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "approved", map[string]string{
 			"name": secret.Name, "old_version": strconv.FormatInt(oldVersion, 10),
 			"new_version": strconv.FormatInt(pending.Version, 10), "fingerprint": pending.ValueHash,
-		})
+		}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -347,10 +388,12 @@ func (s *SecretService) applyRevoke(ctx context.Context, secret *domain.Secret, 
 			domain.SecretVersionActive, domain.SecretVersionRevoked, now)
 	}
 	secret.Status = domain.SecretStatusRevoked
-	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, comment, map[string]string{
 			"name": secret.Name,
-		})
+		}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -395,6 +438,9 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
+	if err := s.enforceSecretRule(secret.Namespace, secret.Name, in.Plaintext); err != nil {
+		return domain.Secret{}, err
+	}
 	if !secret.CanRotate() {
 		return domain.Secret{}, apperr.Conflict("secret cannot be rotated in current status")
 	}
@@ -432,11 +478,13 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "submitted:"+in.Comment, map[string]string{
 			"name": secret.Name, "pending_version": strconv.FormatInt(newVersionNo, 10),
 			"fingerprint": blob.ValueHash,
-		})
+		}); err != nil {
+		return domain.Secret{}, err
+	}
 	return secret, nil
 }
 
@@ -463,23 +511,41 @@ func (s *SecretService) RevokeSecret(ctx context.Context, secretID int64, commen
 	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
+	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretRevoke, ResourceTypeSecret,
 		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "submitted:"+comment, map[string]string{
 			"name": secret.Name,
-		})
+		}); err != nil {
+		return domain.Secret{}, err
+	}
 	return secret, nil
 }
 
-// ActivateVersion 回滚激活指定版本。
-func (s *SecretService) ActivateVersion(ctx context.Context, secretID, version int64, actor Actor) (domain.Secret, error) {
-	if err := requireActor(actor); err != nil {
+// ActivateVersionInput 是激活历史版本入参（CC-R-14：须破玻璃）。
+type ActivateVersionInput struct {
+	SecretID         int64
+	Version          int64
+	BreakGlass       bool
+	BreakGlassReason string
+	Actor            Actor
+}
+
+// ActivateVersion 回滚激活指定版本；须显式 break_glass（绕过轮换审批）。
+func (s *SecretService) ActivateVersion(ctx context.Context, in ActivateVersionInput) (domain.Secret, error) {
+	if err := requireActor(in.Actor); err != nil {
 		return domain.Secret{}, err
 	}
-	secret, err := s.secrets.GetByID(ctx, secretID)
+	if !in.BreakGlass {
+		return domain.Secret{}, apperr.BadRequest(
+			"activate version requires break_glass=true (bypasses rotate approval; CC-R-14)")
+	}
+	if strings.TrimSpace(in.BreakGlassReason) == "" {
+		return domain.Secret{}, apperr.BadRequest("break_glass_reason is required to activate a secret version")
+	}
+	secret, err := s.secrets.GetByID(ctx, in.SecretID)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	target, err := s.secrets.GetVersion(ctx, secretID, version)
+	target, err := s.secrets.GetVersion(ctx, in.SecretID, in.Version)
 	if err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
@@ -487,22 +553,33 @@ func (s *SecretService) ActivateVersion(ctx context.Context, secretID, version i
 		return domain.Secret{}, apperr.Conflict("version cannot be activated")
 	}
 	now := s.now().UTC()
-	if secret.ActiveVersion != nil && *secret.ActiveVersion != version {
-		_ = s.secrets.UpdateVersionStatus(ctx, secretID, *secret.ActiveVersion,
-			domain.SecretVersionActive, domain.SecretVersionGrace, now)
+	if secret.ActiveVersion != nil && *secret.ActiveVersion != in.Version {
+		if err := s.secrets.UpdateVersionStatus(ctx, in.SecretID, *secret.ActiveVersion,
+			domain.SecretVersionActive, domain.SecretVersionGrace, now); err != nil {
+			return domain.Secret{}, mapSecretErr(err)
+		}
 	}
 	if target.Status != domain.SecretVersionActive {
-		_ = s.secrets.UpdateVersionStatus(ctx, secretID, version, target.Status, domain.SecretVersionActive, now)
+		if err := s.secrets.UpdateVersionStatus(ctx, in.SecretID, in.Version, target.Status, domain.SecretVersionActive, now); err != nil {
+			return domain.Secret{}, mapSecretErr(err)
+		}
 	}
 	expected := secret.Version
-	secret.ActiveVersion = &version
+	secret.ActiveVersion = &in.Version
 	secret.Fingerprint = target.ValueHash
 	secret.Status = domain.SecretStatusActive
-	secret.UpdatedBy = actor.SubjectID
+	secret.UpdatedBy = in.Actor.SubjectID
 	secret.UpdatedAt = now
 	secret.Version++
 	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
 		return domain.Secret{}, mapSecretErr(err)
+	}
+	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretRotate, ResourceTypeSecret,
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, "break_glass_activate", map[string]string{
+			"name": secret.Name, "version": strconv.FormatInt(in.Version, 10),
+			"break_glass": "true", "break_glass_reason": strings.TrimSpace(in.BreakGlassReason),
+		}); err != nil {
+		return domain.Secret{}, err
 	}
 	return secret, nil
 }
@@ -557,11 +634,13 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
 		return domain.SecretGrant{}, mapSecretErr(err)
 	}
-	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
+	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
 		strconv.FormatInt(grantID, 10), audit.OutcomeSuccess, "submitted", map[string]string{
 			"secret_id":        strconv.FormatInt(secret.ID, 10),
 			"service_identity": grant.ServiceIdentity, "op": "create",
-		})
+		}); err != nil {
+		return domain.SecretGrant{}, err
+	}
 	return grant, nil
 }
 
@@ -582,10 +661,12 @@ func (s *SecretService) RevokeGrant(ctx context.Context, secretID, grantID int64
 		return domain.SecretGrant{}, mapSecretErr(err)
 	}
 	grant.RevokedAt = &now
-	_ = s.audit.emit(ctx, actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
+	if err := s.requireAudit(ctx, actor, audit.ActionConfigSecretGrant, ResourceTypeGrant,
 		strconv.FormatInt(grantID, 10), audit.OutcomeSuccess, "", map[string]string{
 			"secret_id": strconv.FormatInt(secretID, 10), "op": "revoke",
-		})
+		}); err != nil {
+		return domain.SecretGrant{}, err
+	}
 	return grant, nil
 }
 
@@ -645,11 +726,14 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 		}
 		if _, err := s.grants.FindActive(ctx, in.Env, in.Namespace, in.ServiceIdentity, secret.ID, now); err != nil {
 			s.recordAccess(ctx, in, name, *secret.ActiveVersion, "denied")
-			_ = s.audit.emit(ctx, Actor{SubjectID: in.ServiceIdentity, ActorType: "service", TraceID: in.TraceID},
+			if auditErr := s.requireAudit(ctx, Actor{SubjectID: in.ServiceIdentity, ActorType: "service", TraceID: in.TraceID},
 				audit.ActionConfigSecretResolve, ResourceTypeSecret, strconv.FormatInt(secret.ID, 10),
 				audit.OutcomeDenied, "missing grant", map[string]string{
 					"name": name, "service_identity": in.ServiceIdentity,
-				})
+				}); auditErr != nil {
+				observe("error")
+				return nil, auditErr
+			}
 			observe("denied")
 			return nil, apperr.Forbidden("secret resolve denied")
 		}
@@ -685,12 +769,15 @@ func (s *SecretService) Resolve(ctx context.Context, in ResolveInput) ([]Resolve
 		}
 		out = append(out, item)
 		s.recordAccess(ctx, in, name, version.Version, "ok")
-		_ = s.audit.emit(ctx, Actor{SubjectID: in.ServiceIdentity, ActorType: "service", TraceID: in.TraceID},
+		if auditErr := s.requireAudit(ctx, Actor{SubjectID: in.ServiceIdentity, ActorType: "service", TraceID: in.TraceID},
 			audit.ActionConfigSecretResolve, ResourceTypeSecret, strconv.FormatInt(secret.ID, 10),
 			audit.OutcomeSuccess, "", map[string]string{
 				"name": name, "version": strconv.FormatInt(version.Version, 10),
 				"service_identity": in.ServiceIdentity,
-			})
+			}); auditErr != nil {
+			observe("error")
+			return nil, auditErr
+		}
 	}
 	observe("ok")
 	return out, nil

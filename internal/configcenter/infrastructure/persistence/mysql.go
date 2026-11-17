@@ -364,12 +364,21 @@ func (r *ReleaseRepository) GetByNo(ctx context.Context, env, namespace string, 
 }
 
 // List 按状态过滤列出发布（release_no 降序，稳定分页）；status 为空表示全部。
-func (r *ReleaseRepository) List(ctx context.Context, env, namespace string, status domain.ReleaseStatus, limit, offset int) ([]domain.Release, int, error) {
+func (r *ReleaseRepository) List(ctx context.Context, filter domain.ReleaseListFilter, limit, offset int) ([]domain.Release, int, error) {
 	where := " WHERE env = ? AND namespace = ?"
-	args := []any{env, namespace}
-	if status != "" {
+	args := []any{filter.Env, filter.Namespace}
+	if filter.Status != "" {
 		where += " AND status = ?"
-		args = append(args, string(status))
+		args = append(args, string(filter.Status))
+	}
+	if owner := strings.TrimSpace(filter.Owner); owner != "" {
+		where += " AND created_by = ?"
+		args = append(args, owner)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		needle := strings.ToLower(keyword)
+		where += " AND (INSTR(LOWER(name), ?) > 0 OR INSTR(LOWER(description), ?) > 0)"
+		args = append(args, needle, needle)
 	}
 	var total int
 	if err := queryFrom(ctx, r.db).QueryRowContext(ctx,

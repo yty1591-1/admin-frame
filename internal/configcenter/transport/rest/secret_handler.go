@@ -317,6 +317,11 @@ func (h *Handler) ListSecretVersions(w http.ResponseWriter, r *http.Request) {
 	apiresp.OK(w, map[string]any{"items": views, "total": total, "page": page.Page, "page_size": page.PageSize}, traceID)
 }
 
+type activateSecretVersionRequest struct {
+	BreakGlass       bool   `json:"break_glass"`
+	BreakGlassReason string `json:"break_glass_reason"`
+}
+
 // ActivateSecretVersion 处理 POST .../versions/{version}/activate。
 func (h *Handler) ActivateSecretVersion(w http.ResponseWriter, r *http.Request) {
 	traceID := apiresp.TraceIDFromContext(r.Context())
@@ -339,10 +344,18 @@ func (h *Handler) ActivateSecretVersion(w http.ResponseWriter, r *http.Request) 
 		apiresp.FromError(w, err, traceID)
 		return
 	}
+	var body activateSecretVersionRequest
+	if err := decodeOptionalJSON(r, &body); err != nil {
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
 	var secret domain.Secret
 	err = h.withinTx(r.Context(), func(ctx context.Context) error {
 		var cerr error
-		secret, cerr = h.secrets.ActivateVersion(ctx, id, version, a)
+		secret, cerr = h.secrets.ActivateVersion(ctx, app.ActivateVersionInput{
+			SecretID: id, Version: version,
+			BreakGlass: body.BreakGlass, BreakGlassReason: body.BreakGlassReason, Actor: a,
+		})
 		return cerr
 	})
 	if err != nil {

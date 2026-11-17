@@ -359,7 +359,9 @@ func TestAdminAPIAndSDKIntegration(t *testing.T) {
 	// 6. 回滚到 A：SDK 再次拉取应回到 A 的取值。
 	status, rolledBack := do(t, http.MethodPost,
 		base+"/admin/v1/configs/releases/"+strconv.FormatInt(releaseA.ID, 10)+"/rollback", "u3",
-		[]string{"config:publish"}, map[string]any{"comment": "rollback to A"})
+		[]string{"config:publish"}, map[string]any{
+			"comment": "rollback to A", "break_glass": true, "break_glass_reason": "sdk integration drill",
+		})
 	if status != http.StatusOK {
 		t.Fatalf("rollback status = %d (%s)", status, rolledBack.Message)
 	}

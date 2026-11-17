@@ -98,7 +98,9 @@ func TestBootstrapIsIdempotent(t *testing.T) {
 		t.Fatalf("second bootstrap must be a no-op: %+v", second)
 	}
 
-	_, total, err := repos.Releases.List(ctx, domain.EnvDev, "platform", "", 10, 0)
+	_, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: domain.EnvDev, Namespace: "platform",
+	}, 10, 0)
 	if err != nil || total != 1 {
 		t.Fatalf("release count mismatch: %v %d", err, total)
 	}
@@ -156,6 +158,59 @@ func TestBootstrapValidation(t *testing.T) {
 		Env: domain.EnvDev, Namespace: "unknown", Actor: testActor,
 	}); !errors.Is(err, apperr.ErrBadRequest) {
 		t.Fatalf("namespace without specs must be bad request, got %v", err)
+	}
+}
+
+func TestBootstrapReconcilesMissingKeys(t *testing.T) {
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	registry := spec.NewRegistry()
+	if err := registry.Register(
+		domain.KeySpec{
+			Namespace: "platform", Key: "http.timeout", ValueType: domain.ValueTypeDuration,
+			Default: "10s", Description: "HTTP 超时", Owner: "team-platform", Reloadable: true,
+		},
+	); err != nil {
+		t.Fatalf("register initial: %v", err)
+	}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		registry, emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+	ctx := context.Background()
+	input := app.BootstrapInput{Env: domain.EnvDev, Namespace: "platform", Actor: testActor}
+	first, err := service.EnsureBaseline(ctx, input)
+	if err != nil || !first.Seeded || first.ItemCount != 1 {
+		t.Fatalf("first bootstrap: %v %+v", err, first)
+	}
+
+	if err := registry.Register(domain.KeySpec{
+		Namespace: "platform", Key: "log.level", ValueType: domain.ValueTypeString,
+		Default: "info", Description: "日志级别", Owner: "team-platform", Reloadable: true,
+		Enum: []string{"debug", "info", "warn"},
+	}); err != nil {
+		t.Fatalf("register new key: %v", err)
+	}
+	second, err := service.EnsureBaseline(ctx, input)
+	if err != nil || !second.Seeded || second.ItemCount != 1 {
+		t.Fatalf("reconcile must seed one new key: %v %+v", err, second)
+	}
+	if second.ReleaseID == first.ReleaseID {
+		t.Fatal("reconcile must publish a new release")
+	}
+	items := mustItems(t, repos, second.ReleaseID)
+	if len(items) != 2 {
+		t.Fatalf("reconciled snapshot size = %d, want 2", len(items))
+	}
+	old, err := repos.Releases.Get(ctx, first.ReleaseID)
+	if err != nil || old.Status != domain.ReleaseStatusSuperseded {
+		t.Fatalf("old release must be superseded: %v %+v", err, old)
+	}
+	third, err := service.EnsureBaseline(ctx, input)
+	if err != nil || third.Seeded {
+		t.Fatalf("stable reconcile must be no-op: %v %+v", err, third)
 	}
 }
 

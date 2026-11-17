@@ -1073,7 +1073,7 @@ target_id 优先级：instance_id > tenant_id > channel > "global"
 
 **首次启动**：空库时不依赖外部配置，按代码 key spec 的默认值播种基线 Release；声明了 `secret_rule` 的密钥按规则生成并加密入库；初始化幂等、不覆盖已有值，**不产出引导配置清单或导入清单**。
 
-**实现**：`pkg/config.Loader` 改为「代码默认值 + 配置中心快照 → normalize → Validate」。M1 迁移期文件仅用于双读对比，不参与取值；M3 删除文件与环境变量覆盖代码路径。
+**实现（现行，对齐 ADR-0016）**：业务进程经 `configboot` / `configclient` 从 `config-api` HTTP 拉取命名空间配置，合并代码默认值后 `normalize → Validate`；本地 dir 缓存仅作降级。热更白名单见 [ADR-0015](./adr/0015-config-hot-reload-whitelist.md)（`spec.HotKeys`，12 键）。永久排除分类见 `CONFIG_STANDARDS` §3.1.1。历史「文件双读 / 签名快照启动」路径已移除，不得回退。
 
 **三类键，边界必须显式声明**：
 

@@ -41,11 +41,20 @@ func (n namespaceSpecs) base(key, defaultValue, description string, valueType do
 		Default:     defaultValue,
 		Description: description,
 		Owner:       n.owner,
+		ReloadMode:  domain.ReloadStartup,
+		Reloadable:  false,
 	}
 }
 
 func (n namespaceSpecs) str(key, defaultValue, description string) domain.KeySpec {
 	return n.base(key, defaultValue, description, domain.ValueTypeString)
+}
+
+// floatString 以字符串承载浮点速率（CC-R-11：无独立 float ValueType 时的登记方式）。
+func (n namespaceSpecs) floatString(key, defaultValue, description string) domain.KeySpec {
+	spec := n.str(key, defaultValue, description)
+	spec.Pattern = `^[0-9]+(\.[0-9]+)?$`
+	return spec
 }
 
 func (n namespaceSpecs) enum(key, defaultValue, description string, allowed ...string) domain.KeySpec {
@@ -58,10 +67,33 @@ func (n namespaceSpecs) integer(key string, defaultValue int64, description stri
 	return n.base(key, strconv.FormatInt(defaultValue, 10), description, domain.ValueTypeInt)
 }
 
+// integerMin 构造带下限的整数键（CC-R-10）。
+func (n namespaceSpecs) integerMin(key string, defaultValue, minValue int64, description string) domain.KeySpec {
+	spec := n.integer(key, defaultValue, description)
+	minCopy := minValue
+	spec.MinInt = &minCopy
+	return spec
+}
+
 func (n namespaceSpecs) boolean(key string, defaultValue bool, description string) domain.KeySpec {
 	return n.base(key, strconv.FormatBool(defaultValue), description, domain.ValueTypeBool)
 }
 
 func (n namespaceSpecs) duration(key, defaultValue, description string) domain.KeySpec {
 	return n.base(key, defaultValue, description, domain.ValueTypeDuration)
+}
+
+// sensitiveAuto 登记敏感键（仅进 config_secret，不进普通 Item 播种；CC-R-05）。
+func (n namespaceSpecs) sensitiveAuto(key, description string, rule *domain.SecretRule) domain.KeySpec {
+	return domain.KeySpec{
+		Namespace:   n.namespace,
+		Key:         key,
+		ValueType:   domain.ValueTypeString,
+		Description: description,
+		Owner:       n.owner,
+		ReloadMode:  domain.ReloadStartup,
+		Reloadable:  false,
+		Sensitive:   true,
+		SecretRule:  rule,
+	}
 }

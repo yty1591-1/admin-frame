@@ -172,3 +172,60 @@ func TestSecretRuleGenerate(t *testing.T) {
 		t.Fatalf("generated too short: %q", value)
 	}
 }
+
+func TestActivateVersionRequiresBreakGlass(t *testing.T) {
+	svc, _ := newSecretService(t)
+	ctx := context.Background()
+	creator := app.Actor{SubjectID: "u-create", Channel: "admin"}
+	approver := app.Actor{SubjectID: "u-approve", Channel: "admin"}
+
+	secret, err := svc.CreateSecret(ctx, app.CreateSecretInput{
+		Env: "dev", Namespace: "platform", Name: "platform.demo.hmac_key",
+		Owner: "team-platform", Plaintext: "super-secret-value", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+	if _, err := svc.SubmitSecret(ctx, secret.ID, creator); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	secret, err = svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	})
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	secret, err = svc.RotateSecret(ctx, app.RotateSecretInput{
+		ID: secret.ID, Plaintext: "rotated-secret-value", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	secret, err = svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	})
+	if err != nil {
+		t.Fatalf("Approve rotate: %v", err)
+	}
+
+	if _, err := svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1, Actor: creator,
+	}); err == nil {
+		t.Fatal("activate without break_glass must fail")
+	}
+	if _, err := svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1, BreakGlass: true, Actor: creator,
+	}); err == nil {
+		t.Fatal("activate without break_glass_reason must fail")
+	}
+	secret, err = svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1,
+		BreakGlass: true, BreakGlassReason: "incident rollback drill", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("ActivateVersion: %v", err)
+	}
+	if secret.ActiveVersion == nil || *secret.ActiveVersion != 1 {
+		t.Fatalf("active version after activate = %v", secret.ActiveVersion)
+	}
+}

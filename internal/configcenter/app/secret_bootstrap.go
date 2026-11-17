@@ -9,6 +9,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
@@ -100,7 +101,11 @@ func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.
 		Channel:   reviewer.Channel,
 		TraceID:   reviewer.TraceID,
 	}
-	for _, identity := range bootstrapGrantIdentities() {
+	identities, err := bootstrapGrantIdentities(secret.Env)
+	if err != nil {
+		return err
+	}
+	for _, identity := range identities {
 		if _, err := s.grants.FindActive(ctx, secret.Env, secret.Namespace, identity, secret.ID, s.now().UTC()); err == nil {
 			continue
 		}
@@ -130,7 +135,9 @@ func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.
 }
 
 // bootstrapGrantIdentities 返回启动期应获得 resolve 授权的服务身份列表。
-func bootstrapGrantIdentities() []string {
+//
+// staging/prod 必须显式配置 CONFIG_BOOTSTRAP_GRANT_IDENTITY，禁止默认过宽 grant（CC-R-05）。
+func bootstrapGrantIdentities(env string) ([]string, error) {
 	raw := strings.TrimSpace(os.Getenv("CONFIG_BOOTSTRAP_GRANT_IDENTITY"))
 	if raw != "" {
 		parts := strings.Split(raw, ",")
@@ -148,12 +155,17 @@ func bootstrapGrantIdentities() []string {
 			out = append(out, id)
 		}
 		if len(out) > 0 {
-			return out
+			return out, nil
 		}
+	}
+	if platformconfig.IsProdLikeEnv(env) {
+		return nil, apperr.BadRequest(
+			"CONFIG_BOOTSTRAP_GRANT_IDENTITY is required when env=" + strings.TrimSpace(env) +
+				" (refusing default wide bootstrap grants; CC-R-05)")
 	}
 	return []string{
 		"admin-api", "biz-api", "c-api", "worker",
 		"spiffe://local/admin-api", "spiffe://local/biz-api",
 		"spiffe://local/c-api", "spiffe://local/worker",
-	}
+	}, nil
 }
