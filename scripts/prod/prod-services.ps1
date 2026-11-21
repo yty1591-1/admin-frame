@@ -9,6 +9,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1 start -NoBuild -Migrate
 #
 # 环境变量文件默认 scripts/prod/.env（从 env.example 复制）。
+# 最小启动：不自动 begin/apply/complete；业务配置用 Admin /setup/install。
 
 [CmdletBinding()]
 param(
@@ -295,7 +296,7 @@ function Do-Start {
       Show-RoleLogs "config-api" 50
       Die "config-api 未就绪"
     }
-    Write-Log "config-api ready"
+    Write-Log "config-api ready（最小启动；业务播种请打开 Admin /setup/install）"
   }
 
   foreach ($role in @("worker", "admin-api", "biz-api", "c-api")) {
@@ -303,14 +304,14 @@ function Do-Start {
     if ($role -eq "worker") { Start-Sleep -Seconds 1 }
   }
 
-  if (-not $SkipHealth) {
-    foreach ($role in $Roles) {
-      if (-not (Wait-Readyz $role $Ports[$role] 120)) {
-        Show-RoleLogs $role 50
-        Die "$role /readyz 超时"
-      }
+  # 未完成安装时业务 /readyz 为 503（ADR-0017），不因此失败启动；仅确认进程仍存活。
+  foreach ($role in @("worker", "admin-api", "biz-api", "c-api")) {
+    if (-not (Read-Pid $role)) {
+      Show-RoleLogs $role 50
+      Die "$role 进程已退出"
     }
   }
+  Write-Warn "业务 /readyz 在 install 未 ready 前可为 503；请打开 Admin /setup/install 完成播种"
   $script:RollbackOnDie = $false
   Write-Log "启动完成。日志：$LogDir"
 }

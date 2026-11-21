@@ -77,6 +77,16 @@ func run() error {
 				http.HandlerFunc(rt.Internal.Notifications))
 			mux.Handle("POST /internal/v1/configs/secrets/resolve",
 				http.HandlerFunc(rt.Internal.ResolveSecrets))
+			if rt.Install != nil {
+				mux.Handle("GET /internal/v1/install/status",
+					http.HandlerFunc(rt.Install.Status))
+				mux.Handle("POST /internal/v1/install/begin",
+					http.HandlerFunc(rt.Install.Begin))
+				mux.Handle("POST /internal/v1/install/apply",
+					http.HandlerFunc(rt.Install.Apply))
+				mux.Handle("POST /internal/v1/install/complete",
+					http.HandlerFunc(rt.Install.Complete))
+			}
 			return nil
 		},
 	})

@@ -122,11 +122,11 @@ func HTTPStatusFromBizCode(code int) int {
 		return http.StatusForbidden
 	case BizCodeNotFound:
 		return http.StatusNotFound
-	case BizCodeConflict:
+	case BizCodeConflict, BizCodeInstallInProgress, BizCodeInstallCompleted:
 		return http.StatusConflict
 	case BizCodeTooManyRequests:
 		return http.StatusTooManyRequests
-	case BizCodeServiceUnavailable:
+	case BizCodeServiceUnavailable, BizCodeInstallRequired:
 		return http.StatusServiceUnavailable
 	case BizCodeInternal:
 		return http.StatusInternalServerError

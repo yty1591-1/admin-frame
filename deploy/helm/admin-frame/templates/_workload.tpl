@@ -84,7 +84,8 @@ spec:
           resources:
             {{- toYaml $w.resources | nindent 12 }}
           {{- $ccEnabled := and $root.Values.configCenter.enabled (ne $key "config") }}
-          {{- if or $root.Values.env $root.Values.identitySecrets.enabled $ccEnabled }}
+          {{- $installTok := and (eq $key "config") $root.Values.configCenter.installSetupToken.secretName }}
+          {{- if or $root.Values.env $root.Values.identitySecrets.enabled $ccEnabled $installTok }}
           env:
             {{- with $root.Values.env }}
             {{- toYaml . | nindent 12 }}
@@ -118,6 +119,13 @@ spec:
             {{- end }}
             - name: CONFIGCENTER_CACHE_DIR
               value: {{ $root.Values.configCenter.cacheDir | quote }}
+            {{- end }}
+            {{- if $installTok }}
+            - name: CONFIG_INSTALL_SETUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.configCenter.installSetupToken.secretName }}
+                  key: {{ $root.Values.configCenter.installSetupToken.key | default "setup_token" }}
             {{- end }}
           {{- end }}
           {{- with $root.Values.envFrom }}

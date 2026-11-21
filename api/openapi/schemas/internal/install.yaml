@@ -1,0 +1,51 @@
+# ADR-0017：安装态响应 Schema。
+
+InstallState:
+  type: object
+  required: [env, status, version, updated_at]
+  properties:
+    env:
+      type: string
+    status:
+      type: string
+      enum: [pending, installing, ready, failed]
+    owner:
+      type: string
+    lease_until:
+      type: string
+      format: date-time
+    version:
+      type: integer
+      format: int64
+    last_error:
+      type: string
+    updated_at:
+      type: string
+      format: date-time
+    completed_at:
+      type: string
+      format: date-time
+
+InstallStatusResponse:
+  allOf:
+    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - type: object
+      properties:
+        data:
+          $ref: "#/InstallState"
+
+InstallApplyResponse:
+  allOf:
+    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - type: object
+      properties:
+        data:
+          type: object
+          required: [namespaces, item_count, state]
+          properties:
+            namespaces:
+              type: integer
+            item_count:
+              type: integer
+            state:
+              $ref: "#/InstallState"

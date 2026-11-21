@@ -67,7 +67,11 @@ func run(replayDLQ string, sweepCertifications bool) error {
 	// prod-like 快照含 auth.mode=jwt；Validate 前须注入 secretclient 解析的签名密钥。
 	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
 	if err != nil {
-		return fmt.Errorf("jwt secret: %w", err)
+		if boot.InstallPending {
+			jwtSecret = configboot.InstallPendingJWTSecret
+		} else {
+			return fmt.Errorf("jwt secret: %w", err)
+		}
 	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
@@ -207,7 +211,7 @@ func run(replayDLQ string, sweepCertifications bool) error {
 	}
 
 	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
-	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
+	stopHTTP := startWorkerHTTP(cfg, database, met, logger, boot)
 	defer stopHTTP()
 
 	logger.Info("worker started",
@@ -246,6 +250,7 @@ func startWorkerHTTP(
 	database *db.DB,
 	met *pkgmetrics.Metrics,
 	logger *slog.Logger,
+	boot *configboot.Result,
 ) func() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", met.Handler())
@@ -258,6 +263,13 @@ func startWorkerHTTP(
 		if err := database.Ping(pingCtx); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
 			return
+		}
+		if boot != nil && boot.ConfigAPIURL != "" {
+			st, err := configboot.FetchInstallStatus(pingCtx, boot.ConfigAPIURL, boot.HTTPClient)
+			if err != nil || !configboot.IsInstallReady(st.Status) {
+				http.Error(w, "config center install not ready", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

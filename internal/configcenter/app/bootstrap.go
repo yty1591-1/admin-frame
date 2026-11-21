@@ -66,6 +66,8 @@ type BootstrapInput struct {
 	Env       string
 	Namespace string
 	Actor     Actor
+	// Overrides 优先于 prod-like overlay 与 KeySpec.Default（安装向导提交值）。
+	Overrides map[string]string
 }
 
 // BootstrapResult 是播种结果；SkippedKeys 不含值，仅供日志与运维核对。
@@ -106,7 +108,7 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 	result := BootstrapResult{}
 	entries := make([]domain.ReleaseItem, 0, len(specs))
 	for _, keySpec := range specs {
-		seedValue := resolveSeedValue(in.Env, keySpec)
+		seedValue := resolveSeedValue(in.Env, keySpec, in.Overrides)
 		if keySpec.Sensitive || seedValue == "" {
 			// 敏感值走 config_secret（M2）；无解析取值无法自动播种。
 			result.SkippedKeys = append(result.SkippedKeys, keySpec.Key)
@@ -182,7 +184,7 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 	}
 	added := make([]domain.ReleaseItem, 0)
 	for _, keySpec := range specs {
-		seedValue := resolveSeedValue(in.Env, keySpec)
+		seedValue := resolveSeedValue(in.Env, keySpec, in.Overrides)
 		if keySpec.Sensitive || seedValue == "" {
 			if _, ok := inRelease[keySpec.Key]; !ok {
 				result.SkippedKeys = append(result.SkippedKeys, keySpec.Key)

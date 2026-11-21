@@ -33,8 +33,13 @@ func prodLikeSeedDefaults() map[string]string {
 	}
 }
 
-// resolveSeedValue 解析播种取值：prod-like 优先 overlay，否则 KeySpec.Default。
-func resolveSeedValue(env string, keySpec domain.KeySpec) string {
+// resolveSeedValue 解析播种取值：Overrides > prod-like overlay > KeySpec.Default。
+func resolveSeedValue(env string, keySpec domain.KeySpec, overrides map[string]string) string {
+	if overrides != nil {
+		if v, ok := overrides[keySpec.Key]; ok && v != "" {
+			return v
+		}
+	}
 	if platformconfig.IsProdLikeEnv(env) {
 		if overlay, ok := prodLikeSeedDefaults()[keySpec.Key]; ok && overlay != "" {
 			return overlay

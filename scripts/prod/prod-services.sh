@@ -11,10 +11,12 @@
 #   --migrate           start/restart 前执行 migrate up
 #
 # 说明：
-#   1. 启动顺序：config-api →（就绪）→ worker → admin-api → biz-api → c-api
-#   2. 每个进程注入 CONFIG_SERVICE_IDENTITY 与唯一 ADMIN_FRAME_ID_NODE_ID
-#   3. config-api 健康检查走 mTLS /readyz（Git Bash 的 Schannel curl 无法加载 PEM，改用 python ssl）
-#   4. Windows / WSL：优先转调 prod-services.ps1；Bash 回退路径用 tasklist/taskkill 识别 Windows PID
+#   1. 最小启动：config-api ready 后拉起业务进程；不自动 begin/apply/complete
+#   2. 业务配置请用 Admin /setup/install + CONFIG_INSTALL_SETUP_TOKEN 手动完成
+#   3. 未安装完成时业务 /readyz 为 503（ADR-0017），不因此回滚启动
+#   4. 每个进程注入 CONFIG_SERVICE_IDENTITY 与唯一 ADMIN_FRAME_ID_NODE_ID
+#   5. config-api 健康检查走 mTLS /readyz（Git Bash Schannel curl 无法加载 PEM，改用 python ssl）
+#   6. Windows / WSL：优先转调 prod-services.ps1；Bash 回退路径用 tasklist/taskkill 识别 Windows PID
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -445,38 +447,27 @@ wait_url_role() {
 }
 
 wait_ready() {
+  # 仅强等 config-api；业务未安装时 /readyz 503 属预期，返回 0 并打 warn。
   [[ "$SKIP_HEALTH" -eq 1 ]] && return 0
-  if ! command -v curl >/dev/null 2>&1; then
-    warn "未找到 curl，业务进程 /readyz 可能无法探测"
+  if ! wait_url_role config-api "$CONFIG_API_PORT" "$HEALTH_TIMEOUT"; then
+    warn "config-api /readyz 超时；见 $LOG_DIR"
+    return 1
   fi
-  if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
-    warn "未找到 python，config-api mTLS /readyz 无法探测（Git Bash Schannel curl 不支持 PEM）"
-  fi
-  local i
-  for ((i = 1; i <= HEALTH_TIMEOUT; i++)); do
-    local ok=1
-    health_one config-api "$CONFIG_API_PORT" || ok=0
-    health_one worker "$WORKER_PORT" || ok=0
-    health_one admin-api "$ADMIN_API_PORT" || ok=0
-    health_one biz-api "$BIZ_API_PORT" || ok=0
-    health_one c-api "$C_API_PORT" || ok=0
-    if [[ "$ok" -eq 1 ]]; then
-      log "全部服务就绪（耗时 ${i}s）"
-      return 0
+  local role port
+  for role in worker admin-api biz-api c-api; do
+    case "$role" in
+      worker) port="$WORKER_PORT" ;;
+      admin-api) port="$ADMIN_API_PORT" ;;
+      biz-api) port="$BIZ_API_PORT" ;;
+      c-api) port="$C_API_PORT" ;;
+    esac
+    if health_one "$role" "$port"; then
+      log "$role /readyz ok"
+    else
+      warn "$role /readyz 未通过（install 未 ready 时属预期）"
     fi
-    for role in "${ROLES[@]}"; do
-      if ! read_pid "$role" >/dev/null; then
-        if [[ "$i" -gt 3 ]]; then
-          warn "$role 进程已退出，最近日志："
-          tail_role_logs "$role" 50
-          return 1
-        fi
-      fi
-    done
-    sleep 1
   done
-  warn "等待 /readyz 超时（${HEALTH_TIMEOUT}s）；见 $LOG_DIR"
-  return 1
+  return 0
 }
 
 run_migrate() {
@@ -518,7 +509,7 @@ do_start() {
       do_stop
       exit 1
     fi
-    log "config-api ready"
+    log "config-api ready（最小启动；业务播种请打开 Admin /setup/install）"
   fi
 
   local role
@@ -530,11 +521,16 @@ do_start() {
     fi
     [[ "$role" == "worker" ]] && sleep 1
   done
-  if ! wait_ready; then
-    warn "就绪检查未通过，停止本次启动的进程"
-    do_stop
-    exit 1
-  fi
+  # 未完成安装时业务 /readyz 为 503（ADR-0017），不因此失败启动；仅确认进程仍存活。
+  for role in worker admin-api biz-api c-api; do
+    if ! read_pid "$role" >/dev/null; then
+      warn "$role 进程已退出，最近日志："
+      tail_role_logs "$role" 50
+      do_stop
+      exit 1
+    fi
+  done
+  warn "业务 /readyz 在 install 未 ready 前可为 503；请打开 Admin /setup/install 完成播种"
   log "启动完成。状态：bash scripts/prod/prod-services.sh status；日志：$LOG_DIR"
 }
 

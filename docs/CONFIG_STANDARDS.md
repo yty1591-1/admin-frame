@@ -3,9 +3,9 @@
 > **状态**：已批准（Approved）；M3 已删除 `configs/` 跟踪文件并关闭迁移期样例例外；见 §10
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：配置 key spec、配置中心加载、首次启动初始化、业务密钥托管、多环境与迁移门禁
-> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)、[ADR-0016](./adr/0016-config-service-pull-model.md)
+> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)、[ADR-0016](./adr/0016-config-service-pull-model.md)、[ADR-0017](./adr/0017-config-center-install-state.md)
 > **执行方式**：`Validate()` 单测 + `check-configcenter.sh` + `check-no-static-config.sh` + gitleaks + Review
-> **最后更新**：2026-11-16（v3：CFG-04/11/12 收敛为 config-api 拉取模型，移除签名快照启动前置）
+> **最后更新**：2026-11-21（v4：ADR-0017 prod-like 首次安装态；dev 仍自动播种）
 > **变更方式**：修改本规范须同步更新 `pkg/config`、`internal/configcenter`、`cmd/internal/appconfig`、`scripts/ci/check-configcenter.sh`、`scripts/ci/check-no-static-config.sh`、`deploy/` 与架构 §17，经架构 Owner 与安全 Reviewer 评审
 
 ---
@@ -14,7 +14,7 @@
 
 1. **启动即安全**：非法配置、互斥项、生产演示模式在启动时失败，不带病运行。
 2. **单一事实源**：配置以配置中心为唯一事实源，代码 key spec 只提供类型、默认值与校验规则。
-3. **空环境可启动**：首次部署无配置记录时，按代码默认值自动播种基线 Release，不依赖人工导入。
+3. **空环境可启动**：local/dev/test 首次部署按代码默认值自动播种；staging/prod 经安装向导完成播种（ADR-0017）。
 4. **密钥明文不入库**：业务密钥信封加密后入库，KEK 外部托管；明文不落库、不落快照、不落日志、不回显前端。
 5. **优先级清晰**：业务配置「config-api 拉取结果 > 本地缓存 > 代码默认值」；基础设施口令仅 `ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`；业务密钥仅 `secretclient` → `config-api`。
 
@@ -34,7 +34,7 @@
 | CFG-06 | 仓库禁止出现真实密钥、生产 DSN、云 AK/SK；测试密钥须用 `strings.Repeat` 等构造，禁止高熵字面量 | gitleaks + Review |
 | CFG-07 | 禁止在业务代码硬编码监听地址、超时、功能开关；应用配置或常量默认值经 `applyDefaults`，跨字段派生经 `normalize` | Review |
 | CFG-08 | 合并请求须勾选配置自检 | PR 模板 |
-| CFG-09 | 首次启动空库时按 key spec 默认值播种基线 Release；初始化幂等、不覆盖已有值、强制审计 | 集成测试 + `check-configcenter.sh` |
+| CFG-09 | local/dev/test 空库按 key spec 自动播种；staging/prod 经安装态 + setup token 播种；幂等、不覆盖、强制审计 | 集成测试 + `check-configcenter.sh` |
 | CFG-10 | 业务密钥只允许密文入库：每版本独立 DEK + AES-256-GCM + 外部 KEK；密钥字段必须声明 `secret_rule`，首次启动仅对允许自动生成的字段用 `crypto/rand` 生成 | 单测 + 安全评审 + gitleaks |
 | CFG-11 | 普通配置读与密钥解析只经 `cmd/config-api`：mTLS / SPIFFE + 服务身份；密钥短租约；业务进程不接触 KEK，禁止明文批量导出 | 集成测试 + 安全评审 |
 | CFG-12 | 业务进程启动必须经 SDK 拉取 config-api；成功写本地缓存，失败读缓存，都没有则 fail-fast；响应不含密钥明文 | 单测 + 灾备演练 |
@@ -97,26 +97,41 @@ key / value_type / default / validation / required / owner / reloadable(startup|
 
 ---
 
-## 4. 首次启动初始化
+## 4. 首次启动初始化（ADR-0017）
 
-### 4.1 触发条件
+### 4.1 环境策略与安装态
 
-配置中心数据库为空（无 `config_release_pointer` 或目标 namespace 无基线 Release）时触发；非空库不重复播种。已有 pointer 时仅增量补齐「有解析取值且尚未进生效快照」的声明键，**不覆盖**已有值。
+| 环境 | 启动时业务播种 | `config_install_state` | config-api `/readyz` | 业务 `/readyz` |
+|------|----------------|------------------------|----------------------|----------------|
+| local/dev/test | 自动 `EnsureBaseline` + `EnsureAutoSecrets` | 标为 `ready` | 依赖健康即 200 | 正常 |
+| staging/prod | **跳过**；经安装 API 完成 | 初始 `pending` | 自身健康即 200（可装） | 非 `ready` → 503 |
 
-### 4.2 初始化步骤
+真相以表 `config_install_state`（`pending|installing|ready|failed`）为准；`config_release_pointer` 仅作 `complete` 校验。已有 pointer 时增量补齐缺失声明键，**不覆盖**已有值。
+
+### 4.2 安装 API 与 setup token
+
+- 路径（config-api）：`GET /internal/v1/install/status`；`POST .../begin|apply|complete`
+- 写路径请求头：`X-Config-Install-Token`，与 env `CONFIG_INSTALL_SETUP_TOKEN` 常量时间比较
+- staging/prod 启动时 setup token **必填**；local/dev/test 可空
+- `status=ready` 后写接口拒绝；Token **不入库**；审计 `config.install.*`（不记 token）
+- 集群：`begin` 以 CAS + 租约（默认 15m）抢 `installing`；无选主
+
+### 4.3 初始化步骤
+
+**local/dev/test（启动期）** 与 **prod-like（`apply`）** 共用播种逻辑：
 
 ```text
 1. 扫描代码 key spec，校验 key 唯一、类型与默认值合法、secret_rule 完整
-2. 解析播种取值：prod/staging 优先 prod-like overlay，否则 KeySpec.Default
+2. 解析播种取值：请求 Overrides > prod-like overlay > KeySpec.Default
 3. 为每个 namespace 生成 baseline Release（status=active）；Sensitive 键跳过 Item
 4. 密钥：local/dev/test 仅 auto_generate=true；prod/staging 凡有 SecretRule 的缺失敏感键
    均 GenerateForBootstrap 占位（含第三方口令 / PEM / FCM JSON），信封入库并审计 placeholder=true
 5. 无 SecretRule 且 Required 的敏感键缺失 → fail-fast
 6. 写 config_release_pointer（CAS 初始化）
-7. 审计 config.bootstrap.completed（含 key 数量、生成密钥数量、缺失项）
+7. 审计 config.bootstrap.completed；安装完成另发 config.install.complete
 ```
 
-### 4.3 prod-like overlay 与进程补齐
+### 4.4 prod-like overlay 与进程补齐
 
 - 共享 namespace overlay（跨 channel 安全）：如 `db.driver=mysql`、`storage.driver=s3`、
   `async.enabled=true`、`auth.mode=jwt` + issuer/audience、`idempotency.*=redis`、
@@ -124,15 +139,16 @@ key / value_type / default / validation / required / owner / reloadable(startup|
 - **不**在共享快照播种 `iam.mode=enforce` / `identity.enabled`（会与 c/worker 互斥）；
   由 admin/biz/c 进程 `ApplyProdLikeProcessDefaults` / 强制写入补齐。
 - 静态 KeySpec.Default 保持本地友好；overlay 仅在 `env∈{prod,staging}` 生效。
+- config-api **自身**仍须 `ADMIN_FRAME_DB_*`（及 prod mTLS / Vault KEK）；不消费业务快照。
 
-### 4.4 约束
+### 4.5 约束
 
-- 初始化幂等：重复启动不新增 Release、不覆盖已有值、不重新生成密钥。
-- 初始化不得调用外部业务系统；不依赖人工导入清单。
-- 初始化失败必须回滚事务并 fail-fast，禁止带半初始化状态启动。
+- 初始化幂等：重复启动 / 重复 apply 不新增 Release、不覆盖已有值、不重新生成密钥。
+- 初始化不得调用外部业务系统；不做「配置导入清单」文件，但 prod-like 允许 Admin 安装向导。
+- local/dev 播种失败 fail-fast；prod-like 未安装时 config-api 仍可听端口，业务进程可启动但 `/readyz` 失败。
 - 默认值 / 占位密钥不得冒充真实第三方凭据；运维须轮换后方可真投递。
 - 初始化日志只打印 key、来源与数量，不打印值。
-- 播种后仍须运维提供：`ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`、
+- 运维仍须提供：`ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`、`CONFIG_INSTALL_SETUP_TOKEN`（prod-like）、
   `CONFIG_BOOTSTRAP_GRANT_IDENTITY`、config-api mTLS、`id.node_id`（或 StatefulSet）。
 
 ---

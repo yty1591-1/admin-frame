@@ -66,6 +66,17 @@ const coreRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    component: () => import('#/views/_core/install/index.vue'),
+    meta: {
+      hideInMenu: true,
+      hideInTab: true,
+      ignoreAccess: true,
+      title: '配置中心安装',
+    },
+    name: 'ConfigInstall',
+    path: '/setup/install',
+  },
 ];
 
 export { coreRoutes, fallbackNotFoundRoute };

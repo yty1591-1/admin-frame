@@ -45,7 +45,7 @@
 
 **附属清单**（被门禁脚本直接读取，改动需同步脚本）：
 
-- [adr/](./adr/) — 架构决策记录（ADR-0001～0015）
+- [adr/](./adr/) — 架构决策记录（ADR-0001～0017；含 [0017 安装态](./adr/0017-config-center-install-state.md)）
 - [runbooks/](./runbooks/) — 值班手册（`ALERTS.md` 与 `deploy/observability` 告警规则双向校验）
 - [incident/](./incident/) — 事故定级 / 响应 / 复盘 / 演练（RB-08，`check-oncall` OC-02/OC-04）
 - [oncall/ROTATION.md](./oncall/ROTATION.md) — 排班、交接与呼叫链路验证（RB-09，`check-oncall` OC-05/OC-06）

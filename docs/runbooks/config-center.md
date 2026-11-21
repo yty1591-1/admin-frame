@@ -3,8 +3,9 @@
 > 适用：`config.client_stale`、`config.publish_failure`、`config.fetch_error`、
 > `config.pending_approval`、`config.db_latency`、`config.rollback`、
 > `config.snapshot_corrupt`、`config.cold_start_degraded`。
-> 关联规范：`docs/CONFIG_STANDARDS.md`（CFG-01～12）、[ADR-0016](../adr/0016-config-service-pull-model.md)。
+> 关联规范：`docs/CONFIG_STANDARDS.md`（CFG-01～12）、[ADR-0016](../adr/0016-config-service-pull-model.md)、[ADR-0017](../adr/0017-config-center-install-state.md)。
 > 原则：业务进程经 **config-api 拉取**；远端失败读本地缓存；二者皆无则启动失败。
+> 首次安装（prod-like）：`GET /internal/v1/install/status`；未 `ready` 时业务 `/readyz` 503；用 setup token 走 Admin `/setup/install` 手动完成（`scripts/prod` 仅最小启动，不自动安装）。
 
 ## 症状与告警
 

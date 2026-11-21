@@ -15,11 +15,12 @@ import (
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 )
 
-// Repositories 汇总三个持久化端口的进程内实现。
+// Repositories 汇总持久化端口的进程内实现。
 type Repositories struct {
 	Items    domain.ItemRepository
 	Releases domain.ReleaseRepository
 	Pointers domain.PointerRepository
+	Install  domain.InstallRepository
 }
 
 // New 构造空仓储集合。
@@ -29,6 +30,7 @@ func New() *Repositories {
 		Items:    &itemRepository{store: store},
 		Releases: &releaseRepository{store: store},
 		Pointers: &pointerRepository{store: store},
+		Install:  &InstallRepository{store: store},
 	}
 }
 
@@ -43,6 +45,7 @@ type store struct {
 	relItems   map[int64][]domain.ReleaseItem
 	reviews    map[int64][]domain.ReleaseReview
 	pointers   map[string]domain.Pointer
+	installs   map[string]domain.InstallState
 }
 
 func newStore() *store {
@@ -55,6 +58,7 @@ func newStore() *store {
 		relItems:   make(map[int64][]domain.ReleaseItem),
 		reviews:    make(map[int64][]domain.ReleaseReview),
 		pointers:   make(map[string]domain.Pointer),
+		installs:   make(map[string]domain.InstallState),
 	}
 }
 

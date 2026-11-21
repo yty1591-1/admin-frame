@@ -82,8 +82,9 @@ for permission in config:read config:write config:approve config:publish; do
 done
 
 echo "==> CC-03: audit actions"
-for action in config.change config.bootstrap.completed config.release.publish \
-  config.release.rollback config.release.approve; do
+for action in config.change config.bootstrap.completed config.install.begin \
+  config.install.apply config.install.complete config.install.fail \
+  config.release.publish config.release.rollback config.release.approve; do
   require_grep "internal/shared/audit/actions.go" "\"${action}\"" "审计动作 ${action}"
 done
 
@@ -164,9 +165,15 @@ done
 require_grep "cmd/config-api/main.go" "NewConfigAPI" "config-api 自举入口"
 require_grep "cmd/config-api/main.go" \
   "/internal/v1/configs/notifications" "config-api 注册长轮询"
+require_grep "cmd/config-api/main.go" \
+  "/internal/v1/install/status" "config-api 注册安装态（ADR-0017）"
 require_file "api/openapi/paths/internal/configs.yaml" "internal OpenAPI 拉取路径"
+require_file "api/openapi/paths/internal/install.yaml" "internal OpenAPI 安装路径"
+require_file "migrations/000037_create_config_install_state.up.sql" "安装态迁移 up"
 require_grep "api/openapi/internal.yaml" \
   "internal-v1-configs-env-namespace" "internal OpenAPI 登记拉取路径"
+require_grep "api/openapi/internal.yaml" \
+  "internal-v1-install-status" "internal OpenAPI 登记安装态"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"

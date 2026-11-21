@@ -63,6 +63,10 @@ const (
 	ActionConfigChange      = "config.change"
 	// 配置中心（ADR-0013）：初始化、发布、回滚与审批。
 	ActionConfigBootstrapCompleted = "config.bootstrap.completed"
+	ActionConfigInstallBegin       = "config.install.begin"
+	ActionConfigInstallApply       = "config.install.apply"
+	ActionConfigInstallComplete    = "config.install.complete"
+	ActionConfigInstallFail        = "config.install.fail"
 	ActionConfigReleasePublish     = "config.release.publish"
 	ActionConfigReleaseRollback    = "config.release.rollback"
 	ActionConfigReleaseApprove     = "config.release.approve"
@@ -144,6 +148,10 @@ func KnownActions() []string {
 		ActionRBACCertification,
 		ActionConfigChange,
 		ActionConfigBootstrapCompleted,
+		ActionConfigInstallBegin,
+		ActionConfigInstallApply,
+		ActionConfigInstallComplete,
+		ActionConfigInstallFail,
 		ActionConfigReleasePublish,
 		ActionConfigReleaseRollback,
 		ActionConfigReleaseApprove,

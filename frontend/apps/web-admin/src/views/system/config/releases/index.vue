@@ -10,6 +10,7 @@ import type {
 } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
@@ -43,9 +44,11 @@ import {
   rollbackConfigReleaseApi,
   submitConfigReleaseApi,
 } from '#/api';
+import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
 
 defineOptions({ name: 'SystemConfigReleases' });
 
+const router = useRouter();
 const userStore = useUserStore();
 const currentUserId = computed(() => userStore.userInfo?.userId || '');
 
@@ -500,9 +503,7 @@ async function confirmCancel() {
 
 function canCancel(record: ConfigRelease) {
   return (
-    record.status === 'draft' ||
-    record.status === 'pending_review' ||
-    record.status === 'approved'
+    record.status === 'draft' || record.status === 'pending_review' || record.status === 'approved'
   );
 }
 
@@ -525,10 +526,7 @@ async function confirmRollback() {
 }
 
 function canApprove(record: ConfigRelease) {
-  return (
-    record.status === 'pending_review' &&
-    record.submitted_by !== currentUserId.value
-  );
+  return record.status === 'pending_review' && record.submitted_by !== currentUserId.value;
 }
 
 function onItemSelectChange(keys: (number | string)[]) {
@@ -536,6 +534,9 @@ function onItemSelectChange(keys: (number | string)[]) {
 }
 
 onMounted(async () => {
+  if (await redirectIfInstallRequired(router)) {
+    return;
+  }
   try {
     await loadNamespaces();
     await fetchList();
@@ -554,11 +555,7 @@ onMounted(async () => {
       <QueryForm />
       <Space class="mt-2">
         <Button type="primary" @click="handleSearch">查询</Button>
-        <Button
-          v-access:code="'config:write'"
-          type="primary"
-          @click="openCreate"
-        >
+        <Button v-access:code="'config:write'" type="primary" @click="openCreate">
           新建发布单
         </Button>
       </Space>
@@ -581,11 +578,7 @@ onMounted(async () => {
         </template>
         <template v-else-if="column.key === 'actions'">
           <Space wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="openDetail(record as ConfigRelease)"
-            >
+            <Button size="small" type="link" @click="openDetail(record as ConfigRelease)">
               详情
             </Button>
             <Button
@@ -636,9 +629,7 @@ onMounted(async () => {
               取消
             </Button>
             <Button
-              v-if="
-                record.status === 'active' || record.status === 'superseded'
-              "
+              v-if="record.status === 'active' || record.status === 'superseded'"
               v-access:code="'config:publish'"
               danger
               size="small"
@@ -662,16 +653,11 @@ onMounted(async () => {
       <CreateForm />
       <div class="mb-2 mt-2 flex items-center justify-between">
         <span class="font-medium">选择配置键（须已有版本）</span>
-        <Button size="small" @click="onCreateEnvNamespaceChange">
-          按表单环境刷新
-        </Button>
+        <Button size="small" @click="onCreateEnvNamespaceChange"> 按表单环境刷新 </Button>
       </div>
-      <p
-        v-if="selectedItemIds.length > 0"
-        class="mb-2 text-sm text-gray-500"
-      >
-        已选 {{ selectedItemIds.length }} 项：热更
-        {{ selectionImpact.hot }} / 需重启 {{ selectionImpact.restart }}
+      <p v-if="selectedItemIds.length > 0" class="mb-2 text-sm text-gray-500">
+        已选 {{ selectedItemIds.length }} 项：热更 {{ selectionImpact.hot }} / 需重启
+        {{ selectionImpact.restart }}
         （ADR-0015 白名单）
       </p>
       <Table
@@ -761,11 +747,7 @@ onMounted(async () => {
       <p class="mb-2 text-sm text-orange-600">
         回滚会生成新 Release 指向历史快照，并走发布指针切换；请填写原因。
       </p>
-      <Input.TextArea
-        v-model:value="rollback.comment"
-        placeholder="回滚说明"
-        :rows="4"
-      />
+      <Input.TextArea v-model:value="rollback.comment" placeholder="回滚说明" :rows="4" />
     </Modal>
 
     <Modal
@@ -777,11 +759,7 @@ onMounted(async () => {
       <p class="mb-2 text-sm text-gray-500">
         仅未生效的草稿 / 待审 / 已通过发布单可取消；取消后不可恢复。
       </p>
-      <Input.TextArea
-        v-model:value="cancelForm.reason"
-        placeholder="取消原因（必填）"
-        :rows="4"
-      />
+      <Input.TextArea v-model:value="cancelForm.reason" placeholder="取消原因（必填）" :rows="4" />
     </Modal>
   </Page>
 </template>

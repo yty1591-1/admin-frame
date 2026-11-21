@@ -26,6 +26,7 @@ import (
 	configcenterrest "github.com/admin-frame/admin-frame/internal/configcenter/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -64,6 +65,10 @@ type Runtime struct {
 	Hot *hotconfig.Holder
 	// Secrets 是业务密钥用例（M2）；管理面 wrap / config-api unwrap。
 	Secrets *app.SecretService
+	// Install 是首次安装 Handler（ADR-0017）；config-api 挂载。
+	Install *configcenterrest.InstallHandler
+	// InstallService 供运行时内部查询安装态。
+	InstallService *app.InstallService
 
 	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
 	clientEnv        string
@@ -76,11 +81,12 @@ type Options struct {
 	Service string
 }
 
-// repositories 汇总三个持久化端口；内存与 MySQL 实现同签名。
+// repositories 汇总持久化端口；内存与 MySQL 实现同签名。
 type repositories struct {
 	items    domain.ItemRepository
 	releases domain.ReleaseRepository
 	pointers domain.PointerRepository
+	install  domain.InstallRepository
 }
 
 // New 装配配置中心运行时。
@@ -184,10 +190,13 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	}, nil
 }
 
-// NewConfigAPI 装配 config-api：播种基线、快照读取、长轮询、密钥解析（ADR-0016）。
+// NewConfigAPI 装配 config-api：安装态、播种基线、快照读取、长轮询、密钥解析（ADR-0016/0017）。
 func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.IDs == nil {
 		return nil, fmt.Errorf("configcenter config-api requires platform deps")
+	}
+	if err := app.RequireSetupTokenConfigured(deps.Config.Env); err != nil {
+		return nil, err
 	}
 	emitter := buildEmitter(deps)
 	service := opts.Service
@@ -208,9 +217,6 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter bootstrap service: %w", err)
 	}
-	if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
-		return nil, err
-	}
 
 	kek, err := buildKEK(deps.Config.Env, deps.Logger)
 	if err != nil {
@@ -230,8 +236,49 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
-		return nil, err
+
+	installService, err := app.NewInstallService(app.InstallServiceConfig{
+		Install: repos.install, Pointers: repos.pointers, Bootstrap: bootstrapService,
+		Secrets: secretService, Specs: registry, Emitter: emitter, IDs: deps.IDs, Options: appOpts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configcenter install service: %w", err)
+	}
+
+	prodLike := platformconfig.IsProdLikeEnv(deps.Config.Env)
+	bootstrapActor := app.Actor{
+		SubjectID: bootstrapSubject, ActorType: "system", Channel: "admin", TraceID: bootstrapTrace,
+	}
+	if prodLike {
+		if _, ensureErr := installService.EnsureState(context.Background(), deps.Config.Env, domain.InstallPending); ensureErr != nil {
+			return nil, fmt.Errorf("configcenter ensure install state: %w", ensureErr)
+		}
+		state, statusErr := installService.Status(context.Background(), deps.Config.Env)
+		if statusErr != nil {
+			return nil, fmt.Errorf("configcenter install status: %w", statusErr)
+		}
+		if state.Status == domain.InstallReady {
+			if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
+				return nil, err
+			}
+			if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
+				return nil, err
+			}
+		}
+		// pending/installing/failed：跳过启动期自动播种，等待安装向导。
+	} else {
+		if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
+			return nil, err
+		}
+		if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
+			return nil, err
+		}
+		if err := withinTx(context.Background(), sqlDB, func(ctx context.Context) error {
+			_, markErr := installService.MarkReady(ctx, deps.Config.Env, bootstrapActor)
+			return markErr
+		}); err != nil {
+			return nil, fmt.Errorf("configcenter mark install ready: %w", err)
+		}
 	}
 
 	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
@@ -242,12 +289,18 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter release watcher: %w", err)
 	}
-	deployEnv := ""
-	if deps != nil && deps.Config != nil {
-		deployEnv = deps.Config.Env
-	}
+	deployEnv := deps.Config.Env
 	internal, err := configcenterrest.NewInternalHandler(configcenterrest.InternalHandlerConfig{
 		Snapshots: snapshots, Watcher: watcher, Secrets: secretService, DeployEnv: deployEnv,
+	})
+	if err != nil {
+		return nil, err
+	}
+	installHandler, err := configcenterrest.NewInstallHandler(configcenterrest.InstallHandlerConfig{
+		Install: installService, DeployEnv: deployEnv,
+		WithinTx: func(ctx context.Context, fn func(context.Context) error) error {
+			return withinTx(ctx, sqlDB, fn)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -258,11 +311,13 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 		})
 	}
 	return &Runtime{
-		Internal:  internal,
-		Watcher:   watcher,
-		Snapshots: snapshots,
-		Secrets:   secretService,
-		Metrics:   metrics,
+		Internal:       internal,
+		Install:        installHandler,
+		InstallService: installService,
+		Watcher:        watcher,
+		Snapshots:      snapshots,
+		Secrets:        secretService,
+		Metrics:        metrics,
 	}, nil
 }
 
@@ -526,6 +581,7 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 			items:    memoryRepos.Items,
 			releases: memoryRepos.Releases,
 			pointers: memoryRepos.Pointers,
+			install:  memoryRepos.Install,
 		}, nil, nil
 	}
 	sqlDB := deps.Database.SQL()
@@ -537,6 +593,7 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 		items:    repos.Items,
 		releases: repos.Releases,
 		pointers: repos.Pointers,
+		install:  repos.Install,
 	}, sqlDB, nil
 }
 

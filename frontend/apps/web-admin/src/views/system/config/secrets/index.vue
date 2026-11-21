@@ -10,6 +10,7 @@ import type {
 } from '#/api';
 
 import { onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -17,9 +18,9 @@ import { Button, Drawer, message, Modal, Space, Table, Tag } from 'ant-design-vu
 
 import { useVbenForm } from '#/adapter/form';
 import {
-  CONFIG_ENV_OPTIONS,
   activateConfigSecretVersionApi,
   approveConfigSecretApi,
+  CONFIG_ENV_OPTIONS,
   createConfigSecretApi,
   createConfigSecretGrantApi,
   getConfigErrorMessage,
@@ -33,8 +34,11 @@ import {
   rotateConfigSecretApi,
   submitConfigSecretApi,
 } from '#/api';
+import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
 
 defineOptions({ name: 'SystemConfigSecrets' });
+
+const router = useRouter();
 
 const namespaces = ref<{ label: string; value: string }[]>([]);
 const loading = ref(false);
@@ -45,7 +49,7 @@ const createSubmitting = ref(false);
 const detailOpen = ref(false);
 const detailLoading = ref(false);
 const detailSecret = ref<ConfigSecret | null>(null);
-const detailTab = ref<'versions' | 'grants' | 'accesses'>('versions');
+const detailTab = ref<'accesses' | 'grants' | 'versions'>('versions');
 const versions = ref<ConfigSecretVersion[]>([]);
 const grants = ref<ConfigSecretGrant[]>([]);
 const accesses = ref<ConfigSecretAccess[]>([]);
@@ -299,9 +303,7 @@ async function onActivateVersion(version: ConfigSecretVersion) {
     message.info('该版本已是 active');
     return;
   }
-  const reason = window.prompt(
-    '破玻璃原因（必填；激活历史版本绕过轮换审批，须 24h 内补审）',
-  );
+  const reason = window.prompt('破玻璃原因（必填；激活历史版本绕过轮换审批，须 24h 内补审）');
   if (!reason?.trim()) return;
   try {
     await activateConfigSecretVersionApi(secret.id, version.version, {
@@ -341,6 +343,9 @@ function onTableChange(pag: TablePaginationConfig) {
 }
 
 onMounted(async () => {
+  if (await redirectIfInstallRequired(router)) {
+    return;
+  }
   await loadNamespaces();
   await queryFormApi.setFieldValue('namespace', namespaces.value[0]?.value);
   await loadRows();
@@ -353,9 +358,7 @@ onMounted(async () => {
       <QueryForm class="flex-1" />
       <Space>
         <Button type="primary" @click="loadRows">查询</Button>
-        <Button v-access:code="'config:secret:write'" @click="createOpen = true">
-          新建密钥
-        </Button>
+        <Button v-access:code="'config:secret:write'" @click="createOpen = true"> 新建密钥 </Button>
       </Space>
     </div>
 
@@ -377,11 +380,7 @@ onMounted(async () => {
         <template v-else-if="column.key === 'actions'">
           <Space wrap>
             <Button size="small" @click="loadDetail(record)">详情</Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onSubmit(record)"
-            >
+            <Button v-access:code="'config:secret:write'" size="small" @click="onSubmit(record)">
               送审
             </Button>
             <Button
@@ -391,18 +390,10 @@ onMounted(async () => {
             >
               批准
             </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onRotate(record)"
-            >
+            <Button v-access:code="'config:secret:write'" size="small" @click="onRotate(record)">
               轮换
             </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onGrant(record)"
-            >
+            <Button v-access:code="'config:secret:write'" size="small" @click="onGrant(record)">
               授权
             </Button>
             <Button

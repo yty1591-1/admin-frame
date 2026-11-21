@@ -1,12 +1,13 @@
 openapi: 3.0.3
 info:
   title: Config API (internal)
-  version: 1.1.0
+  version: 1.2.0
   description: |
-    配置中心内部服务（ADR-0014 / ADR-0016）。仅集群内 mTLS 可达；
+    配置中心内部服务（ADR-0014 / ADR-0016 / ADR-0017）。仅集群内 mTLS 可达；
     不承载管理面。破坏性变更须提升 major。
     1.0.0：新增 `POST /internal/v1/configs/secrets/resolve`。
     1.1.0：新增配置拉取与长轮询（ADR-0016）。
+    1.2.0：新增首次安装态 API（ADR-0017）。
 servers:
   - url: http://localhost:8085
     description: 本地 config-api
@@ -17,6 +18,14 @@ paths:
     $ref: './paths/internal/configs.yaml#/internal-v1-configs-notifications'
   /internal/v1/configs/secrets/resolve:
     $ref: './paths/internal/secrets.yaml#/internal-v1-configs-secrets-resolve'
+  /internal/v1/install/status:
+    $ref: './paths/internal/install.yaml#/internal-v1-install-status'
+  /internal/v1/install/begin:
+    $ref: './paths/internal/install.yaml#/internal-v1-install-begin'
+  /internal/v1/install/apply:
+    $ref: './paths/internal/install.yaml#/internal-v1-install-apply'
+  /internal/v1/install/complete:
+    $ref: './paths/internal/install.yaml#/internal-v1-install-complete'
   /healthz:
     get:
       tags: [probe]

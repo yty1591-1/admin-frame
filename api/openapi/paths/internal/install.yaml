@@ -1,0 +1,127 @@
+# ADR-0017：config-api 首次安装态 API。
+
+internal-v1-install-status:
+  get:
+    tags: [install]
+    summary: 查询安装态
+    operationId: getInstallStatus
+    description: |
+      返回当前部署环境的 `config_install_state`。
+      无需 setup token；业务进程 /readyz 与 Admin SPA 据此判断是否进入安装向导。
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+
+internal-v1-install-begin:
+  post:
+    tags: [install]
+    summary: 开始安装（抢租约）
+    operationId: beginInstall
+    parameters:
+      - $ref: "#/components/parameters/SetupTokenHeader"
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              owner:
+                type: string
+                description: 安装者标识；空则服务端生成
+    responses:
+      "200":
+        description: 进入 installing
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "401":
+        description: setup token 无效
+      "409":
+        description: 40951 安装进行中 / 40952 已完成
+
+internal-v1-install-apply:
+  post:
+    tags: [install]
+    summary: 安装期播种
+    operationId: applyInstall
+    parameters:
+      - $ref: "#/components/parameters/SetupTokenHeader"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+              overrides:
+                type: object
+                additionalProperties:
+                  type: string
+                description: 覆盖 KeySpec / overlay 的键值（不含敏感明文以外的密钥；密钥走自动生成）
+    responses:
+      "200":
+        description: 播种完成（幂等）
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallApplyResponse"
+      "401":
+        description: setup token 无效
+      "409":
+        description: 未持有租约或已完成
+
+internal-v1-install-complete:
+  post:
+    tags: [install]
+    summary: 完成安装
+    operationId: completeInstall
+    parameters:
+      - $ref: "#/components/parameters/SetupTokenHeader"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+    responses:
+      "200":
+        description: status=ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "400":
+        description: 缺少 namespace pointer
+      "401":
+        description: setup token 无效
+      "409":
+        description: 未持有租约或已完成
+
+components:
+  parameters:
+    SetupTokenHeader:
+      name: X-Config-Install-Token
+      in: header
+      required: true
+      schema:
+        type: string
+      description: 与 CONFIG_INSTALL_SETUP_TOKEN 一致；不入库

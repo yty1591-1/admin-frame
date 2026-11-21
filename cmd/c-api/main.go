@@ -52,14 +52,19 @@ func run() error {
 	// 先 Resolve 再 Validate：JWT / identity 明文只来自 secretclient。
 	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
 	if err != nil {
-		return fmt.Errorf("jwt secret: %w", err)
+		if boot.InstallPending {
+			jwtSecret = configboot.InstallPendingJWTSecret
+		} else {
+			return fmt.Errorf("jwt secret: %w", err)
+		}
 	}
 	hashKey, mfaSecret, err := secretruntime.ResolveIdentitySecretsFromEnv(ctx, boot.Env)
 	if err != nil {
-		if !platformconfig.IsLocalDevEnv(boot.Env) {
+		if boot.InstallPending || platformconfig.IsLocalDevEnv(boot.Env) {
+			hashKey, mfaSecret = "", ""
+		} else {
 			return fmt.Errorf("identity secrets: %w", err)
 		}
-		hashKey, mfaSecret = "", ""
 	}
 	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
 	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
@@ -119,6 +124,7 @@ func run() error {
 			return built.Checker, nil
 		},
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
+			configboot.RegisterInstallReadyCheck(deps.Health, boot.ConfigAPIURL, boot.HTTPClient)
 			built, err := buildIdentity(deps)
 			if err != nil {
 				return err

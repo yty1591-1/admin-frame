@@ -11,7 +11,7 @@
 | `CONFIGCENTER_ENV` | `dev` | `prod` |
 | KEK | LocalKEK（`CONFIGCENTER_LOCAL_KEK_HEX`） | Vault Transit（禁止 local） |
 | config-api TLS | 明文 HTTP | mTLS `require` |
-| 播种 overlay | KeySpec.Default | prod-like overlay（mysql/s3/jwt…） |
+| 播种 overlay | KeySpec.Default（启动自动） | 最小启动保持 `pending`；Admin `/setup/install` + setup token 手动 begin/apply/complete |
 | 编排 PID/日志 | `bin/run/` | `bin/run-prod/` |
 | Vault | 一般不需要 | **file 存储**（非 `-dev`）；`vault-init` 解封并把 root token 写入 `var/prod-vault/` |
 
@@ -34,6 +34,7 @@ make prod-vault-init    # transit/keys/configcenter
 make prod-migrate       # 可选；prod-up 已带 -Migrate / --migrate
 make prod-start
 make prod-status
+# 浏览器打开 Admin /setup/install，填入 CONFIG_INSTALL_SETUP_TOKEN 完成播种
 ```
 
 **Windows / WSL：** `make prod-start` / `prod-restart` / `prod-stop` / `prod-status` 走 PowerShell `prod-services.ps1`（可保活、正确识别 PID）。也可直接：
@@ -63,12 +64,21 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8081/readyz
 
 ## 4. 关键变量（见 `scripts/prod/env.example`）
 
+最小启动必填：
+
 - 基础设施：`ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`（DSN 须加引号，含 `tcp(...)` 与 `&`）
-- 对象存储部署侧：`ADMIN_FRAME_STORAGE_S3_*`（RustFS，宿主机 `19000`）
 - 配置中心：`CONFIGCENTER_ENV=prod`、`CONFIGCENTER_KEK_DRIVER=vault`、`VAULT_ADDR`（`VAULT_TOKEN` 优先读 `var/prod-vault/root.token`，**仅注入 config-api**）
+- 首次安装令牌：`CONFIG_INSTALL_SETUP_TOKEN`（ADR-0017；**仅**供 Admin `/setup/install`，脚本不自动安装）
 - mTLS：`CONFIG_API_MTLS=require`、服务端/客户端证书路径、`CONFIG_API_NAMESPACE_ALLOWLIST`
 - 密钥播种授权：`CONFIG_BOOTSTRAP_GRANT_IDENTITY`（prod 必填，CC-R-05）
 - 每进程唯一 `ADMIN_FRAME_ID_NODE_ID`（脚本按角色覆盖 1～5）
+
+安装完成后的可选部署侧 overlay（`env.example` 末尾注释）：
+
+- `ADMIN_FRAME_STORAGE_S3_*`（快照为 `storage.driver=s3` 时再启用；RustFS 宿主机 `19000`）
+- `ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT`（worker 本地回退盐，可选）
+
+> `prod-start` 仅强等 `config-api /readyz`；业务进程未安装前 `/readyz` 503 属预期，不回滚启动。
 
 ## 5. 停止
 

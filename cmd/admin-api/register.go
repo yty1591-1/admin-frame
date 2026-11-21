@@ -2,13 +2,17 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
@@ -91,6 +95,8 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
 		}
 	}
+	// ADR-0017：安装向导经 admin-api 代理到 config-api（mTLS），无 JWT。
+	registerInstallProxy(deps, mux)
 	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
 	if configRT != nil {
 		configRT.StartRefresh(deps, 0)
@@ -116,6 +122,26 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 		notificationadmin.Register(mux, notificationHandler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
+}
+
+// registerInstallProxy 挂载 /admin/v1/install/* → config-api（mTLS 客户端）。
+func registerInstallProxy(deps *platform.Deps, mux *http.ServeMux) {
+	base := strings.TrimSpace(os.Getenv("CONFIG_API_URL"))
+	if base == "" {
+		deps.Logger.Warn("install proxy skipped: CONFIG_API_URL empty")
+		return
+	}
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	client, err := secretruntime.LoadClientHTTPFromEnvFor(env)
+	if err != nil {
+		deps.Logger.Warn("install proxy skipped: mTLS client unavailable", "error", err)
+		return
+	}
+	configboot.NewInstallProxy(base, client).Register(mux)
+	deps.Logger.Info("install proxy enabled", "upstream", base)
 }
 
 // tenantSessionRevoker 提取 identity 的租户会话撤销器；身份域未启用时返回 nil。

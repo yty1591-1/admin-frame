@@ -20,6 +20,7 @@ import {
   listConfigItemsApi,
   listConfigNamespacesApi,
 } from '#/api';
+import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
 
 defineOptions({ name: 'SystemConfigItems' });
 
@@ -304,6 +305,9 @@ function goVersions(record: ConfigItem) {
 }
 
 onMounted(async () => {
+  if (await redirectIfInstallRequired(router)) {
+    return;
+  }
   try {
     await loadNamespaces();
     await fetchList();

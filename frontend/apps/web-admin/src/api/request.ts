@@ -18,6 +18,7 @@ import { message } from 'ant-design-vue';
 import { useAuthStore } from '#/store';
 
 import { refreshTokenApi } from './core';
+import { ensureIdempotencyHeader } from './idempotency';
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
@@ -73,13 +74,14 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     return token ? `Bearer ${token}` : null;
   }
 
-  // 请求头处理
+  // 请求头处理（含 prod 强制 Idempotency-Key）
   client.addRequestInterceptor({
     fulfilled: async (config) => {
       const accessStore = useAccessStore();
 
       config.headers.Authorization = formatToken(accessStore.accessToken);
       config.headers['Accept-Language'] = preferences.app.locale;
+      ensureIdempotencyHeader(config.headers, config.method);
       return config;
     },
   });
@@ -123,4 +125,11 @@ export const requestClient = createRequestClient(apiURL, {
   responseReturn: 'data',
 });
 
+/** 无鉴权拦截器的客户端；仍注入 Idempotency-Key（登录等写路径在 prod 必填）。 */
 export const baseRequestClient = new RequestClient({ baseURL: apiURL });
+baseRequestClient.addRequestInterceptor({
+  fulfilled: async (config) => {
+    ensureIdempotencyHeader(config.headers, config.method);
+    return config;
+  },
+});

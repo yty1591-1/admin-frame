@@ -25,11 +25,12 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
-// Repositories 汇总三个持久化端口的 MySQL 实现。
+// Repositories 汇总持久化端口的 MySQL 实现。
 type Repositories struct {
 	Items    domain.ItemRepository
 	Releases domain.ReleaseRepository
 	Pointers domain.PointerRepository
+	Install  domain.InstallRepository
 }
 
 // New 构造共享同一连接池的仓储集合。
@@ -46,7 +47,11 @@ func New(sqlDB *sql.DB) (*Repositories, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Repositories{Items: items, Releases: releases, Pointers: pointers}, nil
+	install, err := NewInstallRepository(sqlDB)
+	if err != nil {
+		return nil, err
+	}
+	return &Repositories{Items: items, Releases: releases, Pointers: pointers, Install: install}, nil
 }
 
 // execer / queryer 让仓储在事务内复用调用方的 *sql.Tx。

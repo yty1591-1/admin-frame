@@ -4,6 +4,7 @@ package configboot
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -19,9 +20,15 @@ type Result struct {
 	Values map[string]string
 	Client *configclient.Client
 	Env    string
+	// InstallPending 为 true 时表示配置中心尚未 ready；Values 来自代码默认值兜底。
+	InstallPending bool
+	HTTPClient     *http.Client
+	ConfigAPIURL   string
 }
 
 // Load 拉取配置：远端成功写缓存；失败读缓存；都没有则返回错误。
+//
+// ADR-0017：若安装态非 ready，允许用 key spec 默认值完成进程监听（InstallPending=true）。
 func Load(ctx context.Context) (*Result, error) {
 	base := strings.TrimSpace(os.Getenv("CONFIG_API_URL"))
 	identity := strings.TrimSpace(os.Getenv("CONFIG_SERVICE_IDENTITY"))
@@ -37,6 +44,21 @@ func Load(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	statusCtx, statusCancel := context.WithTimeout(ctx, 2*time.Second)
+	installStatus, statusErr := FetchInstallStatus(statusCtx, base, httpClient)
+	statusCancel()
+	if statusErr == nil && !IsInstallReady(installStatus.Status) {
+		values, buildErr := BuildSpecDefaultValues()
+		if buildErr != nil {
+			return nil, fmt.Errorf("configboot: build defaults while install pending: %w", buildErr)
+		}
+		return &Result{
+			Values: values, Env: env, InstallPending: true,
+			HTTPClient: httpClient, ConfigAPIURL: base,
+		}, nil
+	}
+
 	source, err := configclient.NewHTTPSource(configclient.HTTPSourceConfig{
 		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
@@ -75,7 +97,10 @@ func Load(ctx context.Context) (*Result, error) {
 	if len(client.Values()) == 0 {
 		return nil, fmt.Errorf("configboot: no config values from config-api or cache")
 	}
-	return &Result{Values: client.Values(), Client: client, Env: env}, nil
+	return &Result{
+		Values: client.Values(), Client: client, Env: env,
+		HTTPClient: httpClient, ConfigAPIURL: base,
+	}, nil
 }
 
 // ProcessIdentity 是进程身份证；按规范不进配置中心，须由各 cmd 写死注入。
