@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
@@ -67,6 +68,14 @@ func run() error {
 		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
 			Service: "c-api", Channel: "c", Env: boot.Env, Addr: ":8083",
 		})
+		// C 端启用登录路由；prod-like 短信渠道由 ApplyProdLikeProcessDefaults 补齐。
+		values["identity.enabled"] = "true"
+		configboot.SetIfEmpty(values, "auth.mode", "jwt")
+		configboot.SetIfEmpty(values, "auth.jwt.alg", "HS256")
+		configboot.SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")
+		configboot.SetIfEmpty(values, "auth.jwt.audience", "c")
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "c")
+		configboot.ApplyDeployOverlays(values)
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
 		if hashKey != "" {
 			values[secretruntime.IdentityHashKeyValueKey] = hashKey
@@ -74,7 +83,8 @@ func run() error {
 		if mfaSecret != "" {
 			values[secretruntime.IdentityMFASecretValueKey] = mfaSecret
 		}
-		if samlPrivateKey != "" {
+		// enabled=false 时注入私钥会触发 Validate 失败（密钥仍可由配置中心托管）。
+		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
 			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
 		}
 		return values, nil

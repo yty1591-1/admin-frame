@@ -80,7 +80,8 @@ type BootstrapResult struct {
 // EnsureBaseline 在空 namespace 播种代码默认值；已有指针时增量补齐缺失声明键（CC-R-13）。
 //
 // 幂等：无缺失键时不新增 Release、不覆盖已有值。
-// 敏感键与无默认值的 required 键不播种，登记到 SkippedKeys。
+// 敏感键与解析后仍无取值的键不播种，登记到 SkippedKeys。
+// prod/staging 优先使用 prodLikeSeedDefaults 叠加层（CONFIG_STANDARDS §4）。
 func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput) (BootstrapResult, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return BootstrapResult{}, err
@@ -105,12 +106,13 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 	result := BootstrapResult{}
 	entries := make([]domain.ReleaseItem, 0, len(specs))
 	for _, keySpec := range specs {
-		if keySpec.Sensitive || keySpec.Default == "" {
-			// 敏感值走 config_secret（M2）；required 无默认值无法自动播种。
+		seedValue := resolveSeedValue(in.Env, keySpec)
+		if keySpec.Sensitive || seedValue == "" {
+			// 敏感值走 config_secret（M2）；无解析取值无法自动播种。
 			result.SkippedKeys = append(result.SkippedKeys, keySpec.Key)
 			continue
 		}
-		item, version, buildErr := s.buildSeededItem(keySpec, in, now)
+		item, version, buildErr := s.buildSeededItem(keySpec, in, seedValue, now)
 		if buildErr != nil {
 			return BootstrapResult{}, buildErr
 		}
@@ -132,7 +134,7 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 	}
 
 	release, err := s.buildSeedRelease(ctx, in, entries, now, "baseline",
-		"首次启动按代码 key spec 默认值播种")
+		"首次启动按代码 key spec / prod-like overlay 播种")
 	if err != nil {
 		return BootstrapResult{}, err
 	}
@@ -180,7 +182,8 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 	}
 	added := make([]domain.ReleaseItem, 0)
 	for _, keySpec := range specs {
-		if keySpec.Sensitive || keySpec.Default == "" {
+		seedValue := resolveSeedValue(in.Env, keySpec)
+		if keySpec.Sensitive || seedValue == "" {
 			if _, ok := inRelease[keySpec.Key]; !ok {
 				result.SkippedKeys = append(result.SkippedKeys, keySpec.Key)
 			}
@@ -194,7 +197,7 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 		case getErr == nil:
 			// 键已存在但未进生效快照：按当前版本并入。
 		case errors.Is(getErr, domain.ErrNotFound):
-			created, version, buildErr := s.buildSeededItem(keySpec, in, now)
+			created, version, buildErr := s.buildSeededItem(keySpec, in, seedValue, now)
 			if buildErr != nil {
 				return BootstrapResult{}, buildErr
 			}
@@ -270,9 +273,13 @@ func (s *BootstrapService) emitBootstrapAudit(ctx context.Context, in BootstrapI
 	return nil
 }
 
-// buildSeededItem 按声明生成一条 active 配置键与版本 1。
+// buildSeededItem 按声明与解析后的取值生成一条 active 配置键与版本 1。
 func (s *BootstrapService) buildSeededItem(keySpec domain.KeySpec, in BootstrapInput,
-	now time.Time) (domain.Item, domain.ItemVersion, error) {
+	seedValue string, now time.Time) (domain.Item, domain.ItemVersion, error) {
+	if err := keySpec.ValidateValue(seedValue); err != nil {
+		return domain.Item{}, domain.ItemVersion{}, apperr.BadRequest(
+			fmt.Sprintf("seed value for %s: %v", keySpec.Key, err))
+	}
 	itemID, err := s.ids.Next()
 	if err != nil {
 		return domain.Item{}, domain.ItemVersion{}, apperr.Internal("generate item id failed", err)
@@ -298,7 +305,7 @@ func (s *BootstrapService) buildSeededItem(keySpec domain.KeySpec, in BootstrapI
 	if err := item.Validate(); err != nil {
 		return domain.Item{}, domain.ItemVersion{}, apperr.BadRequest(err.Error())
 	}
-	version, err := buildVersion(s.ids, item, 1, keySpec.Default, "bootstrap", in.Actor.SubjectID, now)
+	version, err := buildVersion(s.ids, item, 1, seedValue, "bootstrap", in.Actor.SubjectID, now)
 	if err != nil {
 		return domain.Item{}, domain.ItemVersion{}, err
 	}

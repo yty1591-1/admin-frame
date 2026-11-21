@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
@@ -79,6 +80,9 @@ func run() error {
 		configboot.SetIfEmpty(values, "auth.jwt.alg", "HS256")
 		configboot.SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")
 		configboot.SetIfEmpty(values, "auth.jwt.audience", "admin")
+		// prod/staging：IAM enforce / 审批 / redis 缓存等端别强制项。
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "admin")
+		configboot.ApplyDeployOverlays(values)
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
 		if hashKey != "" {
 			values[secretruntime.IdentityHashKeyValueKey] = hashKey
@@ -86,7 +90,8 @@ func run() error {
 		if mfaSecret != "" {
 			values[secretruntime.IdentityMFASecretValueKey] = mfaSecret
 		}
-		if samlPrivateKey != "" {
+		// SAML 仅 channel=c；enabled=false 时注入私钥会触发 Validate 失败。
+		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
 			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
 		}
 		return values, nil

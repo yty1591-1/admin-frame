@@ -2,11 +2,67 @@ package configcenterruntime
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
+
+type countingHandler struct {
+	info int
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelInfo && r.Message == "configcenter snapshot loaded" {
+		h.info++
+	}
+	return nil
+}
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestRefreshLoggerDedupsPerNamespace(t *testing.T) {
+	handler := &countingHandler{}
+	logFn := refreshLogger(slog.New(handler))
+	if logFn == nil {
+		t.Fatal("refreshLogger returned nil")
+	}
+
+	emit := func(ns string, release int64) {
+		logFn(configclient.RefreshEvent{
+			Loaded: true,
+			Snapshot: configclient.Snapshot{
+				Env: "prod", Namespace: ns, ReleaseID: release, ReleaseNo: 1,
+				Values: map[string]string{"k": "v"},
+			},
+		})
+	}
+
+	// 一轮多 namespace：各打一次。
+	emit("audit", 1)
+	emit("iam", 2)
+	emit("platform", 3)
+	if handler.info != 3 {
+		t.Fatalf("first round info=%d, want 3", handler.info)
+	}
+
+	// 同 release 再轮询：不应再打 INFO。
+	emit("audit", 1)
+	emit("iam", 2)
+	emit("platform", 3)
+	if handler.info != 3 {
+		t.Fatalf("unchanged round info=%d, want 3", handler.info)
+	}
+
+	// 仅 platform 升版：只多 1 条。
+	emit("platform", 4)
+	emit("audit", 1)
+	if handler.info != 4 {
+		t.Fatalf("after platform bump info=%d, want 4", handler.info)
+	}
+}
 
 type fakeRefreshSource struct {
 	snapshot configclient.Snapshot

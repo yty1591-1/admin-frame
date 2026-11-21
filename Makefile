@@ -10,6 +10,7 @@ PYTHON ?= python3
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
 	run-admin run-biz run-c run-worker run-config \
 	local-deps local-env local-migrate local-start local-stop local-restart local-status local-up \
+	prod-deps prod-env prod-certs prod-vault-init prod-migrate prod-start prod-stop prod-restart prod-status prod-up \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-no-static-config \
 	check-migrations check-reliability check-observability \
@@ -85,6 +86,66 @@ local-status:
 # 一键：依赖 → env → 迁移 → 启动（首次本机推荐）
 local-up: local-deps local-env
 	bash scripts/local/dev-services.sh start --migrate
+
+# ---------- 本机 prod 演练编排（Vault + mTLS + 五进程）----------
+# 文档：docs/prod-rehearsal.md
+# Windows_NT（原生 make）：直接走 prod-services.ps1。
+# 其它（含 WSL）：bash prod-services.sh；WSL/Git Bash 内会再转调 .ps1（路径已转换）。
+# 勿在 WSL 里用 nohup 拉 Windows .exe。
+
+prod-deps:
+	docker compose -f docker-compose.prod-rehearsal.yml up -d --wait
+
+prod-env:
+	@bash -c 'test -f scripts/prod/.env || cp scripts/prod/env.example scripts/prod/.env; echo "OK: scripts/prod/.env"'
+
+prod-certs:
+	bash scripts/prod/gen-mtls-certs.sh
+
+prod-vault-init:
+	bash scripts/prod/vault-init.sh
+
+ifeq ($(OS),Windows_NT)
+PROD_PS = powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1
+
+prod-migrate: prod-env
+	$(PROD_PS) migrate
+
+prod-start: prod-env prod-vault-init
+	$(PROD_PS) start
+
+prod-stop:
+	$(PROD_PS) stop
+
+prod-restart: prod-env prod-vault-init
+	$(PROD_PS) restart
+
+prod-status:
+	$(PROD_PS) status
+
+# 一键：依赖 → env → 证书 → Vault Transit → 迁移 → 启动
+prod-up: prod-deps prod-env prod-certs prod-vault-init
+	$(PROD_PS) start -Migrate
+else
+prod-migrate: prod-env
+	bash scripts/prod/prod-services.sh migrate
+
+prod-start: prod-env prod-vault-init
+	bash scripts/prod/prod-services.sh start
+
+prod-stop:
+	bash scripts/prod/prod-services.sh stop
+
+prod-restart: prod-env prod-vault-init
+	bash scripts/prod/prod-services.sh restart
+
+prod-status:
+	bash scripts/prod/prod-services.sh status
+
+# 一键：依赖 → env → 证书 → Vault Transit → 迁移 → 启动
+prod-up: prod-deps prod-env prod-certs prod-vault-init
+	bash scripts/prod/prod-services.sh start --migrate
+endif
 
 test:
 	$(GO) test ./...

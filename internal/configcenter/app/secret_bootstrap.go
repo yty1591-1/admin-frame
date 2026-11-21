@@ -15,10 +15,13 @@ import (
 
 const bootstrapReviewer = "system:config-bootstrap-reviewer"
 
-// EnsureAutoSecrets 对声明了 secret_rule.auto_generate 的敏感键幂等生成并入库。
+// EnsureAutoSecrets 对敏感键幂等生成并入库（D16 / AC-CC-17）。
 //
-// 已存在同名密钥时跳过；无规则且 Required 的敏感键返回错误（fail-fast）。
-// 自动生成链路使用双系统主体完成双人审批，使空环境可一键启动（D16 / AC-CC-17）。
+//   - local/dev/test：仅 AutoGenerate=true；Required 且不可生成时 fail-fast。
+//   - prod/staging：凡声明 SecretRule 的 Sensitive 缺失即 GenerateForBootstrap 占位
+//     （含 AutoGenerate=false 的第三方凭据；不可真投递，须运维轮换）。
+//
+// 已存在同名密钥时只补 grant。
 func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, registry *spec.Registry, actor Actor) error {
 	if registry == nil {
 		return apperr.Internal("secret bootstrap requires registry", nil)
@@ -26,6 +29,7 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 	if err := requireActor(actor); err != nil {
 		return err
 	}
+	prodLike := platformconfig.IsProdLikeEnv(env)
 	reviewer := Actor{
 		SubjectID: bootstrapReviewer,
 		ActorType: "system",
@@ -37,7 +41,18 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 			if !keySpec.Sensitive {
 				continue
 			}
-			if keySpec.SecretRule == nil || !keySpec.SecretRule.AutoGenerate {
+			if keySpec.SecretRule == nil {
+				if keySpec.Required {
+					_, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
+					if errors.Is(err, domain.ErrNotFound) {
+						return apperr.BadRequest(fmt.Sprintf(
+							"required secret %s.%s missing and has no secret_rule", namespace, keySpec.Key))
+					}
+				}
+				continue
+			}
+			canGenerate := keySpec.SecretRule.AutoGenerate || prodLike
+			if !canGenerate {
 				if keySpec.Required {
 					_, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
 					if errors.Is(err, domain.ErrNotFound) {
@@ -56,13 +71,22 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 			} else if !errors.Is(err, domain.ErrNotFound) {
 				return apperr.Internal("lookup secret failed", err)
 			}
-			plaintext, err := keySpec.SecretRule.Generate()
+			var plaintext string
+			if keySpec.SecretRule.AutoGenerate && !prodLike {
+				plaintext, err = keySpec.SecretRule.Generate()
+			} else {
+				plaintext, err = keySpec.SecretRule.GenerateForBootstrap()
+			}
 			if err != nil {
 				return apperr.Internal("generate secret failed", err)
 			}
+			desc := keySpec.Description
+			if prodLike && !keySpec.SecretRule.AutoGenerate {
+				desc = strings.TrimSpace(desc + " [bootstrap placeholder=true]")
+			}
 			secret, err = s.CreateSecret(ctx, CreateSecretInput{
 				Env: env, Namespace: namespace, Name: keySpec.Key,
-				Description: keySpec.Description, Owner: keySpec.Owner,
+				Description: desc, Owner: keySpec.Owner,
 				Plaintext: plaintext, Actor: actor,
 			})
 			if err != nil {
@@ -71,9 +95,13 @@ func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, regis
 			if _, err := s.SubmitSecret(ctx, secret.ID, actor); err != nil {
 				return err
 			}
+			comment := "bootstrap auto-approve"
+			if prodLike {
+				comment = "bootstrap auto-approve placeholder=true"
+			}
 			secret, err = s.ApproveSecret(ctx, ApproveSecretInput{
 				ID: secret.ID, Decision: domain.DecisionApproved,
-				Comment: "bootstrap auto-approve", Actor: reviewer,
+				Comment: comment, Actor: reviewer,
 			})
 			if err != nil {
 				return err

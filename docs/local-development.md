@@ -21,7 +21,7 @@
 ### 2.1 准备
 
 ```bash
-# 1) 依赖（MySQL + Redis；可选 MinIO 见 compose 文件）
+# 1) 依赖（MySQL + Redis；可选 RustFS 见 compose 文件）
 make local-deps
 # 等价：docker compose -f docker-compose.integration.yml up -d mysql redis
 
@@ -115,7 +115,7 @@ curl -s -X POST http://127.0.0.1:8081/admin/v1/auth/login \
 
 - `make local-*` 依赖可用的 `bash`（Git Bash）与 `curl`。
 - 不要从 **WSL** 去 `start` 原生 Windows 二进制：环境变量与进程生命周期会丢；请用 Git Bash 或 `dev-services.ps1`。
-- 生产向编排仍用 `scripts/prod/start-services.sh`（需自备 `configs/prod/.env`）。
+- 本机 **prod 演练**（Vault + mTLS）见 [prod-rehearsal.md](./prod-rehearsal.md)：`make prod-up` / `scripts/prod/prod-services.ps1`。
 
 ## 6. 相关路径
 
@@ -125,5 +125,7 @@ curl -s -X POST http://127.0.0.1:8081/admin/v1/auth/login \
 | `scripts/local/.env` | 本机 dotenv（gitignore） |
 | `scripts/local/dev-services.sh` | Bash 编排 |
 | `scripts/local/dev-services.ps1` | PowerShell 编排 |
-| `docker-compose.integration.yml` | MySQL / Redis / MinIO |
+| `scripts/prod/` | 本机 prod 演练（见 [prod-rehearsal.md](./prod-rehearsal.md)） |
+| `docker-compose.integration.yml` | MySQL / Redis / RustFS（dev） |
+| `docker-compose.prod-rehearsal.yml` | MySQL / Redis / RustFS / Vault（prod 演练） |
 | `var/configcenter-cache/` | 拉取缓存（gitignore） |

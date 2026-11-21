@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	"github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -40,12 +41,14 @@ func run() error {
 		addr = ":8085"
 	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
-		return map[string]string{
+		values := map[string]string{
 			"service": "config-api",
 			"channel": "internal",
 			"addr":    addr,
 			"env":     env,
-		}, nil
+		}
+		configboot.ApplyConfigAPIBootstrapValues(values, env)
+		return values, nil
 	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)

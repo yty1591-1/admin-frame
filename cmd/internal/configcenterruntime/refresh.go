@@ -124,8 +124,7 @@ func refreshLogger(logger *slog.Logger) func(configclient.RefreshEvent) {
 	}
 	var (
 		mu          sync.Mutex
-		loaded      bool
-		lastRelease int64
+		lastRelease = map[string]int64{} // namespace → 最近一次已打 INFO 的 release_id
 		lastErr     string
 	)
 	return func(event configclient.RefreshEvent) {
@@ -145,11 +144,13 @@ func refreshLogger(logger *slog.Logger) func(configclient.RefreshEvent) {
 		if !event.Loaded {
 			return
 		}
-		if loaded && event.Snapshot.ReleaseID == lastRelease {
+		ns := strings.TrimSpace(event.Snapshot.Namespace)
+		// 多 namespace 轮询时各自 release_id 不同；按 namespace 去重，
+		// 避免 5s 一轮把 6 个 namespace 的「未变更」重复打成 INFO。
+		if prev, ok := lastRelease[ns]; ok && prev == event.Snapshot.ReleaseID {
 			return
 		}
-		loaded = true
-		lastRelease = event.Snapshot.ReleaseID
+		lastRelease[ns] = event.Snapshot.ReleaseID
 		logger.Info("configcenter snapshot loaded",
 			"env", event.Snapshot.Env,
 			"namespace", event.Snapshot.Namespace,

@@ -101,27 +101,39 @@ key / value_type / default / validation / required / owner / reloadable(startup|
 
 ### 4.1 触发条件
 
-配置中心数据库为空（无 `config_release_pointer` 或目标 namespace 无基线 Release）时触发；非空库不重复播种。
+配置中心数据库为空（无 `config_release_pointer` 或目标 namespace 无基线 Release）时触发；非空库不重复播种。已有 pointer 时仅增量补齐「有解析取值且尚未进生效快照」的声明键，**不覆盖**已有值。
 
 ### 4.2 初始化步骤
 
 ```text
 1. 扫描代码 key spec，校验 key 唯一、类型与默认值合法、secret_rule 完整
-2. 校验默认值可启动、无真实生产凭据、敏感字段不含明文默认值
-3. 为每个 namespace 生成 baseline Release（status=active）
-4. 对 auto_generate=true 的密钥字段用 crypto/rand 生成，按信封加密写入密钥子域
-5. 对无生成规则且 required 的密钥字段，标记 missing；启动阶段 fail-fast
+2. 解析播种取值：prod/staging 优先 prod-like overlay，否则 KeySpec.Default
+3. 为每个 namespace 生成 baseline Release（status=active）；Sensitive 键跳过 Item
+4. 密钥：local/dev/test 仅 auto_generate=true；prod/staging 凡有 SecretRule 的缺失敏感键
+   均 GenerateForBootstrap 占位（含第三方口令 / PEM / FCM JSON），信封入库并审计 placeholder=true
+5. 无 SecretRule 且 Required 的敏感键缺失 → fail-fast
 6. 写 config_release_pointer（CAS 初始化）
 7. 审计 config.bootstrap.completed（含 key 数量、生成密钥数量、缺失项）
 ```
 
-### 4.3 约束
+### 4.3 prod-like overlay 与进程补齐
+
+- 共享 namespace overlay（跨 channel 安全）：如 `db.driver=mysql`、`storage.driver=s3`、
+  `async.enabled=true`、`auth.mode=jwt` + issuer/audience、`idempotency.*=redis`、
+  `notification.channels.*.driver=disabled`、`identity.mfa.admin_required=true`。
+- **不**在共享快照播种 `iam.mode=enforce` / `identity.enabled`（会与 c/worker 互斥）；
+  由 admin/biz/c 进程 `ApplyProdLikeProcessDefaults` / 强制写入补齐。
+- 静态 KeySpec.Default 保持本地友好；overlay 仅在 `env∈{prod,staging}` 生效。
+
+### 4.4 约束
 
 - 初始化幂等：重复启动不新增 Release、不覆盖已有值、不重新生成密钥。
 - 初始化不得调用外部业务系统；不依赖人工导入清单。
 - 初始化失败必须回滚事务并 fail-fast，禁止带半初始化状态启动。
-- 默认值中不得包含真实第三方凭据、生产 DSN、私钥或高熵密钥。
+- 默认值 / 占位密钥不得冒充真实第三方凭据；运维须轮换后方可真投递。
 - 初始化日志只打印 key、来源与数量，不打印值。
+- 播种后仍须运维提供：`ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`、
+  `CONFIG_BOOTSTRAP_GRANT_IDENTITY`、config-api mTLS、`id.node_id`（或 StatefulSet）。
 
 ---
 
@@ -152,8 +164,11 @@ value_hash  = SHA-256(plaintext)[:8]（仅比对，不可逆）
 ### 5.3 secret_rule 与自动生成
 
 - `secret_rule` 必须声明长度、编码（`base64url` / `hex`）、算法、前缀与 `auto_generate`。
-- 首次启动仅对 `auto_generate=true` 的字段用 `crypto/rand` 生成；生成即版本 1 并审计。
-- 无规则或 `auto_generate=false` 的密钥必须人工录入；`required` 且缺失时 fail-fast。
+- 算法约定：空/`random`；`rsa-pem`；`ec-p256-pem`；`fcm-sa-json`（prod-like 占位）。
+- local/dev/test：仅 `auto_generate=true` 用 `crypto/rand` 生成；`auto_generate=false` 须人工录入。
+- prod/staging：凡声明 `secret_rule` 的缺失敏感键均 `GenerateForBootstrap` 占位（可忽略
+  `auto_generate`）；第三方占位不可真投递，须轮换。生成即版本 1 并审计 `placeholder=true`。
+- 无 `secret_rule` 且 `required` 缺失时 fail-fast。
 - 生成值只返回指纹；不得回显、不得落日志、不得写入快照。
 
 ### 5.4 生命周期

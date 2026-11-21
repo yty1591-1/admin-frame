@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
 
@@ -31,14 +33,18 @@ func Load(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("configboot: CONFIG_API_URL and CONFIG_SERVICE_IDENTITY are required")
 	}
 	namespaces := namespacesFromEnv()
+	httpClient, err := secretruntime.LoadClientHTTPFromEnvFor(env)
+	if err != nil {
+		return nil, err
+	}
 	source, err := configclient.NewHTTPSource(configclient.HTTPSourceConfig{
-		BaseURL: base, ServiceIdentity: identity,
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, err
 	}
 	notifier, err := configclient.NewLongPoller(configclient.LongPollerConfig{
-		BaseURL: base, ServiceIdentity: identity,
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, err
@@ -118,6 +124,49 @@ func SetIfEmpty(values map[string]string, key, value string) {
 	}
 	if strings.TrimSpace(values[key]) == "" {
 		values[key] = value
+	}
+}
+
+// ApplyProdLikeProcessDefaults 在 prod/staging 为端别强制项补齐快照缺失值。
+//
+// 共享 namespace 不能播种 iam.mode=enforce（会炸掉 c/worker）；由 admin/biz
+// 在此补齐。JWT 与 C 端短信登录渠道路径同理。
+func ApplyProdLikeProcessDefaults(values map[string]string, env, channel string) {
+	if values == nil || !platformconfig.IsProdLikeEnv(env) {
+		return
+	}
+	SetIfEmpty(values, "auth.mode", "jwt")
+	SetIfEmpty(values, "auth.jwt.alg", "HS256")
+	SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")
+	SetIfEmpty(values, "auth.jwt.audience",
+		`["admin","biz","c","worker","internal"]`)
+
+	switch strings.TrimSpace(channel) {
+	case "admin", "biz":
+		// 与 identity.enabled 同理：共享快照是 KeySpec 跨端安全默认值
+		// （approval=false / cache=memory），admin/biz 在 prod 必须强制覆盖，
+		// 不能 SetIfEmpty（否则永远吃到快照默认值，Validate 失败）。
+		values["iam.mode"] = "enforce"
+		values["iam.approval.enabled"] = "true"
+		values["iam.cache.driver"] = "redis"
+		// prod-like 播种 identity.mfa.admin_required=true（A 端门禁）；
+		// biz 进程必须关掉，否则 Validate 拒绝 channel=biz。
+		if strings.TrimSpace(channel) == "biz" {
+			values["identity.mfa.admin_required"] = "false"
+		}
+	case "c":
+		// 共享快照默认 sms.enabled=false / driver=memory；C 端 prod 必须强制覆盖。
+		values["identity.sms.enabled"] = "true"
+		values["identity.sms.driver"] = "aliyun"
+		SetIfEmpty(values, "identity.sms.template_id", "bootstrap-placeholder")
+		SetIfEmpty(values, "identity.sms.sign_name", "bootstrap-placeholder")
+		if strings.TrimSpace(values["identity.sms.daily_budget"]) == "" ||
+			strings.TrimSpace(values["identity.sms.daily_budget"]) == "0" {
+			values["identity.sms.daily_budget"] = "1000"
+		}
+		values["identity.mfa.admin_required"] = "false"
+	case "worker":
+		values["identity.mfa.admin_required"] = "false"
 	}
 }
 

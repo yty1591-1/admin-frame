@@ -20,6 +20,8 @@ configs/**/*.env
 /var/
 # 本地开发 dotenv（从 scripts/local/env.example 复制）
 /scripts/local/.env
+# 本机 prod 演练 dotenv（从 scripts/prod/env.example 复制）
+/scripts/prod/.env
 
 .idea/
 .vscode/

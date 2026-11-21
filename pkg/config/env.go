@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding"
+	"encoding/json"
 	"os"
 	"reflect"
 	"strconv"
@@ -297,11 +298,22 @@ func assignLeaf(field reflect.Value, raw string) string {
 		field.SetFloat(parsed)
 		return ""
 	case reflect.Slice:
+		trimmed := strings.TrimSpace(raw)
+		// 配置中心 ValueTypeJSON 存 JSON 数组；优先按 JSON 解码，避免
+		// `["a","b"]` 被逗号拆成带引号片段导致 audience 校验失败。
+		if strings.HasPrefix(trimmed, "[") {
+			dest := reflect.New(field.Type())
+			if err := json.Unmarshal([]byte(trimmed), dest.Interface()); err != nil {
+				return "expected a JSON array"
+			}
+			field.Set(dest.Elem())
+			return ""
+		}
 		parts := strings.Split(raw, ",")
 		items := make([]string, 0, len(parts))
 		for _, part := range parts {
-			if trimmed := strings.TrimSpace(part); trimmed != "" {
-				items = append(items, trimmed)
+			if item := strings.TrimSpace(part); item != "" {
+				items = append(items, item)
 			}
 		}
 		field.Set(reflect.ValueOf(items).Convert(field.Type()))

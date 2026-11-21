@@ -1,6 +1,8 @@
 package configboot
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestWithProcessIdentity(t *testing.T) {
 	got := WithProcessIdentity(map[string]string{
@@ -33,5 +35,57 @@ func TestSetIfEmpty(t *testing.T) {
 	}
 	if values["auth.jwt.issuer"] != "admin-frame" {
 		t.Fatalf("must fill empty: %q", values["auth.jwt.issuer"])
+	}
+}
+
+func TestApplyProdLikeProcessDefaults(t *testing.T) {
+	admin := map[string]string{}
+	ApplyProdLikeProcessDefaults(admin, "prod", "admin")
+	if admin["iam.mode"] != "enforce" || admin["iam.approval.enabled"] != "true" {
+		t.Fatalf("admin iam: %+v", admin)
+	}
+	if admin["iam.cache.driver"] != "redis" || admin["auth.mode"] != "jwt" {
+		t.Fatalf("admin auth/cache: %+v", admin)
+	}
+
+	c := map[string]string{
+		"identity.sms.enabled":      "false",
+		"identity.sms.driver":       "memory",
+		"identity.sms.daily_budget": "0",
+	}
+	ApplyProdLikeProcessDefaults(c, "staging", "c")
+	if c["identity.sms.enabled"] != "true" || c["identity.sms.driver"] != "aliyun" {
+		t.Fatalf("c sms: %+v", c)
+	}
+	if c["identity.sms.daily_budget"] != "1000" || c["identity.sms.template_id"] != "bootstrap-placeholder" {
+		t.Fatalf("c sms budget/template: %+v", c)
+	}
+	if c["iam.mode"] != "" {
+		t.Fatalf("c must not set iam.mode: %+v", c)
+	}
+	if c["identity.mfa.admin_required"] != "false" {
+		t.Fatalf("c must clear admin_required: %+v", c)
+	}
+
+	biz := map[string]string{"identity.mfa.admin_required": "true"}
+	ApplyProdLikeProcessDefaults(biz, "prod", "biz")
+	if biz["identity.mfa.admin_required"] != "false" {
+		t.Fatalf("biz must clear admin_required: %+v", biz)
+	}
+
+	local := map[string]string{}
+	ApplyProdLikeProcessDefaults(local, "dev", "admin")
+	if len(local) != 0 {
+		t.Fatalf("dev must be no-op: %+v", local)
+	}
+
+	existing := map[string]string{
+		"iam.mode":             "shadow",
+		"iam.approval.enabled": "false",
+		"iam.cache.driver":     "memory",
+	}
+	ApplyProdLikeProcessDefaults(existing, "prod", "admin")
+	if existing["iam.mode"] != "enforce" || existing["iam.approval.enabled"] != "true" || existing["iam.cache.driver"] != "redis" {
+		t.Fatalf("admin/biz must force IAM prod gates over snapshot defaults: %+v", existing)
 	}
 }

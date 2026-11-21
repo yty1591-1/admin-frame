@@ -164,11 +164,11 @@ func NewOrchestrator(requests domain.RequestRepository, deliveries domain.Delive
 		return nil, apperr.Internal("notification orchestrator requires a preference repository", nil)
 	case blacklist == nil:
 		return nil, apperr.Internal("notification orchestrator requires a blacklist repository", nil)
-	case len(opts.Route) == 0:
-		return nil, apperr.Internal("notification orchestrator requires a channel route", nil)
 	case opts.Emitter == nil:
 		return nil, apperr.Internal("notification orchestrator requires an audit emitter", nil)
 	}
+	// Route 允许为空：prod/staging 可将全部渠道显式设为 disabled（配置校验已放行）。
+	// 此时投递无可用 Sender，按失败路径落终态，不阻塞 worker 启动。
 	now := time.Now
 	budgets := opts.MaxAttempts
 	if budgets == nil {

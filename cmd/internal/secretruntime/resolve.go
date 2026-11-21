@@ -19,7 +19,11 @@ func NewFromEnv() (*secretclient.Client, error) {
 	if base == "" || identity == "" {
 		return nil, fmt.Errorf("secretruntime: CONFIG_API_URL and CONFIG_SERVICE_IDENTITY are required")
 	}
+	httpClient, err := LoadClientHTTPFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	return secretclient.New(secretclient.Config{
-		BaseURL: base, ServiceIdentity: identity,
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
 }

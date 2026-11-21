@@ -19,6 +19,7 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
@@ -58,9 +59,15 @@ func main() {
 // -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
 func run(replayDLQ string, sweepCertifications bool) error {
-	boot, err := configboot.Load(context.Background())
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("config boot: %w", err)
+	}
+	// prod-like 快照含 auth.mode=jwt；Validate 前须注入 secretclient 解析的签名密钥。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		return fmt.Errorf("jwt secret: %w", err)
 	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
@@ -69,6 +76,9 @@ func run(replayDLQ string, sweepCertifications bool) error {
 			Service: "worker", Channel: "worker", Env: boot.Env, Addr: ":8090",
 		})
 		values["async.enabled"] = "true"
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "worker")
+		configboot.ApplyDeployOverlays(values)
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
 		return values, nil
 	})
 	if err != nil {

@@ -47,6 +47,25 @@ func TestBindValuesAppliesTypedFields(t *testing.T) {
 	}
 }
 
+func TestBindValuesAppliesJSONArraySlice(t *testing.T) {
+	var cfg testConfig
+	err := config.BindValues(&cfg, map[string]string{
+		"tags": `["admin","biz","c","worker","internal"]`,
+	})
+	if err != nil {
+		t.Fatalf("bind JSON array slice: %v", err)
+	}
+	want := []string{"admin", "biz", "c", "worker", "internal"}
+	if len(cfg.Tags) != len(want) {
+		t.Fatalf("tags=%v, want %v", cfg.Tags, want)
+	}
+	for i := range want {
+		if cfg.Tags[i] != want[i] {
+			t.Fatalf("tags=%v, want %v", cfg.Tags, want)
+		}
+	}
+}
+
 func TestBindValuesAllowsEmptyString(t *testing.T) {
 	cfg := testConfig{Addr: ":8080"}
 	if err := config.BindValues(&cfg, map[string]string{"addr": ""}); err != nil {

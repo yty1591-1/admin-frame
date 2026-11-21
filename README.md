@@ -38,6 +38,8 @@ pwsh -File scripts/local/dev-services.ps1 start -Migrate
 
 单进程排障仍可用 `make run-config` / `run-admin` 等（须自行 export 引导变量与 `CONFIG_SERVICE_IDENTITY`）。
 
+本机 **prod 演练**（Vault KEK + mTLS）：见 [docs/prod-rehearsal.md](docs/prod-rehearsal.md)，`make prod-up`。
+
 ## 鉴权
 
 三端统一使用 JWT（`auth.mode: jwt`，HS256 或 RS256），不存在 Demo Token：

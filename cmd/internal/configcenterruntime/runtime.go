@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
@@ -383,14 +384,22 @@ func newHTTPRefreshClient(deps *platform.Deps, metrics *observability.Metrics, h
 	if base == "" || identity == "" {
 		return nil, nil
 	}
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	httpClient, err := secretruntime.LoadClientHTTPFromEnvFor(env)
+	if err != nil {
+		return nil, err
+	}
 	source, err := configclient.NewHTTPSource(configclient.HTTPSourceConfig{
-		BaseURL: base, ServiceIdentity: identity,
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, err
 	}
 	notifier, err := configclient.NewLongPoller(configclient.LongPollerConfig{
-		BaseURL: base, ServiceIdentity: identity,
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, err
