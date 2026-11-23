@@ -251,8 +251,9 @@
 | 本地 pre-commit（oxlint / oxfmt / eslint / stylelint / 全量 `check:type`） | 🟡 仅 `frontend/` 安装 lefthook 时生效；本机 `.git/hooks` 无 pre-commit；可 `--no-verify` 绕过 | `frontend/lefthook.yml` |
 | `pnpm check:type` | 🟡 只跑 `web-admin` / `web-biz` 两个 app；27 个 `packages/**` 无 `typecheck` |
 | 类型基线（2026-11-21） | ✅ 两 app `vue-tsc --noEmit` 均 0 错误；修掉 9 处既有红（`secrets/index.vue` 8 处模板断言、`releases.ts:72` payload 默认值） | `apps/web-admin/src/views/system/config/secrets/index.vue`、`apps/web-admin/src/api/configcenter/releases.ts` |
-| 门禁红灯验证（2026-11-21） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；`check:dep` / `check:circular` 退出码待 CI 首跑取证 | 本轮实施记录 | `turbo.json` |
-| `pnpm check:dep` / `check:circular` | 🟡 2026-11-21 已改为发现问题即非 0 退出（`hasUnusedDependencies` / `exceedsThreshold` + 单测）；本地沙箱无法实跑扫描器，退出码证据以 CI 首跑为准 | `frontend/scripts/vsh/src/check-*/` |
+| 门禁红灯验证（2026-11-23） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；`check:dep` / `check:circular` 见下一行 | 本轮实施记录 | `turbo.json` |
+| `pnpm check:dep` / `check:circular` | ✅ 2026-11-23 本地实测：存量未用依赖 / 10 个循环时 exit 1，清理后 exit 0；单测随 `pnpm test:unit` 通过 | `frontend/scripts/vsh/src/check-*/` |
+| PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm test:unit` | 🟡 77 个测试全在 `packages/`、`internal/`；`apps/` 为 0 | `vitest.config.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
@@ -275,7 +276,7 @@
 - [ ] 按钮权限用 `v-access`，且对应接口服务端有 `perm()`；
 - [ ] 文案无硬编码中文；无新增 `v-html` / `innerHTML`；
 - [ ] 至少 1 条用例（页面或请求层）；
-- [ ] MR 勾选「前端自检」节（模板待 FE-G-03 增加）。
+- [ ] MR 勾选「前端自检」节（模板已提供，`check-git.sh` 断言该节存在）。
 
 ## 附录 B：关联文档
 

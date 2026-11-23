@@ -220,8 +220,8 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | ID | 负责人 | 状态 | 关闭判据 / 备注 |
 |----|--------|------|------------------|
 | FE-G-01 | 待指派 | 进行中 | 2026-11-21：ci.yml `frontend` job、`make frontend-check`、PARITY 登记、Gitee `build@nodejs` step、gitee-job 子命令已落地；待 CI 首跑与 lint 红灯取证 |
-| FE-G-02 | 待指派 | 进行中 | 2026-11-21：`hasUnusedDependencies` / `exceedsThreshold` + 退出码已改，单测已加；本地沙箱 spawn EPERM 无法实跑，dist 由 CI 的 postinstall 重建 |
-| FE-G-03 | 待指派 | 未开始 | 双模板 + `check-git` |
+| FE-G-02 | 待指派 | 已完成 | 2026-11-23：`hasUnusedDependencies` / `exceedsThreshold` + 退出码已改，单测已加；本地 `frontend-check` 实测：存量未用依赖/循环依赖时 exit 1，清理后 exit 0 |
+| FE-G-03 | 待指派 | 已完成 | 2026-11-23：两份 PR 模板新增「前端自检」节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题实测 exit 1，恢复后 0） |
 | FE-G-04 | 待指派 | 未开始 | cspell/.vue + 全量 lint |
 | FE-G-05 | 待指派 | 未开始 | 27 包 typecheck |
 | FE-G-06 | 待指派 | 未开始 | apps 用例 + 覆盖率 |
@@ -259,7 +259,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 
 - [ ] `frontend` job 存在且为 required check；`make frontend-check` 可复现同一套步骤（FE-G-01）
 - [ ] `check:dep` / `check:circular` 遇到问题返回非 0（FE-G-02）
-- [ ] 两份 PR 模板有「前端自检」节，且 `check-git` 能断言（FE-G-03）
+- [x] 两份 PR 模板有「前端自检」节，且 `check-git` 能断言（FE-G-03）
 - [ ] cspell/stylelint 覆盖 `.vue`，CI 跑全量（FE-G-04）
 - [ ] 27 个包有 `typecheck`，`turbo run typecheck` 全量（FE-G-05）
 - [ ] `apps/*` 有冒烟用例，覆盖率阈值生效（FE-G-06 / FE-T-01 / FE-T-03）

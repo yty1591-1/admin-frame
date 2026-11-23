@@ -63,6 +63,17 @@
 - [ ] API 保留 `/healthz`、`/readyz`、`/version`
 - [ ] A/B/C 关键写按 AUD 发出审计（见「审计自检」）
 
+## 前端自检（FRONTEND_STANDARDS）
+
+> 仅前端改动需逐项勾选；未触及前端可整节跳过。
+
+- [ ] `make frontend-check` 本地全绿（lint / check:dep / check:circular / check:type / test:unit / build:admin / build:biz）
+- [ ] 新增页面已按 FE-15 接入：页面目录、菜单 `component`、seed/白名单、权限点、locale
+- [ ] 无新增 `#/api/*`、`#/layouts/*` 等应用内深导入；跨端复用逻辑进 `@vben/*` 包（FE-03）
+- [ ] 请求走 `request.ts` 统一出口；分页 `page_size`≤100；写路径幂等头符合 FE-13
+- [ ] 无未净化 `v-html` / `innerHTML`；令牌与锁屏口令不落 Web Storage（FE-SEC-01/04/05）
+- [ ] 未提交 `frontend/.env` 或含密钥的 `VITE_*`；新配置进 `.env.example`（FE-21）
+
 ## Git 自检（GIT_STANDARDS）
 
 - [ ] 经 MR 合入保护分支；分支名符合 `feature|fix|hotfix|chore|docs/*`
