@@ -13,6 +13,7 @@ export default defineConfig({
     'node_modules',
     '.nvmrc',
     'coverage',
+    '.coverage',
     'CODEOWNERS',
     '**/*.svg',
     '**/*.sh',

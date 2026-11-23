@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FE-CI-01：前端必跑门禁唯一入口。
+# 前端必跑门禁唯一入口（CI-18）。
 #
 # 消费者（必须同时存在，CI-16 parity 校验）：
 #   - .github/workflows/ci.yml 的 frontend job
@@ -18,29 +18,34 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> [1/8] pnpm install --frozen-lockfile"
+echo "==> [1/9] pnpm install --frozen-lockfile"
 pnpm install --frozen-lockfile
 
-echo "==> [2/8] pnpm lint（oxlint/oxfmt/eslint/stylelint 全量，非 staged）"
+echo "==> [2/9] pnpm lint（oxlint/oxfmt/eslint/stylelint 全量，非 staged）"
 pnpm lint
 
-echo "==> [3/8] pnpm check:cspell（含 **/*.vue 模板，FE-G-04）"
+echo "==> [3/9] pnpm check:cspell（含 **/*.vue 模板，FE-G-04）"
 pnpm check:cspell
 
 # 依赖检查与循环依赖检查此前恒 exit 0，这里接入是 FE-G-02 的消费者。
-echo "==> [4/8] pnpm check:dep"
+echo "==> [4/9] pnpm check:dep"
 pnpm check:dep
 
-echo "==> [5/8] pnpm check:circular"
+echo "==> [5/9] pnpm check:circular"
 pnpm check:circular
 
-echo "==> [6/8] pnpm check:type（两个 app，vue-tsc）"
+echo "==> [6/9] pnpm check:type（32 个包 + 2 个 app，FE-G-05）"
 pnpm check:type
 
-echo "==> [7/8] pnpm test:unit"
+# 根 vitest 覆盖 packages/internal/scripts；两个 app 各自一份配置，
+# 因为 `#/` 别名与覆盖率阈值必须按应用隔离（FE-G-06）。
+echo "==> [7/9] pnpm test:unit（根 + web-admin + web-biz，含覆盖率阈值）"
 pnpm test:unit
 
-echo "==> [8/8] pnpm build:admin && pnpm build:biz"
+echo "==> [8/9] check-frontend-gates.sh（apps 冒烟用例与覆盖率门禁，FE-G-06）"
+bash "${ROOT}/scripts/ci/check-frontend-gates.sh"
+
+echo "==> [9/9] pnpm build:admin && pnpm build:biz"
 pnpm build:admin
 pnpm build:biz
 

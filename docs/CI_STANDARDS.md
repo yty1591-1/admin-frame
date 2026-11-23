@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）
 > **执行方式**：见下文「多平台」；本地统一 `make ci`
-> **最后更新**：2026-11-21（新增 CI-18 / job `frontend`：前端必跑门禁；见 FE-CI-01 与 `scripts/ci/frontend-check.sh`）
+> **最后更新**：2026-11-23（CI-18 增补 apps 冒烟与覆盖率门槛步骤；见 FE-G-06 与 `scripts/ci/check-frontend-gates.sh`）
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -39,7 +39,7 @@
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 | CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
 | CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
-| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm lint`、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
+| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm lint`、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`（根 + web-admin + web-biz，apps 覆盖率阈值 30%）、`check-frontend-gates.sh`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -221,7 +221,7 @@ make check-perf           # PERF-01/02
 make build                # CI-08
 make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构见 CI `image`）
 make image-scan                        # 本地复现 image job 的 Trivy 扫描（HIGH/CRITICAL）
-make frontend-check                    # CI-18 / FE-CI-01：前端 lint/type/unit/build（需 pnpm 11 + Node 24；不进 make ci）
+make frontend-check                    # CI-18 / FE-CI-01：前端 lint/type/unit/build（需 pnpm 11 + Node 24；不进 make ci；含两 app 冒烟与覆盖率）
 ```
 
 或一键：
@@ -331,7 +331,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 - [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）
 - [ ] 已更新本专文映射表（若有增删 job）
 - [ ] `make check-ci-parity` 通过：新增/改名 job 已在 `check-ci-parity.sh` 登记本地入口（CI-16）
-- [ ] 前端 job / Gitee step / `make frontend-check` 仍同源于 `scripts/ci/frontend-check.sh`（CI-18 / FE-CI-01）
+- [ ] 前端 job / Gitee step / `make frontend-check` 仍同源于 `scripts/ci/frontend-check.sh`（CI-18 / FE-CI-01），且含 `check-frontend-gates.sh`（FE-G-06）
 - [ ] 新门禁若依赖外部工具/服务，已说明 `make ci-full` 如何提供，或已在 `ci-run.sh` 的 ALLOW 表写明豁免理由（CI-17）
 
 ---
@@ -348,7 +348,8 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-ci-paths.sh` | CI-15 |
 | `scripts/ci/check-ci-parity.sh` | CI-16：workflow job ↔ 本地入口一致性 |
-| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用） |
+| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用；9 步含 apps 冒烟与覆盖率） |
+| `scripts/ci/check-frontend-gates.sh` | FE-G-06：apps 冒烟用例存在性 + `v-access`/`pageMap` 覆盖断言（由 `frontend-check.sh` 第 8 步调用） |
 | `frontend/.node-version` / `frontend/pnpm-lock.yaml` | 前端工具链钉扎（Node 24.16.0 + pnpm 11.16.0） |
 | `scripts/ci/ci-run.sh` | CI-17：跳过项汇总与严格模式（被 `make ci-strict` 调用） |
 | `scripts/ci/ci-full.sh` | CI-17：本地判定等价（service 容器 + integration + `-race` + 镜像扫描） |

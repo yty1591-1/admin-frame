@@ -87,6 +87,7 @@ catalog:
   '@typescript-eslint/parser': ^8.72.0
   '@vitejs/plugin-vue': ^6.0.10
   '@vitejs/plugin-vue-jsx': ^5.1.6
+  '@vitest/coverage-v8': 4.1.11
   '@vue/shared': ^3.5.44
   '@vue/test-utils': ^2.5.1
   '@vueuse/core': ^15.0.0

@@ -210,8 +210,8 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-25 | 分层：`packages/**` 有单元测试；`apps/*` 至少覆盖登录四态、刷新单飞、401 清令牌、403/404、429 倒计时、204、分页钳制、错误码映射、菜单未命中；E2E 放 nightly，不进 PR 必跑 | `frontend` job（🟡 已含 `test:unit`，apps 用例待 FE-T-01） |
-| FE-26 | 覆盖率：`apps/*` 关键路径首版 ≥30%，半年内 ≥50%；`packages/**` 不得下降。阈值写入 `vitest.config.ts` 并由脚本校验 | `check-frontend-gates.sh`（⬜） |
+| FE-25 | 分层：`packages/**` 有单元测试；`apps/*` 至少覆盖登录四态、刷新单飞、401 清令牌、403/404、429 倒计时、204、分页钳制、错误码映射、菜单未命中；E2E 放 nightly，不进 PR 必跑 | `frontend` job（✅ 2026-11-23 apps 冒烟已接入：登录四态/幂等/错误映射/pageMap/守卫；429/204/401 随拦截器扩展） |
+| FE-26 | 覆盖率：`apps/*` 关键路径首版 ≥30%，半年内 ≥50%；`packages/**` 不得下降。阈值写入 `vitest.config.ts` 并由脚本校验 | `apps/*/vitest.config.ts` + `check-frontend-gates.sh`（✅ 30% 生效；admin 89.47%、biz 93.5%） |
 | FE-27 | 新增页面/接口必须带用例；缺陷修复必须附回归用例（对应 `TESTING_STANDARDS.md` 的例外体例） | Review |
 | FE-28 | 禁止 `--passWithNoTests`、禁止跳过用例凑绿、禁止依赖外网后端；测试必须可离线运行（mock 接口） | Review + 测试运行 |
 
@@ -253,10 +253,11 @@
 | 类型基线（2026-11-21） | ✅ 两 app `vue-tsc --noEmit` 均 0 错误；修掉 9 处既有红（`secrets/index.vue` 8 处模板断言、`releases.ts:72` payload 默认值） | `apps/web-admin/src/views/system/config/secrets/index.vue`、`apps/web-admin/src/api/configcenter/releases.ts` |
 | 包级类型基线（2026-11-23） | ✅ 32 个包（26 packages + 6 internal）全 0 错误；修掉 21 处既有红（`typings/vue-router.d.ts` 声明路径、`RouteMeta` augmentation、Vite/Rollup 插件 hook 类型、测试非空断言等） | `packages/@core/base/typings/vue-router.d.ts`、`internal/vite-config/src/plugins/*.test.ts` |
 | 门禁红灯验证（2026-11-23） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；包级：在 `packages/utils/src/helpers/generate-menus.ts` 注入同句 → `pnpm check:type` 退出 2（turbo `Failed: @vben/utils#typecheck`），撤销后 0；`check:dep` / `check:circular` 见下一行 | 本轮实施记录 | `turbo.json` |
+| 应用级覆盖率红灯（2026-11-23） | ✅ 临时把 `web-admin` 阈值调 99% → `vitest run` exit 1（Coverage for statements/branches/functions/lines does not meet global threshold）；恢复 30% 后 38 条用例全绿 | `apps/web-admin/vitest.config.ts` |
 | `pnpm check:dep` / `check:circular` | ✅ 2026-11-23 本地实测：存量未用依赖 / 10 个循环时 exit 1，清理后 exit 0；单测随 `pnpm test:unit` 通过 | `frontend/scripts/vsh/src/check-*/` |
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
-| `pnpm test:unit` | 🟡 77 个测试全在 `packages/`、`internal/`；`apps/` 为 0 | `vitest.config.ts` |
+| `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
 | `make ci` | ⬜ 40+ 检查仍无前端；引入独立目标 `make frontend-check`（刻意不并入，pnpm install 依赖网络） | `Makefile` |
