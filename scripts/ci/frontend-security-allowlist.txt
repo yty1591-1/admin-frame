@@ -1,0 +1,17 @@
+# FE-SEC-01 前端 XSS 出口白名单（FE-S-01）
+#
+# 格式：<仓库相对路径>|<规则>|<原因>|<到期日 YYYY-MM-DD>
+# 规则：v-html | innerHTML | window-open；eval/new Function 不允许豁免（写了也会失败）。
+# 约束：到期日必须填写且未过期；条目必须对应真实命中，否则视为陈旧条目失败；
+#       到期后必须修复代码或重新评估后更新日期（不允许无期限豁免）。
+# 责任：Frontend；评审依据 docs/FRONTEND_STANDARDS.md §7。
+
+# 富文本预览：内容来自后端富文本字段，仅做展示（本轮无编辑器输入）
+frontend/packages/effects/plugins/src/tiptap/preview.vue|v-html|富文本预览原始 HTML，内容来自后端富文本字段|2027-06-30
+# 工作台卡片描述：展示后端下发的固定文案（含 <b> 强调）
+frontend/packages/effects/common-ui/src/ui/dashboard/workbench/workbench-trends.vue|v-html|工作台趋势卡片描述，后端固定文案|2027-06-30
+frontend/packages/effects/common-ui/src/ui/dashboard/workbench/workbench-todo.vue|v-html|工作台待办描述，后端固定文案|2027-06-30
+# loading 指令写入静态样式字符串，不含用户输入
+frontend/packages/effects/common-ui/src/components/loading/directive.ts|innerHTML|loading 指令写入静态样式表，无用户输入|2027-06-30
+# 通用 openWindow 帮助函数：features 由调用方决定，内部路由调用已带 noopener
+frontend/packages/@core/base/shared/src/utils/window.ts|window-open|通用窗口打开帮助函数，features 由调用方传入|2027-06-30

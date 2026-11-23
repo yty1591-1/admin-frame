@@ -110,7 +110,7 @@ async function handleEnter() {
     handleClose();
     await nextTick();
     if (isHttpUrl(to.path)) {
-      window.open(to.path, '_blank');
+      window.open(to.path, '_blank', 'noopener,noreferrer');
     } else {
       router.push({ path: to.path, replace: true });
     }

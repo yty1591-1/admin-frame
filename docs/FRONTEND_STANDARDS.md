@@ -1,7 +1,7 @@
 # 前端开发规范（L1）
 
 > **状态**：草案 v0.1（Draft，尚未生效）  
-> **转正条件**：`frontend` CI job（2026-11-21 已接入并完成类型门禁红→绿验证）、`check-frontend-security.sh`、覆盖率门槛上线后，按 [`frontend-remediation-plan.md`](./frontend-remediation-plan.md) §四 评审转 Normative  
+> **转正条件**：`frontend` CI job（2026-11-21 已接入并完成类型门禁红→绿验证）、`check-frontend-security.sh`（2026-11-23 已接入并完成红→绿验证）、覆盖率门槛上线后，按 [`frontend-remediation-plan.md`](./frontend-remediation-plan.md) §四 评审转 Normative  
 > **效力**：转正后与 [`CODE_STYLE.md`](./CODE_STYLE.md) 同等；违反则 MR **不得合并**  
 > **适用范围**：`frontend/` 下全部代码与构建产物——`apps/web-admin`、`apps/web-biz`、`packages/**`、`internal/**`（lint / tsconfig / vite 配置）  
 > **上位约束**：[`ARCHITECTURE.md`](./ARCHITECTURE.md)（后端契约与领域边界）、[`API_STANDARDS.md`](./API_STANDARDS.md)（OpenAPI 与错误码）、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（密钥、鉴权、安全基线）  
@@ -175,7 +175,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-01 | 禁止 `v-html` 渲染未净化内容；确需富文本时调用 `DOMPurify.sanitize` 并限制允许标签。禁止 `innerHTML`、`eval`、`new Function`、`document.write`。新增例外必须走 §10（含到期日与 owner） | eslint `vue/no-v-html: error`（🟡 待设 error）/ `check-frontend-security.sh`（⬜） |
+| FE-SEC-01 | 禁止 `v-html` 渲染未净化内容；确需富文本时调用 `DOMPurify.sanitize` 并限制允许标签。禁止 `innerHTML`、`eval`、`new Function`、`document.write`。新增例外必须走 §10（含到期日与 owner） | eslint `vue/no-v-html: error`（✅ 已设；去掉 disable 即 exit 1）/ `check-frontend-security.sh`（✅ 第 4/11 步，allowlist 5 条带到期日） |
 
 **现状**：`preview.vue` 有 2 处 `v-html` 且以 eslint-disable 关闭告警（TipTapPreview 当前未被 apps 引用）。转正前必须完成净化或登记例外，禁止永久 disable。
 
@@ -258,6 +258,7 @@
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
 | `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
+| XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
 | `make ci` | ⬜ 40+ 检查仍无前端；引入独立目标 `make frontend-check`（刻意不并入，pnpm install 依赖网络） | `Makefile` |

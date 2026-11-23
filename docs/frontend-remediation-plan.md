@@ -142,7 +142,7 @@
 
 | ID | 动作 | 落点 | 验收 |
 |----|------|------|------|
-| FE-S-01 | XSS 出口管控：`vue/no-v-html = error`；现存 3 处 `v-html` 进 allowlist（带到期日）；新增 `check-frontend-security.sh` 扫 `v-html`/`innerHTML`/`eval(`/`new Function`/`window.open` 缺 `noopener` | eslint vue 配置、`scripts/ci/check-frontend-security.sh`、`docs/FRONTEND_STANDARDS.md` §7 | 去掉 `preview.vue` 的 disable 后 CI 红；allowlist 条目均有到期日 |
+| FE-S-01 | XSS 出口管控：`vue/no-v-html = error`；现存 3 处 `v-html` 进 allowlist（带到期日）；新增 `check-frontend-security.sh` 扫 `v-html`/`innerHTML`/`eval(`/`new Function`/`window.open` 缺 `noopener` | eslint vue 配置、`scripts/ci/check-frontend-security.sh`、`docs/FRONTEND_STANDARDS.md` §7 | ✅ 2026-11-23：`vue/no-v-html: error` 生效（去掉 preview.vue 的 disable 即 eslint exit 1）；`check-frontend-security.sh` 扫 837 文件、5 命中全在 allowlist（4 条路径，均带到期日 2027-06-30）；注入 `v-html=` 即 exit 1；3 处 `window.open` 已补 `noopener,noreferrer`；`frontend-check.sh` 第 4/11 步 |
 | FE-S-02 | 安全头 + CSP 先 `Report-Only`：`nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy`、`Permissions-Policy`、HSTS（TLS 终止层）；处理内联脚本（`VITE_INJECT_APP_LOADING`） | `frontend/scripts/deploy/nginx.conf`、Helm Ingress 注记 | `curl -sI` 见 5 个头；staging 一周无 `script-src` 违规后切强制 |
 | FE-S-03 | 令牌/凭据条规：禁新增 Web Storage 持久化令牌；锁屏改「重新认证」或仅内存态；写明「SecureLS 是混淆不是加密」 | `docs/FRONTEND_STANDARDS.md` §5、`frontend/packages/stores/src/modules/access.ts`、`frontend/apps/web-admin/src/setup.ts` | `lockScreenPassword` 不再持久化；单测断言 `persist.pick` 不含该键 |
 | FE-S-04 | 权限分工成文：前端权限仅展示控制，每个新增/变更接口必须服务端 `perm()` 兜底；补齐 `v-access` 的 `updated` 语义 | `docs/FRONTEND_STANDARDS.md` §4、`v-access` 指令实现、PR 模板 | Review checklist 含「服务端 perm」；`v-access` 有更新用例 |
@@ -156,7 +156,7 @@
 |----|------|------|------|
 | FE-T-01 | 首批回归用例：已覆盖登录四态、redirect 回跳、登出清理、MFA 中间态不落令牌、幂等键注入/保留、错误消息映射、pageMap 与守卫 redirect、Web Storage 令牌禁令（`v-access`/`pageMap` 断言）；429/204/401 清令牌在 axios 拦截器层，随 FE-T-02 扩展 | `frontend/apps/web-admin/src/**/__tests__/*.test.ts`、`frontend/apps/web-biz/src/**/__tests__/*.test.ts` | ✅ 2026-11-23：`pnpm test:unit` 含 apps 用例通过（admin 38 + biz 20）；禁 `--passWithNoTests` |
 | FE-T-02 | 菜单契约双向：`catalog_test.go` 反向校验（页面文件/seed → 白名单）；先修复 9 个未入白名单菜单（PATCH 400 风险）与 `/system/audit` 死链 | `internal/iam/menuview/catalog.go`、`catalog_test.go`、`migrations/` | 双向测试通过；`EnableMenu` 对不存在的 component 报错 |
-| FE-T-03 | 覆盖率门槛落地：首版 ≥30%，半年内 ≥50%；阈值写入 `apps/*/vitest.config.ts`（v8，语句/分支/函数/行），`frontend-check.sh` 第 9/10 步校验 apps 用例存在 | `frontend/apps/*/vitest.config.ts`、`check-frontend-gates.sh`、CI | ✅ 2026-11-23：30% 生效；当前语句 89%/93%，可随时上调至 50% |
+| FE-T-03 | 覆盖率门槛落地：首版 ≥30%，半年内 ≥50%；阈值写入 `apps/*/vitest.config.ts`（v8，语句/分支/函数/行），`frontend-check.sh` 第 10/11 步校验 apps 用例存在 | `frontend/apps/*/vitest.config.ts`、`check-frontend-gates.sh`、CI | ✅ 2026-11-23：30% 生效；当前语句 89%/93%，可随时上调至 50% |
 | FE-T-04 | E2E 放 nightly（不进 PR 必跑）：5 条冒烟（登录、菜单、权限按钮、分页、错误提示） | `.github/workflows/`、`frontend/e2e/` | nightly 有结果；`test:e2e` 不再空转 |
 
 ### 5.5 文档写回（FE-D）
@@ -186,7 +186,7 @@
 ### 6.1 CI job
 
 - job 名：`frontend`；`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`（11.16.0），`setup-node@v4` 用 `node-version-file: frontend/.node-version` + pnpm 缓存；实际命令全部收敛到 `bash scripts/ci/frontend-check.sh`（脚本内 `cd frontend`）。
-- 步骤与 `make frontend-check` **一一对应**（10 步）：`pnpm install --frozen-lockfile` → `pnpm audit --prod --audit-level=high`（npmjs registry，FE-G-07）→ `pnpm lint` → `pnpm check:cspell` → `pnpm check:dep` → `pnpm check:circular` → `pnpm check:type` → `pnpm test:unit`（根 610 + web-admin 38 + web-biz 20）→ `bash scripts/ci/check-frontend-gates.sh` → `pnpm build:admin` → `pnpm build:biz`。
+- 步骤与 `make frontend-check` **一一对应**（11 步）：`pnpm install --frozen-lockfile` → `pnpm audit --prod --audit-level=high`（npmjs registry，FE-G-07）→ `pnpm lint` → `bash scripts/ci/check-frontend-security.sh`（FE-S-01）→ `pnpm check:cspell` → `pnpm check:dep` → `pnpm check:circular` → `pnpm check:type` → `pnpm test:unit`（根 610 + web-admin 38 + web-biz 20）→ `bash scripts/ci/check-frontend-gates.sh` → `pnpm build:admin` → `pnpm build:biz`。
 - **不新增 `paths` 过滤**：required check 被 skip 会产生「跳过是否算通过」的歧义（CI-17 语义），先保持全量触发；时长用缓存与 `--frozen-lockfile` 控制。
 
 ### 6.2 本地入口
@@ -224,8 +224,8 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-G-03 | 待指派 | 已完成 | 2026-11-23：两份 PR 模板新增「前端自检」节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题实测 exit 1，恢复后 0） |
 | FE-G-04 | 待指派 | 已完成 | 2026-11-23：`check:cspell` 增加 `**/*.vue`（943 文件 0 问题）；`frontend-check.sh` 增加 `check:cspell` 步（第 3/8），lint/stylelint 本就全量非 staged；`.vue` 注入 `zzqqxx` 实测 exit 1 |
 | FE-G-05 | 待指派 | 已完成 | 2026-11-23：32 包（26 packages + 6 internal）补 `typecheck`；`pnpm check:type` 34/34 通过（约 1m8s）；修掉暴露的 21 处既有类型红（typings 声明路径、RouteMeta augmentation、Vite/Rollup 插件类型、测试非空断言等）；红灯实测：`packages/utils` 注入 `const __redLightProbe: string = 1` → turbo 退出 2（TS2322/TS6133），撤销后 FULL TURBO 0 |
-| FE-G-06 | 待指派 | 已完成 | 2026-11-23：admin 38 / biz 20 条冒烟用例；两 app 独立 `vitest.config.ts`（`#/` 别名 + 覆盖率阈值 30%）；`test:unit` 链式跑三次；`check-frontend-gates.sh` 纳入第 9/10 步；阈值 99% 实测红、恢复后绿 |
-| FE-G-07 | 待指派 | 已完成 | 2026-11-23：`engineStrict: true` 生效（Node `>=99` 实测 exit 1）、`minimumReleaseAge: 1440`、11 个 overrides 修复 33 high + 2 critical → audit 0 high（余 3 low/12 moderate）、dependabot npm `/frontend`、`frontend-check.sh` 第 2/10 步 |
+| FE-G-06 | 待指派 | 已完成 | 2026-11-23：admin 38 / biz 20 条冒烟用例；两 app 独立 `vitest.config.ts`（`#/` 别名 + 覆盖率阈值 30%）；`test:unit` 链式跑三次；`check-frontend-gates.sh` 纳入第 10/11 步；阈值 99% 实测红、恢复后绿 |
+| FE-G-07 | 待指派 | 已完成 | 2026-11-23：`engineStrict: true` 生效（Node `>=99` 实测 exit 1）、`minimumReleaseAge: 1440`、11 个 overrides 修复 33 high + 2 critical → audit 0 high（余 3 low/12 moderate）、dependabot npm `/frontend`、`frontend-check.sh` 第 2/11 步 |
 | FE-G-08 | 待指派 | 已完成 | 2026-11-23：`docs/README.md`、根 `README.md`、`ci.yml` 头注释统一 CI-01～CI-18；`CI_STANDARDS.md` CI-18 与 §3.1 映射；`check-ci-paths.sh` PATTERN 含 `frontend` 并扩到 ts/tsx/vue/js/mjs/cjs（151 refs）；`ARCHITECTURE.md`、`rbac-iam.md` 旧编号更正；`make check-ci-paths` exit 0，注入 `frontend/__nonexistent__/probe.ts` 实测 make exit 2 |
 | FE-B-01 | 待指派 | 未开始 | SHA 注入 |
 | FE-B-02 | 待指派 | 未开始 | multi-target 镜像 |
@@ -233,7 +233,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-B-04 | 待指派 | 未开始 | Helm 前端 workload |
 | FE-B-05 | 待指派 | 未开始 | env 模板 + 白名单 |
 | FE-B-06 | 待指派 | 未开始 | 发布/回滚演练 |
-| FE-S-01 | 待指派 | 未开始 | 出口管控 + 豁免 |
+| FE-S-01 | 待指派 | 已完成 | 2026-11-23：出口管控 + 豁免；`check-frontend-security.sh`（第 4/11 步）、`vue/no-v-html=error`、allowlist 带到期日 |
 | FE-S-02 | 待指派 | 未开始 | 头 + CSP Report-Only |
 | FE-S-03 | 待指派 | 未开始 | 令牌/锁屏条规 |
 | FE-S-04 | 待指派 | 未开始 | 权限分工 |
@@ -269,7 +269,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [ ] Helm 前端 workload 渲染通过，kind 冒烟两端可访问（FE-B-04）
 - [ ] `.env.example` 存在且无密钥；未声明变量构建失败（FE-B-05）
 - [ ] staging 完成一次发布 + 回滚演练（FE-B-06）
-- [ ] `vue/no-v-html = error`，allowlist 均带到期日（FE-S-01）
+- [x] `vue/no-v-html = error`，allowlist 均带到期日（FE-S-01）
 - [ ] 安全头 5 项生效，CSP 先 Report-Only（FE-S-02）
 - [ ] 锁屏密码不再持久化（FE-S-03）
 - [ ] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07）
