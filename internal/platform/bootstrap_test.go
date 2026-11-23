@@ -32,7 +32,7 @@ func TestRunMissingConfig(t *testing.T) {
 
 // TestRunRejectsInvalidStorage 验证装配期校验失败会阻止进程启动。
 func TestRunRejectsInvalidStorage(t *testing.T) {
-	path := writeConfig(t, "bad-storage.yaml", "service: c-api\nchannel: c\naddr: \"127.0.0.1:0\"\nstorage:\n  driver: bogus\n")
+	path := writeConfig(t, "bad-storage.yaml", "service: c-api\nchannel: c\nenv: test\naddr: \"127.0.0.1:0\"\nstorage:\n  driver: bogus\n")
 	err := platform.Run(context.Background(), platform.Options{
 		ConfigPath: path,
 		Register:   func(*platform.Deps, *http.ServeMux) error { return nil },
@@ -44,7 +44,7 @@ func TestRunRejectsInvalidStorage(t *testing.T) {
 
 // TestRunReturnsRegisterError 验证 Register 错误向上传递（不被吞掉）。
 func TestRunReturnsRegisterError(t *testing.T) {
-	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\naddr: \"127.0.0.1:0\"\n")
+	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\nenv: test\naddr: \"127.0.0.1:0\"\n")
 	want := errors.New("boom")
 	err := platform.Run(context.Background(), platform.Options{
 		ConfigPath: path,
@@ -60,7 +60,7 @@ func TestRunReturnsRegisterError(t *testing.T) {
 // TestRunBootstrapsAndShutsDown 验证完整装配链路（配置→日志→指标→追踪→存储→
 // 鉴权→探针→链路→监听→关闭）在 ctx 取消后干净退出。
 func TestRunBootstrapsAndShutsDown(t *testing.T) {
-	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\naddr: \"127.0.0.1:0\"\nhttp:\n  timeout: 1s\n")
+	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\nenv: test\naddr: \"127.0.0.1:0\"\nhttp:\n  timeout: 1s\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
