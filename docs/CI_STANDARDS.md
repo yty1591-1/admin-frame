@@ -39,7 +39,7 @@
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 | CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
 | CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
-| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm audit --prod --audit-level=high`（npmjs registry）、`pnpm lint`、`check-frontend-security.sh`（XSS 出口）、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`（根 + web-admin + web-biz，apps 覆盖率阈值 30%）、`check-frontend-gates.sh`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
+| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm audit --prod --audit-level=high`（npmjs registry）、`pnpm lint`、`check-frontend-security.sh`（XSS 出口）、`check-frontend-headers.sh`（安全响应头 + CSP Report-Only）、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`（根 + web-admin + web-biz，apps 覆盖率阈值 30%）、`check-frontend-gates.sh`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -112,7 +112,7 @@
 - Go 版本：`actions/setup-go` 读取 `go.mod`
 - `arch` job 使用 runner 系统 Python；运行前钉扎安装 `pyyaml==6.0.3`，供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
-- `frontend` job（CI-18 / FE-CI-01）：`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`，`setup-node@v4` 用 `frontend/.node-version`（24.16.0）与 pnpm cache（键 `frontend/pnpm-lock.yaml`），执行 `bash scripts/ci/frontend-check.sh`（11 步，第 2 步为 `pnpm audit`、第 4 步为 XSS 出口巡检）；与 `make frontend-check`、Gitee step 同源，禁止三处各写一套命令
+- `frontend` job（CI-18 / FE-CI-01）：`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`，`setup-node@v4` 用 `frontend/.node-version`（24.16.0）与 pnpm cache（键 `frontend/pnpm-lock.yaml`），执行 `bash scripts/ci/frontend-check.sh`（12 步，第 2 步为 `pnpm audit`、第 4 步为 XSS 出口巡检、第 5 步为安全响应头）；与 `make frontend-check`、Gitee step 同源，禁止三处各写一套命令
 
 ### 3.3 Gitee Go
 
@@ -348,7 +348,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-ci-paths.sh` | CI-15 |
 | `scripts/ci/check-ci-parity.sh` | CI-16：workflow job ↔ 本地入口一致性 |
-| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用；11 步含 audit、XSS 巡检、apps 冒烟与覆盖率） |
+| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用；12 步含 audit、XSS 巡检、安全响应头、apps 冒烟与覆盖率） |
 | `scripts/ci/check-frontend-security.sh` | FE-S-01：XSS 出口巡检（v-html/innerHTML/eval/new Function/window.open 缺 noopener），例外见 `frontend-security-allowlist.txt`（带到期日；由 `frontend-check.sh` 第 4 步调用） |
 | `scripts/ci/check-frontend-gates.sh` | FE-G-06：apps 冒烟用例存在性 + `v-access`/`pageMap` 覆盖断言（由 `frontend-check.sh` 第 10 步调用） |
 | `frontend/.node-version` / `frontend/pnpm-lock.yaml` | 前端工具链钉扎（Node 24.16.0 + pnpm 11.16.0） |

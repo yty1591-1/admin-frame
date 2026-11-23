@@ -175,7 +175,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-01 | 禁止 `v-html` 渲染未净化内容；确需富文本时调用 `DOMPurify.sanitize` 并限制允许标签。禁止 `innerHTML`、`eval`、`new Function`、`document.write`。新增例外必须走 §10（含到期日与 owner） | eslint `vue/no-v-html: error`（✅ 已设；去掉 disable 即 exit 1）/ `check-frontend-security.sh`（✅ 第 4/11 步，allowlist 5 条带到期日） |
+| FE-SEC-01 | 禁止 `v-html` 渲染未净化内容；确需富文本时调用 `DOMPurify.sanitize` 并限制允许标签。禁止 `innerHTML`、`eval`、`new Function`、`document.write`。新增例外必须走 §10（含到期日与 owner） | eslint `vue/no-v-html: error`（✅ 已设；去掉 disable 即 exit 1）/ `check-frontend-security.sh`（✅ 第 4/12 步，allowlist 5 条带到期日） |
 
 **现状**：`preview.vue` 有 2 处 `v-html` 且以 eslint-disable 关闭告警（TipTapPreview 当前未被 apps 引用）。转正前必须完成净化或登记例外，禁止永久 disable。
 
@@ -183,7 +183,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-02 | 所有前端入口必须下发：`Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（或 `frame-ancestors 'none'`）、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy`；HSTS 在 TLS 终止层配置。CSP 首版用 `Content-Security-Policy-Report-Only`，staging 观察一周无 `script-src` 违规后切强制。静态站禁止 `Access-Control-Allow-Origin: *` 与凭据请求混用 | `check-frontend-headers.sh`（⬜）+ `curl -sI` |
+| FE-SEC-02 | 所有前端入口必须下发：`Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（或 `frame-ancestors 'none'`）、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy`；HSTS 在 TLS 终止层配置。CSP 首版用 `Content-Security-Policy-Report-Only`，staging 观察一周无 `script-src` 违规后切强制。静态站禁止 `Access-Control-Allow-Origin: *` 与凭据请求混用 | `check-frontend-headers.sh`（✅ 第 5/12 步：静态校验 5 头 + CSP 仅 Report-Only + 禁 `ACAO: *`；删任一即 exit 1）/ `curl -sI`（⬜ 待部署取证） |
 
 注意：nginx 子块内的 `add_header` 会覆盖父块，安全头必须与现有 CORS 头**同层**成组维护；`VITE_INJECT_APP_LOADING=true` 会注入内联脚本，CSP 需为其产出哈希或关闭该开关。
 
@@ -262,7 +262,7 @@
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
 | `make ci` | ⬜ 40+ 检查仍无前端；引入独立目标 `make frontend-check`（刻意不并入，pnpm install 依赖网络） | `Makefile` |
-| 安全头 / CSP | ⬜ 示例 nginx 无安全头，且 `ACAO:*` | `frontend/scripts/deploy/nginx.conf` |
+| 安全头 / CSP | 🟡 2026-11-23：`nginx.conf` 下发 5 个安全头 + `Content-Security-Policy-Report-Only`，移除 `ACAO:*`；`check-frontend-headers.sh` 静态校验入第 5/12 步（删 `X-Frame-Options` 实测 exit 1）；⬜ `curl -sI` 实机取证待部署 | `frontend/scripts/deploy/nginx.conf`、`scripts/ci/check-frontend-headers.sh` |
 | 产物 SHA | ⬜ 只注入 package 版本 | `internal/vite-config/src/plugins/inject-metadata.ts` |
 | 发布 | ⬜ Dockerfile 只 COPY `web-admin/dist`；`deploy/` 无前端 workload | `frontend/scripts/deploy/Dockerfile` |
 | 供应链 | ✅ `engineStrict: true` + `minimumReleaseAge: 1440` + audit 0 high（11 个 overrides）+ dependabot npm `/frontend` | `frontend/pnpm-workspace.yaml`、`.github/dependabot.yml` |

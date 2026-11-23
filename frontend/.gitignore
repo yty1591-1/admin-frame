@@ -9,6 +9,7 @@ dist.war
 *-dist.tar
 *-dist.war
 coverage
+.coverage
 *.local
 .cache
 .turbo
