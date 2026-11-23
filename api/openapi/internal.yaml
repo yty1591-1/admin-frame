@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Config API (internal)
-  version: 1.3.0
+  version: 1.4.0
   description: |
     配置中心内部服务（ADR-0014 / ADR-0016 / ADR-0017 / ADR-0018）。仅集群内 mTLS 可达；
     不承载管理面。破坏性变更须提升 major。
@@ -12,6 +12,9 @@ info:
     `apply` 新增按 namespace 分组的 `values` 并返回 `remaining_gaps`，安装态响应
     新增 `mode`/`gaps`/`blocking_count`/`repair_keys`，`complete` 在仍有阻塞键时
     返回 40000 且状态保持 `installing`。
+    1.4.0：`begin` 新增 `declared_keys`（运维声明的额外阻塞键），用于服务端算不出
+    阻塞键但进程确实起不来的场景；被声明的键同样计入 `remaining_gaps` 与 `complete`
+    门禁（ADR-0018 待定 5）。
 servers:
   - url: http://localhost:8085
     description: 本地 config-api

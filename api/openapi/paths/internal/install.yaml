@@ -57,8 +57,9 @@ internal-v1-install-begin:
     operationId: beginInstall
     description: |
       `reason=first_install`（默认）只能从 `pending`/`failed`/过期 `installing` 进入；
-      `reason=repair` 只允许在 `ready` 之后发起，且要求当前存在阻塞键，服务端会把
-      `namespace/key` 白名单冻结进 `repair_keys`，后续 apply 只接受这些键（ADR-0018）。
+      `reason=repair` 只允许在 `ready` 之后发起，且要求当前存在阻塞键（或运维通过
+      `declared_keys` 声明），服务端会把 `namespace/key` 白名单冻结进 `repair_keys`，
+      后续 apply 只接受这些键（ADR-0018）。
     parameters:
       - $ref: "#/components/parameters/SetupTokenHeader"
     requestBody:
@@ -75,6 +76,15 @@ internal-v1-install-begin:
                 type: string
                 enum: [first_install, repair]
                 description: 省略时按当前状态推断（ready → repair，否则 first_install）
+              declared_keys:
+                type: array
+                maxItems: 64
+                description: |
+                  运维声明的额外阻塞键（`namespace/key`），只在 `repair` 轮次有效。
+                  用于服务端算不出阻塞键、但进程确实起不来的场景：键必须已声明、非敏感，
+                  且尚未进入生效快照（已有值的键属正常变更，应走配置审批流）。
+                items:
+                  type: string
     responses:
       "200":
         description: 进入 installing
@@ -83,7 +93,9 @@ internal-v1-install-begin:
             schema:
               $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
       "400":
-        description: reason 非法，或 repair 时状态不是 ready
+        description: |
+          reason 非法；repair 时状态不是 ready；declared_keys 与 first_install 同时提交；
+          declared_keys 含未声明键 / 敏感键 / 已有值的键
       "401":
         description: setup token 无效
       "409":

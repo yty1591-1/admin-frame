@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
@@ -422,25 +423,17 @@ func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]R
 		if len(required) == 0 {
 			continue
 		}
-		pointer, err := s.pointers.Get(ctx, env, namespace)
-		switch {
-		case errors.Is(err, domain.ErrNotFound):
+		present, hasRelease, err := s.activeKeys(ctx, env, namespace)
+		if err != nil {
+			return nil, err
+		}
+		if !hasRelease {
 			for _, keySpec := range required {
 				gaps = append(gaps, RequiredGap{
 					Namespace: namespace, Key: keySpec.Key, Reason: "no_active_release",
 				})
 			}
 			continue
-		case err != nil:
-			return nil, translate(err)
-		}
-		activeItems, err := s.releases.ListItems(ctx, pointer.ActiveReleaseID)
-		if err != nil {
-			return nil, translate(err)
-		}
-		present := make(map[string]struct{}, len(activeItems))
-		for _, entry := range activeItems {
-			present[entry.ConfigKey] = struct{}{}
 		}
 		for _, keySpec := range required {
 			if _, ok := present[keySpec.Key]; !ok {
@@ -451,4 +444,69 @@ func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]R
 		}
 	}
 	return gaps, nil
+}
+
+// activeKeys 返回 namespace 生效发布内的键集合；hasRelease=false 表示该域尚无生效发布。
+func (s *BootstrapService) activeKeys(ctx context.Context, env, namespace string) (
+	present map[string]struct{}, hasRelease bool, err error) {
+	pointer, err := s.pointers.Get(ctx, env, namespace)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, translate(err)
+	}
+	activeItems, err := s.releases.ListItems(ctx, pointer.ActiveReleaseID)
+	if err != nil {
+		return nil, false, translate(err)
+	}
+	present = make(map[string]struct{}, len(activeItems))
+	for _, entry := range activeItems {
+		present[entry.ConfigKey] = struct{}{}
+	}
+	return present, true, nil
+}
+
+// CheckRefs 逐个判定 namespace/key 是否已进入生效快照。
+//
+// missing 是仍缺失的键；present 是已有值的键。begin(repair) 据此拒绝把
+// 「已有值、需要走审批」的键塞进 repair 白名单（ADR-0018 待定 5）。
+func (s *BootstrapService) CheckRefs(ctx context.Context, env string, refs []string) (
+	missing []RequiredGap, present []string, err error) {
+	if !domain.ValidEnv(env) {
+		return nil, nil, apperr.BadRequest("invalid env")
+	}
+	cache := make(map[string]map[string]struct{}, 4)
+	for _, ref := range refs {
+		namespace, key, ok := strings.Cut(ref, "/")
+		if !ok || namespace == "" || key == "" {
+			return nil, nil, apperr.BadRequest(
+				fmt.Sprintf("invalid key reference %q: want namespace/key", ref))
+		}
+		presentKeys, cached := cache[namespace]
+		if !cached {
+			presentKeys, _, err = s.activeKeys(ctx, env, namespace)
+			if err != nil {
+				return nil, nil, err
+			}
+			cache[namespace] = presentKeys
+		}
+		if _, ok := presentKeys[key]; ok {
+			present = append(present, ref)
+			continue
+		}
+		missing = append(missing, RequiredGap{
+			Namespace: namespace, Key: key, Reason: "missing_in_snapshot",
+		})
+	}
+	return missing, present, nil
+}
+
+// MissingRefs 只返回 refs 中仍缺失的键，供 apply / complete 的阻塞门禁复用。
+func (s *BootstrapService) MissingRefs(ctx context.Context, env string, refs []string) ([]RequiredGap, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	missing, _, err := s.CheckRefs(ctx, env, refs)
+	return missing, err
 }

@@ -72,7 +72,15 @@ func run() error {
 	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
 	// gaps 在装配退出时回传：缺必填键时改走 setup-only，避免带病装配（ADR-0018）。
 	var bootGaps []string
+	var bootValues map[string]string
 	gapsKnown := false
+	// validateValues 用于失败后复判：填占位值能过校验，说明失败是「缺值」而非「值写错」。
+	validateValues := func(values map[string]string) error {
+		_, verr := appconfig.LoadFromValues(func() (map[string]string, error) {
+			return values, nil
+		})
+		return verr
+	}
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
 		// 故进程级补齐非密钥项；密钥已由 secretclient 解析。
@@ -107,6 +115,7 @@ func run() error {
 			return nil, gapsErr
 		}
 		bootGaps, gapsKnown = gaps, true
+		bootValues = values
 		return values, nil
 	})
 	build := httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime}
@@ -119,6 +128,12 @@ func run() error {
 		return runSetupOnly(ctx, boot, bootGaps, build)
 	}
 	if err != nil {
+		// 注册表看不出缺键（例如只有配置校验层才要求的值）时再判一次：
+		// 填占位值能过校验即视为「缺值阻塞」，否则按配置写错处理（ADR-0018 决策 3）。
+		if gaps, ok := configboot.DiagnoseMissingValues(bootValues, validateValues); ok {
+			log.Printf("admin-api: config validation failed (%v); missing values block startup, entering setup-only mode: %s", err, strings.Join(gaps, ", "))
+			return runSetupOnly(ctx, boot, gaps, build)
+		}
 		return fmt.Errorf("load config: %w", err)
 	}
 	// 主体加密：优先 secretclient 的 identity.subject.key；仍空时才本地回退（CC-R-05）。

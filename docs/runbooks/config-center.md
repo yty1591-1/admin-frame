@@ -75,7 +75,9 @@
 - `complete` 时仍有阻塞键返回 `40000`，状态保持 `installing`（租约 15 分钟）：可继续 `apply`，不必重新 `begin`。
 - 白名单外的键一律 400：repair 不是日常配置渠道，非阻塞变更仍走 `submit → approve → publish`。
 - 「键存在但取值非法」不降级（避免静默带病运行）：按 `config: invalid config: config validation failed: ...` 定位键，走管理面发布修正。
-- 注意覆盖口径：`gaps` 只统计 key spec 的 `Required` 键。`auth.jwt.secret` 缺失、KEK/mTLS 证书错误这类「非快照」故障仍是 crash-loop，不会进降级态——按 §密钥与证书排障，别在向导里找答案。
+- 注意覆盖口径：`gaps` 只统计 key spec 的 `Required` 键。`auth.jwt.secret` 缺失、KEK/mTLS 证书错误这类「非快照」故障默认仍是 crash-loop，不会进降级态——按 §密钥与证书排障。
+- 若诊断不出缺值（`config validation failed` 但填占位值也不通过）：进程会继续 crash-loop，此时用 `declared_keys` 打开 repair——`POST /admin/v1/install/begin {"reason":"repair","declared_keys":["platform/auth.jwt.secret"]}`。键必须已在注册表声明、非敏感、且尚未在生效快照有值，否则 400；上限 64。被声明的键同样计入 `remaining_gaps` 与 `complete` 门禁。
+- 反过来，如果启动日志出现 `missing values block startup, entering setup-only mode: ...`，说明是「缺值」而非「值非法」，直接开向导按 schema 填即可，不需要 `declared_keys`。
 
 ### 回滚
 

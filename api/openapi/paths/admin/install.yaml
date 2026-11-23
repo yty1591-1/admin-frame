@@ -78,8 +78,8 @@ admin-v1-install-begin:
     security: []
     description: |
       `reason=first_install`（默认）用于首次安装；`reason=repair` 只允许在 `ready`
-      之后发起，且要求当前存在阻塞键，服务端会冻结 `namespace/key` 白名单到
-      `repair_keys`，后续 apply 只接受这些键（ADR-0018）。
+      之后发起，且要求当前存在阻塞键（或通过 `declared_keys` 声明），服务端会冻结
+      `namespace/key` 白名单到 `repair_keys`，后续 apply 只接受这些键（ADR-0018）。
     parameters:
       - name: X-Config-Install-Token
         in: header
@@ -101,6 +101,14 @@ admin-v1-install-begin:
                 type: string
                 enum: [first_install, repair]
                 description: 省略时按状态推断（ready → repair，否则 first_install）
+              declared_keys:
+                type: array
+                maxItems: 64
+                description: |
+                  运维声明的额外阻塞键（`namespace/key`），只在 `repair` 轮次有效：
+                  必须已声明、非敏感，且尚未进入生效快照。
+                items:
+                  type: string
     responses:
       "200":
         description: 进入 installing

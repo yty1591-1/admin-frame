@@ -102,12 +102,15 @@ GET /internal/v1/install/schema        头：X-Config-Install-Token（必需）
 ### repair 契约（P2 已落地，2026-11-23）
 
 ```text
-POST /internal/v1/install/begin   {owner, reason}
+POST /internal/v1/install/begin   {owner, reason, declared_keys?}
   · reason 省略 → 按状态推断：ready 走 repair，其余 first_install
   · reason 非法 → 40000 reason must be "first_install" or "repair"
   · first_install 遇 ready → 40952 install already completed
   · repair 遇非 ready → 40000 repair requires install status ready
-  · repair 且 gaps 为空 → 40952 no blocking keys to repair（防止把向导当日常配置渠道）
+  · declared_keys 与 first_install 同交 → 40000
+    "declared_keys is only valid with reason \"repair\""
+  · repair 且 gaps 为空且无 declared_keys → 40952 no blocking keys to repair
+    （防止把向导当日常配置渠道）
   → state.repair_keys = ["platform/http.metrics_url", ...]（begin 时冻结）
 
 POST /internal/v1/install/apply   {owner, values:{ns:{key:value}}}
@@ -121,6 +124,8 @@ POST /internal/v1/install/complete {owner}
 ```
 
 - 白名单比对使用 `namespace/key` 形式（`RequiredGap.KeyRef()`）；键到 namespace 的解析走注册表 `Lookup`，不依赖前端传分组。
+- `declared_keys` 的三条拒绝规则（`InstallService.normalizeDeclaredKeys`）：键未在注册表声明、键是敏感项（敏感值由向导自动生成）、键在生效快照里**已有值**（属正常变更，应走 `submit → approve → publish`）。上限 64 个，去重后排序冻结。
+- 被声明的键与注册表必填键同源计数：`apply`/`complete` 都用 `MissingRefs(RepairKeys)` 复核，因此「声明了却没填」不会在 `complete` 时漏过。
 - repair 生成的新 release 固定 `reason=install-repair`、描述「安装向导 repair 补齐阻塞启动的必填键」，指针仍走 CAS，历史版本不原地修改。
 - `mode` 在状态行上持久化，重启后 repair 轮次仍可续（租约 15 分钟内）；`ready` 之后 DTO 的 `mode` 统一展示为 `repair`（表示「再改就是重配置」），与 schema 的 mode 判定一致。
 
@@ -136,7 +141,20 @@ POST /internal/v1/install/complete {owner}
 - 其他进程（biz/c/worker）：在各自 `LoadFromValues` 闭包里调 `configboot.RequireComplete`，缺键时返回 `biz-api: config incomplete: missing required keys: ...; run the admin install wizard to seed them`，保持 crash-loop——它们无法自行修复，降级只会把故障面扩大。
 - 过渡期保留 `InstallPending` 兜底（安装态非 `ready` 且 config-api 可达时，仍用 key spec 默认值让进程监听）：两种情形语义不同，安装未开始不该降级成「缺键」。
 
-**当前覆盖面（P3 实测）**：全仓 `Required` 键只有 `platform/auth.jwt.issuer`、`platform/auth.jwt.audience` 两个，而 `admin-api` 会用 `SetIfEmpty` 补齐这两项——因此降级态今天是一条**安全网**（未来新增必填键时才触发），实际让 prod 起不来的多半是 `secretclient`（JWT 密钥、KEK）与 mTLS 证书这类「非快照」故障，它们不在 `Gaps` 口径内。扩大阻塞判定需要先把「启动校验的缺值类错误」纳入进来，并让 repair 接受运维声明的白名单——记作待定 5。
+**当前覆盖面（P3 实测 + P5 扩展）**：全仓 `Required` 键只有 `platform/auth.jwt.issuer`、`platform/auth.jwt.audience` 两个，而 `admin-api` 会用 `SetIfEmpty` 补齐这两项——因此降级态按「注册表必填键」计算时是**安全网**（未来新增必填键时才触发），实际让 prod 起不来的多半是 `secretclient`（JWT 密钥、KEK）与 mTLS 证书这类「非快照」故障。为覆盖这类故障，P5 把阻塞判定扩成两条腿（见下方「声明白名单与缺值诊断」）：`begin(declared_keys)` 让运维登记服务端算不出的键，`configboot.DiagnoseMissingValues` 用占位法区分「缺值」与「值非法」。
+
+## 声明白名单与缺值诊断（P5 已落地，2026-11-23）
+
+待定 5 的解法是**两条腿同时上**，缺一条都会形成新死锁：
+
+1. **声明白名单**（服务端）：`begin(reason=repair, declared_keys=[...])` 让运维把「服务端算不出、但进程确实起不来」的键登记进白名单。三条拒绝规则保证它不能被当成后门：键必须在注册表声明、必须非敏感、必须尚未在生效快照里有值（已有值的属正常变更，走审批流）。上限 64。冻结后 `apply`/`complete` 都用 `MissingRefs(RepairKeys)` 复核，`remaining_gaps` 会把「声明了却没填」如实报出来。
+2. **缺值诊断**（进程侧）：`configboot.DiagnoseMissingValues(values, validate)` 在 `LoadFromValues` 失败后，给注册表里**未声明值且非敏感**的键填占位值（Enum 首项 / `max(MinInt,1)` / `true` / `1s` / `{}` / `placeholder`），再跑一次同一套校验：
+   - 通过 → 判定「只是缺值」，进入 setup-only；
+   - 仍失败 → 判定「值非法」，不降级，继续 crash-loop（决策 3）。
+
+   方向是**保守**的：占位值本身不合法时宁可让进程继续崩，也不把类型/枚举错误吞成「缺值」放进向导——否则用户在向导里填对三个键、重启后照样起不来，故障更难定位。
+
+因此「`auth.jwt.secret` 缺失导致 crash-loop」这类故障现在有两条自救路径：进程侧诊断出缺值 → 自动降级 → 向导打开（不需要知道键名）；或诊断判不出来（值在但错）→ 运维用 `declared_keys` 登记该键 → repair 修值。两者的审计都落在既有 `config.install.*` 事件上，带 `mode`/`declared_keys`/`remaining` 字段。
 
 ## 代码改造清单
 
@@ -145,14 +163,15 @@ POST /internal/v1/install/complete {owner}
 | spec | `internal/configcenter/spec/meta.go` | `GroupOf`（分组与顺序）、`NamespaceTitle`、`DeriveLabel`、`WidgetFor`（P1 已落地） |
 | app | `internal/configcenter/app/bootstrap.go` | `MissingRequired(env)`（阻塞键统计，排除敏感键；P1 已落地）；`BootstrapInput.Repair` 与 `install-repair` release 名（P2 已落地） |
 | app | `internal/configcenter/app/install_schema.go` | `InstallService.Schema(env)`：字段清单 + 默认值来源 + 阻塞键（P1 已落地） |
-| app | `internal/configcenter/app/install.go` | `Gaps`（P1'）、`Begin(reason)` 的 repair 分支、`Apply` 白名单校验、`complete` 阻塞键门禁（P2 已落地）；审计复用既有 4 个 action + `mode` 字段 |
+| app | `internal/configcenter/app/install.go` | `Gaps`（P1'）、`Begin(reason)` 的 repair 分支、`Apply` 白名单校验、`complete` 阻塞键门禁（P2 已落地）；`normalizeDeclaredKeys` / `MissingRefs` 合并 / `mergeGaps`（P5 已落地）；审计复用既有 4 个 action + `mode` 字段 |
 | 持久化 | `migrations/000038_*` + repository | `config_install_state` 增 `mode`、`repair_keys`（expand-only，可空默认 `first_install`；000037 已被 ADR-0017 占用；P2 已落地） |
 | transport | `internal/configcenter/transport/rest/{internal_handler,install_handler}.go` | `/install/schema`（P1）；`status` 增 `mode`（P1）/`gaps`+`blocking_count`（P2）；`begin.reason`、`apply.values`/`overrides` 合并、`remaining_gaps`、`repair_keys`（P2） |
 | 进程 | `cmd/internal/configboot/gaps.go` | `MissingRequired`（必填缺值，排除敏感键）、`RequireComplete`（fail-fast 进程的错误文案；P3 已落地） |
 | 平台 | `internal/platform/setup_only.go` | `RunSetupOnly` + `SetupOnlyAutoExitEnv`：探针/版本/安装代理，`/readyz` 固定 503 并带缺失键（P3 已落地） |
 | 进程 | `cmd/admin-api/setup_only.go` | 降级态装配与 `ready` 后自动退出（P3 已落地） |
+| 进程 | `cmd/internal/configboot/diagnose.go` | `DiagnoseMissingValues`（占位法区分缺值/值非法）、`FillPlaceholders`、`placeholderValue`（P5 已落地） |
 | 前端 | `frontend/apps/web-admin/src/views/_core/install/index.vue`、路由表 | 目录驱动表单（分域、默认值徽标、必填/敏感标记）、repair 只显阻塞键、`/setup/install`免登录白名单 |
-| 契约 | `api/openapi/paths/{internal,admin}/install.yaml`、`schemas/internal/install.yaml` | schema 端点与响应契约（P1 已落地）；gaps 契约随 P2 |
+| 契约 | `api/openapi/paths/{internal,admin}/install.yaml`、`schemas/internal/install.yaml` | schema 端点与响应契约（P1 已落地）；gaps/repair 契约（P2 已落地）；`begin.declared_keys`（P5，internal 1.4.0 / admin 9.6.0） |
 | 门禁 | `scripts/ci/check-configcenter.sh` | 断言每个 `Required` 键可经向导填写（非敏感或带 `SecretRule`）；install 端点与状态机契约 |
 | 装配 | `cmd/internal/configcenterruntime/runtime.go` | 删除 `IsProdLikeEnv` 分支：一律 `EnsureState(pending)`，仅 `ready` 时幂等 `bootstrap`/`bootstrapSecrets`；删除 `MarkReady` |
 | 装配 | `internal/configcenter/app/install.go` | `RequireSetupTokenConfigured` 对所有环境强制；删除 `MarkReady` |
@@ -168,6 +187,7 @@ POST /internal/v1/install/complete {owner}
 | P1' | `status.gaps`（与 P2 的 repair 白名单同源，避免两处统计口径漂移） | 已完成 |
 | P2 | `Begin(repair)`、`Apply` 白名单、`RepairKeys` 写入；迁移 000038；`remaining_gaps`；`complete` 阻塞键门禁 | 已完成 |
 | P3 | 进程侧降级：`configboot.MissingRequired`/`RequireComplete`、`platform.RunSetupOnly`、`admin-api` 降级 + `ready` 后自动退出、biz/c/worker fail-fast；单测覆盖探针/挂载面/自动退出 | 已完成 |
+| P5 | 待定 5 两条腿：`begin.declared_keys` 声明白名单（三条拒绝规则 + 上限 64 + `MissingRefs` 复核）、`configboot.DiagnoseMissingValues` 占位诊断（保守方向）、`admin-api` 校验失败时按诊断结果分流；OpenAPI 1.4.0/9.6.0 | 已完成 |
 | P4 | 前端 schema 驱动表单（分域、默认值徽标、必填/敏感标记）；`mode=repair` 时只渲染阻塞键 | 待做 |
 
 ## 安全与失效
@@ -191,11 +211,11 @@ POST /internal/v1/install/complete {owner}
 2. ~~自动退出还是手动重启~~：已结案（P3）——默认 `ready` 后自动退出并由编排重启，`ADMIN_FRAME_SETUP_ONLY_AUTO_EXIT=false` 可退回手动重启。
 3. ~~schema 的可见范围~~：已定案——`/install/schema` 要求 setup token（键名、默认值与校验规则虽不含密文，也不应匿名可读）；若后续要支持「只读预览不填 token」再单独评估。
 4. **repair 白名单与运行期改值的边界**：当前 repair 只覆盖「缺键」，运维想顺手改一个非阻塞键仍需退出向导走管理面。是否给 `apply` 一个 `also_update` 列表（仍需 token + 审计 + 双人审批中的至少一项）留作后续评估。
-5. **阻塞判定是否扩到「校验层缺值」**：现在 `Gaps` 只认 `Required` 键，而全仓只有 issuer/audience 两个、admin-api 还会代码补齐 → 降级是安全网而非日常路径。若要覆盖「`auth.jwt.secret` 缺失导致 crash-loop」这类真实故障，需要（a）把启动校验的缺值类错误纳入阻塞判定，（b）让 `begin(repair)` 接受运维声明的白名单（服务端校验键存在），否则 `Gaps` 为空会直接返回 `40952` 形成新死锁。改动跨 transport 契约与白名单冻结逻辑，单独评估。
+5. ~~阻塞判定是否扩到「校验层缺值」~~：已结案（P5）——两条腿同时落地：`begin(declared_keys)` 让运维登记服务端算不出的阻塞键（须已声明、非敏感、尚未在生效快照有值，上限 64），`configboot.DiagnoseMissingValues` 用占位法区分「缺值」与「值非法」，只有前者降级。保守方向：占位值本身不合法时继续 crash-loop，绝不把类型/枚举错误吞成缺值。
 
 ## 同步文档
 
 - [`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md) §4：补「缺键阻塞 → setup-only → repair」链路；CFG-09 改为全环境安装向导。
-- [`../runbooks/config-center.md`](../runbooks/config-center.md)：补 repair 值班流程与告警处置。
+- [`../runbooks/config-center.md`](../runbooks/config-center.md)：补 repair 值班流程与告警处置；P5 增「gaps 为空但进程起不来」的 `declared_keys` 操作步骤。
 - [`../local-development.md`](../local-development.md)：dev 启动流程补安装向导步骤与 `CONFIG_INSTALL_SETUP_TOKEN`。
 - [`../config-center-plan.md`](../config-center-plan.md)：增补 D17（repair 与降级），D16 标注被 ADR-0018 部分修订。

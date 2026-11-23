@@ -92,13 +92,16 @@ func (h *InstallHandler) Begin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Owner  string `json:"owner"`
 		Reason string `json:"reason"`
+		// DeclaredKeys 是运维声明的额外阻塞键（namespace/key），只在 repair 轮次有效。
+		DeclaredKeys []string `json:"declared_keys"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var state domain.InstallState
 	err := h.withinTx(r.Context(), func(ctx context.Context) error {
 		var beginErr error
 		state, beginErr = h.install.Begin(ctx, app.BeginInput{
-			Env: h.deployEnv, Owner: body.Owner, Reason: body.Reason, Actor: setupActor(traceID),
+			Env: h.deployEnv, Owner: body.Owner, Reason: body.Reason,
+			DeclaredKeys: body.DeclaredKeys, Actor: setupActor(traceID),
 		})
 		return beginErr
 	})

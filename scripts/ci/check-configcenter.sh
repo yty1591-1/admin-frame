@@ -204,6 +204,19 @@ require_grep "cmd/worker/main.go" \
   "configboot.RequireComplete" "worker 缺键 fail-fast"
 require_grep "internal/configcenter/app/install.go" \
   "repair only accepts frozen blocking keys" "repair 白名单越权拒绝"
+require_file "cmd/internal/configboot/diagnose.go" "缺值诊断（占位法，ADR-0018 待定 5）"
+require_grep "cmd/internal/configboot/diagnose.go" \
+  "func DiagnoseMissingValues" "缺值诊断入口"
+require_grep "internal/configcenter/app/install.go" \
+  "declared_keys is only valid with reason" "声明白名单只允许 repair 轮次"
+require_grep "internal/configcenter/app/install.go" \
+  "already have values in the active release" "声明白名单拒绝已有值的键"
+require_grep "internal/configcenter/app/bootstrap.go" \
+  "func \(s \*BootstrapService\) CheckRefs" "声明键存在性校验"
+require_grep "api/openapi/paths/internal/install.yaml" \
+  "declared_keys" "internal 契约登记声明白名单"
+require_grep "api/openapi/paths/admin/install.yaml" \
+  "declared_keys" "admin 契约登记声明白名单"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"
