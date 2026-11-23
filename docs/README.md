@@ -1,7 +1,7 @@
 # docs 文档地图
 
 > **本文件是 `docs/` 的唯一入口。** 新增、移动、归档文档前请先读「四、文档新增与归档判据」。
-> **最后整理**：2026-11-21（新增 [prod-rehearsal.md](./prod-rehearsal.md)：本机 prod 演练（Vault Transit KEK + mTLS、`make prod-*`））；前次 2026-11-17（关闭并归档 [config-center-remediation-plan.md](./archive/plans/config-center-remediation-plan.md)：`CC-R-01`～`18` 全完成，会签姓名 ai）；前次 2026-11-16（配置中心 **M3 出口**：删除剩余 8 个 `configs/` 样例、CI 零跟踪、JWT secretclient 消费、KEK/故障/签名/PITR 演练；**AC-CC-09** Owner 放行）；同日 M2 出口（业务密钥信封加密、`cmd/config-api`、管理面 / 前端密钥页）；同日 M1 出口（非密钥 configs 基线收缩 + 本机 staging 演练 + 前端 4 页）；前次 2026-11-13（配置中心 M1 推进：双读改为启动 + 每 30s 周期采样并补 7 天 soak 步骤，[ADR-0015](./adr/0015-config-hot-reload-whitelist.md) 热更白名单 Accepted；同日 [config-center-plan.md](./config-center-plan.md) 升至 v0.4：M1 范围收敛为「仅全量发布」，百分比 / 租户 / 渠道 / 实例灰度整体降级 P1，服务端对非 `all` 策略返回 `40000`；同期修复 `000031` 迁移 MySQL 保留字缺陷并补齐仓储集成测试与管理面列表覆盖率）；前次 2026-11-12（[config-center-plan.md](./config-center-plan.md) 升至 v0.3 并关闭 8 个 M0 前置条件：ADR-0013 / ADR-0014 转 Accepted，CFG-04 收敛为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动默认值初始化与密钥规则生成，完成权限点 / 审计事件等契约冻结；可进入 M1 编码）；前次 2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
+> **最后整理**：2026-11-21（新增 [ADR-0018](./adr/0018-config-repair-and-setup-degrade.md) 草案：配置中心 repair 与启动降级；同日新增 [frontend-remediation-plan.md](./frontend-remediation-plan.md)：前端规范与门禁整改计划（L3）；同日新增 [FRONTEND_STANDARDS.md](./FRONTEND_STANDARDS.md)：前端 L1 规范 v0.1 草案（2026-11-21 接入 `frontend` 门禁，待 CI 首跑与安全/覆盖率门槛后转正）；同日新增 [prod-rehearsal.md](./prod-rehearsal.md)：本机 prod 演练（Vault Transit KEK + mTLS、`make prod-*`））；前次 2026-11-17（关闭并归档 [config-center-remediation-plan.md](./archive/plans/config-center-remediation-plan.md)：`CC-R-01`～`18` 全完成，会签姓名 ai）；前次 2026-11-16（配置中心 **M3 出口**：删除剩余 8 个 `configs/` 样例、CI 零跟踪、JWT secretclient 消费、KEK/故障/签名/PITR 演练；**AC-CC-09** Owner 放行）；同日 M2 出口（业务密钥信封加密、`cmd/config-api`、管理面 / 前端密钥页）；同日 M1 出口（非密钥 configs 基线收缩 + 本机 staging 演练 + 前端 4 页）；前次 2026-11-13（配置中心 M1 推进：双读改为启动 + 每 30s 周期采样并补 7 天 soak 步骤，[ADR-0015](./adr/0015-config-hot-reload-whitelist.md) 热更白名单 Accepted；同日 [config-center-plan.md](./config-center-plan.md) 升至 v0.4：M1 范围收敛为「仅全量发布」，百分比 / 租户 / 渠道 / 实例灰度整体降级 P1，服务端对非 `all` 策略返回 `40000`；同期修复 `000031` 迁移 MySQL 保留字缺陷并补齐仓储集成测试与管理面列表覆盖率）；前次 2026-11-12（[config-center-plan.md](./config-center-plan.md) 升至 v0.3 并关闭 8 个 M0 前置条件：ADR-0013 / ADR-0014 转 Accepted，CFG-04 收敛为「配置中心 > 代码默认值」，取消引导配置清单与导入清单，新增首次启动默认值初始化与密钥规则生成，完成权限点 / 审计事件等契约冻结；可进入 M1 编码）；前次 2026-11-11（IAM 计划 v1.9 关闭并归档：M0 会签通过、S6-1 安全评审转「通过」、P1-7 双评审签字、M6 生产准入通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行；ADR-0012 转 Accepted；四份记录移入 `archive/reviews/` 与 `archive/plans/`；`docs/archive/` 合计 35 份）；前次 2026-11-10（S6-1 安全评审完成，IAM 计划升 v1.8；`identity-slo.md` 补 M2M / SCIM 的 SLO、容量与压测口径；补录 `identity/`、`iam/` 记录类文档与 `perf/LOAD_BASELINES.md`）；2026-11-09（归档 `production-readiness-gaps.md` 至 `archive/platform/`，`docs/archive/` 合计 31 份）
 
 ---
 
@@ -24,8 +24,9 @@
 |------|------|----------|
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | §1–§20 | `check-layering` / `check-transport` / 架构 Review |
 | [CODE_STYLE.md](./CODE_STYLE.md) | S-01～S-12 | `make fmt-check` + golangci-lint |
+| [FRONTEND_STANDARDS.md](./FRONTEND_STANDARDS.md) | FE-01～FE-SEC-08、FE-EXC | 草案 v0.1；`frontend` CI job / Gitee step / `make frontend-check` + eslint/stylelint |
 | [COMMENT_STANDARDS.md](./COMMENT_STANDARDS.md) | C-01～C-10 | golangci-lint（godot / revive） |
-| [CI_STANDARDS.md](./CI_STANDARDS.md) | CI-01～CI-15 | `make ci` |
+| [CI_STANDARDS.md](./CI_STANDARDS.md) | CI-01～CI-18 | `make ci` |
 | [SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md) | SEC-01～SEC-16 | `make secrets` / `make lint` / `check-debug` |
 | [API_STANDARDS.md](./API_STANDARDS.md) | API-01～API-12 | `check-openapi`（oasdiff） |
 | [TESTING_STANDARDS.md](./TESTING_STANDARDS.md) | TEST-01～TEST-08 | `make test-ci` / `check-test-gates` |
@@ -86,8 +87,9 @@
 |------|------|----------|
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
 | [config-center-plan.md](./config-center-plan.md) | 已通过 v0.4（L2 设计 + L3 计划） | 8 个 M0 前置条件已满足；**M1 / M2 / M3 已出口**（M3：`configs/` 零跟踪、无文件/KEK/故障/签名灾备演练、CC-14）；下一步按需 M4；**M1 发布能力收敛为仅全量**，灰度整体 P1（§10.5） |
+| [frontend-remediation-plan.md](./frontend-remediation-plan.md) | 规划生效 v0.1 | 见 §八 状态表：`FE-G-01` / `FE-G-02` / `FE-G-08` / `FE-D-01` 进行中（2026-11-21 门禁已接入，待 CI 首跑取证），其余未开始；优先 P0 门禁（`FE-G-01`～`04`、`08`）与构建发布（`FE-B-01`～`06`），内核重构按 §5.6 单独立项 |
 
-> 当前有两份「有未关闭事项」的计划类文档：生产就绪实施计划、配置中心规划。配置中心缺口修复规划（CC-R-01～18）已于 2026-11-17 关闭并移入 [`archive/plans/config-center-remediation-plan.md`](./archive/plans/config-center-remediation-plan.md)；IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
+> 当前有三份「有未关闭事项」的计划类文档：生产就绪实施计划、配置中心规划、前端规范与门禁整改计划。配置中心缺口修复规划（CC-R-01～18）已于 2026-11-17 关闭并移入 [`archive/plans/config-center-remediation-plan.md`](./archive/plans/config-center-remediation-plan.md)；IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
 >
 > **输入依据（已归档）**：
 > - [iam-audit-report-2026-11-05.md](./archive/iam/iam-audit-report-2026-11-05.md) 是 2026-11-05 的一次性 IAM 审计，结论已被 [iam-p1-5-7-engineering-plan.md](./archive/plans/iam-p1-5-7-engineering-plan.md) 引用；它不构成排期，已于 2026-11-08 移入 `archive/iam/`。
@@ -136,8 +138,9 @@
 docs/
 ├── README.md                  # 本文件：文档地图与判据
 ├── ARCHITECTURE.md            # 架构总纲（L1）
-├── *_STANDARDS.md             # 17 篇硬约束专文（L1）
+├── *_STANDARDS.md             # 18 篇硬约束专文（L1）
 ├── CODE_STYLE.md              # 代码风格（L1）
+├── FRONTEND_STANDARDS.md      # 前端规范（L1，草案 v0.1）
 ├── standards-roadmap.md       # 专文路线图与状态总表（L1）
 ├── identity-authn.md          # 身份域设计（L2）
 ├── rbac-iam.md                # IAM 域设计（L2）
@@ -151,6 +154,7 @@ docs/
 ├── pkg-roadmap.md             # pkg 路线图（L2）
 ├── production-readiness-implementation-plan.md # 平台能力实施计划（L3）
 ├── config-center-plan.md      # 配置中心规划与评审（L2 设计 + L3 计划）
+├── frontend-remediation-plan.md # 前端规范与门禁整改计划（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
 ├── incident/                  # 事故定级 / 响应 / 复盘 / 演练（L1）

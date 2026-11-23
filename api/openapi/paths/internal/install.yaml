@@ -22,6 +22,33 @@ internal-v1-install-status:
             schema:
               $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
 
+internal-v1-install-schema:
+  get:
+    tags: [install]
+    summary: 查询向导渲染元数据
+    operationId: getInstallSchema
+    description: |
+      返回安装向导渲染表单所需的字段清单、分组、默认值来源与缺失必填键（ADR-0018）。
+      与读配置不同，本端点不需 JWT，但**需要 setup token**：schema 会暴露键名、
+      默认值与校验规则。`mode=repair` 时前端只应允许修改 `blocking_keys`。
+    parameters:
+      - $ref: "#/components/parameters/SetupTokenHeader"
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallSchemaResponse"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+
 internal-v1-install-begin:
   post:
     tags: [install]

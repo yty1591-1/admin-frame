@@ -30,6 +30,45 @@ admin-v1-install-status:
       "502":
         description: config-api 不可达（`CONFIG_API_URL` 未配置、mTLS 握手失败或上游 5xx）
 
+admin-v1-install-schema:
+  get:
+    tags: [install]
+    summary: 查询向导渲染元数据
+    operationId: adminGetInstallSchema
+    security: []
+    description: |
+      透传 `GET /internal/v1/install/schema`（ADR-0018）。返回字段清单、分组、
+      默认值来源与缺失必填键，供向导渲染表单；`mode=repair` 时只应允许修改阻塞键。
+      虽然只出元数据，仍与写操作一样要求 `X-Config-Install-Token`。
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallSchemaResponse"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
 admin-v1-install-begin:
   post:
     tags: [install]

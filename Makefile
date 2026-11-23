@@ -83,6 +83,10 @@ local-restart: local-env
 local-status:
 	bash scripts/local/dev-services.sh status
 
+# 重跑安装向导（config-api 需已就绪；ready 时为空操作）
+local-install:
+	bash scripts/local/dev-services.sh install
+
 # 一键：依赖 → env → 迁移 → 启动（首次本机推荐）
 local-up: local-deps local-env
 	bash scripts/local/dev-services.sh start --migrate

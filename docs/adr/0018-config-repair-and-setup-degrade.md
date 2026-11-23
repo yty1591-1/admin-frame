@@ -61,14 +61,11 @@ repair 的 `complete` 前置与首装一致：`Gaps` 必须为空。也就是说
 ```text
 GET  /internal/v1/install/status
 → {env, status, mode, owner, version, lease_until, completed_at, last_error,
-   gaps:[{namespace, key, description}]}
+   gaps:[{namespace, key, description}]}          # gaps 随 P2 补齐
 
-GET  /internal/v1/install/catalog[?namespace=]
-→ {namespaces:[{name, owner}],
-   keys:[{namespace, key, type, default?, required, sensitive, reloadable, deprecated,
-          description, enum?, min?, max?, pattern?, secret_rule?}]}
-   · sensitive 项不返回 default；不返回任何已入库值
-   · 读接口不要求 token；写接口要求
+GET  /internal/v1/install/schema                    # P1 已落地，见下方契约
+→ 向导渲染元数据（字段清单 + 分组 + 默认值来源 + 阻塞键）
+   · 只出声明信息，不出任何已入库值；敏感项只出生成规则
 
 POST /internal/v1/install/begin     {owner, reason:"first_install"|"repair"}
 POST /internal/v1/install/apply     {owner, values:{namespace:{key:value}}, comment?}
@@ -78,6 +75,27 @@ POST /internal/v1/install/complete  {owner}
 - 请求头：`X-Config-Install-Token`；`apply` 的 `values` 由服务端按当前 `mode` 决定接受范围：`first_install` 接受任意已声明键，`repair` 只接受冻结白名单内的键。
 - admin-api 继续同源代理 `/admin/v1/install/*`（ADR-0017 决策 5 不变），浏览器不直连 config-api。
 - 新增审计事件：`config_install.repair.begin`、`config_install.repair.apply`、`config_install.repair.complete`；每条事件带 `mode`、`repair_keys` 与操作者 `system:setup-token`。
+
+### 向导 schema 契约（P1 已落地，2026-11-23）
+
+```text
+GET /internal/v1/install/schema        头：X-Config-Install-Token（必需）
+→ {env, mode, status, blocking_count,
+   blocking_keys:[{namespace, key, label, reason}],          // reason ∈ no_active_release | missing_in_snapshot
+   namespaces:[{namespace, title, order, key_count, blocking_count}],
+   fields:[{namespace, key, label, group, group_title, order, widget, value_type,
+            required, sensitive, deprecated, blocking, reload_mode, hot_whitelist,
+            enum?, min_int?, max_int?, pattern?, description, owner,
+            default:{value, source},                          // source ∈ code_default | prod_default | none
+            secret?:{algorithm, auto_generate, encoding, min_len, max_len, prefix?}}]}
+```
+
+- `mode`：`ready` 之前为 `first_install`，之后为 `repair`；`status` 同步返回 `mode`，前端据此决定「全量表单」还是「只渲染阻塞键」。
+- `blocking_keys` 只统计**非敏感**必填键：敏感键的取值走 `config_secret`（自动生成 + 授权），不会进入配置快照，计入会把每个环境都判成永久缺键。
+- `default.source` 解决了「无默认值」与「默认值为空串」不可分的问题：`none` 表示没有默认值，前端不显示「默认：」徽标。
+- `group` / `group_title` 由键前缀派生（`identity.sms`、`notification.channels` 等二级分组），`order` 是「命名空间顺序 + 分组顺序 + 组内序号」压成的排序键，前端直接按 `order` 升序渲染即可，无需硬编码分组表。
+- `widget` 由声明推导（`password` / `select` / `switch` / `number` / `duration` / `code` / `text`），前端不维护键名到控件的映射。
+- 本端点要求 setup token：schema 暴露键名、默认值与校验规则，虽不含密文也不应匿名可读。
 
 ## 进程侧
 
@@ -91,16 +109,18 @@ POST /internal/v1/install/complete  {owner}
 
 | 层 | 文件 | 改动 |
 | --- | --- | --- |
-| spec | `internal/configcenter/spec/registry.go` | `MissingRequired(ns, values)`、`MissingRequiredAll(values)`、`Catalog()`（脱敏、可过滤 namespace） |
+| spec | `internal/configcenter/spec/meta.go` | `GroupOf`（分组与顺序）、`NamespaceTitle`、`DeriveLabel`、`WidgetFor`（P1 已落地） |
+| app | `internal/configcenter/app/bootstrap.go` | `MissingRequired(env)`（阻塞键统计，排除敏感键） |
+| app | `internal/configcenter/app/install_schema.go` | `InstallService.Schema(env)`：字段清单 + 默认值来源 + 阻塞键（P1 已落地） |
 | app | `internal/configcenter/app/install.go` | `Gaps`、`Begin(reason)` 的 repair 分支、`Apply` 白名单校验、repair 审计事件 |
 | app | `internal/configcenter/app/bootstrap.go` | 新增 `RepairKeys`：只写白名单键，生成新 version + `install-repair` release + 指针 CAS |
 | 持久化 | `migrations/000038_*` + repository | `config_install_state` 增 `mode`、`repair_keys`（expand-only，可空默认 `first_install`；000037 已被 ADR-0017 占用） |
-| transport | `internal/configcenter/transport/rest/{internal_handler,install_handler}.go` | `/install/catalog`；`status` 增 `gaps`/`mode`；`apply` 白名单与错误分支 |
+| transport | `internal/configcenter/transport/rest/{internal_handler,install_handler}.go` | `/install/schema`（P1 已落地）；`status` 增 `mode`（P1）/`gaps`（P2）；`apply` 白名单与错误分支 |
 | 进程 | `cmd/internal/configboot/{load,install}.go` | `Gaps`/`Blocked`；`FetchInstallStatus` 解析 `gaps` |
 | 平台 | `internal/platform/bootstrap.go` | `Options.SetupOnly`；`/readyz` 携带缺失键 |
 | 进程 | `cmd/admin-api/{main,register}.go` | setup-only 分支与 `ready` 后自动退出 |
 | 前端 | `frontend/apps/web-admin/src/views/_core/install/index.vue`、路由表 | 目录驱动表单（分域、默认值徽标、必填/敏感标记）、repair 只显阻塞键、`/setup/install`免登录白名单 |
-| 契约 | `api/openapi/paths/admin/install.yaml` 等 | 新增 catalog 与 gaps 契约 |
+| 契约 | `api/openapi/paths/{internal,admin}/install.yaml`、`schemas/internal/install.yaml` | schema 端点与响应契约（P1 已落地）；gaps 契约随 P2 |
 | 门禁 | `scripts/ci/check-configcenter.sh` | 断言每个 `Required` 键可经向导填写（非敏感或带 `SecretRule`）；install 端点与状态机契约 |
 | 装配 | `cmd/internal/configcenterruntime/runtime.go` | 删除 `IsProdLikeEnv` 分支：一律 `EnsureState(pending)`，仅 `ready` 时幂等 `bootstrap`/`bootstrapSecrets`；删除 `MarkReady` |
 | 装配 | `internal/configcenter/app/install.go` | `RequireSetupTokenConfigured` 对所有环境强制；删除 `MarkReady` |
@@ -112,10 +132,11 @@ POST /internal/v1/install/complete  {owner}
 | --- | --- | --- |
 | P0' | 统一安装路径：删 `IsProdLikeEnv` 分支与 `MarkReady`；所有环境强制 setup token；本地脚本自动驱动向导（`install` 子命令 + `make local-install`） | 已完成 |
 | P0'' | 现状契约补齐：admin 安装代理四端点登记 OpenAPI（`admin.yaml` 9.3.0，`InstallState` 上提 `components.yaml` 共享）+ `check-configcenter` 断言 | 已完成 |
-| P1 | `spec.Registry` 的 `MissingRequired` / `Catalog`；`status` 出 `gaps`/`mode`；`catalog` 端点 | 待做 |
+| P1 | `MissingRequired`（`app/bootstrap.go`）+ `spec/meta.go` 派生元数据 + `InstallService.Schema` + `GET /install/schema`（internal 与 admin 代理）+ `status.mode` + OpenAPI 登记 + 单测 | 已完成 |
+| P1' | `status.gaps`（与 P2 的 repair 白名单同源，避免两处统计口径漂移） | 待做 |
 | P2 | `Begin(repair)`、`Apply` 白名单、`RepairKeys` 写入；迁移 000038 | 待做 |
 | P3 | `configboot.Load` 出 `Gaps`/`Blocked`；`platform.Options.SetupOnly`；admin-api 降级与自动退出 | 待做 |
-| P4 | 前端目录驱动表单；`gaps` / `catalog` / `repair` 契约（安装代理现状契约已在 P0'' 补齐）；目录端点断言 | 待做 |
+| P4 | 前端 schema 驱动表单（分域、默认值徽标、必填/敏感标记）；`gaps` / `repair` 契约（schema 与安装代理现状契约已在 P1/P0'' 补齐）；`check-configcenter` 对 schema 端点的断言 | 待做 |
 
 ## 安全与失效
 
@@ -136,7 +157,7 @@ POST /internal/v1/install/complete  {owner}
 
 1. **「值非法」死锁的自救通道**：按决策 1 不降级，则「键在、值错」时向导也进不去。是否增加一个显式逃生门——例如运维在进程侧注入 `CONFIGCENTER_REPAIR_FORCE=<token 指纹>` 后，允许把「存在但非法」的键纳入 repair 白名单（仍要 token、仍留审计）？
 2. **自动退出还是手动重启**：setup-only 的 admin-api 在 `ready` 后自动 `exit(0)`（依赖编排重启）还是只提示运维手动重启？前者少一步人工，后者更可控。
-3. **catalog 的可见范围**：目录元数据是否需要 token？当前设计为免 token 只读（不含任何已入库值），但默认值本身可能暴露内部端点结构。
+3. **schema 的可见范围**：向导契约（`/install/schema`）已按「要求 setup token」落地——键名、默认值与校验规则虽不含密文，也不应匿名可读；若后续要支持「只读预览不填 token」再单独评估。
 
 ## 同步文档
 

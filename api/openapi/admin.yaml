@@ -1,10 +1,14 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 9.3.0
+  version: 9.4.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
+    9.4.0：新增 `GET /admin/v1/install/schema` 向导渲染元数据（ADR-0018，纯增量）——
+    返回字段清单/分组/默认值来源/缺失必填键；只出声明信息、不出运行值，
+    与写操作一样要求 `X-Config-Install-Token`。安装态响应新增 `mode`
+    （first_install / repair）。
     9.3.0：新增安装向导代理端点 `/admin/v1/install/*`（ADR-0017 / ADR-0018，纯增量）——
     安装期尚无可用 JWT，四个端点均不鉴权，写操作凭 `X-Config-Install-Token`
     由 config-api 校验，响应原样透传（含 502 上游不可达）。
@@ -108,6 +112,8 @@ paths:
     $ref: './paths/admin/probe.yaml#/version'
   /admin/v1/install/status:
     $ref: './paths/admin/install.yaml#/admin-v1-install-status'
+  /admin/v1/install/schema:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-schema'
   /admin/v1/install/begin:
     $ref: './paths/admin/install.yaml#/admin-v1-install-begin'
   /admin/v1/install/apply:

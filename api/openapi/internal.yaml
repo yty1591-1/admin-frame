@@ -20,6 +20,8 @@ paths:
     $ref: './paths/internal/secrets.yaml#/internal-v1-configs-secrets-resolve'
   /internal/v1/install/status:
     $ref: './paths/internal/install.yaml#/internal-v1-install-status'
+  /internal/v1/install/schema:
+    $ref: './paths/internal/install.yaml#/internal-v1-install-schema'
   /internal/v1/install/begin:
     $ref: './paths/internal/install.yaml#/internal-v1-install-begin'
   /internal/v1/install/apply:

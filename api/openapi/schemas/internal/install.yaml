@@ -25,3 +25,157 @@ InstallApplyResponse:
               type: integer
             state:
               $ref: ../../components.yaml#/components/schemas/InstallState
+
+# ADR-0018：安装向导渲染元数据（只出声明信息，不出运行值）。
+InstallSchemaResponse:
+  allOf:
+    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - type: object
+      properties:
+        data:
+          type: object
+          required: [env, mode, status, blocking_count, blocking_keys, namespaces, fields]
+          properties:
+            env:
+              type: string
+            mode:
+              type: string
+              enum: [first_install, repair]
+              description: ready 之前为首装，之后为补配/修复（ADR-0018）
+            status:
+              type: string
+              enum: [pending, installing, ready, failed]
+            blocking_count:
+              type: integer
+              description: 缺失的必填键数量；>0 表示进程会被启动降级拦住
+            blocking_keys:
+              type: array
+              items:
+                type: object
+                required: [namespace, key, label, reason]
+                properties:
+                  namespace:
+                    type: string
+                  key:
+                    type: string
+                  label:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [no_active_release, missing_in_snapshot]
+            namespaces:
+              type: array
+              items:
+                type: object
+                required: [namespace, title, order, key_count, blocking_count]
+                properties:
+                  namespace:
+                    type: string
+                  title:
+                    type: string
+                    description: 面向用户的命名空间标题（如「身份与登录」）
+                  order:
+                    type: integer
+                  key_count:
+                    type: integer
+                  blocking_count:
+                    type: integer
+            fields:
+              type: array
+              items:
+                type: object
+                required:
+                  - namespace
+                  - key
+                  - label
+                  - group
+                  - group_title
+                  - order
+                  - widget
+                  - value_type
+                  - required
+                  - sensitive
+                  - deprecated
+                  - blocking
+                  - reload_mode
+                  - hot_whitelist
+                  - description
+                  - owner
+                  - default
+                properties:
+                  namespace:
+                    type: string
+                  key:
+                    type: string
+                  label:
+                    type: string
+                    description: 由 Description 派生的人话标签
+                  group:
+                    type: string
+                    description: 表单分组 id（如 identity.sms）
+                  group_title:
+                    type: string
+                  order:
+                    type: integer
+                    description: 命名空间顺序 + 分组顺序 + 组内序号压成的排序键
+                  widget:
+                    type: string
+                    enum: [text, password, select, switch, number, duration, code, textarea]
+                  value_type:
+                    type: string
+                    enum: [string, bool, int, duration, json]
+                  required:
+                    type: boolean
+                  sensitive:
+                    type: boolean
+                  deprecated:
+                    type: boolean
+                  blocking:
+                    type: boolean
+                    description: 是否为当前缺失的必填键
+                  reload_mode:
+                    type: string
+                  hot_whitelist:
+                    type: boolean
+                    description: 是否在热更白名单内（改完无需重启）
+                  enum:
+                    type: array
+                    items:
+                      type: string
+                  min_int:
+                    type: integer
+                  max_int:
+                    type: integer
+                  pattern:
+                    type: string
+                  description:
+                    type: string
+                  owner:
+                    type: string
+                  default:
+                    type: object
+                    required: [source]
+                    properties:
+                      value:
+                        type: string
+                      source:
+                        type: string
+                        enum: [code_default, prod_default, none]
+                        description: 无默认值时 value 为空、source=none（不可与空默认混淆）
+                  secret:
+                    type: object
+                    description: 仅敏感键存在；不含任何密钥值
+                    required: [algorithm, auto_generate, encoding, min_len, max_len]
+                    properties:
+                      algorithm:
+                        type: string
+                      auto_generate:
+                        type: boolean
+                      encoding:
+                        type: string
+                      min_len:
+                        type: integer
+                      max_len:
+                        type: integer
+                      prefix:
+                        type: string

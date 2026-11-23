@@ -355,3 +355,61 @@ func (s *BootstrapService) buildSeedRelease(ctx context.Context, in BootstrapInp
 	}
 	return signed, nil
 }
+
+// RequiredGap 是「已声明必填、但尚未进入生效快照」的配置键。
+type RequiredGap struct {
+	Namespace string
+	Key       string
+	// Reason 取 no_active_release（该域尚无生效发布）或 missing_in_snapshot。
+	Reason string
+}
+
+// MissingRequired 统计各 namespace 中缺失的必填键，供安装向导与启动降级判断。
+//
+// 只统计非敏感键：敏感键的取值走 config_secret（生成 + 授权），不会进入
+// 配置快照，若一并统计会把每个环境都判成永久缺键。
+func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]RequiredGap, error) {
+	if !domain.ValidEnv(env) {
+		return nil, apperr.BadRequest("invalid env")
+	}
+	gaps := make([]RequiredGap, 0, 4)
+	for _, namespace := range s.specs.Namespaces() {
+		required := make([]domain.KeySpec, 0, 4)
+		for _, keySpec := range s.specs.List(namespace) {
+			if keySpec.Required && !keySpec.Sensitive {
+				required = append(required, keySpec)
+			}
+		}
+		if len(required) == 0 {
+			continue
+		}
+		pointer, err := s.pointers.Get(ctx, env, namespace)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			for _, keySpec := range required {
+				gaps = append(gaps, RequiredGap{
+					Namespace: namespace, Key: keySpec.Key, Reason: "no_active_release",
+				})
+			}
+			continue
+		case err != nil:
+			return nil, translate(err)
+		}
+		activeItems, err := s.releases.ListItems(ctx, pointer.ActiveReleaseID)
+		if err != nil {
+			return nil, translate(err)
+		}
+		present := make(map[string]struct{}, len(activeItems))
+		for _, entry := range activeItems {
+			present[entry.ConfigKey] = struct{}{}
+		}
+		for _, keySpec := range required {
+			if _, ok := present[keySpec.Key]; !ok {
+				gaps = append(gaps, RequiredGap{
+					Namespace: namespace, Key: keySpec.Key, Reason: "missing_in_snapshot",
+				})
+			}
+		}
+	}
+	return gaps, nil
+}

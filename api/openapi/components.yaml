@@ -799,6 +799,12 @@ components:
         status:
           type: string
           enum: [pending, installing, ready, failed]
+        mode:
+          type: string
+          enum: [first_install, repair]
+          description: |
+            向导模式（ADR-0018）：`ready` 之前是首装（first_install），
+            之后是补配/修复（repair）。前端据此决定是否只渲染阻塞键。
         owner:
           type: string
           description: 持有租约的安装者标识（`installing` 期间有效）

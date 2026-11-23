@@ -80,6 +80,8 @@ func run() error {
 			if rt.Install != nil {
 				mux.Handle("GET /internal/v1/install/status",
 					http.HandlerFunc(rt.Install.Status))
+				mux.Handle("GET /internal/v1/install/schema",
+					http.HandlerFunc(rt.Install.Schema))
 				mux.Handle("POST /internal/v1/install/begin",
 					http.HandlerFunc(rt.Install.Begin))
 				mux.Handle("POST /internal/v1/install/apply",

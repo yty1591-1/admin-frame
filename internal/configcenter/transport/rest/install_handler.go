@@ -53,6 +53,24 @@ func (h *InstallHandler) Status(w http.ResponseWriter, r *http.Request) {
 	apiresp.OK(w, installStateDTO(state), traceID)
 }
 
+// Schema 处理 GET /internal/v1/install/schema。
+//
+// 返回向导渲染所需的字段清单与缺失必填键；与写路径一样要求 setup token，
+// 因为 schema 会暴露键名、默认值与校验规则。
+func (h *InstallHandler) Schema(w http.ResponseWriter, r *http.Request) {
+	traceID := apiresp.TraceIDFromContext(r.Context())
+	if err := h.install.RequireSetupToken(r.Header.Get(app.SetupTokenHeader())); err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	schema, err := h.install.Schema(r.Context(), h.deployEnv)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	apiresp.OK(w, schema, traceID)
+}
+
 // Begin 处理 POST /internal/v1/install/begin。
 func (h *InstallHandler) Begin(w http.ResponseWriter, r *http.Request) {
 	traceID := apiresp.TraceIDFromContext(r.Context())
@@ -150,8 +168,13 @@ func setupActor(traceID string) app.Actor {
 }
 
 func installStateDTO(state domain.InstallState) map[string]any {
+	mode := app.InstallModeFirstInstall
+	if state.Status == domain.InstallReady {
+		mode = app.InstallModeRepair
+	}
 	out := map[string]any{
 		"env":        state.Env,
+		"mode":       mode,
 		"status":     string(state.Status),
 		"owner":      state.Owner,
 		"version":    state.Version,

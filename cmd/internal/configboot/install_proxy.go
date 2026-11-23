@@ -32,6 +32,7 @@ func (p *InstallProxy) Register(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /admin/v1/install/status", p.forward("GET", "/internal/v1/install/status"))
+	mux.HandleFunc("GET /admin/v1/install/schema", p.forward("GET", "/internal/v1/install/schema"))
 	mux.HandleFunc("POST /admin/v1/install/begin", p.forward("POST", "/internal/v1/install/begin"))
 	mux.HandleFunc("POST /admin/v1/install/apply", p.forward("POST", "/internal/v1/install/apply"))
 	mux.HandleFunc("POST /admin/v1/install/complete", p.forward("POST", "/internal/v1/install/complete"))
