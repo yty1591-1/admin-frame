@@ -57,10 +57,11 @@ describe('loadScript', () => {
     appendSpy.mockRestore();
 
     expect(capturedScript).toBeTruthy();
-    if (!capturedScript) {
+    const script = capturedScript as HTMLScriptElement | null;
+    if (!script) {
       throw new Error('Expected the captured script element to exist');
     }
-    capturedScript.dispatchEvent(new Event('error'));
+    script.dispatchEvent(new Event('error'));
 
     await expect(promise).rejects.toThrow('Failed to load script: error.js');
   });

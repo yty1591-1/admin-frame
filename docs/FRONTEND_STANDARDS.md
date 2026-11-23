@@ -127,7 +127,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-18 | 组件复用优先：同一 UI 片段在两个应用出现两次即上移 `packages/effects/*` 或 `packages/@core/*`；禁止跨应用复制组件后再改；组件 props 必须声明类型，禁止 `any` 逃逸 | eslint / `check:type`（🟡 仅两 app） |
+| FE-18 | 组件复用优先：同一 UI 片段在两个应用出现两次即上移 `packages/effects/*` 或 `packages/@core/*`；禁止跨应用复制组件后再改；组件 props 必须声明类型，禁止 `any` 逃逸 | eslint / `check:type`（✅ 全仓 32 包 + 2 app） |
 | FE-19 | 样式：优先 Tailwind 工具类；全局样式只允许在 `packages/styles`；CSS 层顺序由 `internal/vite-config` 的 `css-layer` 插件强制（✅），不得绕过；`!important` 必须注释理由 | stylelint（🟡 仅 lefthook staged）+ Review |
 | FE-20 | 文案与资源：用户可见文案必须走 `$t()` + `locales`（禁止硬编码中文）；新增页面同步 `langs/<locale>/*.json`；图标走 `@vben/icons`。**上传与预览**：扩展名 + MIME 双白名单，SVG 默认禁止；预览新窗口必须 `noopener,noreferrer`；非图片文件走下载而非内联打开 | stylelint / cspell（🟡 不含 `.vue`）/ 单测（⬜） |
 
@@ -242,16 +242,17 @@
 
 ---
 
-## 11. 当前执行现状（2026-11-21）
+## 11. 当前执行现状（2026-11-23）
 
 > 本节只描述**工具实际行为**，不描述目标。转正前，标 ⬜/🟡 的规则以 Code Review 为准。
 
 | 能力 | 现状 | 关联 |
 |------|------|------|
 | 本地 pre-commit（oxlint / oxfmt / eslint / stylelint / 全量 `check:type`） | 🟡 仅 `frontend/` 安装 lefthook 时生效；本机 `.git/hooks` 无 pre-commit；可 `--no-verify` 绕过 | `frontend/lefthook.yml` |
-| `pnpm check:type` | 🟡 只跑 `web-admin` / `web-biz` 两个 app；27 个 `packages/**` 无 `typecheck` |
+| `pnpm check:type` | ✅ 2026-11-23：`turbo run typecheck` 覆盖 32 个包 + 2 个 app（34 任务，约 1m8s）；包内 `.vue` 用 `vue-tsc --noEmit`、纯 TS 用 `tsc --noEmit` | `frontend/packages/**/package.json`、`frontend/internal/**/package.json`、`frontend/turbo.json` |
 | 类型基线（2026-11-21） | ✅ 两 app `vue-tsc --noEmit` 均 0 错误；修掉 9 处既有红（`secrets/index.vue` 8 处模板断言、`releases.ts:72` payload 默认值） | `apps/web-admin/src/views/system/config/secrets/index.vue`、`apps/web-admin/src/api/configcenter/releases.ts` |
-| 门禁红灯验证（2026-11-23） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；`check:dep` / `check:circular` 见下一行 | 本轮实施记录 | `turbo.json` |
+| 包级类型基线（2026-11-23） | ✅ 32 个包（26 packages + 6 internal）全 0 错误；修掉 21 处既有红（`typings/vue-router.d.ts` 声明路径、`RouteMeta` augmentation、Vite/Rollup 插件 hook 类型、测试非空断言等） | `packages/@core/base/typings/vue-router.d.ts`、`internal/vite-config/src/plugins/*.test.ts` |
+| 门禁红灯验证（2026-11-23） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；包级：在 `packages/utils/src/helpers/generate-menus.ts` 注入同句 → `pnpm check:type` 退出 2（turbo `Failed: @vben/utils#typecheck`），撤销后 0；`check:dep` / `check:circular` 见下一行 | 本轮实施记录 | `turbo.json` |
 | `pnpm check:dep` / `check:circular` | ✅ 2026-11-23 本地实测：存量未用依赖 / 10 个循环时 exit 1，清理后 exit 0；单测随 `pnpm test:unit` 通过 | `frontend/scripts/vsh/src/check-*/` |
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |

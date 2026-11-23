@@ -118,11 +118,11 @@
 
 | ID | 动作 | 落点 | 验收 |
 |----|------|------|------|
-| FE-G-01 | 新增单一 `frontend` CI job（lint + `check:dep` + `check:circular` + `check:type` + `test:unit` + `build:admin` + `build:biz`；`test:unit` 先按现有 77 条用例接入，apps 用例见 FE-T-01）；新增 `make frontend-check`；`check-ci-parity.sh` PARITY 表登记；Gitee 三个流水线加 `build@nodejs` step；`gitee-job.sh` 增 `frontend` 子命令 | `.github/workflows/ci.yml`、`Makefile`、`scripts/ci/check-ci-parity.sh`、`.workflow/`、`scripts/ci/gitee-job.sh` | ① 在 `.vue` 制造 lint 错误 → PR 红；② `main.ts` 制造类型错误 → PR 红；③ 删 PARITY 行 → `make check-ci-parity` 红；④ Gitee 侧存在同名 step |
+| FE-G-01 | 新增单一 `frontend` CI job（lint + `check:dep` + `check:circular` + `check:type` + `test:unit` + `build:admin` + `build:biz`；`test:unit` 先按现有用例（85 文件 610 条）接入，apps 用例见 FE-T-01）；新增 `make frontend-check`；`check-ci-parity.sh` PARITY 表登记；Gitee 三个流水线加 `build@nodejs` step；`gitee-job.sh` 增 `frontend` 子命令 | `.github/workflows/ci.yml`、`Makefile`、`scripts/ci/check-ci-parity.sh`、`.workflow/`、`scripts/ci/gitee-job.sh` | ① 在 `.vue` 制造 lint 错误 → PR 红；② `main.ts` 制造类型错误 → PR 红；③ 删 PARITY 行 → `make check-ci-parity` 红；④ Gitee 侧存在同名 step |
 | FE-G-02 | 修两条恒 0：`check-dep` / `check-circular` 改 `process.exitCode = 1`（或抛错），补退出码用例 | `frontend/scripts/vsh/src/{check-dep,check-circular}/index.ts` | 加未使用依赖 → 退出码 1；造 A→B→A 循环 → 退出码 1；干净树 → 0 |
 | FE-G-03 | 两份 PR 模板加「前端自检」节；`check-git.sh` 断言该节存在 | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` | 删任一模板的前端节 → `make check-git` 红 |
 | FE-G-04 | `check:cspell` glob 覆盖 `**/*.vue`；CI 跑全量 lint/stylelint（非 staged） | `frontend/package.json`、CI job | `.vue` 模板拼写错误 → job 红；`.scss` 非法属性 → job 红 |
-| FE-G-05 | 27 个 `packages/**/package.json` 补 `typecheck` 脚本，`turbo run typecheck` 覆盖全部包 | `frontend/packages/**/package.json`、`frontend/turbo.json` | 在 `packages/stores` 引入类型错误 → `pnpm check:type` 红 |
+| FE-G-05 | 32 个包（`packages` 26 + `internal` 6）补 `typecheck` 脚本（含 `.vue` 用 `vue-tsc --noEmit`，纯 TS 用 `tsc --noEmit`），`turbo run typecheck` 覆盖全部包 | `frontend/packages/**/package.json`、`frontend/internal/**/package.json`、`frontend/turbo.json` | 在任一包引入类型错误 → `pnpm check:type` 红；全量 34 任务通过 |
 | FE-G-06 | `apps/*` 补冒烟用例（见 FE-T-01）；`vitest.config.ts` 加覆盖率阈值；新增 `check-frontend-gates.sh`（仿 `check-test-gates.sh`） | `frontend/apps/*/src/**/*.test.ts`、`frontend/vitest.config.ts`、`scripts/ci/check-frontend-gates.sh` | 删除一条关键用例 → 覆盖率低于阈值则红；`grep -rl "v-access\|pageMap" --include=*.test.ts frontend/` 非空 |
 | FE-G-07 | `engine-strict=true`；dependabot 加 `npm`（`/frontend`）；CI 增加 `pnpm audit --prod --audit-level=high`；`minimumReleaseAge` 恢复为组织策略值（非 0） | `frontend/.npmrc`、`.github/dependabot.yml`、CI、`frontend/pnpm-workspace.yaml` | Node 版本不符时 `pnpm install` 直接失败；引入已知 high 漏洞依赖 → job 红；dependabot 出现 npm PR |
 | FE-G-08 | 索引收敛：`docs/README.md` 的 CI 编号、`ci.yml` 头注释、`check-ci-paths.sh` PATTERN 加 `frontend/`；`CI_STANDARDS.md` 增「前端 job」条文 | `docs/README.md`、`docs/CI_STANDARDS.md`、`scripts/ci/check-ci-paths.sh` | `make check-ci-paths` 能校验前端脚本引用；文档编号不再漂移 |
@@ -223,7 +223,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-G-02 | 待指派 | 已完成 | 2026-11-23：`hasUnusedDependencies` / `exceedsThreshold` + 退出码已改，单测已加；本地 `frontend-check` 实测：存量未用依赖/循环依赖时 exit 1，清理后 exit 0 |
 | FE-G-03 | 待指派 | 已完成 | 2026-11-23：两份 PR 模板新增「前端自检」节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题实测 exit 1，恢复后 0） |
 | FE-G-04 | 待指派 | 已完成 | 2026-11-23：`check:cspell` 增加 `**/*.vue`（943 文件 0 问题）；`frontend-check.sh` 增加 `check:cspell` 步（第 3/8），lint/stylelint 本就全量非 staged；`.vue` 注入 `zzqqxx` 实测 exit 1 |
-| FE-G-05 | 待指派 | 未开始 | 27 包 typecheck |
+| FE-G-05 | 待指派 | 已完成 | 2026-11-23：32 包（26 packages + 6 internal）补 `typecheck`；`pnpm check:type` 34/34 通过（约 1m8s）；修掉暴露的 21 处既有类型红（typings 声明路径、RouteMeta augmentation、Vite/Rollup 插件类型、测试非空断言等）；红灯实测：`packages/utils` 注入 `const __redLightProbe: string = 1` → turbo 退出 2（TS2322/TS6133），撤销后 FULL TURBO 0 |
 | FE-G-06 | 待指派 | 未开始 | apps 用例 + 覆盖率 |
 | FE-G-07 | 待指派 | 未开始 | engine-strict + audit + dependabot |
 | FE-G-08 | 待指派 | 进行中 | 2026-11-21：`ci.yml` 头注释、`CI_STANDARDS.md` CI-18、`check-ci-paths.sh` PATTERN 已改；`docs/README.md` CI 编号与 CI-17 表待收敛 |
@@ -261,7 +261,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [ ] `check:dep` / `check:circular` 遇到问题返回非 0（FE-G-02）
 - [x] 两份 PR 模板有「前端自检」节，且 `check-git` 能断言（FE-G-03）
 - [x] cspell/stylelint 覆盖 `.vue`，CI 跑全量（FE-G-04）
-- [ ] 27 个包有 `typecheck`，`turbo run typecheck` 全量（FE-G-05）
+- [x] 32 个包有 `typecheck`，`turbo run typecheck` 全量 34 任务通过（FE-G-05）
 - [ ] `apps/*` 有冒烟用例，覆盖率阈值生效（FE-G-06 / FE-T-01 / FE-T-03）
 - [ ] `engine-strict`、dependabot npm、`pnpm audit` 入 CI（FE-G-07）
 - [ ] 文档索引收敛（FE-G-08 / FE-D-02～04）
