@@ -26,7 +26,6 @@ import (
 	configcenterrest "github.com/admin-frame/admin-frame/internal/configcenter/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -245,39 +244,22 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter install service: %w", err)
 	}
 
-	prodLike := platformconfig.IsProdLikeEnv(deps.Config.Env)
-	bootstrapActor := app.Actor{
-		SubjectID: bootstrapSubject, ActorType: "system", Channel: "admin", TraceID: bootstrapTrace,
+	// 安装流程对所有环境统一（ADR-0018）：启动期只保证安装态行存在，
+	// 仅已 ready 的环境做幂等播种（补齐新增键）；pending/installing/failed
+	// 一律等待安装向导，由 scripts/local|prod 的安装步骤驱动 begin→apply→complete。
+	if _, ensureErr := installService.EnsureState(context.Background(), deps.Config.Env, domain.InstallPending); ensureErr != nil {
+		return nil, fmt.Errorf("configcenter ensure install state: %w", ensureErr)
 	}
-	if prodLike {
-		if _, ensureErr := installService.EnsureState(context.Background(), deps.Config.Env, domain.InstallPending); ensureErr != nil {
-			return nil, fmt.Errorf("configcenter ensure install state: %w", ensureErr)
-		}
-		state, statusErr := installService.Status(context.Background(), deps.Config.Env)
-		if statusErr != nil {
-			return nil, fmt.Errorf("configcenter install status: %w", statusErr)
-		}
-		if state.Status == domain.InstallReady {
-			if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
-				return nil, err
-			}
-			if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
-				return nil, err
-			}
-		}
-		// pending/installing/failed：跳过启动期自动播种，等待安装向导。
-	} else {
+	state, statusErr := installService.Status(context.Background(), deps.Config.Env)
+	if statusErr != nil {
+		return nil, fmt.Errorf("configcenter install status: %w", statusErr)
+	}
+	if state.Status == domain.InstallReady {
 		if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
 			return nil, err
 		}
 		if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
 			return nil, err
-		}
-		if err := withinTx(context.Background(), sqlDB, func(ctx context.Context) error {
-			_, markErr := installService.MarkReady(ctx, deps.Config.Env, bootstrapActor)
-			return markErr
-		}); err != nil {
-			return nil, fmt.Errorf("configcenter mark install ready: %w", err)
 		}
 	}
 

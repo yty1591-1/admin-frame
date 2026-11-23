@@ -1129,13 +1129,14 @@ docs/adr/
 git clone <repo>
 cd myproject
 
-# 无需复制配置样例：首次启动按代码默认值自动初始化（CFG-04 / CFG-09）
+# 无需复制配置样例：首次启动经安装向导播种（CFG-04 / CFG-09 / ADR-0018）
 
 # 本地依赖
 docker compose -f docker-compose.integration.yml up -d mysql redis
 
 make build
-./bin/admin-api   # A 端，首次启动自动播种基线 Release
+make local-start   # config-api 就绪后自动驱动安装向导（begin → apply → complete）
+./bin/admin-api   # A 端
 ./bin/biz-api     # B 端
 ./bin/c-api       # C 端
 ```

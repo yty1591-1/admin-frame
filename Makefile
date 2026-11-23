@@ -397,9 +397,15 @@ mock:
 	@command -v $(MOCKERY) >/dev/null 2>&1 || { echo "install mockery or set MOCKERY=..."; exit 1; }
 	$(MOCKERY)
 
+# 前端门禁（FE-CI-01）：与 CI frontend job 同源，刻意不并入 ci 目标。
+# 理由：pnpm install 依赖网络且耗时数分钟，本地 make ci 需保持可离线执行；
+# CI 侧由分支保护把 frontend 设为 required check 保证必跑。
+frontend-check:
+	bash scripts/ci/frontend-check.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
-	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
+	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。

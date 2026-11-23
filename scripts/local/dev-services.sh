@@ -2,20 +2,21 @@
 # 本地开发：一键启动 / 停止 / 重启 / 查看五进程（config-api + worker + 三端 API）。
 #
 # 用法：
-#   bash scripts/local/dev-services.sh <start|stop|restart|status> [选项]
+#   bash scripts/local/dev-services.sh <start|stop|restart|status|install> [选项]
 #
 # 选项：
 #   --no-build          跳过 go build
-#   --skip-health       启动后不等待 /readyz
+#   --skip-health       启动后不等待 /readyz（同时跳过安装步骤）
 #   --env-file <path>   默认 scripts/local/.env（可从 env.example 复制）
 #   --migrate           start/restart 前执行 migrate up
 #
 # 说明：
-#   1. 启动顺序：config-api →（就绪）→ worker → admin-api → biz-api → c-api
-#   2. 每个进程注入各自的 CONFIG_SERVICE_IDENTITY（密钥 resolve 授权）
-#   3. PID / 日志写入 bin/run/（已被 /bin/ 忽略）
-#   4. Windows 请用原生 Git Bash 或 make local-*；勿从 WSL 拉起 Windows 二进制
-#   5. 破坏性冒烟（清空密钥表）见 scripts/local/smoke-start-all.ps1
+#   1. 启动顺序：config-api →（就绪）→ 安装向导（begin/apply/complete）→ worker → admin-api → biz-api → c-api
+#   2. 所有环境统一走安装流程（ADR-0018）；`install` 子命令可单独重跑安装
+#   3. 每个进程注入各自的 CONFIG_SERVICE_IDENTITY（密钥 resolve 授权）
+#   4. PID / 日志写入 bin/run/（已被 /bin/ 忽略）
+#   5. Windows 请用原生 Git Bash 或 make local-*；勿从 WSL 拉起 Windows 二进制
+#   6. 破坏性冒烟（清空密钥表）见 scripts/local/smoke-start-all.ps1
 
 set -euo pipefail
 
@@ -106,9 +107,9 @@ parse_args() {
   fi
   shift || true
   case "$action" in
-    start | stop | restart | status) ACTION="$action" ;;
+    start | stop | restart | status | install) ACTION="$action" ;;
     -h | --help | help) usage; exit 0 ;;
-    *) die "未知子命令：$action（可用：start|stop|restart|status）" ;;
+    *) die "未知子命令：$action（可用：start|stop|restart|status|install）" ;;
   esac
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -158,6 +159,8 @@ load_env() {
   export CONFIGCENTER_ENV="${CONFIGCENTER_ENV:-dev}"
   export CONFIGCENTER_CACHE_DIR="${CONFIGCENTER_CACHE_DIR:-var/configcenter-cache}"
   export CONFIGCENTER_KEK_DRIVER="${CONFIGCENTER_KEK_DRIVER:-local}"
+  # 安装向导凭据：dev 缺省值仅用于本机自动安装（ADR-0018 统一安装流程）。
+  export CONFIG_INSTALL_SETUP_TOKEN="${CONFIG_INSTALL_SETUP_TOKEN:-local-dev-install-setup-token-0123456789abcdef}"
   mkdir -p "$CONFIGCENTER_CACHE_DIR"
   log "已加载环境变量：$file"
 }
@@ -288,6 +291,74 @@ run_migrate() {
   "$mig" -dir migrations -action up
 }
 
+# install_field 从安装态读取字段（env/status/owner）；无值输出空串。
+install_field() {
+  local field="$1" body
+  body="$(curl -fsS "http://$API_HOST:$CONFIG_API_PORT/internal/v1/install/status" 2>/dev/null || true)"
+  printf '%s' "$body" | tr -d '\r' | grep -o "\"$field\":\"[^\"]*\"" | head -n 1 | cut -d'"' -f4 || true
+}
+
+# install_post <begin|apply|complete> <json>：输出响应体，非 2xx 返回非 0。
+install_post() {
+  local path="$1" payload="$2" body code
+  body="$(curl -sS -X POST "http://$API_HOST:$CONFIG_API_PORT/internal/v1/install/$path" \
+    -H 'Content-Type: application/json' \
+    -H "X-Config-Install-Token: ${CONFIG_INSTALL_SETUP_TOKEN:-}" \
+    -d "$payload" -w $'\n%{http_code}' 2>&1 || true)"
+  code="${body##*$'\n'}"
+  body="${body%$'\n'*}"
+  [[ -n "$body" ]] && printf '%s\n' "$body"
+  [[ "$code" == 2* ]]
+}
+
+# run_install 驱动安装向导：ready 时跳过，否则 begin → apply → complete。
+# 所有环境统一（ADR-0018）；overrides 留空表示全部采用 key spec 默认值。
+run_install() {
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "未找到 curl，跳过安装步骤（可手工 POST /internal/v1/install/{begin,apply,complete}）"
+    return 0
+  fi
+  if [[ -z "${CONFIG_INSTALL_SETUP_TOKEN:-}" ]]; then
+    die "CONFIG_INSTALL_SETUP_TOKEN 未设置；见 scripts/local/env.example"
+  fi
+  local status owner="local-dev" resp
+  status="$(install_field status)"
+  if [[ "$status" == "ready" ]]; then
+    log "安装态已 ready，跳过安装向导"
+    return 0
+  fi
+  if [[ -n "$(install_field owner)" ]]; then
+    owner="$(install_field owner)"
+  fi
+  log "安装向导：begin → apply → complete（env=${CONFIGCENTER_ENV:-dev}，状态=${status:-none}，owner=$owner）"
+  if ! resp="$(install_post begin "{\"owner\":\"$owner\"}")"; then
+    warn "install begin 失败：${resp:-（无响应体）}"
+    return 1
+  fi
+  if ! resp="$(install_post apply "{\"owner\":\"$owner\",\"overrides\":{}}")"; then
+    warn "install apply 失败：${resp:-（无响应体）}"
+    return 1
+  fi
+  if ! resp="$(install_post complete "{\"owner\":\"$owner\"}")"; then
+    warn "install complete 失败：${resp:-（无响应体）}"
+    return 1
+  fi
+  status="$(install_field status)"
+  if [[ "$status" != "ready" ]]; then
+    warn "安装后状态仍为 ${status:-unknown}，请查看 config-api 日志与 /internal/v1/install/status"
+    return 1
+  fi
+  log "安装完成（status=ready）"
+}
+
+do_install() {
+  load_env
+  if ! health_one "http://$API_HOST:$CONFIG_API_PORT/readyz"; then
+    die "config-api 未就绪；请先执行 start"
+  fi
+  run_install
+}
+
 do_start() {
   mkdir -p "$PID_DIR" "$LOG_DIR"
   load_env
@@ -311,6 +382,11 @@ do_start() {
       exit 1
     fi
     log "config-api ready"
+    if ! run_install; then
+      warn "安装未完成，停止本次启动的进程"
+      do_stop
+      exit 1
+    fi
   fi
 
   local role
@@ -370,6 +446,9 @@ do_status() {
     fi
   done
   printf '\n日志目录：%s\n' "$LOG_DIR"
+  if command -v curl >/dev/null 2>&1; then
+    printf '安装态：%s\n' "$(install_field status)"
+  fi
 }
 
 parse_args "$@"
@@ -378,4 +457,5 @@ case "$ACTION" in
   stop) do_stop ;;
   restart) do_stop; do_start ;;
   status) do_status ;;
+  install) do_install ;;
 esac

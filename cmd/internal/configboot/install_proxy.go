@@ -66,7 +66,7 @@ func (p *InstallProxy) forward(method, upstreamPath string) http.HandlerFunc {
 			http.Error(w, "install proxy upstream unavailable: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		for _, h := range []string{"Content-Type", "X-Trace-Id"} {
 			if v := resp.Header.Get(h); v != "" {
 				w.Header().Set(h, v)

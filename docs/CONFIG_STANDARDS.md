@@ -3,9 +3,9 @@
 > **状态**：已批准（Approved）；M3 已删除 `configs/` 跟踪文件并关闭迁移期样例例外；见 §10
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：配置 key spec、配置中心加载、首次启动初始化、业务密钥托管、多环境与迁移门禁
-> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)、[ADR-0016](./adr/0016-config-service-pull-model.md)、[ADR-0017](./adr/0017-config-center-install-state.md)
+> **关联**：[ARCHITECTURE.md](./ARCHITECTURE.md) §4.4 / §5.6 / §17、[SECURITY_STANDARDS.md](./SECURITY_STANDARDS.md)、[config-center-plan.md](./config-center-plan.md)、[ADR-0013](./adr/0013-config-center-in-process-snapshot.md)、[ADR-0014](./adr/0014-secret-management-envelope-encryption.md)、[ADR-0016](./adr/0016-config-service-pull-model.md)、[ADR-0017](./adr/0017-config-center-install-state.md)、[ADR-0018](./adr/0018-config-repair-and-setup-degrade.md)
 > **执行方式**：`Validate()` 单测 + `check-configcenter.sh` + `check-no-static-config.sh` + gitleaks + Review
-> **最后更新**：2026-11-21（v4：ADR-0017 prod-like 首次安装态；dev 仍自动播种）
+> **最后更新**：2026-11-21（v5：ADR-0018 统一安装流程——dev/test 也经安装向导，删除后端自动播种分支）
 > **变更方式**：修改本规范须同步更新 `pkg/config`、`internal/configcenter`、`cmd/internal/appconfig`、`scripts/ci/check-configcenter.sh`、`scripts/ci/check-no-static-config.sh`、`deploy/` 与架构 §17，经架构 Owner 与安全 Reviewer 评审
 
 ---
@@ -14,7 +14,7 @@
 
 1. **启动即安全**：非法配置、互斥项、生产演示模式在启动时失败，不带病运行。
 2. **单一事实源**：配置以配置中心为唯一事实源，代码 key spec 只提供类型、默认值与校验规则。
-3. **空环境可启动**：local/dev/test 首次部署按代码默认值自动播种；staging/prod 经安装向导完成播种（ADR-0017）。
+3. **空环境可启动**：所有环境（含 local/dev/test）统一经安装向导完成首次播种（ADR-0017 / ADR-0018）；本地脚本在 config-api 就绪后自动驱动 `begin → apply → complete`。
 4. **密钥明文不入库**：业务密钥信封加密后入库，KEK 外部托管；明文不落库、不落快照、不落日志、不回显前端。
 5. **优先级清晰**：业务配置「config-api 拉取结果 > 本地缓存 > 代码默认值」；基础设施口令仅 `ADMIN_FRAME_DB_*` / `ADMIN_FRAME_REDIS_*`；业务密钥仅 `secretclient` → `config-api`。
 
@@ -34,7 +34,7 @@
 | CFG-06 | 仓库禁止出现真实密钥、生产 DSN、云 AK/SK；测试密钥须用 `strings.Repeat` 等构造，禁止高熵字面量 | gitleaks + Review |
 | CFG-07 | 禁止在业务代码硬编码监听地址、超时、功能开关；应用配置或常量默认值经 `applyDefaults`，跨字段派生经 `normalize` | Review |
 | CFG-08 | 合并请求须勾选配置自检 | PR 模板 |
-| CFG-09 | local/dev/test 空库按 key spec 自动播种；staging/prod 经安装态 + setup token 播种；幂等、不覆盖、强制审计 | 集成测试 + `check-configcenter.sh` |
+| CFG-09 | 所有环境统一经安装态 + `CONFIG_INSTALL_SETUP_TOKEN` 播种（`begin → apply → complete`），不存在「按环境自动播种」的第二条代码路径；`ready` 后启动仅做幂等补齐；幂等、不覆盖、强制审计 | 集成测试 + `check-configcenter.sh` |
 | CFG-10 | 业务密钥只允许密文入库：每版本独立 DEK + AES-256-GCM + 外部 KEK；密钥字段必须声明 `secret_rule`，首次启动仅对允许自动生成的字段用 `crypto/rand` 生成 | 单测 + 安全评审 + gitleaks |
 | CFG-11 | 普通配置读与密钥解析只经 `cmd/config-api`：mTLS / SPIFFE + 服务身份；密钥短租约；业务进程不接触 KEK，禁止明文批量导出 | 集成测试 + 安全评审 |
 | CFG-12 | 业务进程启动必须经 SDK 拉取 config-api；成功写本地缓存，失败读缓存，都没有则 fail-fast；响应不含密钥明文 | 单测 + 灾备演练 |

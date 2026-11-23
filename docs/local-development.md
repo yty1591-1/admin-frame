@@ -57,10 +57,11 @@ pwsh -File scripts/local/dev-services.ps1 stop
 
 脚本行为要点：
 
-- 顺序：`config-api` 就绪 → `worker` → 三端 API
+- 顺序：`config-api` 就绪 → 安装向导（`begin` → `apply` → `complete`）→ `worker` → 三端 API
 - 每个进程注入独立 `CONFIG_SERVICE_IDENTITY`（密钥 grant 命中）
 - PID / 日志：`bin/run/pids`、`bin/run/logs`
 - 可选：`bash scripts/local/dev-services.sh start --no-build --migrate`
+- 安装向导：所有环境（含 dev/test）统一走安装流程（ADR-0018）；`make local-install` / `pwsh -File scripts/local/dev-services.ps1 install` 可单独重跑，安装态为 `ready` 时为空操作
 
 ### 2.3 冒烟（破坏性，勿当日常）
 
@@ -73,6 +74,9 @@ export $(grep -v '^#' scripts/local/.env | xargs)   # 或按需 export
 
 make migrate-up
 make run-config    # 终端 1；等待 /readyz
+
+# 安装向导（所有环境统一，ADR-0018）；config-api 未 ready 时业务进程只会以 InstallPending 兜底启动
+bash scripts/local/dev-services.sh install   # 或 make local-install
 
 # 每个业务进程必须带自己的身份：
 export CONFIG_SERVICE_IDENTITY=admin-api && make run-admin
@@ -107,6 +111,7 @@ curl -s -X POST http://127.0.0.1:8081/admin/v1/auth/login \
 | `CONFIGCENTER_ENV` | 配置环境，本地默认 `dev` |
 | `CONFIGCENTER_CACHE_DIR` | 本地缓存，默认 `var/configcenter-cache`（已 gitignore） |
 | `CONFIGCENTER_KEK_DRIVER` / `CONFIGCENTER_LOCAL_KEK_HEX` | 仅本地 LocalKEK；prod 必须 Vault |
+| `CONFIG_INSTALL_SETUP_TOKEN` | 安装向导凭据（所有环境必填；dev 有脚本缺省值） |
 | `ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT` | worker 通知黑名单盐（装配期） |
 
 禁止在 `.env` 中放 JWT 明文或业务配置覆盖（CFG-04）。

@@ -18,6 +18,8 @@ $env:CONFIGCENTER_LOCAL_KEK_HEX = "0123456789abcdef0123456789abcdef0123456789abc
 $env:CONFIGCENTER_CACHE_DIR = Join-Path $Root "var\configcenter-cache-smoke"
 # worker 通知黑名单 HMAC 盐（装配期必填；本地冒烟固定值，非生产密钥）
 $env:ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT = "smoke-local-blacklist-salt-32b!!"
+# 安装向导凭据（所有环境统一走安装流程；本地固定值，非生产密钥）
+$env:CONFIG_INSTALL_SETUP_TOKEN = "local-dev-install-setup-token-0123456789abcdef"
 
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "bin\run\logs") | Out-Null
@@ -81,6 +83,23 @@ Assert-Alive $configProc "config-api"
 Wait-Http "http://127.0.0.1:8085/readyz" 90
 Assert-Alive $configProc "config-api"
 Write-Host "config-api ready"
+
+Write-Host "==> install wizard (begin -> apply -> complete)"
+$installHdr = @{ "X-Config-Install-Token" = $env:CONFIG_INSTALL_SETUP_TOKEN }
+$installBase = "http://127.0.0.1:8085/internal/v1/install"
+$state = Invoke-RestMethod -Uri "$installBase/status" -Headers $installHdr
+if ($state.data.status -ne "ready") {
+  $owner = "smoke-local"
+  $begin = @{ owner = $owner } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri "$installBase/begin" -Headers $installHdr -ContentType "application/json" -Body $begin | Out-Null
+  $apply = @{ owner = $owner; overrides = @{} } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri "$installBase/apply" -Headers $installHdr -ContentType "application/json" -Body $apply | Out-Null
+  $complete = @{ owner = $owner } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri "$installBase/complete" -Headers $installHdr -ContentType "application/json" -Body $complete | Out-Null
+  $state = Invoke-RestMethod -Uri "$installBase/status" -Headers $installHdr
+}
+if ($state.data.status -ne "ready") { throw "install not ready: $($state | ConvertTo-Json -Depth 5)" }
+Write-Host "OK install ready"
 
 # 确认 resolve 可用
 $resolveBody = '{"env":"dev","namespace":"platform","names":["auth.jwt.private_key"]}'

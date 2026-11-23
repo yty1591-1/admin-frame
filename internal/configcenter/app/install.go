@@ -12,7 +12,6 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/id"
@@ -23,8 +22,8 @@ const (
 	DefaultInstallLease = 15 * time.Minute
 	// ResourceTypeInstall 审计资源类型。
 	ResourceTypeInstall = "config_install"
-	setupTokenEnv       = "CONFIG_INSTALL_SETUP_TOKEN"
-	setupTokenHeader    = "X-Config-Install-Token"
+	setupTokenEnv       = "CONFIG_INSTALL_SETUP_TOKEN" //nolint:gosec // G101: 环境变量名常量，非凭据。
+	setupTokenHeader    = "X-Config-Install-Token"     //nolint:gosec // G101: 请求头名常量，非凭据。
 )
 
 // InstallService 管理首次安装状态机与 apply/complete（ADR-0017）。
@@ -113,13 +112,13 @@ func (s *InstallService) RequireSetupToken(provided string) error {
 	return nil
 }
 
-// RequireSetupTokenConfigured 在 prod-like 启动时断言 token 已配置。
+// RequireSetupTokenConfigured 在启动时断言 token 已配置。
+//
+// 所有环境统一走安装流程（ADR-0018），因此 token 不再按 prod-like 豁免：
+// 缺失时安装态只能停在 pending，业务进程无法就绪。
 func RequireSetupTokenConfigured(env string) error {
-	if !platformconfig.IsProdLikeEnv(env) {
-		return nil
-	}
 	if strings.TrimSpace(os.Getenv(setupTokenEnv)) == "" {
-		return fmt.Errorf("%s is required for env %q", setupTokenEnv, env)
+		return fmt.Errorf("%s is required for env %q (install wizard is the only seeding path)", setupTokenEnv, env)
 	}
 	return nil
 }
@@ -301,20 +300,21 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 		return domain.InstallState{}, err
 	}
 	for _, namespace := range s.specs.Namespaces() {
-		if _, getErr := s.pointers.Get(ctx, in.Env, namespace); getErr != nil {
-			msg := fmt.Sprintf("namespace %q missing release pointer", namespace)
-			now := s.now().UTC()
-			next := state
-			next.Status = domain.InstallFailed
-			next.Owner = ""
-			next.LeaseUntil = nil
-			next.LastError = msg
-			next.UpdatedAt = now
-			_, _ = s.install.CompareAndSwap(ctx, next, state.Version)
-			_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigInstallFail, ResourceTypeInstall, in.Env,
-				audit.OutcomeFailure, msg, nil)
-			return domain.InstallState{}, apperr.BadRequest(msg)
+		if _, getErr := s.pointers.Get(ctx, in.Env, namespace); getErr == nil {
+			continue
 		}
+		msg := fmt.Sprintf("namespace %q missing release pointer", namespace)
+		now := s.now().UTC()
+		next := state
+		next.Status = domain.InstallFailed
+		next.Owner = ""
+		next.LeaseUntil = nil
+		next.LastError = msg
+		next.UpdatedAt = now
+		_, _ = s.install.CompareAndSwap(ctx, next, state.Version)
+		_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigInstallFail, ResourceTypeInstall, in.Env,
+			audit.OutcomeFailure, msg, nil)
+		return domain.InstallState{}, apperr.BadRequest(msg)
 	}
 	now := s.now().UTC()
 	completed := now
@@ -331,33 +331,6 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 	}
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigInstallComplete, ResourceTypeInstall, in.Env,
 		audit.OutcomeSuccess, "", map[string]string{"status": "ready"})
-	return updated, nil
-}
-
-// MarkReady 在 local/dev 自动播种成功后直接写入 ready（跳过向导）。
-func (s *InstallService) MarkReady(ctx context.Context, env string, actor Actor) (domain.InstallState, error) {
-	cur, err := s.EnsureState(ctx, env, domain.InstallPending)
-	if err != nil {
-		return domain.InstallState{}, err
-	}
-	if cur.Status == domain.InstallReady {
-		return cur, nil
-	}
-	now := s.now().UTC()
-	completed := now
-	next := cur
-	next.Status = domain.InstallReady
-	next.Owner = ""
-	next.LeaseUntil = nil
-	next.LastError = ""
-	next.UpdatedAt = now
-	next.CompletedAt = &completed
-	updated, err := s.install.CompareAndSwap(ctx, next, cur.Version)
-	if err != nil {
-		return domain.InstallState{}, translate(err)
-	}
-	_ = s.audit.emit(ctx, actor, audit.ActionConfigInstallComplete, ResourceTypeInstall, env,
-		audit.OutcomeSuccess, "auto-seed", map[string]string{"status": "ready", "mode": "auto"})
 	return updated, nil
 }
 
@@ -402,10 +375,10 @@ func secureTokenEqual(a, b string) bool {
 	return v == 0
 }
 
-func truncateErr(msg string, max int) string {
+func truncateErr(msg string, limit int) string {
 	msg = strings.TrimSpace(msg)
-	if max <= 0 || len(msg) <= max {
+	if limit <= 0 || len(msg) <= limit {
 		return msg
 	}
-	return msg[:max]
+	return msg[:limit]
 }

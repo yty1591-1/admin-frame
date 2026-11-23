@@ -1,6 +1,6 @@
 # ADR-0017：配置中心 prod-like 首次安装态
 
-- 状态：Accepted（已接受，2026-11-21）
+- 状态：Accepted（已接受，2026-11-21）；**部分修订**：dev/test 自动播种已由 [ADR-0018](0018-config-repair-and-setup-degrade.md) 决策 10 取消（所有环境统一走安装向导）
 - 日期：2026-11-21
 - 关联：[ADR-0013](0013-config-center-in-process-snapshot.md)、[ADR-0016](0016-config-service-pull-model.md)、[`../CONFIG_STANDARDS.md`](../CONFIG_STANDARDS.md) §4、[`../config-center-plan.md`](../config-center-plan.md) D16
 

@@ -1,4 +1,4 @@
-﻿# 本地开发：Windows 原生 PowerShell 编排（start|stop|restart|status）。
+﻿# 本地开发：Windows 原生 PowerShell 编排（start|stop|restart|status|install）。
 # 日常联调用本脚本；破坏性冒烟（TRUNCATE 密钥表）见 smoke-start-all.ps1。
 #
 # 用法：
@@ -6,14 +6,16 @@
 #   pwsh -File scripts/local/dev-services.ps1 stop
 #   pwsh -File scripts/local/dev-services.ps1 restart
 #   pwsh -File scripts/local/dev-services.ps1 status
+#   pwsh -File scripts/local/dev-services.ps1 install
 #   pwsh -File scripts/local/dev-services.ps1 start -NoBuild -Migrate
 #
 # 环境变量文件默认 scripts/local/.env（从 env.example 复制）。
+# 启动流程统一为：config-api 就绪 → 安装向导（begin/apply/complete）→ 其余进程（ADR-0018）。
 
 [CmdletBinding()]
 param(
   [Parameter(Position = 0, Mandatory = $true)]
-  [ValidateSet("start", "stop", "restart", "status")]
+  [ValidateSet("start", "stop", "restart", "status", "install")]
   [string]$Action,
 
   [switch]$NoBuild,
@@ -67,6 +69,8 @@ function Import-DotEnv([string]$Path) {
   if (-not $env:CONFIGCENTER_ENV) { $env:CONFIGCENTER_ENV = "dev" }
   if (-not $env:CONFIGCENTER_CACHE_DIR) { $env:CONFIGCENTER_CACHE_DIR = "var\configcenter-cache" }
   if (-not $env:CONFIGCENTER_KEK_DRIVER) { $env:CONFIGCENTER_KEK_DRIVER = "local" }
+  # 安装向导凭据：dev 缺省值仅用于本机自动安装（ADR-0018 统一安装流程）。
+  if (-not $env:CONFIG_INSTALL_SETUP_TOKEN) { $env:CONFIG_INSTALL_SETUP_TOKEN = "local-dev-install-setup-token-0123456789abcdef" }
   New-Item -ItemType Directory -Force -Path $env:CONFIGCENTER_CACHE_DIR | Out-Null
   Write-Log "已加载环境变量：$Path"
 }
@@ -157,6 +161,45 @@ function Invoke-Migrate {
   if ($LASTEXITCODE -ne 0) { Die "migrate up failed" }
 }
 
+function Get-InstallState {
+  try {
+    return Invoke-RestMethod -Uri "http://127.0.0.1:$($Ports['config-api'])/internal/v1/install/status" -TimeoutSec 5
+  } catch {
+    return $null
+  }
+}
+
+function Invoke-Install {
+  if (-not $env:CONFIG_INSTALL_SETUP_TOKEN) {
+    Die "CONFIG_INSTALL_SETUP_TOKEN 未设置；见 scripts/local/env.example"
+  }
+  $state = Get-InstallState
+  if ($state -and $state.data.status -eq "ready") {
+    Write-Log "安装态已 ready，跳过安装向导"
+    return
+  }
+  $owner = "local-dev"
+  if ($state -and $state.data.owner) { $owner = $state.data.owner }
+  $base = "http://127.0.0.1:$($Ports['config-api'])/internal/v1/install"
+  $hdr = @{ "X-Config-Install-Token" = $env:CONFIG_INSTALL_SETUP_TOKEN }
+  Write-Log "安装向导：begin → apply → complete（env=$($env:CONFIGCENTER_ENV)，owner=$owner）"
+  $begin = @{ owner = $owner } | ConvertTo-Json -Compress
+  $apply = @{ owner = $owner; overrides = @{} } | ConvertTo-Json -Compress
+  $complete = @{ owner = $owner } | ConvertTo-Json -Compress
+  try {
+    Invoke-RestMethod -Method Post -Uri "$base/begin" -Headers $hdr -ContentType "application/json" -Body $begin | Out-Null
+    Invoke-RestMethod -Method Post -Uri "$base/apply" -Headers $hdr -ContentType "application/json" -Body $apply | Out-Null
+    Invoke-RestMethod -Method Post -Uri "$base/complete" -Headers $hdr -ContentType "application/json" -Body $complete | Out-Null
+  } catch {
+    Die "安装向导失败：$($_.Exception.Message)"
+  }
+  $state = Get-InstallState
+  if (-not $state -or $state.data.status -ne "ready") {
+    Die "安装后状态不是 ready：$($state | ConvertTo-Json -Depth 5)"
+  }
+  Write-Log "安装完成（status=ready）"
+}
+
 function Do-Start {
   New-Item -ItemType Directory -Force -Path $PidDir, $LogDir | Out-Null
   Import-DotEnv $EnvFile
@@ -170,6 +213,7 @@ function Do-Start {
       Die "config-api 未就绪"
     }
     Write-Log "config-api ready"
+    Invoke-Install
   }
 
   foreach ($role in @("worker", "admin-api", "biz-api", "c-api")) {
@@ -207,6 +251,16 @@ function Do-Status {
   }
   Write-Host ""
   Write-Host "日志目录：$LogDir"
+  $state = Get-InstallState
+  if ($state) { Write-Host "安装态：$($state.data.status)" }
+}
+
+function Do-Install {
+  Import-DotEnv $EnvFile
+  if (-not (Wait-Http "http://127.0.0.1:$($Ports['config-api'])/readyz" 5)) {
+    Die "config-api 未就绪；请先执行 start"
+  }
+  Invoke-Install
 }
 
 switch ($Action) {
@@ -214,4 +268,5 @@ switch ($Action) {
   "stop" { Do-Stop }
   "restart" { Do-Stop; Do-Start }
   "status" { Do-Status }
+  "install" { Do-Install }
 }

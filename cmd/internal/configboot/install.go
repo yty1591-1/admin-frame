@@ -16,11 +16,10 @@ import (
 )
 
 // InstallPendingJWTSecret 仅供安装未完成时让业务进程通过 Validate；非业务签发密钥。
-const InstallPendingJWTSecret = "install-pending-process-jwt-secret-32b" //nolint:gosec // G101: 安装期占位，非生产凭据。
+const InstallPendingJWTSecret = "install-pending-process-jwt-secret-32b"
 
 // InstallSetupTokenHeader 与 config-api 写路径鉴权头一致（ADR-0017）。
-const InstallSetupTokenHeader = "X-Config-Install-Token"
-
+const InstallSetupTokenHeader = "X-Config-Install-Token" //nolint:gosec // G101: 请求头名常量，非凭据。
 
 // InstallStatus 是 config-api 安装态查询结果。
 type InstallStatus struct {
@@ -37,15 +36,15 @@ func FetchInstallStatus(ctx context.Context, baseURL string, httpClient *http.Cl
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/internal/v1/install/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/internal/v1/install/status", http.NoBody) //nolint:gosec // G704: baseURL 来自受控环境变量 CONFIG_API_URL。
 	if err != nil {
 		return InstallStatus{}, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) //nolint:gosec // G704: 同上，请求目标是受控的 config-api 内部地址。
 	if err != nil {
 		return InstallStatus{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return InstallStatus{}, fmt.Errorf("configboot: install status http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -93,8 +92,8 @@ func RegisterInstallReadyCheck(h *health.Handler, baseURL string, httpClient *ht
 		return
 	}
 	var (
-		mu      sync.Mutex
-		cached  InstallStatus
+		mu       sync.Mutex
+		cached   InstallStatus
 		cachedAt time.Time
 	)
 	h.Register("config_install", func() error {

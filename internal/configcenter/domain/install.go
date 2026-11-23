@@ -9,6 +9,7 @@ import (
 // InstallStatus 是首次安装状态机（ADR-0017）。
 type InstallStatus string
 
+// 安装状态机取值：pending 待安装、installing 安装中、ready 已就绪、failed 安装失败。
 const (
 	InstallPending    InstallStatus = "pending"
 	InstallInstalling InstallStatus = "installing"
