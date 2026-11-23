@@ -47,9 +47,7 @@ const hasAuth = computed(() => {
   if (type === 'role') {
     return hasAccessByRoles(codes);
   }
-  return mode === 'all'
-    ? hasAllAccessByCodes(codes)
-    : hasAccessByCodes(codes);
+  return mode === 'all' ? hasAllAccessByCodes(codes) : hasAccessByCodes(codes);
 });
 </script>
 

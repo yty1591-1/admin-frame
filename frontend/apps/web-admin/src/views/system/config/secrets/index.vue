@@ -9,12 +9,21 @@ import type {
   ConfigSecretVersion,
 } from '#/api';
 
-import { onMounted, reactive, ref } from 'vue';
+import { h, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Drawer, message, Modal, Space, Table, Tag } from 'ant-design-vue';
+import {
+  Button,
+  Drawer,
+  Input,
+  message,
+  Modal,
+  Space,
+  Table,
+  Tag,
+} from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
 import {
@@ -138,7 +147,12 @@ const columns: TableColumnsType<ConfigSecret> = [
   { dataIndex: 'name', key: 'name', title: '名称', width: 220 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 120 },
   { dataIndex: 'fingerprint', key: 'fingerprint', title: '指纹', width: 160 },
-  { dataIndex: 'active_version', key: 'active_version', title: '版本', width: 80 },
+  {
+    dataIndex: 'active_version',
+    key: 'active_version',
+    title: '版本',
+    width: 80,
+  },
   { dataIndex: 'owner', key: 'owner', title: '负责人', width: 120 },
   { key: 'actions', title: '操作', width: 420 },
 ];
@@ -162,7 +176,12 @@ const grantColumns: TableColumnsType<ConfigSecretGrant> = [
 const accessColumns: TableColumnsType<ConfigSecretAccess> = [
   { dataIndex: 'occurred_at', key: 'occurred_at', title: '时间', width: 180 },
   { dataIndex: 'service_identity', key: 'service_identity', title: '服务身份' },
-  { dataIndex: 'secret_version', key: 'secret_version', title: '版本', width: 80 },
+  {
+    dataIndex: 'secret_version',
+    key: 'secret_version',
+    title: '版本',
+    width: 80,
+  },
   { dataIndex: 'result', key: 'result', title: '结果', width: 120 },
   { dataIndex: 'trace_id', key: 'trace_id', title: 'Trace', width: 160 },
 ];
@@ -173,7 +192,7 @@ async function loadNamespaces() {
     label: `${item.namespace} (${item.key_count})`,
     value: item.namespace,
   }));
-  if (!namespaces.value.length) {
+  if (namespaces.value.length === 0) {
     namespaces.value = [{ label: 'platform', value: 'platform' }];
   }
 }
@@ -217,6 +236,36 @@ async function loadDetail(secret: ConfigSecret) {
   }
 }
 
+function promptValue(
+  title: string,
+  placeholder: string,
+  help?: string,
+): Promise<null | string> {
+  return new Promise((resolve) => {
+    let value = '';
+    Modal.confirm({
+      title,
+      content: () =>
+        h('div', [
+          help
+            ? h('p', { class: 'text-muted-foreground mb-2 text-xs' }, help)
+            : null,
+          h(Input, {
+            placeholder,
+            value,
+            'onUpdate:value': (next: string) => {
+              value = next;
+            },
+          }),
+        ]),
+      okText: '确定',
+      cancelText: '取消',
+      onCancel: () => resolve(null),
+      onOk: () => resolve(value.trim() || null),
+    });
+  });
+}
+
 async function onCreate() {
   const { valid } = await createFormApi.validate();
   if (!valid) return;
@@ -256,17 +305,19 @@ async function onApprove(row: ConfigSecret, decision: 'approved' | 'rejected') {
 }
 
 async function onRotate(row: ConfigSecret) {
-  Modal.confirm({
-    title: '提交轮换',
-    content: '请在下一提示中输入新明文；需另一审批人批准后旧版本才进入 grace。',
-    async onOk() {
-      const plaintext = window.prompt('新明文（不会回显到列表）');
-      if (!plaintext) return;
-      await rotateConfigSecretApi(row.id, { plaintext });
-      message.success('已提交轮换，待审批');
-      await loadRows();
-    },
-  });
+  const plaintext = await promptValue(
+    '提交轮换',
+    '新明文（不会回显到列表）',
+    '需另一审批人批准后旧版本才进入 grace。',
+  );
+  if (!plaintext) return;
+  try {
+    await rotateConfigSecretApi(row.id, { plaintext });
+    message.success('已提交轮换，待审批');
+    await loadRows();
+  } catch (error) {
+    message.error(getConfigErrorMessage(error, '提交轮换失败'));
+  }
 }
 
 async function onRevoke(row: ConfigSecret) {
@@ -282,7 +333,10 @@ async function onRevoke(row: ConfigSecret) {
 }
 
 async function onGrant(row: ConfigSecret) {
-  const identity = window.prompt('服务身份（证书 SAN / SPIFFE ID）');
+  const identity = await promptValue(
+    '提交授权',
+    '服务身份（证书 SAN / SPIFFE ID）',
+  );
   if (!identity) return;
   try {
     await createConfigSecretGrantApi(row.id, { service_identity: identity });
@@ -303,8 +357,12 @@ async function onActivateVersion(version: ConfigSecretVersion) {
     message.info('该版本已是 active');
     return;
   }
-  const reason = window.prompt('破玻璃原因（必填；激活历史版本绕过轮换审批，须 24h 内补审）');
-  if (!reason?.trim()) return;
+  const reason = await promptValue(
+    '破玻璃原因',
+    '破玻璃原因（必填）',
+    '激活历史版本绕过轮换审批，须 24h 内补审。',
+  );
+  if (!reason) return;
   try {
     await activateConfigSecretVersionApi(secret.id, version.version, {
       break_glass: true,
@@ -353,12 +411,20 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="业务密钥托管：明文一次性输入，列表仅展示指纹。" title="密钥管理">
+  <Page
+    description="业务密钥托管：明文一次性输入，列表仅展示指纹。"
+    title="密钥管理"
+  >
     <div class="mb-4 flex flex-wrap items-end gap-3">
       <QueryForm class="flex-1" />
       <Space>
         <Button type="primary" @click="loadRows">查询</Button>
-        <Button v-access:code="'config:secret:write'" @click="createOpen = true"> 新建密钥 </Button>
+        <Button
+          v-access:code="'config:secret:write'"
+          @click="createOpen = true"
+        >
+          新建密钥
+        </Button>
       </Space>
     </div>
 
@@ -379,8 +445,14 @@ onMounted(async () => {
         </template>
         <template v-else-if="column.key === 'actions'">
           <Space wrap>
-            <Button size="small" @click="loadDetail(record as ConfigSecret)">详情</Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onSubmit(record as ConfigSecret)">
+            <Button size="small" @click="loadDetail(record as ConfigSecret)">
+              详情
+            </Button>
+            <Button
+              v-access:code="'config:secret:write'"
+              size="small"
+              @click="onSubmit(record as ConfigSecret)"
+            >
               送审
             </Button>
             <Button
@@ -390,10 +462,18 @@ onMounted(async () => {
             >
               批准
             </Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onRotate(record as ConfigSecret)">
+            <Button
+              v-access:code="'config:secret:write'"
+              size="small"
+              @click="onRotate(record as ConfigSecret)"
+            >
               轮换
             </Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onGrant(record as ConfigSecret)">
+            <Button
+              v-access:code="'config:secret:write'"
+              size="small"
+              @click="onGrant(record as ConfigSecret)"
+            >
               授权
             </Button>
             <Button
@@ -463,7 +543,9 @@ onMounted(async () => {
           <template v-if="column.key === 'actions'">
             <Button
               v-access:code="'config:secret:write'"
-              :disabled="record.status === 'active' || record.status === 'destroyed'"
+              :disabled="
+                record.status === 'active' || record.status === 'destroyed'
+              "
               size="small"
               @click="onActivateVersion(record as ConfigSecretVersion)"
             >

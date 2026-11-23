@@ -1,6 +1,4 @@
-export {
-  getConfigErrorMessage,
-} from './errors';
+export { getConfigErrorMessage } from './errors';
 export {
   createConfigItemApi,
   getConfigItemApi,
@@ -12,7 +10,10 @@ export {
   transitionConfigItemApi,
   updateConfigItemValueApi,
 } from './items';
-export type { ConfigItemListParams, ConfigItemVersionListParams } from './items';
+export type {
+  ConfigItemListParams,
+  ConfigItemVersionListParams,
+} from './items';
 export {
   approveConfigReleaseApi,
   cancelConfigReleaseApi,
@@ -48,6 +49,8 @@ export type {
   ConfigSecretVersion,
 } from './secrets';
 export type {
+  ConfigDeclaredKey,
+  ConfigDeclaredKeyListData,
   ConfigEnv,
   ConfigItem,
   ConfigItemCreatePayload,
@@ -57,17 +60,15 @@ export type {
   ConfigItemUpdatePayload,
   ConfigItemVersion,
   ConfigItemVersionListData,
-  ConfigDeclaredKey,
-  ConfigDeclaredKeyListData,
   ConfigNamespace,
   ConfigNamespaceListData,
   ConfigRelease,
   ConfigReleaseApprovePayload,
+  ConfigReleaseCancelPayload,
   ConfigReleaseCreatePayload,
   ConfigReleaseEntry,
   ConfigReleaseItem,
   ConfigReleaseListData,
-  ConfigReleaseCancelPayload,
   ConfigReleasePublishPayload,
   ConfigReleaseRollbackPayload,
   ConfigReleaseStatus,

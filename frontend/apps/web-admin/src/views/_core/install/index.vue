@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { InstallState } from '#/api/configcenter/install';
+
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
@@ -9,7 +11,6 @@ import {
   beginInstall,
   completeInstall,
   fetchInstallStatus,
-  type InstallState,
 } from '#/api/configcenter/install';
 
 const router = useRouter();
@@ -19,23 +20,23 @@ const owner = ref('');
 const overridesText = ref('');
 const busy = ref(false);
 const message = ref('');
-const error = ref('');
+const errorMessage = ref('');
 
 async function refresh() {
-  error.value = '';
+  errorMessage.value = '';
   try {
     status.value = await fetchInstallStatus();
     if (status.value.status === 'ready') {
       message.value = '安装已完成，可返回登录。';
     }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
   }
 }
 
 async function runInstall() {
   busy.value = true;
-  error.value = '';
+  errorMessage.value = '';
   message.value = '';
   try {
     let overrides: Record<string, string> = {};
@@ -49,8 +50,8 @@ async function runInstall() {
     message.value = `已播种 ${applied.item_count} 个键 / ${applied.namespaces} 个 namespace`;
     status.value = await completeInstall(token.value, owner.value);
     message.value = '安装完成（status=ready）';
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
     await refresh();
   } finally {
     busy.value = false;
@@ -70,7 +71,9 @@ onMounted(refresh);
         <div>环境：{{ status?.env || '—' }}</div>
         <div>状态：{{ status?.status || '—' }}</div>
         <div v-if="status?.owner">持锁：{{ status.owner }}</div>
-        <div v-if="status?.last_error" class="text-red-600">错误：{{ status.last_error }}</div>
+        <div v-if="status?.last_error" class="text-red-600">
+          错误：{{ status.last_error }}
+        </div>
       </div>
 
       <label class="block text-sm">
@@ -86,7 +89,11 @@ onMounted(refresh);
 
       <label class="block text-sm">
         Owner（可选，begin 后回填）
-        <input v-model="owner" class="mt-1 w-full rounded border px-3 py-2" type="text" />
+        <input
+          v-model="owner"
+          class="mt-1 w-full rounded border px-3 py-2"
+          type="text"
+        />
       </label>
 
       <label class="block text-sm">
@@ -95,7 +102,7 @@ onMounted(refresh);
           v-model="overridesText"
           class="mt-1 w-full rounded border px-3 py-2 font-mono text-xs"
           rows="6"
-          placeholder='{"storage.driver":"s3"}'
+          :placeholder="JSON.stringify({ 'storage.driver': 's3' })"
         ></textarea>
       </label>
 
@@ -108,16 +115,25 @@ onMounted(refresh);
         >
           开始并完成安装
         </button>
-        <button class="rounded border px-4 py-2" type="button" :disabled="busy" @click="refresh">
+        <button
+          class="rounded border px-4 py-2"
+          type="button"
+          :disabled="busy"
+          @click="refresh"
+        >
           刷新状态
         </button>
-        <button class="rounded border px-4 py-2" type="button" @click="router.push('/auth/login')">
+        <button
+          class="rounded border px-4 py-2"
+          type="button"
+          @click="router.push('/auth/login')"
+        >
           去登录
         </button>
       </div>
 
       <p v-if="message" class="text-sm text-green-700">{{ message }}</p>
-      <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+      <p v-if="errorMessage" class="text-sm text-red-600">{{ errorMessage }}</p>
     </div>
   </Page>
 </template>

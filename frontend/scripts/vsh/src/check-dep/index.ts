@@ -1,13 +1,13 @@
 import type { CAC } from 'cac';
 
+import type { KnipResult } from './has-unused';
+
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { execa } from '@vben/node-utils';
-
-import type { KnipResult } from './has-unused';
 
 import { hasUnusedDependencies } from './has-unused';
 

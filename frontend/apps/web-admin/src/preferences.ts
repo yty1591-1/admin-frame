@@ -1,4 +1,8 @@
-import { defineOverridesPreferences, preferences, updatePreferences } from '@vben/preferences';
+import {
+  defineOverridesPreferences,
+  preferences,
+  updatePreferences,
+} from '@vben/preferences';
 
 /**
  * 品牌静态资源地址。
@@ -70,7 +74,8 @@ export const overridesPreferences = defineOverridesPreferences({
 export function migrateLegacyBrandAssets() {
   const currentLogo = preferences.logo.source ?? '';
   const currentAvatar = preferences.app.defaultAvatar ?? '';
-  const usesRemoteAsset = currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
+  const usesRemoteAsset =
+    currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
 
   if (!usesRemoteAsset) {
     return;

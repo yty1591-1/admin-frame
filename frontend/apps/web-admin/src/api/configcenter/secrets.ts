@@ -3,18 +3,18 @@ import type { Recordable } from '@vben/types';
 import { requestClient } from '#/api/request';
 
 export type ConfigSecretStatus =
+  | 'active'
+  | 'destroyed'
   | 'draft'
   | 'pending_review'
-  | 'active'
   | 'rejected'
-  | 'revoked'
-  | 'destroyed';
+  | 'revoked';
 
 export type ConfigSecretVersionStatus =
   | 'active'
+  | 'destroyed'
   | 'grace'
-  | 'revoked'
-  | 'destroyed';
+  | 'revoked';
 
 export interface ConfigSecret {
   id: number;
@@ -24,7 +24,7 @@ export interface ConfigSecret {
   description: string;
   owner: string;
   status: ConfigSecretStatus;
-  active_version?: number | null;
+  active_version?: null | number;
   version: number;
   fingerprint: string;
   rotate_interval_days: number;
@@ -49,7 +49,7 @@ export interface ConfigSecretVersion {
   algorithm: string;
   created_by: string;
   created_at: string;
-  revoked_at?: string | null;
+  revoked_at?: null | string;
 }
 
 export interface ConfigSecretGrant {
@@ -60,8 +60,8 @@ export interface ConfigSecretGrant {
   permission: string;
   created_by: string;
   created_at: string;
-  revoked_at?: string | null;
-  expires_at?: string | null;
+  revoked_at?: null | string;
+  expires_at?: null | string;
 }
 
 export interface ConfigSecretAccess {
@@ -74,9 +74,12 @@ export interface ConfigSecretAccess {
 }
 
 export async function listConfigSecretsApi(params: Recordable<any>) {
-  return requestClient.get<ConfigSecretListResult>('/admin/v1/configs/secrets', {
-    params,
-  });
+  return requestClient.get<ConfigSecretListResult>(
+    '/admin/v1/configs/secrets',
+    {
+      params,
+    },
+  );
 }
 
 export async function createConfigSecretApi(data: Recordable<any>) {

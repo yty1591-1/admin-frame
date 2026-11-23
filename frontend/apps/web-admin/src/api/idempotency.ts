@@ -9,7 +9,10 @@ const IDEMPOTENT_METHODS = new Set(['patch', 'post', 'put']);
 
 /** 生成客户端幂等键（每次写操作一份；同一请求重试须复用）。 */
 export function newIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
     return crypto.randomUUID();
   }
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -51,7 +54,10 @@ function writeHeader(headers: unknown, name: string, value: string): void {
 }
 
 /** 若写方法且尚未设置，则注入 Idempotency-Key（支持 Headers / AxiosHeaders / 普通对象）。 */
-export function ensureIdempotencyHeader(headers: unknown, method?: string): void {
+export function ensureIdempotencyHeader(
+  headers: unknown,
+  method?: string,
+): void {
   if (!isIdempotentMethod(method) || !headers) {
     return;
   }

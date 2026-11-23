@@ -6,7 +6,14 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, Descriptions, Input, message, Space, Tag } from 'ant-design-vue';
+import {
+  Button,
+  Descriptions,
+  Input,
+  message,
+  Space,
+  Tag,
+} from 'ant-design-vue';
 
 import {
   getConfigErrorMessage,
@@ -29,7 +36,9 @@ const changeSummary = ref('');
 
 const itemId = computed(() => Number(route.query.id || 0));
 
-const canEdit = computed(() => !!item.value && !item.value.sensitive && itemId.value > 0);
+const canEdit = computed(
+  () => !!item.value && !item.value.sensitive && itemId.value > 0,
+);
 
 const canDeprecate = computed(() => item.value?.status === 'active');
 const canArchive = computed(
@@ -133,7 +142,9 @@ onMounted(loadItem);
         <Descriptions.Item label="环境 / 命名空间">
           {{ item.env }} / {{ item.namespace }}
         </Descriptions.Item>
-        <Descriptions.Item label="类型">{{ item.value_type }}</Descriptions.Item>
+        <Descriptions.Item label="类型">
+          {{ item.value_type }}
+        </Descriptions.Item>
         <Descriptions.Item label="状态">
           <Tag>{{ item.status }}</Tag>
         </Descriptions.Item>
@@ -169,7 +180,11 @@ onMounted(loadItem);
         placeholder="写入后追加为新版本"
       />
       <div class="mb-2 mt-4 font-medium">变更摘要</div>
-      <Input v-model:value="changeSummary" :disabled="!canEdit || loading" placeholder="可选" />
+      <Input
+        v-model:value="changeSummary"
+        :disabled="!canEdit || loading"
+        placeholder="可选"
+      />
       <Space class="mt-4" wrap>
         <Button
           v-access:code="'config:write'"

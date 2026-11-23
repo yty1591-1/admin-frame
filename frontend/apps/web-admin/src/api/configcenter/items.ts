@@ -1,4 +1,5 @@
 import type {
+  ConfigDeclaredKeyListData,
   ConfigEnv,
   ConfigItem,
   ConfigItemCreatePayload,
@@ -8,7 +9,6 @@ import type {
   ConfigItemUpdatePayload,
   ConfigItemVersion,
   ConfigItemVersionListData,
-  ConfigDeclaredKeyListData,
   ConfigNamespaceListData,
   PageQuery,
 } from './types';
@@ -64,10 +64,13 @@ export async function transitionConfigItemApi(
   id: number,
   payload: ConfigItemTransitionPayload,
 ): Promise<ConfigItem> {
-  return requestClient.post<ConfigItem>(`/configs/items/${id}/transition`, payload);
+  return requestClient.post<ConfigItem>(
+    `/configs/items/${id}/transition`,
+    payload,
+  );
 }
 
-export interface ConfigItemVersionListParams extends PageQuery {}
+export type ConfigItemVersionListParams = PageQuery;
 
 export async function listConfigItemVersionsApi(
   id: number,

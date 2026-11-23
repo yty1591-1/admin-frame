@@ -3,7 +3,9 @@ import type { Router } from 'vue-router';
 import { fetchInstallStatus } from './install';
 
 /** 配置页进入前：未 ready 则跳转安装向导。 */
-export async function redirectIfInstallRequired(router: Router): Promise<boolean> {
+export async function redirectIfInstallRequired(
+  router: Router,
+): Promise<boolean> {
   try {
     const state = await fetchInstallStatus();
     if (state.status && state.status !== 'ready') {

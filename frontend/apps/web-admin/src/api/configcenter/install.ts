@@ -32,7 +32,10 @@ function installBase(): string {
   return `${api}/install`;
 }
 
-async function installFetch<T>(path: string, init?: RequestInit & { token?: string }): Promise<T> {
+async function installFetch<T>(
+  path: string,
+  init?: RequestInit & { token?: string },
+): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
   if (init?.token) {
@@ -51,7 +54,9 @@ async function installFetch<T>(path: string, init?: RequestInit & { token?: stri
   try {
     json = JSON.parse(text) as Envelope<T>;
   } catch {
-    throw new Error(text.trim() || `install api http ${resp.status} (non-json)`);
+    throw new Error(
+      text.trim() || `install api http ${resp.status} (non-json)`,
+    );
   }
   if (!resp.ok || (json.code !== undefined && json.code !== 0)) {
     throw new Error(json.message || `install api http ${resp.status}`);
@@ -71,7 +76,11 @@ export function beginInstall(token: string, owner?: string) {
   });
 }
 
-export function applyInstall(token: string, owner: string, overrides: Record<string, string> = {}) {
+export function applyInstall(
+  token: string,
+  owner: string,
+  overrides: Record<string, string> = {},
+) {
   return installFetch<{
     namespaces: number;
     item_count: number;

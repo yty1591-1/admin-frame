@@ -16,6 +16,7 @@ const props = withDefaults(
   }>(),
   {
     disabled: false,
+    modelValue: undefined,
     placeholder: '请选择角色',
     status: 'active',
   },

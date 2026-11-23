@@ -1,8 +1,8 @@
+import type { KnipFileIssue, KnipResult } from './has-unused';
+
 import { describe, expect, it } from 'vitest';
 
 import { hasUnusedDependencies } from './has-unused';
-
-import type { KnipFileIssue, KnipResult } from './has-unused';
 
 function makeIssue(overrides: Partial<KnipFileIssue>): KnipFileIssue {
   return {

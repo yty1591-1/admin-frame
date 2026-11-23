@@ -238,7 +238,9 @@ function handleTableChange(page: TablePaginationConfig) {
 
 async function openCreate() {
   const values = await queryFormApi.getValues();
-  const namespace = String(values.namespace || namespaces.value[0]?.value || '');
+  const namespace = String(
+    values.namespace || namespaces.value[0]?.value || '',
+  );
   createOpen.value = true;
   await createFormApi.reset();
   await createFormApi.setValues({
@@ -327,7 +329,11 @@ onMounted(async () => {
       <Space class="mt-2">
         <Button type="primary" @click="handleSearch">查询</Button>
         <Button @click="handleReset">重置</Button>
-        <Button v-access:code="'config:write'" type="primary" @click="openCreate">
+        <Button
+          v-access:code="'config:write'"
+          type="primary"
+          @click="openCreate"
+        >
           新建配置键
         </Button>
       </Space>

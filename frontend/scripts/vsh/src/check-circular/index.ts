@@ -67,7 +67,8 @@ async function detectCircularDependencies({
       args.push('--absolute');
     }
 
-    args.push('--ignore', ignorePattern);
+    // 纯类型引用在运行时被擦除，不构成真实循环；只拦截运行期依赖环。
+    args.push('--ignore', ignorePattern, '--exclude-types');
 
     await execa(process.execPath, args, {
       cwd,

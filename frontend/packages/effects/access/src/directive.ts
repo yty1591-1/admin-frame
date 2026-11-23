@@ -23,12 +23,12 @@ function isAccessible(
   const value = binding.value;
 
   if (!value) return;
-  const authMethod =
-    accessMode.value === 'frontend' && binding.arg === 'role'
-      ? hasAccessByRoles
-      : binding.modifiers.all
-        ? hasAllAccessByCodes
-        : hasAccessByCodes;
+  let authMethod = hasAccessByCodes;
+  if (accessMode.value === 'frontend' && binding.arg === 'role') {
+    authMethod = hasAccessByRoles;
+  } else if (binding.modifiers.all) {
+    authMethod = hasAllAccessByCodes;
+  }
 
   const values = Array.isArray(value) ? value : [value];
 

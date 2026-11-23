@@ -2,18 +2,9 @@
 
 export type ConfigEnv = 'dev' | 'local' | 'prod' | 'staging' | 'test';
 
-export type ConfigItemStatus =
-  | 'active'
-  | 'archived'
-  | 'deprecated'
-  | 'draft';
+export type ConfigItemStatus = 'active' | 'archived' | 'deprecated' | 'draft';
 
-export type ConfigValueType =
-  | 'bool'
-  | 'duration'
-  | 'int'
-  | 'json'
-  | 'string';
+export type ConfigValueType = 'bool' | 'duration' | 'int' | 'json' | 'string';
 
 export type ConfigReleaseStatus =
   | 'active'

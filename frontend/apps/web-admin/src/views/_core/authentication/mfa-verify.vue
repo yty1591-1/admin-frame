@@ -48,8 +48,12 @@ watch([code, mode], ([value, current]) => {
 
 const canSubmit = computed(() => {
   const formatValid =
-    mode.value === 'totp' ? /^\d{6}$/.test(code.value) : code.value.replaceAll('-', '').length >= 6;
-  return formatValid && !props.loading && !props.errorText && props.cooldown <= 0;
+    mode.value === 'totp'
+      ? /^\d{6}$/.test(code.value)
+      : code.value.replaceAll('-', '').length >= 6;
+  return (
+    formatValid && !props.loading && !props.errorText && props.cooldown <= 0
+  );
 });
 
 function toggleMode() {
@@ -81,14 +85,22 @@ function handleSubmit() {
       }}
     </p>
 
-    <Alert v-if="errorText" :message="errorText" class="mb-4" show-icon type="error" />
+    <Alert
+      v-if="errorText"
+      :message="errorText"
+      class="mb-4"
+      show-icon
+      type="error"
+    />
 
     <Input
       v-model:value="code"
       :disabled="!!errorText"
       :maxlength="mode === 'totp' ? 6 : 19"
       :placeholder="
-        mode === 'totp' ? $t('authentication.mfaCodeTip') : $t('authentication.mfaRecoveryCodeTip')
+        mode === 'totp'
+          ? $t('authentication.mfaCodeTip')
+          : $t('authentication.mfaRecoveryCodeTip')
       "
       :autocomplete="mode === 'totp' ? 'one-time-code' : 'off'"
       :class="
@@ -113,9 +125,17 @@ function handleSubmit() {
       {{ cooldown > 0 ? `${cooldown}s` : $t('authentication.mfaVerify') }}
     </Button>
 
-    <Button block :disabled="!!errorText" class="mt-3" type="link" @click="toggleMode">
+    <Button
+      block
+      :disabled="!!errorText"
+      class="mt-3"
+      type="link"
+      @click="toggleMode"
+    >
       {{
-        mode === 'totp' ? $t('authentication.mfaUseRecoveryCode') : $t('authentication.mfaUseTotp')
+        mode === 'totp'
+          ? $t('authentication.mfaUseRecoveryCode')
+          : $t('authentication.mfaUseTotp')
       }}
     </Button>
 
