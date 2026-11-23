@@ -188,7 +188,7 @@ POST /internal/v1/install/complete {owner}
 | P2 | `Begin(repair)`、`Apply` 白名单、`RepairKeys` 写入；迁移 000038；`remaining_gaps`；`complete` 阻塞键门禁 | 已完成 |
 | P3 | 进程侧降级：`configboot.MissingRequired`/`RequireComplete`、`platform.RunSetupOnly`、`admin-api` 降级 + `ready` 后自动退出、biz/c/worker fail-fast；单测覆盖探针/挂载面/自动退出 | 已完成 |
 | P5 | 待定 5 两条腿：`begin.declared_keys` 声明白名单（三条拒绝规则 + 上限 64 + `MissingRefs` 复核）、`configboot.DiagnoseMissingValues` 占位诊断（保守方向）、`admin-api` 校验失败时按诊断结果分流；OpenAPI 1.4.0/9.6.0 | 已完成 |
-| P4 | 前端 schema 驱动表单（分域、默认值徽标、必填/敏感标记）；`mode=repair` 时只渲染阻塞键 | 待做 |
+| P4 | 前端 schema 驱动向导：`api/configcenter/install.ts` 补 schema/status/begin/apply/complete 类型与 `declared_keys`；`views/_core/install/schema.ts` 纯函数层（分组/默认值徽标/缺项/草稿转换）；`index.vue` 五步向导（repair 只渲染阻塞键、密钥只读） | 已完成 |
 
 ## 安全与失效
 
