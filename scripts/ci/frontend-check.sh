@@ -18,34 +18,39 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> [1/9] pnpm install --frozen-lockfile"
+echo "==> [1/10] pnpm install --frozen-lockfile"
 pnpm install --frozen-lockfile
 
-echo "==> [2/9] pnpm lint（oxlint/oxfmt/eslint/stylelint 全量，非 staged）"
+# FE-G-07：npmmirror 未实现 audit endpoint，显式指向 npmjs 官方 registry；
+# 只审生产依赖且以 high 为阈值，避免把 dev-only 的中危噪声带进阻断。
+echo "==> [2/10] pnpm audit --prod --audit-level=high（FE-G-07）"
+pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org
+
+echo "==> [3/10] pnpm lint（oxlint/oxfmt/eslint/stylelint 全量，非 staged）"
 pnpm lint
 
-echo "==> [3/9] pnpm check:cspell（含 **/*.vue 模板，FE-G-04）"
+echo "==> [4/10] pnpm check:cspell（含 **/*.vue 模板，FE-G-04）"
 pnpm check:cspell
 
 # 依赖检查与循环依赖检查此前恒 exit 0，这里接入是 FE-G-02 的消费者。
-echo "==> [4/9] pnpm check:dep"
+echo "==> [5/10] pnpm check:dep"
 pnpm check:dep
 
-echo "==> [5/9] pnpm check:circular"
+echo "==> [6/10] pnpm check:circular"
 pnpm check:circular
 
-echo "==> [6/9] pnpm check:type（32 个包 + 2 个 app，FE-G-05）"
+echo "==> [7/10] pnpm check:type（32 个包 + 2 个 app，FE-G-05）"
 pnpm check:type
 
 # 根 vitest 覆盖 packages/internal/scripts；两个 app 各自一份配置，
 # 因为 `#/` 别名与覆盖率阈值必须按应用隔离（FE-G-06）。
-echo "==> [7/9] pnpm test:unit（根 + web-admin + web-biz，含覆盖率阈值）"
+echo "==> [8/10] pnpm test:unit（根 + web-admin + web-biz，含覆盖率阈值）"
 pnpm test:unit
 
-echo "==> [8/9] check-frontend-gates.sh（apps 冒烟用例与覆盖率门禁，FE-G-06）"
+echo "==> [9/10] check-frontend-gates.sh（apps 冒烟用例与覆盖率门禁，FE-G-06）"
 bash "${ROOT}/scripts/ci/check-frontend-gates.sh"
 
-echo "==> [9/9] pnpm build:admin && pnpm build:biz"
+echo "==> [10/10] pnpm build:admin && pnpm build:biz"
 pnpm build:admin
 pnpm build:biz
 

@@ -165,7 +165,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-08 | 生产依赖不得存在 `high` 及以上已知漏洞；`minimumReleaseAge` 禁止为 0；`engine-strict=true`；npm 生态纳入 Dependabot | `pnpm audit --prod --audit-level=high`（⬜ + CI）/ dependabot（⬜） |
+| FE-SEC-08 | 生产依赖不得存在 `high` 及以上已知漏洞；`minimumReleaseAge` 禁止为 0；`engineStrict: true`；npm 生态纳入 Dependabot | `pnpm audit --prod --audit-level=high`（✅ CI 第 2/10 步，npmjs registry）/ dependabot（✅）/ `engineStrict`（✅） |
 
 ---
 
@@ -264,7 +264,7 @@
 | 安全头 / CSP | ⬜ 示例 nginx 无安全头，且 `ACAO:*` | `frontend/scripts/deploy/nginx.conf` |
 | 产物 SHA | ⬜ 只注入 package 版本 | `internal/vite-config/src/plugins/inject-metadata.ts` |
 | 发布 | ⬜ Dockerfile 只 COPY `web-admin/dist`；`deploy/` 无前端 workload | `frontend/scripts/deploy/Dockerfile` |
-| 供应链 | ⬜ `minimumReleaseAge: 0`、无 npm dependabot、CI 无 SCA | `frontend/pnpm-workspace.yaml`、`.github/dependabot.yml` |
+| 供应链 | ✅ `engineStrict: true` + `minimumReleaseAge: 1440` + audit 0 high（11 个 overrides）+ dependabot npm `/frontend` | `frontend/pnpm-workspace.yaml`、`.github/dependabot.yml` |
 
 门禁接入顺序与验收见 [`frontend-remediation-plan.md`](./frontend-remediation-plan.md) §五 / §六；本文条目与 `FE-G`、`FE-B`、`FE-S`、`FE-T` 任务包一一对应。
 

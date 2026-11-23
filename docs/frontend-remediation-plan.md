@@ -123,8 +123,8 @@
 | FE-G-03 | 两份 PR 模板加「前端自检」节；`check-git.sh` 断言该节存在 | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` | 删任一模板的前端节 → `make check-git` 红 |
 | FE-G-04 | `check:cspell` glob 覆盖 `**/*.vue`；CI 跑全量 lint/stylelint（非 staged） | `frontend/package.json`、CI job | `.vue` 模板拼写错误 → job 红；`.scss` 非法属性 → job 红 |
 | FE-G-05 | 32 个包（`packages` 26 + `internal` 6）补 `typecheck` 脚本（含 `.vue` 用 `vue-tsc --noEmit`，纯 TS 用 `tsc --noEmit`），`turbo run typecheck` 覆盖全部包 | `frontend/packages/**/package.json`、`frontend/internal/**/package.json`、`frontend/turbo.json` | 在任一包引入类型错误 → `pnpm check:type` 红；全量 34 任务通过 |
-| FE-G-06 | `apps/*` 冒烟用例（FE-T-01 首批）落在各自 `vitest.config.ts`（`#/` 别名隔离 + v8 覆盖率阈值 30%）；`pnpm test:unit` 链式执行根 + 两 app；新增 `check-frontend-gates.sh` 并作为 `frontend-check.sh` 第 8/9 步 | `frontend/apps/*/vitest.config.ts`、`frontend/apps/*/src/**/__tests__/*.test.ts`、`scripts/ci/check-frontend-gates.sh`、`scripts/ci/frontend-check.sh` | ✅ 2026-11-23：admin 38 条、biz 20 条通过；覆盖率 admin 89.47%/82.35%（语句/分支）、biz 93.5%/78.26%；阈值临时调 99% 实测 exit 1（Coverage ... does not meet global threshold），恢复 30% 后绿；`grep -rl "v-access\|pageMap"` 非空 |
-| FE-G-07 | `engine-strict=true`；dependabot 加 `npm`（`/frontend`）；CI 增加 `pnpm audit --prod --audit-level=high`；`minimumReleaseAge` 恢复为组织策略值（非 0） | `frontend/.npmrc`、`.github/dependabot.yml`、CI、`frontend/pnpm-workspace.yaml` | Node 版本不符时 `pnpm install` 直接失败；引入已知 high 漏洞依赖 → job 红；dependabot 出现 npm PR |
+| FE-G-06 | `apps/*` 冒烟用例（FE-T-01 首批）落在各自 `vitest.config.ts`（`#/` 别名隔离 + v8 覆盖率阈值 30%）；`pnpm test:unit` 链式执行根 + 两 app；新增 `check-frontend-gates.sh` 并作为 `frontend-check.sh` 第 9/10 步 | `frontend/apps/*/vitest.config.ts`、`frontend/apps/*/src/**/__tests__/*.test.ts`、`scripts/ci/check-frontend-gates.sh`、`scripts/ci/frontend-check.sh` | ✅ 2026-11-23：admin 38 条、biz 20 条通过；覆盖率 admin 89.47%/82.35%（语句/分支）、biz 93.5%/78.26%；阈值临时调 99% 实测 exit 1（Coverage ... does not meet global threshold），恢复 30% 后绿；`grep -rl "v-access\|pageMap"` 非空 |
+| FE-G-07 | `engineStrict: true`（pnpm-workspace.yaml；`.npmrc` 的 `engine-strict` 对 pnpm 11 不生效）；dependabot 加 `npm`（`/frontend`）；CI 增加 `pnpm audit --prod --audit-level=high`（`--registry=https://registry.npmjs.org`，npmmirror 无 audit 端点）；`minimumReleaseAge` 恢复非 0 | `frontend/.npmrc`、`.github/dependabot.yml`、`frontend/pnpm-workspace.yaml`、`scripts/ci/frontend-check.sh` | ✅ 2026-11-23：`engineStrict: true` + Node 临时改 `>=99` 实测 `ERR_PNPM_UNSUPPORTED_ENGINE` exit 1；`minimumReleaseAge: 1440`；11 个 overrides 修 high/critical → audit exit 0（余 3 low/12 moderate）；dependabot npm `/frontend`；门禁第 2/10 步 |
 | FE-G-08 | 索引收敛：`docs/README.md` 的 CI 编号、`ci.yml` 头注释、`check-ci-paths.sh` PATTERN 加 `frontend/`；`CI_STANDARDS.md` 增「前端 job」条文 | `docs/README.md`、`docs/CI_STANDARDS.md`、`scripts/ci/check-ci-paths.sh` | `make check-ci-paths` 能校验前端脚本引用；文档编号不再漂移 |
 
 ### 5.2 P0 构建发布（FE-B）
@@ -156,7 +156,7 @@
 |----|------|------|------|
 | FE-T-01 | 首批回归用例：已覆盖登录四态、redirect 回跳、登出清理、MFA 中间态不落令牌、幂等键注入/保留、错误消息映射、pageMap 与守卫 redirect、Web Storage 令牌禁令（`v-access`/`pageMap` 断言）；429/204/401 清令牌在 axios 拦截器层，随 FE-T-02 扩展 | `frontend/apps/web-admin/src/**/__tests__/*.test.ts`、`frontend/apps/web-biz/src/**/__tests__/*.test.ts` | ✅ 2026-11-23：`pnpm test:unit` 含 apps 用例通过（admin 38 + biz 20）；禁 `--passWithNoTests` |
 | FE-T-02 | 菜单契约双向：`catalog_test.go` 反向校验（页面文件/seed → 白名单）；先修复 9 个未入白名单菜单（PATCH 400 风险）与 `/system/audit` 死链 | `internal/iam/menuview/catalog.go`、`catalog_test.go`、`migrations/` | 双向测试通过；`EnableMenu` 对不存在的 component 报错 |
-| FE-T-03 | 覆盖率门槛落地：首版 ≥30%，半年内 ≥50%；阈值写入 `apps/*/vitest.config.ts`（v8，语句/分支/函数/行），`frontend-check.sh` 第 8 步校验 apps 用例存在 | `frontend/apps/*/vitest.config.ts`、`check-frontend-gates.sh`、CI | ✅ 2026-11-23：30% 生效；当前语句 89%/93%，可随时上调至 50% |
+| FE-T-03 | 覆盖率门槛落地：首版 ≥30%，半年内 ≥50%；阈值写入 `apps/*/vitest.config.ts`（v8，语句/分支/函数/行），`frontend-check.sh` 第 9/10 步校验 apps 用例存在 | `frontend/apps/*/vitest.config.ts`、`check-frontend-gates.sh`、CI | ✅ 2026-11-23：30% 生效；当前语句 89%/93%，可随时上调至 50% |
 | FE-T-04 | E2E 放 nightly（不进 PR 必跑）：5 条冒烟（登录、菜单、权限按钮、分页、错误提示） | `.github/workflows/`、`frontend/e2e/` | nightly 有结果；`test:e2e` 不再空转 |
 
 ### 5.5 文档写回（FE-D）
@@ -186,7 +186,7 @@
 ### 6.1 CI job
 
 - job 名：`frontend`；`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`（11.16.0），`setup-node@v4` 用 `node-version-file: frontend/.node-version` + pnpm 缓存；实际命令全部收敛到 `bash scripts/ci/frontend-check.sh`（脚本内 `cd frontend`）。
-- 步骤与 `make frontend-check` **一一对应**（9 步）：`pnpm install --frozen-lockfile` → `pnpm lint` → `pnpm check:cspell` → `pnpm check:dep` → `pnpm check:circular` → `pnpm check:type` → `pnpm test:unit`（根 610 + web-admin 38 + web-biz 20）→ `bash scripts/ci/check-frontend-gates.sh` → `pnpm build:admin` → `pnpm build:biz`。
+- 步骤与 `make frontend-check` **一一对应**（10 步）：`pnpm install --frozen-lockfile` → `pnpm audit --prod --audit-level=high`（npmjs registry，FE-G-07）→ `pnpm lint` → `pnpm check:cspell` → `pnpm check:dep` → `pnpm check:circular` → `pnpm check:type` → `pnpm test:unit`（根 610 + web-admin 38 + web-biz 20）→ `bash scripts/ci/check-frontend-gates.sh` → `pnpm build:admin` → `pnpm build:biz`。
 - **不新增 `paths` 过滤**：required check 被 skip 会产生「跳过是否算通过」的歧义（CI-17 语义），先保持全量触发；时长用缓存与 `--frozen-lockfile` 控制。
 
 ### 6.2 本地入口
@@ -224,8 +224,8 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-G-03 | 待指派 | 已完成 | 2026-11-23：两份 PR 模板新增「前端自检」节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题实测 exit 1，恢复后 0） |
 | FE-G-04 | 待指派 | 已完成 | 2026-11-23：`check:cspell` 增加 `**/*.vue`（943 文件 0 问题）；`frontend-check.sh` 增加 `check:cspell` 步（第 3/8），lint/stylelint 本就全量非 staged；`.vue` 注入 `zzqqxx` 实测 exit 1 |
 | FE-G-05 | 待指派 | 已完成 | 2026-11-23：32 包（26 packages + 6 internal）补 `typecheck`；`pnpm check:type` 34/34 通过（约 1m8s）；修掉暴露的 21 处既有类型红（typings 声明路径、RouteMeta augmentation、Vite/Rollup 插件类型、测试非空断言等）；红灯实测：`packages/utils` 注入 `const __redLightProbe: string = 1` → turbo 退出 2（TS2322/TS6133），撤销后 FULL TURBO 0 |
-| FE-G-06 | 待指派 | 已完成 | 2026-11-23：admin 38 / biz 20 条冒烟用例；两 app 独立 `vitest.config.ts`（`#/` 别名 + 覆盖率阈值 30%）；`test:unit` 链式跑三次；`check-frontend-gates.sh` 纳入第 8/9 步；阈值 99% 实测红、恢复后绿 |
-| FE-G-07 | 待指派 | 未开始 | engine-strict + audit + dependabot |
+| FE-G-06 | 待指派 | 已完成 | 2026-11-23：admin 38 / biz 20 条冒烟用例；两 app 独立 `vitest.config.ts`（`#/` 别名 + 覆盖率阈值 30%）；`test:unit` 链式跑三次；`check-frontend-gates.sh` 纳入第 9/10 步；阈值 99% 实测红、恢复后绿 |
+| FE-G-07 | 待指派 | 已完成 | 2026-11-23：`engineStrict: true` 生效（Node `>=99` 实测 exit 1）、`minimumReleaseAge: 1440`、11 个 overrides 修复 33 high + 2 critical → audit 0 high（余 3 low/12 moderate）、dependabot npm `/frontend`、`frontend-check.sh` 第 2/10 步 |
 | FE-G-08 | 待指派 | 进行中 | 2026-11-21：`ci.yml` 头注释、`CI_STANDARDS.md` CI-18、`check-ci-paths.sh` PATTERN 已改；`docs/README.md` CI 编号与 CI-17 表待收敛 |
 | FE-B-01 | 待指派 | 未开始 | SHA 注入 |
 | FE-B-02 | 待指派 | 未开始 | multi-target 镜像 |
@@ -263,7 +263,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] cspell/stylelint 覆盖 `.vue`，CI 跑全量（FE-G-04）
 - [x] 32 个包有 `typecheck`，`turbo run typecheck` 全量 34 任务通过（FE-G-05）
 - [x] `apps/*` 有冒烟用例，覆盖率阈值生效（FE-G-06 / FE-T-01 / FE-T-03；2026-11-23）
-- [ ] `engine-strict`、dependabot npm、`pnpm audit` 入 CI（FE-G-07）
+- [x] `engineStrict`、dependabot npm、`pnpm audit` 入 CI（FE-G-07）
 - [ ] 文档索引收敛（FE-G-08 / FE-D-02～04）
 - [ ] 产物含 git SHA；双端镜像可构建（FE-B-01～03）
 - [ ] Helm 前端 workload 渲染通过，kind 冒烟两端可访问（FE-B-04）
