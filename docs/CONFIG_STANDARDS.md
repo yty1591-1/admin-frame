@@ -219,7 +219,7 @@ config-api 自身启动：代码默认值 + db/redis 环境变量 → `EnsureSta
 | config-api 不可用但有本地缓存 | 使用缓存启动，标记 degraded，打点告警 |
 | 非关键键缺失 | 使用默认值，标记 degraded，打点告警 |
 | 快照缺 `Required` 非敏感键 | admin-api 降级为 setup-only（只留探针 + `/admin/v1/install/*`，`/readyz` 503 且带缺失键）并保留安装向导；biz/c/worker fail-fast；安装态 `ready` 后 admin-api 自动退出（`ADMIN_FRAME_SETUP_ONLY_AUTO_EXIT=false` 可关），由编排重启恢复（ADR-0018） |
-| `Required` 键存在但取值非法 | 不降级，继续 crash-loop（避免静默带病运行） |
+| `Required` 键存在但取值非法 | 不降级；先尝试「重置为声明默认值」自愈（`configboot.DiagnoseInvalidValues` → `POST /internal/v1/configs/repair/reset-defaults` → 重载重试）。重置仍失败则继续 crash-loop，避免静默带病运行（ADR-0018 待定 1） |
 | 启动校验失败但**填占位值后可通** | 判定为「缺值」→ admin-api 降级 setup-only（`configboot.DiagnoseMissingValues`；占位值本身不合法则不降级，ADR-0018 待定 5） |
 | 进程起不来但服务端算不出阻塞键 | 运维 `begin(reason=repair, declared_keys=[...])` 登记键后 repair；键须已声明、非敏感、尚未在生效快照有值（ADR-0018 待定 5） |
 | 密钥解析不可用 | required 密钥 fail-fast；非 required 用内存缓存并告警 |

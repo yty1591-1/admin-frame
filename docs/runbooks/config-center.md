@@ -74,7 +74,8 @@
 - 修复：`POST /admin/v1/install/begin` 带 `reason:"repair"`（服务端把阻塞键冻结成 `repair_keys` 白名单）→ 向导只渲染阻塞键 → `apply` → 响应 `remaining_gaps` 为空 → `complete`。
 - `complete` 时仍有阻塞键返回 `40000`，状态保持 `installing`（租约 15 分钟）：可继续 `apply`，不必重新 `begin`。
 - 白名单外的键一律 400：repair 不是日常配置渠道，非阻塞变更仍走 `submit → approve → publish`。
-- 「键存在但取值非法」不降级（避免静默带病运行）：按 `config: invalid config: config validation failed: ...` 定位键，走管理面发布修正。
+- 「键存在但取值非法」的两级处置：① 先看 admin-api 启动日志有没有 `resetting invalid values to declared defaults: platform/db.driver`——有则说明进程已调 `POST /internal/v1/configs/repair/reset-defaults` 自动把值退回声明默认值并重载，重启后应恢复；② 若日志是 `config still invalid after reset` 或 `reset invalid values failed`，说明默认值也不满足校验或 config-api 拒绝（敏感键/无默认值/未声明），此时按 `config: invalid config: config validation failed: ...` 定位键，走管理面 `submit → approve → publish` 修正。
+- 自愈通道的边界：只有「注册表声明过、有默认值、非敏感」的键会被重置；调用方（admin-api）只声明 `namespace/key`，不能指定取值；每次重置生成 `install-reset-defaults` 发布，审计 `config.release.publish` 带 `mode=reset-defaults`，可据此回溯。
 - 注意覆盖口径：`gaps` 只统计 key spec 的 `Required` 键。`auth.jwt.secret` 缺失、KEK/mTLS 证书错误这类「非快照」故障默认仍是 crash-loop，不会进降级态——按 §密钥与证书排障。
 - 若诊断不出缺值（`config validation failed` 但填占位值也不通过）：进程会继续 crash-loop，此时用 `declared_keys` 打开 repair——`POST /admin/v1/install/begin {"reason":"repair","declared_keys":["platform/auth.jwt.secret"]}`。键必须已在注册表声明、非敏感、且尚未在生效快照有值，否则 400；上限 64。被声明的键同样计入 `remaining_gaps` 与 `complete` 门禁。
 - 反过来，如果启动日志出现 `missing values block startup, entering setup-only mode: ...`，说明是「缺值」而非「值非法」，直接开向导按 schema 填即可，不需要 `declared_keys`。

@@ -217,6 +217,17 @@ require_grep "api/openapi/paths/internal/install.yaml" \
   "declared_keys" "internal 契约登记声明白名单"
 require_grep "api/openapi/paths/admin/install.yaml" \
   "declared_keys" "admin 契约登记声明白名单"
+require_file "internal/configcenter/app/reset_defaults.go" \
+  "启动自愈：取值非法时重置为声明默认值（ADR-0018 待定 1）"
+require_grep "internal/configcenter/app/reset_defaults.go" \
+  "resetAuditMode" "重置默认值留审计"
+require_grep "cmd/config-api/main.go" \
+  "repair/reset-defaults" "config-api 注册启动自愈路由"
+require_grep "cmd/internal/configboot/diagnose_invalid.go" \
+  "func DiagnoseInvalidValues" "值非法诊断入口"
+require_file "api/openapi/paths/internal/repair.yaml" "启动自愈契约"
+require_grep "api/openapi/internal.yaml" \
+  "internal-v1-configs-repair-reset-defaults" "internal 契约登记启动自愈"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"

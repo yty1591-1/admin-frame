@@ -89,6 +89,10 @@ func run() error {
 				mux.Handle("POST /internal/v1/install/complete",
 					http.HandlerFunc(rt.Install.Complete))
 			}
+			if rt.ResetDefaults != nil {
+				mux.Handle("POST /internal/v1/configs/repair/reset-defaults",
+					http.HandlerFunc(rt.ResetDefaults.ResetDefaults))
+			}
 			return nil
 		},
 	})

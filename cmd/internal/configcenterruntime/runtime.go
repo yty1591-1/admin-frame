@@ -68,6 +68,8 @@ type Runtime struct {
 	Install *configcenterrest.InstallHandler
 	// InstallService 供运行时内部查询安装态。
 	InstallService *app.InstallService
+	// ResetDefaults 是启动自愈 Handler（ADR-0018）：把取值非法的键重置为声明默认值。
+	ResetDefaults *configcenterrest.ResetDefaultsHandler
 
 	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
 	clientEnv        string
@@ -287,6 +289,15 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	resetDefaultsHandler, err := configcenterrest.NewResetDefaultsHandler(configcenterrest.ResetDefaultsHandlerConfig{
+		Reset: bootstrapService, DeployEnv: deployEnv,
+		WithinTx: func(ctx context.Context, fn func(context.Context) error) error {
+			return withinTx(ctx, sqlDB, fn)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 	if deps.Background != nil {
 		deps.Background(func(ctx context.Context) error {
 			return watcher.Run(ctx)
@@ -296,6 +307,7 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Internal:       internal,
 		Install:        installHandler,
 		InstallService: installService,
+		ResetDefaults:  resetDefaultsHandler,
 		Watcher:        watcher,
 		Snapshots:      snapshots,
 		Secrets:        secretService,

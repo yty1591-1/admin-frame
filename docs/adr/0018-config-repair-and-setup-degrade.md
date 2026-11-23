@@ -156,6 +156,17 @@ POST /internal/v1/install/complete {owner}
 
 因此「`auth.jwt.secret` 缺失导致 crash-loop」这类故障现在有两条自救路径：进程侧诊断出缺值 → 自动降级 → 向导打开（不需要知道键名）；或诊断判不出来（值在但错）→ 运维用 `declared_keys` 登记该键 → repair 修值。两者的审计都落在既有 `config.install.*` 事件上，带 `mode`/`declared_keys`/`remaining` 字段。
 
+## 启动自愈：取值非法重置为默认值（P6 已落地，2026-11-23）
+
+决策 3 规定「值非法不降级」，于是「键存在但取值写错」会让向导也进不去。P6 的解法不是开放写入，而是**把值退回声明默认值**：
+
+1. **诊断**（进程侧）：`configboot.DiagnoseInvalidValues(values, validate)` 只在 `LoadFromValues` 失败后调用，两阶段定位——先按错误文案里点名的键（如 `db.driver`）精确匹配；匹配不到再逐个单键试默认值。两阶段都判不出就返回 `false`，继续 crash-loop，**不做批量重置**：宁可让人来处理，也不顺手改掉一批无关键。
+2. **重置**（服务端）：`POST /internal/v1/configs/repair/reset-defaults`，body `{env?, refs:[namespace/key]}`，上限 32 键；与读路径同一套服务身份（mTLS SAN / `X-Service-Identity` + namespace allowlist）。取值由 config-api 解析（prod-like overlay > 代码默认值），**调用方不能指定值**；敏感键、无默认值、未声明、已归档键写入 `skipped` 并回原因，不静默吞掉。
+3. **生效**：每键追加 item 版本 → 生成 `install-reset-defaults` 发布 → 旧发布 superseded → 指针 CAS；响应回 `release_keys`。admin-api 重置成功后重新 `configboot.Load` 并重建配置，成功则继续正常启动，失败则保留 fail-fast（不掩盖真正的 bug）。
+4. **审计**：复用 `config.release.publish`，`mode=reset-defaults`，`attrs` 带 `env/namespace/release_id/release_no/keys/key_count`——action 白名单不加新名字，避免三处登记表漂移。
+
+边界：只重置「注册表声明过、有默认值、非敏感」的键；入口只在启动失败路径上触发，管理面不暴露。运维仍可在 `refs` 里点名，但值不可控。
+
 ## 代码改造清单
 
 | 层 | 文件 | 改动 |
@@ -170,8 +181,12 @@ POST /internal/v1/install/complete {owner}
 | 平台 | `internal/platform/setup_only.go` | `RunSetupOnly` + `SetupOnlyAutoExitEnv`：探针/版本/安装代理，`/readyz` 固定 503 并带缺失键（P3 已落地） |
 | 进程 | `cmd/admin-api/setup_only.go` | 降级态装配与 `ready` 后自动退出（P3 已落地） |
 | 进程 | `cmd/internal/configboot/diagnose.go` | `DiagnoseMissingValues`（占位法区分缺值/值非法）、`FillPlaceholders`、`placeholderValue`（P5 已落地） |
+| 进程 | `cmd/internal/configboot/{diagnose_invalid.go,repair.go}` | `DiagnoseInvalidValues`（点名键 → 单键试探，判不出不降级）、`ResetInvalidValues`（调内部自愈端点）（P6 已落地） |
+| app | `internal/configcenter/app/reset_defaults.go` | `BootstrapService.ResetToDefaults`：逐键校验（敏感/无默认/已归档跳过）→ 新版本 → `install-reset-defaults` 发布 → 指针 CAS → 审计 `mode=reset-defaults`（P6 已落地） |
+| transport | `internal/configcenter/transport/rest/reset_handler.go` | `ResetDefaultsHandler`：服务身份 + namespace allowlist + env 一致性 + 事务包裹（P6 已落地） |
 | 前端 | `frontend/apps/web-admin/src/views/_core/install/index.vue`、路由表 | 目录驱动表单（分域、默认值徽标、必填/敏感标记）、repair 只显阻塞键、`/setup/install`免登录白名单 |
 | 契约 | `api/openapi/paths/{internal,admin}/install.yaml`、`schemas/internal/install.yaml` | schema 端点与响应契约（P1 已落地）；gaps/repair 契约（P2 已落地）；`begin.declared_keys`（P5，internal 1.4.0 / admin 9.6.0） |
+| 契约 | `api/openapi/paths/internal/repair.yaml`、`schemas/internal/repair.yaml` | 启动自愈端点与响应契约（P6，internal 1.5.0） |
 | 门禁 | `scripts/ci/check-configcenter.sh` | 断言每个 `Required` 键可经向导填写（非敏感或带 `SecretRule`）；install 端点与状态机契约 |
 | 装配 | `cmd/internal/configcenterruntime/runtime.go` | 删除 `IsProdLikeEnv` 分支：一律 `EnsureState(pending)`，仅 `ready` 时幂等 `bootstrap`/`bootstrapSecrets`；删除 `MarkReady` |
 | 装配 | `internal/configcenter/app/install.go` | `RequireSetupTokenConfigured` 对所有环境强制；删除 `MarkReady` |
@@ -189,6 +204,7 @@ POST /internal/v1/install/complete {owner}
 | P3 | 进程侧降级：`configboot.MissingRequired`/`RequireComplete`、`platform.RunSetupOnly`、`admin-api` 降级 + `ready` 后自动退出、biz/c/worker fail-fast；单测覆盖探针/挂载面/自动退出 | 已完成 |
 | P5 | 待定 5 两条腿：`begin.declared_keys` 声明白名单（三条拒绝规则 + 上限 64 + `MissingRefs` 复核）、`configboot.DiagnoseMissingValues` 占位诊断（保守方向）、`admin-api` 校验失败时按诊断结果分流；OpenAPI 1.4.0/9.6.0 | 已完成 |
 | P4 | 前端 schema 驱动向导：`api/configcenter/install.ts` 补 schema/status/begin/apply/complete 类型与 `declared_keys`；`views/_core/install/schema.ts` 纯函数层（分组/默认值徽标/缺项/草稿转换）；`index.vue` 五步向导（repair 只渲染阻塞键、密钥只读） | 已完成 |
+| P6 | 启动自愈：`configboot.DiagnoseInvalidValues`（按错误文案点名键 → 单键试探两阶段）+ `ResetInvalidValues`；`app.BootstrapService.ResetToDefaults`（新版本 + `install-reset-defaults` 发布 + 指针 CAS + 审计 `mode=reset-defaults`）；`POST /internal/v1/configs/repair/reset-defaults`（internal 1.5.0）；admin-api 重置后重载重试；单测覆盖定位/保守/HTTP 契约 | 已完成 |
 
 ## 安全与失效
 
@@ -207,10 +223,10 @@ POST /internal/v1/install/complete {owner}
 
 ## 待定
 
-1. **「值非法」死锁的自救通道**：按决策 1 不降级，则「键在、值错」时向导也进不去。是否增加一个显式逃生门——例如运维在进程侧注入 `CONFIGCENTER_REPAIR_FORCE=<token 指纹>` 后，允许把「存在但非法」的键纳入 repair 白名单（仍要 token、仍留审计）？
+1. ~~**「值非法」死锁的自救通道**~~：已结案（P6，2026-11-23）——不做 `CONFIGCENTER_REPAIR_FORCE` 这类逃生令牌，改为**把非法值重置为声明默认值后启动**：`configboot.DiagnoseInvalidValues` 判定「键在但值错」后调 `POST /internal/v1/configs/repair/reset-defaults`，config-api 按 key spec（prod-like overlay 优先）解析默认值、追加 item 版本、生成 `install-reset-defaults` 发布并以 CAS 推进指针，再由编排重启为正常进程。调用方只声明 `namespace/key`，不能指定取值；敏感键、无默认值、未声明、已归档键一律跳过并回 `skipped` 原因。
 2. ~~自动退出还是手动重启~~：已结案（P3）——默认 `ready` 后自动退出并由编排重启，`ADMIN_FRAME_SETUP_ONLY_AUTO_EXIT=false` 可退回手动重启。
 3. ~~schema 的可见范围~~：已定案——`/install/schema` 要求 setup token（键名、默认值与校验规则虽不含密文，也不应匿名可读）；若后续要支持「只读预览不填 token」再单独评估。
-4. **repair 白名单与运行期改值的边界**：当前 repair 只覆盖「缺键」，运维想顺手改一个非阻塞键仍需退出向导走管理面。是否给 `apply` 一个 `also_update` 列表（仍需 token + 审计 + 双人审批中的至少一项）留作后续评估。
+4. ~~**repair 白名单与运行期改值的边界**~~：已定案（2026-11-23，用户决策「不需要」）——repair 严格只覆盖阻塞键，非阻塞键的变更必须退出向导走管理面审批；不提供 `also_update` 之类的旁路。
 5. ~~阻塞判定是否扩到「校验层缺值」~~：已结案（P5）——两条腿同时落地：`begin(declared_keys)` 让运维登记服务端算不出的阻塞键（须已声明、非敏感、尚未在生效快照有值，上限 64），`configboot.DiagnoseMissingValues` 用占位法区分「缺值」与「值非法」，只有前者降级。保守方向：占位值本身不合法时继续 crash-loop，绝不把类型/枚举错误吞成缺值。
 
 ## 同步文档

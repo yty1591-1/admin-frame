@@ -81,7 +81,7 @@ func run() error {
 		})
 		return verr
 	}
-	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+	buildValues := func() (map[string]string, error) {
 		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
 		// 故进程级补齐非密钥项；密钥已由 secretclient 解析。
 		// Env 必须在此注入，供 Normalize/Validate 使用（CC-R-01）。
@@ -117,7 +117,8 @@ func run() error {
 		bootGaps, gapsKnown = gaps, true
 		bootValues = values
 		return values, nil
-	})
+	}
+	appCfg, err := appconfig.LoadFromValues(buildValues)
 	build := httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime}
 	if gapsKnown && len(bootGaps) > 0 {
 		if err != nil {
@@ -134,6 +135,32 @@ func run() error {
 			log.Printf("admin-api: config validation failed (%v); missing values block startup, entering setup-only mode: %s", err, strings.Join(gaps, ", "))
 			return runSetupOnly(ctx, boot, gaps, build)
 		}
+		// 「键在但值错」：按声明默认值重置后重试一次（ADR-0018 待定 1）。
+		// 重置仍不通过则保留 fail-fast，不带病启动、不静默改无关键。
+		if refs, ok := configboot.DiagnoseInvalidValues(bootValues, validateValues); ok {
+			log.Printf("admin-api: config validation failed (%v); resetting invalid values to declared defaults: %s", err, strings.Join(refs, ", "))
+			identity := strings.TrimSpace(os.Getenv("CONFIG_SERVICE_IDENTITY"))
+			resetErr := configboot.ResetInvalidValues(ctx, boot.ConfigAPIURL, boot.HTTPClient, identity, boot.Env, refs)
+			switch {
+			case resetErr != nil:
+				log.Printf("admin-api: reset invalid values failed: %v", resetErr)
+			default:
+				reloaded, loadErr := configboot.Load(ctx)
+				if loadErr != nil {
+					log.Printf("admin-api: reload config after reset failed: %v", loadErr)
+					break
+				}
+				boot = reloaded
+				cfg, retryErr := appconfig.LoadFromValues(buildValues)
+				if retryErr != nil {
+					log.Printf("admin-api: config still invalid after reset (%v); keeping fail-fast", retryErr)
+					break
+				}
+				appCfg, err = cfg, nil
+			}
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	// 主体加密：优先 secretclient 的 identity.subject.key；仍空时才本地回退（CC-R-05）。
