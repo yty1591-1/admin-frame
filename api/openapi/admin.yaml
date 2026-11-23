@@ -1,10 +1,15 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 9.4.0
+  version: 9.5.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
+    9.5.0：安装向导进入 repair 形态（ADR-0018，纯增量）——`POST /admin/v1/install/begin`
+    接受 `reason: first_install|repair`，repair 只允许在 `ready` 之后发起并把阻塞键冻结成
+    `repair_keys` 白名单；`apply` 新增按 namespace 分组的 `values`，响应新增
+    `remaining_gaps`；安装态响应新增 `gaps`/`blocking_count`/`repair_keys`；
+    `complete` 在仍有阻塞键时返回 40000 且状态保持 `installing`。
     9.4.0：新增 `GET /admin/v1/install/schema` 向导渲染元数据（ADR-0018，纯增量）——
     返回字段清单/分组/默认值来源/缺失必填键；只出声明信息、不出运行值，
     与写操作一样要求 `X-Config-Install-Token`。安装态响应新增 `mode`

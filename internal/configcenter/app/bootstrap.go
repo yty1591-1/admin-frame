@@ -68,6 +68,8 @@ type BootstrapInput struct {
 	Actor     Actor
 	// Overrides 优先于 prod-like overlay 与 KeySpec.Default（安装向导提交值）。
 	Overrides map[string]string
+	// Repair 为真表示本轮是安装向导的 repair 轮次：Release 与审计标记为 install-repair。
+	Repair bool
 }
 
 // BootstrapResult 是播种结果；SkippedKeys 不含值，仅供日志与运维核对。
@@ -135,8 +137,8 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 		return result, nil
 	}
 
-	release, err := s.buildSeedRelease(ctx, in, entries, now, "baseline",
-		"首次启动按代码 key spec / prod-like overlay 播种")
+	release, err := s.buildSeedRelease(ctx, in, entries, now, seedReleaseName(in, true),
+		seedReleaseDescription(in, true))
 	if err != nil {
 		return BootstrapResult{}, err
 	}
@@ -154,7 +156,8 @@ func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput
 		return BootstrapResult{}, translate(err)
 	}
 
-	if err := s.emitBootstrapAudit(ctx, in, release, len(entries), result.SkippedKeys, "bootstrap"); err != nil {
+	if err := s.emitBootstrapAudit(ctx, in, release, len(entries), result.SkippedKeys,
+		seedAuditMode(in, "bootstrap")); err != nil {
 		return BootstrapResult{}, err
 	}
 
@@ -230,8 +233,8 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 	merged = append(merged, activeItems...)
 	merged = append(merged, added...)
 
-	release, err := s.buildSeedRelease(ctx, in, merged, now, "spec-reconcile",
-		"按代码 key spec 增量补齐缺失默认键")
+	release, err := s.buildSeedRelease(ctx, in, merged, now, seedReleaseName(in, false),
+		seedReleaseDescription(in, false))
 	if err != nil {
 		return BootstrapResult{}, err
 	}
@@ -246,7 +249,8 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 		pointer.Version, release.ID, now); err != nil {
 		return BootstrapResult{}, translate(err)
 	}
-	if err := s.emitBootstrapAudit(ctx, in, release, len(added), result.SkippedKeys, "reconcile"); err != nil {
+	if err := s.emitBootstrapAudit(ctx, in, release, len(added), result.SkippedKeys,
+		seedAuditMode(in, "reconcile")); err != nil {
 		return BootstrapResult{}, err
 	}
 
@@ -358,10 +362,45 @@ func (s *BootstrapService) buildSeedRelease(ctx context.Context, in BootstrapInp
 
 // RequiredGap 是「已声明必填、但尚未进入生效快照」的配置键。
 type RequiredGap struct {
-	Namespace string
-	Key       string
+	Namespace string `json:"namespace"`
+	Key       string `json:"key"`
 	// Reason 取 no_active_release（该域尚无生效发布）或 missing_in_snapshot。
-	Reason string
+	Reason string `json:"reason"`
+}
+
+// KeyRef 返回 namespace/key 形式，用作 repair 白名单元素与前端展示。
+func (g RequiredGap) KeyRef() string { return g.Namespace + "/" + g.Key }
+
+// seedReleaseName 返回播种 / 补种 Release 的名称。
+func seedReleaseName(in BootstrapInput, baseline bool) string {
+	switch {
+	case in.Repair:
+		return "install-repair"
+	case baseline:
+		return "baseline"
+	default:
+		return "spec-reconcile"
+	}
+}
+
+// seedReleaseDescription 返回 Release 描述，便于发布列表区分来源。
+func seedReleaseDescription(in BootstrapInput, baseline bool) string {
+	switch {
+	case in.Repair:
+		return "安装向导 repair 补齐阻塞启动的必填键"
+	case baseline:
+		return "首次启动按代码 key spec / prod-like overlay 播种"
+	default:
+		return "按代码 key spec 增量补齐缺失默认键"
+	}
+}
+
+// seedAuditMode 返回播种审计的 mode 标签。
+func seedAuditMode(in BootstrapInput, fallback string) string {
+	if in.Repair {
+		return "repair"
+	}
+	return fallback
 }
 
 // MissingRequired 统计各 namespace 中缺失的必填键，供安装向导与启动降级判断。

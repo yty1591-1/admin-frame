@@ -808,6 +808,13 @@ components:
         owner:
           type: string
           description: 持有租约的安装者标识（`installing` 期间有效）
+        repair_keys:
+          type: array
+          description: |
+            repair 轮次在 begin 时冻结的阻塞键白名单，元素为 `namespace/key`（ADR-0018）。
+            首装为空数组；repair 期间 apply 只接受白名单内的键。
+          items:
+            type: string
         lease_until: {type: string, format: date-time}
         version:
           type: integer
@@ -815,6 +822,21 @@ components:
         last_error: {type: string}
         updated_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
+    InstallGap:
+      type: object
+      description: |
+        缺失的必填键（ADR-0018）。`status.gaps` 与 `apply.remaining_gaps` 用它回答
+        「为什么进程起不来」，前端据此高亮需要填写的字段。
+      required: [namespace, key, reason]
+      properties:
+        namespace: {type: string}
+        key: {type: string}
+        reason:
+          type: string
+          enum: [no_active_release, missing_in_snapshot]
+          description: |
+            `no_active_release`：该 namespace 尚无生效指针（首装）；
+            `missing_in_snapshot`：指针存在但快照里缺这个必填键（升级/修复）。
   responses:
     BadRequest:
       description: 参数非法

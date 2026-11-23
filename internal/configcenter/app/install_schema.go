@@ -13,8 +13,8 @@ import (
 
 // 安装向导的模式（ADR-0018）：ready 之前是首装，之后是补配/修复。
 const (
-	InstallModeFirstInstall = "first_install"
-	InstallModeRepair       = "repair"
+	InstallModeFirstInstall = string(domain.InstallModeFirstInstall)
+	InstallModeRepair       = string(domain.InstallModeRepair)
 )
 
 // 默认值来源：代码 KeySpec.Default / prod-like 叠加层 / 无默认值。
@@ -116,7 +116,7 @@ func (s *InstallService) Schema(ctx context.Context, env string) (InstallSchema,
 		Status:       string(state.Status),
 		BlockingKeys: make([]SchemaGap, 0, len(gaps)),
 	}
-	if state.Status == domain.InstallReady {
+	if state.Status == domain.InstallReady || state.Mode == domain.InstallModeRepair {
 		out.Mode = InstallModeRepair
 	}
 	blocking := make(map[string]map[string]struct{}, len(gaps))

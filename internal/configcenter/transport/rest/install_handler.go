@@ -50,7 +50,18 @@ func (h *InstallHandler) Status(w http.ResponseWriter, r *http.Request) {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
-	apiresp.OK(w, installStateDTO(state), traceID)
+	gaps, err := h.install.Gaps(r.Context(), h.deployEnv)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	out := installStateDTO(state)
+	if gaps == nil {
+		gaps = make([]app.RequiredGap, 0)
+	}
+	out["gaps"] = gaps
+	out["blocking_count"] = len(gaps)
+	apiresp.OK(w, out, traceID)
 }
 
 // Schema 处理 GET /internal/v1/install/schema。
@@ -79,14 +90,15 @@ func (h *InstallHandler) Begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Owner string `json:"owner"`
+		Owner  string `json:"owner"`
+		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var state domain.InstallState
 	err := h.withinTx(r.Context(), func(ctx context.Context) error {
 		var beginErr error
 		state, beginErr = h.install.Begin(ctx, app.BeginInput{
-			Env: h.deployEnv, Owner: body.Owner, Actor: setupActor(traceID),
+			Env: h.deployEnv, Owner: body.Owner, Reason: body.Reason, Actor: setupActor(traceID),
 		})
 		return beginErr
 	})
@@ -105,18 +117,29 @@ func (h *InstallHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Owner     string            `json:"owner"`
-		Overrides map[string]string `json:"overrides"`
+		Owner string `json:"owner"`
+		// Values 按 namespace 分组（新契约）；Overrides 是扁平键值（兼容旧客户端）。
+		Values    map[string]map[string]string `json:"values"`
+		Overrides map[string]string            `json:"overrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && r.ContentLength != 0 {
 		apiresp.FromError(w, apperr.BadRequest("invalid apply body"), traceID)
 		return
 	}
+	overrides := make(map[string]string, len(body.Overrides))
+	for key, value := range body.Overrides {
+		overrides[key] = value
+	}
+	for _, group := range body.Values {
+		for key, value := range group {
+			overrides[key] = value
+		}
+	}
 	var result app.ApplyResult
 	err := h.withinTx(r.Context(), func(ctx context.Context) error {
 		var applyErr error
 		result, applyErr = h.install.Apply(ctx, app.ApplyInput{
-			Env: h.deployEnv, Owner: body.Owner, Overrides: body.Overrides,
+			Env: h.deployEnv, Owner: body.Owner, Overrides: overrides,
 			Actor: setupActor(traceID),
 		})
 		return applyErr
@@ -125,10 +148,15 @@ func (h *InstallHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
+	remaining := result.RemainingGaps
+	if remaining == nil {
+		remaining = make([]app.RequiredGap, 0)
+	}
 	apiresp.OK(w, map[string]any{
-		"namespaces": result.Namespaces,
-		"item_count": result.ItemCount,
-		"state":      installStateDTO(result.State),
+		"namespaces":     result.Namespaces,
+		"item_count":     result.ItemCount,
+		"remaining_gaps": remaining,
+		"state":          installStateDTO(result.State),
 	}, traceID)
 }
 
@@ -168,8 +196,12 @@ func setupActor(traceID string) app.Actor {
 }
 
 func installStateDTO(state domain.InstallState) map[string]any {
-	mode := app.InstallModeFirstInstall
+	mode := string(state.Mode)
+	if mode == "" {
+		mode = app.InstallModeFirstInstall
+	}
 	if state.Status == domain.InstallReady {
+		// ready 之后向导语义固定为「重配置」：既能修阻塞键，也允许只读预览。
 		mode = app.InstallModeRepair
 	}
 	out := map[string]any{
@@ -181,6 +213,11 @@ func installStateDTO(state domain.InstallState) map[string]any {
 		"last_error": state.LastError,
 		"updated_at": state.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	repairKeys := state.RepairKeys
+	if repairKeys == nil {
+		repairKeys = []string{}
+	}
+	out["repair_keys"] = repairKeys
 	if state.LeaseUntil != nil {
 		out["lease_until"] = state.LeaseUntil.UTC().Format(time.RFC3339Nano)
 	}

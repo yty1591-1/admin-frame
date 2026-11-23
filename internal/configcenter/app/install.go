@@ -133,7 +133,7 @@ func (s *InstallService) EnsureState(ctx context.Context, env string, initial do
 	}
 	now := s.now().UTC()
 	return s.install.Ensure(ctx, domain.InstallState{
-		Env: env, Status: initial, Version: 1, UpdatedAt: now,
+		Env: env, Status: initial, Mode: domain.InstallModeFirstInstall, Version: 1, UpdatedAt: now,
 	})
 }
 
@@ -146,14 +146,26 @@ func (s *InstallService) Status(ctx context.Context, env string) (domain.Install
 	return state, nil
 }
 
+// Gaps 返回当前阻塞启动的非敏感必填键；与 repair 冻结白名单同源。
+func (s *InstallService) Gaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	if !domain.ValidEnv(env) {
+		return nil, apperr.BadRequest("invalid env")
+	}
+	return s.bootstrap.MissingRequired(ctx, env)
+}
+
 // BeginInput 是 begin 入参。
 type BeginInput struct {
 	Env   string
 	Owner string
-	Actor Actor
+	// Reason 取 first_install 或 repair；空值时按当前状态推断（ready → repair）。
+	Reason string
+	Actor  Actor
 }
 
-// Begin 抢安装锁：pending|failed → installing；可对过期 lease 抢占。
+// Begin 抢安装锁：pending|failed → installing(first_install)；ready → installing(repair)。
+//
+// repair 轮次在 begin 时冻结阻塞键白名单，apply 只接受白名单内的键（ADR-0018）。
 func (s *InstallService) Begin(ctx context.Context, in BeginInput) (domain.InstallState, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return domain.InstallState{}, err
@@ -169,9 +181,9 @@ func (s *InstallService) Begin(ctx context.Context, in BeginInput) (domain.Insta
 	if err != nil {
 		return domain.InstallState{}, translate(err)
 	}
-	if cur.Status == domain.InstallReady {
-		return domain.InstallState{}, apperr.New(apperr.CodeInstallCompleted,
-			"install already completed", nil)
+	mode, repairKeys, err := s.beginMode(ctx, in, cur)
+	if err != nil {
+		return domain.InstallState{}, err
 	}
 	now := s.now().UTC()
 	if cur.Status == domain.InstallInstalling && cur.LeaseActive(now) && cur.Owner != owner {
@@ -179,14 +191,16 @@ func (s *InstallService) Begin(ctx context.Context, in BeginInput) (domain.Insta
 			fmt.Sprintf("install in progress by %s", cur.Owner), nil)
 	}
 	switch cur.Status {
-	case domain.InstallPending, domain.InstallFailed, domain.InstallInstalling:
-		// ok
+	case domain.InstallPending, domain.InstallFailed, domain.InstallInstalling, domain.InstallReady:
+		// ok；ready 仅在 mode=repair 时到达这里。
 	default:
 		return domain.InstallState{}, apperr.Conflict("cannot begin install from status " + string(cur.Status))
 	}
 	leaseUntil := now.Add(s.lease)
 	next := cur
 	next.Status = domain.InstallInstalling
+	next.Mode = mode
+	next.RepairKeys = repairKeys
 	next.Owner = owner
 	next.LeaseUntil = &leaseUntil
 	next.LastError = ""
@@ -203,8 +217,48 @@ func (s *InstallService) Begin(ctx context.Context, in BeginInput) (domain.Insta
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigInstallBegin, ResourceTypeInstall, in.Env,
 		audit.OutcomeSuccess, "", map[string]string{
 			"owner": owner, "status": string(updated.Status),
+			"mode": string(mode), "repair_keys": strings.Join(repairKeys, ","),
 		})
 	return updated, nil
+}
+
+// beginMode 解析本轮 begin 的性质，并在 repair 时冻结阻塞键白名单。
+func (s *InstallService) beginMode(ctx context.Context, in BeginInput,
+	cur domain.InstallState) (domain.InstallMode, []string, error) {
+	reason := strings.TrimSpace(in.Reason)
+	if reason == "" {
+		if cur.Status == domain.InstallReady {
+			reason = string(domain.InstallModeRepair)
+		} else {
+			reason = string(domain.InstallModeFirstInstall)
+		}
+	}
+	mode := domain.InstallMode(reason)
+	if !domain.ValidInstallMode(mode) {
+		return "", nil, apperr.BadRequest(`reason must be "first_install" or "repair"`)
+	}
+	if mode == domain.InstallModeFirstInstall {
+		if cur.Status == domain.InstallReady {
+			return "", nil, apperr.New(apperr.CodeInstallCompleted, "install already completed", nil)
+		}
+		return mode, nil, nil
+	}
+	if cur.Status != domain.InstallReady {
+		return "", nil, apperr.BadRequest("repair requires install status ready")
+	}
+	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(gaps) == 0 {
+		return "", nil, apperr.New(apperr.CodeInstallCompleted,
+			"no blocking keys to repair", nil)
+	}
+	keys := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		keys = append(keys, gap.KeyRef())
+	}
+	return mode, keys, nil
 }
 
 // ApplyInput 是 apply 入参。
@@ -219,10 +273,14 @@ type ApplyInput struct {
 type ApplyResult struct {
 	Namespaces int
 	ItemCount  int
-	State      domain.InstallState
+	// RemainingGaps 是 apply 之后仍未补齐的阻塞键；complete 前必须为空。
+	RemainingGaps []RequiredGap
+	State         domain.InstallState
 }
 
 // Apply 在持锁状态下播种（不覆盖已有值）；续约租约。
+//
+// first_install 接受任意已声明键；repair 只接受 begin 时冻结的白名单键。
 func (s *InstallService) Apply(ctx context.Context, in ApplyInput) (ApplyResult, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return ApplyResult{}, err
@@ -231,11 +289,16 @@ func (s *InstallService) Apply(ctx context.Context, in ApplyInput) (ApplyResult,
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	overrides, err := s.filterOverrides(state, in.Overrides)
+	if err != nil {
+		return ApplyResult{}, err
+	}
 	actor := in.Actor
 	itemCount := 0
 	for _, namespace := range s.specs.Namespaces() {
 		result, ensureErr := s.bootstrap.EnsureBaseline(ctx, BootstrapInput{
-			Env: in.Env, Namespace: namespace, Actor: actor, Overrides: in.Overrides,
+			Env: in.Env, Namespace: namespace, Actor: actor,
+			Overrides: overrides, Repair: state.Mode == domain.InstallModeRepair,
 		})
 		if ensureErr != nil {
 			return s.failApply(ctx, state, in, ensureErr)
@@ -246,6 +309,10 @@ func (s *InstallService) Apply(ctx context.Context, in ApplyInput) (ApplyResult,
 		if secErr := s.secrets.EnsureAutoSecrets(ctx, in.Env, s.specs, actor); secErr != nil {
 			return s.failApply(ctx, state, in, secErr)
 		}
+	}
+	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	if err != nil {
+		return s.failApply(ctx, state, in, err)
 	}
 	now := s.now().UTC()
 	leaseUntil := now.Add(s.lease)
@@ -261,12 +328,56 @@ func (s *InstallService) Apply(ctx context.Context, in ApplyInput) (ApplyResult,
 		audit.OutcomeSuccess, "", map[string]string{
 			"namespaces": fmt.Sprintf("%d", len(s.specs.Namespaces())),
 			"item_count": fmt.Sprintf("%d", itemCount),
+			"mode":       string(state.Mode),
+			"remaining":  fmt.Sprintf("%d", len(gaps)),
 		})
 	return ApplyResult{
-		Namespaces: len(s.specs.Namespaces()),
-		ItemCount:  itemCount,
-		State:      updated,
+		Namespaces:    len(s.specs.Namespaces()),
+		ItemCount:     itemCount,
+		RemainingGaps: gaps,
+		State:         updated,
 	}, nil
+}
+
+// filterOverrides 在 repair 轮次把提交值收窄到冻结白名单；首装原样返回。
+func (s *InstallService) filterOverrides(state domain.InstallState,
+	overrides map[string]string) (map[string]string, error) {
+	if state.Mode != domain.InstallModeRepair || len(overrides) == 0 {
+		return overrides, nil
+	}
+	allowed := make(map[string]struct{}, len(state.RepairKeys))
+	for _, key := range state.RepairKeys {
+		allowed[key] = struct{}{}
+	}
+	filtered := make(map[string]string, len(overrides))
+	rejected := make([]string, 0)
+	for key, value := range overrides {
+		namespace, ok := s.namespaceFor(key)
+		if !ok {
+			rejected = append(rejected, key)
+			continue
+		}
+		if _, ok := allowed[namespace+"/"+key]; !ok {
+			rejected = append(rejected, key)
+			continue
+		}
+		filtered[key] = value
+	}
+	if len(rejected) > 0 {
+		return nil, apperr.BadRequest(fmt.Sprintf(
+			"repair only accepts frozen blocking keys; rejected: %s", strings.Join(rejected, ", ")))
+	}
+	return filtered, nil
+}
+
+// namespaceFor 返回声明该键的 namespace。
+func (s *InstallService) namespaceFor(key string) (string, bool) {
+	for _, namespace := range s.specs.Namespaces() {
+		if _, ok := s.specs.Lookup(namespace, key); ok {
+			return namespace, true
+		}
+	}
+	return "", false
 }
 
 func (s *InstallService) failApply(ctx context.Context, state domain.InstallState, in ApplyInput, cause error) (ApplyResult, error) {
@@ -316,6 +427,18 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 			audit.OutcomeFailure, msg, nil)
 		return domain.InstallState{}, apperr.BadRequest(msg)
 	}
+	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	if err != nil {
+		return domain.InstallState{}, err
+	}
+	if len(gaps) > 0 {
+		keys := make([]string, 0, len(gaps))
+		for _, gap := range gaps {
+			keys = append(keys, gap.KeyRef())
+		}
+		return domain.InstallState{}, apperr.BadRequest(
+			"install incomplete; blocking keys remain: " + strings.Join(keys, ", "))
+	}
 	now := s.now().UTC()
 	completed := now
 	next := state
@@ -330,7 +453,9 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 		return domain.InstallState{}, translate(err)
 	}
 	_ = s.audit.emit(ctx, in.Actor, audit.ActionConfigInstallComplete, ResourceTypeInstall, in.Env,
-		audit.OutcomeSuccess, "", map[string]string{"status": "ready"})
+		audit.OutcomeSuccess, "", map[string]string{
+			"status": "ready", "mode": string(state.Mode),
+		})
 	return updated, nil
 }
 

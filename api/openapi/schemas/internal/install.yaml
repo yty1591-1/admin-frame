@@ -8,7 +8,18 @@ InstallStatusResponse:
     - type: object
       properties:
         data:
-          $ref: ../../components.yaml#/components/schemas/InstallState
+          allOf:
+            - $ref: ../../components.yaml#/components/schemas/InstallState
+            - type: object
+              required: [gaps, blocking_count]
+              properties:
+                blocking_count:
+                  type: integer
+                  description: 缺失的必填键数量；>0 表示进程会被启动降级拦住
+                gaps:
+                  type: array
+                  items:
+                    $ref: ../../components.yaml#/components/schemas/InstallGap
 
 InstallApplyResponse:
   allOf:
@@ -17,14 +28,22 @@ InstallApplyResponse:
       properties:
         data:
           type: object
-          required: [namespaces, item_count, state]
+          required: [namespaces, item_count, remaining_gaps, state]
           properties:
             namespaces:
               type: integer
             item_count:
               type: integer
+            remaining_gaps:
+              type: array
+              description: 本次 apply 之后仍未满足的必填键；为空才允许 complete
+              items:
+                $ref: ../../components.yaml#/components/schemas/InstallGap
             state:
               $ref: ../../components.yaml#/components/schemas/InstallState
+
+# ADR-0018：阻塞键形状（`InstallGap`）定义在 components.yaml，与 `InstallState`
+# 一样被 admin / internal 两侧复用，避免 bundle 内出现跨文件 `#/` 悬空指针。
 
 # ADR-0018：安装向导渲染元数据（只出声明信息，不出运行值）。
 InstallSchemaResponse:

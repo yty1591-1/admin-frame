@@ -60,5 +60,9 @@ func (r *InstallRepository) CompareAndSwap(_ context.Context, next domain.Instal
 func cloneInstall(s domain.InstallState) domain.InstallState {
 	s.LeaseUntil = cloneTime(s.LeaseUntil)
 	s.CompletedAt = cloneTime(s.CompletedAt)
+	if s.Mode == "" {
+		s.Mode = domain.InstallModeFirstInstall
+	}
+	s.RepairKeys = append([]string(nil), s.RepairKeys...)
 	return s
 }

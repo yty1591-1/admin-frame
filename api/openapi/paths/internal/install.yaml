@@ -6,8 +6,9 @@ internal-v1-install-status:
     summary: 查询安装态
     operationId: getInstallStatus
     description: |
-      返回当前部署环境的 `config_install_state`。
-      无需 setup token；业务进程 /readyz 与 Admin SPA 据此判断是否进入安装向导。
+      返回当前部署环境的 `config_install_state`，并附带 `gaps`（缺失的必填键）与
+      `blocking_count`（ADR-0018）。无需 setup token；业务进程 /readyz 与 Admin SPA
+      据此判断是否进入安装向导或启动降级。
     responses:
       "200":
         description: ok
@@ -52,8 +53,12 @@ internal-v1-install-schema:
 internal-v1-install-begin:
   post:
     tags: [install]
-    summary: 开始安装（抢租约）
+    summary: 开始安装 / 开始修复（抢租约）
     operationId: beginInstall
+    description: |
+      `reason=first_install`（默认）只能从 `pending`/`failed`/过期 `installing` 进入；
+      `reason=repair` 只允许在 `ready` 之后发起，且要求当前存在阻塞键，服务端会把
+      `namespace/key` 白名单冻结进 `repair_keys`，后续 apply 只接受这些键（ADR-0018）。
     parameters:
       - $ref: "#/components/parameters/SetupTokenHeader"
     requestBody:
@@ -66,6 +71,10 @@ internal-v1-install-begin:
               owner:
                 type: string
                 description: 安装者标识；空则服务端生成
+              reason:
+                type: string
+                enum: [first_install, repair]
+                description: 省略时按当前状态推断（ready → repair，否则 first_install）
     responses:
       "200":
         description: 进入 installing
@@ -73,16 +82,22 @@ internal-v1-install-begin:
           application/json:
             schema:
               $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "400":
+        description: reason 非法，或 repair 时状态不是 ready
       "401":
         description: setup token 无效
       "409":
-        description: 40951 安装进行中 / 40952 已完成
+        description: 40951 安装进行中 / 40952 已完成（首装已完成，或 repair 时无阻塞键可修）
 
 internal-v1-install-apply:
   post:
     tags: [install]
-    summary: 安装期播种
+    summary: 安装期播种 / 修复阻塞键
     operationId: applyInstall
+    description: |
+      把向导提交的值与默认值合并后播种成新的 item version + release + 指针；
+      响应里的 `remaining_gaps` 是本次 apply 之后的剩余阻塞键。
+      `mode=repair` 时只接受 `repair_keys` 白名单内的键，越权键直接 400。
     parameters:
       - $ref: "#/components/parameters/SetupTokenHeader"
     requestBody:
@@ -95,18 +110,27 @@ internal-v1-install-apply:
             properties:
               owner:
                 type: string
+              values:
+                type: object
+                description: 按 namespace 分组的新契约（键为 namespace，值为 key → 字符串）
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    type: string
               overrides:
                 type: object
                 additionalProperties:
                   type: string
-                description: 覆盖 KeySpec / overlay 的键值（不含敏感明文以外的密钥；密钥走自动生成）
+                description: 扁平键值，兼容旧客户端；与 values 合并，后者优先
     responses:
       "200":
-        description: 播种完成（幂等）
+        description: 播种完成（幂等）；响应内含 remaining_gaps
         content:
           application/json:
             schema:
               $ref: "../../schemas/internal/install.yaml#/InstallApplyResponse"
+      "400":
+        description: 请求体非法，或 repair 时提交了白名单之外的键
       "401":
         description: setup token 无效
       "409":
@@ -137,7 +161,7 @@ internal-v1-install-complete:
             schema:
               $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
       "400":
-        description: 缺少 namespace pointer
+        description: 缺少 namespace pointer，或仍存在阻塞键（此时状态保持 installing，可继续 apply）
       "401":
         description: setup token 无效
       "409":

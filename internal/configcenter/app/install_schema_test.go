@@ -202,7 +202,13 @@ func TestInstallSchemaRepairAfterReady(t *testing.T) {
 	if _, err := install.Begin(ctx, app.BeginInput{Env: "prod", Owner: "owner-a", Actor: actor}); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := install.Apply(ctx, app.ApplyInput{Env: "prod", Owner: "owner-a", Actor: actor}); err != nil {
+	if _, err := install.Apply(ctx, app.ApplyInput{
+		Env: "prod", Owner: "owner-a", Actor: actor,
+		Overrides: map[string]string{
+			"http.base_url":   "https://admin.example.com",
+			"auth.jwt.issuer": "admin-frame",
+		},
+	}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if _, err := install.Complete(ctx, app.CompleteInput{Env: "prod", Owner: "owner-a", Actor: actor}); err != nil {
