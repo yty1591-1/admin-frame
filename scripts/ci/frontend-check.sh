@@ -18,26 +18,29 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> [1/7] pnpm install --frozen-lockfile"
+echo "==> [1/8] pnpm install --frozen-lockfile"
 pnpm install --frozen-lockfile
 
-echo "==> [2/7] pnpm lint"
+echo "==> [2/8] pnpm lint（oxlint/oxfmt/eslint/stylelint 全量，非 staged）"
 pnpm lint
 
+echo "==> [3/8] pnpm check:cspell（含 **/*.vue 模板，FE-G-04）"
+pnpm check:cspell
+
 # 依赖检查与循环依赖检查此前恒 exit 0，这里接入是 FE-G-02 的消费者。
-echo "==> [3/7] pnpm check:dep"
+echo "==> [4/8] pnpm check:dep"
 pnpm check:dep
 
-echo "==> [4/7] pnpm check:circular"
+echo "==> [5/8] pnpm check:circular"
 pnpm check:circular
 
-echo "==> [5/7] pnpm check:type（两个 app，vue-tsc）"
+echo "==> [6/8] pnpm check:type（两个 app，vue-tsc）"
 pnpm check:type
 
-echo "==> [6/7] pnpm test:unit"
+echo "==> [7/8] pnpm test:unit"
 pnpm test:unit
 
-echo "==> [7/7] pnpm build:admin && pnpm build:biz"
+echo "==> [8/8] pnpm build:admin && pnpm build:biz"
 pnpm build:admin
 pnpm build:biz
 

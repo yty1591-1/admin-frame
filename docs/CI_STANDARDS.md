@@ -39,7 +39,7 @@
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 | CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
 | CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
-| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm lint`、`check:dep`、`check:circular`、`check:type`、`test:unit`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
+| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm lint`、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 

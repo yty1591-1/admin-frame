@@ -254,6 +254,7 @@
 | 门禁红灯验证（2026-11-23） | ✅ 类型门禁：在 `main.ts` 注入 `const __redLightProbe: string = 1` → `vue-tsc` 退出 2（TS2322/TS6133），撤销后退出 0；`check:dep` / `check:circular` 见下一行 | 本轮实施记录 | `turbo.json` |
 | `pnpm check:dep` / `check:circular` | ✅ 2026-11-23 本地实测：存量未用依赖 / 10 个循环时 exit 1，清理后 exit 0；单测随 `pnpm test:unit` 通过 | `frontend/scripts/vsh/src/check-*/` |
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
+| `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
 | `pnpm test:unit` | 🟡 77 个测试全在 `packages/`、`internal/`；`apps/` 为 0 | `vitest.config.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
