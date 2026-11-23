@@ -9,7 +9,7 @@
 > **关联硬约束**：  
 > - [工程化注释规范](./COMMENT_STANDARDS.md)（C-01～C-10）  
 > - [工程化代码编写风格规范](./CODE_STYLE.md)（S-01～S-12）  
-> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
+> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-18）  
 >   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（合并门禁）、[`.github/workflows/image.yml`](../.github/workflows/image.yml)（发版镜像）  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-16）  

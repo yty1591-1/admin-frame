@@ -226,7 +226,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-G-05 | 待指派 | 已完成 | 2026-11-23：32 包（26 packages + 6 internal）补 `typecheck`；`pnpm check:type` 34/34 通过（约 1m8s）；修掉暴露的 21 处既有类型红（typings 声明路径、RouteMeta augmentation、Vite/Rollup 插件类型、测试非空断言等）；红灯实测：`packages/utils` 注入 `const __redLightProbe: string = 1` → turbo 退出 2（TS2322/TS6133），撤销后 FULL TURBO 0 |
 | FE-G-06 | 待指派 | 已完成 | 2026-11-23：admin 38 / biz 20 条冒烟用例；两 app 独立 `vitest.config.ts`（`#/` 别名 + 覆盖率阈值 30%）；`test:unit` 链式跑三次；`check-frontend-gates.sh` 纳入第 9/10 步；阈值 99% 实测红、恢复后绿 |
 | FE-G-07 | 待指派 | 已完成 | 2026-11-23：`engineStrict: true` 生效（Node `>=99` 实测 exit 1）、`minimumReleaseAge: 1440`、11 个 overrides 修复 33 high + 2 critical → audit 0 high（余 3 low/12 moderate）、dependabot npm `/frontend`、`frontend-check.sh` 第 2/10 步 |
-| FE-G-08 | 待指派 | 进行中 | 2026-11-21：`ci.yml` 头注释、`CI_STANDARDS.md` CI-18、`check-ci-paths.sh` PATTERN 已改；`docs/README.md` CI 编号与 CI-17 表待收敛 |
+| FE-G-08 | 待指派 | 已完成 | 2026-11-23：`docs/README.md`、根 `README.md`、`ci.yml` 头注释统一 CI-01～CI-18；`CI_STANDARDS.md` CI-18 与 §3.1 映射；`check-ci-paths.sh` PATTERN 含 `frontend` 并扩到 ts/tsx/vue/js/mjs/cjs（151 refs）；`ARCHITECTURE.md`、`rbac-iam.md` 旧编号更正；`make check-ci-paths` exit 0，注入 `frontend/__nonexistent__/probe.ts` 实测 make exit 2 |
 | FE-B-01 | 待指派 | 未开始 | SHA 注入 |
 | FE-B-02 | 待指派 | 未开始 | multi-target 镜像 |
 | FE-B-03 | 待指派 | 未开始 | 前端 matrix + digest |
@@ -264,7 +264,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] 32 个包有 `typecheck`，`turbo run typecheck` 全量 34 任务通过（FE-G-05）
 - [x] `apps/*` 有冒烟用例，覆盖率阈值生效（FE-G-06 / FE-T-01 / FE-T-03；2026-11-23）
 - [x] `engineStrict`、dependabot npm、`pnpm audit` 入 CI（FE-G-07）
-- [ ] 文档索引收敛（FE-G-08 / FE-D-02～04）
+- [x] 文档索引收敛（FE-G-08 / FE-D-02～04；2026-11-23）
 - [ ] 产物含 git SHA；双端镜像可构建（FE-B-01～03）
 - [ ] Helm 前端 workload 渲染通过，kind 冒烟两端可访问（FE-B-04）
 - [ ] `.env.example` 存在且无密钥；未声明变量构建失败（FE-B-05）
