@@ -49,20 +49,33 @@
 - 删除损坏的 namespace 缓存文件，依赖 config-api 重新拉取；首次无远端则进程退出。
 - 不要手工改写缓存 JSON。
 
-### 首次部署 / 无缓存启动
+### 首次部署 / 安装向导
 
-1. 先起 `config-api`（播种基线 Release）。
-2. 业务进程设置：
+1. 先起 `config-api`：`CONFIGCENTER_ENV` 与 `CONFIG_INSTALL_SETUP_TOKEN` 都必填。启动后只 `EnsureState(pending)`，**不再自动播种基线**——所有环境统一由安装向导播种（CFG-09 / ADR-0018）。
+2. 起 `admin-api`：安装态未 `ready` 时它以占位 JWT 起，只暴露安装向导代理；浏览器打开 `/setup/install`，用 setup token 依次 `begin → apply → complete`（本地 `make local-start` / `make local-install` 会自动驱动）。
+3. 业务进程设置：
    - `CONFIG_API_URL`
    - `CONFIG_SERVICE_IDENTITY`
    - `CONFIGCENTER_ENV`（必须在 Validate 前注入进程身份证；禁止 Load 后再补写）
    - 可选 `CONFIGCENTER_NAMESPACES` / `CONFIGCENTER_CACHE_DIR`
-3. **config-api（staging/prod）额外强制（CC-R-04）**：
+4. **config-api（staging/prod）额外强制（CC-R-04）**：
    - `CONFIG_API_MTLS=require`
    - `CONFIG_API_TLS_CERT` / `CONFIG_API_TLS_KEY` / `CONFIG_API_TLS_CLIENT_CA`
    - `CONFIG_API_NAMESPACE_ALLOWLIST`（例：`admin-api:platform,identity;biz-api:platform,identity;*:platform`）
-4. 确认拉取成功后再挂流量。
-5. staging/prod 禁止业务密钥裸 env（短信 AK、通知盐/回调密钥、OAuth client_secret_env 等）；须走 secretclient（CC-R-03/05）。
+5. 确认拉取成功后再挂流量。
+6. staging/prod 禁止业务密钥裸 env（短信 AK、通知盐/回调密钥、OAuth client_secret_env 等）；须走 secretclient（CC-R-03/05）。
+
+### 缺键阻塞启动（setup-only）与 repair
+
+- 症状：`/readyz` 返回 503，`checks[config_install].error` 形如 `config_incomplete: missing required keys: platform/auth.jwt.issuer; run admin install wizard`；日志首行固定 `SETUP-ONLY MODE: missing required keys ...`；admin-api 仍可打开安装向导，biz/c/worker 保持 crash-loop（启动日志 `config incomplete: missing required keys: ...`）。
+- 降级态的暴露面：只有 `/healthz`、`/readyz`、`/version` 与 `/admin/v1/install/*`；`/metrics` 与全部业务路由 404，别拿降级态的 404 当成网关故障。
+- 退出方式：安装完成后 admin-api **自动退出（退出码 0）**，由编排重启为正常进程；无编排环境把它当成长驻服务时，设 `ADMIN_FRAME_SETUP_ONLY_AUTO_EXIT=false`，修复后手工重启。`/readyz` 恢复 200 才可挂流量。
+- 定位：`GET /admin/v1/install/status` 看 `gaps` 与 `blocking_count`；`GET /admin/v1/install/schema` 看这些键的类型/默认值/校验规则。
+- 修复：`POST /admin/v1/install/begin` 带 `reason:"repair"`（服务端把阻塞键冻结成 `repair_keys` 白名单）→ 向导只渲染阻塞键 → `apply` → 响应 `remaining_gaps` 为空 → `complete`。
+- `complete` 时仍有阻塞键返回 `40000`，状态保持 `installing`（租约 15 分钟）：可继续 `apply`，不必重新 `begin`。
+- 白名单外的键一律 400：repair 不是日常配置渠道，非阻塞变更仍走 `submit → approve → publish`。
+- 「键存在但取值非法」不降级（避免静默带病运行）：按 `config: invalid config: config validation failed: ...` 定位键，走管理面发布修正。
+- 注意覆盖口径：`gaps` 只统计 key spec 的 `Required` 键。`auth.jwt.secret` 缺失、KEK/mTLS 证书错误这类「非快照」故障仍是 crash-loop，不会进降级态——按 §密钥与证书排障，别在向导里找答案。
 
 ### 回滚
 

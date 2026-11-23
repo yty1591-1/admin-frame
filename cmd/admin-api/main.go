@@ -70,6 +70,9 @@ func run() error {
 	}
 	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
 	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
+	// gaps 在装配退出时回传：缺必填键时改走 setup-only，避免带病装配（ADR-0018）。
+	var bootGaps []string
+	gapsKnown := false
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// A 端登录依赖 identity + jwt；基线未播种 required issuer/audience，
 		// 故进程级补齐非密钥项；密钥已由 secretclient 解析。
@@ -99,8 +102,22 @@ func run() error {
 		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
 			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
 		}
+		gaps, gapsErr := configboot.MissingRequired(values)
+		if gapsErr != nil {
+			return nil, gapsErr
+		}
+		bootGaps, gapsKnown = gaps, true
 		return values, nil
 	})
+	build := httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime}
+	if gapsKnown && len(bootGaps) > 0 {
+		if err != nil {
+			log.Printf("admin-api: config incomplete (%v); entering setup-only mode: %s", err, strings.Join(bootGaps, ", "))
+		} else {
+			log.Printf("admin-api: missing required keys; entering setup-only mode: %s", strings.Join(bootGaps, ", "))
+		}
+		return runSetupOnly(ctx, boot, bootGaps, build)
+	}
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -145,7 +162,7 @@ func run() error {
 	}
 	return platform.Run(context.Background(), platform.Options{
 		Config: &appCfg.Config,
-		Build:  httpserver.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
+		Build:  build,
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
 			built, err := buildIdentity(deps)
 			if err != nil {

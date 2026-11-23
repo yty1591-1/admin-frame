@@ -209,7 +209,7 @@ value_hash  = SHA-256(plaintext)[:8]（仅比对，不可逆）
 
 `env` 属于进程身份证，与 `service` / `channel` 一并在进入 Loader 前注入；不得在 Validate 通过后补写。
 
-config-api 自身启动：代码默认值 + db/redis 环境变量 → 播种基线（空库）→ 装配拉取 / 长轮询 / 密钥 resolve。
+config-api 自身启动：代码默认值 + db/redis 环境变量 → `EnsureState(pending)` → 装配拉取 / 长轮询 / 密钥 resolve；基线由安装向导（`begin → apply → complete`）播种，所有环境一致（CFG-09）。
 
 ### 6.2 失败策略
 
@@ -218,6 +218,8 @@ config-api 自身启动：代码默认值 + db/redis 环境变量 → 播种基�
 | config-api 不可用且无本地缓存 | 业务进程 fail-fast |
 | config-api 不可用但有本地缓存 | 使用缓存启动，标记 degraded，打点告警 |
 | 非关键键缺失 | 使用默认值，标记 degraded，打点告警 |
+| 快照缺 `Required` 非敏感键 | admin-api 降级为 setup-only（只留探针 + `/admin/v1/install/*`，`/readyz` 503 且带缺失键）并保留安装向导；biz/c/worker fail-fast；安装态 `ready` 后 admin-api 自动退出（`ADMIN_FRAME_SETUP_ONLY_AUTO_EXIT=false` 可关），由编排重启恢复（ADR-0018） |
+| `Required` 键存在但取值非法 | 不降级，继续 crash-loop（避免静默带病运行） |
 | 密钥解析不可用 | required 密钥 fail-fast；非 required 用内存缓存并告警 |
 
 ### 6.3 Validate 基线

@@ -181,6 +181,29 @@ require_grep "api/openapi/admin.yaml" \
   "admin-v1-install-status" "admin OpenAPI 登记安装向导代理"
 require_grep "api/openapi/admin.yaml" \
   "admin-v1-install-schema" "admin OpenAPI 登记向导 schema"
+require_file "migrations/000038_config_install_repair_mode.up.sql" "安装态 repair 迁移 up"
+require_file "migrations/000038_config_install_repair_mode.down.sql" "安装态 repair 迁移 down"
+require_grep "migrations/000038_config_install_repair_mode.up.sql" \
+  "repair_keys" "迁移新增 repair 白名单列（ADR-0018）"
+require_grep "api/openapi/components.yaml" \
+  "repair_keys" "安装态契约含 repair 白名单"
+require_grep "api/openapi/schemas/internal/install.yaml" \
+  "remaining_gaps" "apply 响应含剩余阻塞键"
+require_file "internal/platform/setup_only.go" "启动降级态运行器（ADR-0018）"
+require_grep "internal/platform/setup_only.go" \
+  "SETUP-ONLY MODE: missing required keys" "降级态日志首行可 grep"
+require_grep "cmd/admin-api/setup_only.go" \
+  "runSetupOnly" "admin-api 缺键时降级装配"
+require_grep "cmd/internal/configboot/gaps.go" \
+  "func MissingRequired" "必填缺值判定（与 status.gaps 同源）"
+require_grep "cmd/biz-api/main.go" \
+  "configboot.RequireComplete" "B 端缺键 fail-fast"
+require_grep "cmd/c-api/main.go" \
+  "configboot.RequireComplete" "C 端缺键 fail-fast"
+require_grep "cmd/worker/main.go" \
+  "configboot.RequireComplete" "worker 缺键 fail-fast"
+require_grep "internal/configcenter/app/install.go" \
+  "repair only accepts frozen blocking keys" "repair 白名单越权拒绝"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"

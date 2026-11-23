@@ -92,6 +92,10 @@ func run() error {
 		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
 			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
 		}
+		// 缺必填键时 fail-fast：C 端无法自行修复，等 admin 向导补齐（ADR-0018）。
+		if err := configboot.RequireComplete("c-api", values); err != nil {
+			return nil, err
+		}
 		return values, nil
 	})
 	if err != nil {

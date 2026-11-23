@@ -83,6 +83,10 @@ func run(replayDLQ string, sweepCertifications bool) error {
 		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "worker")
 		configboot.ApplyDeployOverlays(values)
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		// 缺必填键时 fail-fast：worker 无法自行修复，等 admin 向导补齐（ADR-0018）。
+		if err := configboot.RequireComplete("worker", values); err != nil {
+			return nil, err
+		}
 		return values, nil
 	})
 	if err != nil {
