@@ -4,7 +4,7 @@
 > **已落地**：注释（C）、风格（S）、CI、SEC、API、TEST、DEP、CFG、DATA、REL、OBS、GIT、RELS、RB、AUD、[LIC](./LICENSE_STANDARDS.md)、[GEN](./CODEGEN_STANDARDS.md)、[PERF](./PERFORMANCE_STANDARDS.md)。  
 > **效力目标**：专文生效（Normative）后，与架构文档同等；违反则 MR **不得合并**。  
 > **状态约定**：`待做` / `进行中` / `已完成` / `暂缓`。  
-> **最后更新**：2026-11-02（补文档地图与 `docs/archive/` 归档区条目；路线图表内专文全部完成）
+> **最后更新**：2026-11-21（补前端 FE 专文行：v0.1 草案已出且 `frontend` 门禁已接入（`make frontend-check` / CI / Gitee），待首跑取证；路线图表内其余专文仍为已完成）
 
 ---
 
@@ -27,6 +27,7 @@
 |-------|------------------|---------|------|------|----------|----------|
 | P0 | `.github/workflows/ci.yml` + `.workflow/`（Gitee Go） | CI | **流水线本身** | 已完成 | GitHub Actions + Gitee Go；分支保护需管理员勾选 | §18.3 |
 | P0 | `docs/CI_STANDARDS.md` | CI | CI 必跑步骤、失败策略、多平台 | 已完成 | `make ci` | §18.3 |
+| P1 | [docs/FRONTEND_STANDARDS.md](./FRONTEND_STANDARDS.md) | FE | 前端分层/请求/路由权限/安全/测试门禁（v0.1 草案，2026-11-21） | 草案 v0.1（门禁已接入，待 CI 首跑取证） | `frontend` CI job / Gitee step / `make frontend-check` + eslint/stylelint | — |
 | P1 | `docs/SECURITY_STANDARDS.md` | SEC | 密钥、注入、三端鉴权隔离等 | 已完成 | gitleaks、gosec、调试端点 | §十 |
 | P1 | `docs/API_STANDARDS.md` | API | 分端 OpenAPI、错误码、分页 | 已完成 | oasdiff | §十六 |
 | P1 | `docs/TESTING_STANDARDS.md` | TEST | 分层测试、覆盖率、B/C 必测 | 已完成 | `make test-ci` | §十三 |
@@ -99,4 +100,5 @@
 
 1. 管理员完成 **分支保护**（唯一未闭环的人工项）。  
 2. 业务路径接线 `audit.Emitter`；按需启用 mockery/sqlc 并更新 MANIFEST。  
-3. 发版流水线接入镜像扫描（补强 RELS）。
+3. 发版流水线接入镜像扫描（补强 RELS）。  
+4. 前端规范与门禁按 [`frontend-remediation-plan.md`](./frontend-remediation-plan.md) 推进（`FE-G` / `FE-B` / `FE-S` / `FE-T`）。

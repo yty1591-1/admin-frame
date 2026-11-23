@@ -19,7 +19,7 @@ fail() { echo "    ERROR: $1" >&2; FAIL=1; }
 echo "==> CP-01: paths referenced by gate scripts must exist"
 # 只取代码与文档目录：configs 下的 yaml 名多由脚本拼接（如 configs/prod/${name}.yaml），
 # 纳入会误报为「路径不存在」。
-PATTERN='(internal|pkg|cmd|tests|migrations|deploy|api|docs)/[A-Za-z0-9_./-]+\.(go|sql|yaml|yml|sh|md|json)'
+PATTERN='(internal|pkg|cmd|tests|migrations|deploy|api|docs|frontend)/[A-Za-z0-9_./-]+\.(go|sql|yaml|yml|sh|md|json)'
 
 refs="$(grep -rhoE "${PATTERN}" scripts/ci/*.sh | sort -u || true)"
 if [[ -z "${refs}" ]]; then

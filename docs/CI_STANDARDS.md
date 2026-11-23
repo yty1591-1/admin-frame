@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）
 > **执行方式**：见下文「多平台」；本地统一 `make ci`
-> **最后更新**：2026-11-07（新增 CI-16 / CI-17：job 本地入口对等、跳过不得视为通过；CI-15 并入 `arch`；镜像改走 `make image-scan`）
+> **最后更新**：2026-11-21（新增 CI-18 / job `frontend`：前端必跑门禁；见 FE-CI-01 与 `scripts/ci/frontend-check.sh`）
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -39,6 +39,7 @@
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 | CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
 | CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
+| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm lint`、`check:dep`、`check:circular`、`check:type`、`test:unit`、`build:admin`、`build:biz`，任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -90,6 +91,7 @@
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
+| CI-18 + FE-25～28 | `frontend` | `frontend` | `make frontend-check` |
 | CI-15 / CI-16 | 并入 `arch` | `arch` | `make check-ci-paths` + `make check-ci-parity` |
 | RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make image-scan`（构建 + Trivy）+ `make docker-push` + `make check-release` |
 | CI-17（本地判定等价） | —（本地专用） | — | `make ci-strict` / `make ci-full` |
@@ -110,6 +112,7 @@
 - Go 版本：`actions/setup-go` 读取 `go.mod`
 - `arch` job 使用 runner 系统 Python；运行前钉扎安装 `pyyaml==6.0.3`，供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
+- `frontend` job（CI-18 / FE-CI-01）：`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`，`setup-node@v4` 用 `frontend/.node-version`（24.16.0）与 pnpm cache（键 `frontend/pnpm-lock.yaml`），执行 `bash scripts/ci/frontend-check.sh`；与 `make frontend-check`、Gitee step 同源，禁止三处各写一套命令
 
 ### 3.3 Gitee Go
 
@@ -118,7 +121,7 @@
   - `PRPipeline.yml`：PR 目标为 `main`/`master`
   - `MasterPipeline.yml`：push 到 `main`/`master`
   - `BranchPipeline.yml`：其它分支 push（排除主干，避免重复）
-- 插件：`build@golang`（全部 job）；阶段 `strategy: fast`（一失败则快速失败）
+- 插件：`build@golang`（后端 job）+ `build@nodejs`（`frontend` step，`nodeVersion` 以控制台可用列表为准，pnpm 由 corepack 按 `packageManager` 固定为 11.16.0）；阶段 `strategy: fast`（一失败则快速失败）
 - 代理：默认 `GOPROXY=https://goproxy.cn,direct`
 - **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
   1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或
@@ -130,7 +133,8 @@
 1. 仓库启用 Gitee Go
 2. 确认 `.workflow` 三个文件生效（或控制台从代码库导入）
 3. 调整 `golangVersion`
-4. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
+4. 确认 Node 构建插件可用，并把 `frontend` step 的 `nodeVersion` 调成控制台实际提供的版本（目标 24.x）
+5. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
 
 详见 [`.workflow/README.md`](../.workflow/README.md)。
 
@@ -176,7 +180,8 @@ PR / push main ──►  ├── lint
                     ├── arch  (cross-transport)
                     ├── secrets (gitleaks + debug + config examples)
                     ├── openapi (validate + breaking)
-                    └── build (all cmd)
+                    ├── build (all cmd)
+                    └── frontend (lint/type/unit/build；CI-18 / FE-CI-01)
 ```
 
 ```text
@@ -216,6 +221,7 @@ make check-perf           # PERF-01/02
 make build                # CI-08
 make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构见 CI `image`）
 make image-scan                        # 本地复现 image job 的 Trivy 扫描（HIGH/CRITICAL）
+make frontend-check                    # CI-18 / FE-CI-01：前端 lint/type/unit/build（需 pnpm 11 + Node 24；不进 make ci）
 ```
 
 或一键：
@@ -259,14 +265,15 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 
 1. 保护 `main`（或默认分支）
 2. Require a pull request before merging
-3. Require status checks：勾选 `CI` workflow 全部必跑 job
+3. Require status checks：勾选 `CI` workflow 全部必跑 job（含 `frontend`；该 job 无 paths 过滤，不会因纯后端 PR 被 skip）
 4. 限制无检查强推；应急绕过须事后补跑
 
 ### Gitee
 
 1. 保护默认分支 / 设置合并规则
 2. 要求关联 PR 流水线（`PR CI` / `pr-pipeline`）通过后方可合并
-3. 限制管理员绕过；应急流程同 GitHub
+3. 确认质量门禁 stage 内包含 `frontend` step（`build@nodejs`，调用 `gitee-job.sh frontend`）
+4. 限制管理员绕过；应急流程同 GitHub
 
 未完成分支保护前，流水线文件合入仍视为「门禁未闭环」。
 
@@ -293,7 +300,8 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 - GitHub：`setup-go` cache；golangci-lint-action 缓存
 - Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载
 - 不在 PR 构建/推送镜像；仅在 push `main`/`master` 与 `v*` tag 触发 `image`（§3.5），避免重复构建与成本
-- 不可用路径过滤跳过 fmt/lint/test/vuln
+- 前端：`setup-node` 的 pnpm store 缓存，键为 `frontend/pnpm-lock.yaml`；Gitee `build@nodejs` 依赖平台缓存
+- 不可用路径过滤跳过 fmt/lint/test/vuln（含 frontend）
 
 ---
 
@@ -323,6 +331,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 - [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）
 - [ ] 已更新本专文映射表（若有增删 job）
 - [ ] `make check-ci-parity` 通过：新增/改名 job 已在 `check-ci-parity.sh` 登记本地入口（CI-16）
+- [ ] 前端 job / Gitee step / `make frontend-check` 仍同源于 `scripts/ci/frontend-check.sh`（CI-18 / FE-CI-01）
 - [ ] 新门禁若依赖外部工具/服务，已说明 `make ci-full` 如何提供，或已在 `ci-run.sh` 的 ALLOW 表写明豁免理由（CI-17）
 
 ---
@@ -339,6 +348,8 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-ci-paths.sh` | CI-15 |
 | `scripts/ci/check-ci-parity.sh` | CI-16：workflow job ↔ 本地入口一致性 |
+| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用） |
+| `frontend/.node-version` / `frontend/pnpm-lock.yaml` | 前端工具链钉扎（Node 24.16.0 + pnpm 11.16.0） |
 | `scripts/ci/ci-run.sh` | CI-17：跳过项汇总与严格模式（被 `make ci-strict` 调用） |
 | `scripts/ci/ci-full.sh` | CI-17：本地判定等价（service 容器 + integration + `-race` + 镜像扫描） |
 | `scripts/ci/run-race-tests.sh` | 容器内 `-race`（补足本地无 CGO 的降级） |

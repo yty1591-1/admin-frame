@@ -80,9 +80,8 @@ identity 域整改走完了「差距评审 → 计划 → 批次台账 → 完�
 | [s6-1-security-review-record-2026-11-10.md](./reviews/s6-1-security-review-record-2026-11-10.md) | 身份域安全评审（S6-1），2026-11-11 由「有条件通过」转「通过」；`C1`～`C3` 闭环，staging 项按 `STG-EQ-01` 等价环境放行 | 无（结论已回写 `identity-authn.md` §21 与计划 §13.2） |
 | [p1-7-acceptance-report.md](./reviews/p1-7-acceptance-report.md) | P1-7 访问复核验收（S7-5），2026-11-11 安全 / 平台双评审签字通过；ADR-0012 评审 Accept，staging 实战按等价环境放行 | 无（结论已回写 `rbac-iam.md` §10.3 与计划 §13.3） |
 
-> **重要**：前两份前端评审里的未闭环 GAP **当前没有对应的活跃计划文档跟踪**。
-> 如果要推进，请新建 `docs/frontend-remediation-plan.md`（L3 活跃计划）并在 `docs/README.md` §3.2 登记，
-> 把 GAP 条目搬过去逐条给验收标准；**不要**直接修改归档文件里的清单。
+> **重要**：前两份前端评审里的未闭环 GAP 已由 [`../frontend-remediation-plan.md`](../frontend-remediation-plan.md)（L3 活跃计划，2026-11-21 立项）跟踪，
+> 并在 `docs/README.md` §3.2 登记；GAP 条目按 `FE-*` 任务包逐条承接验收；**不要**直接修改归档文件里的清单。
 >
 > 后两份平台评审的整改动作已全部落地，归档只保留「当时如何判定」的依据。
 

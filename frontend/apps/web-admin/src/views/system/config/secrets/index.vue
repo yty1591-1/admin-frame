@@ -379,28 +379,28 @@ onMounted(async () => {
         </template>
         <template v-else-if="column.key === 'actions'">
           <Space wrap>
-            <Button size="small" @click="loadDetail(record)">详情</Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onSubmit(record)">
+            <Button size="small" @click="loadDetail(record as ConfigSecret)">详情</Button>
+            <Button v-access:code="'config:secret:write'" size="small" @click="onSubmit(record as ConfigSecret)">
               送审
             </Button>
             <Button
               v-access:code="'config:secret:approve'"
               size="small"
-              @click="onApprove(record, 'approved')"
+              @click="onApprove(record as ConfigSecret, 'approved')"
             >
               批准
             </Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onRotate(record)">
+            <Button v-access:code="'config:secret:write'" size="small" @click="onRotate(record as ConfigSecret)">
               轮换
             </Button>
-            <Button v-access:code="'config:secret:write'" size="small" @click="onGrant(record)">
+            <Button v-access:code="'config:secret:write'" size="small" @click="onGrant(record as ConfigSecret)">
               授权
             </Button>
             <Button
               v-access:code="'config:secret:write'"
               danger
               size="small"
-              @click="onRevoke(record)"
+              @click="onRevoke(record as ConfigSecret)"
             >
               吊销
             </Button>
@@ -465,7 +465,7 @@ onMounted(async () => {
               v-access:code="'config:secret:write'"
               :disabled="record.status === 'active' || record.status === 'destroyed'"
               size="small"
-              @click="onActivateVersion(record)"
+              @click="onActivateVersion(record as ConfigSecretVersion)"
             >
               激活
             </Button>
@@ -489,7 +489,7 @@ onMounted(async () => {
               :disabled="!!record.revoked_at"
               danger
               size="small"
-              @click="onRevokeGrant(record)"
+              @click="onRevokeGrant(record as ConfigSecretGrant)"
             >
               吊销
             </Button>

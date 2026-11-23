@@ -69,7 +69,7 @@ export async function publishConfigReleaseApi(
 
 export async function rollbackConfigReleaseApi(
   id: number,
-  payload: ConfigReleaseRollbackPayload = {},
+  payload: ConfigReleaseRollbackPayload,
 ): Promise<ConfigRelease> {
   return requestClient.post<ConfigRelease>(
     `/configs/releases/${id}/rollback`,

@@ -7,6 +7,10 @@ import { dirname, join } from 'node:path';
 
 import { execa } from '@vben/node-utils';
 
+import type { KnipResult } from './has-unused';
+
+import { hasUnusedDependencies } from './has-unused';
+
 const require = createRequire(import.meta.url);
 const knipMain = require.resolve('knip');
 const knipCli = join(dirname(knipMain), '..', 'bin', 'knip.js');
@@ -30,30 +34,13 @@ const DEFAULT_CONFIG = {
   ignoreWorkspaces: ['internal/lint-configs/*', 'scripts/*'],
 };
 
-interface KnipDependency {
-  col: number;
-  line: number;
-  name: string;
-  pos: number;
-}
-
-interface KnipFileIssue {
-  dependencies: KnipDependency[];
-  devDependencies: KnipDependency[];
-  file: string;
-  optionalPeerDependencies: KnipDependency[];
-}
-
-interface KnipResult {
-  issues: KnipFileIssue[];
-}
-
 /**
  * 格式化依赖检查结果
  * @param result - 依赖检查结果
+ * @returns 存在未使用依赖时为 true
  */
-function formatResult(result: KnipResult): void {
-  let hasIssues = false;
+function formatResult(result: KnipResult): boolean {
+  const hasIssues = hasUnusedDependencies(result);
 
   for (const issue of result.issues) {
     const hasDeps = issue.dependencies.length > 0;
@@ -63,9 +50,7 @@ function formatResult(result: KnipResult): void {
       continue;
     }
 
-    hasIssues = true;
     console.log(`\n📦 ${issue.file}`);
-
     if (hasDeps) {
       console.log('⚠️ Unused dependencies:');
       for (const dep of issue.dependencies) {
@@ -84,6 +69,8 @@ function formatResult(result: KnipResult): void {
   if (!hasIssues) {
     console.log('\n✅ Dependency check completed, no issues found');
   }
+
+  return hasIssues;
 }
 
 /**
@@ -117,8 +104,17 @@ async function runKnipCheck(): Promise<void> {
     };
 
     if (execaError.exitCode === 1 && execaError.stdout) {
-      const result: KnipResult = JSON.parse(execaError.stdout);
-      formatResult(result);
+      try {
+        const result: KnipResult = JSON.parse(execaError.stdout);
+        if (formatResult(result)) {
+          process.exitCode = 1;
+        }
+      } catch {
+        console.error(
+          '❌ Dependency check failed: knip output is not valid JSON',
+        );
+        process.exitCode = 1;
+      }
       return;
     }
 
@@ -126,6 +122,7 @@ async function runKnipCheck(): Promise<void> {
       '❌ Dependency check failed:',
       error instanceof Error ? error.message : error,
     );
+    process.exitCode = 1;
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
