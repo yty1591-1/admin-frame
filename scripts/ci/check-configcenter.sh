@@ -174,6 +174,9 @@ require_grep "api/openapi/internal.yaml" \
   "internal-v1-configs-env-namespace" "internal OpenAPI 登记拉取路径"
 require_grep "api/openapi/internal.yaml" \
   "internal-v1-install-status" "internal OpenAPI 登记安装态"
+require_file "api/openapi/paths/admin/install.yaml" "admin 安装向导代理 OpenAPI 路径"
+require_grep "api/openapi/admin.yaml" \
+  "admin-v1-install-status" "admin OpenAPI 登记安装向导代理"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"

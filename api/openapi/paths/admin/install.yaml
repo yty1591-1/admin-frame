@@ -1,0 +1,185 @@
+# ADR-0017 / ADR-0018：Admin 安装向导代理（无 JWT，经 mTLS 转发到 config-api）。
+#
+# 浏览器无法向 prod-like config-api 出示 PEM 客户端证书，向导因此经 admin-api
+# 同源代理；写操作的 `X-Config-Install-Token` 由 config-api 校验，本端不做鉴权。
+# 响应体为 config-api 原样透传（成功信封与错误码一致）。
+
+admin-v1-install-status:
+  get:
+    tags: [install]
+    summary: 查询安装态
+    operationId: adminGetInstallStatus
+    # 安装期尚无可用 JWT（业务配置未播种、登录依赖尚未就绪），与内部端点一致不鉴权。
+    security: []
+    description: |
+      透传 `GET /internal/v1/install/status`（ADR-0017）。返回当前部署环境的安装态，
+      Admin SPA 据此决定进入安装向导还是业务界面。无需 setup token。
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达（`CONFIG_API_URL` 未配置、mTLS 握手失败或上游 5xx）
+
+admin-v1-install-begin:
+  post:
+    tags: [install]
+    summary: 开始安装（抢租约）
+    operationId: adminBeginInstall
+    security: []
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              owner:
+                type: string
+                description: 安装者标识；空则由服务端生成
+    responses:
+      "200":
+        description: 进入 installing
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 40951 安装进行中（他人持租约）/ 40952 已完成
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
+admin-v1-install-apply:
+  post:
+    tags: [install]
+    summary: 安装期播种
+    operationId: adminApplyInstall
+    security: []
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+              overrides:
+                type: object
+                additionalProperties:
+                  type: string
+                description: |
+                  覆盖 KeySpec / overlay 的键值；仅接受已声明键（未声明键返回 40000）。
+                  敏感项不接受明文覆盖（由服务端自动生成并落库信封加密）。
+    responses:
+      "200":
+        description: 播种完成（幂等）
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallApplyResponse"
+      "400":
+        description: 未声明键或取值非法
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 未持有租约或已完成
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
+admin-v1-install-complete:
+  post:
+    tags: [install]
+    summary: 完成安装
+    operationId: adminCompleteInstall
+    security: []
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+    responses:
+      "200":
+        description: status=ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "400":
+        description: 存在仍缺指针的 namespace
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 未持有租约或已完成
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达

@@ -1,30 +1,6 @@
 # ADR-0017：安装态响应 Schema。
-
-InstallState:
-  type: object
-  required: [env, status, version, updated_at]
-  properties:
-    env:
-      type: string
-    status:
-      type: string
-      enum: [pending, installing, ready, failed]
-    owner:
-      type: string
-    lease_until:
-      type: string
-      format: date-time
-    version:
-      type: integer
-      format: int64
-    last_error:
-      type: string
-    updated_at:
-      type: string
-      format: date-time
-    completed_at:
-      type: string
-      format: date-time
+# `InstallState` 本体在 components.yaml 共享定义——A 端安装向导代理（ADR-0018）
+# 复用同一契约，避免 admin / internal 两份 DTO 漂移。本文件只保留响应信封装配。
 
 InstallStatusResponse:
   allOf:
@@ -32,7 +8,7 @@ InstallStatusResponse:
     - type: object
       properties:
         data:
-          $ref: "#/InstallState"
+          $ref: ../../components.yaml#/components/schemas/InstallState
 
 InstallApplyResponse:
   allOf:
@@ -48,4 +24,4 @@ InstallApplyResponse:
             item_count:
               type: integer
             state:
-              $ref: "#/InstallState"
+              $ref: ../../components.yaml#/components/schemas/InstallState

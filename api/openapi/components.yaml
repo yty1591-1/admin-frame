@@ -788,6 +788,27 @@ components:
         version: {type: integer}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    InstallState:
+      type: object
+      description: |
+        首次安装 / 重配置（repair）态（ADR-0017 / ADR-0018）。`ready` 之外的状态下
+        业务进程按 ADR-0018 决定降级或失败关闭；`lease_until` 只在 `installing` 有值。
+      required: [env, status, version, updated_at]
+      properties:
+        env: {type: string}
+        status:
+          type: string
+          enum: [pending, installing, ready, failed]
+        owner:
+          type: string
+          description: 持有租约的安装者标识（`installing` 期间有效）
+        lease_until: {type: string, format: date-time}
+        version:
+          type: integer
+          format: int64
+        last_error: {type: string}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
   responses:
     BadRequest:
       description: 参数非法

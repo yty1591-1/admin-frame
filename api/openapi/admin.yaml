@@ -1,10 +1,13 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 9.2.0
+  version: 9.3.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
+    9.3.0：新增安装向导代理端点 `/admin/v1/install/*`（ADR-0017 / ADR-0018，纯增量）——
+    安装期尚无可用 JWT，四个端点均不鉴权，写操作凭 `X-Config-Install-Token`
+    由 config-api 校验，响应原样透传（含 502 上游不可达）。
     9.2.0：发布单取消端点与列表 keyword/owner 过滤（CC-R-16）；声明键增补
     `hot_whitelist`（ADR-0015 HotKeySet；CC-R-17）（纯增量）。
     9.1.0：新增 `GET /admin/v1/configs/namespaces/{namespace}/keys` 声明键列表（纯增量；CC-R-12）。
@@ -69,6 +72,12 @@ servers:
 tags:
   - name: probe
     description: 存活/就绪/版本（无需鉴权）
+  - name: install
+    description: |
+      安装向导代理（ADR-0017 / ADR-0018）。安装期业务配置尚未播种，A 端无可用 JWT，
+      因此四个端点均不鉴权；写操作凭 `X-Config-Install-Token`（与 config-api 的
+      `CONFIG_INSTALL_SETUP_TOKEN` 一致）由 config-api 校验，请求经 admin-api 以 mTLS
+      转发到 `/internal/v1/install/*`，响应与错误码原样透传。
   - name: iam
     description: |
       RBAC / IAM 管理。写接口要求 `If-Match` 或 body `version` 与当前版本一致（乐观锁），
@@ -97,6 +106,14 @@ paths:
     $ref: './paths/admin/probe.yaml#/readyz'
   /version:
     $ref: './paths/admin/probe.yaml#/version'
+  /admin/v1/install/status:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-status'
+  /admin/v1/install/begin:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-begin'
+  /admin/v1/install/apply:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-apply'
+  /admin/v1/install/complete:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-complete'
   /admin/v1/auth/login:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-login'
   /admin/v1/auth/refresh:
