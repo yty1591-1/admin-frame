@@ -102,3 +102,53 @@ grep -qF 'for cmd in admin-api biz-api c-api worker migrate web-admin web-biz; d
 grep -qE 'format: cyclonedx' "${IY}" || fail "image.yml 缺少 CycloneDX SBOM"
 
 echo "OK: image.yml 前端镜像、标签规则与 digest 收集校验通过"
+
+# 7. Helm 前端 workload（FE-B-04）：Deployment/Service/Ingress + nginx ConfigMap。
+CHART="${ROOT}/deploy/helm/admin-frame"
+CHART_CONF="${CHART}/files/nginx.conf"
+NGINX_CONF="${ROOT}/frontend/scripts/deploy/nginx.conf"
+
+[[ -f "${CHART_CONF}" ]] || fail "missing ${CHART_CONF}（FE-B-04）"
+cmp -s "${NGINX_CONF}" "${CHART_CONF}" ||
+  fail "${CHART_CONF} 与 frontend/scripts/deploy/nginx.conf 不一致：改完 nginx.conf 后复制到 chart files/（FE-B-04）"
+
+for f in deployment-frontend.yaml service-frontend.yaml ingress-frontend.yaml configmap-frontend-nginx.yaml; do
+  [[ -f "${CHART}/templates/${f}" ]] || fail "missing templates/${f}（FE-B-04）"
+done
+
+grep -q 'checksum/nginx' "${CHART}/templates/deployment-frontend.yaml" ||
+  fail "frontend Deployment 缺少 checksum/nginx 注解（ConfigMap 更新需滚动 Pod）"
+grep -q 'path: /healthz' "${CHART}/templates/deployment-frontend.yaml" ||
+  fail "frontend 探针必须走 /healthz（避免命中 SPA 入口）"
+grep -q 'location = /healthz' "${NGINX_CONF}" || fail "nginx.conf 缺少 location = /healthz"
+grep -qE '^  webAdmin:' "${CHART}/values.yaml" || fail "values.yaml 缺少 frontend.webAdmin"
+grep -qE '^  webBiz:' "${CHART}/values.yaml" || fail "values.yaml 缺少 frontend.webBiz"
+
+if command -v helm >/dev/null 2>&1; then
+  render_default="$(helm template fe-b04 "${CHART}")"
+  render_biz="$(helm template fe-b04 "${CHART}" --set frontend.webBiz.enabled=true --set frontend.webBiz.ingress.enabled=true)"
+
+  for name in web-admin; do
+    for kind in Deployment Service Ingress; do
+      grep -q "kind: ${kind}" <<<"${render_default}" ||
+        fail "helm render 缺少 ${kind}（FE-B-04）"
+      grep -q "name: .*-${name}$" <<<"${render_default}" ||
+        fail "helm render 缺少 ${name} ${kind}（FE-B-04）"
+    done
+  done
+
+  for name in web-biz; do
+    for kind in Deployment Service Ingress; do
+      grep -q "name: .*-${name}$" <<<"${render_biz}" ||
+        fail "helm render（启用 webBiz）缺少 ${name} ${kind}（FE-B-04）"
+    done
+  done
+
+  grep -q 'frontend-nginx' <<<"${render_default}" || fail "helm render 缺少 nginx ConfigMap（FE-B-04）"
+  if grep -qE 'image: .*:latest' <<<"${render_default}${render_biz}"; then
+    fail "helm render 出现 :latest 镜像（RELS-01）"
+  fi
+  echo "OK: Helm 前端 workload（Deployment/Service/Ingress/nginx ConfigMap）渲染通过"
+else
+  echo "SKIP: helm 未安装，跳过 FE-B-04 的 helm template 断言（GitHub CI 由 azure/setup-helm 提供）"
+fi

@@ -120,6 +120,15 @@ workloads:
       iam:
         mode: "off"
 
+frontend:
+  # 静态站：kind 无 ingress controller，走 kubectl port-forward 冒烟。
+  webAdmin:
+    replicas: 1
+    ingress:
+      enabled: false
+  webBiz:
+    enabled: false
+
 migrate:
   enabled: true
   image:

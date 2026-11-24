@@ -146,6 +146,77 @@ configCenter:
 env: []
 envFrom: []
 
+# 前端静态站（FE-B-04）：独立 Deployment/Service/Ingress，A/B 端各自入口。
+# 镜像来自 image.yml 的 web-admin / web-biz；tag 用 sha-<short> 或 semver，禁止 latest。
+frontend:
+  # nginx.conf 由 ConfigMap 下发；源文件 frontend/scripts/deploy/nginx.conf，
+  # check-frontend-dockerfile.sh 会断言 chart files/ 与源文件一致（防漂移）。
+  nginxConfig:
+    enabled: true
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  webAdmin:
+    enabled: true
+    image:
+      repository: web-admin
+      tag: ""
+      digest: ""
+    replicas: 1
+    port: 8080
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    service:
+      port: 80
+    ingress:
+      enabled: true
+      className: ""
+      annotations: {}
+      host: admin.localhost
+      path: /
+      pathType: Prefix
+      tls: []
+  webBiz:
+    # web-biz 生产入口/域名未定（plan §十一 待决 2）；启用时由 values-<env> 覆盖 host。
+    enabled: false
+    image:
+      repository: web-biz
+      tag: ""
+      digest: ""
+    replicas: 1
+    port: 8080
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    service:
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: biz.localhost
+      path: /
+      pathType: Prefix
+      tls: []
+
 workloads:
   admin:
     enabled: true

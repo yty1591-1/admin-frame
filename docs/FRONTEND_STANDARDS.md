@@ -210,8 +210,8 @@
 |----|------|------|
 | FE-21 | 工具链唯一：pnpm（`packageManager` 固定 11.16.0）+ turbo；Node 版本以 `frontend/.node-version` 为准（基线建议 24 LTS，待决）；禁止 npm / yarn 混用；仓库根不得执行 `pnpm install` | `engine-strict`（✅ 2026-11-23：`engineStrict: true`，Node `>=99` 实测 exit 1） |
 | FE-22 | 环境变量只允许 `VITE_*`；**构建期变量等于公开信息**，禁止存放任何密钥/口令。新增变量必须登记 `frontend/.env.example` 与白名单；`internal/vite-config/src/utils/env.ts` 对缺失必填项必须**构建失败**，禁止沿用「全默认值静默降级」 | 构建脚本（✅ 2026-11-24：`assertDeclaredEnv`，未声明变量 exit 1；4 例单测；`.env.example` 三份） |
-| FE-23 | 产物必须可追溯：注入 `VITE_APP_GIT_SHA`、`VITE_APP_BUILD_TIME`、`VITE_APP_VERSION`（meta 与运行时均可读）；镜像 tag 含 git SHA；禁止 `latest`；禁止手工 `scp dist` 上线 | `check-frontend-build-meta.sh`（✅ 2026-11-24，第 14/14 步）+ `check-frontend-dockerfile.sh`（✅ 第 12/14 步）+ 镜像 tag 含 SHA（FE-B-02 双 target 已具备，⬜ 发布标签 FE-B-03） |
-| FE-24 | 发布：`web-admin` / `web-biz` 各自独立镜像与 workload，Dockerfile 支持 multi-target；发布走 `release/CHECKLIST.md` 前端节；回滚步骤进 runbook 并至少演练一次 | `check-release` + 演练记录（⬜） |
+| FE-23 | 产物必须可追溯：注入 `VITE_APP_GIT_SHA`、`VITE_APP_BUILD_TIME`、`VITE_APP_VERSION`（meta 与运行时均可读）；镜像 tag 含 git SHA；禁止 `latest`；禁止手工 `scp dist` 上线 | `check-frontend-build-meta.sh`（✅ 2026-11-24，第 14/14 步）+ `check-frontend-dockerfile.sh`（✅ 第 12/14 步）+ 镜像 tag 含 SHA（FE-B-02 双 target + FE-B-03 流水线 `sha-<short>`/semver，✅ 配置就位，⬜ 远端首跑） |
+| FE-24 | 发布：`web-admin` / `web-biz` 各自独立镜像与 workload，Dockerfile 支持 multi-target；发布走 `release/CHECKLIST.md` 前端节；回滚步骤进 runbook 并至少演练一次 | `check-frontend-dockerfile.sh` 第 12/14 步（✅ 2026-11-24：双 target + chart 渲染 + nginx ConfigMap）；`release/CHECKLIST.md` 前端节 ✅；helm 回滚演练 ⬜ |
 
 ---
 

@@ -355,6 +355,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
+      # FE-B-04：check-frontend-dockerfile.sh 需要 helm 做 chart 渲染断言（缺 helm 时该段 SKIP）。
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
+
       - name: Frontend gates
         env:
           CI: "true"
