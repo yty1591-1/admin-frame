@@ -7,6 +7,9 @@
   "scripts": {
     "typecheck": "vue-tsc --noEmit"
   },
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -19,16 +22,28 @@
     "./adapter/form": {
       "types": "./src/adapter/form.ts",
       "default": "./src/adapter/form.ts"
+    },
+    "./layouts/auth": {
+      "types": "./src/layouts/auth.vue",
+      "default": "./src/layouts/auth.vue"
     }
   },
   "dependencies": {
+    "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/hooks": "workspace:*",
     "@vben/icons": "workspace:*",
+    "@vben/layouts": "workspace:*",
     "@vben/locales": "workspace:*",
+    "@vben/plugins": "workspace:*",
+    "@vben/preferences": "workspace:*",
+    "@vben/stores": "workspace:*",
+    "@vben/styles": "workspace:*",
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
+    "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
-    "vue": "catalog:"
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   }
 }
