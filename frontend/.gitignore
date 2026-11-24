@@ -22,8 +22,10 @@ package-lock.json
 .omx
 .pnpm-store
 # local env files
+.env
 .env.local
 .env.*.local
+apps/*/.env
 .eslintcache
 
 logs
