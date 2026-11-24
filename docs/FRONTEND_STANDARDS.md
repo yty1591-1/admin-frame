@@ -266,7 +266,7 @@
 | `pnpm check:dep` / `check:circular` | ✅ 2026-11-23 本地实测：存量未用依赖 / 10 个循环时 exit 1，清理后 exit 0；单测随 `pnpm test:unit` 通过 | `frontend/scripts/vsh/src/check-*/` |
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
-| `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
+| `pnpm test:unit` | ✅ 2026-11-24：根 741（102 文件）+ web-admin 51 + web-biz 9；两 app 覆盖率 89.18% / 90%+（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
 | 上传类型双白名单（FE-20） | ✅ 2026-11-24：`@vben/utils` 新增 `validateUploadFile`（扩展名 + MIME，SVG 默认禁）与 `downloadFile`；两 app Upload 适配器接入，非图片预览改为下载；11 例单测 | `frontend/packages/utils/src/helpers/upload.ts`、`frontend/apps/*/src/adapter/component/index.ts` |
 | v-access 更新语义（FE-16） | ✅ 2026-11-24：指令同时实现 `mounted` + `updated`，用 `display: none` 隐藏/恢复（权限快照异步到达与回收均生效）；3 例单测，删掉 `updated` 即 exit 1 | `frontend/packages/effects/access/src/directive.ts`、`frontend/packages/effects/access/src/__tests__/directive.test.ts` |
 | 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |

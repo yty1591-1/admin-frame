@@ -41,7 +41,6 @@ export default defineConfig({
         'src/api/configcenter/errors.ts',
         'src/api/idempotency.ts',
         'src/router/access.ts',
-        'src/router/guard.ts',
         'src/store/auth.ts',
       ],
       exclude: ['**/*.test.ts', '**/__tests__/**'],

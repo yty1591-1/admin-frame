@@ -130,6 +130,7 @@ export class KernelCapabilityError extends Error {
 | 日期 | 批次 | 内容 | 状态 |
 | --- | --- | --- | --- |
 | 2026-11-24 | 批次 A | 新建 `packages/effects/app-kernel`（`@vben/app-kernel`）；迁移 `adapter/form.ts`、`adapter/component/index.ts`（756 行）；两 app 删除本地 adapter、`bootstrap.ts` 改从内核导入、12 个视图改用 `@vben/app-kernel/adapter/form`；能力类型 `KernelCapabilities` 与 `ADMIN_/BIZ_CAPABILITIES` 入内核 | ✅ 35 turbo 任务、14 步门禁绿 |
+| 2026-11-24 | 批次 C | `router/{guard,access,index,routes}`、`locales/index.ts` 收敛为内核工厂（`createAppRouter`、`createAccessGenerator`、`createRoutes`、`createLocaleSetup`），守卫与菜单生成改为依赖注入；应用侧只保留 `import.meta.glob` 与注入参数；11 例守卫测试迁入内核（`packages/effects/app-kernel/src/router/__tests__`），应用侧保留 access 接线测试 | ✅ 35 turbo 任务、14 步门禁绿（SHA=2c328b7），根 741 / admin 51 / biz 9 |
 | 2026-11-24 | 批次 B | `createAppRoot`（ConfigProvider 主题/语言 + RouterView）、`bootstrapApp` 统一启动流程（适配器→i18n→stores→指令→tippy→router→motion→标题→mount）、`layouts/auth.vue` 迁入内核；两 app 删除 `app.vue` 与 `layouts/auth.vue`，`router/routes/core.ts` 改指向内核；清理 app 中已不再直接使用的 `@vben/plugins`/`@vben/styles`/`@vueuse/core` 依赖 | ✅ 35 turbo 任务、14 步门禁绿（SHA=18e6adb） |
 | 2026-11-24 | 批次 C（待） | router 四文件 + 两组测试、`locales/index.ts` | 未开始 |
 | 2026-11-24 | 批次 D（待） | auth api/store capabilities 化、`main.ts` 漂移归零 | 未开始 |

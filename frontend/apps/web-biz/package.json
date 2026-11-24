@@ -15,7 +15,6 @@
     "#/*": "./src/*"
   },
   "dependencies": {
-    "@vben/access": "workspace:*",
     "@vben/app-kernel": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
@@ -29,7 +28,6 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "ant-design-vue": "catalog:",
-    "dayjs": "catalog:",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"

@@ -17,9 +17,13 @@ const mocks = vi.hoisted(() => {
     userInfo: null as null | { homePath?: string; roles?: string[] },
   };
   const authStore = { fetchUserInfo: vi.fn() };
+  const accessRoutes = [{ path: '/dynamic' }];
+  const coreRouteNames = ['Login', 'FallbackNotFound'];
   return {
+    accessRoutes,
     accessStore,
     authStore,
+    coreRouteNames,
     generateAccess: vi.fn(),
     startProgress: vi.fn(),
     stopProgress: vi.fn(),
@@ -50,12 +54,6 @@ vi.mock('@vben/utils', () => ({
   startProgress: mocks.startProgress,
   stopProgress: mocks.stopProgress,
 }));
-vi.mock('#/router/routes', () => ({
-  accessRoutes: [{ path: '/dynamic' }],
-  coreRouteNames: ['Login', 'FallbackNotFound'],
-}));
-vi.mock('#/store', () => ({ useAuthStore: () => mocks.authStore }));
-vi.mock('../access', () => ({ generateAccess: mocks.generateAccess }));
 
 type Guard = (to: any, from: any) => any;
 
@@ -72,7 +70,12 @@ function createFakeRouter() {
     resolve: vi.fn((path: string) => ({ fullPath: path, path, query: {} })),
   } as unknown as Router;
 
-  createRouterGuard(router);
+  createRouterGuard(router, {
+    accessRoutes: mocks.accessRoutes as never,
+    coreRouteNames: mocks.coreRouteNames,
+    generateAccess: mocks.generateAccess,
+    getAuthStore: () => mocks.authStore,
+  });
 
   const [common, access] = before;
   if (!common || !access) {

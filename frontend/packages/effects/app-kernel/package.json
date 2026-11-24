@@ -26,11 +26,20 @@
     "./layouts/auth": {
       "types": "./src/layouts/auth.vue",
       "default": "./src/layouts/auth.vue"
+    },
+    "./locales": {
+      "types": "./src/locales.ts",
+      "default": "./src/locales.ts"
+    },
+    "./router": {
+      "types": "./src/router/index.ts",
+      "default": "./src/router/index.ts"
     }
   },
   "dependencies": {
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
+    "@vben/constants": "workspace:*",
     "@vben/hooks": "workspace:*",
     "@vben/icons": "workspace:*",
     "@vben/layouts": "workspace:*",
@@ -43,6 +52,7 @@
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
+    "dayjs": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   }

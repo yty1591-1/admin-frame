@@ -582,9 +582,6 @@ importers:
 
   apps/web-admin:
     dependencies:
-      '@vben/access':
-        specifier: workspace:*
-        version: link:../../packages/effects/access
       '@vben/app-kernel':
         specifier: workspace:*
         version: link:../../packages/effects/app-kernel
@@ -655,9 +652,6 @@ importers:
 
   apps/web-biz:
     dependencies:
-      '@vben/access':
-        specifier: workspace:*
-        version: link:../../packages/effects/access
       '@vben/app-kernel':
         specifier: workspace:*
         version: link:../../packages/effects/app-kernel
@@ -697,9 +691,6 @@ importers:
       ant-design-vue:
         specifier: 'catalog:'
         version: 4.2.6(vue@3.5.46(typescript@6.0.3))
-      dayjs:
-        specifier: 'catalog:'
-        version: 1.11.23
       pinia:
         specifier: ^4.0.2
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3))
@@ -1323,6 +1314,9 @@ importers:
       '@vben/common-ui':
         specifier: workspace:*
         version: link:../common-ui
+      '@vben/constants':
+        specifier: workspace:*
+        version: link:../../constants
       '@vben/hooks':
         specifier: workspace:*
         version: link:../hooks
@@ -1359,6 +1353,9 @@ importers:
       ant-design-vue:
         specifier: 'catalog:'
         version: 4.2.6(vue@3.5.46(typescript@6.0.3))
+      dayjs:
+        specifier: 'catalog:'
+        version: 1.11.23
       vue:
         specifier: 3.5.46
         version: 3.5.46(typescript@6.0.3)
