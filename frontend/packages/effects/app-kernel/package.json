@@ -34,6 +34,14 @@
     "./router": {
       "types": "./src/router/index.ts",
       "default": "./src/router/index.ts"
+    },
+    "./api/request": {
+      "types": "./src/api/request.ts",
+      "default": "./src/api/request.ts"
+    },
+    "./main": {
+      "types": "./src/main.ts",
+      "default": "./src/main.ts"
     }
   },
   "dependencies": {
@@ -46,6 +54,7 @@
     "@vben/locales": "workspace:*",
     "@vben/plugins": "workspace:*",
     "@vben/preferences": "workspace:*",
+    "@vben/request": "workspace:*",
     "@vben/stores": "workspace:*",
     "@vben/styles": "workspace:*",
     "@vben/types": "workspace:*",
