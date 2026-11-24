@@ -133,7 +133,7 @@
 |----|------|------|------|
 | FE-B-01 | 产物注入 `VITE_APP_GIT_SHA` / `VITE_APP_BUILD_TIME` / `VITE_APP_VERSION`，写入 `index.html` meta 与运行时全局 | `frontend/internal/vite-config/src/plugins/inject-metadata.ts` | ✅ 2026-11-24：`index.html` 注入 `x-app-version` / `x-app-git-sha` / `x-app-build-time`；`__VBEN_ADMIN_METADATA__` 与 `VITE_APP_*` 可读；关于页展示版本与 SHA；`check-frontend-build-meta.sh`（第 14/14 步）断言两 app 产物 SHA 为 40 位十六进制（构建后实测 `f70fb27…`）；`VITE_APP_GIT_SHA` 纳入 turbo `globalEnv` 缓存键，构建缓存命中不会产出旧 SHA（2026-11-24 修正）；⬜ 镜像 tag 含 SHA 见 FE-B-02/03 |
 | FE-B-02 | Dockerfile 改 multi-target（`web-admin` / `web-biz`），钉死 Node/pnpm 版本，构建参数白名单校验，禁止任何密钥入 build arg | `frontend/scripts/deploy/Dockerfile` | ✅ 2026-11-24：双 target（`web-admin`/`web-biz`，`production` 兼容别名），`NODE_VERSION=24.16.0`/`PNPM_VERSION=11.16.0` 钉死并校验与 `.node-version`/`packageManager` 一致；`check-frontend-dockerfile.sh`（第 12/14 步）校验 ARG 白名单、禁 `VITE_*`/密钥参数、禁 COPY `.env*`、`.dockerignore` 忽略项；`docker build --target web-admin` 与 `--target web-biz` 均本地构建成功，镜像 `vben-web-admin:<sha>` / `vben-web-biz:<sha>`；容器内 `index.html` meta SHA 与 HEAD 一致，`curl -sI` 实测 6 个安全头 + `Cache-Control: no-store`；⬜ CI 推送与 SHA tag 流水线见 FE-B-03 |
-| FE-B-03 | `image.yml` 增加前端 matrix：两镜像构建推送、digest 写入发布清单 | `.github/workflows/image.yml` | Release 清单含两个前端镜像 digest；无 `latest` |
+| FE-B-03 | `image.yml` 增加前端 matrix：两镜像构建推送、digest 写入发布清单 | `.github/workflows/image.yml` | ✅ 2026-11-24（静态件）：matrix `include` 扩到 7 镜像（后端 5 + `web-admin`/`web-biz`），每项带 `context`/`dockerfile`，前端 `context: frontend`、`file: frontend/scripts/deploy/Dockerfile`、`target` 即镜像名；`GIT_SHA=${GITHUB_SHA}` 仅传前端，后端仍走 `CMD/VERSION/COMMIT/BUILD_TIME`；标签沿用 `sha-<short>` + semver + `latest=false`（RELS-01）；release 清单收集 `web-admin`/`web-biz` digest 进 `images.json`，SBOM/签名/Trivy 按 digest 复用；`check-frontend-dockerfile.sh` 第 6 段断言 matrix/标签/digest 收集。⬜ GitHub 首跑（push `v*`）待远端验证 |
 | FE-B-04 | Helm 增加前端 workload（Deployment/Service/Ingress + nginx ConfigMap），A/B 端独立入口 | `deploy/helm/` | `helm template` 渲染通过；kind 冒烟可访问两端 |
 | FE-B-05 | 新增 `frontend/.env.example`（无密钥）与环境变量白名单；构建期检出未声明变量即失败 | `frontend/.env.example`、`frontend/internal/vite-config/src/utils/env.ts` | ✅ 2026-11-24：根与两 app 各一份 `.env.example`（无密钥）；`DECLARED_ENV_KEYS` 白名单 + `assertDeclaredEnv`，`VITE_BOGUS_FLAG` 实测构建 exit 1（`未声明的构建期环境变量：VITE_BOGUS_FLAG`）；4 例单测；`apps/*/.env` 已加入 .gitignore |
 | FE-B-06 | 发布与回滚：`release/CHECKLIST.md` 前端节、`RELEASE_STANDARDS.md` 条文、回滚 runbook、staging 演练记录 | `docs/release/CHECKLIST.md`、`docs/RELEASE_STANDARDS.md`、`docs/runbooks/`、`docs/incident/drills/` | 演练记录含「发布 N → 回滚 N-1 → 页面可用」；回滚步骤可被他人照做 |
@@ -229,7 +229,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-G-08 | 待指派 | 已完成 | 2026-11-23：`docs/README.md`、根 `README.md`、`ci.yml` 头注释统一 CI-01～CI-18；`CI_STANDARDS.md` CI-18 与 §3.1 映射；`check-ci-paths.sh` PATTERN 含 `frontend` 并扩到 ts/tsx/vue/js/mjs/cjs（151 refs）；`ARCHITECTURE.md`、`rbac-iam.md` 旧编号更正；`make check-ci-paths` exit 0，注入 `frontend/__nonexistent__/probe.ts` 实测 make exit 2 |
 | FE-B-01 | 已交付 | ✅ 已完成（2026-11-24，见 5.2） | SHA 注入 |
 | FE-B-02 | 待指派 | 已完成 | 2026-11-24：multi-target（`web-admin`/`web-biz`）；Node/pnpm 钉死并与 `.node-version`/`packageManager` 校验一致；ARG 白名单脚本 `check-frontend-dockerfile.sh`（第 12/14 步）禁 `VITE_*`/密钥参数；`docker build --target web-biz` 成功 |
-| FE-B-03 | 待指派 | 未开始 | 前端 matrix + digest |
+| FE-B-03 | 待指派 | 已完成（静态件） | 2026-11-24：matrix 7 镜像、`GIT_SHA` 注入、`latest=false`、release digest 收集；⬜ 远端首跑 |
 | FE-B-04 | 待指派 | 未开始 | Helm 前端 workload |
 | FE-B-05 | 已交付 | ✅ 已完成（2026-11-24，见 5.2） | env 模板 + 白名单 |
 | FE-B-06 | 待指派 | 未开始 | 发布/回滚演练 |
@@ -265,7 +265,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] `apps/*` 有冒烟用例，覆盖率阈值生效（FE-G-06 / FE-T-01 / FE-T-03；2026-11-23）
 - [x] `engineStrict`、dependabot npm、`pnpm audit` 入 CI（FE-G-07）
 - [x] 文档索引收敛（FE-G-08 / FE-D-02～04；2026-11-23）
-- [x] 产物含 git SHA（FE-B-01）；[x] 双端镜像可构建（FE-B-02）；[ ] 镜像发布带 SHA tag（FE-B-03）
+- [x] 产物含 git SHA（FE-B-01）；[x] 双端镜像可构建（FE-B-02）；[x] 镜像发布带 SHA tag（FE-B-03，配置已就位，⬜ 远端首跑）
 - [ ] Helm 前端 workload 渲染通过，kind 冒烟两端可访问（FE-B-04）
 - [x] `.env.example` 存在且无密钥；未声明变量构建失败（FE-B-05）
 - [ ] staging 完成一次发布 + 回滚演练（FE-B-06）

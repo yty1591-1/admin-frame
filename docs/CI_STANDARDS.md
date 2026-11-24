@@ -152,16 +152,18 @@
 |----|------|
 | 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
 | 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
-| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05） |
+| 镜像名 | `<registry>/<owner>/<cmd>`（后端 admin-api / biz-api / c-api / worker / migrate 与前端 web-admin / web-biz 各自独立，RELS-05） |
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
-| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
-| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
+| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译；前端镜像走 buildx（QEMU 下安装依赖并构建，缓存 scope 按镜像名隔离） |
+| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03）；前端：`GIT_SHA` 作为 build arg 注入 `GITHUB_SHA`/`VITE_APP_GIT_SHA`，产物 `index.html` 的 `x-app-git-sha` 与 tag 同源（FE-B-01/FE-B-03） |
 | 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
 | SBOM | 按推送后的 **digest** 生成 CycloneDX，作为 `sbom-<cmd>` artifact 上传（缺文件即失败）；同一 digest 上以 `cosign attest --type cyclonedx` 附加（RELS-13） |
 | 签名 | `cosign sign`（keyless，`id-token: write`）签 **digest**，不签 tag；cosign 版本经 `COSIGN_VERSION` 钉扎（RELS-13） |
 | 验签 | 不在本流水线：由 `release.yml` 的 `verify` job 在部署前完成（RELS-14）；本流水线只负责「签得对」 |
 | 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
+| 构建上下文 | matrix 每项带 `context` / `dockerfile`：后端为仓库根 + 根 `Dockerfile`，前端为 `frontend/` + `frontend/scripts/deploy/Dockerfile`，`target` 即镜像名 |
+| 发布清单 | `release` job 汇总 7 个镜像的 digest 到 `images.json`（含 `web-admin`、`web-biz`），随 `v*` tag 的 GitHub Release 资产发布；任一无 digest 即失败 |
 
 - 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备），`check-sbom.sh` 校验 SBOM/签名/验签结构（SB-01～SB-11）。
 - 供应链门禁是**静态**的：`make check-sbom` 不联网、不需要 cosign，因此可在合并门禁里跑；真实密码学链路由 `release.yml` 首跑与 `scripts/ci/supply-chain-rehearsal.sh` 覆盖。

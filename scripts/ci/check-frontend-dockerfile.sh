@@ -82,3 +82,23 @@ for pattern in node_modules dist .env; do
 done
 
 echo "OK: Dockerfile 双 target、版本钉死与 build arg 白名单校验通过"
+
+# 6. 发版流水线（FE-B-03）：前端镜像进 image.yml matrix，tag 禁 latest，digest 进 release 清单。
+IY="${ROOT}/.github/workflows/image.yml"
+[[ -f "${IY}" ]] || fail "missing ${IY}"
+
+for app in web-admin web-biz; do
+  grep -qE "^          - cmd: ${app}$" "${IY}" || fail "image.yml matrix 缺少前端镜像 ${app}"
+done
+grep -qE '^            context: frontend$' "${IY}" || fail "image.yml 前端镜像 context 必须为 frontend"
+grep -qF 'dockerfile: frontend/scripts/deploy/Dockerfile' "${IY}" ||
+  fail "image.yml 前端镜像未指向 frontend/scripts/deploy/Dockerfile"
+grep -qF 'GIT_SHA=${GITHUB_SHA}' "${IY}" || fail "image.yml 未把 GIT_SHA 传入前端镜像构建"
+grep -qE '^            latest=false$' "${IY}" || fail "image.yml metadata 必须禁 latest（RELS-01）"
+grep -qE '^            type=sha,format=short,prefix=sha-$' "${IY}" || fail "image.yml 缺少 sha- 标签"
+grep -qE '^            type=semver,pattern=\{\{version\}\}' "${IY}" || fail "image.yml 缺少 semver 标签"
+grep -qF 'for cmd in admin-api biz-api c-api worker migrate web-admin web-biz; do' "${IY}" ||
+  fail "release 清单未收集前端镜像 digest（images.json 必须含 web-admin/web-biz）"
+grep -qE 'format: cyclonedx' "${IY}" || fail "image.yml 缺少 CycloneDX SBOM"
+
+echo "OK: image.yml 前端镜像、标签规则与 digest 收集校验通过"
