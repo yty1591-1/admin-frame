@@ -136,7 +136,7 @@
 |----|------|------|
 | FE-18 | 组件复用优先：同一 UI 片段在两个应用出现两次即上移 `packages/effects/*` 或 `packages/@core/*`；禁止跨应用复制组件后再改；组件 props 必须声明类型，禁止 `any` 逃逸 | eslint / `check:type`（✅ 全仓 32 包 + 2 app） |
 | FE-19 | 样式：优先 Tailwind 工具类；全局样式只允许在 `packages/styles`；CSS 层顺序由 `internal/vite-config` 的 `css-layer` 插件强制（✅），不得绕过；`!important` 必须注释理由 | stylelint（🟡 仅 lefthook staged）+ Review |
-| FE-20 | 文案与资源：用户可见文案必须走 `$t()` + `locales`（禁止硬编码中文）；新增页面同步 `langs/<locale>/*.json`；图标走 `@vben/icons`。**上传与预览**：扩展名 + MIME 双白名单，SVG 默认禁止；预览新窗口必须 `noopener,noreferrer`；非图片文件走下载而非内联打开 | stylelint / cspell（🟡 不含 `.vue`）/ 单测（⬜） |
+| FE-20 | 文案与资源：用户可见文案必须走 `$t()` + `locales`（禁止硬编码中文）；新增页面同步 `langs/<locale>/*.json`；图标走 `@vben/icons`。**上传与预览**：扩展名 + MIME 双白名单（`validateUploadFile`），SVG 默认禁止（可显式 `allowSvg`）；MIME 为空时只按扩展名判定；预览新窗口必须 `noopener,noreferrer`；非图片文件走 `downloadFile` 下载而非内联打开；服务端仍需复核类型与内容 | stylelint / cspell / 单测（✅ 2026-11-24：`packages/utils/src/helpers/__tests__/upload.test.ts` 11 例：白名单、SVG 拒绝与放行、伪 MIME、空 MIME、下载锚点） |
 
 ---
 
@@ -267,6 +267,7 @@
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
 | `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
+| 上传类型双白名单（FE-20） | ✅ 2026-11-24：`@vben/utils` 新增 `validateUploadFile`（扩展名 + MIME，SVG 默认禁）与 `downloadFile`；两 app Upload 适配器接入，非图片预览改为下载；11 例单测 | `frontend/packages/utils/src/helpers/upload.ts`、`frontend/apps/*/src/adapter/component/index.ts` |
 | v-access 更新语义（FE-16） | ✅ 2026-11-24：指令同时实现 `mounted` + `updated`，用 `display: none` 隐藏/恢复（权限快照异步到达与回收均生效）；3 例单测，删掉 `updated` 即 exit 1 | `frontend/packages/effects/access/src/directive.ts`、`frontend/packages/effects/access/src/__tests__/directive.test.ts` |
 | 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |
 | XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |

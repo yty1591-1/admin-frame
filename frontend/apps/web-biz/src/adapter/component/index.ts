@@ -64,7 +64,7 @@ import {
 import { useSortable } from '@vben/hooks';
 import { IconifyIcon } from '@vben/icons';
 import { $t } from '@vben/locales';
-import { isEmpty } from '@vben/utils';
+import { downloadFile, isEmpty, validateUploadFile } from '@vben/utils';
 
 import { message, Modal, notification } from 'ant-design-vue';
 
@@ -238,11 +238,11 @@ async function previewImage(
   visible: Ref<boolean>,
   fileList: Ref<UploadProps['fileList']>,
 ) {
-  // 非图片文件直接打开链接
+  // 非图片文件走下载，避免内联打开同源 HTML 执行脚本（FE-SEC-06）
   if (!isImageFile(file)) {
     const url = file.url || file.preview;
     if (url) {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      downloadFile(url, file.name);
     } else {
       message.error($t('ui.formRules.previewWarning'));
     }
@@ -434,6 +434,18 @@ const withPreviewUpload = () => {
         file: UploadFile,
         originFileList: Array<File>,
       ) => {
+        // 扩展名 + MIME 双白名单，SVG 默认禁（FE-SEC-06）；服务端仍需复核
+        const validation = validateUploadFile(file);
+        if (!validation.ok) {
+          message.error(
+            $t('ui.formRules.uploadTypeLimit', [
+              validation.extension || validation.mime || file.name || '',
+            ]),
+          );
+          file.status = 'removed';
+          return false;
+        }
+
         // 文件大小限制
         if (maxSize.value && (file.size || 0) / 1024 / 1024 > maxSize.value) {
           message.error($t('ui.formRules.sizeLimit', [maxSize.value]));

@@ -9,7 +9,8 @@
     "startWith": "{0}必須以 {1} 開頭",
     "invalidURL": "請輸入有效的連結",
     "sizeLimit": "檔案大小不能超過 {0}MB",
-    "previewWarning": "無法開啟檔案，沒有可用的URL或預覽地址"
+    "previewWarning": "無法開啟檔案，沒有可用的URL或預覽地址",
+    "uploadTypeLimit": "檔案類型不支援：{0}"
   },
   "actionTitle": {
     "edit": "修改{0}",
