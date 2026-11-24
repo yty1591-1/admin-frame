@@ -7,6 +7,12 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1 status
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1 migrate
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1 start -NoBuild -Migrate
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1 start -Strict
+#
+# 启动策略（降级启动，默认）：
+#   config-api 是硬前置，未就绪则整体失败并回滚；
+#   worker / admin-api / biz-api / c-api 任一启动失败只记录，不停止已起进程，
+#   便于打开 Admin /setup/install 修复配置。-Strict 恢复「全有或全无」。
 #
 # 环境变量文件默认 scripts/prod/.env（从 env.example 复制）。
 # 最小启动：不自动 begin/apply/complete；业务配置用 Admin /setup/install。
@@ -20,6 +26,9 @@ param(
   [switch]$NoBuild,
   [switch]$SkipHealth,
   [switch]$Migrate,
+  # 默认「降级启动」：单个可降级进程失败不回滚已起进程，便于进 Admin 修配置。
+  # -Strict 恢复全有或全无（任一进程失败即停掉全部）。
+  [switch]$Strict,
   [string]$EnvFile = ""
 )
 
@@ -120,6 +129,12 @@ function Import-DotEnv([string]$Path) {
   }
   if (-not $env:CONFIG_API_NAMESPACE_ALLOWLIST) { Die "缺少 CONFIG_API_NAMESPACE_ALLOWLIST" }
   if (-not $env:CONFIG_BOOTSTRAP_GRANT_IDENTITY) { Die "缺少 CONFIG_BOOTSTRAP_GRANT_IDENTITY（prod CC-R-05）" }
+  # prod-like 播种固定 storage.driver=s3，而连接参数属部署侧注入（CONFIG_STANDARDS §3.1.1）。
+  # 缺失时 admin-api / worker / biz-api 都会在 Validate 阶段退出，向导都打不开。
+  if (-not $env:ADMIN_FRAME_STORAGE_S3_BUCKET -or -not $env:ADMIN_FRAME_STORAGE_S3_REGION) {
+    Write-Warn "缺少 ADMIN_FRAME_STORAGE_S3_BUCKET / REGION：prod-like 播种为 storage.driver=s3，业务进程将因 's3 requires bucket and region' 退出"
+    Write-Warn "请在 $Path 补齐（见 scripts/prod/env.example 的部署侧 overlay 段）"
+  }
   Write-Log "已加载环境变量：$Path"
 }
 
@@ -203,11 +218,14 @@ urllib.request.urlopen(r'$url', context=ctx, timeout=2).read()
 
 function Start-Role([string]$Role) {
   $exe = Exe-Path $Role
-  if (-not (Test-Path $exe)) { Die "二进制不存在：$exe" }
+  if (-not (Test-Path $exe)) {
+    Write-Warn "二进制不存在：$exe"
+    return $false
+  }
   $existing = Read-Pid $Role
   if ($existing) {
     Write-Warn "$Role 已在运行（pid=$existing），跳过"
-    return
+    return $true
   }
   $identity = Identity-For $Role
   $nodeId = $NodeIds[$Role]
@@ -239,9 +257,12 @@ function Start-Role([string]$Role) {
   Start-Sleep -Milliseconds 1000
   if ($proc.HasExited) {
     Show-RoleLogs $Role 50
-    Die "$Role 启动即退出 code=$($proc.ExitCode)"
+    Write-Warn "$Role 启动即退出 code=$($proc.ExitCode)"
+    Remove-Item (Join-Path $PidDir "$Role.pid") -ErrorAction SilentlyContinue
+    return $false
   }
   Write-Log "$Role 已启动（pid=$($proc.Id), identity=$identity, node_id=$nodeId）"
+  return $true
 }
 
 function Stop-Role([string]$Role) {
@@ -290,7 +311,8 @@ function Do-Start {
   if (-not $NoBuild) { Build-All }
   if ($Migrate) { Invoke-Migrate }
 
-  Start-Role "config-api"
+  # config-api 是硬前置：它起不来，其余进程与安装向导都不可用，直接回滚。
+  Start-Role "config-api" | Out-Null
   if (-not $SkipHealth) {
     if (-not (Wait-Readyz "config-api" $Ports["config-api"] 120)) {
       Show-RoleLogs "config-api" 50
@@ -300,17 +322,36 @@ function Do-Start {
   }
 
   foreach ($role in @("worker", "admin-api", "biz-api", "c-api")) {
-    Start-Role $role
+    Start-Role $role | Out-Null
     if ($role -eq "worker") { Start-Sleep -Seconds 1 }
   }
 
   # 未完成安装时业务 /readyz 为 503（ADR-0017），不因此失败启动；仅确认进程仍存活。
+  # 默认降级启动：失败进程只汇总，不停已起进程，避免「一处配置错 → Admin 也进不去」。
+  $failed = @()
   foreach ($role in @("worker", "admin-api", "biz-api", "c-api")) {
     if (-not (Read-Pid $role)) {
       Show-RoleLogs $role 50
-      Die "$role 进程已退出"
+      $failed += $role
     }
   }
+
+  if ($failed.Count -gt 0) {
+    if ($Strict) {
+      Write-Warn "以下进程未启动：$($failed -join ', ')（-Strict：回滚全部进程）"
+      Die "启动失败"
+    }
+    Write-Warn "以下进程未启动：$($failed -join ', ')；其余进程保持运行"
+    if (-not (Read-Pid "admin-api")) {
+      Write-Warn "admin-api 未运行，安装向导不可用；请按日志修正配置后重试：make prod-restart"
+    } else {
+      Write-Warn "admin-api 可用，可打开 Admin /setup/install 补齐配置后重启失败进程"
+    }
+    $script:RollbackOnDie = $false
+    Write-Log "降级启动完成。日志：$LogDir"
+    exit 1
+  }
+
   Write-Warn "业务 /readyz 在 install 未 ready 前可为 503；请打开 Admin /setup/install 完成播种"
   $script:RollbackOnDie = $false
   Write-Log "启动完成。日志：$LogDir"

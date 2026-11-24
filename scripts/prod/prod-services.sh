@@ -9,6 +9,7 @@
 #   --skip-health       启动后不等待 /readyz
 #   --env-file <path>   默认 scripts/prod/.env（可从 env.example 复制）
 #   --migrate           start/restart 前执行 migrate up
+#   --strict            任一进程失败即回滚全部（默认降级启动）
 #
 # 说明：
 #   1. 最小启动：config-api ready 后拉起业务进程；不自动 begin/apply/complete
@@ -17,6 +18,8 @@
 #   4. 每个进程注入 CONFIG_SERVICE_IDENTITY 与唯一 ADMIN_FRAME_ID_NODE_ID
 #   5. config-api 健康检查走 mTLS /readyz（Git Bash Schannel curl 无法加载 PEM，改用 python ssl）
 #   6. Windows / WSL：优先转调 prod-services.ps1；Bash 回退路径用 tasklist/taskkill 识别 Windows PID
+#   7. 默认降级启动：config-api 是硬前置；其余进程失败只记录并保持已起进程，
+#      便于打开 Admin /setup/install 修配置；--strict 恢复全有或全无
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -56,6 +59,7 @@ reexec_windows_ps1() {
       --no-build) ps_args+=("-NoBuild") ;;
       --skip-health) ps_args+=("-SkipHealth") ;;
       --migrate) ps_args+=("-Migrate") ;;
+      --strict) ps_args+=("-Strict") ;;
       --env-file)
         [[ $# -ge 2 ]] || return 1
         local ef="$2"
@@ -106,6 +110,7 @@ ENV_FILE="${ENV_FILE:-scripts/prod/.env}"
 NO_BUILD=0
 SKIP_HEALTH=0
 DO_MIGRATE=0
+STRICT=0
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 API_HOST="${API_HOST:-127.0.0.1}"
 ADMIN_API_PORT="${ADMIN_API_PORT:-8081}"
@@ -154,7 +159,7 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 parse_args() {
@@ -174,6 +179,7 @@ parse_args() {
       --no-build) NO_BUILD=1 ;;
       --skip-health) SKIP_HEALTH=1 ;;
       --migrate) DO_MIGRATE=1 ;;
+      --strict) STRICT=1 ;;
       --env-file)
         [[ $# -ge 2 ]] || die "--env-file 需要路径参数"
         ENV_FILE="$2"
@@ -231,6 +237,12 @@ load_env() {
   [[ -n "${CONFIG_API_CLIENT_CERT:-}" && -f "$CONFIG_API_CLIENT_CERT" ]] || die "缺少客户端证书：$CONFIG_API_CLIENT_CERT"
   [[ -n "${CONFIG_API_NAMESPACE_ALLOWLIST:-}" ]] || die "缺少 CONFIG_API_NAMESPACE_ALLOWLIST"
   [[ -n "${CONFIG_BOOTSTRAP_GRANT_IDENTITY:-}" ]] || die "缺少 CONFIG_BOOTSTRAP_GRANT_IDENTITY（prod CC-R-05）"
+  # prod-like 播种固定 storage.driver=s3，而连接参数属部署侧注入（CONFIG_STANDARDS §3.1.1）。
+  # 缺失时 admin-api / worker / biz-api 都会在 Validate 阶段退出，向导都打不开。
+  if [[ -z "${ADMIN_FRAME_STORAGE_S3_BUCKET:-}" || -z "${ADMIN_FRAME_STORAGE_S3_REGION:-}" ]]; then
+    warn "缺少 ADMIN_FRAME_STORAGE_S3_BUCKET / REGION：prod-like 播种为 storage.driver=s3，业务进程将因 's3 requires bucket and region' 退出"
+    warn "请在 $file 补齐（见 scripts/prod/env.example 的部署侧 overlay 段）"
+  fi
   log "已加载环境变量：$file"
 }
 
@@ -498,6 +510,7 @@ do_start() {
     run_migrate
   fi
 
+  # config-api 是硬前置：它起不来，其余进程与安装向导都不可用，直接回滚。
   if ! start_role config-api; then
     do_stop
     exit 1
@@ -514,22 +527,37 @@ do_start() {
 
   local role
   for role in worker admin-api biz-api c-api; do
-    if ! start_role "$role"; then
-      warn "启动失败，回滚"
-      do_stop
-      exit 1
-    fi
+    start_role "$role" || warn "$role 启动失败，继续启动其余进程"
     [[ "$role" == "worker" ]] && sleep 1
   done
+
   # 未完成安装时业务 /readyz 为 503（ADR-0017），不因此失败启动；仅确认进程仍存活。
+  # 默认降级启动：失败进程只汇总，不停已起进程，避免「一处配置错 → Admin 也进不去」。
+  local failed=()
   for role in worker admin-api biz-api c-api; do
     if ! read_pid "$role" >/dev/null; then
       warn "$role 进程已退出，最近日志："
       tail_role_logs "$role" 50
+      failed+=("$role")
+    fi
+  done
+
+  if (( ${#failed[@]} > 0 )); then
+    if [[ "$STRICT" -eq 1 ]]; then
+      warn "以下进程未启动：${failed[*]}（--strict：回滚全部进程）"
       do_stop
       exit 1
     fi
-  done
+    warn "以下进程未启动：${failed[*]}；其余进程保持运行"
+    if ! read_pid admin-api >/dev/null; then
+      warn "admin-api 未运行，安装向导不可用；请按日志修正配置后重试：make prod-restart"
+    else
+      warn "admin-api 可用，可打开 Admin /setup/install 补齐配置后重启失败进程"
+    fi
+    log "降级启动完成。状态：bash scripts/prod/prod-services.sh status；日志：$LOG_DIR"
+    exit 1
+  fi
+
   warn "业务 /readyz 在 install 未 ready 前可为 503；请打开 Admin /setup/install 完成播种"
   log "启动完成。状态：bash scripts/prod/prod-services.sh status；日志：$LOG_DIR"
 }
