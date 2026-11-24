@@ -42,6 +42,14 @@
     "./main": {
       "types": "./src/main.ts",
       "default": "./src/main.ts"
+    },
+    "./api/core/auth": {
+      "types": "./src/api/core/auth.ts",
+      "default": "./src/api/core/auth.ts"
+    },
+    "./store": {
+      "types": "./src/store/index.ts",
+      "default": "./src/store/index.ts"
     }
   },
   "dependencies": {
@@ -62,6 +70,7 @@
     "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
+    "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   }

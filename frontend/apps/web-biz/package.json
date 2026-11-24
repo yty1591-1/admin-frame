@@ -26,7 +26,6 @@
     "@vben/request": "workspace:*",
     "@vben/stores": "workspace:*",
     "@vben/types": "workspace:*",
-    "@vben/utils": "workspace:*",
     "ant-design-vue": "catalog:",
     "pinia": "catalog:",
     "vue": "catalog:",

@@ -27,10 +27,16 @@ const mocks = vi.hoisted(() => {
   return {
     accessStore,
     api: {
+      completePasswordChangeApi: vi.fn(),
+      confirmMfaBindingSessionApi: vi.fn(),
+      disableMfaApi: vi.fn(),
       getMyPermissionsApi: vi.fn(),
       getUserInfoApi: vi.fn(),
       loginApi: vi.fn(),
       logoutApi: vi.fn(),
+      mfaSetupApi: vi.fn(),
+      mfaSetupSessionApi: vi.fn(),
+      mfaVerifyApi: vi.fn(),
     },
     notificationSuccess: vi.fn(),
     resetAllStores: vi.fn(),
@@ -82,7 +88,7 @@ describe('auth store（B 端）', () => {
   });
 
   it('登录直接拿令牌：落库、合并角色、跳转默认首页并提示', async () => {
-    mocks.api.loginApi.mockResolvedValue(tokens);
+    mocks.api.loginApi.mockResolvedValue({ kind: 'token', tokens });
 
     const store = useAuthStore();
     await store.authLogin({ password: 'p', username: 'u' });
@@ -110,7 +116,7 @@ describe('auth store（B 端）', () => {
     mocks.router.currentRoute.value.query = {
       redirect: encodeURIComponent('/orders?page=1'),
     };
-    mocks.api.loginApi.mockResolvedValue(tokens);
+    mocks.api.loginApi.mockResolvedValue({ kind: 'token', tokens });
 
     await useAuthStore().authLogin({ password: 'p', username: 'u' });
 

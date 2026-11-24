@@ -37,7 +37,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text-summary', 'json-summary'],
       reportsDirectory: './.coverage',
-      include: ['src/router/access.ts', 'src/store/auth.ts'],
+      include: ['src/store/auth.ts'],
       exclude: ['**/*.test.ts', '**/__tests__/**'],
       thresholds: {
         branches: 30,
