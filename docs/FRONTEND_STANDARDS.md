@@ -210,7 +210,7 @@
 |----|------|------|
 | FE-21 | 工具链唯一：pnpm（`packageManager` 固定 11.16.0）+ turbo；Node 版本以 `frontend/.node-version` 为准（基线建议 24 LTS，待决）；禁止 npm / yarn 混用；仓库根不得执行 `pnpm install` | `engine-strict`（✅ 2026-11-23：`engineStrict: true`，Node `>=99` 实测 exit 1） |
 | FE-22 | 环境变量只允许 `VITE_*`；**构建期变量等于公开信息**，禁止存放任何密钥/口令。新增变量必须登记 `frontend/.env.example` 与白名单；`internal/vite-config/src/utils/env.ts` 对缺失必填项必须**构建失败**，禁止沿用「全默认值静默降级」 | 构建脚本（✅ 2026-11-24：`assertDeclaredEnv`，未声明变量 exit 1；4 例单测；`.env.example` 三份） |
-| FE-23 | 产物必须可追溯：注入 `VITE_APP_GIT_SHA`、`VITE_APP_BUILD_TIME`、`VITE_APP_VERSION`（meta 与运行时均可读）；镜像 tag 含 git SHA；禁止 `latest`；禁止手工 `scp dist` 上线 | `check-frontend-build-meta.sh`（✅ 2026-11-24，第 13/13 步）+ 镜像 tag（⬜ FE-B-02/03） |
+| FE-23 | 产物必须可追溯：注入 `VITE_APP_GIT_SHA`、`VITE_APP_BUILD_TIME`、`VITE_APP_VERSION`（meta 与运行时均可读）；镜像 tag 含 git SHA；禁止 `latest`；禁止手工 `scp dist` 上线 | `check-frontend-build-meta.sh`（✅ 2026-11-24，第 14/14 步）+ `check-frontend-dockerfile.sh`（✅ 第 12/14 步）+ 镜像 tag 含 SHA（FE-B-02 双 target 已具备，⬜ 发布标签 FE-B-03） |
 | FE-24 | 发布：`web-admin` / `web-biz` 各自独立镜像与 workload，Dockerfile 支持 multi-target；发布走 `release/CHECKLIST.md` 前端节；回滚步骤进 runbook 并至少演练一次 | `check-release` + 演练记录（⬜） |
 
 ---
@@ -276,9 +276,9 @@
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
 | `make ci` | ⬜ 40+ 检查仍无前端；引入独立目标 `make frontend-check`（刻意不并入，pnpm install 依赖网络） | `Makefile` |
-| 安全头 / CSP | 🟡 2026-11-23：`security-headers.conf` 下发 5 个安全头 + `Content-Security-Policy-Report-Only`，移除 `ACAO:*`；`/index.html` `no-store` + 两处 include；`check-frontend-headers.sh` 静态校验入第 5/13 步（删头/去 no-store 实测 exit 1）；⬜ `curl -sI` 实机取证待部署 | `frontend/scripts/deploy/nginx.conf`、`frontend/scripts/deploy/security-headers.conf`、`scripts/ci/check-frontend-headers.sh` |
+| 安全头 / CSP | 🟡 2026-11-23：`security-headers.conf` 下发 5 个安全头 + `Content-Security-Policy-Report-Only`，移除 `ACAO:*`；`/index.html` `no-store` + 两处 include；`check-frontend-headers.sh` 静态校验入第 5/14 步（删头/去 no-store 实测 exit 1）；⬜ `curl -sI` 实机取证待部署 | `frontend/scripts/deploy/nginx.conf`、`frontend/scripts/deploy/security-headers.conf`、`scripts/ci/check-frontend-headers.sh` |
 | 错误呈现（FE-SEC-03） | ✅ 2026-11-24：`resolveRequestErrorMessage` 按 `code` 映射本地文案 + 透出 `trace_id`（清洗/截断），不再直出服务端 `message`；11 例单测（改坏映射即 exit 1）；两 app `request.ts` 接入 | `frontend/packages/effects/request/src/request-client/error-message.ts`、`frontend/apps/*/src/api/request.ts` |
-| 产物 SHA | ✅ 2026-11-24：`index.html` 注入 `x-app-version` / `x-app-git-sha` / `x-app-build-time`（`__VBEN_ADMIN_METADATA__` 与 `VITE_APP_*` 同源）；关于页展示版本与提交号；`check-frontend-build-meta.sh` 第 13/13 步断言两 app 产物 SHA 为 40 位十六进制（实测 `f70fb27…`） | `frontend/internal/vite-config/src/plugins/inject-metadata.ts`、`scripts/ci/check-frontend-build-meta.sh` |
+| 产物 SHA | ✅ 2026-11-24：`index.html` 注入 `x-app-version` / `x-app-git-sha` / `x-app-build-time`（`__VBEN_ADMIN_METADATA__` 与 `VITE_APP_*` 同源）；关于页展示版本与提交号；`check-frontend-build-meta.sh` 第 14/14 步断言两 app 产物 SHA 为 40 位十六进制；`VITE_APP_GIT_SHA` 纳入 turbo `globalEnv`，缓存命中不会复用旧 SHA。镜像双 target 见 FE-B-02 | `frontend/internal/vite-config/src/plugins/inject-metadata.ts`、`scripts/ci/check-frontend-build-meta.sh` |
 | 环境变量白名单（FE-22） | ✅ 2026-11-24：根与两 app 各一份 `.env.example`（无密钥）；`DECLARED_ENV_KEYS` + `assertDeclaredEnv`，未声明 `VITE_BOGUS_FLAG` 实测构建 exit 1；4 例单测；`apps/*/.env` 已 gitignore | `frontend/internal/vite-config/src/utils/env.ts`、`frontend/.env.example`、`frontend/apps/*/.env.example` |
 | 发布 | ⬜ Dockerfile 只 COPY `web-admin/dist`；`deploy/` 无前端 workload | `frontend/scripts/deploy/Dockerfile` |
 | 供应链 | ✅ `engineStrict: true` + `minimumReleaseAge: 1440` + audit 0 high（11 个 overrides）+ dependabot npm `/frontend` | `frontend/pnpm-workspace.yaml`、`.github/dependabot.yml` |

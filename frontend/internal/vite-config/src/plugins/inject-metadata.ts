@@ -73,6 +73,10 @@ async function resolveMonorepoDependencies() {
  * 两者都不可用时返回 `unknown`，由 CI 的构建元数据断言拦截（FE-B-01）。
  */
 function resolveGitSha(cwd: string): string {
+  const fromEnv = process.env.VITE_APP_GIT_SHA;
+  if (fromEnv && /^[\da-f]{40}$/i.test(fromEnv)) {
+    return fromEnv.toLowerCase();
+  }
   const fromCi =
     process.env.GITHUB_SHA ??
     process.env.CI_COMMIT_SHA ??
