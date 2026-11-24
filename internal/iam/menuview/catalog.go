@@ -15,11 +15,21 @@ import (
 //
 // 新增页面时在此追加，并在同一变更中创建对应 .vue 文件，否则测试失败。
 var adminComponents = []string{
+	"/_core/profile/index.vue",
+	"/iam/binding/index.vue",
+	"/iam/breakglass/index.vue",
+	"/iam/change/index.vue",
+	"/iam/check/index.vue",
+	"/iam/permission/index.vue",
+	"/iam/sod/index.vue",
+	"/iam/template/index.vue",
+	"/system/audit/index.vue",
 	"/system/config/edit/index.vue",
 	"/system/config/items/index.vue",
 	"/system/config/releases/index.vue",
 	"/system/config/secrets/index.vue",
 	"/system/config/versions/index.vue",
+	"/system/menu/index.vue",
 	"/system/role/index.vue",
 }
 

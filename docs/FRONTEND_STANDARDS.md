@@ -105,8 +105,8 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-14 | 路由来源：业务页面由后端菜单 + `pageMap` 动态生成；静态路由只保留登录、403、404、重定向等基础设施页面 | 单测（⬜） |
-| FE-15 | 菜单 `component` 必须与前端文件**双向一致**；未命中必须显式报错并提示，禁止只 `console.error` 后静默退化为 `not-found` | `catalog_test.go`（✅ 单向）+ 反向校验（⬜） |
+| FE-14 | 路由来源：业务页面由后端菜单 + `pageMap` 动态生成；静态路由只保留登录、403、404、重定向等基础设施页面 | 单测（✅ 2026-11-24：`apps/*/src/router/__tests__/access.test.ts` 断言 pageMap 命中） |
+| FE-15 | 菜单 `component` 必须与前端文件**双向一致**；未命中必须显式报错并提示，禁止只 `console.error` 后静默退化为 `not-found` | `catalog_test.go`（✅ 单向 + 反向 seed 扫描 2026-11-24）+ 运行时未命中显式报错（⬜） |
 | FE-16 | 前端权限只做**展示控制**；每个新增或变更的接口必须由服务端 `perm()` 兜底。`v-access` 只负责隐藏，不承担鉴权；`*` 不代表全权限。按钮级权限点必须登记 `docs/iam/PERMISSIONS.md`。指令必须同时实现 `mounted` 与 `updated`：权限快照异步到达或权限被回收时要在同一 DOM 上恢复/隐藏（用 `display: none`，不得依赖移除后重挂） | 单测（✅ 2026-11-24：`packages/effects/access/src/__tests__/directive.test.ts` 3 例；去掉 `updated` 即 exit 1）+ Review checklist（服务端 `perm()`） |
 | FE-17 | 守卫：未登录跳登录页并携带 `redirect`（白名单规则见 FE-SEC-07）；403 / 404 有独立页面；刷新恢复会话必须单飞，禁止并发刷新 | 单测（✅ redirect 白名单 2026-11-24；刷新单飞/403/404 走 Review） |
 
@@ -289,7 +289,7 @@
 ## 附录 A：新增页面自检表
 
 - [ ] `views/<域>/<页>/index.vue` 已建，目录与路由 name 一致；
-- [ ] `pageMap` 与后端 `component` 双向命中（用 `FE-T-02` 的反向用例验证）；
+- [x] `pageMap` 与后端 `component` 双向命中（用 `FE-T-02` 的反向用例验证）；
 - [ ] 白名单、seed、权限点、`PERMISSIONS.md`、`page.json` 五处同步；
 - [ ] 请求全部走 `request.ts`，分页 `page_size ≤ 100`；
 - [ ] 按钮权限用 `v-access`，且对应接口服务端有 `perm()`；
