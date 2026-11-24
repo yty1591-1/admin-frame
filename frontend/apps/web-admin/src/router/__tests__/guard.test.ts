@@ -39,6 +39,14 @@ vi.mock('@vben/stores', () => ({
   useUserStore: () => mocks.userStore,
 }));
 vi.mock('@vben/utils', () => ({
+  resolveSafeRedirect: (value: unknown, fallback: string) => {
+    try {
+      const decoded = decodeURIComponent(String(value ?? ''));
+      return decoded.startsWith('/') ? decoded : fallback;
+    } catch {
+      return fallback;
+    }
+  },
   startProgress: mocks.startProgress,
   stopProgress: mocks.stopProgress,
 }));

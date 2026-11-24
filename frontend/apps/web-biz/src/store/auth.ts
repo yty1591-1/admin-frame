@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router';
 import { LOGIN_PATH } from '@vben/constants';
 import { preferences } from '@vben/preferences';
 import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
+import { resolveSafeRedirect } from '@vben/utils';
 
 import { notification } from 'ant-design-vue';
 import { defineStore } from 'pinia';
@@ -61,7 +62,9 @@ export const useAuthStore = defineStore('auth', () => {
       | string
       | undefined;
     await router.push(
-      redirect ? decodeURIComponent(redirect) : preferences.app.defaultHomePath,
+      redirect
+        ? resolveSafeRedirect(redirect, preferences.app.defaultHomePath)
+        : preferences.app.defaultHomePath,
     );
 
     if (userInfo?.realName) {

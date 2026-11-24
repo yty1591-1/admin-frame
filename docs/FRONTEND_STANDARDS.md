@@ -108,7 +108,7 @@
 | FE-14 | 路由来源：业务页面由后端菜单 + `pageMap` 动态生成；静态路由只保留登录、403、404、重定向等基础设施页面 | 单测（⬜） |
 | FE-15 | 菜单 `component` 必须与前端文件**双向一致**；未命中必须显式报错并提示，禁止只 `console.error` 后静默退化为 `not-found` | `catalog_test.go`（✅ 单向）+ 反向校验（⬜） |
 | FE-16 | 前端权限只做**展示控制**；每个新增或变更的接口必须由服务端 `perm()` 兜底。`v-access` 只负责隐藏，不承担鉴权；`*` 不代表全权限。按钮级权限点必须登记 `docs/iam/PERMISSIONS.md`。指令必须同时实现 `mounted` 与 `updated`：权限快照异步到达或权限被回收时要在同一 DOM 上恢复/隐藏（用 `display: none`，不得依赖移除后重挂） | 单测（✅ 2026-11-24：`packages/effects/access/src/__tests__/directive.test.ts` 3 例；去掉 `updated` 即 exit 1）+ Review checklist（服务端 `perm()`） |
-| FE-17 | 守卫：未登录跳登录页并携带 `redirect`（白名单规则见 FE-SEC-07）；403 / 404 有独立页面；刷新恢复会话必须单飞，禁止并发刷新 | 单测（⬜） |
+| FE-17 | 守卫：未登录跳登录页并携带 `redirect`（白名单规则见 FE-SEC-07）；403 / 404 有独立页面；刷新恢复会话必须单飞，禁止并发刷新 | 单测（✅ redirect 白名单 2026-11-24；刷新单飞/403/404 走 Review） |
 
 ### 4.1 新增页面六步（缺一即 Review 不通过）
 
@@ -168,7 +168,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-07 | `redirect` 参数必须走白名单（仅站内相对路径），并容错 `decodeURIComponent`（畸形编码不得白屏）；越界地址回落到首页 | 单测（⬜） |
+| FE-SEC-07 | `redirect` 参数必须走白名单（仅站内相对路径），并容错 `decodeURIComponent`（畸形编码不得白屏）；越界地址回落到首页 | 单测（✅ 2026-11-24：`packages/utils/src/helpers/__tests__/redirect.test.ts` 9 例——畸形编码/协议相对/绝对 URL/伪协议/反斜杠/控制字符/双次编码全部回退；去掉 origin 校验即 exit 1）；两 app 的 `router/guard.ts` 与 `store/auth.ts` 接入 `resolveSafeRedirect` |
 
 ### 6.5 供应链
 
@@ -270,6 +270,7 @@
 | 上传类型双白名单（FE-20） | ✅ 2026-11-24：`@vben/utils` 新增 `validateUploadFile`（扩展名 + MIME，SVG 默认禁）与 `downloadFile`；两 app Upload 适配器接入，非图片预览改为下载；11 例单测 | `frontend/packages/utils/src/helpers/upload.ts`、`frontend/apps/*/src/adapter/component/index.ts` |
 | v-access 更新语义（FE-16） | ✅ 2026-11-24：指令同时实现 `mounted` + `updated`，用 `display: none` 隐藏/恢复（权限快照异步到达与回收均生效）；3 例单测，删掉 `updated` 即 exit 1 | `frontend/packages/effects/access/src/directive.ts`、`frontend/packages/effects/access/src/__tests__/directive.test.ts` |
 | 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |
+| 登录回跳白名单（FE-SEC-07） | ✅ 2026-11-24：`resolveSafeRedirect`（仅站内相对路径、解码容错、origin 校验）；两 app guard/store 接入；9 例单测（去掉 origin 校验即 exit 1） | `frontend/packages/utils/src/helpers/redirect.ts`、`frontend/apps/*/src/router/guard.ts`、`frontend/apps/*/src/store/auth.ts` |
 | XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
