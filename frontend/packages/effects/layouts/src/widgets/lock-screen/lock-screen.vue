@@ -23,7 +23,7 @@ withDefaults(defineProps<Props>(), {
   avatar: '',
 });
 
-defineEmits<{ toLogin: [] }>();
+const emit = defineEmits<{ toLogin: [] }>();
 
 const { locale } = useI18n();
 const accessStore = useAccessStore();
@@ -63,13 +63,20 @@ const [Form, { getFieldComponentRef, getRawValues, setFieldError, validate }] =
 
 async function handleSubmit() {
   const { valid } = await validate();
-  if (valid) {
-    const { password } = await getRawValues();
-    if (lockScreenPassword?.value === password) {
-      accessStore.unlockScreen();
-    } else {
-      await setFieldError('password', $t('authentication.passwordErrorTip'));
-    }
+  if (!valid) {
+    return;
+  }
+  // FE-SEC-05：锁屏口令只存内存态；刷新后口令丢失，不能再用本地比对「解锁」，
+  // 必须走重新认证（登出并回登录页），避免用可被同源脚本读取的本地值放行。
+  if (!lockScreenPassword?.value) {
+    emit('toLogin');
+    return;
+  }
+  const { password } = await getRawValues();
+  if (lockScreenPassword.value === password) {
+    accessStore.unlockScreen();
+  } else {
+    await setFieldError('password', $t('authentication.passwordErrorTip'));
   }
 }
 

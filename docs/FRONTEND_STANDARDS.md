@@ -147,7 +147,9 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-05 | **禁止持久化用户输入的账号口令**，包括锁屏密码（`lockScreenPassword`）。锁屏改为「重新认证」或仅内存态；禁止把口令写入任何 Storage、日志或埋点 | 单测断言 `persist.pick` 不含该键（⬜） |
+| FE-SEC-05 | **禁止持久化用户输入的账号口令**，包括锁屏密码（`lockScreenPassword`）。锁屏改为「重新认证」或仅内存态；禁止把口令写入任何 Storage、日志或埋点 | 单测（✅ 2026-11-24：`packages/stores/src/__tests__/access.test.ts` 断言 `ACCESS_STORE_PERSIST_KEYS` 不含 `lockScreenPassword`；把该键加回即 exit 1） |
+
+锁屏实现约定：`lockScreenPassword` 只存内存；`isLockScreen` 仍持久化。刷新后口令丢失，锁屏页提交即 `emit('toLogin')` 走重新认证（登出回登录页），不得再用本地口令比对放行。
 
 ### 6.3 其他持久化与登出
 
@@ -258,6 +260,7 @@
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
 | `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
+| 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |
 | XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
