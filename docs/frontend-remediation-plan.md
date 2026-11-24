@@ -147,7 +147,7 @@
 | FE-S-03 | 令牌/凭据条规：禁新增 Web Storage 持久化令牌；锁屏改「重新认证」或仅内存态；写明「SecureLS 是混淆不是加密」 | `docs/FRONTEND_STANDARDS.md` §6、`frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/setup.ts` | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（抽为 `ACCESS_STORE_PERSIST_KEYS`），单测 3 例（加回键即 exit 1）；锁屏口令仅内存，刷新后提交走 `toLogin` 重新认证；SecureLS 注释写明混淆非加密、`VITE_*` 密钥进 bundle |
 | FE-S-04 | 权限分工成文：前端权限仅展示控制，每个新增/变更接口必须服务端 `perm()` 兜底；补齐 `v-access` 的 `updated` 语义 | `docs/FRONTEND_STANDARDS.md` §4、`v-access` 指令实现、PR 模板 | ✅ 2026-11-24：§4.2 分工条文 + FE-16 更新；`v-access` 加 `updated` 并用 `display:none` 隐藏/恢复；PR 双模板加「服务端 perm()」勾选项；单测 3 例（删 `updated` 即 exit 1） |
 | FE-S-05 | 上传/预览收紧：扩展名 + MIME 双白名单（SVG 默认关）；预览 `noopener,noreferrer`；非图片走下载 | `frontend/packages/utils/src/helpers/upload.ts`、`frontend/apps/*/src/adapter/component/index.ts` | ✅ 2026-11-24：`validateUploadFile` 双白名单 + SVG 默认禁 + `downloadFile`；两 app Upload 适配器接入，非图片预览改下载；11 例单测（`.svg`/`.html`/伪 MIME 被拒，`allowSvg` 放行，下载锚点带 `noopener noreferrer`）；`uploadTypeLimit` 文案三语 |
-| FE-S-06 | 错误呈现：按 `code` 映射固定文案，禁止直出服务端 `message`；展示 `trace_id`；MFA 页 `no-store` + `frame-ancestors 'none'` | `frontend/apps/web-admin/src/api/request.ts`、MFA 页面、nginx | mock `{code:50000,message:"pq: ..."}` → UI 不显示原文；`curl -I` 见 `no-store` |
+| FE-S-06 | 错误呈现：按 `code` 映射固定文案（不直出服务端 `message`）；透出 `trace_id`；MFA 页 `no-store` + `frame-ancestors 'none'` | `frontend/packages/effects/request`、`frontend/apps/*/src/api/request.ts`、`frontend/scripts/deploy/{nginx.conf,security-headers.conf}` | ✅ 2026-11-24：`resolveRequestErrorMessage` 11 例单测（改坏映射即 exit 1）；两 app 接入；`/index.html` `no-store` + Pragma/Vary，headers 脚本校验（删 no-store 即 exit 1）；⬜ `curl -I` 待部署 |
 | FE-S-07 | 登录 `redirect` 白名单 + `decodeURIComponent` 容错；登出/401/429/204 行为用例 | `frontend/apps/web-admin/src/store/auth.ts`、`router/guard.ts`、单测 | 构造畸形 `redirect` 不白屏；越界地址被拒 |
 
 ### 5.4 P1 质量与契约（FE-T）
@@ -238,7 +238,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-S-03 | 待指派 | 已完成 | 2026-11-24：`ACCESS_STORE_PERSIST_KEYS` 去 `lockScreenPassword`、单测 3 例、锁屏刷新走重新认证、SecureLS 注释 |
 | FE-S-04 | 待指派 | 已完成 | 2026-11-24：§4.2 分工、FE-16 updated 语义 + 3 例单测、PR 双模板 perm() 项 |
 | FE-S-05 | 待指派 | 已完成 | 2026-11-24：`validateUploadFile`/`downloadFile` + 两 app 适配器 + 11 例单测 |
-| FE-S-06 | 待指派 | 未开始 | 错误呈现 |
+| FE-S-06 | 待指派 | 已完成 | 2026-11-24：错误码映射 + trace_id、`/index.html` no-store、11 例单测 |
 | FE-S-07 | 待指派 | 未开始 | redirect 白名单 |
 | FE-T-01 | 待指派 | 已完成 | 2026-11-23：首批 8 类场景已覆盖（admin 38 + biz 20）；429/204/401 随拦截器扩展 |
 | FE-T-02 | 待指派 | 未开始 | 菜单双向 |
@@ -272,7 +272,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] `vue/no-v-html = error`，allowlist 均带到期日（FE-S-01）
 - [ ] 安全头 5 项生效，CSP 先 Report-Only（FE-S-02；静态件已绿，待 `curl -sI` 实机）
 - [x] 锁屏密码不再持久化（FE-S-03；单测 `packages/stores/src/__tests__/access.test.ts`）
-- [ ] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07；FE-S-04/05 ✅ 2026-11-24）
+- [ ] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07；FE-S-04/05/06 ✅ 2026-11-24）
 - [ ] 菜单白名单与 seed 双向一致，`/system/audit` 死链关闭（FE-T-02）
 - [ ] `FRONTEND_STANDARDS.md` 进入 L1 表（FE-D-01/02）
 - [ ] `app-kernel` 立项获批（FE-K-00）

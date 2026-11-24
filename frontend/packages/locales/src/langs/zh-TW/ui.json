@@ -124,7 +124,14 @@
       "unauthorized": "登入認證過期，請重新登入後繼續。",
       "forbidden": "禁止訪問, 您沒有許可權訪問此資源。",
       "notFound": "未找到, 請求的資源不存在。",
-      "internalServerError": "內部伺服器錯誤，請稍後再試。"
+      "internalServerError": "內部伺服器錯誤，請稍後再試。",
+      "conflict": "資料衝突，請重新整理後重試。",
+      "installInProgress": "系統正在安裝中，請稍後再試。",
+      "installCompleted": "安裝已完成。",
+      "tooManyRequests": "操作過於頻繁，請稍後再試。",
+      "serviceUnavailable": "服務暫時無法使用，請稍後重試。",
+      "notInitialized": "系統尚未初始化。",
+      "errorWithTrace": "{0}（trace: {1}）"
     }
   },
   "widgets": {

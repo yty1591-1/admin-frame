@@ -29,8 +29,9 @@ RUN echo "types { application/javascript js mjs; }" > /etc/nginx/conf.d/mjs.conf
 # 复制构建产物（演示站 playground 已移除，镜像改为发布 web-admin 产物）
 COPY --from=builder /app/apps/web-admin/dist /usr/share/nginx/html
 
-# 复制 nginx 配置
+# 复制 nginx 配置与安全头片段（nginx.conf 通过 include 引用）
 COPY --from=builder /app/scripts/deploy/nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/scripts/deploy/security-headers.conf /etc/nginx/security-headers.conf
 
 EXPOSE 8080
 

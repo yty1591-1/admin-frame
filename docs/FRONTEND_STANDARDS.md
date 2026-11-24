@@ -192,15 +192,15 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-02 | 所有前端入口必须下发：`Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（或 `frame-ancestors 'none'`）、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy`；HSTS 在 TLS 终止层配置。CSP 首版用 `Content-Security-Policy-Report-Only`，staging 观察一周无 `script-src` 违规后切强制。静态站禁止 `Access-Control-Allow-Origin: *` 与凭据请求混用 | `check-frontend-headers.sh`（✅ 第 5/12 步：静态校验 5 头 + CSP 仅 Report-Only + 禁 `ACAO: *`；删任一即 exit 1）/ `curl -sI`（⬜ 待部署取证） |
+| FE-SEC-02 | 所有前端入口必须下发：`Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（或 `frame-ancestors 'none'`）、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy`；HSTS 在 TLS 终止层配置。CSP 首版用 `Content-Security-Policy-Report-Only`，staging 观察一周无 `script-src` 违规后切强制。静态站禁止 `Access-Control-Allow-Origin: *` 与凭据请求混用；SPA 入口 `/index.html` 必须 `Cache-Control: no-store` | `check-frontend-headers.sh`（✅ 第 5/12 步：静态校验 5 头 + CSP 仅 Report-Only + 禁 `ACAO: *` + `index.html` no-store + 两处 include；删任一即 exit 1）/ `curl -sI`（⬜ 待部署取证） |
 
-注意：nginx 子块内的 `add_header` 会覆盖父块，安全头必须与现有 CORS 头**同层**成组维护；`VITE_INJECT_APP_LOADING=true` 会注入内联脚本，CSP 需为其产出哈希或关闭该开关。
+注意：nginx 子块内的 `add_header` 会覆盖父块（不继承），因此安全头集中在 `security-headers.conf`，由 server 与 `location = /index.html` 两处 include；Dockerfile 需一并复制该片段。`VITE_INJECT_APP_LOADING=true` 会注入内联脚本，CSP 需为其产出哈希或关闭该开关。
 
 ### 7.3 错误呈现与敏感页
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-03 | 按 `code` 映射**固定**用户文案，禁止直出服务端 `message` / `error`；界面与日志展示 `trace_id` 便于报障。MFA 绑定/设置页必须 `Cache-Control: no-store` 且不可被 iframe 嵌入；离开页面清除 secret | 单测（mock 错误体，⬜）/ `curl -I` |
+| FE-SEC-03 | 按 `code` 映射**固定**用户文案（`resolveRequestErrorMessage`），禁止直出服务端 `message` / `error`；服务端返回 `trace_id` 时附在文案末尾便于报障（清洗控制字符并截断）。MFA 绑定/设置页必须 `Cache-Control: no-store` 且不可被 iframe 嵌入；离开页面清除 secret | 单测（✅ 2026-11-24：`packages/effects/request/src/request-client/error-message.test.ts` 11 例；改坏映射即 exit 1）/ `check-frontend-headers.sh`（✅ `index.html` no-store）/ `curl -I`（⬜） |
 
 ---
 
@@ -274,7 +274,8 @@
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |
 | `make ci` | ⬜ 40+ 检查仍无前端；引入独立目标 `make frontend-check`（刻意不并入，pnpm install 依赖网络） | `Makefile` |
-| 安全头 / CSP | 🟡 2026-11-23：`nginx.conf` 下发 5 个安全头 + `Content-Security-Policy-Report-Only`，移除 `ACAO:*`；`check-frontend-headers.sh` 静态校验入第 5/12 步（删 `X-Frame-Options` 实测 exit 1）；⬜ `curl -sI` 实机取证待部署 | `frontend/scripts/deploy/nginx.conf`、`scripts/ci/check-frontend-headers.sh` |
+| 安全头 / CSP | 🟡 2026-11-23：`security-headers.conf` 下发 5 个安全头 + `Content-Security-Policy-Report-Only`，移除 `ACAO:*`；`/index.html` `no-store` + 两处 include；`check-frontend-headers.sh` 静态校验入第 5/12 步（删头/去 no-store 实测 exit 1）；⬜ `curl -sI` 实机取证待部署 | `frontend/scripts/deploy/nginx.conf`、`frontend/scripts/deploy/security-headers.conf`、`scripts/ci/check-frontend-headers.sh` |
+| 错误呈现（FE-SEC-03） | ✅ 2026-11-24：`resolveRequestErrorMessage` 按 `code` 映射本地文案 + 透出 `trace_id`（清洗/截断），不再直出服务端 `message`；11 例单测（改坏映射即 exit 1）；两 app `request.ts` 接入 | `frontend/packages/effects/request/src/request-client/error-message.ts`、`frontend/apps/*/src/api/request.ts` |
 | 产物 SHA | ⬜ 只注入 package 版本 | `internal/vite-config/src/plugins/inject-metadata.ts` |
 | 发布 | ⬜ Dockerfile 只 COPY `web-admin/dist`；`deploy/` 无前端 workload | `frontend/scripts/deploy/Dockerfile` |
 | 供应链 | ✅ `engineStrict: true` + `minimumReleaseAge: 1440` + audit 0 high（11 个 overrides）+ dependabot npm `/frontend` | `frontend/pnpm-workspace.yaml`、`.github/dependabot.yml` |

@@ -10,6 +10,7 @@ import {
   defaultResponseInterceptor,
   errorMessageResponseInterceptor,
   RequestClient,
+  resolveRequestErrorMessage,
 } from '@vben/request';
 import { useAccessStore } from '@vben/stores';
 
@@ -104,15 +105,11 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     }),
   );
 
-  // 通用的错误处理,如果没有进入上面的错误处理逻辑，就会进入这里
+  // 统一错误呈现：按业务码映射本地文案并透出 trace_id，
+  // 不直出服务端 message（可能是代理错误页或内部细节）。
   client.addResponseInterceptor(
     errorMessageResponseInterceptor((msg: string, error) => {
-      // 这里可以根据业务进行定制,你可以拿到 error 内的信息进行定制化处理，根据不同的 code 做不同的提示，而不是直接使用 message.error 提示 msg
-      // admin-frame 统一信封的错误字段是 message（保留 error 兼容历史接口）
-      const responseData = error?.response?.data ?? {};
-      const errorMessage = responseData?.error ?? responseData?.message ?? '';
-      // 如果没有错误信息，则会根据状态码进行提示
-      message.error(errorMessage || msg);
+      message.error(resolveRequestErrorMessage(error?.response?.data, msg));
     }),
   );
 
