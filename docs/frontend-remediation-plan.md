@@ -176,7 +176,7 @@
 |----|------|------|
 | FE-K-00 | 立项书 + ADR（`packages/effects/app-kernel` 依赖方向、对外 API、与 `@core` 边界） | 架构 Owner 批准；ADR 状态 Accepted |
 | FE-K-01 | 迁移清单与逐文件基线（第一批约 17 个逐字节相同文件） | 清单可核对；每文件有归属与回归点 |
-| FE-K-02 | 差异文件裁决（`api/core/auth.ts` 305 vs 101 行、`store/auth.ts` 180 vs 108 行） | A/B 端能力差异有明确取舍，不丢 MFA/改密/会话能力 |
+| FE-K-02 | 差异文件裁决（`api/core/auth.ts` 360 vs 124 行、`store/auth.ts` 216 vs 133 行） | A/B 端能力差异有明确取舍，不丢 MFA/改密/会话能力 |
 | FE-K-03 | 执行与验收：漂移归零（`main.ts` await、幂等头、错误处理一致）、双端回归、迁移指南 | 已知漂移全部关闭；两端构建与冒烟通过 |
 
 ---
@@ -249,8 +249,8 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-D-03 | 待指派 | 未开始 | ARCHITECTURE 指针 |
 | FE-D-04 | 待指派 | 已完成 | 2026-11-21：路线图 FE 行 + 状态 + §七 推进项 |
 | FE-K-00 | 待指派 | 已完成 | 2026-11-24：ADR-0019 Accepted，立项书 [frontend-app-kernel-brief.md](./frontend-app-kernel-brief.md) |
-| FE-K-01 | 待指派 | 进行中 | 2026-11-24：迁移清单与差异裁决输入已建档 [frontend-app-kernel-migration.md](./frontend-app-kernel-migration.md) |
-| FE-K-02 | 待指派 | 未开始 | 差异裁决 |
+| FE-K-01 | 待指派 | 已完成 | 2026-11-24：迁移清单与逐文件基线已建档 [frontend-app-kernel-migration.md](./frontend-app-kernel-migration.md) |
+| FE-K-02 | 待指派 | 已完成 | 2026-11-24：capabilities 契约与 api/store 裁决已定稿（§3.1～3.6），待 FE-K-03 落地 |
 | FE-K-03 | 待指派 | 未开始 | 漂移归零验收 |
 
 ---

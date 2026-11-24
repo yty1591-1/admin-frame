@@ -45,14 +45,59 @@
 | `locales/langs/{en-US,zh-CN}/authentication.json` | 5/5 | 3 | 合并（文案差异） |
 | `locales/langs/{en-US,zh-CN}/page.json` | 30/16 | 30 | 保留 app（菜单名称集合不同） |
 
-## 三、差异裁决表（FE-K-02 输入，未决）
+## 三、差异裁决（FE-K-02，2026-11-24 定稿）
 
-| 文件 | admin 行 | biz 行 | 差异性质 | 建议裁决 | 状态 |
-| --- | --- | --- | --- | --- | --- |
-| `api/core/auth.ts` | 360 | 124 | A 端含 MFA/改密/会话（login 四态、`completePasswordChange`、`verifyMfaChallenge`、`startMfaBinding` 等） | 内核导出 `createAuthApi(capabilities)`：MFA/改密类方法仅在 `mfa/passwordChange` 开启时注册；B 端传 false → 不暴露 | 待批 |
-| `store/auth.ts` | 216 | 133 | 同上（登录四态、`disableMfaForAccount`、`completeLogin` 后置通知） | 内核 `createAuthStore({ capabilities })`；B 端关闭 MFA 分支；`logout`/`fetchUserInfo` 共用 | 待批 |
-| `views/_core/authentication/login.vue` | 239 | 79 | 视图层，A 端有 MFA/改密步骤 | 留 app（视图不进内核） | — |
-| `views/_core/profile/*` | 174/49 等 | 23 等 | 视图层 | 留 app | — |
+裁决原则：能力按 `KernelCapabilities` 显式开关；关闭的能力**保留方法但调用即抛** `KernelCapabilityError`（fail-closed，不静默降级）；视图与适配器留在 app。
+
+### 3.1 能力契约
+
+```ts
+export interface KernelCapabilities {
+  mfa: boolean;
+  mfaBinding: boolean;
+  passwordChange: boolean;
+  idempotency: boolean;
+  refresh: boolean;
+}
+
+export class KernelCapabilityError extends Error {
+  readonly capability: keyof KernelCapabilities;
+}
+```
+
+| 能力 | admin | biz | 依据 |
+| --- | --- | --- | --- |
+| `mfa` | true | false | B 端登录无 MFA 中间态（`web-biz/src/api/core/auth.ts` 文件头注释；`LoginOutcome` 四态仅 A 端） |
+| `mfaBinding` | true | false | 强制绑定仅 A 端（`mfa_binding_required`） |
+| `passwordChange` | true | false | B 端无改密接口与视图 |
+| `idempotency` | true | false | B 端无 idempotency 模块（`api/idempotency.ts` 仅 A 端） |
+| `refresh` | true | true | 两端 `api/request.ts` 均有 `doRefreshToken`/`refreshTokenApi` |
+
+### 3.2 API 面裁决
+
+| 导出 | 能力开关 | admin | biz | 说明 |
+| --- | --- | --- | --- | --- |
+| `loginApi(data)` | always | ✅ | ✅ | 返回 `LoginOutcome`；载荷要求的能力关闭时抛 `KernelCapabilityError`，不把中间态当令牌 |
+| `refreshTokenApi` / `logoutApi` / `getMyPermissionsApi` / `getAccessCodesApi` / `toTokenPairVM` | always（refresh 由能力决定） | ✅ | ✅ | 两端现有行为不变 |
+| `changePasswordApi` / `completePasswordChangeApi` | `passwordChange` | ✅ | 抛错 | B 端不展示入口 |
+| `mfaSetupApi` / `mfaVerifyApi` / `mfaSetupSessionApi` / `confirmMfaBindingSessionApi` / `disableMfaApi` | `mfa` / `mfaBinding` | ✅ | 抛错 | A 端 MFA 全流程保留 |
+| `listMySessionsApi` / `revokeMySessionApi` / `revokeAllMySessionsApi` | 不设开关 | ✅ | ✅ | 纯 REST；B 端暂无会话视图，需要时可直接复用 |
+
+### 3.3 Store 面裁决
+
+`createAuthStore({ capabilities })` 返回与 A 端相同的动作全集：`authLogin`、`completePasswordChange`、`verifyMfaChallenge`、`startMfaBinding`、`confirmMfaBinding`、`startMfaBindingForAccount`、`confirmMfaBindingForAccount`、`disableMfaForAccount`、`fetchUserInfo`、`logout`、`loginLoading`、`$reset`。关闭能力的动作调用即抛错；B 端实际调用面仍只有 `authLogin`/`fetchUserInfo`/`logout`/`loginLoading`。B 端 `authLogin` 行为不变：`loginApi` → `completeLogin`（落双令牌 → `fetchUserInfo` → redirect 白名单跳转 → 成功通知）。
+
+### 3.4 类型与通道
+
+`SubjectPermissions.channel` 内核取 `'admin' | 'biz'`；A 端消费处可窄化为 `'admin'`（现有代码不按 channel 做运行时分支）。B 端保留自身注释语义。
+
+### 3.5 适配器
+
+维持 ADR-0019：adapter 留 app；内核只定义 `AppAdapter` 接口（component/form），apps 注入实现；内核零 `ant-design-vue` 依赖，避免把视图库带进内核。
+
+### 3.6 对迁移顺序的影响
+
+`api/core/auth.ts` 与 `store/auth.ts` 在 FE-K-03 第 4 步迁移；B 端迁移后删除本文件的 MFA 类型段，`completeLogin` 保留；A/B 行为对照单测在 FE-K-03 补（A：四态含 `mfa-binding`/`mfa-challenge`/`password-change`；B：恒 `token`）。
 
 ## 四、回归矩阵（迁移每批必跑）
 
