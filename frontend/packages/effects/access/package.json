@@ -28,5 +28,8 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "vue": "catalog:"
+  },
+  "devDependencies": {
+    "pinia": "catalog:"
   }
 }

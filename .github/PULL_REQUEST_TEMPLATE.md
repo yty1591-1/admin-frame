@@ -69,6 +69,7 @@
 - [ ] 无新增 `#/api/*`、`#/layouts/*` 等应用内深导入；跨端复用逻辑进 `@vben/*` 包（FE-03）
 - [ ] 请求走 `request.ts` 统一出口；分页 `page_size`≤100；写路径幂等头符合 FE-13
 - [ ] 无未净化 `v-html` / `innerHTML`；令牌与锁屏口令不落 Web Storage（FE-SEC-01/04/05）
+- [ ] 新增/变更接口已在服务端补 `perm()` 兜底与测试；前端隐藏不作为鉴权（FE-16 / §4.2）
 - [ ] 未提交 `frontend/.env` 或含密钥的 `VITE_*`；新配置进 `.env.example`（FE-21）
 
 ## Git 自检（GIT_STANDARDS）

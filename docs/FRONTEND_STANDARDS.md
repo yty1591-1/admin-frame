@@ -107,7 +107,7 @@
 |----|------|------|
 | FE-14 | 路由来源：业务页面由后端菜单 + `pageMap` 动态生成；静态路由只保留登录、403、404、重定向等基础设施页面 | 单测（⬜） |
 | FE-15 | 菜单 `component` 必须与前端文件**双向一致**；未命中必须显式报错并提示，禁止只 `console.error` 后静默退化为 `not-found` | `catalog_test.go`（✅ 单向）+ 反向校验（⬜） |
-| FE-16 | 前端权限只做**展示控制**；每个新增或变更的接口必须由服务端 `perm()` 兜底。`v-access` 只负责隐藏，不承担鉴权；`*` 不代表全权限。按钮级权限点必须登记 `docs/iam/PERMISSIONS.md` | Review + 后端 review checklist |
+| FE-16 | 前端权限只做**展示控制**；每个新增或变更的接口必须由服务端 `perm()` 兜底。`v-access` 只负责隐藏，不承担鉴权；`*` 不代表全权限。按钮级权限点必须登记 `docs/iam/PERMISSIONS.md`。指令必须同时实现 `mounted` 与 `updated`：权限快照异步到达或权限被回收时要在同一 DOM 上恢复/隐藏（用 `display: none`，不得依赖移除后重挂） | 单测（✅ 2026-11-24：`packages/effects/access/src/__tests__/directive.test.ts` 3 例；去掉 `updated` 即 exit 1）+ Review checklist（服务端 `perm()`） |
 | FE-17 | 守卫：未登录跳登录页并携带 `redirect`（白名单规则见 FE-SEC-07）；403 / 404 有独立页面；刷新恢复会话必须单飞，禁止并发刷新 | 单测（⬜） |
 
 ### 4.1 新增页面六步（缺一即 Review 不通过）
@@ -120,6 +120,13 @@
 6. `apps/web-admin/src/locales/langs/<locale>/page.json` 文案。
 
 **现状**：白名单仅 6 条，已 seed 13 个 page 菜单，其中 9 个未入白名单，PATCH 校验可能返回 400；`/system/audit` 目录不存在却可被启用成死链。在 `FE-T-02` 修复前，新增页面以上述六步为准，并在 MR 附「三处一致」截图或命令输出。
+
+### 4.2 权限分工与服务端兜底
+
+- 前端权限快照只来自服务端（`getMyPermissionsApi` → `accessCodes`）；禁止在前端写死或硬编码「隐藏即安全」。
+- `v-access`、菜单可见性、按钮显隐都只是 UX；判断放过请求的责任在服务端，每个新增/变更的接口必须补 `perm()` 与对应测试。
+- 前端 `*` 视为「全部权限」仅用于展示（破玻璃/系统角色），不得据此跳过接口返回的 401/403 处理。
+- 新增权限点必须同时改：`internal/iam` 权限点、`docs/iam/PERMISSIONS.md`、前端按钮 `v-access:code`；MR 勾选 PR 模板「前端自检」中的服务端兜底项。
 
 ---
 
@@ -167,7 +174,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-SEC-08 | 生产依赖不得存在 `high` 及以上已知漏洞；`minimumReleaseAge` 禁止为 0；`engineStrict: true`；npm 生态纳入 Dependabot | `pnpm audit --prod --audit-level=high`（✅ CI 第 2/10 步，npmjs registry）/ dependabot（✅）/ `engineStrict`（✅） |
+| FE-SEC-08 | 生产依赖不得存在 `high` 及以上已知漏洞；`minimumReleaseAge` 禁止为 0；`engineStrict: true`；npm 生态纳入 Dependabot | `pnpm audit --prod --audit-level=high`（✅ CI 第 2/12 步，npmjs registry）/ dependabot（✅）/ `engineStrict`（✅） |
 
 ---
 
@@ -260,6 +267,7 @@
 | PR 模板「前端自检」 | ✅ 双模板含该节；`check-git.sh` 断言标题与 `make frontend-check` 命令（改标题即 exit 1） | `.github/PULL_REQUEST_TEMPLATE.md`、`.gitee/PULL_REQUEST_TEMPLATE.md`、`scripts/ci/check-git.sh` |
 | `pnpm check:cspell` | ✅ 2026-11-23 覆盖 `**/*.ts`、`**/*.vue`、README、changeset（943 文件 0 问题）；`.vue` 注入错词即 exit 1 | `frontend/package.json`、`frontend/cspell.json` |
 | `pnpm test:unit` | ✅ 2026-11-23：根 610 + web-admin 38 + web-biz 20；两 app 覆盖率 89.47% / 93.5%（阈值 30%） | `vitest.config.ts`、`apps/*/vitest.config.ts` |
+| v-access 更新语义（FE-16） | ✅ 2026-11-24：指令同时实现 `mounted` + `updated`，用 `display: none` 隐藏/恢复（权限快照异步到达与回收均生效）；3 例单测，删掉 `updated` 即 exit 1 | `frontend/packages/effects/access/src/directive.ts`、`frontend/packages/effects/access/src/__tests__/directive.test.ts` |
 | 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |
 | XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
