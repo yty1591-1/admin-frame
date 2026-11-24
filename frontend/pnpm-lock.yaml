@@ -585,6 +585,9 @@ importers:
       '@vben/access':
         specifier: workspace:*
         version: link:../../packages/effects/access
+      '@vben/app-kernel':
+        specifier: workspace:*
+        version: link:../../packages/effects/app-kernel
       '@vben/common-ui':
         specifier: workspace:*
         version: link:../../packages/effects/common-ui
@@ -664,6 +667,9 @@ importers:
       '@vben/access':
         specifier: workspace:*
         version: link:../../packages/effects/access
+      '@vben/app-kernel':
+        specifier: workspace:*
+        version: link:../../packages/effects/app-kernel
       '@vben/common-ui':
         specifier: workspace:*
         version: link:../../packages/effects/common-ui
@@ -1326,6 +1332,33 @@ importers:
       pinia:
         specifier: ^4.0.2
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.46(typescript@6.0.3))
+
+  packages/effects/app-kernel:
+    dependencies:
+      '@vben/common-ui':
+        specifier: workspace:*
+        version: link:../common-ui
+      '@vben/hooks':
+        specifier: workspace:*
+        version: link:../hooks
+      '@vben/icons':
+        specifier: workspace:*
+        version: link:../../icons
+      '@vben/locales':
+        specifier: workspace:*
+        version: link:../../locales
+      '@vben/types':
+        specifier: workspace:*
+        version: link:../../types
+      '@vben/utils':
+        specifier: workspace:*
+        version: link:../../utils
+      ant-design-vue:
+        specifier: 'catalog:'
+        version: 4.2.6(vue@3.5.46(typescript@6.0.3))
+      vue:
+        specifier: 3.5.46
+        version: 3.5.46(typescript@6.0.3)
 
   packages/effects/common-ui:
     dependencies:

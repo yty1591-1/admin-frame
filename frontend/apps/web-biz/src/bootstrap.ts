@@ -1,6 +1,7 @@
 import { createApp, watchEffect } from 'vue';
 
 import { registerAccessDirective } from '@vben/access';
+import { initComponentAdapter, initSetupVbenForm } from '@vben/app-kernel';
 import { registerLoadingDirective } from '@vben/common-ui/es/loading';
 import { preferences } from '@vben/preferences';
 import { initStores } from '@vben/stores';
@@ -11,8 +12,6 @@ import { useTitle } from '@vueuse/core';
 
 import { $t, setupI18n } from '#/locales';
 
-import { initComponentAdapter } from './adapter/component';
-import { initSetupVbenForm } from './adapter/form';
 import App from './app.vue';
 import { router } from './router';
 

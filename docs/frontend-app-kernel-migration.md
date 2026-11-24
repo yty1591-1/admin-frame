@@ -124,3 +124,12 @@ export class KernelCapabilityError extends Error {
 
 - 每批一个提交、两端同时可用；任一批回归失败即 revert 该提交（内核为独立包，app 入口改回本地实现即可）。
 - 最大风险在 #11 适配器（756 行、依赖 `ant-design-vue`）与 #16 守卫（登录链路）；对应单测必须先在迁移前绿，迁移后原样通过。
+
+## 七、执行进度（FE-K-03）
+
+| 日期 | 批次 | 内容 | 状态 |
+| --- | --- | --- | --- |
+| 2026-11-24 | 批次 A | 新建 `packages/effects/app-kernel`（`@vben/app-kernel`）；迁移 `adapter/form.ts`、`adapter/component/index.ts`（756 行）；两 app 删除本地 adapter、`bootstrap.ts` 改从内核导入、12 个视图改用 `@vben/app-kernel/adapter/form`；能力类型 `KernelCapabilities` 与 `ADMIN_/BIZ_CAPABILITIES` 入内核 | ✅ 35 turbo 任务、14 步门禁绿 |
+| 2026-11-24 | 批次 B（待） | `store/index.ts`、`api/core/index.ts`、`layouts/*`、`app.vue`、`bootstrap.ts` 收敛为 `createAppKernel` | 未开始 |
+| 2026-11-24 | 批次 C（待） | router 四文件 + 两组测试、`locales/index.ts` | 未开始 |
+| 2026-11-24 | 批次 D（待） | auth api/store capabilities 化、`main.ts` 漂移归零 | 未开始 |

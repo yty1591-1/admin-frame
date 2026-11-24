@@ -7,6 +7,7 @@ import type { ChangeAction, DataScope, Role, RoleStatus } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import {
@@ -24,7 +25,6 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   cloneRoleApi,
   createChangeRequestApi,

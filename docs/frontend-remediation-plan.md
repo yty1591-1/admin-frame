@@ -251,7 +251,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-K-00 | 待指派 | 已完成 | 2026-11-24：ADR-0019 Accepted，立项书 [frontend-app-kernel-brief.md](./frontend-app-kernel-brief.md) |
 | FE-K-01 | 待指派 | 已完成 | 2026-11-24：迁移清单与逐文件基线已建档 [frontend-app-kernel-migration.md](./frontend-app-kernel-migration.md) |
 | FE-K-02 | 待指派 | 已完成 | 2026-11-24：capabilities 契约与 api/store 裁决已定稿（§3.1～3.6），待 FE-K-03 落地 |
-| FE-K-03 | 待指派 | 未开始 | 漂移归零验收 |
+| FE-K-03 | 待指派 | 进行中 | 2026-11-24：批次 A 落地（@vben/app-kernel + 适配器迁移，35 任务/14 步门禁绿），余批次 B～D |
 
 ---
 

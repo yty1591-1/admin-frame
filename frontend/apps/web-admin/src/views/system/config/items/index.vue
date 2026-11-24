@@ -6,11 +6,11 @@ import type { ConfigEnv, ConfigItem, ConfigItemStatus } from '#/api';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import { Button, message, Modal, Space, Table, Tag } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   CONFIG_ENV_OPTIONS,
   CONFIG_ITEM_STATUS_OPTIONS,
