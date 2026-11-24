@@ -1,6 +1,6 @@
 # ADR-0019：前端双端公共内核（app-kernel）下沉
 
-- 状态：Proposed（草案，待架构 Owner 评审，2026-11-24）
+- 状态：Accepted（2026-11-24 架构 Owner 批准；立项书见 [`../frontend-app-kernel-brief.md`](../frontend-app-kernel-brief.md)）
 - 日期：2026-11-24
 - 关联：[`../frontend-remediation-plan.md`](../frontend-remediation-plan.md) §5.6（FE-K-00～03）、[`../FRONTEND_STANDARDS.md`](../FRONTEND_STANDARDS.md) §2（FE-01～05 依赖方向）、[`../frontend-app-kernel-brief.md`](../frontend-app-kernel-brief.md)（立项书）
 

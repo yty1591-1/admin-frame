@@ -248,8 +248,8 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-D-02 | 待指派 | 进行中 | §3.2 + §5 + 文首已完成；L1 行待 FE-D-01 |
 | FE-D-03 | 待指派 | 未开始 | ARCHITECTURE 指针 |
 | FE-D-04 | 待指派 | 已完成 | 2026-11-21：路线图 FE 行 + 状态 + §七 推进项 |
-| FE-K-00 | 待指派 | 进行中 | ADR-0019 Proposed + 立项书已出（2026-11-24），待架构 Owner 批准 |
-| FE-K-01 | 待指派 | 未开始 | 迁移清单 |
+| FE-K-00 | 待指派 | 已完成 | 2026-11-24：ADR-0019 Accepted，立项书 [frontend-app-kernel-brief.md](./frontend-app-kernel-brief.md) |
+| FE-K-01 | 待指派 | 进行中 | 2026-11-24：迁移清单与差异裁决输入已建档 [frontend-app-kernel-migration.md](./frontend-app-kernel-migration.md) |
 | FE-K-02 | 待指派 | 未开始 | 差异裁决 |
 | FE-K-03 | 待指派 | 未开始 | 漂移归零验收 |
 
@@ -275,7 +275,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07 ✅ 2026-11-24；401/429/204 拦截器用例 ✅ FE-T-01）
 - [x] 菜单白名单与 seed 双向一致，`/system/audit` 死链关闭（FE-T-02）
 - [ ] `FRONTEND_STANDARDS.md` 进入 L1 表（FE-D-01/02）
-- [ ] `app-kernel` 立项获批（FE-K-00）
+- [x] `app-kernel` 立项获批（FE-K-00，ADR-0019 Accepted 2026-11-24）
 
 ---
 

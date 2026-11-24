@@ -88,6 +88,7 @@
 | [production-readiness-implementation-plan.md](./production-readiness-implementation-plan.md) | 规划生效 v0.1 | 见 §十二 状态表：`ENT-01`～`ENT-19` 已关闭（`ENT-10`/`ENT-11` 主体完成，遗留为渠道凭据等环境配置项）；`ENT-20`～`ENT-24` 待做（触发条件未满足，现状证据已并入 §六），`ENT-25` 暂缓 |
 | [config-center-plan.md](./config-center-plan.md) | 已通过 v0.4（L2 设计 + L3 计划） | 8 个 M0 前置条件已满足；**M1 / M2 / M3 已出口**（M3：`configs/` 零跟踪、无文件/KEK/故障/签名灾备演练、CC-14）；下一步按需 M4；**M1 发布能力收敛为仅全量**，灰度整体 P1（§10.5） |
 | [frontend-app-kernel-brief.md](./frontend-app-kernel-brief.md) | 立项 Draft | app-kernel 立项书（FE-K-00～03），待架构 Owner 批准后启动；依赖 [ADR-0019](./adr/0019-frontend-app-kernel.md) 转 Accepted |
+| [frontend-app-kernel-migration.md](./frontend-app-kernel-migration.md) | 进行中 | FE-K-01 迁移清单：17 个逐字节相同文件、11 个近同构、差异裁决表与回归矩阵；随 FE-K-02/03 更新 |
 | [frontend-remediation-plan.md](./frontend-remediation-plan.md) | 规划生效 v0.1 | 见 §八 状态表：`FE-G-01` / `FE-G-02` / `FE-G-08` / `FE-D-01` 进行中（2026-11-21 门禁已接入，待 CI 首跑取证），其余未开始；优先 P0 门禁（`FE-G-01`～`04`、`08`）与构建发布（`FE-B-01`～`06`），内核重构按 §5.6 单独立项 |
 
 > 当前有三份「有未关闭事项」的计划类文档：生产就绪实施计划、配置中心规划、前端规范与门禁整改计划。配置中心缺口修复规划（CC-R-01～18）已于 2026-11-17 关闭并移入 [`archive/plans/config-center-remediation-plan.md`](./archive/plans/config-center-remediation-plan.md)；IAM P1-5/6/7 计划已于 2026-11-11 关闭并移入 [`archive/plans/`](./archive/plans/)；其余整改计划（platform、IAM 权限模型、identity 各批次、通知中心、特性开关、租户域 B1～B4、平台级差距评估）均已闭环，位于 [`archive/`](./archive/)。
@@ -156,6 +157,7 @@ docs/
 ├── production-readiness-implementation-plan.md # 平台能力实施计划（L3）
 ├── config-center-plan.md      # 配置中心规划与评审（L2 设计 + L3 计划）
 ├── frontend-app-kernel-brief.md # 前端公共内核立项书（L3）
+├── frontend-app-kernel-migration.md # app-kernel 迁移清单与差异裁决（L3）
 ├── frontend-remediation-plan.md # 前端规范与门禁整改计划（L3）
 ├── adr/                       # 架构决策记录（L1）
 ├── runbooks/                  # 值班手册（L1）
