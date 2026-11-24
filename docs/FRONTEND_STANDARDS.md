@@ -219,7 +219,7 @@
 
 | ID | 约束 | 门禁 |
 |----|------|------|
-| FE-25 | 分层：`packages/**` 有单元测试；`apps/*` 至少覆盖登录四态、刷新单飞、401 清令牌、403/404、429 倒计时、204、分页钳制、错误码映射、菜单未命中；E2E 放 nightly，不进 PR 必跑 | `frontend` job（✅ 2026-11-23 apps 冒烟已接入：登录四态/幂等/错误映射/pageMap/守卫；429/204/401 随拦截器扩展） |
+| FE-25 | 分层：`packages/**` 有单元测试；`apps/*` 至少覆盖登录四态、刷新单飞、401 清令牌、403/404、429 倒计时、204、分页钳制、错误码映射、菜单未命中；E2E 放 nightly，不进 PR 必跑 | `frontend` job（✅ apps 冒烟 2026-11-23；拦截器层 401/429/204 + 分页钳制 2026-11-24：`preset-interceptors.test.ts`、`retry-after.test.ts`、`pagination.test.ts`） |
 | FE-26 | 覆盖率：`apps/*` 关键路径首版 ≥30%，半年内 ≥50%；`packages/**` 不得下降。阈值写入 `vitest.config.ts` 并由脚本校验 | `apps/*/vitest.config.ts` + `check-frontend-gates.sh`（✅ 30% 生效；admin 89.47%、biz 93.5%） |
 | FE-27 | 新增页面/接口必须带用例；缺陷修复必须附回归用例（对应 `TESTING_STANDARDS.md` 的例外体例） | Review |
 | FE-28 | 禁止 `--passWithNoTests`、禁止跳过用例凑绿、禁止依赖外网后端；测试必须可离线运行（mock 接口） | Review + 测试运行 |
@@ -271,6 +271,7 @@
 | v-access 更新语义（FE-16） | ✅ 2026-11-24：指令同时实现 `mounted` + `updated`，用 `display: none` 隐藏/恢复（权限快照异步到达与回收均生效）；3 例单测，删掉 `updated` 即 exit 1 | `frontend/packages/effects/access/src/directive.ts`、`frontend/packages/effects/access/src/__tests__/directive.test.ts` |
 | 锁屏口令不落盘（FE-SEC-05） | ✅ 2026-11-24：`persist.pick` 移除 `lockScreenPassword`（改为 `ACCESS_STORE_PERSIST_KEYS`）；单测 3 例（加回该键即 exit 1）；刷新后锁屏页走 `toLogin` 重新认证 | `frontend/packages/stores/src/modules/access.ts`、`frontend/packages/stores/src/__tests__/access.test.ts`、`frontend/packages/effects/layouts/src/widgets/lock-screen/lock-screen.vue` |
 | 登录回跳白名单（FE-SEC-07） | ✅ 2026-11-24：`resolveSafeRedirect`（仅站内相对路径、解码容错、origin 校验）；两 app guard/store 接入；9 例单测（去掉 origin 校验即 exit 1） | `frontend/packages/utils/src/helpers/redirect.ts`、`frontend/apps/*/src/router/guard.ts`、`frontend/apps/*/src/store/auth.ts` |
+| 拦截器回归（FE-25） | ✅ 2026-11-24：401 重认证与刷新单飞（含重试注入新令牌、刷新失败清队列）、204 无内容成功、429 `Retry-After` 解析、分页 `page_size` 钳制共 22 例；刷新漏注入 `Authorization` 的缺陷由测试先红后绿暴露 | `frontend/packages/effects/request/src/request-client/preset-interceptors.test.ts`、`frontend/packages/utils/src/helpers/__tests__/retry-after.test.ts`、`frontend/apps/web-admin/src/api/__tests__/pagination.test.ts` |
 | XSS 出口巡检（FE-SEC-01） | ✅ 2026-11-23：`check-frontend-security.sh` 扫 837 个文件，5 处 `v-html`/`innerHTML`/`window.open` 命中全部 allowlist（带到期日）；注入 `v-html=` 即 exit 1；`vue/no-v-html=error`（去掉 preview.vue disable 即 exit 1）；3 处 `window.open` 已补 `noopener,noreferrer` | `scripts/ci/check-frontend-security.sh`、`scripts/ci/frontend-security-allowlist.txt`、`internal/lint-configs/eslint-config/src/configs/vue.ts` |
 | `pnpm test:e2e` | ⬜ `turbo run test:e2e` 无任何包定义该脚本，空转 | `frontend/package.json` |
 | CI | 🟡 job `frontend` 已接入（`pnpm` + Node 24.16.0 + `bash scripts/ci/frontend-check.sh`，无 `paths` 过滤）；Gitee 三个流水线已加 `build@nodejs` step（插件语法待控制台核实）；远端首跑未取证 | `.github/workflows/ci.yml`、`.workflow/*.yml` |

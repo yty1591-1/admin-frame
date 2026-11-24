@@ -148,13 +148,13 @@
 | FE-S-04 | 权限分工成文：前端权限仅展示控制，每个新增/变更接口必须服务端 `perm()` 兜底；补齐 `v-access` 的 `updated` 语义 | `docs/FRONTEND_STANDARDS.md` §4、`v-access` 指令实现、PR 模板 | ✅ 2026-11-24：§4.2 分工条文 + FE-16 更新；`v-access` 加 `updated` 并用 `display:none` 隐藏/恢复；PR 双模板加「服务端 perm()」勾选项；单测 3 例（删 `updated` 即 exit 1） |
 | FE-S-05 | 上传/预览收紧：扩展名 + MIME 双白名单（SVG 默认关）；预览 `noopener,noreferrer`；非图片走下载 | `frontend/packages/utils/src/helpers/upload.ts`、`frontend/apps/*/src/adapter/component/index.ts` | ✅ 2026-11-24：`validateUploadFile` 双白名单 + SVG 默认禁 + `downloadFile`；两 app Upload 适配器接入，非图片预览改下载；11 例单测（`.svg`/`.html`/伪 MIME 被拒，`allowSvg` 放行，下载锚点带 `noopener noreferrer`）；`uploadTypeLimit` 文案三语 |
 | FE-S-06 | 错误呈现：按 `code` 映射固定文案（不直出服务端 `message`）；透出 `trace_id`；MFA 页 `no-store` + `frame-ancestors 'none'` | `frontend/packages/effects/request`、`frontend/apps/*/src/api/request.ts`、`frontend/scripts/deploy/{nginx.conf,security-headers.conf}` | ✅ 2026-11-24：`resolveRequestErrorMessage` 11 例单测（改坏映射即 exit 1）；两 app 接入；`/index.html` `no-store` + Pragma/Vary，headers 脚本校验（删 no-store 即 exit 1）；⬜ `curl -I` 待部署 |
-| FE-S-07 | 登录 `redirect` 白名单 + `decodeURIComponent` 容错；登出/401/429/204 行为用例 | `frontend/packages/utils/src/helpers/redirect.ts`、`frontend/apps/*/src/router/guard.ts`、`frontend/apps/*/src/store/auth.ts`、单测 | ✅ 2026-11-24（redirect 部分）：`resolveSafeRedirect` 仅接受站内相对路径，畸形编码/协议相对/伪协议/反斜杠/控制字符全部回退；两 app guard 与 completeLogin 接入；9 例单测（去掉 origin 校验即 exit 1）；⬜ 401/429/204 拦截器用例随 FE-T-01 扩展 |
+| FE-S-07 | 登录 `redirect` 白名单 + `decodeURIComponent` 容错；登出/401/429/204 行为用例 | `frontend/packages/utils/src/helpers/redirect.ts`、`frontend/apps/*/src/router/guard.ts`、`frontend/apps/*/src/store/auth.ts`、单测 | ✅ 2026-11-24：`resolveSafeRedirect` 仅接受站内相对路径，畸形编码/协议相对/伪协议/反斜杠/控制字符全部回退；两 app guard 与 completeLogin 接入；9 例单测（去掉 origin 校验即 exit 1）；401/429/204 见 FE-T-01（✅ 拦截器用例） |
 
 ### 5.4 P1 质量与契约（FE-T）
 
 | ID | 动作 | 落点 | 验收 |
 |----|------|------|------|
-| FE-T-01 | 首批回归用例：已覆盖登录四态、redirect 回跳、登出清理、MFA 中间态不落令牌、幂等键注入/保留、错误消息映射、pageMap 与守卫 redirect、Web Storage 令牌禁令（`v-access`/`pageMap` 断言）；429/204/401 清令牌在 axios 拦截器层，随 FE-T-02 扩展 | `frontend/apps/web-admin/src/**/__tests__/*.test.ts`、`frontend/apps/web-biz/src/**/__tests__/*.test.ts` | ✅ 2026-11-23：`pnpm test:unit` 含 apps 用例通过（admin 38 + biz 20）；禁 `--passWithNoTests` |
+| FE-T-01 | 首批回归用例：登录四态、redirect 回跳、登出清理、MFA 中间态不落令牌、幂等键注入/保留、错误消息映射、pageMap 与守卫 redirect、Web Storage 令牌禁令；拦截器层 401 清令牌/刷新单飞/重试带新令牌、204 无内容成功、429 `Retry-After` 解析、分页钳制 | `frontend/apps/*/src/**/__tests__/*.test.ts`、`frontend/packages/effects/request/src/request-client/preset-interceptors.test.ts`、`frontend/packages/utils/src/helpers/__tests__/{retry-after,redirect}.test.ts` | ✅ 2026-11-24：apps admin 38 + biz 20；拦截器 10 例（401 重认证/刷新成功重试/刷新失败队列清空/并发单飞）、204 成功、`parseRetryAfterSeconds` 4 例、`toPageQuery` 钳制 8 例；刷新重试曾漏注入新 `Authorization`，已修复（测试先红后绿）；禁 `--passWithNoTests` |
 | FE-T-02 | 菜单契约双向：`catalog_test.go` 反向校验（页面文件/seed → 白名单）；先修复 9 个未入白名单菜单（PATCH 400 风险）与 `/system/audit` 死链 | `internal/iam/menuview/catalog.go`、`catalog_test.go`、`migrations/` | 双向测试通过；`EnableMenu` 对不存在的 component 报错 |
 | FE-T-03 | 覆盖率门槛落地：首版 ≥30%，半年内 ≥50%；阈值写入 `apps/*/vitest.config.ts`（v8，语句/分支/函数/行），`frontend-check.sh` 第 11/12 步校验 apps 用例存在 | `frontend/apps/*/vitest.config.ts`、`check-frontend-gates.sh`、CI | ✅ 2026-11-23：30% 生效；当前语句 89%/93%，可随时上调至 50% |
 | FE-T-04 | E2E 放 nightly（不进 PR 必跑）：5 条冒烟（登录、菜单、权限按钮、分页、错误提示） | `.github/workflows/`、`frontend/e2e/` | nightly 有结果；`test:e2e` 不再空转 |
@@ -240,7 +240,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 | FE-S-05 | 待指派 | 已完成 | 2026-11-24：`validateUploadFile`/`downloadFile` + 两 app 适配器 + 11 例单测 |
 | FE-S-06 | 待指派 | 已完成 | 2026-11-24：错误码映射 + trace_id、`/index.html` no-store、11 例单测 |
 | FE-S-07 | 待指派 | 已完成 | 2026-11-24：`resolveSafeRedirect` 白名单 + 解码容错，两 app 接入，9 例单测 |
-| FE-T-01 | 待指派 | 已完成 | 2026-11-23：首批 8 类场景已覆盖（admin 38 + biz 20）；429/204/401 随拦截器扩展 |
+| FE-T-01 | 待指派 | 已完成 | 2026-11-24：apps 场景 + 拦截器 401/204/429 + 分页钳制共 30 例；修掉刷新重试未带新令牌 |
 | FE-T-02 | 待指派 | 未开始 | 菜单双向 |
 | FE-T-03 | 待指派 | 已完成 | 2026-11-23：30% 阈值生效（语句 89%/93%），半年后上调 50% |
 | FE-T-04 | 待指派 | 未开始 | E2E nightly |
@@ -272,7 +272,7 @@ make frontend-check   # 与 CI job 同步骤；只在前端改动时由开发者
 - [x] `vue/no-v-html = error`，allowlist 均带到期日（FE-S-01）
 - [ ] 安全头 5 项生效，CSP 先 Report-Only（FE-S-02；静态件已绿，待 `curl -sI` 实机）
 - [x] 锁屏密码不再持久化（FE-S-03；单测 `packages/stores/src/__tests__/access.test.ts`）
-- [x] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07 ✅ 2026-11-24；401/429/204 拦截器用例随 FE-T-01 扩展）
+- [x] 权限分工、上传、错误呈现、redirect 白名单均有条文与用例（FE-S-04～07 ✅ 2026-11-24；401/429/204 拦截器用例 ✅ FE-T-01）
 - [ ] 菜单白名单与 seed 双向一致，`/system/audit` 死链关闭（FE-T-02）
 - [ ] `FRONTEND_STANDARDS.md` 进入 L1 表（FE-D-01/02）
 - [ ] `app-kernel` 立项获批（FE-K-00）
