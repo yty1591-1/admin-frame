@@ -228,6 +228,10 @@ require_grep "cmd/internal/configboot/diagnose_invalid.go" \
 require_file "api/openapi/paths/internal/repair.yaml" "启动自愈契约"
 require_grep "api/openapi/internal.yaml" \
   "internal-v1-configs-repair-reset-defaults" "internal 契约登记启动自愈"
+require_grep "cmd/admin-api/bootstrap_heal.go" \
+  "func healStartupConfig" "admin-api 装配失败后走自愈重试"
+require_grep "cmd/admin-api/bootstrap_heal_test.go" \
+  "TestHealStartupConfigResetsInvalidValuesAndReloads" "自愈重试有集成用例"
 
 echo "==> CC-12: Helm deployment wiring"
 require_grep "deploy/helm/admin-frame/values.yaml" "configCenter:" "Helm configCenter 默认值"
