@@ -130,32 +130,20 @@ func run() error {
 	}
 	if err != nil {
 		// 注册表看不出缺键（例如只有配置校验层才要求的值）时再判一次：
-		// 填占位值能过校验即视为「缺值阻塞」，否则按配置写错处理（ADR-0018 决策 3）。
-		if gaps, ok := configboot.DiagnoseMissingValues(bootValues, validateValues); ok {
-			log.Printf("admin-api: config validation failed (%v); missing values block startup, entering setup-only mode: %s", err, strings.Join(gaps, ", "))
-			return runSetupOnly(ctx, boot, gaps, build)
+		// 填占位值能过校验即视为「缺值阻塞」；只能把值改回声明默认值才过则视为
+		// 「值非法」（ADR-0018 决策 3 / 待定 1）。两者都判不出则保持 fail-fast。
+		heal := healStartupConfig(ctx, boot, bootValues, err, validateValues, configboot.Load)
+		if len(heal.Gaps) > 0 {
+			log.Printf("admin-api: config validation failed (%v); missing values block startup, entering setup-only mode: %s",
+				err, strings.Join(heal.Gaps, ", "))
+			return runSetupOnly(ctx, boot, heal.Gaps, build)
 		}
-		// 「键在但值错」：按声明默认值重置后重试一次（ADR-0018 待定 1）。
-		// 重置仍不通过则保留 fail-fast，不带病启动、不静默改无关键。
-		if refs, ok := configboot.DiagnoseInvalidValues(bootValues, validateValues); ok {
-			log.Printf("admin-api: config validation failed (%v); resetting invalid values to declared defaults: %s", err, strings.Join(refs, ", "))
-			identity := strings.TrimSpace(os.Getenv("CONFIG_SERVICE_IDENTITY"))
-			resetErr := configboot.ResetInvalidValues(ctx, boot.ConfigAPIURL, boot.HTTPClient, identity, boot.Env, refs)
-			switch {
-			case resetErr != nil:
-				log.Printf("admin-api: reset invalid values failed: %v", resetErr)
-			default:
-				reloaded, loadErr := configboot.Load(ctx)
-				if loadErr != nil {
-					log.Printf("admin-api: reload config after reset failed: %v", loadErr)
-					break
-				}
-				boot = reloaded
-				cfg, retryErr := appconfig.LoadFromValues(buildValues)
-				if retryErr != nil {
-					log.Printf("admin-api: config still invalid after reset (%v); keeping fail-fast", retryErr)
-					break
-				}
+		// 自愈成功后重试一次装配；仍不通过则保留 fail-fast，不带病启动。
+		if heal.Reloaded {
+			boot = heal.Boot
+			if cfg, retryErr := appconfig.LoadFromValues(buildValues); retryErr != nil {
+				log.Printf("admin-api: config still invalid after reset (%v); keeping fail-fast", retryErr)
+			} else {
 				appCfg, err = cfg, nil
 			}
 		}
