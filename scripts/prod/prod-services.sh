@@ -237,12 +237,8 @@ load_env() {
   [[ -n "${CONFIG_API_CLIENT_CERT:-}" && -f "$CONFIG_API_CLIENT_CERT" ]] || die "缺少客户端证书：$CONFIG_API_CLIENT_CERT"
   [[ -n "${CONFIG_API_NAMESPACE_ALLOWLIST:-}" ]] || die "缺少 CONFIG_API_NAMESPACE_ALLOWLIST"
   [[ -n "${CONFIG_BOOTSTRAP_GRANT_IDENTITY:-}" ]] || die "缺少 CONFIG_BOOTSTRAP_GRANT_IDENTITY（prod CC-R-05）"
-  # prod-like 播种固定 storage.driver=s3，而连接参数属部署侧注入（CONFIG_STANDARDS §3.1.1）。
-  # 缺失时 admin-api / worker / biz-api 都会在 Validate 阶段退出，向导都打不开。
-  if [[ -z "${ADMIN_FRAME_STORAGE_S3_BUCKET:-}" || -z "${ADMIN_FRAME_STORAGE_S3_REGION:-}" ]]; then
-    warn "缺少 ADMIN_FRAME_STORAGE_S3_BUCKET / REGION：prod-like 播种为 storage.driver=s3，业务进程将因 's3 requires bucket and region' 退出"
-    warn "请在 $file 补齐（见 scripts/prod/env.example 的部署侧 overlay 段）"
-  fi
+  # 对象存储连接配置由配置中心提供（安装向导 / 管理面审批），不再要求 env。
+  # admin-api 在存储不可用时会降级为 setup-only，可经 /setup/install 修复。
   log "已加载环境变量：$file"
 }
 

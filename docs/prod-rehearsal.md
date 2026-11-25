@@ -75,14 +75,16 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8081/readyz
 
 安装完成后的可选部署侧 overlay（`env.example` 末尾）：
 
-- `ADMIN_FRAME_STORAGE_S3_*`（**最小启动即必填**：prod-like 播种固定 `storage.driver=s3`，缺 bucket/region 会让 admin-api/worker/biz-api 在 Validate 阶段退出；RustFS 宿主机 `19000`）
+- `ADMIN_FRAME_STORAGE_S3_*`（**正常路径不需要**：连接配置已迁入配置中心，由安装向导填写；这组变量仅作「快照尚未播种」时的临时兜底，`ApplyDeployStorage` 以 `SetIfEmpty` 注入）
 - `ADMIN_FRAME_NOTIFICATION_BLACKLIST_SALT`（worker 本地回退盐，可选）
 
 > `prod-start` 仅强等 `config-api /readyz`；业务进程未安装前 `/readyz` 503 属预期，不回滚启动。
 
 **启动失败策略（默认降级启动）**：`config-api` 是硬前置，起不来则整体失败并回滚。`worker` / `admin-api` / `biz-api` / `c-api` 任一失败**只记录、不回滚**，其余进程保持运行——否则一个业务进程的配置错误会把 `admin-api` 一起带走，导致 `/setup/install` 也打不开（自锁）。结束时脚本汇总未启动进程，并说明 `admin-api` 是否可用。需要「全有或全无」时显式加 `--strict` / `-Strict`。
 
-> **对象存储 overlay 必填**：prod-like 播种把 `storage.driver` 固定为 `s3`（`internal/configcenter/app/prod_defaults.go`），而 bucket/region 等连接参数属「永久排除、不进配置中心」的部署侧注入项（`CONFIG_STANDARDS.md` §3.1.1）。`scripts/prod/env.example` 已给出与 RustFS 对齐的一组变量；缺这组值时 `admin-api` / `worker` / `biz-api` 都会在 Validate 阶段报 `s3 requires bucket and region` 退出，向导同样打不开。脚本启动时会做缺失告警。
+> **对象存储配置走配置中心**：`storage.driver` / `storage.s3.bucket` / `storage.s3.region` / `endpoint` / `force_path_style` 已登记为 KeySpec（`CONFIG_STANDARDS.md` §3.1.1 修订），由 Admin `/setup/install` 填写或管理面审批发布；`access_key` / `secret_key` 登记为敏感键，只进 `config_secret`。**不要在 `scripts/prod/.env` 声明业务变量**。`bucket` / `region` 在 `storage.driver=s3|minio` 时条件必填，缺失会被判为阻塞键。
+
+> **存储不可用时 admin-api 降级**：对象存储装配失败（缺桶/区域、凭据无效、端点不可达）时，`admin-api` 不再退出，而是进入 setup-only，用 `/setup/install` 重新配置后重启；`worker` / `biz-api` / `c-api` 仍保持 fail-fast（ADR-0018 决策 2）。这是 `ErrStorageUnavailable` 分支，专门覆盖「配置校验通过但资源打不开」这一类故障。
 
 ## 5. 停止
 
