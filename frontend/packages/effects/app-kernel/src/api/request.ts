@@ -46,9 +46,11 @@ export function createAppRequestClient({
   options,
   ensureIdempotencyHeader,
 }: AppRequestClientOptions) {
+  // 业务请求默认解包信封 data；登录/登出等需整包响应的走 baseRequestClient 或显式 raw。
   const client = new RequestClient({
     ...options,
     baseURL: apiURL,
+    responseReturn: 'data',
   });
 
   async function doReAuthenticate() {
