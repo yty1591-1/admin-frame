@@ -10,7 +10,7 @@ import (
 
 const (
 	// StorageS3AccessKeySecretName 是对象存储 AccessKey 的密钥名（platform 域）。
-	StorageS3AccessKeySecretName = "storage.s3.access_key"
+	StorageS3AccessKeySecretName = "storage.s3.access_key" //nolint:gosec // G101: 密钥名，非凭据值
 	// StorageS3SecretKeySecretName 是对象存储 SecretKey 的密钥名（platform 域）。
 	StorageS3SecretKeySecretName = "storage.s3.secret_key" //nolint:gosec // G101: 密钥名，非凭据值
 	// StorageS3AccessKeyValueKey 是注入 appconfig Values 的扁平路径。
@@ -46,7 +46,7 @@ func ResolveStorageS3Credentials(ctx context.Context, env string,
 }
 
 // ResolveStorageS3CredentialsFromEnv 构造 secretclient 并解析对象存储 AK/SK。
-func ResolveStorageS3CredentialsFromEnv(ctx context.Context, env string) (string, string, error) {
+func ResolveStorageS3CredentialsFromEnv(ctx context.Context, env string) (accessKey, secretKey string, err error) {
 	client, err := NewFromEnv()
 	if err != nil {
 		return "", "", err
