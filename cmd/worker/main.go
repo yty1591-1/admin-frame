@@ -73,6 +73,9 @@ func run(replayDLQ string, sweepCertifications bool) error {
 			return fmt.Errorf("jwt secret: %w", err)
 		}
 	}
+	// 对象存储凭据：走密钥子域（config_secret）；解析失败不在此退出，
+	// 交由 Opening 阶段按 opts 判定（worker 无降级，缺凭据即 fail-fast）。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
 	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
 		// 与 service/channel/addr/env 同属进程身份证，须在 Validate 前注入（CC-R-01）。
@@ -83,6 +86,12 @@ func run(replayDLQ string, sweepCertifications bool) error {
 		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "worker")
 		configboot.ApplyDeployOverlays(values)
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
 		// 缺必填键时 fail-fast：worker 无法自行修复，等 admin 向导补齐（ADR-0018）。
 		if err := configboot.RequireComplete("worker", values); err != nil {
 			return nil, err

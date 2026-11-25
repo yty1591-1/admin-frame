@@ -81,3 +81,62 @@ func TestRequireComplete(t *testing.T) {
 		t.Fatalf("error must tell operators how to fix it, got %q", msg)
 	}
 }
+
+// TestMissingRequiredStorageConditional 守护对象存储的条件必填：
+// 只有 s3/minio 才要求 bucket/region，别的驱动不该被判缺键。
+func TestMissingRequiredStorageConditional(t *testing.T) {
+	cases := []struct {
+		name   string
+		driver string
+		bucket string
+		region string
+		want   []string
+	}{
+		{
+			name: "s3 缺 bucket 与 region", driver: "s3",
+			want: []string{"platform/storage.s3.bucket", "platform/storage.s3.region"},
+		},
+		{
+			name: "minio 缺 region", driver: "minio", bucket: "b",
+			want: []string{"platform/storage.s3.region"},
+		},
+		{
+			name: "s3 已全填", driver: "s3", bucket: "b", region: "r",
+			want: nil,
+		},
+		{
+			name: "memory 不需要桶参数", driver: "memory",
+			want: nil,
+		},
+		{
+			name: "local 不需要桶参数", driver: "local",
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			values := requiredValues(t)
+			values["storage.driver"] = tc.driver
+			values["storage.s3.bucket"] = tc.bucket
+			values["storage.s3.region"] = tc.region
+			gaps, err := MissingRequired(values)
+			if err != nil {
+				t.Fatalf("MissingRequired: %v", err)
+			}
+			var got []string
+			for _, gap := range gaps {
+				if strings.HasPrefix(gap, "platform/storage.") {
+					got = append(got, gap)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("storage gaps = %v, want %v", got, tc.want)
+			}
+			for i, want := range tc.want {
+				if got[i] != want {
+					t.Fatalf("storage gaps = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

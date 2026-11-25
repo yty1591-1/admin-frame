@@ -45,7 +45,11 @@ func ApplyDeployNodeID(values map[string]string) {
 	}
 }
 
-// ApplyDeployStorage 在 storage.driver 为 s3/minio 时注入云连接参数（STANDARDS §3.1.1）。
+// ApplyDeployStorage 保留为兼容回退：从部署侧 env 注入对象存储连接参数。
+//
+// 自配置中心接管（CONFIG_STANDARDS §3.1.1 修订）后，正式路径是快照提供
+// storage.s3.*（安装向导 / 管理面审批），AK/SK 走 config_secret。本函数
+// 只在快照缺这些键时兜底，便于尚未迁移的部署继续保持可用。
 func ApplyDeployStorage(values map[string]string) {
 	if values == nil {
 		return

@@ -61,6 +61,8 @@ func run() error {
 			return fmt.Errorf("jwt secret: %w", err)
 		}
 	}
+	// 对象存储凭据：走密钥子域（config_secret）；缺失时由装配阶段决定是否致命。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
 	hashKey, mfaSecret, err := secretruntime.ResolveIdentitySecretsFromEnv(ctx, boot.Env)
 	if err != nil {
 		if boot.InstallPending || platformconfig.IsLocalDevEnv(boot.Env) {
@@ -85,6 +87,12 @@ func run() error {
 		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "biz")
 		configboot.ApplyDeployOverlays(values)
 		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
 		if hashKey != "" {
 			values[secretruntime.IdentityHashKeyValueKey] = hashKey
 		}

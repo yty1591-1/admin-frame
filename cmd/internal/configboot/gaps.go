@@ -14,6 +14,10 @@ import (
 // 的键——敏感键走 config_secret（缺失由密钥自动生成流程负责），若把它们算进
 // 阻塞会把环境判成永久缺键（ADR-0018）。
 //
+// 在此基础上追加「条件必填」：对象存储驱动为 s3/minio 时，bucket/region 没有
+// 默认值且缺失即无法打开存储，与 Required 等价（KeySpec.Required 表达不了
+// 依赖其他键的条件，故在进程侧补判）。
+//
 // 必须在所有进程级补齐（SetIfEmpty / ApplyProdLikeProcessDefaults /
 // ApplyDeployOverlays）之后调用：代码能补的键不算缺，否则会误降级。
 func MissingRequired(values map[string]string) ([]string, error) {
@@ -32,8 +36,27 @@ func MissingRequired(values map[string]string) ([]string, error) {
 			}
 		}
 	}
+	gaps = append(gaps, missingStorageRefs(values)...)
 	sort.Strings(gaps)
 	return gaps, nil
+}
+
+// missingStorageRefs 返回对象存储的条件必填缺值键。
+//
+// 仅在 storage.driver=s3/minio 时要求 bucket/region：memory/local 等驱动
+// 不需要桶连接参数，若一并要求会把每个 dev/test 环境判成缺键。
+func missingStorageRefs(values map[string]string) []string {
+	driver := strings.ToLower(strings.TrimSpace(values["storage.driver"]))
+	if driver != "s3" && driver != "minio" {
+		return nil
+	}
+	refs := make([]string, 0, 2)
+	for _, key := range []string{"storage.s3.bucket", "storage.s3.region"} {
+		if strings.TrimSpace(values[key]) == "" {
+			refs = append(refs, spec.NamespacePlatform+"/"+key)
+		}
+	}
+	return refs
 }
 
 // RequireComplete 供 fail-fast 进程使用：仍缺必填键时返回带修复指引的启动错误。

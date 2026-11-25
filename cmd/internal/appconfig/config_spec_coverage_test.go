@@ -66,7 +66,8 @@ var excludedPrefixes = map[string]string{
 	"secrets.":                           "密钥来源配置",
 	"cors.":                              "STANDARDS §3.1.1 CORS/本地路径；随网关部署",
 	"storage.local.":                     "STANDARDS §3.1.1 CORS/本地路径；随节点部署",
-	"storage.s3.":                        "STANDARDS §3.1.1 云厂商连接参数",
+	"storage.s3.session_token":           "STANDARDS §3.1.1 云厂商连接参数；临时会话凭据随 Provider",
+	"storage.s3.disable_ssl":             "STANDARDS §3.1.1 云厂商连接参数；禁用 TLS 仅限开发，生产禁止",
 	"storage.oss.":                       "STANDARDS §3.1.1 云厂商连接参数",
 	"storage.cos.":                       "STANDARDS §3.1.1 云厂商连接参数",
 	"storage.obs.":                       "STANDARDS §3.1.1 云厂商连接参数",
@@ -132,8 +133,8 @@ func TestExcludedReasonsForbidStalePhrases(t *testing.T) {
 // TestCORSStorageExclusionsCiteStandards 守护 cors/storage 排除必须引用 STANDARDS §3.1.1（CC-R-11）。
 func TestCORSStorageExclusionsCiteStandards(t *testing.T) {
 	required := []string{
-		"cors.", "storage.local.", "storage.s3.", "storage.oss.",
-		"storage.cos.", "storage.obs.", "storage.lifecycle.", "storage.buckets",
+		"cors.", "storage.local.", "storage.s3.session_token", "storage.s3.disable_ssl",
+		"storage.oss.", "storage.cos.", "storage.obs.", "storage.lifecycle.", "storage.buckets",
 	}
 	for _, prefix := range required {
 		reason, ok := excludedPrefixes[prefix]

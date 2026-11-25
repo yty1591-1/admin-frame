@@ -70,6 +70,9 @@ func run() error {
 	}
 	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
 	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
+	// 对象存储凭据：走密钥子域（config_secret）；仅在 s3/minio 驱动时解析，
+	// 解析失败不在此处退出——交由存储装配阶段判定，从而能降级到安装向导。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
 	// gaps 在装配退出时回传：缺必填键时改走 setup-only，避免带病装配（ADR-0018）。
 	var bootGaps []string
 	var bootValues map[string]string
@@ -109,6 +112,13 @@ func run() error {
 		// SAML 仅 channel=c；enabled=false 时注入私钥会触发 Validate 失败。
 		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
 			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
+		}
+		// 对象存储凭据来自 config_secret，覆盖部署侧 env（CC-R-05）。
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
 		}
 		gaps, gapsErr := configboot.MissingRequired(values)
 		if gapsErr != nil {

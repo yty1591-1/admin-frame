@@ -72,8 +72,12 @@ config-api 拉取结果 > 本地缓存目录 > 代码默认值（key spec / appl
 | 部署身份 | `env` / `service` / `channel` / `addr` / `id.node_id` | `WithProcessIdentity` 或编排 |
 | 基础设施口令 | `db.dsn` / `redis.password` | 仅 `ADMIN_FRAME_DB_*` / `REDIS_*` |
 | 密钥环与列表 | `identity.subject.keys` / `previous_hash_keys` / `mfa.keys` / JWT keys | 密钥子域或本地回退 |
-| 云厂商连接参数 | `storage.s3/oss/cos/obs.*` / `storage.lifecycle.*` / `storage.buckets` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider；凭据另走密钥子域 |
+| 云厂商厂商段与桶映射 | `storage.oss/cos/obs.*` / `storage.lifecycle.*` / `storage.buckets` / `storage.s3.session_token` / `storage.s3.disable_ssl` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider；凭据另走密钥子域 |
 | CORS / 本地路径 | `cors.*` / `storage.local.*` | 网关与节点部署；不进 Item 播种 |
+
+**已迁入配置中心（原排除项，2026-11-24 修订）**：`storage.driver` / `storage.s3.bucket` / `storage.s3.region` / `storage.s3.endpoint` / `storage.s3.force_path_style` 属「连接配置」而非凭据，改为 KeySpec 登记，可由安装向导填写或管理面审批后发布；`storage.s3.access_key` / `storage.s3.secret_key` 登记为**敏感键**，只进 `config_secret`，任何接口都不回显。`bucket` / `region` 无默认值且**条件必填**（仅 `storage.driver=s3|minio` 时要求）——`KeySpec.Required` 表达不了跨键依赖，故由 `configboot.MissingRequired` 的 `missingStorageRefs` 在进程侧补判。
+
+> 理由：原先把桶参数一律排除，导致 prod-like 播种 `storage.driver=s3` 后按样例 env 启动必然在 `OpenStorageSet` 处失败（`s3 requires bucket and region`），且 `admin-api` 同时退出使安装向导不可达，形成死锁。改为「连接配置进配置中心 + 凭据进密钥子域」既消除了该死锁，也不把凭据暴露到普通快照。
 
 浮点速率与采样率须以 **string + pattern**（或未来 float ValueType）登记进 KeySpec，不得长期排除。
 

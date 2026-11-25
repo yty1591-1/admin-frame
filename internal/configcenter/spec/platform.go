@@ -113,13 +113,31 @@ func platformSpecs() []domain.KeySpec {
 		stringKey("redis.addr", "", "Redis 地址；空表示不启用", false),
 		intKey("redis.db", 0, "Redis 逻辑库编号", false, int64Ptr(0), nil),
 
-		// 对象存储：云厂商凭证与桶级配置不进配置中心。
+		// 对象存储：驱动与桶级参数进配置中心（可由安装向导填写 / 管理面审批）。
+		// 连接参数（bucket/region/endpoint/force_path_style）是「配置」而非凭据，
+		// 因此不再按部署侧注入排除；AK/SK 属凭据，登记为敏感键走 config_secret。
 		stringKeyWithEnum("storage.driver", "memory", "对象存储驱动", false,
 			"memory", "local", "s3", "minio", "oss", "cos", "obs"),
 		stringKey("storage.key_prefix", "", "对象键前缀", false),
 		intKey("storage.max_object_bytes", 0, "单对象字节上限；0 表示不限制", false, int64Ptr(0), nil),
 		durationKey("storage.presign_put_ttl", "0s", "预签名上传有效期", false),
 		durationKey("storage.presign_get_ttl", "0s", "预签名下载有效期", false),
+		// 条件必填：bucket / region 仅在 storage.driver=s3/minio 时需要。
+		// KeySpec.Required 是「全局必填且与 Default 互斥」的语义，表达不了
+		// 依赖其他键的条件，故此处保留空默认值 + 非必填；缺值判定由
+		// configboot 的启动期诊断按驱动门控（见 DiagnoseMissingValues）。
+		stringKey("storage.s3.bucket", "", "对象存储桶名；storage.driver=s3/minio 时必填", false),
+		stringKey("storage.s3.region", "", "对象存储区域；storage.driver=s3/minio 时必填", false),
+		stringKey("storage.s3.endpoint", "", "对象存储端点；空表示使用云厂商默认端点", false),
+		boolKey("storage.s3.force_path_style", "false", "对象存储是否强制 path-style 访问", false),
+		// 凭据：走密钥子域（config_secret），安装向导自动生成或由运维填写，
+		// 任何接口都不回显明文或密文（CC-R-05）。
+		sensitiveAutoKey("storage.s3.access_key",
+			"对象存储 AccessKey（密钥子域；prod-like 播种占位，须轮换真值）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
+		sensitiveAutoKey("storage.s3.secret_key",
+			"对象存储 SecretKey（密钥子域；prod-like 播种占位，须轮换真值）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
 
 		// 后台任务与追踪。
 		// startup：全仓无以该间隔运转的循环；列入热更会造成假热更（ADR-0015 H5）。
