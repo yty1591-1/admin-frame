@@ -6,8 +6,7 @@ import { preferences } from '@vben/preferences';
 import { $t } from '#/locales';
 
 const BasicLayout = () => import('#/layouts/basic.vue');
-const AuthPageLayout = () =>
-  import('@vben/app-kernel/layouts/auth').then((m) => m.default);
+const AuthPageLayout = () => import('@vben/app-kernel/layouts/auth').then((m) => m.default);
 
 /**
  * 全局 404 页面
@@ -73,7 +72,7 @@ const coreRoutes: RouteRecordRaw[] = [
       hideInMenu: true,
       hideInTab: true,
       ignoreAccess: true,
-      title: '配置中心安装',
+      title: $t('install.brandSubtitle'),
     },
     name: 'ConfigInstall',
     path: '/setup/install',

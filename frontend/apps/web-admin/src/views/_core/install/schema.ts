@@ -6,11 +6,7 @@
  * 避免向导里散落硬编码的分组表。
  */
 
-import type {
-  InstallMode,
-  InstallSchema,
-  SchemaField,
-} from '#/api/configcenter/install';
+import type { InstallMode, InstallSchema, SchemaField } from '#/api/configcenter/install';
 
 export type FieldGroup = {
   fields: SchemaField[];
@@ -32,21 +28,24 @@ export type FieldSection = {
 export type InstallDraft = Record<string, Record<string, string>>;
 
 /** 表单里真正需要用户填的字段：敏感键走密钥服务，不在这里渲染成输入框。 */
-export function configFields(
-  schema: InstallSchema,
-  mode: InstallMode,
-): SchemaField[] {
+export function configFields(schema: InstallSchema, mode: InstallMode): SchemaField[] {
   return schema.fields
     .filter((field) => !field.sensitive)
     .filter((field) => (mode === 'repair' ? field.blocking : true))
     .toSorted((a, b) => byOrder(a, b));
 }
 
-/** 敏感键：向导只展示「安装时自动生成」与生成规则，不回显也不收值。 */
+/** 敏感键：自动生成项只展示规则；`auto_generate=false` 允许向导填写覆盖值。 */
 export function secretFields(schema: InstallSchema): SchemaField[] {
   return schema.fields
     .filter((field) => field.sensitive)
+    .filter((field) => (schema.mode === 'repair' ? field.blocking : true))
     .toSorted((a, b) => byOrder(a, b));
+}
+
+/** 可在向导中填写明文的敏感键（安装时写入密钥子域）。 */
+export function writableSecretFields(schema: InstallSchema): SchemaField[] {
+  return secretFields(schema).filter((field) => field.secret && !field.secret.auto_generate);
 }
 
 /**
@@ -106,7 +105,12 @@ export function defaultBadge(field: SchemaField): string {
   if (field.default.value === '') {
     return '默认：空';
   }
-  const suffix = field.default.source === 'prod_default' ? '（生产基线）' : '';
+  let suffix = '';
+  if (field.default.source === 'prod_default') {
+    suffix = '（生产基线）';
+  } else if (field.default.source === 'dev_default') {
+    suffix = '（开发基线）';
+  }
   return `默认：${field.default.value}${suffix}`;
 }
 
@@ -168,10 +172,23 @@ export function declaredKeyRefs(text: string): string[] {
 
 /** 已填值数量，用于「预览」步骤显示本次会写入多少键。 */
 export function filledCount(draft: InstallDraft): number {
-  return Object.values(draft).reduce(
-    (sum, group) =>
-      sum + Object.values(group).filter((value) => hasValue(value)).length,
-    0,
+  return filledEntries(draft).length;
+}
+
+/** 已填条目清单（预览步变更摘要）。 */
+export function filledEntries(
+  draft: InstallDraft,
+): Array<{ key: string; namespace: string; value: string }> {
+  const rows: Array<{ key: string; namespace: string; value: string }> = [];
+  for (const [namespace, group] of Object.entries(draft)) {
+    for (const [key, value] of Object.entries(group)) {
+      if (hasValue(value)) {
+        rows.push({ key, namespace, value: value.trim() });
+      }
+    }
+  }
+  return rows.toSorted((a, b) =>
+    `${a.namespace}/${a.key}`.localeCompare(`${b.namespace}/${b.key}`),
   );
 }
 
