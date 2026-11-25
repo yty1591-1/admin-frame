@@ -20,3 +20,25 @@ test('登录页渲染账号、密码输入与登录按钮', async ({ page }) => 
     page.locator('button', { hasText: '登录' }).first(),
   ).toBeVisible();
 });
+
+/**
+ * 回归：api/request 与 api/core/auth 的模块环曾让 prd 产物登录时报
+ * `Cannot read properties of undefined (reading 'post')`（FE-T-04 发现并修复），
+ * 这里断言提交确实发出 POST /auth/login，避免该接线再次静默断掉。
+ */
+test('登录提交发出 POST /auth/login', async ({ page }) => {
+  const loginRequests: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/auth/login')) {
+      loginRequests.push(request.url());
+    }
+  });
+
+  await page.goto('/#/auth/login');
+  const inputs = page.locator('input');
+  await inputs.nth(0).fill('e2e');
+  await inputs.nth(1).fill('secret');
+  await page.locator('button', { hasText: '登录' }).first().click();
+
+  await expect.poll(() => loginRequests.length).toBeGreaterThan(0);
+});
