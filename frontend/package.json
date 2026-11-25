@@ -52,7 +52,7 @@
     "reinstall": "pnpm run clean -- --del-lock && pnpm install",
     "test:benchmark": "vitest bench --run",
     "test:unit": "vitest run --dom && vitest run --dom --config apps/web-admin/vitest.config.ts && vitest run --dom --config apps/web-biz/vitest.config.ts",
-    "test:e2e": "turbo run test:e2e",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "update:deps": "npx taze -r -w",
     "version": "pnpm exec changeset version && pnpm install --no-frozen-lockfile",
     "catalog": "pnpm dlx codemod pnpm/catalog"
@@ -92,7 +92,8 @@
     "vite": "catalog:",
     "vitest": "catalog:",
     "vue": "catalog:",
-    "vue-tsc": "catalog:"
+    "vue-tsc": "catalog:",
+    "@playwright/test": "catalog:"
   },
   "engines": {
     "node": "^22.18.0 || ^24.12.0",
