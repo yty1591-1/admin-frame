@@ -16,7 +16,8 @@ FAIL=0
 # 证伪时发现过这个假阴性，故统一走 code_has。
 code_has() {
   local file="$1" needle="$2"
-  grep -vE '^[[:space:]]*#' "${file}" 2>/dev/null | grep -qF -- "${needle}"
+  # 消费完整管道，避免 grep -q 提前退出令上游 SIGPIPE 被 pipefail 判为失败。
+  grep -vE '^[[:space:]]*#' "${file}" 2>/dev/null | grep -F -- "${needle}" >/dev/null
 }
 
 echo "==> ENT-08: backup artifacts exist"
