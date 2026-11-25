@@ -1,4 +1,5 @@
 import type {
+  RouteLocationResolvedGeneric,
   Router,
   RouteRecordNameGeneric,
   RouteRecordRaw,
@@ -68,10 +69,14 @@ function setupAccessGuard(router: Router, options: RouterGuardOptions) {
     // 基本路由，这些路由不需要进入权限拦截
     if (coreRouteNames.includes(to.name)) {
       if (to.path === LOGIN_PATH && accessStore.accessToken) {
-        return resolveSafeRedirect(
-          to.query?.redirect,
-          userStore.userInfo?.homePath || preferences.app.defaultHomePath,
-        );
+        const homePath =
+          userStore.userInfo?.homePath || preferences.app.defaultHomePath;
+        // 已登录再进登录页：回跳也要避开未注册路径（如历史 /dashboard）。
+        return pickRegisteredPath(router, [
+          resolveSafeRedirect(to.query?.redirect, homePath),
+          homePath,
+          preferences.app.defaultHomePath,
+        ]);
       }
       return true;
     }
@@ -121,19 +126,82 @@ function setupAccessGuard(router: Router, options: RouterGuardOptions) {
     accessStore.setAccessMenus(accessibleMenus as never);
     accessStore.setAccessRoutes(accessibleRoutes);
     accessStore.setIsAccessChecked(true);
-    const redirectPath = resolveSafeRedirect(
+    const homePath = userInfo.homePath || preferences.app.defaultHomePath;
+    // 优先回跳登录前地址；若目标未注册（如残留的 /dashboard），回落到首页，
+    // 避免「登录成功 → 立刻 404」。
+    const preferred = resolveSafeRedirect(
       from.query.redirect ??
-        (to.path === preferences.app.defaultHomePath
-          ? userInfo.homePath || preferences.app.defaultHomePath
-          : to.fullPath),
-      userInfo.homePath || preferences.app.defaultHomePath,
+        (to.path === preferences.app.defaultHomePath ? homePath : to.fullPath),
+      homePath,
     );
+    const redirectPath = pickRegisteredPath(router, [
+      preferred,
+      homePath,
+      preferences.app.defaultHomePath,
+      firstAccessiblePath(accessibleRoutes),
+    ]);
 
     return {
       ...router.resolve(redirectPath),
       replace: true,
     };
   });
+}
+
+/** 判断 resolve 结果是否落在全局 404 兜底路由上。 */
+function isNotFoundLocation(resolved: RouteLocationResolvedGeneric): boolean {
+  if (resolved.name === 'FallbackNotFound') {
+    return true;
+  }
+  const matched = resolved.matched ?? [];
+  if (matched.length === 0) {
+    return true;
+  }
+  return matched.some((record) => record.name === 'FallbackNotFound');
+}
+
+/**
+ * 从候选路径中选出第一条已注册业务路由；都未命中则退回第一个候选（通常是首页）。
+ */
+function pickRegisteredPath(router: Router, candidates: Array<null | string>) {
+  const unique = [
+    ...new Set(
+      candidates
+        .map((item) => item?.trim())
+        .filter((item): item is string => Boolean(item)),
+    ),
+  ];
+  for (const path of unique) {
+    if (!isNotFoundLocation(router.resolve(path))) {
+      return path;
+    }
+  }
+  return unique[0] || preferences.app.defaultHomePath;
+}
+
+/** 取后端菜单树中第一个可访问叶子路径，供首页也未注册时兜底。 */
+function firstAccessiblePath(routes: RouteRecordRaw[]): string {
+  for (const route of routes) {
+    const children = route.children ?? [];
+    if (children.length > 0) {
+      const childPath = firstAccessiblePath(children);
+      if (!childPath) {
+        continue;
+      }
+      if (childPath.startsWith('/')) {
+        return childPath;
+      }
+      const parent = route.path || '';
+      if (parent.endsWith('/')) {
+        return `${parent}${childPath}`;
+      }
+      return `${parent}/${childPath}`;
+    }
+    if (route.path) {
+      return route.path;
+    }
+  }
+  return '';
 }
 
 /**

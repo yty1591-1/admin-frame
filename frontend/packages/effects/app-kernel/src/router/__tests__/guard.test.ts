@@ -67,7 +67,25 @@ function createFakeRouter() {
     afterEach: vi.fn((fn: (to: any) => any) => {
       after.push(fn);
     }),
-    resolve: vi.fn((path: string) => ({ fullPath: path, path, query: {} })),
+    resolve: vi.fn((path: string) => {
+      // 模拟未注册路径（如历史残留 /dashboard）落到全局 404。
+      if (path === '/dashboard') {
+        return {
+          fullPath: path,
+          matched: [{ name: 'FallbackNotFound' }],
+          name: 'FallbackNotFound',
+          path,
+          query: {},
+        };
+      }
+      return {
+        fullPath: path,
+        matched: [{ name: 'Page' }],
+        name: 'Page',
+        path,
+        query: {},
+      };
+    }),
   } as unknown as Router;
 
   createRouterGuard(router, {
@@ -236,6 +254,8 @@ describe('router guard', () => {
     expect(router.resolve).toHaveBeenCalledWith('/users');
     expect(result).toEqual({
       fullPath: '/users',
+      matched: [{ name: 'Page' }],
+      name: 'Page',
       path: '/users',
       query: {},
       replace: true,
@@ -257,5 +277,30 @@ describe('router guard', () => {
 
     expect(mocks.authStore.fetchUserInfo).not.toHaveBeenCalled();
     expect(router.resolve).toHaveBeenCalledWith('/from-redirect');
+  });
+
+  it('回跳目标未注册时回落到 homePath，避免登录后立刻 404', async () => {
+    const { access, router } = createFakeRouter();
+    mocks.accessStore.accessToken = 'token';
+    mocks.userStore.userInfo = { homePath: '/home', roles: ['admin'] };
+    mocks.generateAccess.mockResolvedValue({
+      accessibleMenus: [],
+      accessibleRoutes: [{ path: '/system', children: [{ path: 'role' }] }],
+    });
+
+    const result = await access(route({ fullPath: '/dashboard' }), {
+      query: { redirect: encodeURIComponent('/dashboard') },
+    });
+
+    expect(router.resolve).toHaveBeenCalledWith('/dashboard');
+    expect(router.resolve).toHaveBeenCalledWith('/home');
+    expect(result).toEqual({
+      fullPath: '/home',
+      matched: [{ name: 'Page' }],
+      name: 'Page',
+      path: '/home',
+      query: {},
+      replace: true,
+    });
   });
 });
