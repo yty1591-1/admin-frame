@@ -4,7 +4,7 @@
 
 InstallStatusResponse:
   allOf:
-    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - $ref: ../../components.yaml#/components/schemas/Envelope
     - type: object
       properties:
         data:
@@ -23,7 +23,7 @@ InstallStatusResponse:
 
 InstallApplyResponse:
   allOf:
-    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - $ref: ../../components.yaml#/components/schemas/Envelope
     - type: object
       properties:
         data:
@@ -48,7 +48,7 @@ InstallApplyResponse:
 # ADR-0018：安装向导渲染元数据（只出声明信息，不出运行值）。
 InstallSchemaResponse:
   allOf:
-    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - $ref: ../../components.yaml#/components/schemas/Envelope
     - type: object
       properties:
         data:

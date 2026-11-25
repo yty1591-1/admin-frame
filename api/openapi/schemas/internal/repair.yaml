@@ -5,7 +5,7 @@
 
 ResetDefaultsResponse:
   allOf:
-    - $ref: ../../components.yaml#/components/schemas/SuccessEnvelope
+    - $ref: ../../components.yaml#/components/schemas/Envelope
     - type: object
       required: [data]
       properties:
