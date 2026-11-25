@@ -3,7 +3,6 @@ import { useAppConfig } from '@vben/hooks';
 
 import { useAuthStore } from '#/store';
 
-
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
 /**

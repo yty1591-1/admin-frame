@@ -60,6 +60,7 @@
   "devDependencies": {
     "@changesets/changelog-github": "catalog:",
     "@changesets/cli": "catalog:",
+    "@playwright/test": "catalog:",
     "@tsdown/css": "catalog:",
     "@types/node": "catalog:",
     "@vben/commitlint-config": "workspace:*",
@@ -92,8 +93,7 @@
     "vite": "catalog:",
     "vitest": "catalog:",
     "vue": "catalog:",
-    "vue-tsc": "catalog:",
-    "@playwright/test": "catalog:"
+    "vue-tsc": "catalog:"
   },
   "engines": {
     "node": "^22.18.0 || ^24.12.0",
