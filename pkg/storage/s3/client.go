@@ -3,6 +3,8 @@ package s3
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -66,24 +68,55 @@ func newClients(ctx context.Context, sc storage.S3Config) (*s3.Client, *s3.Presi
 		return nil, nil, fmt.Errorf("%w: load aws config: %v", storage.ErrInvalidConfig, err)
 	}
 
+	ep := normalizeS3Endpoint(sc)
+	usePathStyle := sc.ForcePathStyle || endpointNeedsPathStyle(ep)
 	s3opts := []func(*s3.Options){
 		func(o *s3.Options) {
-			o.UsePathStyle = sc.ForcePathStyle
+			o.UsePathStyle = usePathStyle
 		},
 	}
-	if sc.Endpoint != "" {
-		ep := sc.Endpoint
-		if !strings.HasPrefix(ep, "http://") && !strings.HasPrefix(ep, "https://") {
-			if sc.DisableSSL {
-				ep = "http://" + ep
-			} else {
-				ep = "https://" + ep
-			}
-		}
+	if ep != "" {
 		s3opts = append(s3opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(ep)
 		})
 	}
 	client := s3.NewFromConfig(awsCfg, s3opts...)
 	return client, s3.NewPresignClient(client), nil
+}
+
+// normalizeS3Endpoint 为裸主机补齐 scheme，空端点保持空串。
+func normalizeS3Endpoint(sc storage.S3Config) string {
+	ep := strings.TrimSpace(sc.Endpoint)
+	if ep == "" {
+		return ""
+	}
+	if strings.HasPrefix(ep, "http://") || strings.HasPrefix(ep, "https://") {
+		return ep
+	}
+	if sc.DisableSSL {
+		return "http://" + ep
+	}
+	return "https://" + ep
+}
+
+// endpointNeedsPathStyle 在自定义端点为 localhost / 字面量 IP 时强制 path-style。
+//
+// 虚拟主机风格会变成 bucket.127.0.0.1，本地 S3 兼容服务（RustFS/MinIO）无法解析。
+func endpointNeedsPathStyle(endpoint string) bool {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return false
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		host = endpoint
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	return net.ParseIP(host) != nil
 }
