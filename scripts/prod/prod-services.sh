@@ -335,8 +335,9 @@ start_role() {
 
   export CONFIG_SERVICE_IDENTITY="$identity"
   export ADMIN_FRAME_ID_NODE_ID="$node_id"
-  # 最小权限：仅 config-api 持有 Vault root token（KEK Transit）。
-  if [[ "$role" == "config-api" ]]; then
+  # config-api（安装/密钥）与 admin-api（配置管理面）需要 Vault Transit KEK；
+  # 其余业务进程不注入 token。
+  if [[ "$role" == "config-api" || "$role" == "admin-api" ]]; then
     [[ -n "$saved_vault_token" ]] && export VAULT_TOKEN="$saved_vault_token"
   else
     unset VAULT_TOKEN || true

@@ -13,9 +13,9 @@ const envPrefix = EnvPrefix
 
 // InfraEnvPathAllowlist 是业务进程唯一允许的 ADMIN_FRAME_* 环境覆盖根段。
 //
-// 仅基础设施连接参数（db / redis，含 username/password）；业务键与 JWT 等
-// 密钥不得经环境变量注入，须走签名快照或 secretclient → config-api。
-var InfraEnvPathAllowlist = []string{"db", "redis"}
+// 仅 DB 连接参数（含 DSN）；Redis/NATS/SMTP 走配置中心与密钥子域，
+// 口令不得再经 ADMIN_FRAME_REDIS_* 后盖快照（ADR-0018 连通性探测修订）。
+var InfraEnvPathAllowlist = []string{"db"}
 
 // maskedValue 是日志中敏感字段的占位符（SECURITY_STANDARDS SEC-05）。
 const maskedValue = "***"

@@ -41,8 +41,9 @@ func TestValidateSMTP(t *testing.T) {
 	}
 
 	cfg.Channels.Email.SMTP.PasswordEnv = ""
-	if errs := cfg.Validate("prod"); len(errs) == 0 {
-		t.Fatal("missing password_env: want error, got none")
+	// password_env 不再作为 Validate 必填；装配期经密钥子域解析。
+	if errs := cfg.Validate("prod"); len(errs) != 0 {
+		t.Fatalf("smtp without password_env must pass Validate, got %v", errs)
 	}
 }
 

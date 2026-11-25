@@ -11,7 +11,6 @@ func TestApplyConfigAPIBootstrapValuesProd(t *testing.T) {
 	t.Setenv("ADMIN_FRAME_ID_NODE_ID", "1")
 	t.Setenv("ADMIN_FRAME_DB_DRIVER", "mysql")
 	t.Setenv("ADMIN_FRAME_DB_DSN", "root:root@tcp(127.0.0.1:3306)/admin_frame_test?parseTime=true&loc=UTC&charset=utf8mb4")
-	t.Setenv("ADMIN_FRAME_REDIS_ADDR", "127.0.0.1:6379")
 
 	cfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		values := map[string]string{

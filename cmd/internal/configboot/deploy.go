@@ -48,13 +48,21 @@ func ApplyDeployNodeID(values map[string]string) {
 // ApplyDeployStorage 保留为兼容回退：从部署侧 env 注入对象存储连接参数。
 //
 // 自配置中心接管（CONFIG_STANDARDS §3.1.1 修订）后，正式路径是快照提供
-// storage.s3.*（安装向导 / 管理面审批），AK/SK 走 config_secret。本函数
-// 只在快照缺这些键时兜底，便于尚未迁移的部署继续保持可用。
+// storage.s3.*（安装向导 / 管理面审批），AK/SK 走 config_secret；
+// storage.local.* 仍属节点部署（不进 KeySpec）。本函数只在快照缺这些键时兜底。
 func ApplyDeployStorage(values map[string]string) {
 	if values == nil {
 		return
 	}
 	driver := strings.ToLower(strings.TrimSpace(values["storage.driver"]))
+	if driver == "local" {
+		if root := strings.TrimSpace(os.Getenv("ADMIN_FRAME_STORAGE_LOCAL_ROOT")); root != "" {
+			SetIfEmpty(values, "storage.local.root", root)
+		} else {
+			SetIfEmpty(values, "storage.local.root", "var/prod-storage")
+		}
+		return
+	}
 	if driver != "s3" && driver != "minio" {
 		return
 	}
@@ -74,6 +82,9 @@ func ApplyDeployStorage(values map[string]string) {
 }
 
 // ApplyDeployOverlays 合并 node_id 与 storage 部署侧注入；业务进程在 Validate 前调用。
+//
+// redis.addr / redis.db / redis.username 仅来自配置中心快照（安装向导 / 审批发布），
+// 不再从 ADMIN_FRAME_REDIS_* 兜底。
 func ApplyDeployOverlays(values map[string]string) {
 	ApplyDeployNodeID(values)
 	ApplyDeployStorage(values)

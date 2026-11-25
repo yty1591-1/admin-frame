@@ -825,7 +825,7 @@ components:
     InstallGap:
       type: object
       description: |
-        缺失的必填键（ADR-0018）。`status.gaps` 与 `apply.remaining_gaps` 用它回答
+        阻塞键（ADR-0018）。`status.gaps` 与 `apply.remaining_gaps` 用它回答
         「为什么进程起不来」，前端据此高亮需要填写的字段。
       required: [namespace, key, reason]
       properties:
@@ -833,10 +833,18 @@ components:
         key: {type: string}
         reason:
           type: string
-          enum: [no_active_release, missing_in_snapshot]
+          enum:
+            - no_active_release
+            - missing_in_snapshot
+            - connectivity_failed
+            - deploy_env_missing
+            - secret_missing
           description: |
             `no_active_release`：该 namespace 尚无生效指针（首装）；
-            `missing_in_snapshot`：指针存在但快照里缺这个必填键（升级/修复）。
+            `missing_in_snapshot`：指针存在但快照里缺这个必填键（升级/修复）；
+            `connectivity_failed`：字段取值存在但连通性探测失败；
+            `deploy_env_missing`：部署侧 env 缺失（如 DB DSN，不进向导）；
+            `secret_missing`：条件必填的敏感键尚未写入密钥子域。
   responses:
     BadRequest:
       description: 参数非法

@@ -37,6 +37,7 @@ func MissingRequired(values map[string]string) ([]string, error) {
 		}
 	}
 	gaps = append(gaps, spec.MissingStorageRefs(values)...)
+	gaps = append(gaps, spec.MissingInfraRefs(values)...)
 	sort.Strings(gaps)
 	return gaps, nil
 }

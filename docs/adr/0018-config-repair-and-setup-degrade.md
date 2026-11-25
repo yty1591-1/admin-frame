@@ -19,7 +19,7 @@ ADR-0017 把 prod-like 的首次配置收敛成「安装态 + setup token」，�
 
 ## 决策
 
-1. **阻塞判定只看缺键**：`blocking := KeySpec.Required && (快照缺失 || 值为空)`。值非法（键存在但校验不过）不计入阻塞，进程继续 crash-loop，不降级——避免静默带病运行。
+1. **阻塞判定 = 缺键 ∪ 条件缺键 ∪ 条件缺密 ∪ 连通性失败**：`MissingRequired`（含 storage/SMTP 条件 Gaps）+ 条件敏感键缺失（`secret_missing`）+ `RunInfraProbes`（`connectivity_failed` / `deploy_env_missing`）。值非法（键存在但校验不过）仍不计入阻塞，进程继续 crash-loop——避免静默带病运行。config-api 在 `ready` 启动探测失败时 CAS `ready → failed`，`begin(repair)` 允许从 `ready|failed` 进入。
 2. **进程自动降级，且仅 admin-api**：`configboot.Load` 在 Refresh 之后用注册表计算 `Gaps`；非空时 admin-api 进入 setup-only 模式，只挂 `/healthz`、`/readyz`（503 + 缺失键清单）、`/version` 与 `/admin/v1/install/*` 代理，不装配业务依赖、不注册业务路由；biz-api / c-api / worker 仍快速失败退出（无人值守进程降级只会掩盖故障）。
 3. **向导写操作始终要 setup token**：降级不额外放宽鉴权，`X-Config-Install-Token` 继续由 `app.RequireSetupToken` 常量时间比较；token 不入库、不回显。
 4. **安装态新增 repair 入口**：`ready` 之后允许 `begin(reason=repair)`，前置条件是 `Gaps` 非空；迁移 `ready → installing(mode=repair)`，`complete` 后回 `ready`。`Gaps` 为空时仍返回 `40952`，防止把向导当成日常配置渠道。
@@ -49,7 +49,7 @@ ADR-0017 把 prod-like 的首次配置收敛成「安装态 + setup token」，�
 | --- | --- | --- | --- | --- |
 | `pending` / `failed` | `begin(first_install)` | 无 | `installing(mode=first_install)` | `40951` 租约被他人持有 |
 | `ready` | `begin(first_install)` | — | 拒绝 | `40952` |
-| `ready` | `begin(repair)` | `Gaps` 非空 | `installing(mode=repair)`，冻结 `repair_keys` | `40952`（无阻塞键）/ `40951` |
+| `ready` / `failed` | `begin(repair)` | Gaps 非空（含连通性） | `installing(mode=repair)`，冻结 `repair_keys` | `40952`（无阻塞键）/ `40951` |
 | `installing` | `apply` | owner 与租约有效 | 续租约；首次安装写全量条目，repair 只写白名单 | `40951` owner 不匹配 |
 | `installing` | `complete` | owner 与租约有效，无阻塞键 | `ready` | `40000` 仍缺键 |
 | `installing` | 租约过期 | — | 允许他人 `begin` 接管，`failApply` 记 `last_error` | — |
@@ -62,7 +62,7 @@ repair 的 `complete` 前置与首装一致：`Gaps` 必须为空。也就是说
 GET  /internal/v1/install/status
 → {env, status, mode, owner, version, lease_until, completed_at, last_error,
    repair_keys:[namespace/key], blocking_count,
-   gaps:[{namespace, key, reason}]}                # reason ∈ no_active_release | missing_in_snapshot
+   gaps:[{namespace, key, reason}]}                # reason ∈ no_active_release | missing_in_snapshot | connectivity_failed | deploy_env_missing | secret_missing
 
 GET  /internal/v1/install/schema                    # P1 已落地，见下方契约
 → 向导渲染元数据（字段清单 + 分组 + 默认值来源 + 阻塞键）
@@ -83,7 +83,7 @@ POST /internal/v1/install/complete  {owner}
 ```text
 GET /internal/v1/install/schema        头：X-Config-Install-Token（必需）
 → {env, mode, status, blocking_count,
-   blocking_keys:[{namespace, key, label, reason}],          // reason ∈ no_active_release | missing_in_snapshot
+   blocking_keys:[{namespace, key, label, reason}],          // reason 同 status.gaps
    namespaces:[{namespace, title, order, key_count, blocking_count}],
    fields:[{namespace, key, label, group, group_title, order, widget, value_type,
             required, sensitive, deprecated, blocking, reload_mode, hot_whitelist,

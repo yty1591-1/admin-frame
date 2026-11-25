@@ -39,6 +39,10 @@ type InstallService struct {
 	now       func() time.Time
 	lease     time.Duration
 	setupTok  string
+
+	probeCacheAt  time.Time
+	probeCacheEnv string
+	probeCache    []RequiredGap
 }
 
 // InstallServiceConfig 是 InstallService 装配参数。
@@ -147,12 +151,25 @@ func (s *InstallService) Status(ctx context.Context, env string) (domain.Install
 	return state, nil
 }
 
-// Gaps 返回当前阻塞启动的非敏感必填键；与 repair 冻结白名单同源。
+// Gaps 返回当前阻塞键：缺键 + 条件缺键 + 敏感条件缺密 + 连通性失败。
 func (s *InstallService) Gaps(ctx context.Context, env string) ([]RequiredGap, error) {
 	if !domain.ValidEnv(env) {
 		return nil, apperr.BadRequest("invalid env")
 	}
-	return s.bootstrap.MissingRequired(ctx, env)
+	gaps, err := s.bootstrap.MissingRequired(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	secretGaps, err := s.missingInfraSecretGaps(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	gaps = mergeGaps(gaps, secretGaps)
+	probeGaps, err := s.connectivityGaps(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	return mergeGaps(gaps, probeGaps), nil
 }
 
 // BeginInput 是 begin 入参。
@@ -233,9 +250,10 @@ func (s *InstallService) beginMode(ctx context.Context, in BeginInput,
 	cur domain.InstallState) (domain.InstallMode, []string, error) {
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
-		if cur.Status == domain.InstallReady {
+		switch cur.Status {
+		case domain.InstallReady, domain.InstallFailed:
 			reason = string(domain.InstallModeRepair)
-		} else {
+		default:
 			reason = string(domain.InstallModeFirstInstall)
 		}
 	}
@@ -253,10 +271,10 @@ func (s *InstallService) beginMode(ctx context.Context, in BeginInput,
 		}
 		return mode, nil, nil
 	}
-	if cur.Status != domain.InstallReady {
-		return "", nil, apperr.BadRequest("repair requires install status ready")
+	if cur.Status != domain.InstallReady && cur.Status != domain.InstallFailed {
+		return "", nil, apperr.BadRequest("repair requires install status ready or failed")
 	}
-	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	gaps, err := s.Gaps(ctx, in.Env)
 	if err != nil {
 		return "", nil, err
 	}
@@ -268,6 +286,10 @@ func (s *InstallService) beginMode(ctx context.Context, in BeginInput,
 	seen := make(map[string]struct{}, len(gaps)+len(declared))
 	for _, gap := range gaps {
 		ref := gap.KeyRef()
+		// DB DSN 只提示运维补 env，不进向导白名单。
+		if ref == spec.NamespacePlatform+"/db.dsn" || gap.Reason == spec.GapReasonDeployEnvMissing {
+			continue
+		}
 		if _, dup := seen[ref]; dup {
 			continue
 		}
@@ -397,15 +419,19 @@ func (s *InstallService) Apply(ctx context.Context, in ApplyInput) (ApplyResult,
 		itemCount += result.ItemCount
 	}
 	if s.secrets != nil {
+		if ovErr := s.secrets.ApplyInstallPlaintexts(ctx, in.Env, overrides, s.specs, actor); ovErr != nil {
+			return s.failApply(ctx, state, in, ovErr)
+		}
 		if secErr := s.secrets.EnsureAutoSecrets(ctx, in.Env, s.specs, actor); secErr != nil {
 			return s.failApply(ctx, state, in, secErr)
 		}
 	}
-	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	s.InvalidateProbeCache()
+	gaps, err := s.Gaps(ctx, in.Env)
 	if err != nil {
 		return s.failApply(ctx, state, in, err)
 	}
-	declaredGaps, err := s.bootstrap.MissingRefs(ctx, in.Env, state.RepairKeys)
+	declaredGaps, err := s.bootstrap.MissingRefs(ctx, in.Env, s.nonSensitiveRefs(state.RepairKeys))
 	if err != nil {
 		return s.failApply(ctx, state, in, err)
 	}
@@ -523,15 +549,19 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 			audit.OutcomeFailure, msg, nil)
 		return domain.InstallState{}, apperr.BadRequest(msg)
 	}
-	gaps, err := s.bootstrap.MissingRequired(ctx, in.Env)
+	gaps, err := s.Gaps(ctx, in.Env)
 	if err != nil {
 		return domain.InstallState{}, err
 	}
-	declaredGaps, err := s.bootstrap.MissingRefs(ctx, in.Env, state.RepairKeys)
+	declaredGaps, err := s.bootstrap.MissingRefs(ctx, in.Env, s.nonSensitiveRefs(state.RepairKeys))
 	if err != nil {
 		return domain.InstallState{}, err
 	}
-	gaps = mergeGaps(gaps, declaredGaps)
+	completeProbes, err := s.completeProbeGaps(ctx, in.Env)
+	if err != nil {
+		return domain.InstallState{}, err
+	}
+	gaps = mergeGaps(gaps, declaredGaps, completeProbes)
 	if len(gaps) > 0 {
 		keys := make([]string, 0, len(gaps))
 		for _, gap := range gaps {
@@ -539,6 +569,9 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 		}
 		return domain.InstallState{}, apperr.BadRequest(
 			"install incomplete; blocking keys remain: " + strings.Join(keys, ", "))
+	}
+	if err := s.validateActiveSnapshots(ctx, in.Env); err != nil {
+		return domain.InstallState{}, apperr.BadRequest(err.Error())
 	}
 	now := s.now().UTC()
 	completed := now
@@ -558,6 +591,146 @@ func (s *InstallService) Complete(ctx context.Context, in CompleteInput) (domain
 			"status": "ready", "mode": string(state.Mode),
 		})
 	return updated, nil
+}
+
+// MarkDegraded 在连通性探测失败时把 ready CAS 为 failed，供启动路径调用。
+func (s *InstallService) MarkDegraded(ctx context.Context, env, detail string) (domain.InstallState, error) {
+	if !domain.ValidEnv(env) {
+		return domain.InstallState{}, apperr.BadRequest("invalid env")
+	}
+	cur, err := s.install.Get(ctx, env)
+	if err != nil {
+		return domain.InstallState{}, translate(err)
+	}
+	if cur.Status != domain.InstallReady {
+		return cur, nil
+	}
+	s.InvalidateProbeCache()
+	now := s.now().UTC()
+	next := cur
+	next.Status = domain.InstallFailed
+	next.Owner = ""
+	next.LeaseUntil = nil
+	next.RepairKeys = nil
+	next.LastError = truncateErr(detail, 512)
+	next.UpdatedAt = now
+	updated, err := s.install.CompareAndSwap(ctx, next, cur.Version)
+	if err != nil {
+		if errors.Is(err, domain.ErrVersionConflict) {
+			cur, getErr := s.install.Get(ctx, env)
+			if getErr != nil {
+				return domain.InstallState{}, translate(getErr)
+			}
+			return cur, nil
+		}
+		return domain.InstallState{}, translate(err)
+	}
+	_ = s.audit.emit(ctx, Actor{
+		SubjectID: "system:config-infra-probe", ActorType: "system", Channel: "internal",
+	}, audit.ActionConfigInstallFail, ResourceTypeInstall, env,
+		audit.OutcomeFailure, next.LastError, map[string]string{"reason": "infra_probe"})
+	return updated, nil
+}
+
+func (s *InstallService) missingInfraSecretGaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	values, err := s.bootstrap.MergedActiveValues(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 || s.secrets == nil {
+		return nil, nil
+	}
+	out := make([]RequiredGap, 0, 2)
+	for _, ref := range spec.RequiredInfraSecrets(values) {
+		ok, err := s.secrets.SecretExists(ctx, env, ref.Namespace, ref.Key)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			out = append(out, RequiredGap{
+				Namespace: ref.Namespace, Key: ref.Key, Reason: spec.GapReasonSecretMissing,
+			})
+		}
+	}
+	return out, nil
+}
+
+const probeGapsCacheTTL = 30 * time.Second
+
+func (s *InstallService) connectivityGaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	now := s.now()
+	if s.probeCacheEnv == env && now.Sub(s.probeCacheAt) < probeGapsCacheTTL {
+		return append([]RequiredGap(nil), s.probeCache...), nil
+	}
+	values, err := s.bootstrap.MergedActiveValues(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		s.probeCacheEnv, s.probeCacheAt, s.probeCache = env, now, nil
+		return nil, nil
+	}
+	results := RunInfraProbes(ctx, ProbeInput{
+		Env: env, Values: values, Secrets: s.secrets, ReportDeployEnvGaps: false,
+	})
+	gaps := ProbeResultsToGaps(results)
+	s.probeCacheEnv, s.probeCacheAt, s.probeCache = env, now, gaps
+	return append([]RequiredGap(nil), gaps...), nil
+}
+
+// completeProbeGaps 在 Complete 时强制包含 deploy_env 类缺口（不走短缓存）。
+func (s *InstallService) completeProbeGaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	values, err := s.bootstrap.MergedActiveValues(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	results := RunInfraProbes(ctx, ProbeInput{
+		Env: env, Values: values, Secrets: s.secrets, ReportDeployEnvGaps: true,
+	})
+	return ProbeResultsToGaps(results), nil
+}
+
+// InvalidateProbeCache 在 apply / MarkDegraded 后强制下次重新探测。
+func (s *InstallService) InvalidateProbeCache() {
+	s.probeCacheAt = time.Time{}
+	s.probeCache = nil
+}
+
+func (s *InstallService) validateActiveSnapshots(ctx context.Context, env string) error {
+	for _, namespace := range s.specs.Namespaces() {
+		values, hasRelease, err := s.bootstrap.activeValues(ctx, env, namespace)
+		if err != nil {
+			return err
+		}
+		if !hasRelease {
+			continue
+		}
+		if err := s.specs.ValidateValues(namespace, values); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// nonSensitiveRefs 过滤 repair_keys 中的敏感键：敏感值在 config_secret，
+// MissingRefs 按快照判定会把它们永久判缺。
+func (s *InstallService) nonSensitiveRefs(refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		namespace, key, ok := strings.Cut(ref, "/")
+		if !ok {
+			continue
+		}
+		keySpec, found := s.specs.Lookup(namespace, key)
+		if found && keySpec.Sensitive {
+			continue
+		}
+		out = append(out, ref)
+	}
+	return out
 }
 
 func (s *InstallService) requireHolder(ctx context.Context, env, owner string) (domain.InstallState, error) {

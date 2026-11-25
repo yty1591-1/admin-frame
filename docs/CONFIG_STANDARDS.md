@@ -29,7 +29,7 @@
 | CFG-01 | 删除 `configs/` 下全部运行时静态配置；**禁止新增** `configs/*.yaml` / `*.env` / `*.example` | `check-no-static-config.sh` |
 | CFG-02 | 配置 key spec 由代码声明并作为唯一来源：`key` / `value_type` / `default` / `validation` / `required` / `owner` / `reloadable` / `expires_at`；**不产出引导配置清单与配置中心导入清单** | Review + `check-configcenter.sh` |
 | CFG-03 | `LoadConfig` 按 CFG-04 顺序加载，由 `Loader` 自动调用 `Validate()`；失败则进程非零退出 | 代码 + 单测 |
-| CFG-04 | 业务配置优先级：**config-api 拉取 > 本地缓存 > 代码默认值**；`ADMIN_FRAME_*` 仅放行 `db.*`/`redis.*`；业务密钥仅 config-api | `configboot` + `EnvPathAllowlist` + 单测 |
+| CFG-04 | 业务配置优先级：**config-api 拉取 > 本地缓存 > 代码默认值**；`ADMIN_FRAME_*` 仅放行 `db.*`；业务密钥仅 config-api | `configboot` + `EnvPathAllowlist` + 单测 |
 | CFG-05 | `env=prod`（或等价）时 `auth.mode` 不得为 `demo`；`auth.expected_channel` 必须与 `channel` 一致；`auth.mode=jwt` 时 `issuer` / `audience` / 密钥必填 | `Validate` + 单测 |
 | CFG-06 | 仓库禁止出现真实密钥、生产 DSN、云 AK/SK；测试密钥须用 `strings.Repeat` 等构造，禁止高熵字面量 | gitleaks + Review |
 | CFG-07 | 禁止在业务代码硬编码监听地址、超时、功能开关；应用配置或常量默认值经 `applyDefaults`，跨字段派生经 `normalize` | Review |
@@ -53,7 +53,7 @@ config-api 拉取结果 > 本地缓存目录 > 代码默认值（key spec / appl
 
 | 通道 | 允许项 | 禁止项 |
 |------|--------|--------|
-| `ADMIN_FRAME_*` 环境变量 | 仅 `db.*` / `redis.*`（含 username/password） | `LOG_*`、`AUTH_*`、`IAM_*`、`NOTIFICATION_*`、JWT Secret 等 |
+| `ADMIN_FRAME_*` 环境变量 | 仅 `db.*`（含 DSN） | `redis.*` 口令后盖、`LOG_*`、`AUTH_*`、`IAM_*`、`NOTIFICATION_*`、JWT Secret 等 |
 | `CONFIG_API_*` / `CONFIGCENTER_ENV` 等 | config-api URL、服务身份、TLS、环境、可选 namespaces / cache dir | 业务键取值、快照文件路径、签名公钥 |
 | `secretclient` → config-api | JWT、identity、notification 等业务密钥 | 以 `ADMIN_FRAME_AUTH_JWT_SECRET` 等 env 回退 |
 
@@ -70,14 +70,15 @@ config-api 拉取结果 > 本地缓存目录 > 代码默认值（key spec / appl
 | 分类 | 示例 | 注入方式 |
 |------|------|----------|
 | 部署身份 | `env` / `service` / `channel` / `addr` / `id.node_id` | `WithProcessIdentity` 或编排 |
-| 基础设施口令 | `db.dsn` / `redis.password` | 仅 `ADMIN_FRAME_DB_*` / `REDIS_*` |
+| 基础设施口令（仅 DB） | `db.dsn` | 仅 `ADMIN_FRAME_DB_*` |
 | 密钥环与列表 | `identity.subject.keys` / `previous_hash_keys` / `mfa.keys` / JWT keys | 密钥子域或本地回退 |
-| 云厂商厂商段与桶映射 | `storage.oss/cos/obs.*` / `storage.lifecycle.*` / `storage.buckets` / `storage.s3.session_token` / `storage.s3.disable_ssl` / `notification.channels.*.smtp.host` 等 | 部署侧 / Provider；凭据另走密钥子域 |
+| 云厂商厂商段与桶映射 | `storage.oss/cos/obs.*` / `storage.lifecycle.*` / `storage.buckets` / `storage.s3.session_token` / `storage.s3.disable_ssl` | 部署侧 / Provider；凭据另走密钥子域 |
 | CORS / 本地路径 | `cors.*` / `storage.local.*` | 网关与节点部署；不进 Item 播种 |
 
-**已迁入配置中心（原排除项，2026-11-24 修订）**：`storage.driver` / `storage.s3.bucket` / `storage.s3.region` / `storage.s3.endpoint` / `storage.s3.force_path_style` 属「连接配置」而非凭据，改为 KeySpec 登记，可由安装向导填写或管理面审批后发布；`storage.s3.access_key` / `storage.s3.secret_key` 登记为**敏感键**，只进 `config_secret`，任何接口都不回显。`bucket` / `region` 无默认值且**条件必填**（仅 `storage.driver=s3|minio` 时要求）——`KeySpec.Required` 表达不了跨键依赖，故由 `configboot.MissingRequired` 的 `missingStorageRefs` 在进程侧补判。
+**已迁入配置中心（原排除项）**：
 
-> 理由：原先把桶参数一律排除，导致 prod-like 播种 `storage.driver=s3` 后按样例 env 启动必然在 `OpenStorageSet` 处失败（`s3 requires bucket and region`），且 `admin-api` 同时退出使安装向导不可达，形成死锁。改为「连接配置进配置中心 + 凭据进密钥子域」既消除了该死锁，也不把凭据暴露到普通快照。
+- **2026-11-24**：`storage.driver` / `storage.s3.bucket|region|endpoint|force_path_style` 为连接配置；`storage.s3.access_key|secret_key` 为敏感键。`bucket`/`region` 条件必填（`storage.driver=s3|minio`）由 `MissingStorageRefs` 补判。
+- **2026-11-25**：`redis.username` / `redis.password`（敏感）、`async.broker.url`（敏感）、SMTP `host|port|username|encryption|auth|helo_name|tls_min_version` 进 KeySpec；安装 / repair / config-api 启动做条件连通性探测，失败则 `InstallState` 降级为 `failed` 并进入 repair。`db.dsn` **永不**进中心。
 
 浮点速率与采样率须以 **string + pattern**（或未来 float ValueType）登记进 KeySpec，不得长期排除。
 

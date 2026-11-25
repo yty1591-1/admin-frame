@@ -262,15 +262,17 @@ func TestLoadConfigIgnoresBusinessEnvOverride(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRedisEnvOverride(t *testing.T) {
+func TestLoadConfigRedisEnvNoLongerOverrides(t *testing.T) {
+	// Redis 已迁出 InfraEnvPathAllowlist：口令以配置中心 / 文件值为准，
+	// ADMIN_FRAME_REDIS_* 不得后盖。
 	path := writeConfig(t, "c.yaml", minimalConfig+"redis:\n  addr: \"127.0.0.1:6379\"\n  password: \"file-pass\"\n")
 	t.Setenv("ADMIN_FRAME_REDIS_PASSWORD", "env-pass")
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Redis.Password != "env-pass" {
-		t.Fatalf("redis.password=%q want env-pass", cfg.Redis.Password)
+	if cfg.Redis.Password != "file-pass" {
+		t.Fatalf("redis.password=%q want file-pass (env must not override)", cfg.Redis.Password)
 	}
 }
 

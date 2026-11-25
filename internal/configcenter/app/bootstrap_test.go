@@ -214,6 +214,72 @@ func TestBootstrapReconcilesMissingKeys(t *testing.T) {
 	}
 }
 
+func TestBootstrapRepairOverwritesExistingKey(t *testing.T) {
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	registry := spec.NewRegistry()
+	if err := registry.Register(domain.KeySpec{
+		Namespace: "platform", Key: "storage.driver", ValueType: domain.ValueTypeString,
+		Default: "s3", Description: "对象存储驱动", Owner: "team-platform", Reloadable: true,
+		Enum: []string{"memory", "local", "s3"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		registry, emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+	ctx := context.Background()
+	first, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvProd, Namespace: "platform", Actor: testActor,
+	})
+	if err != nil || !first.Seeded {
+		t.Fatalf("first seed: %v %+v", err, first)
+	}
+	item, err := repos.Items.GetByKey(ctx, domain.EnvProd, "platform", "storage.driver")
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+	v1, err := repos.Items.GetVersion(ctx, item.ID, item.CurrentVersion)
+	if err != nil || v1.ValueText != "s3" {
+		t.Fatalf("seeded value: %v %+v", err, v1)
+	}
+
+	// 普通 reconcile 不得覆盖。
+	noop, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvProd, Namespace: "platform", Actor: testActor,
+		Overrides: map[string]string{"storage.driver": "local"},
+	})
+	if err != nil || noop.Seeded {
+		t.Fatalf("non-repair must not overwrite: %v %+v", err, noop)
+	}
+
+	repaired, err := service.EnsureBaseline(ctx, app.BootstrapInput{
+		Env: domain.EnvProd, Namespace: "platform", Actor: testActor,
+		Overrides: map[string]string{"storage.driver": "local"}, Repair: true,
+	})
+	if err != nil || !repaired.Seeded || repaired.ItemCount != 1 {
+		t.Fatalf("repair overwrite: %v %+v", err, repaired)
+	}
+	if repaired.ReleaseID == first.ReleaseID {
+		t.Fatal("repair must publish a new release")
+	}
+	item, err = repos.Items.GetByKey(ctx, domain.EnvProd, "platform", "storage.driver")
+	if err != nil {
+		t.Fatalf("get item after repair: %v", err)
+	}
+	v2, err := repos.Items.GetVersion(ctx, item.ID, item.CurrentVersion)
+	if err != nil || v2.ValueText != "local" || v2.ChangeSummary != "install-repair" {
+		t.Fatalf("repaired version: %v %+v", err, v2)
+	}
+	old, err := repos.Releases.Get(ctx, first.ReleaseID)
+	if err != nil || old.Status != domain.ReleaseStatusSuperseded {
+		t.Fatalf("old release must be superseded: %v %+v", err, old)
+	}
+}
+
 // mustItems 读取发布快照条目，用于校验摘要。
 func mustItems(t *testing.T, repos *memory.Repositories, releaseID int64) []domain.ReleaseItem {
 	t.Helper()

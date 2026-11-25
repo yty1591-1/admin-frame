@@ -64,8 +64,12 @@ func readyInstall(t *testing.T, install *app.InstallService, overrides map[strin
 	}); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
+	merged := map[string]string{"db.driver": "memory"}
+	for key, value := range overrides {
+		merged[key] = value
+	}
 	if _, err := install.Apply(ctx, app.ApplyInput{
-		Env: "prod", Owner: "owner-a", Actor: actor, Overrides: overrides,
+		Env: "prod", Owner: "owner-a", Actor: actor, Overrides: merged,
 	}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -188,5 +192,35 @@ func TestInstallRepairWhitelist(t *testing.T) {
 	_, err = install.Begin(ctx, app.BeginInput{Env: "prod", Owner: "owner-c", Reason: "repair", Actor: actor})
 	if !errors.As(err, &appErr) || appErr.Code != apperr.CodeInstallCompleted {
 		t.Fatalf("expected install completed, got %v", err)
+	}
+}
+
+func TestMarkDegradedAllowsRepairFromFailed(t *testing.T) {
+	install, _, registry := newRepairServices(t)
+	ctx := context.Background()
+	actor := app.Actor{SubjectID: "system:setup-token", ActorType: "system", Channel: "admin"}
+	readyInstall(t, install, map[string]string{"http.base_url": "https://example.com"})
+
+	degraded, err := install.MarkDegraded(ctx, "prod", "infra probe failed: platform/redis.addr:connectivity_failed")
+	if err != nil {
+		t.Fatalf("MarkDegraded: %v", err)
+	}
+	if degraded.Status != domain.InstallFailed {
+		t.Fatalf("status=%s want failed", degraded.Status)
+	}
+
+	// 人为制造阻塞键，使 failed → repair 有白名单可冻。
+	registry.MustRegister(domain.KeySpec{
+		Namespace: "platform", Key: "http.metrics_url", ValueType: domain.ValueTypeString,
+		Required: true, Description: "metrics", Owner: "team-platform",
+	})
+	begun, err := install.Begin(ctx, app.BeginInput{
+		Env: "prod", Owner: "owner-d", Reason: "repair", Actor: actor,
+	})
+	if err != nil {
+		t.Fatalf("begin repair from failed: %v", err)
+	}
+	if begun.Status != domain.InstallInstalling || begun.Mode != domain.InstallModeRepair {
+		t.Fatalf("state=%+v", begun)
 	}
 }

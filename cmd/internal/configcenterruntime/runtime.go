@@ -263,6 +263,9 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 		if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
 			return nil, err
 		}
+		if err := probeAndDegrade(deps, installService, bootstrapService, secretService); err != nil {
+			return nil, err
+		}
 	}
 
 	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
@@ -318,6 +321,46 @@ func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 // NewSecretResolve 兼容旧名，转发到 NewConfigAPI。
 func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
 	return NewConfigAPI(deps, opts)
+}
+
+// probeAndDegrade 在 ready 环境启动时探测基础设施；失败则降级为 failed，
+// 仍继续挂装 install API（不退出进程）。
+func probeAndDegrade(deps *platform.Deps, install *app.InstallService,
+	bootstrap *app.BootstrapService, secrets *app.SecretService) error {
+	if install == nil || bootstrap == nil || deps == nil || deps.Config == nil {
+		return nil
+	}
+	env := deps.Config.Env
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	values, err := bootstrap.MergedActiveValues(ctx, env)
+	if err != nil {
+		return fmt.Errorf("configcenter infra probe load values: %w", err)
+	}
+	var dbHandle *db.DB
+	if deps.Database != nil {
+		dbHandle = deps.Database
+	}
+	results := app.RunInfraProbes(ctx, app.ProbeInput{
+		Env: env, Values: values, Secrets: secrets, DB: dbHandle,
+		ReportDeployEnvGaps: true,
+	})
+	if len(results) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(results))
+	for _, r := range results {
+		parts = append(parts, r.Ref+":"+r.Reason)
+	}
+	detail := "infra probe failed: " + strings.Join(parts, "; ")
+	if _, derr := install.MarkDegraded(ctx, env, detail); derr != nil {
+		return fmt.Errorf("configcenter mark degraded: %w", derr)
+	}
+	if deps.Logger != nil {
+		deps.Logger.Warn("configcenter install degraded after infra probe",
+			"env", env, "failures", len(results), "detail", detail)
+	}
+	return nil
 }
 
 // buildKEK 按环境选择 LocalKEK 或 Vault Transit；prod 禁止 LocalKEK。

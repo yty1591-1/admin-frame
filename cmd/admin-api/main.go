@@ -74,6 +74,8 @@ func run() error {
 	// 对象存储凭据：走密钥子域（config_secret）；仅在 s3/minio 驱动时解析，
 	// 解析失败不在此处退出——交由存储装配阶段判定，从而能降级到安装向导。
 	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
+	redisPassword, _ := secretruntime.ResolveRedisPasswordFromEnv(ctx, boot.Env)
+	asyncBrokerURL, _ := secretruntime.ResolveAsyncBrokerURLFromEnv(ctx, boot.Env)
 	// gaps 在装配退出时回传：缺必填键时改走 setup-only，避免带病装配（ADR-0018）。
 	var bootGaps []string
 	var bootValues map[string]string
@@ -120,6 +122,12 @@ func run() error {
 		}
 		if storageSK != "" {
 			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
+		if redisPassword != "" {
+			values[secretruntime.RedisPasswordValueKey] = redisPassword
+		}
+		if asyncBrokerURL != "" {
+			values[secretruntime.AsyncBrokerURLValueKey] = asyncBrokerURL
 		}
 		gaps, gapsErr := configboot.MissingRequired(values)
 		if gapsErr != nil {
