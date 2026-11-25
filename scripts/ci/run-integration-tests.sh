@@ -28,16 +28,18 @@ fi
 
 COMPOSE_FILE="docker-compose.integration.yml"
 
-# 端口与 docker-compose.integration.yml 保持固定一致；compose 不再读取环境变量覆盖。
-export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:3306)/admin_frame_test?parseTime=true&loc=UTC"
+MYSQL_PORT="${INTEGRATION_MYSQL_PORT:-3306}"
+REDIS_PORT="${INTEGRATION_REDIS_PORT:-6379}"
+MINIO_PORT="${INTEGRATION_MINIO_PORT:-9000}"
+export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:${MYSQL_PORT})/admin_frame_test?parseTime=true&loc=UTC"
 # 各域集成包使用独立 DSN 开关；值相同，指向 compose MySQL 测试库。
 export IAM_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export TENANT_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export NOTIFY_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export FEATUREFLAG_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export CONFIGCENTER_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
-export TEST_REDIS_ADDR="127.0.0.1:6379"
-export TEST_S3_ENDPOINT="http://127.0.0.1:9000"
+export TEST_REDIS_ADDR="127.0.0.1:${REDIS_PORT}"
+export TEST_S3_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
 export TEST_S3_ACCESS_KEY="minioadmin"
 export TEST_S3_SECRET_KEY="minioadmin"
 export TEST_S3_BUCKET="admin-frame"
@@ -148,7 +150,7 @@ wait_host_port() {
 }
 
 echo "==> wait for host-side port forwarding"
-for port in 3306 6379 9000; do wait_host_port "${port}"; done
+for port in "${MYSQL_PORT}" "${REDIS_PORT}" "${MINIO_PORT}"; do wait_host_port "${port}"; done
 
 echo "==> create test bucket"
 docker compose -f "${COMPOSE_FILE}" run --rm minio-init
