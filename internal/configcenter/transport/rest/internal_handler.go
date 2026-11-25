@@ -58,13 +58,13 @@ func (h *InternalHandler) GetNamespaceConfig(w http.ResponseWriter, r *http.Requ
 		apiresp.FromError(w, err, traceID)
 		return
 	}
-	snap, err := h.snapshots.Load(r.Context(), env, namespace)
+	snap, unchanged, err := h.snapshots.LoadIfChanged(r.Context(), env, namespace,
+		strings.TrimSpace(r.URL.Query().Get("release_key")))
 	if err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
 	}
-	releaseKey := app.ReleaseKey(snap.ReleaseID, snap.PointerVersion)
-	if want := strings.TrimSpace(r.URL.Query().Get("release_key")); want != "" && want == releaseKey {
+	if unchanged {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -74,7 +74,7 @@ func (h *InternalHandler) GetNamespaceConfig(w http.ResponseWriter, r *http.Requ
 		"release_id":      snap.ReleaseID,
 		"release_no":      snap.ReleaseNo,
 		"pointer_version": snap.PointerVersion,
-		"release_key":     releaseKey,
+		"release_key":     app.ReleaseKey(snap.ReleaseID, snap.PointerVersion),
 		"values":          snap.Values,
 		"generated_at":    formatTime(snap.GeneratedAt),
 	}, traceID)

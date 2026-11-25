@@ -45,10 +45,13 @@ func NewLongPoller(cfg LongPollerConfig) (*LongPoller, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	// 复制调用方客户端以保留 TLS / Transport，同时避免修改密钥解析等共享请求的超时。
 	if client == nil {
-		// 客户端超时略长于服务端挂起，避免误杀。
-		client = &http.Client{Timeout: timeout + 5*time.Second}
+		client = &http.Client{}
 	}
+	pollClient := *client
+	pollClient.Timeout = timeout + 5*time.Second
+	client = &pollClient
 	return &LongPoller{
 		baseURL: base, serviceIdentity: identity, http: client, timeout: timeout,
 	}, nil

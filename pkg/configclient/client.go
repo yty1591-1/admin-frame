@@ -184,15 +184,19 @@ func (c *Client) Namespaces() []string {
 // 返回所有 namespace 失败原因的合并错误；部分成功时仍返回错误，但成功
 // namespace 的新快照已生效。
 func (c *Client) Refresh(ctx context.Context) error {
+	return c.refreshNamespaces(ctx, c.namespaces)
+}
+
+func (c *Client) refreshNamespaces(ctx context.Context, namespaces []string) error {
 	type result struct {
 		namespace string
 		snapshot  Snapshot
 		install   bool
 		err       error
 	}
-	results := make([]result, 0, len(c.namespaces))
+	results := make([]result, 0, len(namespaces))
 	var errs []error
-	for _, namespace := range c.namespaces {
+	for _, namespace := range namespaces {
 		snapshot, install, err := c.refreshNamespace(ctx, namespace)
 		results = append(results, result{namespace: namespace, snapshot: snapshot, install: install, err: err})
 		if err != nil {
@@ -235,6 +239,10 @@ func (c *Client) refreshNamespace(ctx context.Context, namespace string) (Snapsh
 		}
 	}
 	wrapped := fmt.Errorf("configclient: load snapshot for %s: %w", namespace, err)
+	// 已装载的内存版本优先于磁盘，防止落盘失败后回退到更旧的配置。
+	if current, ok := c.SnapshotFor(namespace); ok {
+		return current, false, wrapped
+	}
 	if fallback, ok := c.loadNamespaceFallback(ctx, namespace); ok {
 		return fallback, true, wrapped
 	}
@@ -409,20 +417,36 @@ func (c *Client) runLongPoll(ctx context.Context) error {
 		versions := c.PointerVersions()
 		changed, err := c.notifier.Wait(ctx, c.env, versions)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+			// 单次 HTTP 请求的超时或取消不代表刷新任务结束。
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(time.Second):
-				continue
+			case <-time.After(jitter(time.Second)):
 			}
-		}
-		if len(changed) == 0 {
+			// 通知路径故障时主动校准，避免长期错过发布。
+			_ = c.Refresh(ctx)
 			continue
 		}
-		_ = c.Refresh(ctx)
+		if len(changed) == 0 {
+			// 正常长轮询超时也校准一次，以修复漏通知及启动期部分失败。
+			_ = c.Refresh(ctx)
+			continue
+		}
+		if c.Degraded() {
+			// 任一 namespace 尚未恢复时完整校准，避免增量成功清除其它域的降级状态。
+			_ = c.Refresh(ctx)
+			continue
+		}
+		var namespaces []string
+		for _, namespace := range c.namespaces {
+			if containsNamespace(changed, namespace) {
+				namespaces = append(namespaces, namespace)
+			}
+		}
+		_ = c.refreshNamespaces(ctx, namespaces)
 	}
 }
 

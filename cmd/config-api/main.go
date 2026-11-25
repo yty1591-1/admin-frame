@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
@@ -53,6 +54,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+
+	// 内部通知允许挂起 60 秒；入口 context 与 socket 写入预算须覆盖等待和响应。
+	appCfg.HTTP.Timeout = 65 * time.Second
+	appCfg.HTTP.WriteTimeout = 70 * time.Second
 
 	tlsCfg, err := secretruntime.LoadServerTLSFromEnvFor(appCfg.Env)
 	if err != nil {

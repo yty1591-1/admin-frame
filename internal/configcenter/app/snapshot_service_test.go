@@ -10,6 +10,14 @@ import (
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
 )
 
+type unavailableReleases struct {
+	domain.ReleaseRepository
+}
+
+func (unavailableReleases) Get(context.Context, int64) (domain.Release, error) {
+	panic("unchanged snapshot must not load release")
+}
+
 // seedSensitiveItem 写入一个敏感配置键与版本 1。
 func seedSensitiveItem(t *testing.T, repos *memory.Repositories, id int64, key, value string) int64 {
 	t.Helper()
@@ -69,6 +77,18 @@ func TestPublishExcludesSensitiveAndClientLoads(t *testing.T) {
 	snapshots, err := app.NewSnapshotService(repos.Items, repos.Releases, repos.Pointers)
 	if err != nil {
 		t.Fatalf("new snapshot service: %v", err)
+	}
+	// 304 快速路径只读指针；即使 release 仓储不可用也不应访问它。
+	pointerOnly, err := app.NewSnapshotService(repos.Items, unavailableReleases{ReleaseRepository: repos.Releases}, repos.Pointers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pointer, err := repos.Pointers.Get(ctx, "dev", "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, unchanged, err := pointerOnly.LoadIfChanged(ctx, "dev", "platform", app.ReleaseKey(pointer.ActiveReleaseID, pointer.Version)); err != nil || !unchanged {
+		t.Fatalf("unchanged snapshot should only read pointer: unchanged=%v err=%v", unchanged, err)
 	}
 	snapshot, err := snapshots.Load(ctx, "dev", "platform")
 	if err != nil {

@@ -42,6 +42,33 @@ func buildFor(t *testing.T, namespace string, values map[string]string) Snapshot
 	return snap
 }
 
+func TestRefreshKeepsMemoryInsteadOfOlderDiskFallback(t *testing.T) {
+	cache, err := NewDirCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := buildFor(t, "platform", map[string]string{"value": "old"})
+	current := buildFor(t, "platform", map[string]string{"value": "current"})
+	source := &namespaceSource{snapshots: map[string]Snapshot{"platform": current}, errs: map[string]error{}}
+	client, err := NewClient(ClientConfig{Source: source, Env: "dev", Namespace: "platform", Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SaveNamespace(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	source.set("platform", Snapshot{}, errors.New("center unavailable"))
+	if err := client.Refresh(context.Background()); err == nil {
+		t.Fatal("expected degraded refresh")
+	}
+	if got := client.String("value", ""); got != "current" {
+		t.Fatalf("rolled back to %q", got)
+	}
+}
+
 func TestClientMultiNamespaceMergesValues(t *testing.T) {
 	source := &namespaceSource{
 		snapshots: map[string]Snapshot{

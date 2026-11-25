@@ -86,13 +86,18 @@ func Load(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	pullCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	pullCtx, cancel := context.WithTimeout(ctx, time.Duration(len(client.Namespaces()))*5*time.Second)
 	defer cancel()
-	if err := client.Refresh(pullCtx); err != nil {
-		// Refresh 在部分成功时仍可能返回错误；有任意 Values 即可继续。
-		if len(client.Values()) == 0 {
-			return nil, fmt.Errorf("configboot: pull config failed and cache empty: %w", err)
+	refreshErr := client.Refresh(pullCtx)
+	var missing []string
+	for _, namespace := range client.Namespaces() {
+		if _, loaded := client.SnapshotFor(namespace); !loaded {
+			missing = append(missing, namespace)
 		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("configboot: namespaces unavailable from config-api and cache: %s: %v",
+			strings.Join(missing, ", "), refreshErr)
 	}
 	if len(client.Values()) == 0 {
 		return nil, fmt.Errorf("configboot: no config values from config-api or cache")
