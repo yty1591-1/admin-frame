@@ -99,6 +99,16 @@ func (r SecretRule) generatePlaintext() (string, error) {
 		body = hex.EncodeToString(raw)
 	case "raw":
 		body = string(raw)
+		// raw 直接输出随机字节，可能整段都是空白/控制字符。这种值会在
+		// CreateSecret 的 TrimSpace 处被判成空明文而报「plaintext is required」，
+		// 使播种偶发失败（MinLen 越小概率越高）。重试到含可打印字符为止，
+		// 不改变 raw 保留原始字节的语义（见 TestSecretRuleRawPreservesWhitespaceBytes）。
+		for attempt := 0; attempt < 8 && strings.TrimSpace(body) == ""; attempt++ {
+			if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+				return "", err
+			}
+			body = string(raw)
+		}
 	default:
 		body = base64.RawURLEncoding.EncodeToString(raw)
 	}

@@ -101,3 +101,22 @@ func TestSecretRuleRawPreservesWhitespaceBytes(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateRawNeverAllWhitespace 守护 raw 播种值不会是纯空白。
+//
+// MinLen=1 的 raw 规则（第三方 AK/SK 占位）有约 1/13 概率生成空白字节，
+// 会被 CreateSecret 的 TrimSpace 判成空明文，使 EnsureAutoSecrets 偶发
+// 报 "plaintext is required"——表现为随机失败的 CI 抖动。
+func TestGenerateRawNeverAllWhitespace(t *testing.T) {
+	t.Parallel()
+	rule := SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}
+	for i := 0; i < 2000; i++ {
+		got, err := rule.GenerateForBootstrap()
+		if err != nil {
+			t.Fatalf("generate for bootstrap: %v", err)
+		}
+		if strings.TrimSpace(got) == "" {
+			t.Fatalf("raw bootstrap value must not be all whitespace, got %q at iter %d", got, i)
+		}
+	}
+}
