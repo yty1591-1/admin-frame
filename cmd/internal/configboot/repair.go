@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ResetInvalidValues 请求 config-api 把给定键重置为声明默认值。
@@ -38,7 +39,7 @@ func ResetInvalidValues(ctx context.Context, baseURL string, client *http.Client
 		req.Header.Set("X-Service-Identity", identity)
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

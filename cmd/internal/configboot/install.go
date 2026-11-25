@@ -34,7 +34,7 @@ func FetchInstallStatus(ctx context.Context, baseURL string, httpClient *http.Cl
 		return InstallStatus{}, fmt.Errorf("configboot: empty config-api url")
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: 5 * time.Second}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/internal/v1/install/status", http.NoBody) //nolint:gosec // G704: baseURL 来自受控环境变量 CONFIG_API_URL。
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // InstallProxy 把 Admin 安装 API 转发到 config-api（携带 mTLS 客户端）。
@@ -18,7 +19,7 @@ type InstallProxy struct {
 // NewInstallProxy 构造代理；baseURL 为 CONFIG_API_URL，client 须已装配 mTLS。
 func NewInstallProxy(baseURL string, client *http.Client) *InstallProxy {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &InstallProxy{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),

@@ -147,12 +147,13 @@ func TestRunSetupOnlyServesThenStops(t *testing.T) {
 	url := "http://" + addr + "/readyz"
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if reqErr != nil {
 			t.Fatalf("build request: %v", reqErr)
 		}
-		resp, doErr := http.DefaultClient.Do(req)
+		resp, doErr := client.Do(req)
 		if doErr == nil {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()

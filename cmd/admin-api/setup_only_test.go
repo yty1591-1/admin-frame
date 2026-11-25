@@ -61,7 +61,8 @@ func TestRunSetupOnlyServesWizardAndReadiness(t *testing.T) {
 	})
 
 	// 向导代理可用：status 透传到 config-api。
-	resp, err := http.Get(base + "/admin/v1/install/status") //nolint:noctx // 测试内短连接。
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Get(base + "/admin/v1/install/status") //nolint:noctx // 测试内短连接。
 	if err != nil {
 		t.Fatalf("call install proxy: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestRunSetupOnlyServesWizardAndReadiness(t *testing.T) {
 	}
 
 	// 业务路由不暴露。
-	resp, err = http.Get(base + "/admin/v1/configs/namespaces") //nolint:noctx // 测试内短连接。
+	resp, err = client.Get(base + "/admin/v1/configs/namespaces") //nolint:noctx // 测试内短连接。
 	if err != nil {
 		t.Fatalf("call business route: %v", err)
 	}
@@ -95,9 +96,10 @@ func TestRunSetupOnlyServesWizardAndReadiness(t *testing.T) {
 func waitFor(t *testing.T, url string, ok func(*http.Response, string) bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	client := &http.Client{Timeout: time.Second}
 	var last string
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url) //nolint:noctx,gosec // G107: 轮询目标是测试内 127.0.0.1 临时端口。
+		resp, err := client.Get(url) //nolint:noctx // 测试轮询使用带超时的客户端。
 		if err != nil {
 			last = err.Error()
 			time.Sleep(20 * time.Millisecond)
