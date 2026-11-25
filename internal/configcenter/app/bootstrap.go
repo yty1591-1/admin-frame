@@ -408,6 +408,9 @@ func seedAuditMode(in BootstrapInput, fallback string) string {
 //
 // 只统计非敏感键：敏感键的取值走 config_secret（生成 + 授权），不会进入
 // 配置快照，若一并统计会把每个环境都判成永久缺键。
+//
+// 另附对象存储条件必填（driver=s3/minio 时的 bucket/region），与进程侧
+// configboot.MissingRequired 共用 spec.MissingStorageRefs，避免安装态与启动态分裂。
 func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]RequiredGap, error) {
 	if !domain.ValidEnv(env) {
 		return nil, apperr.BadRequest("invalid env")
@@ -443,12 +446,56 @@ func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]R
 			}
 		}
 	}
+	storageGaps, err := s.missingStorageGaps(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	gaps = append(gaps, storageGaps...)
 	return gaps, nil
+}
+
+// missingStorageGaps 把 s3/minio 条件下仍缺的 bucket/region 记为安装阻塞键。
+func (s *BootstrapService) missingStorageGaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	values, hasRelease, err := s.activeValues(ctx, env, spec.NamespacePlatform)
+	if err != nil {
+		return nil, err
+	}
+	if !hasRelease {
+		return nil, nil
+	}
+	refs := spec.MissingStorageRefs(values)
+	out := make([]RequiredGap, 0, len(refs))
+	for _, ref := range refs {
+		namespace, key, ok := strings.Cut(ref, "/")
+		if !ok {
+			continue
+		}
+		out = append(out, RequiredGap{
+			Namespace: namespace, Key: key, Reason: "missing_in_snapshot",
+		})
+	}
+	return out, nil
 }
 
 // activeKeys 返回 namespace 生效发布内的键集合；hasRelease=false 表示该域尚无生效发布。
 func (s *BootstrapService) activeKeys(ctx context.Context, env, namespace string) (
 	present map[string]struct{}, hasRelease bool, err error) {
+	values, hasRelease, err := s.activeValues(ctx, env, namespace)
+	if err != nil || !hasRelease {
+		return nil, hasRelease, err
+	}
+	present = make(map[string]struct{}, len(values))
+	for key := range values {
+		present[key] = struct{}{}
+	}
+	return present, true, nil
+}
+
+// activeValues 返回 namespace 生效发布的键值；hasRelease=false 表示该域尚无生效发布。
+//
+// 值为空串时仍会出现在 map 中（与「键不存在」可区分）；条件必填判定用 TrimSpace。
+func (s *BootstrapService) activeValues(ctx context.Context, env, namespace string) (
+	values map[string]string, hasRelease bool, err error) {
 	pointer, err := s.pointers.Get(ctx, env, namespace)
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
@@ -460,11 +507,15 @@ func (s *BootstrapService) activeKeys(ctx context.Context, env, namespace string
 	if err != nil {
 		return nil, false, translate(err)
 	}
-	present = make(map[string]struct{}, len(activeItems))
+	values = make(map[string]string, len(activeItems))
 	for _, entry := range activeItems {
-		present[entry.ConfigKey] = struct{}{}
+		version, verErr := s.items.GetVersion(ctx, entry.ItemID, entry.ItemVersion)
+		if verErr != nil {
+			return nil, false, translate(verErr)
+		}
+		values[entry.ConfigKey] = version.ValueText
 	}
-	return present, true, nil
+	return values, true, nil
 }
 
 // CheckRefs 逐个判定 namespace/key 是否已进入生效快照。

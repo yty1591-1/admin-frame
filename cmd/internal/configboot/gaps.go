@@ -36,27 +36,9 @@ func MissingRequired(values map[string]string) ([]string, error) {
 			}
 		}
 	}
-	gaps = append(gaps, missingStorageRefs(values)...)
+	gaps = append(gaps, spec.MissingStorageRefs(values)...)
 	sort.Strings(gaps)
 	return gaps, nil
-}
-
-// missingStorageRefs 返回对象存储的条件必填缺值键。
-//
-// 仅在 storage.driver=s3/minio 时要求 bucket/region：memory/local 等驱动
-// 不需要桶连接参数，若一并要求会把每个 dev/test 环境判成缺键。
-func missingStorageRefs(values map[string]string) []string {
-	driver := strings.ToLower(strings.TrimSpace(values["storage.driver"]))
-	if driver != "s3" && driver != "minio" {
-		return nil
-	}
-	refs := make([]string, 0, 2)
-	for _, key := range []string{"storage.s3.bucket", "storage.s3.region"} {
-		if strings.TrimSpace(values[key]) == "" {
-			refs = append(refs, spec.NamespacePlatform+"/"+key)
-		}
-	}
-	return refs
 }
 
 // RequireComplete 供 fail-fast 进程使用：仍缺必填键时返回带修复指引的启动错误。

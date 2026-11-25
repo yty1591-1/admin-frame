@@ -272,3 +272,59 @@ func TestBootstrapSkipsEmptyDefaultKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestMissingRequiredReportsStorageConditional 守护安装态 Gaps 与进程侧一致：
+// driver=s3 且未填 bucket/region 时必须出现在 MissingRequired 中，否则
+// begin(repair) 会报 no blocking keys，向导无法补齐。
+func TestMissingRequiredReportsStorageConditional(t *testing.T) {
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	registry := spec.NewRegistry()
+	if err := registry.Register(
+		domain.KeySpec{
+			Namespace: spec.NamespacePlatform, Key: "storage.driver",
+			ValueType: domain.ValueTypeString, Default: "s3",
+			Description: "存储驱动", Owner: "team-platform",
+		},
+		domain.KeySpec{
+			Namespace: spec.NamespacePlatform, Key: "storage.s3.bucket",
+			ValueType:   domain.ValueTypeString,
+			Description: "桶名", Owner: "team-platform",
+		},
+		domain.KeySpec{
+			Namespace: spec.NamespacePlatform, Key: "storage.s3.region",
+			ValueType:   domain.ValueTypeString,
+			Description: "区域", Owner: "team-platform",
+		},
+	); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		registry, emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+	if _, err := service.EnsureBaseline(context.Background(), app.BootstrapInput{
+		Env: domain.EnvProd, Namespace: spec.NamespacePlatform, Actor: testActor,
+	}); err != nil {
+		t.Fatalf("ensure baseline: %v", err)
+	}
+
+	gaps, err := service.MissingRequired(context.Background(), domain.EnvProd)
+	if err != nil {
+		t.Fatalf("MissingRequired: %v", err)
+	}
+	got := map[string]bool{}
+	for _, gap := range gaps {
+		got[gap.KeyRef()] = true
+	}
+	for _, want := range []string{
+		"platform/storage.s3.bucket",
+		"platform/storage.s3.region",
+	} {
+		if !got[want] {
+			t.Fatalf("MissingRequired gaps=%v, want %s", gaps, want)
+		}
+	}
+}

@@ -125,7 +125,7 @@ func platformSpecs() []domain.KeySpec {
 		// 条件必填：bucket / region 仅在 storage.driver=s3/minio 时需要。
 		// KeySpec.Required 是「全局必填且与 Default 互斥」的语义，表达不了
 		// 依赖其他键的条件，故此处保留空默认值 + 非必填；缺值判定由
-		// configboot 的启动期诊断按驱动门控（见 DiagnoseMissingValues）。
+		// spec.MissingStorageRefs（安装态 Gaps 与进程侧 configboot 共用）。
 		stringKey("storage.s3.bucket", "", "对象存储桶名；storage.driver=s3/minio 时必填", false),
 		stringKey("storage.s3.region", "", "对象存储区域；storage.driver=s3/minio 时必填", false),
 		stringKey("storage.s3.endpoint", "", "对象存储端点；空表示使用云厂商默认端点", false),
