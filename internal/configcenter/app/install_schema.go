@@ -157,19 +157,23 @@ func (s *InstallService) Schema(ctx context.Context, env string) (InstallSchema,
 			index := groupIndex[group.ID]
 			groupIndex[group.ID] = index + 1
 			_, isHot := hotSet[keySpec.Key]
+			isBlocking := hasKey(blocking[namespace], keySpec.Key)
 			field := SchemaField{
-				Namespace:    namespace,
-				Key:          keySpec.Key,
-				Label:        spec.DeriveLabel(keySpec),
-				Group:        group.ID,
-				GroupTitle:   group.Title,
-				Order:        fieldOrder(order, group.Order, index),
-				Widget:       spec.WidgetFor(keySpec),
-				ValueType:    string(keySpec.ValueType),
-				Required:     keySpec.Required,
+				Namespace:  namespace,
+				Key:        keySpec.Key,
+				Label:      spec.DeriveLabel(keySpec),
+				Group:      group.ID,
+				GroupTitle: group.Title,
+				Order:      fieldOrder(order, group.Order, index),
+				Widget:     spec.WidgetFor(keySpec),
+				ValueType:  string(keySpec.ValueType),
+				// 阻塞键必然是「不填就装不完」的，即使它没有 Required 标记
+				// （storage.s3.bucket 这类条件必填由进程侧补判），也要在
+				// 向导里标成必填，否则前端提交时不会拦截空值。
+				Required:     keySpec.Required || isBlocking,
 				Sensitive:    keySpec.Sensitive,
 				Deprecated:   keySpec.Deprecated,
-				Blocking:     hasKey(blocking[namespace], keySpec.Key),
+				Blocking:     isBlocking,
 				ReloadMode:   string(keySpec.EffectiveReloadMode()),
 				HotWhitelist: isHot,
 				Enum:         keySpec.Enum,

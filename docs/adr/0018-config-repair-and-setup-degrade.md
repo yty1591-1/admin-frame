@@ -94,6 +94,7 @@ GET /internal/v1/install/schema        头：X-Config-Install-Token（必需）
 
 - `mode`：`ready` 之前为 `first_install`，之后为 `repair`；`status` 同步返回 `mode`，前端据此决定「全量表单」还是「只渲染阻塞键」。
 - `blocking_keys` 只统计**非敏感**必填键：敏感键的取值走 `config_secret`（自动生成 + 授权），不会进入配置快照，计入会把每个环境都判成永久缺键。
+- 阻塞键在 schema 中**一律标记 `required`**，即使 `KeySpec.Required=false`（`storage.s3.bucket` 这类条件必填由进程侧 `configboot.MissingRequired` 补判）：否则首装前端不拦截空值，会出现「装完 → admin-api 重启 → 又降级」的循环。
 - `default.source` 解决了「无默认值」与「默认值为空串」不可分的问题：`none` 表示没有默认值，前端不显示「默认：」徽标。
 - `group` / `group_title` 由键前缀派生（`identity.sms`、`notification.channels` 等二级分组），`order` 是「命名空间顺序 + 分组顺序 + 组内序号」压成的排序键，前端直接按 `order` 升序渲染即可，无需硬编码分组表。
 - `widget` 由声明推导（`password` / `select` / `switch` / `number` / `duration` / `code` / `text`），前端不维护键名到控件的映射。
@@ -166,6 +167,19 @@ POST /internal/v1/install/complete {owner}
 4. **审计**：复用 `config.release.publish`，`mode=reset-defaults`，`attrs` 带 `env/namespace/release_id/release_no/keys/key_count`——action 白名单不加新名字，避免三处登记表漂移。
 
 边界：只重置「注册表声明过、有默认值、非敏感」的键；入口只在启动失败路径上触发，管理面不暴露。运维仍可在 `refs` 里点名，但值不可控。
+
+## 资源装配失败降级（2026-11-24 补充）
+
+决策 3 原为「值非法不降级」，但 `OpenStorageSet` 这类**资源装配**失败发生在配置校验通过之后：典型形态是 prod-like 播种 `storage.driver=s3`、而bucket/region 缺失，错误 `s3 requires bucket and region` 由 `platformstorage.OpenStorageSet` 返回，`configboot.DiagnoseInvalidValues` 看不到它，于是 admin-api 与其他进程一起退出，安装向导再次不可达。
+
+处置：
+
+1. **凭据与连接配置分开**：`storage.driver` / `storage.s3.{bucket,region,endpoint,force_path_style}` 登记为普通 KeySpec（可由向导填写或管理面审批）；`storage.s3.{access_key,secret_key}` 登记为敏感键，只进 `config_secret`。这同时修订了 `CONFIG_STANDARDS.md` §3.1.1 的排除表。
+2. **条件必填**：`bucket` / `region` 无默认值，仅当 `storage.driver=s3|minio` 时要求有值——`KeySpec.Required` 表达不了跨键依赖，改由 `configboot.MissingRequired` 的 `missingStorageRefs` 在进程侧补判，因此仍走既有「缺值 → setup-only」链路。
+3. **可识别错误**：`internal/platform` 导出 `ErrStorageUnavailable`，`prepareInfra` 在 `OpenStorageSet` 失败时包装返回。
+4. **仅 admin-api 降级**：捕获 `errors.Is(err, ErrStorageUnavailable)` 后转 `runSetupOnly`，由运维经 `/setup/install` 重配存储并重启；`worker` / `biz-api` / `c-api` 保持 fail-fast（无人值守进程降级只会掩盖故障，与决策 2 一致）。
+
+边界：该降级只覆盖「存储资源打不开」，不覆盖数据库、Redis 等其他基础设施故障——那些仍应 fail-fast，避免把「连不上核心依赖」误判成「配置待补」。
 
 ## 代码改造清单
 

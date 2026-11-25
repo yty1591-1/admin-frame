@@ -111,6 +111,13 @@ func TestInstallSchemaFirstInstall(t *testing.T) {
 	if schema.Namespaces[0].BlockingCount != 1 || schema.Namespaces[1].BlockingCount != 1 {
 		t.Fatalf("namespace blocking=%+v", schema.Namespaces)
 	}
+	// 阻塞键即使是「条件必填」（KeySpec.Required=false），也必须标成 required：
+	// 否则前端首装提交不会拦截空值，装完仍缺值又降级。
+	for _, field := range schema.Fields {
+		if field.Blocking && !field.Required {
+			t.Fatalf("blocking field %s must be required", field.Key)
+		}
+	}
 
 	byKey := make(map[string]app.SchemaField, len(schema.Fields))
 	for _, field := range schema.Fields {

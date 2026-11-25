@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -27,6 +28,11 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
+
+// ErrStorageUnavailable 表示对象存储无法按配置打开（缺桶/区域、凭据无效、
+// 端点不可达等）。admin-api 据此降级为 setup-only，用安装向导重新配置对象
+// 存储；其余进程保持 fail-fast（ADR-0018 决策 2）。
+var ErrStorageUnavailable = errors.New("platform: storage unavailable")
 
 // infraState 是 prepareInfra 产出的进程级基础设施。
 type infraState struct {
@@ -109,7 +115,9 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 
 	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
-		return nil, fmt.Errorf("storage: %w", err)
+		// 包装为可识别类型：admin-api 据此降级为 setup-only，用安装向导
+		// 重新配置对象存储，而不是直接退出（ADR-0018 补充：资源装配失败）。
+		return nil, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	infra.stores = stores
 

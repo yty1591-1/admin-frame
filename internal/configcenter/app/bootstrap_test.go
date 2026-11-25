@@ -223,3 +223,52 @@ func mustItems(t *testing.T, repos *memory.Repositories, releaseID int64) []doma
 	}
 	return items
 }
+
+// TestBootstrapSkipsEmptyDefaultKeys 守护「无默认值的键不会被自动播种」。
+//
+// storage.s3.bucket / region 靠这条语义把「未配置」暴露为安装缺口：
+// 若它们被空值播种进快照，config-api 会判 ready 而 admin-api 仍在
+// OpenStorageSet 失败降级，形成「安装完成 → 重启 → 再降级」的循环。
+func TestBootstrapSkipsEmptyDefaultKeys(t *testing.T) {
+	repos := memory.New()
+	emitter := &fakeEmitter{}
+	registry := spec.NewRegistry()
+	if err := registry.Register(
+		domain.KeySpec{
+			Namespace: "platform", Key: "storage.driver", ValueType: domain.ValueTypeString,
+			Default: "s3", Description: "存储驱动", Owner: "team-platform",
+		},
+		domain.KeySpec{
+			Namespace: "platform", Key: "storage.s3.bucket", ValueType: domain.ValueTypeString,
+			Description: "桶名（无默认值，须向导填写）", Owner: "team-platform",
+		},
+	); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	service, err := app.NewBootstrapService(repos.Items, repos.Releases, repos.Pointers,
+		registry, emitter, newIDs(),
+		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+	result, err := service.EnsureBaseline(context.Background(), app.BootstrapInput{
+		Env: domain.EnvDev, Namespace: "platform", Actor: testActor,
+	})
+	if err != nil {
+		t.Fatalf("ensure baseline: %v", err)
+	}
+	if result.ItemCount != 1 {
+		t.Fatalf("only the defaulted key may be seeded, got %+v", result)
+	}
+	for _, skipped := range result.SkippedKeys {
+		if skipped == "storage.driver" {
+			t.Fatal("defaulted key must not be skipped")
+		}
+	}
+	items := mustItems(t, repos, result.ReleaseID)
+	for _, item := range items {
+		if item.ConfigKey == "storage.s3.bucket" {
+			t.Fatal("key without default must not be seeded into the snapshot")
+		}
+	}
+}

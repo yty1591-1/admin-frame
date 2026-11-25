@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -200,7 +201,7 @@ func run() error {
 		})
 		return identityRT, identityErr
 	}
-	return platform.Run(context.Background(), platform.Options{
+	runErr := platform.Run(context.Background(), platform.Options{
 		Config: &appCfg.Config,
 		Build:  build,
 		NewSessionValidator: func(deps *platform.Deps) (platform.SessionValidator, error) {
@@ -233,6 +234,28 @@ func run() error {
 			return registerRoutes(deps, mux, built, identityBuilt, appCfg)
 		},
 	})
+	// 对象存储装配失败（缺桶/区域、凭据无效、端点不可达）不退出：降级为
+	// setup-only，让运维经 /setup/install 重新配置对象存储后重启。
+	// 其余装配错误保持 fail-fast，不带病运行（ADR-0018 决策 3）。
+	if runErr != nil && errors.Is(runErr, platform.ErrStorageUnavailable) {
+		gaps := storageHealGaps()
+		log.Printf("admin-api: storage unavailable (%v); entering setup-only mode to reconfigure storage: %s",
+			runErr, strings.Join(gaps, ", "))
+		return runSetupOnly(context.Background(), boot, gaps, build)
+	}
+	return runErr
+}
+
+// storageHealGaps 返回对象存储自愈时需在向导中确认的键（namespace/key）。
+//
+// 只列非敏感连接参数：AK/SK 由向导按需填写，且任何接口都不回显，
+// 列入 gaps 只会让 /readyz 文案泄露键名而无助于排障。
+func storageHealGaps() []string {
+	return []string{
+		"platform/storage.driver",
+		"platform/storage.s3.bucket",
+		"platform/storage.s3.region",
+	}
 }
 
 // applyLocalIdentityPIIKeys 在缺少托管密钥时填充本地 PII 摘要/加密密钥环。
