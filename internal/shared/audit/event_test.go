@@ -58,6 +58,15 @@ func TestAuditEventRejectsSecrets(t *testing.T) {
 	if err := e.Validate(); err == nil {
 		t.Fatal("expected AUD-08 rejection for password in attrs")
 	}
+	e.Attrs = map[string]string{"pem": "private_key=-----BEGIN"}
+	if err := e.Validate(); err == nil {
+		t.Fatal("expected AUD-08 rejection for private_key= in attrs")
+	}
+	// 配置键名可出现在 attrs；不得误杀 bootstrap CreateSecret(name=auth.jwt.private_key)。
+	e.Attrs = map[string]string{"name": "auth.jwt.private_key", "namespace": "platform"}
+	if err := e.Validate(); err != nil {
+		t.Fatalf("config key name must be allowed in attrs: %v", err)
+	}
 }
 
 func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
@@ -123,6 +132,10 @@ func TestKnownActionsMatchCatalogBaseline(t *testing.T) {
 		audit.ActionRBACCertification:        true,
 		audit.ActionConfigChange:             true,
 		audit.ActionConfigBootstrapCompleted: true,
+		audit.ActionConfigInstallBegin:       true,
+		audit.ActionConfigInstallApply:       true,
+		audit.ActionConfigInstallComplete:    true,
+		audit.ActionConfigInstallFail:        true,
 		audit.ActionConfigReleasePublish:     true,
 		audit.ActionConfigReleaseRollback:    true,
 		audit.ActionConfigReleaseApprove:     true,

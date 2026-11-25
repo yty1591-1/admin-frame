@@ -15,11 +15,12 @@ import (
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 )
 
-// Repositories 汇总三个持久化端口的进程内实现。
+// Repositories 汇总持久化端口的进程内实现。
 type Repositories struct {
 	Items    domain.ItemRepository
 	Releases domain.ReleaseRepository
 	Pointers domain.PointerRepository
+	Install  domain.InstallRepository
 }
 
 // New 构造空仓储集合。
@@ -29,6 +30,7 @@ func New() *Repositories {
 		Items:    &itemRepository{store: store},
 		Releases: &releaseRepository{store: store},
 		Pointers: &pointerRepository{store: store},
+		Install:  &InstallRepository{store: store},
 	}
 }
 
@@ -43,6 +45,7 @@ type store struct {
 	relItems   map[int64][]domain.ReleaseItem
 	reviews    map[int64][]domain.ReleaseReview
 	pointers   map[string]domain.Pointer
+	installs   map[string]domain.InstallState
 }
 
 func newStore() *store {
@@ -55,6 +58,7 @@ func newStore() *store {
 		relItems:   make(map[int64][]domain.ReleaseItem),
 		reviews:    make(map[int64][]domain.ReleaseReview),
 		pointers:   make(map[string]domain.Pointer),
+		installs:   make(map[string]domain.InstallState),
 	}
 }
 
@@ -246,17 +250,29 @@ func (r *releaseRepository) GetByNo(_ context.Context, env, namespace string, re
 	return cloneRelease(r.store.releases[id]), nil
 }
 
-// List 按状态过滤列出发布，按 release_no 降序稳定分页。
-func (r *releaseRepository) List(_ context.Context, env, namespace string, status domain.ReleaseStatus, limit, offset int) ([]domain.Release, int, error) {
+// List 按过滤条件列出发布，按 release_no 降序稳定分页。
+func (r *releaseRepository) List(_ context.Context, filter domain.ReleaseListFilter, limit, offset int) ([]domain.Release, int, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
+	keyword := strings.ToLower(strings.TrimSpace(filter.Keyword))
+	owner := strings.TrimSpace(filter.Owner)
 	all := make([]domain.Release, 0, len(r.store.releases))
 	for _, release := range r.store.releases {
-		if release.Env != env || release.Namespace != namespace {
+		if release.Env != filter.Env || release.Namespace != filter.Namespace {
 			continue
 		}
-		if status != "" && release.Status != status {
+		if filter.Status != "" && release.Status != filter.Status {
 			continue
+		}
+		if owner != "" && release.CreatedBy != owner {
+			continue
+		}
+		if keyword != "" {
+			name := strings.ToLower(release.Name)
+			desc := strings.ToLower(release.Description)
+			if !strings.Contains(name, keyword) && !strings.Contains(desc, keyword) {
+				continue
+			}
 		}
 		all = append(all, cloneRelease(release))
 	}
@@ -372,6 +388,19 @@ func (r *pointerRepository) Get(_ context.Context, env, namespace string) (domai
 		return domain.Pointer{}, domain.ErrNotFound
 	}
 	return pointer, nil
+}
+
+// ListByEnv 返回某环境下全部生效指针。
+func (r *pointerRepository) ListByEnv(_ context.Context, env string) ([]domain.Pointer, error) {
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
+	out := make([]domain.Pointer, 0, 8)
+	for _, pointer := range r.store.pointers {
+		if pointer.Env == env {
+			out = append(out, pointer)
+		}
+	}
+	return out, nil
 }
 
 // Create 初始化指针；已存在返回 domain.ErrDuplicateKey。

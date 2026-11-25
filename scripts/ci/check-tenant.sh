@@ -74,6 +74,7 @@ mapfile -t ROUTES < <(
 # 再到 tenant.yaml 里查操作定义下的 HTTP 方法。
 mapfile -t OPENAPI < <(
   awk '
+    { sub(/\r$/, "") }
     /^  \/admin\/v1\/tenants[^:]*:$/ {sub(/:$/, "", $1); path=$1; next}
     path != "" && /\$ref:/ {
       opid=$0; sub(/.*#\//, "", opid); sub(/\047.*$/, "", opid)

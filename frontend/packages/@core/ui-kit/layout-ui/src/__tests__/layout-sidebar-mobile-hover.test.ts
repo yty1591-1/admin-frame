@@ -37,7 +37,7 @@ interface MountOptions {
 function mountSidebar(options: MountOptions = {}) {
   const collapse = ref(options.collapse ?? false);
   const collapseWrites: boolean[] = [];
-  const onUpdateCollapse = vi.fn((value: boolean) => {
+  const onUpdateCollapse = vi.fn((value = false) => {
     collapseWrites.push(value);
     collapse.value = value;
   });

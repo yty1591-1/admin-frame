@@ -9,6 +9,8 @@ dist.war
 *-dist.tar
 *-dist.war
 coverage
+/test-results/
+.coverage
 *.local
 .cache
 .turbo
@@ -21,8 +23,10 @@ package-lock.json
 .omx
 .pnpm-store
 # local env files
+.env
 .env.local
 .env.*.local
+apps/*/.env
 .eslintcache
 
 logs

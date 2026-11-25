@@ -9,16 +9,14 @@ package configcenterruntime
 
 import (
 	"context"
-	"crypto/ed25519"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/configcenter/app"
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/infrastructure/memory"
@@ -48,31 +46,30 @@ const (
 	bootstrapTrace   = "config-bootstrap"
 )
 
-// 快照签名密钥通过部署注入（base64）：32 字节 seed 或 64 字节私钥。
-// staging / prod 未配置时启动失败（fail closed），避免发布未签名快照。
-const (
-	signingKeyEnv       = "CONFIGCENTER_SNAPSHOT_SIGNING_KEY"
-	signingKeyIDEnv     = "CONFIGCENTER_SNAPSHOT_SIGNING_KEY_ID"
-	defaultSigningKeyID = "k1"
-)
-
 // Runtime 是配置中心域的运行时产物。
 type Runtime struct {
 	// Handler A 端管理 Handler；为 nil 表示本进程未装配（缺平台依赖）。
 	Handler *configcenterrest.Handler
-	// Snapshots 是当前生效快照读取服务，实现 configclient.Source；
-	// 业务进程据此装配 pkg/configclient.Client。
+	// Internal 是 config-api 内部拉取 / 长轮询 / 密钥解析 Handler。
+	Internal *configcenterrest.InternalHandler
+	// Watcher 是 pointer 版本扫描器；config-api 后台运行。
+	Watcher *app.ReleaseWatcher
+	// Snapshots 是当前生效快照读取服务，实现 configclient.Source。
 	Snapshots *app.SnapshotService
-	// Client 是进程内动态刷新客户端；nil 表示未配置公钥，动态刷新关闭。
+	// Client 是进程内动态刷新客户端；nil 表示未启用。
 	Client *configclient.Client
 	// Metrics 是配置中心指标；deps.Metrics 缺失时为 nil（不观测）。
 	Metrics *observability.Metrics
 	// Hot 是进程级热更视图（ADR-0015）；未启用动态刷新时为 nil。
-	//
-	// 消费方应每次使用读当前视图，不要把取值缓存到局部变量。
 	Hot *hotconfig.Holder
 	// Secrets 是业务密钥用例（M2）；管理面 wrap / config-api unwrap。
 	Secrets *app.SecretService
+	// Install 是首次安装 Handler（ADR-0017）；config-api 挂载。
+	Install *configcenterrest.InstallHandler
+	// InstallService 供运行时内部查询安装态。
+	InstallService *app.InstallService
+	// ResetDefaults 是启动自愈 Handler（ADR-0018）：把取值非法的键重置为声明默认值。
+	ResetDefaults *configcenterrest.ResetDefaultsHandler
 
 	// clientEnv / clientNamespaces 记录刷新归属，仅用于启动日志。
 	clientEnv        string
@@ -85,11 +82,12 @@ type Options struct {
 	Service string
 }
 
-// repositories 汇总三个持久化端口；内存与 MySQL 实现同签名。
+// repositories 汇总持久化端口；内存与 MySQL 实现同签名。
 type repositories struct {
 	items    domain.ItemRepository
 	releases domain.ReleaseRepository
 	pointers domain.PointerRepository
+	install  domain.InstallRepository
 }
 
 // New 装配配置中心运行时。
@@ -120,15 +118,11 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter key spec: %w", err)
 	}
 
-	signer, err := buildSigner(deps.Config.Env, deps.Logger)
-	if err != nil {
-		return nil, err
-	}
 	metrics, err := buildMetrics(deps)
 	if err != nil {
 		return nil, err
 	}
-	appOpts := app.Options{Service: service, Signer: signer}
+	appOpts := app.Options{Service: service, SecretObserver: metrics, Specs: registry}
 
 	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, appOpts)
 	if err != nil {
@@ -139,15 +133,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configcenter release service: %w", err)
 	}
-	bootstrapService, err := app.NewBootstrapService(repos.items, repos.releases, repos.pointers,
-		registry, emitter, deps.IDs, appOpts)
-	if err != nil {
-		return nil, fmt.Errorf("configcenter bootstrap service: %w", err)
-	}
-	if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
-		return nil, err
-	}
-
+	// 播种已迁到 config-api（ADR-0016）；admin-api 仅管理面。
 	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
 	if err != nil {
 		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
@@ -183,8 +169,7 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("configcenter handler: %w", err)
 	}
 
-	// M1-7：管理面进程内动态刷新。未配置可信公钥时关闭刷新（继续使用
-	// 启动期签名快照 / 文件配置）；配置了公钥则每 5s 拉取、验签并原子落盘。
+	// 管理面仍可装配进程内刷新（可选）；业务进程改走 HTTP（ADR-0016）。
 	hot, err := newHotState()
 	if err != nil {
 		return nil, err
@@ -192,9 +177,6 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 	client, err := newRefreshClient(deps, snapshots, metrics, hot)
 	if err != nil {
 		return nil, err
-	}
-	if client == nil && deps.Logger != nil {
-		deps.Logger.Warn("configcenter dynamic refresh disabled; set " + snapshotconfig.PublicKeysEnv)
 	}
 	startPendingApprovalGauge(deps, repos, registry, metrics)
 	return &Runtime{
@@ -205,35 +187,24 @@ func New(deps *platform.Deps, opts Options) (*Runtime, error) {
 		Hot:              hotHolder(client, hot),
 		Secrets:          secretService,
 		clientEnv:        deps.Config.Env,
-		clientNamespaces: snapshotconfig.EnabledNamespaces(),
+		clientNamespaces: enabledNamespaces(),
 	}, nil
 }
 
-// NewSecretResolve 装配仅含密钥解析的运行时（cmd/config-api）。
-func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
+// NewConfigAPI 装配 config-api：安装态、播种基线、快照读取、长轮询、密钥解析（ADR-0016/0017）。
+func NewConfigAPI(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if deps == nil || deps.Config == nil || deps.IDs == nil {
-		return nil, fmt.Errorf("configcenter secret resolve requires platform deps")
+		return nil, fmt.Errorf("configcenter config-api requires platform deps")
+	}
+	if err := app.RequireSetupTokenConfigured(deps.Config.Env); err != nil {
+		return nil, err
 	}
 	emitter := buildEmitter(deps)
 	service := opts.Service
 	if service == "" {
 		service = deps.Config.Service
 	}
-	kek, err := buildKEK(deps.Config.Env, deps.Logger)
-	if err != nil {
-		return nil, err
-	}
 	repos, sqlDB, err := buildRepositories(deps)
-	if err != nil {
-		return nil, err
-	}
-	secretRepos, err := buildSecretRepositories(sqlDB)
-	if err != nil {
-		return nil, err
-	}
-	secretService, err := app.NewSecretService(
-		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
-		kek, emitter, deps.IDs, app.Options{Service: service})
 	if err != nil {
 		return nil, err
 	}
@@ -241,24 +212,112 @@ func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	itemService, err := app.NewItemService(repos.items, registry, emitter, deps.IDs, app.Options{Service: service})
+	appOpts := app.Options{Service: service, Specs: registry}
+	bootstrapService, err := app.NewBootstrapService(repos.items, repos.releases, repos.pointers,
+		registry, emitter, deps.IDs, appOpts)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter bootstrap service: %w", err)
+	}
+
+	kek, err := buildKEK(deps.Config.Env, deps.Logger)
 	if err != nil {
 		return nil, err
 	}
-	releaseService, err := app.NewReleaseService(repos.items, repos.releases, repos.pointers,
-		emitter, deps.IDs, app.Options{Service: service})
+	secretRepos, err := buildSecretRepositories(sqlDB)
 	if err != nil {
 		return nil, err
 	}
-	handler, err := configcenterrest.NewHandler(configcenterrest.HandlerConfig{
-		Items: itemService, Releases: releaseService, Secrets: secretService, Specs: registry,
-		PageLimits: pagination.Config{DefaultPageSize: defaultPageSize, MaxPageSize: maxPageSize},
-		SQLDB:      sqlDB,
+	metrics, err := buildMetrics(deps)
+	if err != nil {
+		return nil, err
+	}
+	secretService, err := app.NewSecretService(
+		secretRepos.Secrets, secretRepos.Grants, secretRepos.Access,
+		kek, emitter, deps.IDs, app.Options{Service: service, SecretObserver: metrics, Specs: registry})
+	if err != nil {
+		return nil, err
+	}
+
+	installService, err := app.NewInstallService(app.InstallServiceConfig{
+		Install: repos.install, Pointers: repos.pointers, Bootstrap: bootstrapService,
+		Secrets: secretService, Specs: registry, Emitter: emitter, IDs: deps.IDs, Options: appOpts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configcenter install service: %w", err)
+	}
+
+	// 安装流程对所有环境统一（ADR-0018）：启动期只保证安装态行存在，
+	// 仅已 ready 的环境做幂等播种（补齐新增键）；pending/installing/failed
+	// 一律等待安装向导，由 scripts/local|prod 的安装步骤驱动 begin→apply→complete。
+	if _, ensureErr := installService.EnsureState(context.Background(), deps.Config.Env, domain.InstallPending); ensureErr != nil {
+		return nil, fmt.Errorf("configcenter ensure install state: %w", ensureErr)
+	}
+	state, statusErr := installService.Status(context.Background(), deps.Config.Env)
+	if statusErr != nil {
+		return nil, fmt.Errorf("configcenter install status: %w", statusErr)
+	}
+	if state.Status == domain.InstallReady {
+		if err := bootstrap(deps, bootstrapService, registry, sqlDB); err != nil {
+			return nil, err
+		}
+		if err := bootstrapSecrets(deps, secretService, registry, sqlDB); err != nil {
+			return nil, err
+		}
+	}
+
+	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
+	}
+	watcher, err := app.NewReleaseWatcher(repos.pointers, app.DefaultWatchInterval)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter release watcher: %w", err)
+	}
+	deployEnv := deps.Config.Env
+	internal, err := configcenterrest.NewInternalHandler(configcenterrest.InternalHandlerConfig{
+		Snapshots: snapshots, Watcher: watcher, Secrets: secretService, DeployEnv: deployEnv,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{Handler: handler, Secrets: secretService}, nil
+	installHandler, err := configcenterrest.NewInstallHandler(configcenterrest.InstallHandlerConfig{
+		Install: installService, DeployEnv: deployEnv,
+		WithinTx: func(ctx context.Context, fn func(context.Context) error) error {
+			return withinTx(ctx, sqlDB, fn)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	resetDefaultsHandler, err := configcenterrest.NewResetDefaultsHandler(configcenterrest.ResetDefaultsHandlerConfig{
+		Reset: bootstrapService, DeployEnv: deployEnv,
+		WithinTx: func(ctx context.Context, fn func(context.Context) error) error {
+			return withinTx(ctx, sqlDB, fn)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if deps.Background != nil {
+		deps.Background(func(ctx context.Context) error {
+			return watcher.Run(ctx)
+		})
+	}
+	return &Runtime{
+		Internal:       internal,
+		Install:        installHandler,
+		InstallService: installService,
+		ResetDefaults:  resetDefaultsHandler,
+		Watcher:        watcher,
+		Snapshots:      snapshots,
+		Secrets:        secretService,
+		Metrics:        metrics,
+	}, nil
+}
+
+// NewSecretResolve 兼容旧名，转发到 NewConfigAPI。
+func NewSecretResolve(deps *platform.Deps, opts Options) (*Runtime, error) {
+	return NewConfigAPI(deps, opts)
 }
 
 // buildKEK 按环境选择 LocalKEK 或 Vault Transit；prod 禁止 LocalKEK。
@@ -307,35 +366,22 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// NewRefresh 只装配动态刷新客户端与客户端指标，不注册管理面、不播种。
+// NewRefresh 装配 HTTP 动态刷新客户端（ADR-0016）；不再直连配置库。
 //
-// 供 biz-api / c-api / worker 在 MySQL 模式下观测配置中心可用性；内存模式
-// 没有中心持久化数据，直接返回 (nil, nil)。刷新值目前不写回配置（热更需
-// 先补 ADR 与白名单），这里只提供快照可用性、版本与 stale 指标。
+// 未配置 CONFIG_API_URL 时返回 (nil, nil)。
 func NewRefresh(deps *platform.Deps) (*Runtime, error) {
 	if deps == nil || deps.Config == nil {
 		return nil, fmt.Errorf("configcenter refresh runtime requires platform deps")
-	}
-	if deps.Database == nil {
-		return nil, nil
-	}
-	repos, _, err := buildRepositories(deps)
-	if err != nil {
-		return nil, err
 	}
 	metrics, err := buildMetrics(deps)
 	if err != nil {
 		return nil, err
 	}
-	snapshots, err := app.NewSnapshotService(repos.items, repos.releases, repos.pointers)
-	if err != nil {
-		return nil, fmt.Errorf("configcenter snapshot service: %w", err)
-	}
 	hot, err := newHotState()
 	if err != nil {
 		return nil, err
 	}
-	client, err := newRefreshClient(deps, snapshots, metrics, hot)
+	client, err := newHTTPRefreshClient(deps, metrics, hot)
 	if err != nil {
 		return nil, err
 	}
@@ -343,33 +389,30 @@ func NewRefresh(deps *platform.Deps) (*Runtime, error) {
 		return nil, nil
 	}
 	return &Runtime{
-		Snapshots:        snapshots,
 		Client:           client,
 		Metrics:          metrics,
 		Hot:              hotHolder(client, hot),
 		clientEnv:        deps.Config.Env,
-		clientNamespaces: snapshotconfig.EnabledNamespaces(),
+		clientNamespaces: enabledNamespaces(),
 	}, nil
 }
 
-// newRefreshClient 构造按开关加载 namespace 的刷新客户端；未配置公钥返回 nil。
+// newRefreshClient 兼容管理面进程内 Source；无 Source 时退回 HTTP。
 func newRefreshClient(deps *platform.Deps, source configclient.Source,
 	metrics *observability.Metrics, hot *hotState) (*configclient.Client, error) {
+	if source == nil {
+		return newHTTPRefreshClient(deps, metrics, hot)
+	}
 	observer := clientRefreshObserver(deps.Logger, metrics)
-	// 观测与热更共用同一个 OnRefresh：热更失败不影响观测，反之亦然。
 	onRefresh := func(event configclient.RefreshEvent) {
 		if observer != nil {
 			observer(event)
 		}
 		hot.onEvent(event, deps.Logger, metrics, deps.LogLevel)
 	}
-	client, err := NewRefreshClient(RefreshConfig{
-		Source:           source,
-		PublicKeys:       os.Getenv(snapshotconfig.PublicKeysEnv),
-		SnapshotFile:     os.Getenv(snapshotconfig.FileEnv),
-		Env:              deps.Config.Env,
-		Namespace:        spec.NamespacePlatform,
-		Namespaces:       snapshotconfig.EnabledNamespaces(),
+	client, err := configclient.NewClient(configclient.ClientConfig{
+		Source: source, Env: deps.Config.Env,
+		Namespace: spec.NamespacePlatform, Namespaces: enabledNamespaces(),
 		PrimaryNamespace: spec.NamespacePlatform,
 		OnRefresh:        onRefresh,
 		OnWatchDropped: func() {
@@ -384,40 +427,89 @@ func newRefreshClient(deps *platform.Deps, source configclient.Source,
 	return client, nil
 }
 
-// buildSigner 从部署注入的密钥材料构造快照签名器。
-//
-// 未配置时：local / dev / test 允许关闭签名（客户端会拒绝未签名快照）；
-// staging / prod 直接失败，避免生产发布无法被客户端验证的快照。
-func buildSigner(env string, logger *slog.Logger) (*configclient.Signer, error) {
-	raw := strings.TrimSpace(os.Getenv(signingKeyEnv))
-	if raw == "" {
-		if env == "staging" || env == "prod" {
-			return nil, fmt.Errorf("configcenter: %s is required when env=%s", signingKeyEnv, env)
-		}
-		if logger != nil {
-			logger.Warn("configcenter snapshot signing disabled; snapshots will be rejected by clients",
-				"env", env, "key_env", signingKeyEnv)
-		}
+func newHTTPRefreshClient(deps *platform.Deps, metrics *observability.Metrics, hot *hotState) (*configclient.Client, error) {
+	base := strings.TrimSpace(os.Getenv("CONFIG_API_URL"))
+	identity := strings.TrimSpace(os.Getenv("CONFIG_SERVICE_IDENTITY"))
+	if base == "" || identity == "" {
 		return nil, nil
 	}
-	decoded, err := base64.StdEncoding.DecodeString(raw)
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	httpClient, err := secretruntime.LoadClientHTTPFromEnvFor(env)
 	if err != nil {
-		return nil, fmt.Errorf("configcenter: %s is not valid base64", signingKeyEnv)
+		return nil, err
 	}
-	var privateKey ed25519.PrivateKey
-	switch len(decoded) {
-	case ed25519.SeedSize:
-		privateKey = ed25519.NewKeyFromSeed(decoded)
-	case ed25519.PrivateKeySize:
-		privateKey = append(ed25519.PrivateKey(nil), decoded...)
-	default:
-		return nil, fmt.Errorf("configcenter: %s must be a base64 ed25519 seed or private key", signingKeyEnv)
+	source, err := configclient.NewHTTPSource(configclient.HTTPSourceConfig{
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
+	})
+	if err != nil {
+		return nil, err
 	}
-	keyID := strings.TrimSpace(os.Getenv(signingKeyIDEnv))
-	if keyID == "" {
-		keyID = defaultSigningKeyID
+	notifier, err := configclient.NewLongPoller(configclient.LongPollerConfig{
+		BaseURL: base, ServiceIdentity: identity, HTTPClient: httpClient,
+	})
+	if err != nil {
+		return nil, err
 	}
-	return configclient.NewSigner(keyID, privateKey)
+	var cache *configclient.DirCache
+	if dir := strings.TrimSpace(os.Getenv("CONFIGCENTER_CACHE_DIR")); dir != "" {
+		cache, err = configclient.NewDirCache(dir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	observer := clientRefreshObserver(deps.Logger, metrics)
+	onRefresh := func(event configclient.RefreshEvent) {
+		if observer != nil {
+			observer(event)
+		}
+		if hot != nil {
+			hot.onEvent(event, deps.Logger, metrics, deps.LogLevel)
+		}
+	}
+	return configclient.NewClient(configclient.ClientConfig{
+		Source: source, Notifier: notifier, Cache: cache,
+		Env: deps.Config.Env, Namespaces: enabledNamespaces(),
+		PrimaryNamespace: spec.NamespacePlatform,
+		OnRefresh:        onRefresh,
+		OnWatchDropped: func() {
+			if metrics != nil {
+				metrics.ClientWatchDropped()
+			}
+		},
+	})
+}
+
+// enabledNamespaces 读取 CONFIGCENTER_NAMESPACES；空则全部已声明 namespace。
+func enabledNamespaces() []string {
+	raw := strings.TrimSpace(os.Getenv("CONFIGCENTER_NAMESPACES"))
+	if raw == "" || raw == "all" || raw == "*" {
+		registry, err := spec.Platform()
+		if err != nil {
+			return []string{spec.NamespacePlatform}
+		}
+		return registry.Namespaces()
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		ns := strings.TrimSpace(part)
+		if ns == "" {
+			continue
+		}
+		if _, ok := seen[ns]; ok {
+			continue
+		}
+		seen[ns] = struct{}{}
+		out = append(out, ns)
+	}
+	if len(out) == 0 {
+		return []string{spec.NamespacePlatform}
+	}
+	return out
 }
 
 // bootstrap 对每个已声明 namespace 幂等播种 baseline；任一失败即返回（fail fast）。
@@ -447,6 +539,26 @@ func bootstrap(deps *platform.Deps, service *app.BootstrapService,
 	return nil
 }
 
+// bootstrapSecrets 按 secret_rule 幂等生成并激活业务密钥（AC-CC-17）。
+func bootstrapSecrets(deps *platform.Deps, service *app.SecretService,
+	registry *spec.Registry, sqlDB *sql.DB) error {
+	if service == nil || registry == nil {
+		return nil
+	}
+	actor := app.Actor{
+		SubjectID: bootstrapSubject,
+		ActorType: "system",
+		Channel:   "admin",
+		TraceID:   bootstrapTrace,
+	}
+	if err := withinTx(context.Background(), sqlDB, func(ctx context.Context) error {
+		return service.EnsureAutoSecrets(ctx, deps.Config.Env, registry, actor)
+	}); err != nil {
+		return fmt.Errorf("configcenter bootstrap secrets: %w", err)
+	}
+	return nil
+}
+
 // withinTx 在 SQL 模式下包事务；内存模式直接执行。
 func withinTx(ctx context.Context, sqlDB *sql.DB, fn func(context.Context) error) error {
 	if sqlDB == nil {
@@ -463,6 +575,7 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 			items:    memoryRepos.Items,
 			releases: memoryRepos.Releases,
 			pointers: memoryRepos.Pointers,
+			install:  memoryRepos.Install,
 		}, nil, nil
 	}
 	sqlDB := deps.Database.SQL()
@@ -474,6 +587,7 @@ func buildRepositories(deps *platform.Deps) (repositories, *sql.DB, error) {
 		items:    repos.Items,
 		releases: repos.Releases,
 		pointers: repos.Pointers,
+		install:  repos.Install,
 	}, sqlDB, nil
 }
 
@@ -520,8 +634,11 @@ func startPendingApprovalGauge(deps *platform.Deps, repos repositories,
 	deps.Background(func(ctx context.Context) error {
 		refresh := func() {
 			for _, namespace := range namespaces {
-				_, total, err := repos.releases.List(ctx, env, namespace,
-					domain.ReleaseStatusPendingReview, 1, 0)
+				_, total, err := repos.releases.List(ctx, domain.ReleaseListFilter{
+					Env:       env,
+					Namespace: namespace,
+					Status:    domain.ReleaseStatusPendingReview,
+				}, 1, 0)
 				if err != nil {
 					continue
 				}

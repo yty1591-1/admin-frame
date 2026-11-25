@@ -109,6 +109,17 @@ type Release struct {
 	UpdatedAt         time.Time
 }
 
+// ReleaseListFilter 是发布单列表过滤条件（CC-R-16）。
+//
+// Keyword 对 Name / Description 做大小写不敏感子串匹配；Owner 精确匹配 CreatedBy。
+type ReleaseListFilter struct {
+	Env       string
+	Namespace string
+	Status    ReleaseStatus
+	Keyword   string
+	Owner     string
+}
+
 // Validate 校验发布单的不变量。
 func (r Release) Validate() error {
 	if r.ID <= 0 {

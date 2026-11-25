@@ -53,7 +53,7 @@ func Fingerprint(plaintext []byte) string {
 }
 
 // Seal 生成 DEK、加密明文并用 KEK wrap DEK。
-func Seal(kek KEKProvider, plaintext []byte, aad []byte) (Blob, error) {
+func Seal(kek KEKProvider, plaintext, aad []byte) (Blob, error) {
 	if kek == nil {
 		return Blob{}, fmt.Errorf("envelope: kek provider required")
 	}

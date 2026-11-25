@@ -25,27 +25,23 @@ type Source interface {
 type ClientConfig struct {
 	// Source 快照来源；必填。
 	Source Source
-	// Verifier 验签器；必填，未签名的快照一律拒绝装载。
-	Verifier *Verifier
 	// Env 环境；必填。
 	Env string
 	// Namespace 单命名空间；Namespaces 为空时使用。
 	Namespace string
-	// Namespaces 是按开关启用的命名空间列表；非空时优先于 Namespace，
-	// 客户端逐个拉取、验签并合并取值（按 namespace 灰度接管）。
+	// Namespaces 是按开关启用的命名空间列表；非空时优先于 Namespace。
 	Namespaces []string
-	// PrimaryNamespace 是本地落盘与兼容读取使用的主 namespace；
-	// 为空时取 Namespaces 首项。多 namespace 时建议显式指定 platform。
+	// PrimaryNamespace 是兼容读取使用的主 namespace；为空时取 Namespaces 首项。
 	PrimaryNamespace string
-	// Store 本地快照仓库；可选。配置后刷新成功即原子落盘，中心不可用时
-	// 冷启动回退到本地已验签快照。多 namespace 模式下只保存主 namespace。
+	// Store 本地快照仓库；可选。多 namespace 时建议用 DirCache。
 	Store SnapshotStore
+	// Cache 按 namespace 落盘的目录缓存；优先于 Store 做逐 ns 回退。
+	Cache *DirCache
+	// Notifier 变更通知；非 nil 时 Run 走长轮询，否则按 interval 轮询。
+	Notifier Notifier
 	// Now 时钟；测试注入。
 	Now func() time.Time
-	// OnRefresh 在每次刷新尝试后按 namespace 回调；用于运行期日志与指标，可为 nil。
-	//
-	// 回调在刷新 goroutine 内同步执行，必须快速返回，且不得调用 Refresh / Run。
-	// 事件中的 Snapshot 为只读副本，调用方不得修改。
+	// OnRefresh 在每次刷新尝试后按 namespace 回调；可为 nil。
 	OnRefresh func(RefreshEvent)
 	// OnWatchDropped 在 Watch 订阅者积压、事件被丢弃时回调；可为 nil。
 	OnWatchDropped func()
@@ -71,17 +67,18 @@ type RefreshEvent struct {
 	Err error
 }
 
-// Client 是进程内配置读取客户端：拉取 → 验签 → 原子替换 → 类型化读取。
+// Client 是进程内配置读取客户端：拉取 → 完整性校验 → 原子替换 → 类型化读取。
 //
 // 多 namespace 模式下按 namespace 独立拉取与降级，取值合并到同一张表；
-// 任一 namespace 失败不会清空其它 namespace 的已验签快照。
+// 任一 namespace 失败不会清空其它 namespace 的已装载快照。
 type Client struct {
 	source     Source
-	verifier   *Verifier
 	env        string
 	namespaces []string
 	primary    string
 	store      SnapshotStore
+	cache      *DirCache
+	notifier   Notifier
 	now        func() time.Time
 	onRefresh  func(RefreshEvent)
 
@@ -105,13 +102,11 @@ type loaded struct {
 	at      time.Time
 }
 
-// NewClient 构造客户端；Source / Verifier / Env 与至少一个 namespace 必填。
+// NewClient 构造客户端；Source / Env 与至少一个 namespace 必填。
 func NewClient(cfg ClientConfig) (*Client, error) {
 	switch {
 	case cfg.Source == nil:
 		return nil, fmt.Errorf("configclient: client requires a snapshot source")
-	case cfg.Verifier == nil:
-		return nil, fmt.Errorf("configclient: client requires a snapshot verifier")
 	case strings.TrimSpace(cfg.Env) == "":
 		return nil, fmt.Errorf("configclient: client requires env")
 	}
@@ -132,11 +127,12 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	return &Client{
 		source:         cfg.Source,
-		verifier:       cfg.Verifier,
 		env:            cfg.Env,
 		namespaces:     namespaces,
 		primary:        primary,
 		store:          cfg.Store,
+		cache:          cfg.Cache,
+		notifier:       cfg.Notifier,
 		now:            now,
 		onRefresh:      cfg.OnRefresh,
 		watchers:       make(map[chan RefreshEvent]struct{}),
@@ -188,15 +184,19 @@ func (c *Client) Namespaces() []string {
 // 返回所有 namespace 失败原因的合并错误；部分成功时仍返回错误，但成功
 // namespace 的新快照已生效。
 func (c *Client) Refresh(ctx context.Context) error {
+	return c.refreshNamespaces(ctx, c.namespaces)
+}
+
+func (c *Client) refreshNamespaces(ctx context.Context, namespaces []string) error {
 	type result struct {
 		namespace string
 		snapshot  Snapshot
 		install   bool
 		err       error
 	}
-	results := make([]result, 0, len(c.namespaces))
+	results := make([]result, 0, len(namespaces))
 	var errs []error
-	for _, namespace := range c.namespaces {
+	for _, namespace := range namespaces {
 		snapshot, install, err := c.refreshNamespace(ctx, namespace)
 		results = append(results, result{namespace: namespace, snapshot: snapshot, install: install, err: err})
 		if err != nil {
@@ -230,18 +230,21 @@ func (c *Client) refreshNamespace(ctx context.Context, namespace string) (Snapsh
 		if verifyErr := c.verify(snapshot, namespace); verifyErr != nil {
 			err = verifyErr
 		} else {
-			if c.store != nil && namespace == c.primary {
-				// 落盘失败不影响本次读取；下次成功刷新会重试。
+			if c.cache != nil {
+				_ = c.cache.SaveNamespace(ctx, snapshot)
+			} else if c.store != nil && namespace == c.primary {
 				_ = c.store.Save(ctx, snapshot)
 			}
 			return snapshot, true, nil
 		}
 	}
 	wrapped := fmt.Errorf("configclient: load snapshot for %s: %w", namespace, err)
-	if namespace == c.primary {
-		if fallback, ok := c.loadFallback(ctx); ok {
-			return fallback, true, wrapped
-		}
+	// 已装载的内存版本优先于磁盘，防止落盘失败后回退到更旧的配置。
+	if current, ok := c.SnapshotFor(namespace); ok {
+		return current, false, wrapped
+	}
+	if fallback, ok := c.loadNamespaceFallback(ctx, namespace); ok {
+		return fallback, true, wrapped
 	}
 	return Snapshot{}, false, wrapped
 }
@@ -338,38 +341,65 @@ func (c *Client) storeSnapshots(snapshots map[string]Snapshot) {
 	})
 }
 
-// loadFallback 在无内存快照时装载本地文件快照；文件也无效则返回 false。
-func (c *Client) loadFallback(ctx context.Context) (Snapshot, bool) {
-	if c.store == nil {
-		return Snapshot{}, false
+// loadNamespaceFallback 读取本地缓存；优先 DirCache，其次单文件 Store（仅 primary）。
+func (c *Client) loadNamespaceFallback(ctx context.Context, namespace string) (Snapshot, bool) {
+	if c.cache != nil {
+		snapshot, err := c.cache.LoadNamespace(ctx, namespace)
+		if err == nil && c.verify(snapshot, namespace) == nil {
+			return snapshot, true
+		}
 	}
-	snapshot, err := c.store.Load(ctx)
-	if err != nil {
-		return Snapshot{}, false
+	if c.store != nil && namespace == c.primary {
+		snapshot, err := c.store.Load(ctx)
+		if err == nil && c.verify(snapshot, namespace) == nil {
+			return snapshot, true
+		}
 	}
-	if err := c.verify(snapshot, c.primary); err != nil {
-		return Snapshot{}, false
-	}
-	return snapshot, true
+	return Snapshot{}, false
 }
 
-// verify 校验快照归属与签名，拒绝跨环境 / 跨 namespace 或未签名数据。
+// verify 校验快照归属与完整性（哈希 / 取值；ADR-0016 无签名）。
 func (c *Client) verify(snapshot Snapshot, namespace string) error {
-	if snapshot.Env != c.env || snapshot.Namespace != namespace {
-		return fmt.Errorf("configclient: snapshot env/namespace does not match client")
+	if snapshot.Env != "" && snapshot.Env != c.env {
+		return fmt.Errorf("configclient: snapshot env does not match client")
 	}
-	return c.verifier.Verify(snapshot)
+	if snapshot.Namespace != "" && snapshot.Namespace != namespace {
+		return fmt.Errorf("configclient: snapshot namespace does not match client")
+	}
+	if len(snapshot.Items) > 0 || snapshot.SnapshotHash != "" {
+		return snapshot.ValidateIntegrity()
+	}
+	return nil
 }
 
-// Run 按 interval（±20% 抖动）持续刷新，直到 ctx 取消。
+// PointerVersions 返回已装载 namespace 的 pointer_version，供长轮询使用。
+func (c *Client) PointerVersions() map[string]int64 {
+	current := c.current.Load()
+	out := make(map[string]int64, len(c.namespaces))
+	for _, namespace := range c.namespaces {
+		if current != nil {
+			if snap, ok := current.snapshots[namespace]; ok {
+				out[namespace] = snap.PointerVersion
+				continue
+			}
+		}
+		out[namespace] = 0
+	}
+	return out
+}
+
+// Run 持续刷新直到 ctx 取消。
 //
-// 首次立即刷新一次；后续失败只记录，不终止循环（配置读路径不因中心
-// 短暂不可用而退出）。
+// 配置了 Notifier 时走长轮询；否则按 interval（±20% 抖动）轮询。
+// 首次立即刷新一次；后续失败只记录，不终止循环。
 func (c *Client) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		interval = DefaultRefreshInterval
 	}
 	_ = c.Refresh(ctx)
+	if c.notifier != nil {
+		return c.runLongPoll(ctx)
+	}
 	for {
 		timer := time.NewTimer(jitter(interval))
 		select {
@@ -379,6 +409,44 @@ func (c *Client) Run(ctx context.Context, interval time.Duration) error {
 		case <-timer.C:
 			_ = c.Refresh(ctx)
 		}
+	}
+}
+
+func (c *Client) runLongPoll(ctx context.Context) error {
+	for {
+		versions := c.PointerVersions()
+		changed, err := c.notifier.Wait(ctx, c.env, versions)
+		if err != nil {
+			// 单次 HTTP 请求的超时或取消不代表刷新任务结束。
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(jitter(time.Second)):
+			}
+			// 通知路径故障时主动校准，避免长期错过发布。
+			_ = c.Refresh(ctx)
+			continue
+		}
+		if len(changed) == 0 {
+			// 正常长轮询超时也校准一次，以修复漏通知及启动期部分失败。
+			_ = c.Refresh(ctx)
+			continue
+		}
+		if c.Degraded() {
+			// 任一 namespace 尚未恢复时完整校准，避免增量成功清除其它域的降级状态。
+			_ = c.Refresh(ctx)
+			continue
+		}
+		var namespaces []string
+		for _, namespace := range c.namespaces {
+			if containsNamespace(changed, namespace) {
+				namespaces = append(namespaces, namespace)
+			}
+		}
+		_ = c.refreshNamespaces(ctx, namespaces)
 	}
 }
 

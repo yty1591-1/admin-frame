@@ -3,9 +3,9 @@ package notificationruntime
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	notificationconfig "github.com/admin-frame/admin-frame/internal/notification/config"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
@@ -25,10 +25,11 @@ import (
 //
 // 配置校验已在启动期完成；这里只做凭据读取与驱动构造，任一渠道配置了
 // 真实驱动但凭据缺失时直接失败，避免「进程起来了但通知永远发不出去」。
-func buildRoute(ctx context.Context, cfg notificationconfig.NotificationConfig) (map[domain.Channel][]app.Sender, error) {
+// staging/prod 拒绝裸 env 凭据（CC-R-03）。
+func buildRoute(ctx context.Context, env string, cfg notificationconfig.NotificationConfig) (map[domain.Channel][]app.Sender, error) {
 	route := make(map[domain.Channel][]app.Sender, 3)
 
-	emailSenders, err := buildEmailSenders(ctx, cfg.Channels.Email)
+	emailSenders, err := buildEmailSenders(ctx, env, cfg.Channels.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +37,7 @@ func buildRoute(ctx context.Context, cfg notificationconfig.NotificationConfig) 
 		route[domain.ChannelEmail] = emailSenders
 	}
 
-	smsSenders, err := buildSMSSenders(ctx, cfg.Channels.SMS)
+	smsSenders, err := buildSMSSenders(ctx, env, cfg.Channels.SMS)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +45,7 @@ func buildRoute(ctx context.Context, cfg notificationconfig.NotificationConfig) 
 		route[domain.ChannelSms] = smsSenders
 	}
 
-	pushSenders, err := buildPushSenders(ctx, cfg.Channels.Push)
+	pushSenders, err := buildPushSenders(ctx, env, cfg.Channels.Push)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func buildRoute(ctx context.Context, cfg notificationconfig.NotificationConfig) 
 	return route, nil
 }
 
-func buildEmailSenders(ctx context.Context, cfg notificationconfig.EmailConfig) ([]app.Sender, error) {
+func buildEmailSenders(ctx context.Context, env string, cfg notificationconfig.EmailConfig) ([]app.Sender, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Driver)) {
 	case notificationconfig.DriverDisabled:
 		return nil, nil
@@ -63,9 +64,10 @@ func buildEmailSenders(ctx context.Context, cfg notificationconfig.EmailConfig) 
 			channel.NewEmailSender(pkgemail.NewMemory(pkgemail.MemoryConfig{}), pkgemail.Address{}),
 		}, nil
 	case notificationconfig.DriverSMTP:
-		password := os.Getenv(strings.TrimSpace(cfg.SMTP.PasswordEnv))
-		if password == "" {
-			return nil, fmt.Errorf("notification email: environment variable %s is required for smtp password", cfg.SMTP.PasswordEnv)
+		password, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationSMTPPasswordName, cfg.SMTP.PasswordEnv)
+		if err != nil {
+			return nil, fmt.Errorf("notification email: smtp password: %w", err)
 		}
 		sender, err := pkgemail.Open(ctx, pkgemail.Config{
 			Driver: notificationconfig.DriverSMTP,
@@ -93,7 +95,7 @@ func buildEmailSenders(ctx context.Context, cfg notificationconfig.EmailConfig) 
 	}
 }
 
-func buildSMSSenders(ctx context.Context, cfg notificationconfig.SMSConfig) ([]app.Sender, error) {
+func buildSMSSenders(ctx context.Context, env string, cfg notificationconfig.SMSConfig) ([]app.Sender, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Driver)) {
 	case notificationconfig.DriverDisabled:
 		return nil, nil
@@ -103,9 +105,26 @@ func buildSMSSenders(ctx context.Context, cfg notificationconfig.SMSConfig) ([]a
 			channel.NewSMSSender(pkgsms.NewMemory(pkgsms.MemoryConfig{AllowRawContent: true}), "", ""),
 		}, nil
 	case notificationconfig.DriverAliyun:
-		secret := os.Getenv(strings.TrimSpace(cfg.Aliyun.AccessKeySecretEnv))
-		if secret == "" {
-			return nil, fmt.Errorf("notification sms: environment variable %s is required for aliyun access key secret", cfg.Aliyun.AccessKeySecretEnv)
+		accessKeyID, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationAliyunAccessKeyID, secretruntime.NotificationAliyunAccessKeyIDEnv)
+		if err != nil {
+			// local/dev/test：允许回退配置树明文 AccessKeyID（非 env）。
+			if bareErr := secretruntime.RejectBareSecretEnv(env, "notification.sms.aliyun.access_key_id"); bareErr != nil {
+				return nil, fmt.Errorf("notification sms: aliyun access key id: %w", err)
+			}
+			accessKeyID = strings.TrimSpace(cfg.Aliyun.AccessKeyID)
+			if accessKeyID == "" {
+				return nil, fmt.Errorf("notification sms: aliyun access key id: %w", err)
+			}
+		}
+		secretEnv := strings.TrimSpace(cfg.Aliyun.AccessKeySecretEnv)
+		if secretEnv == "" {
+			secretEnv = secretruntime.AliyunSMSAccessKeySecretEnv
+		}
+		secret, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationAliyunAccessKeySecret, secretEnv)
+		if err != nil {
+			return nil, fmt.Errorf("notification sms: aliyun access key secret: %w", err)
 		}
 		signName := strings.TrimSpace(cfg.SignName)
 		if signName == "" {
@@ -116,7 +135,7 @@ func buildSMSSenders(ctx context.Context, cfg notificationconfig.SMSConfig) ([]a
 			Aliyun: pkgsms.AliyunConfig{
 				Endpoint:        cfg.Aliyun.Endpoint,
 				Region:          cfg.Aliyun.Region,
-				AccessKeyID:     cfg.Aliyun.AccessKeyID,
+				AccessKeyID:     accessKeyID,
 				AccessKeySecret: secret,
 				SignName:        signName,
 			},
@@ -132,7 +151,7 @@ func buildSMSSenders(ctx context.Context, cfg notificationconfig.SMSConfig) ([]a
 	}
 }
 
-func buildPushSenders(ctx context.Context, cfg notificationconfig.PushConfig) ([]app.Sender, error) {
+func buildPushSenders(ctx context.Context, env string, cfg notificationconfig.PushConfig) ([]app.Sender, error) {
 	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
 	platform, err := pushPlatform(driver, cfg.Platform)
 	if err != nil {
@@ -146,9 +165,10 @@ func buildPushSenders(ctx context.Context, cfg notificationconfig.PushConfig) ([
 			channel.NewPushSender(pkgpush.NewMemory(pkgpush.MemoryConfig{}), platform),
 		}, nil
 	case notificationconfig.DriverAPNS:
-		privateKey := os.Getenv(strings.TrimSpace(cfg.APNS.PrivateKeyEnv))
-		if privateKey == "" {
-			return nil, fmt.Errorf("notification push: environment variable %s is required for apns private key", cfg.APNS.PrivateKeyEnv)
+		privateKey, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationAPNSPrivateKeyName, cfg.APNS.PrivateKeyEnv)
+		if err != nil {
+			return nil, fmt.Errorf("notification push: apns private key: %w", err)
 		}
 		sender, openErr := pkgpush.Open(ctx, pkgpush.Config{
 			Driver: notificationconfig.DriverAPNS,
@@ -166,9 +186,10 @@ func buildPushSenders(ctx context.Context, cfg notificationconfig.PushConfig) ([
 		}
 		return []app.Sender{channel.NewPushSender(sender, platform)}, nil
 	case notificationconfig.DriverFCM:
-		credentials := os.Getenv(strings.TrimSpace(cfg.FCM.CredentialsJSONEnv))
-		if credentials == "" {
-			return nil, fmt.Errorf("notification push: environment variable %s is required for fcm credentials", cfg.FCM.CredentialsJSONEnv)
+		credentials, err := secretruntime.ResolveNotificationChannelSecretOrEnv(ctx, env,
+			secretruntime.NotificationFCMCredentialsJSONName, cfg.FCM.CredentialsJSONEnv)
+		if err != nil {
+			return nil, fmt.Errorf("notification push: fcm credentials: %w", err)
 		}
 		sender, openErr := pkgpush.Open(ctx, pkgpush.Config{
 			Driver: notificationconfig.DriverFCM,

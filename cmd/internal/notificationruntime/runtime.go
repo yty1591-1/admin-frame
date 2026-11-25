@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/notification/app"
 	notificationconfig "github.com/admin-frame/admin-frame/internal/notification/config"
 	"github.com/admin-frame/admin-frame/internal/notification/domain"
@@ -48,7 +49,7 @@ func New(deps *platform.Deps, cfg notificationconfig.NotificationConfig) (*Runti
 	if errs := cfg.Validate(deps.Config.Env); len(errs) > 0 {
 		return nil, fmt.Errorf("notification config: %w", errors.Join(errs...))
 	}
-	route, err := buildRoute(context.Background(), cfg)
+	route, err := buildRoute(context.Background(), deps.Config.Env, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func NewWithRoute(deps *platform.Deps, route map[domain.Channel][]app.Sender, li
 	}
 	// 黑名单 HMAC 盐：只从环境注入（CFG-06），缺盐拒绝启动——
 	// 无盐 HMAC 等于可离线枚举的普通哈希，等于没脱敏。
-	hasher, err := blacklistHasher()
+	hasher, err := blacklistHasher(deps.Config.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -210,11 +211,17 @@ func buildEmitter(deps *platform.Deps) audit.Emitter {
 	return slogEmitter
 }
 
-// blacklistHasher 从环境读取盐并构造 HMAC 函数。
-func blacklistHasher() (app.TargetHasher, error) {
-	salt := os.Getenv(EnvBlacklistSalt)
-	if salt == "" {
-		return nil, fmt.Errorf("notification blacklist salt: environment variable %s is required (empty = offline-enumerable hash)", EnvBlacklistSalt)
+// blacklistHasher 优先经 secretclient 解析；local/dev/test 可回退裸 env（CC-R-05）。
+func blacklistHasher(env string) (app.TargetHasher, error) {
+	salt, err := secretruntime.ResolveNotificationBlacklistSaltFromEnv(context.Background(), env)
+	if err != nil {
+		if err := secretruntime.RejectBareSecretEnv(env, EnvBlacklistSalt); err != nil {
+			return nil, fmt.Errorf("notification blacklist salt: %w", err)
+		}
+		salt = os.Getenv(EnvBlacklistSalt)
+		if salt == "" {
+			return nil, fmt.Errorf("notification blacklist salt: resolve failed (%v) and %s is empty", err, EnvBlacklistSalt)
+		}
 	}
 	return app.HMACHasher([]byte(salt))
 }

@@ -27,7 +27,7 @@
 | GIT-03 | CI 必跑 job 全部通过后方可合并（见 `CI_STANDARDS`） | 分支保护 status checks |
 | GIT-04 | 分支命名：`feature/*`、`fix/*`、`hotfix/*`、`chore/*`、`docs/*`、`dependabot/*`（或平台机器人等价） | Review |
 | GIT-05 | Commit 遵循 [Conventional Commits](https://www.conventionalcommits.org/)：`<type>(optional-scope): <description>` | `commitlint.config.cjs` + Review |
-| GIT-06 | 仓库必须提供 GitHub 与 Gitee（若启用）PR 模板，且含架构相关自检区 | `check-git.sh` |
+| GIT-06 | 仓库必须提供 GitHub 与 Gitee（若启用）PR 模板，且含架构相关自检区（含「前端自检」节） | `check-git.sh` |
 | GIT-07 | MR 标题建议同 Conventional Commits；正文勾选适用自检；禁止空描述合入 | Review + 模板 |
 | GIT-08 | 合并请求须勾选 Git 自检（本专文） | PR 模板 |
 

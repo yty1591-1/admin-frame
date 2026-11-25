@@ -63,15 +63,19 @@ const (
 	ActionConfigChange      = "config.change"
 	// 配置中心（ADR-0013）：初始化、发布、回滚与审批。
 	ActionConfigBootstrapCompleted = "config.bootstrap.completed"
+	ActionConfigInstallBegin       = "config.install.begin"
+	ActionConfigInstallApply       = "config.install.apply"
+	ActionConfigInstallComplete    = "config.install.complete"
+	ActionConfigInstallFail        = "config.install.fail"
 	ActionConfigReleasePublish     = "config.release.publish"
 	ActionConfigReleaseRollback    = "config.release.rollback"
 	ActionConfigReleaseApprove     = "config.release.approve"
 	// 业务密钥（ADR-0014）：创建、轮换、吊销、授权与解析访问。
-	ActionConfigSecretCreate  = "config.secret.create"
-	ActionConfigSecretRotate  = "config.secret.rotate"
-	ActionConfigSecretRevoke  = "config.secret.revoke"
-	ActionConfigSecretGrant   = "config.secret.grant"
-	ActionConfigSecretResolve = "config.secret.resolve"
+	ActionConfigSecretCreate  = "config.secret.create"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretRotate  = "config.secret.rotate"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretRevoke  = "config.secret.revoke"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretGrant   = "config.secret.grant"   //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretResolve = "config.secret.resolve" //nolint:gosec // G101: 审计动作名，非凭据。
 	ActionDataExport          = "data.export"
 	ActionDataQueryScope      = "data.query_scope"
 	ActionPaymentCapture      = "payment.capture"
@@ -144,6 +148,10 @@ func KnownActions() []string {
 		ActionRBACCertification,
 		ActionConfigChange,
 		ActionConfigBootstrapCompleted,
+		ActionConfigInstallBegin,
+		ActionConfigInstallApply,
+		ActionConfigInstallComplete,
+		ActionConfigInstallFail,
 		ActionConfigReleasePublish,
 		ActionConfigReleaseRollback,
 		ActionConfigReleaseApprove,

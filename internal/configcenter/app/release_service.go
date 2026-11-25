@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/pkg/configclient"
@@ -22,10 +23,10 @@ type ReleaseService struct {
 	items    domain.ItemRepository
 	releases domain.ReleaseRepository
 	pointers domain.PointerRepository
+	specs    *spec.Registry
 	audit    auditContext
 	ids      id.Generator
 	now      func() time.Time
-	signer   *configclient.Signer
 }
 
 // NewReleaseService 构造发布用例；三个仓储、审计出口与 ID 生成器必填。
@@ -52,10 +53,10 @@ func NewReleaseService(items domain.ItemRepository, releases domain.ReleaseRepos
 		items:    items,
 		releases: releases,
 		pointers: pointers,
+		specs:    opts.Specs,
 		audit:    auditContext{emitter: emitter, ids: ids, service: opts.Service, now: now},
 		ids:      ids,
 		now:      now,
-		signer:   opts.Signer,
 	}, nil
 }
 
@@ -281,7 +282,10 @@ func (s *ReleaseService) Publish(ctx context.Context, releaseID int64, expectedP
 	if SnapshotHash(items) != release.SnapshotHash {
 		return domain.Release{}, apperr.Internal("release snapshot hash mismatch", nil)
 	}
-	signed, err := applySignature(s.signer, release)
+	if err := s.dryRunSnapshot(ctx, release, items); err != nil {
+		return domain.Release{}, err
+	}
+	signed, err := applySignature(nil, release)
 	if err != nil {
 		return domain.Release{}, err
 	}
@@ -316,11 +320,16 @@ func (s *ReleaseService) Publish(ctx context.Context, releaseID int64, expectedP
 }
 
 // RollbackInput 是回滚入参；目标是历史 Release，不是草稿。
+//
+// 回滚绕过双人审批，必须显式 BreakGlass 并写原因（CC-R-08）；
+// 审计后须在 24h 内补审（见 docs/runbooks/config-center.md）。
 type RollbackInput struct {
 	TargetReleaseID        int64
 	Name                   string
 	Description            string
 	ExpectedPointerVersion *int64
+	BreakGlass             bool
+	BreakGlassReason       string
 	Actor                  Actor
 }
 
@@ -331,6 +340,13 @@ type RollbackInput struct {
 func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain.Release, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return domain.Release{}, err
+	}
+	if !in.BreakGlass {
+		return domain.Release{}, apperr.BadRequest(
+			"rollback requires break_glass=true (bypasses dual approval; CC-R-08)")
+	}
+	if strings.TrimSpace(in.BreakGlassReason) == "" {
+		return domain.Release{}, apperr.BadRequest("break_glass_reason is required for rollback")
 	}
 	target, err := s.getRelease(ctx, in.TargetReleaseID)
 	if err != nil {
@@ -411,7 +427,10 @@ func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain
 	if SnapshotHash(newItems) != target.SnapshotHash {
 		return domain.Release{}, apperr.Internal("rollback snapshot hash mismatch", nil)
 	}
-	signed, err := applySignature(s.signer, newRelease)
+	if err := s.dryRunSnapshot(ctx, newRelease, newItems); err != nil {
+		return domain.Release{}, err
+	}
+	signed, err := applySignature(nil, newRelease)
 	if err != nil {
 		return domain.Release{}, err
 	}
@@ -426,15 +445,17 @@ func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain
 		return domain.Release{}, err
 	}
 	attrs := map[string]string{
-		"target_release_no": fmt.Sprintf("%d", target.ReleaseNo),
-		"new_release_no":    fmt.Sprintf("%d", newRelease.ReleaseNo),
-		"pointer_version":   fmt.Sprintf("%d", switched.Version),
+		"target_release_no":  fmt.Sprintf("%d", target.ReleaseNo),
+		"new_release_no":     fmt.Sprintf("%d", newRelease.ReleaseNo),
+		"pointer_version":    fmt.Sprintf("%d", switched.Version),
+		"break_glass":        "true",
+		"break_glass_reason": strings.TrimSpace(in.BreakGlassReason),
 	}
 	if previousID > 0 {
 		attrs["previous_release_id"] = fmt.Sprintf("%d", previousID)
 	}
 	if err := s.audit.emit(ctx, in.Actor, audit.ActionConfigReleaseRollback, ResourceTypeRelease,
-		releaseResourceID(newRelease), audit.OutcomeSuccess, "", attrs); err != nil {
+		releaseResourceID(newRelease), audit.OutcomeSuccess, "break_glass", attrs); err != nil {
 		return domain.Release{}, apperr.Internal("emit config audit failed", err)
 	}
 	newRelease.Status = domain.ReleaseStatusActive
@@ -447,6 +468,10 @@ func (s *ReleaseService) Rollback(ctx context.Context, in RollbackInput) (domain
 func (s *ReleaseService) Cancel(ctx context.Context, releaseID int64, reason string, actor Actor) (domain.Release, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Release{}, err
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return domain.Release{}, apperr.BadRequest("cancel reason is required")
 	}
 	release, err := s.getRelease(ctx, releaseID)
 	if err != nil {
@@ -477,16 +502,18 @@ func (s *ReleaseService) Get(ctx context.Context, releaseID int64) (domain.Relea
 	return s.getRelease(ctx, releaseID)
 }
 
-// List 按状态列出发布单（release_no 降序）。
-func (s *ReleaseService) List(ctx context.Context, env, namespace string,
-	status domain.ReleaseStatus, limit, offset int) ([]domain.Release, int, error) {
-	if !domain.ValidEnv(env) || !domain.ValidNamespace(namespace) {
+// List 按过滤条件列出发布单（release_no 降序；CC-R-16 支持 keyword/owner）。
+func (s *ReleaseService) List(ctx context.Context, filter domain.ReleaseListFilter,
+	limit, offset int) ([]domain.Release, int, error) {
+	if !domain.ValidEnv(filter.Env) || !domain.ValidNamespace(filter.Namespace) {
 		return nil, 0, apperr.BadRequest("invalid env or namespace")
 	}
-	if status != "" && !status.Valid() {
-		return nil, 0, apperr.BadRequest(fmt.Sprintf("invalid release status %q", status))
+	if filter.Status != "" && !filter.Status.Valid() {
+		return nil, 0, apperr.BadRequest(fmt.Sprintf("invalid release status %q", filter.Status))
 	}
-	releases, total, err := s.releases.List(ctx, env, namespace, status, limit, offset)
+	filter.Keyword = strings.TrimSpace(filter.Keyword)
+	filter.Owner = strings.TrimSpace(filter.Owner)
+	releases, total, err := s.releases.List(ctx, filter, limit, offset)
 	if err != nil {
 		return nil, 0, translate(err)
 	}
@@ -509,6 +536,43 @@ func (s *ReleaseService) ListReviews(ctx context.Context, releaseID int64) ([]do
 		return nil, translate(err)
 	}
 	return reviews, nil
+}
+
+// dryRunSnapshot 在切换指针前校验快照内每个值（CC-R-07）。
+//
+// 对声明键跑 KeySpec.ValidateValue；未声明键拒绝。不强制「Required 全集」——
+// 发布快照可只含变更键集；完整性由播种 / 进程启动 Validate 兜底。
+// Specs 未注入时跳过（单测兼容）。
+func (s *ReleaseService) dryRunSnapshot(ctx context.Context, release domain.Release, items []domain.ReleaseItem) error {
+	if s.specs == nil {
+		return nil
+	}
+	var errs []error
+	for _, releaseItem := range items {
+		item, err := s.items.GetByID(ctx, releaseItem.ItemID)
+		if err != nil {
+			return translate(err)
+		}
+		if item.Sensitive {
+			continue
+		}
+		keySpec, ok := s.specs.Lookup(release.Namespace, releaseItem.ConfigKey)
+		if !ok {
+			errs = append(errs, fmt.Errorf("key %q is not declared in code key spec", releaseItem.ConfigKey))
+			continue
+		}
+		version, err := s.items.GetVersion(ctx, releaseItem.ItemID, releaseItem.ItemVersion)
+		if err != nil {
+			return translate(err)
+		}
+		if err := keySpec.ValidateValue(version.ValueText); err != nil {
+			errs = append(errs, fmt.Errorf("key %q: %w", releaseItem.ConfigKey, err))
+		}
+	}
+	if len(errs) > 0 {
+		return apperr.BadRequest(fmt.Sprintf("release dry-run failed: %v", errors.Join(errs...)))
+	}
+	return nil
 }
 
 // resolveEntries 逐条解析快照条目并拒绝重复键。

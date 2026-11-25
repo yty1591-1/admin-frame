@@ -29,7 +29,7 @@ type ReleaseRepository interface {
 	Create(ctx context.Context, release Release, items []ReleaseItem) error
 	Get(ctx context.Context, id int64) (Release, error)
 	GetByNo(ctx context.Context, env, namespace string, releaseNo int64) (Release, error)
-	List(ctx context.Context, env, namespace string, status ReleaseStatus, limit, offset int) ([]Release, int, error)
+	List(ctx context.Context, filter ReleaseListFilter, limit, offset int) ([]Release, int, error)
 	NextReleaseNo(ctx context.Context, env, namespace string) (int64, error)
 	Transition(ctx context.Context, id int64, from, to ReleaseStatus, actor string, at time.Time) error
 	// UpdateSnapshotSignature 在发布生效前写入 Ed25519 签名与 key id。
@@ -47,6 +47,8 @@ type ReleaseRepository interface {
 // Create 只在 (env, namespace) 首次初始化时调用，冲突返回 ErrDuplicateKey。
 type PointerRepository interface {
 	Get(ctx context.Context, env, namespace string) (Pointer, error)
+	// ListByEnv 返回某环境下全部生效指针；无记录时返回空切片。
+	ListByEnv(ctx context.Context, env string) ([]Pointer, error)
 	Create(ctx context.Context, pointer Pointer) error
 	CompareAndSwap(ctx context.Context, env, namespace string, expectedVersion, activeReleaseID int64, now time.Time) (Pointer, error)
 }

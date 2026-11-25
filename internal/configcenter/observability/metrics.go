@@ -54,6 +54,10 @@ type Metrics struct {
 	hotKeyApplied  *prometheus.CounterVec
 	hotIgnored     *prometheus.CounterVec
 
+	secretResolve         *prometheus.CounterVec
+	secretResolveDuration *prometheus.HistogramVec
+	secretPlaintextLeak   prometheus.Counter
+
 	mu          sync.Mutex
 	lastSuccess map[string]time.Time
 }
@@ -125,6 +129,19 @@ func New(registerer prometheus.Registerer) (*Metrics, error) {
 			Name: "config_hot_ignored_total",
 			Help: "已声明但不在热更白名单的键发生变更的次数（只记录 key）。",
 		}, []string{"key"}),
+		secretResolve: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "config_secret_resolve_total",
+			Help: "密钥解析结果（result：ok / denied / unavailable / error）。",
+		}, []string{"result"}),
+		secretResolveDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "config_secret_resolve_duration_seconds",
+			Help:    "密钥解析耗时。",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}, []string{"result"}),
+		secretPlaintextLeak: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "config_secret_plaintext_leak_total",
+			Help: "检测到密钥明文旁路次数（应为 0）。",
+		}),
 		lastSuccess: make(map[string]time.Time),
 	}
 	for _, c := range []prometheus.Collector{
@@ -132,6 +149,7 @@ func New(registerer prometheus.Registerer) (*Metrics, error) {
 		m.clientFetch, m.clientSnapshotAge, m.clientVersion, m.clientCorrupt, m.clientColdStart,
 		m.clientWatchDrop,
 		m.hotViewVersion, m.hotReload, m.hotKeyApplied, m.hotIgnored,
+		m.secretResolve, m.secretResolveDuration, m.secretPlaintextLeak,
 	} {
 		if err := registerer.Register(c); err != nil {
 			return nil, fmt.Errorf("configcenter observability: register collector: %w", err)
@@ -207,14 +225,15 @@ func (m *Metrics) ObserveClientRefresh(event configclient.RefreshEvent) {
 		return
 	}
 	age := time.Duration(0)
-	if event.Err == nil {
+	switch {
+	case event.Err == nil:
 		m.clientVersion.WithLabelValues(namespace).Set(float64(event.Snapshot.ReleaseNo))
-	} else if !last.IsZero() {
+	case !last.IsZero():
 		age = event.At.Sub(last)
 		if age < 0 {
 			age = 0
 		}
-	} else {
+	default:
 		// 从未成功刷新：不写年龄，避免用进程启动时长污染 stale 告警。
 		return
 	}
@@ -238,12 +257,9 @@ func adminResult(status int) string {
 // isSnapshotCorrupt 判断错误是否属于快照本身不可信（而非中心不可用）。
 func isSnapshotCorrupt(err error) bool {
 	for _, target := range []error{
-		configclient.ErrSnapshotUnsigned,
-		configclient.ErrSnapshotUnknownKeyID,
 		configclient.ErrSnapshotHashMismatch,
 		configclient.ErrSnapshotSizeMismatch,
 		configclient.ErrSnapshotValueMismatch,
-		configclient.ErrSnapshotSignatureInvalid,
 	} {
 		if errors.Is(err, target) {
 			return true
@@ -282,4 +298,24 @@ func (m *Metrics) ObserveHotIgnored(key string) {
 		return
 	}
 	m.hotIgnored.WithLabelValues(key).Inc()
+}
+
+// ObserveSecretResolve 记录一次密钥解析（实现 app.SecretResolveObserver）。
+func (m *Metrics) ObserveSecretResolve(result string, elapsed time.Duration) {
+	if m == nil {
+		return
+	}
+	if result == "" {
+		result = "error"
+	}
+	m.secretResolve.WithLabelValues(result).Inc()
+	m.secretResolveDuration.WithLabelValues(result).Observe(elapsed.Seconds())
+}
+
+// ObserveSecretPlaintextLeak 记录一次明文旁路检测（实现 app.SecretResolveObserver）。
+func (m *Metrics) ObserveSecretPlaintextLeak() {
+	if m == nil {
+		return
+	}
+	m.secretPlaintextLeak.Inc()
 }

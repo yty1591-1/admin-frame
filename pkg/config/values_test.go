@@ -47,6 +47,25 @@ func TestBindValuesAppliesTypedFields(t *testing.T) {
 	}
 }
 
+func TestBindValuesAppliesJSONArraySlice(t *testing.T) {
+	var cfg testConfig
+	err := config.BindValues(&cfg, map[string]string{
+		"tags": `["admin","biz","c","worker","internal"]`,
+	})
+	if err != nil {
+		t.Fatalf("bind JSON array slice: %v", err)
+	}
+	want := []string{"admin", "biz", "c", "worker", "internal"}
+	if len(cfg.Tags) != len(want) {
+		t.Fatalf("tags=%v, want %v", cfg.Tags, want)
+	}
+	for i := range want {
+		if cfg.Tags[i] != want[i] {
+			t.Fatalf("tags=%v, want %v", cfg.Tags, want)
+		}
+	}
+}
+
 func TestBindValuesAllowsEmptyString(t *testing.T) {
 	cfg := testConfig{Addr: ":8080"}
 	if err := config.BindValues(&cfg, map[string]string{"addr": ""}); err != nil {
@@ -100,6 +119,8 @@ func TestLoaderSnapshotOverridesEnvAndFile(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "app.yaml", "addr: \":9090\"\nlog:\n  level: warn\n")
 	opts := testOptions(path)
+	// 与生产一致：仅放行基础设施段；业务键 APP_ADDR 不得压过配置中心快照（CFG-04）。
+	opts.EnvPathAllowlist = []string{"db", "redis"}
 	opts.LookupEnv = envLookup(map[string]string{"APP_ADDR": ":7070"})
 	opts.Values = func() (map[string]string, error) {
 		return map[string]string{"addr": ":6060"}, nil

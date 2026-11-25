@@ -11,12 +11,12 @@ type SecretStatus string
 
 // 密钥治理状态枚举。
 const (
-	SecretStatusDraft          SecretStatus = "draft"
-	SecretStatusPendingReview  SecretStatus = "pending_review"
-	SecretStatusActive         SecretStatus = "active"
-	SecretStatusRejected       SecretStatus = "rejected"
-	SecretStatusRevoked        SecretStatus = "revoked"
-	SecretStatusDestroyed      SecretStatus = "destroyed"
+	SecretStatusDraft         SecretStatus = "draft"
+	SecretStatusPendingReview SecretStatus = "pending_review"
+	SecretStatusActive        SecretStatus = "active"
+	SecretStatusRejected      SecretStatus = "rejected"
+	SecretStatusRevoked       SecretStatus = "revoked"
+	SecretStatusDestroyed     SecretStatus = "destroyed"
 )
 
 // Valid 判断密钥状态枚举合法性。
@@ -35,6 +35,7 @@ type SecretVersionStatus string
 
 // 版本状态枚举。
 const (
+	SecretVersionPending   SecretVersionStatus = "pending" // 待审批轮换版本；解析不使用
 	SecretVersionActive    SecretVersionStatus = "active"
 	SecretVersionGrace     SecretVersionStatus = "grace"
 	SecretVersionRevoked   SecretVersionStatus = "revoked"
@@ -44,12 +45,20 @@ const (
 // Valid 判断版本状态合法性。
 func (s SecretVersionStatus) Valid() bool {
 	switch s {
-	case SecretVersionActive, SecretVersionGrace, SecretVersionRevoked, SecretVersionDestroyed:
+	case SecretVersionPending, SecretVersionActive, SecretVersionGrace,
+		SecretVersionRevoked, SecretVersionDestroyed:
 		return true
 	default:
 		return false
 	}
 }
+
+// 待审批变更动作（落在 Secret.PendingAction；active 期间解析不受影响）。
+const (
+	PendingActionRotate = "rotate"
+	PendingActionRevoke = "revoke"
+	PendingActionGrant  = "grant"
+)
 
 // SecretReviewAction 是密钥审批动作。
 type SecretReviewAction string
@@ -77,11 +86,15 @@ type Secret struct {
 	RotateIntervalDays int
 	DualVersion        bool
 	SubmittedBy        string
-	ExpiresAt          *time.Time
-	CreatedBy          string
-	UpdatedBy          string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// PendingAction 非空表示 active 密钥上有待审批变更（rotate/revoke/grant）。
+	PendingAction string
+	// PendingPayload 承载待审附属数据（如 grant 的 service_identity）。
+	PendingPayload string
+	ExpiresAt      *time.Time
+	CreatedBy      string
+	UpdatedBy      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 	// Fingerprint 是当前 active 版本指纹；仓储列表可不填。
 	Fingerprint string
 }
@@ -179,8 +192,10 @@ func (g SecretGrant) Validate() error {
 	if len(id) > 256 {
 		return fmt.Errorf("configcenter: service_identity too long")
 	}
-	if g.Permission != "resolve" {
-		return fmt.Errorf("configcenter: grant permission must be resolve")
+	switch g.Permission {
+	case "resolve", "pending":
+	default:
+		return fmt.Errorf("configcenter: grant permission must be resolve or pending")
 	}
 	if g.SecretID == 0 {
 		return fmt.Errorf("configcenter: grant secret_id required")
@@ -225,17 +240,22 @@ func (s Secret) CanSubmit() bool {
 	return s.Status == SecretStatusDraft || s.Status == SecretStatusRejected
 }
 
-// CanApprove 判断是否可审批。
+// CanApprove 判断是否可审批（创建送审或 active 上的待审变更）。
 func (s Secret) CanApprove() bool {
-	return s.Status == SecretStatusPendingReview
+	return s.Status == SecretStatusPendingReview || s.PendingAction != ""
 }
 
-// CanRotate 判断是否可轮换。
+// CanRotate 判断是否可提交轮换。
 func (s Secret) CanRotate() bool {
-	return s.Status == SecretStatusActive
+	return s.Status == SecretStatusActive && s.PendingAction == ""
 }
 
-// CanRevoke 判断是否可吊销。
+// CanRevoke 判断是否可提交吊销。
 func (s Secret) CanRevoke() bool {
-	return s.Status == SecretStatusActive || s.Status == SecretStatusPendingReview
+	return s.Status == SecretStatusActive && s.PendingAction == ""
+}
+
+// CanGrant 判断是否可提交授权。
+func (s Secret) CanGrant() bool {
+	return s.Status == SecretStatusActive && s.PendingAction == ""
 }

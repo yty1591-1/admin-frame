@@ -1970,7 +1970,7 @@ iam:
 - [`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)：REL-01～REL-08
 - [`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)：OBS-01～OBS-08
 - [`CODE_STYLE.md`](./CODE_STYLE.md) / [`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)：S-01～S-12 / C-01～C-10
-- [`CI_STANDARDS.md`](./CI_STANDARDS.md)：CI-01～CI-14
+- [`CI_STANDARDS.md`](./CI_STANDARDS.md)：CI-01～CI-18
 - [`docs/audit/EVENTS.md`](./audit/EVENTS.md) / [`docs/audit/FIELDS.md`](./audit/FIELDS.md)
 - 代码：`pkg/rbac`、`internal/security`、`internal/shared/auth`、`internal/shared/apperr`
 - NIST RBAC（INCITS 359）概念参考；OWASP Authorization Cheat Sheet

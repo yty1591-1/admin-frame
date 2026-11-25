@@ -27,7 +27,7 @@ alerts_path = pathlib.Path(sys.argv[2])
 
 catalog = {}
 for line in alerts_path.read_text(encoding="utf-8").splitlines():
-    m = re.match(r"\|\s*`([a-z0-9._-]+)`\s*\|\s*(P[123])\s*\|", line)
+    m = re.match(r"\|\s*`([a-z0-9._-]+)`\s*\|\s*(P[0123])\s*\|", line)
     if m:
         catalog[m.group(1)] = m.group(2)
 
@@ -40,7 +40,7 @@ for path in sorted(rules_dir.glob("*.yaml")):
         if not m_id:
             continue
         alert_id = m_id.group(1)
-        sev = re.search(r"severity:\s*(P[123])", block)
+        sev = re.search(r"severity:\s*(P[0123])", block)
         rules[alert_id] = sev.group(1) if sev else "?"
         rb = re.search(r"runbook_url:\s*(\S+)", block)
         if not rb:
@@ -52,7 +52,7 @@ for path in sorted(rules_dir.glob("*.yaml")):
 
 failed = False
 for alert_id, sev in catalog.items():
-    if sev not in ("P1", "P2"):
+    if sev not in ("P0", "P1", "P2"):
         continue
     if alert_id not in rules:
         print(f"ERROR: ALERTS.md entry `{alert_id}` has no rule (AC-ENT-06-1)", file=sys.stderr)

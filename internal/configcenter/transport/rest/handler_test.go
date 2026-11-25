@@ -160,6 +160,56 @@ func (f *fixture) seedSensitiveItem(t *testing.T) (itemID, versionID int64) {
 	return itemID, versionID
 }
 
+func TestTransitionItemStateMachine(t *testing.T) {
+	f := newFixture(t)
+	item := f.createItem(t, "u1", `{"env":"prod","namespace":"platform","key":"log.level","value":"info","owner":"team-platform"}`)
+	itemID := int64(item["id"].(float64))
+	version := int64(item["version"].(float64))
+
+	transition := func(to string, expected int64) map[string]any {
+		t.Helper()
+		body := `{"to":"` + to + `","expected_version":` + strconv.FormatInt(expected, 10) + `}`
+		request := adminRequestAs("u1", http.MethodPost,
+			"/admin/v1/configs/items/"+strconv.FormatInt(itemID, 10)+"/transition", body)
+		request.SetPathValue("id", strconv.FormatInt(itemID, 10))
+		recorder := httptest.NewRecorder()
+		f.handler.TransitionItem(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("transition to %s status=%d body=%s", to, recorder.Code, recorder.Body.String())
+		}
+		env := decodeEnvelope(t, recorder)
+		var data map[string]any
+		if err := json.Unmarshal(env.Data, &data); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return data
+	}
+
+	active := transition("active", version)
+	if active["status"] != "active" {
+		t.Fatalf("want active, got %v", active["status"])
+	}
+	deprecated := transition("deprecated", int64(active["version"].(float64)))
+	if deprecated["status"] != "deprecated" {
+		t.Fatalf("want deprecated, got %v", deprecated["status"])
+	}
+	archived := transition("archived", int64(deprecated["version"].(float64)))
+	if archived["status"] != "archived" {
+		t.Fatalf("want archived, got %v", archived["status"])
+	}
+
+	// archived 为终态，再迁应 409。
+	body := `{"to":"active","expected_version":` + strconv.FormatInt(int64(archived["version"].(float64)), 10) + `}`
+	request := adminRequestAs("u1", http.MethodPost,
+		"/admin/v1/configs/items/"+strconv.FormatInt(itemID, 10)+"/transition", body)
+	request.SetPathValue("id", strconv.FormatInt(itemID, 10))
+	recorder := httptest.NewRecorder()
+	f.handler.TransitionItem(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("archived→active want 409, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCreateItemAndAppendValue(t *testing.T) {
 	f := newFixture(t)
 
@@ -371,7 +421,7 @@ func TestReleaseLifecycle(t *testing.T) {
 
 	// 回滚到 A：服务端按目标快照生成新 Release 并生效。
 	rollbackRequest := adminRequestAs("u3", http.MethodPost, "/admin/v1/configs/releases/1/rollback",
-		`{"comment":"rollback to first"}`)
+		`{"comment":"rollback to first","break_glass":true,"break_glass_reason":"handler lifecycle drill"}`)
 	rollbackRequest.SetPathValue("id", strconv.FormatInt(releaseA, 10))
 	rollbackRecorder := httptest.NewRecorder()
 	f.handler.RollbackRelease(rollbackRecorder, rollbackRequest)
@@ -412,6 +462,32 @@ func TestListNamespacesAndItems(t *testing.T) {
 	f.handler.ListNamespaces(nsRecorder, nsRequest)
 	if nsRecorder.Code != http.StatusOK {
 		t.Fatalf("list namespaces status = %d (body=%s)", nsRecorder.Code, nsRecorder.Body.String())
+	}
+	keysRequest := adminRequestAs("u1", http.MethodGet, "/admin/v1/configs/namespaces/platform/keys", "")
+	keysRecorder := httptest.NewRecorder()
+	f.handler.ListDeclaredKeys(keysRecorder, keysRequest)
+	if keysRecorder.Code != http.StatusOK {
+		t.Fatalf("list declared keys status = %d (body=%s)", keysRecorder.Code, keysRecorder.Body.String())
+	}
+	var keysData struct {
+		Items []struct {
+			Key          string `json:"key"`
+			HotWhitelist bool   `json:"hot_whitelist"`
+			ReloadMode   string `json:"reload_mode"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(decodeEnvelope(t, keysRecorder).Data, &keysData); err != nil {
+		t.Fatalf("decode declared keys: %v", err)
+	}
+	hotByKey := map[string]bool{}
+	for _, item := range keysData.Items {
+		hotByKey[item.Key] = item.HotWhitelist
+	}
+	if !hotByKey["log.level"] {
+		t.Fatal("log.level must be on ADR-0015 hot whitelist")
+	}
+	if hotByKey["http.timeout"] {
+		t.Fatal("http.timeout must not be on hot whitelist")
 	}
 	var nsData struct {
 		Items []struct {
@@ -516,6 +592,31 @@ func TestReleaseListAndInvalidRequests(t *testing.T) {
 	}
 	if listData.Items[0]["status"] != "draft" || int64(listData.Items[0]["id"].(float64)) != releaseID {
 		t.Fatalf("release list item mismatch: %+v", listData.Items[0])
+	}
+
+	keywordRequest := adminRequestAs("u1", http.MethodGet,
+		"/admin/v1/configs/releases?env=prod&namespace=platform&keyword=LIST&owner=u1", "")
+	keywordRecorder := httptest.NewRecorder()
+	f.handler.ListReleases(keywordRecorder, keywordRequest)
+	if keywordRecorder.Code != http.StatusOK {
+		t.Fatalf("keyword list status = %d (body=%s)", keywordRecorder.Code, keywordRecorder.Body.String())
+	}
+
+	cancelRequest := adminRequestAs("u1", http.MethodPost,
+		"/admin/v1/configs/releases/"+strconv.FormatInt(releaseID, 10)+"/cancel",
+		`{"reason":"需求变更"}`)
+	cancelRequest.SetPathValue("id", strconv.FormatInt(releaseID, 10))
+	cancelRecorder := httptest.NewRecorder()
+	f.handler.CancelRelease(cancelRecorder, cancelRequest)
+	if cancelRecorder.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d (body=%s)", cancelRecorder.Code, cancelRecorder.Body.String())
+	}
+	var cancelled map[string]any
+	if err := json.Unmarshal(decodeEnvelope(t, cancelRecorder).Data, &cancelled); err != nil {
+		t.Fatalf("decode cancelled: %v", err)
+	}
+	if cancelled["status"] != "cancelled" {
+		t.Fatalf("cancelled status = %v", cancelled["status"])
 	}
 
 	// 非法与不存在的路径参数：400 与 404 必须区分，便于前端提示。

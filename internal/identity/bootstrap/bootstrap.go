@@ -141,12 +141,40 @@ func EnsureAdmin(ctx context.Context, sqlDB *sql.DB, protector persistence.Subje
 }
 
 // ensureAccount 在账号不存在时创建；存在时返回 false。软删账号视为已占用唯一键，直接报错。
+//
+// 幂等优先按固定 bootstrapAccountID 判断（hash_key 轮换后 subject_index 会变，
+// 仅按索引查会误判为「不存在」并撞固定主键）；若索引/密文与当前保护器不一致则回写。
 func ensureAccount(ctx context.Context, tx *sql.Tx, protector persistence.SubjectProtector, accountID int64, index, subject string, now time.Time) (bool, error) {
 	var (
-		existingID int64
-		deletedAt  sql.NullTime
+		existingID    int64
+		existingIndex string
+		deletedAt     sql.NullTime
 	)
-	err := tx.QueryRowContext(ctx, `SELECT id, deleted_at FROM identity_account
+	err := tx.QueryRowContext(ctx, `SELECT id, subject_index, deleted_at FROM identity_account
+		WHERE id = ? LIMIT 1`, accountID).Scan(&existingID, &existingIndex, &deletedAt)
+	switch {
+	case err == nil:
+		if deletedAt.Valid {
+			return false, fmt.Errorf("bootstrap: bootstrap account %d is soft-deleted", existingID)
+		}
+		if existingIndex != index {
+			ciphertext, encErr := protector.Encrypt(strconv.FormatInt(accountID, 10), subject)
+			if encErr != nil {
+				return false, fmt.Errorf("bootstrap: re-encrypt subject: %w", encErr)
+			}
+			if _, execErr := tx.ExecContext(ctx, `UPDATE identity_account
+				SET subject_index = ?, subject_ciphertext = ?, updated_at = ?
+				WHERE id = ?`, index, ciphertext, now, accountID); execErr != nil {
+				return false, fmt.Errorf("bootstrap: refresh subject protection: %w", execErr)
+			}
+		}
+		return false, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf("bootstrap: query account by id: %w", err)
+	}
+
+	// 固定 ID 不存在时，再按 subject_index 防撞其它账号占用同一主体。
+	err = tx.QueryRowContext(ctx, `SELECT id, deleted_at FROM identity_account
 		WHERE channel = ? AND merchant_id = ? AND subject_index = ? LIMIT 1`,
 		bootstrapChannel, bootstrapMerchantID, index).Scan(&existingID, &deletedAt)
 	switch {

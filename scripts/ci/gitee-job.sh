@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Gitee Go 与 GitHub Actions 共用的单 job 入口（对齐各 STANDARDS 门禁）。
-# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>
+# 用法: bash scripts/ci/gitee-job.sh <fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend>
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +19,7 @@ fi
 
 job="${1:-}"
 if [[ -z "${job}" ]]; then
-  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|openapi|build>" >&2
+  echo "usage: $0 <fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend>" >&2
   exit 2
 fi
 
@@ -109,6 +109,9 @@ case "${job}" in
     go build -ldflags "-s -w" -o bin/c-api ./cmd/c-api
     go build -ldflags "-s -w" -o bin/worker ./cmd/worker
     go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
+    ;;
+  frontend)
+    bash scripts/ci/frontend-check.sh
     ;;
   *)
     echo "unknown job: ${job}" >&2

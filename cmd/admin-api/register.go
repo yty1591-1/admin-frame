@@ -2,14 +2,17 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
-	snapshotconfig "github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
 	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
@@ -30,7 +33,7 @@ import (
 // 角色 / 绑定数据，否则本地内存模式下会出现「刚授权的角色不生效」。
 // identityRT 用于注册身份域（登录 / 刷新 / 登出 / 会话管理）路由。
 func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
-	identityRT *identityruntime.Runtime, appCfg *appconfig.Config, configPath string) error {
+	identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
 	if rt != nil && rt.Handler != nil {
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}
@@ -92,6 +95,8 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
 		}
 	}
+	// ADR-0017：安装向导经 admin-api 代理到 config-api（mTLS），无 JWT。
+	registerInstallProxy(deps, mux)
 	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
 	if configRT != nil {
 		configRT.StartRefresh(deps, 0)
@@ -99,17 +104,6 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 	// ADR-0015：把热更视图接到运行时参数（限流 / 幂等 TTL / 异步 relay）。
 	if configRT != nil {
 		configRT.ApplyRuntimeParams(deps)
-	}
-	// 迁移期双读：启动时对比一次（main 的 Register 回调），之后跟随快照刷新周期采样，
-	// 否则「7 天零差异」只能靠每次重启抽样，取证不成立。
-	if configRT != nil && configRT.Client != nil {
-		snapshotconfig.StartPeriodic(deps.Background, snapshotconfig.PeriodicConfig{
-			ConfigPath: configPath,
-			Env:        appCfg.Config.Env,
-			Reader:     configRT.Client,
-			Logger:     deps.Logger,
-			Metrics:    deps.Metrics,
-		})
 	}
 	if services != nil {
 		if tenantRT != nil {
@@ -128,6 +122,26 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
 		notificationadmin.Register(mux, notificationHandler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
+}
+
+// registerInstallProxy 挂载 /admin/v1/install/* → config-api（mTLS 客户端）。
+func registerInstallProxy(deps *platform.Deps, mux *http.ServeMux) {
+	base := strings.TrimSpace(os.Getenv("CONFIG_API_URL"))
+	if base == "" {
+		deps.Logger.Warn("install proxy skipped: CONFIG_API_URL empty")
+		return
+	}
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	client, err := secretruntime.LoadClientHTTPFromEnvFor(env)
+	if err != nil {
+		deps.Logger.Warn("install proxy skipped: mTLS client unavailable", "error", err)
+		return
+	}
+	configboot.NewInstallProxy(base, client).Register(mux)
+	deps.Logger.Info("install proxy enabled", "upstream", base)
 }
 
 // tenantSessionRevoker 提取 identity 的租户会话撤销器；身份域未启用时返回 nil。

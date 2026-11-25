@@ -3,7 +3,6 @@ package admin_test
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -129,7 +128,8 @@ func do(t *testing.T, method, target, subject string, scopes []string, body any)
 		request.Header.Set("X-Test-Subject", subject)
 	}
 	request.Header.Set("X-Test-Scopes", strings.Join(scopes, ","))
-	response, err := http.DefaultClient.Do(request)
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}
@@ -139,8 +139,8 @@ func do(t *testing.T, method, target, subject string, scopes []string, body any)
 	return response.StatusCode, envelope
 }
 
-// newIntegrationServer 装配内存仓储 + 签名发布 + 管理路由。
-func newIntegrationServer(t *testing.T) (*httptest.Server, *memory.Repositories, *configclient.Verifier) {
+// newIntegrationServer 装配内存仓储 + 管理路由。
+func newIntegrationServer(t *testing.T) (*httptest.Server, *memory.Repositories) {
 	t.Helper()
 	repos := memory.New()
 	registry := spec.NewRegistry()
@@ -155,18 +155,6 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *memory.Repositories,
 			Description: "SMTP 口令", Owner: "team-platform", Sensitive: true,
 		},
 	)
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generate ed25519 key: %v", err)
-	}
-	signer, err := configclient.NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	verifier, err := configclient.NewVerifier(map[string]ed25519.PublicKey{"k1": publicKey})
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
 	ids := &seqIDs{next: 1000}
 	itemService, err := app.NewItemService(repos.Items, registry, quietEmitter{}, ids,
 		app.Options{Service: "admin-api", Now: func() time.Time { return testNow }})
@@ -175,7 +163,7 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *memory.Repositories,
 	}
 	releaseService, err := app.NewReleaseService(repos.Items, repos.Releases, repos.Pointers,
 		quietEmitter{}, ids, app.Options{
-			Service: "admin-api", Now: func() time.Time { return testNow }, Signer: signer,
+			Service: "admin-api", Now: func() time.Time { return testNow },
 		})
 	if err != nil {
 		t.Fatalf("new release service: %v", err)
@@ -191,7 +179,7 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *memory.Repositories,
 	}
 	server := httptest.NewServer(admin.NewRouter(handler, testAuth, testPermissions))
 	t.Cleanup(server.Close)
-	return server, repos, verifier
+	return server, repos
 }
 
 func decodeData[T any](t *testing.T, envelope apiResponse) T {
@@ -226,7 +214,7 @@ func seedSensitiveItem(t *testing.T, repos *memory.Repositories, id int64, key, 
 }
 
 func TestAdminAPIAndSDKIntegration(t *testing.T) {
-	server, repos, verifier := newIntegrationServer(t)
+	server, repos := newIntegrationServer(t)
 	base := server.URL
 	ctx := context.Background()
 
@@ -303,11 +291,11 @@ func TestAdminAPIAndSDKIntegration(t *testing.T) {
 	if publishedA.Status != string(domain.ReleaseStatusActive) {
 		t.Fatalf("release A status = %q, want active", publishedA.Status)
 	}
-	if publishedA.SnapshotKeyID != "k1" || publishedA.SnapshotSignature == "" {
-		t.Fatalf("publish must return signature: %+v", publishedA)
+	if publishedA.SnapshotKeyID != "" || publishedA.SnapshotSignature != "" {
+		t.Fatalf("publish must leave signature empty: %+v", publishedA)
 	}
 
-	// 3. SDK 从同一仓储拉取快照并验签；敏感值不得进入取值集合。
+	// 3. SDK 从同一仓储拉取快照；敏感值不得进入取值集合。
 	snapshots, err := app.NewSnapshotService(repos.Items, repos.Releases, repos.Pointers)
 	if err != nil {
 		t.Fatalf("new snapshot service: %v", err)
@@ -318,7 +306,7 @@ func TestAdminAPIAndSDKIntegration(t *testing.T) {
 		t.Fatalf("new file store: %v", err)
 	}
 	client, err := configclient.NewClient(configclient.ClientConfig{
-		Source: snapshots, Verifier: verifier, Env: "dev", Namespace: "platform", Store: store,
+		Source: snapshots, Env: "dev", Namespace: "platform", Store: store,
 	})
 	if err != nil {
 		t.Fatalf("new sdk client: %v", err)
@@ -371,7 +359,9 @@ func TestAdminAPIAndSDKIntegration(t *testing.T) {
 	// 6. 回滚到 A：SDK 再次拉取应回到 A 的取值。
 	status, rolledBack := do(t, http.MethodPost,
 		base+"/admin/v1/configs/releases/"+strconv.FormatInt(releaseA.ID, 10)+"/rollback", "u3",
-		[]string{"config:publish"}, map[string]any{"comment": "rollback to A"})
+		[]string{"config:publish"}, map[string]any{
+			"comment": "rollback to A", "break_glass": true, "break_glass_reason": "sdk integration drill",
+		})
 	if status != http.StatusOK {
 		t.Fatalf("rollback status = %d (%s)", status, rolledBack.Message)
 	}
@@ -384,7 +374,7 @@ func TestAdminAPIAndSDKIntegration(t *testing.T) {
 
 	// 7. 冷启动回退：中心不可用时从本地快照恢复并验签。
 	offline, err := configclient.NewClient(configclient.ClientConfig{
-		Source: failingSource{}, Verifier: verifier, Env: "dev", Namespace: "platform", Store: store,
+		Source: failingSource{}, Env: "dev", Namespace: "platform", Store: store,
 	})
 	if err != nil {
 		t.Fatalf("new offline client: %v", err)

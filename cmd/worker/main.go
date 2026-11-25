@@ -14,11 +14,12 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
@@ -42,12 +43,11 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/dev/worker.yaml", "config file path")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
 	sweepCertifications := flag.Bool("certification-sweep", false,
 		"run one access-certification expiry sweep and exit")
 	flag.Parse()
-	if err := run(*configPath, *replayDLQ, *sweepCertifications); err != nil {
+	if err := run(*replayDLQ, *sweepCertifications); err != nil {
 		log.Printf("worker: %v", err)
 		os.Exit(1)
 	}
@@ -58,19 +58,46 @@ func main() {
 // worker 是 Outbox Relay 的独占宿主：注册业务 topic handler 后运行 Relay；
 // -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
 // （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
-func run(configPath, replayDLQ string, sweepCertifications bool) error {
-	// M1-9：本地签名快照优先于静态配置；未配置或验签失败时降级为文件配置。
-	startup, err := snapshotconfig.Load(context.Background())
+func run(replayDLQ string, sweepCertifications bool) error {
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
 	if err != nil {
-		log.Printf("worker: config snapshot ignored: %v", err)
+		return fmt.Errorf("config boot: %w", err)
 	}
-	var snapshotValues map[string]string
-	if startup != nil {
-		snapshotValues = startup.Values
+	// prod-like 快照含 auth.mode=jwt；Validate 前须注入 secretclient 解析的签名密钥。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		if boot.InstallPending {
+			jwtSecret = configboot.InstallPendingJWTSecret
+		} else {
+			return fmt.Errorf("jwt secret: %w", err)
+		}
 	}
-	appCfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return snapshotValues, nil
-	}, snapshotconfig.AllowMissingConfig(snapshotValues))
+	// 对象存储凭据：走密钥子域（config_secret）；解析失败不在此退出，
+	// 交由 Opening 阶段按 opts 判定（worker 无降级，缺凭据即 fail-fast）。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
+		// 与 service/channel/addr/env 同属进程身份证，须在 Validate 前注入（CC-R-01）。
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "worker", Channel: "worker", Env: boot.Env, Addr: ":8090",
+		})
+		values["async.enabled"] = "true"
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "worker")
+		configboot.ApplyDeployOverlays(values)
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
+		// 缺必填键时 fail-fast：worker 无法自行修复，等 admin 向导补齐（ADR-0018）。
+		if err := configboot.RequireComplete("worker", values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -99,10 +126,6 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	})
 	if err != nil {
 		return fmt.Errorf("metrics: %w", err)
-	}
-	// M1 迁移期双读：文件基线 vs 签名快照，差异只打点与记日志，不改变取值。
-	if err := snapshotconfig.ReportWithMetrics(ctx, configPath, cfg.Env, startup, logger, met); err != nil {
-		logger.Warn("configcenter dual read failed", "err", err)
 	}
 	// 进程级 ID 生成器：审计保留服务用它写 audit.retention_purge 元审计事件，
 	// 缺失时 NewRetentionService 直接拒绝构造，worker 启动即失败。
@@ -151,20 +174,6 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	} else if built != nil {
 		refreshRT = built
 		refreshRT.StartRefreshContext(ctx, logger, 0)
-		// 迁移期双读：worker 不走 platform.Run，用同一 ctx 起周期采样。
-		if refreshRT.Client != nil {
-			go func() {
-				if err := snapshotconfig.RunPeriodic(ctx, snapshotconfig.PeriodicConfig{
-					ConfigPath: configPath,
-					Env:        appCfg.Config.Env,
-					Reader:     refreshRT.Client,
-					Logger:     logger,
-					Metrics:    deps.Metrics,
-				}); err != nil {
-					logger.Warn("configcenter dual read periodic failed", "err", err)
-				}
-			}()
-		}
 	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)
@@ -215,7 +224,7 @@ func run(configPath, replayDLQ string, sweepCertifications bool) error {
 	}
 
 	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
-	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
+	stopHTTP := startWorkerHTTP(cfg, database, met, logger, boot)
 	defer stopHTTP()
 
 	logger.Info("worker started",
@@ -254,6 +263,7 @@ func startWorkerHTTP(
 	database *db.DB,
 	met *pkgmetrics.Metrics,
 	logger *slog.Logger,
+	boot *configboot.Result,
 ) func() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", met.Handler())
@@ -266,6 +276,13 @@ func startWorkerHTTP(
 		if err := database.Ping(pingCtx); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
 			return
+		}
+		if boot != nil && boot.ConfigAPIURL != "" {
+			st, err := configboot.FetchInstallStatus(pingCtx, boot.ConfigAPIURL, boot.HTTPClient)
+			if err != nil || !configboot.IsInstallReady(st.Status) {
+				http.Error(w, "config center install not ready", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

@@ -11,7 +11,7 @@ groups:
           alert_id: config.client_stale
         annotations:
           summary: "客户端快照超过 5 分钟未成功刷新"
-          description: "动态刷新连续失败，进程仍在使用上一份已验签快照；检查 MySQL / 网络 / admin-api 与 SDK 日志。"
+          description: "长轮询或拉取连续失败，进程仍在使用内存中上一份配置；检查 config-api / 网络 / 服务身份。"
           runbook_url: docs/runbooks/config-center.md
 
       - alert: ConfigPublishFailure
@@ -27,7 +27,7 @@ groups:
           alert_id: config.publish_failure
         annotations:
           summary: "配置发布失败率超过 5%"
-          description: "查看 admin-api 日志、DB 与审计事件；确认指针 CAS 冲突或快照签名异常。"
+          description: "查看 admin-api 日志、DB 与审计事件；确认指针 CAS 冲突。"
           runbook_url: docs/runbooks/config-center.md
 
       - alert: ConfigSnapshotFetchError
@@ -42,8 +42,8 @@ groups:
           severity: P2
           alert_id: config.fetch_error
         annotations:
-          summary: "配置快照拉取失败率超过 1%"
-          description: "检查 DB 连接池、快照大小与网络；客户端应继续服务本地快照。"
+          summary: "配置拉取失败率超过 1%"
+          description: "检查 config-api、网络与服务身份；运行期可继续使用内存配置，重启依赖本地缓存或远端。"
           runbook_url: docs/runbooks/config-center.md
 
       - alert: ConfigPendingApproval
@@ -89,8 +89,8 @@ groups:
           severity: P2
           alert_id: config.snapshot_corrupt
         annotations:
-          summary: "快照验签或完整性校验失败"
-          description: "检查快照文件、公钥 key_id 与签名服务；客户端已拒绝装载该快照。"
+          summary: "配置缓存完整性校验失败"
+          description: "检查 CONFIGCENTER_CACHE_DIR 文件权限与内容；客户端已拒绝装载该缓存。"
           runbook_url: docs/runbooks/config-center.md
 
       - alert: ConfigColdStartDegraded
@@ -100,8 +100,8 @@ groups:
           severity: P2
           alert_id: config.cold_start_degraded
         annotations:
-          summary: "进程冷启动无可信快照，已回退代码默认值"
-          description: "检查启动期 DB / 快照文件可用性；确认该进程是否允许以默认值启动。"
+          summary: "进程冷启动无可用配置缓存"
+          description: "确认 config-api 已就绪且曾成功拉取；ADR-0016 下无远端且无缓存应 fail-fast。"
           runbook_url: docs/runbooks/config-center.md
 
       - alert: ConfigSecretAPIUnavailable
@@ -124,9 +124,21 @@ groups:
         expr: increase(config_secret_plaintext_leak_total[5m]) > 0
         for: 0m
         labels:
-          severity: P0
+          # 矩阵仅 P1–P3；密钥明文旁路按安全优先归入 P1（SEVERITY_MATRIX）。
+          severity: P1
           alert_id: config.secret_plaintext_leak
         annotations:
           summary: "检测到密钥明文旁路"
           description: "立即止血：吊销相关密钥、轮换 KEK 访问、排查日志 / 导出 / 前端响应。"
+          runbook_url: docs/runbooks/secret-management.md
+
+      - alert: ConfigSecretResolveDenied
+        expr: rate(config_secret_resolve_total{result="denied"}[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: config.secret_resolve_denied
+        annotations:
+          summary: "密钥解析拒绝率偏高"
+          description: "检查 grant / 服务身份与 mTLS；确认是否越权探测。"
           runbook_url: docs/runbooks/secret-management.md

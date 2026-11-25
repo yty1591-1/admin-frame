@@ -13,69 +13,40 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
 
-// RefreshConfig 是进程内动态刷新客户端的装配参数。
+// RefreshConfig 是进程内动态刷新客户端的装配参数（兼容旧调用）。
 type RefreshConfig struct {
-	// Source 是快照来源，通常是 app.SnapshotService（MySQL / 内存实现）；必填。
-	Source configclient.Source
-	// PublicKeys 是 CONFIGCENTER_SNAPSHOT_PUBLIC_KEYS 原值；为空表示关闭动态刷新。
-	PublicKeys string
-	// SnapshotFile 是 CONFIGCENTER_SNAPSHOT_FILE；可选，刷新成功后原子落盘，
-	// 供下次冷启动验签装载。
-	SnapshotFile string
-	// Env 与 Namespace 是消费的快照归属；必填。
-	Env       string
-	Namespace string
-	// Namespaces 是按开关启用的 namespace；非空时优先于 Namespace。
-	Namespaces []string
-	// PrimaryNamespace 是本地落盘与兼容读取的主 namespace；建议显式传 platform。
+	Source           configclient.Source
+	PublicKeys       string // 已忽略（ADR-0016）
+	SnapshotFile     string // 已忽略
+	Env              string
+	Namespace        string
+	Namespaces       []string
 	PrimaryNamespace string
-	// OnRefresh 可选回调，用于运行期日志与指标。
-	OnRefresh func(configclient.RefreshEvent)
-	// OnWatchDropped 可选回调，用于 Watch 慢消费者丢事件指标。
-	OnWatchDropped func()
+	OnRefresh        func(configclient.RefreshEvent)
+	OnWatchDropped   func()
+	Notifier         configclient.Notifier
+	Cache            *configclient.DirCache
 }
 
-// NewRefreshClient 构造进程内动态刷新客户端。
-//
-// 未配置公钥时返回 (nil, nil)：动态刷新关闭，进程继续使用启动期配置；
-// 配置了公钥但格式非法则返回错误，不做「静默降级为不验签」。
+// NewRefreshClient 构造动态刷新客户端；Verifier 不再必填。
 func NewRefreshClient(cfg RefreshConfig) (*configclient.Client, error) {
-	rawKeys := strings.TrimSpace(cfg.PublicKeys)
-	if rawKeys == "" {
+	if cfg.Source == nil {
 		return nil, nil
-	}
-	keys, err := configclient.ParsePublicKeys(rawKeys)
-	if err != nil {
-		return nil, err
-	}
-	verifier, err := configclient.NewVerifier(keys)
-	if err != nil {
-		return nil, err
-	}
-	var store configclient.SnapshotStore
-	if path := strings.TrimSpace(cfg.SnapshotFile); path != "" {
-		store, err = configclient.NewFileStore(path)
-		if err != nil {
-			return nil, err
-		}
 	}
 	return configclient.NewClient(configclient.ClientConfig{
 		Source:           cfg.Source,
-		Verifier:         verifier,
 		Env:              cfg.Env,
 		Namespace:        cfg.Namespace,
 		Namespaces:       cfg.Namespaces,
 		PrimaryNamespace: cfg.PrimaryNamespace,
-		Store:            store,
+		Notifier:         cfg.Notifier,
+		Cache:            cfg.Cache,
 		OnRefresh:        cfg.OnRefresh,
 		OnWatchDropped:   cfg.OnWatchDropped,
 	})
 }
 
-// StartRefresh 注册进程内动态刷新后台任务。
-//
-// interval <= 0 时取 configclient.DefaultRefreshInterval（5s ±20%）；
-// 未启用动态刷新（Client=nil）或运行时不具备后台任务注册能力时为空操作。
+// StartRefresh 注册动态刷新后台任务（长轮询或 interval 轮询）。
 func (r *Runtime) StartRefresh(deps *platform.Deps, interval time.Duration) {
 	if r == nil || r.Client == nil || deps == nil || deps.Background == nil {
 		return
@@ -96,8 +67,6 @@ func (r *Runtime) StartRefresh(deps *platform.Deps, interval time.Duration) {
 }
 
 // StartRefreshContext 在调用方提供的 ctx 上启动刷新。
-//
-// 供不走 platform.Run 的长驻进程（worker）使用；一次性 CLI 模式不应调用。
 func (r *Runtime) StartRefreshContext(ctx context.Context, logger *slog.Logger, interval time.Duration) {
 	if r == nil || r.Client == nil {
 		return
@@ -116,7 +85,6 @@ func (r *Runtime) StartRefreshContext(ctx context.Context, logger *slog.Logger, 
 	}()
 }
 
-// runRefresh 持续刷新直到 ctx 取消；正常关停不视为任务失败。
 func runRefresh(ctx context.Context, client *configclient.Client, interval time.Duration, logger *slog.Logger) error {
 	err := client.Run(ctx, interval)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -128,10 +96,6 @@ func runRefresh(ctx context.Context, client *configclient.Client, interval time.
 	return err
 }
 
-// clientRefreshObserver 组合刷新日志与指标。
-//
-// 冷启动降级只在首次事件「无可用快照且刷新失败」时计数一次；指标与日志
-// 都只含元数据，不记录取值。
 func clientRefreshObserver(logger *slog.Logger, metrics *observability.Metrics) func(configclient.RefreshEvent) {
 	log := refreshLogger(logger)
 	if log == nil && metrics == nil {
@@ -154,18 +118,13 @@ func clientRefreshObserver(logger *slog.Logger, metrics *observability.Metrics) 
 	}
 }
 
-// refreshLogger 构造刷新状态日志。
-//
-// 只在发布版本变化或错误变化时输出，避免 5s 轮询刷屏；日志只含快照元数据，
-// 不含取值。回调可能被并发 Refresh 触发，内部状态需加锁。
 func refreshLogger(logger *slog.Logger) func(configclient.RefreshEvent) {
 	if logger == nil {
 		return nil
 	}
 	var (
 		mu          sync.Mutex
-		loaded      bool
-		lastRelease int64
+		lastRelease = map[string]int64{} // namespace → 最近一次已打 INFO 的 release_id
 		lastErr     string
 	)
 	return func(event configclient.RefreshEvent) {
@@ -185,17 +144,18 @@ func refreshLogger(logger *slog.Logger) func(configclient.RefreshEvent) {
 		if !event.Loaded {
 			return
 		}
-		if loaded && event.Snapshot.ReleaseID == lastRelease {
+		ns := strings.TrimSpace(event.Snapshot.Namespace)
+		// 多 namespace 轮询时各自 release_id 不同；按 namespace 去重，
+		// 避免 5s 一轮把 6 个 namespace 的「未变更」重复打成 INFO。
+		if prev, ok := lastRelease[ns]; ok && prev == event.Snapshot.ReleaseID {
 			return
 		}
-		loaded = true
-		lastRelease = event.Snapshot.ReleaseID
+		lastRelease[ns] = event.Snapshot.ReleaseID
 		logger.Info("configcenter snapshot loaded",
 			"env", event.Snapshot.Env,
 			"namespace", event.Snapshot.Namespace,
 			"release_id", event.Snapshot.ReleaseID,
 			"release_no", event.Snapshot.ReleaseNo,
-			"key_id", event.Snapshot.KeyID,
 			"keys", len(event.Snapshot.Values))
 	}
 }

@@ -1,0 +1,12 @@
+{{- if and .Values.frontend.nginxConfig.enabled (or .Values.frontend.webAdmin.enabled .Values.frontend.webBiz.enabled) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "admin-frame.fullname" . }}-frontend-nginx
+  labels:
+    {{- include "admin-frame.labels" (dict "root" . "component" "frontend") | nindent 4 }}
+data:
+  # 源文件：frontend/scripts/deploy/nginx.conf；check-frontend-dockerfile.sh 断言两者一致。
+  nginx.conf: |-
+{{ .Files.Get "files/nginx.conf" | indent 4 }}
+{{- end }}

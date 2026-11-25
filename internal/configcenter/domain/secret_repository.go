@@ -28,6 +28,8 @@ type SecretGrantRepository interface {
 	GetByID(ctx context.Context, id int64) (SecretGrant, error)
 	ListBySecret(ctx context.Context, secretID int64) ([]SecretGrant, error)
 	FindActive(ctx context.Context, env, namespace, serviceIdentity string, secretID int64, now time.Time) (SecretGrant, error)
+	// Activate 将 pending 授权升级为 resolve（双人审批通过）。
+	Activate(ctx context.Context, id int64) error
 	Revoke(ctx context.Context, id int64, at time.Time) error
 }
 

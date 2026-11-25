@@ -33,14 +33,33 @@ import (
 // maxBodyBytes 管理类请求体上限：配置值可能是 JSON，64KB 足够。
 const maxBodyBytes = 64 << 10
 
+// namespaceFromPath 读取路径参数 namespace；兼容未经 ServeMux 匹配的直调测试。
+func namespaceFromPath(r *http.Request) string {
+	if ns := strings.TrimSpace(r.PathValue("namespace")); ns != "" {
+		return ns
+	}
+	const marker = "/namespaces/"
+	path := r.URL.Path
+	idx := strings.Index(path, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := path[idx+len(marker):]
+	if end := strings.IndexByte(rest, '/'); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
 // Handler 是配置中心管理 Handler。
 type Handler struct {
-	items    *app.ItemService
-	releases *app.ReleaseService
-	secrets  *app.SecretService
-	specs    *spec.Registry
-	pageCfg  pagination.Config
-	sqlDB    *sql.DB
+	items     *app.ItemService
+	releases  *app.ReleaseService
+	secrets   *app.SecretService
+	specs     *spec.Registry
+	pageCfg   pagination.Config
+	sqlDB     *sql.DB
+	deployEnv string // 仅 internal resolve 授权使用；管理面可空
 }
 
 // HandlerConfig 是 Handler 的装配参数。
@@ -126,6 +145,55 @@ func (h *Handler) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	apiresp.OK(w, namespaceListResponse{Items: items, Total: len(items)}, traceID)
+}
+
+type declaredKeyView struct {
+	Key          string   `json:"key"`
+	ValueType    string   `json:"value_type"`
+	Default      string   `json:"default,omitempty"`
+	Description  string   `json:"description"`
+	Owner        string   `json:"owner"`
+	ReloadMode   string   `json:"reload_mode"`
+	HotWhitelist bool     `json:"hot_whitelist"`
+	Sensitive    bool     `json:"sensitive"`
+	Required     bool     `json:"required"`
+	Deprecated   bool     `json:"deprecated"`
+	Enum         []string `json:"enum,omitempty"`
+}
+
+type declaredKeyListResponse struct {
+	Items []declaredKeyView `json:"items"`
+	Total int               `json:"total"`
+}
+
+// ListDeclaredKeys 处理 GET /admin/v1/configs/namespaces/{namespace}/keys（CC-R-12/17）。
+func (h *Handler) ListDeclaredKeys(w http.ResponseWriter, r *http.Request) {
+	traceID := apiresp.TraceIDFromContext(r.Context())
+	namespace := namespaceFromPath(r)
+	if !domain.ValidNamespace(namespace) {
+		apiresp.FromError(w, apperr.BadRequest("invalid namespace"), traceID)
+		return
+	}
+	hotSet := spec.HotKeySet()
+	specs := h.specs.List(namespace)
+	items := make([]declaredKeyView, 0, len(specs))
+	for _, keySpec := range specs {
+		_, hot := hotSet[keySpec.Key]
+		items = append(items, declaredKeyView{
+			Key:          keySpec.Key,
+			ValueType:    string(keySpec.ValueType),
+			Default:      keySpec.Default,
+			Description:  keySpec.Description,
+			Owner:        keySpec.Owner,
+			ReloadMode:   string(keySpec.EffectiveReloadMode()),
+			HotWhitelist: hot,
+			Sensitive:    keySpec.Sensitive,
+			Required:     keySpec.Required,
+			Deprecated:   keySpec.Deprecated,
+			Enum:         keySpec.Enum,
+		})
+	}
+	apiresp.OK(w, declaredKeyListResponse{Items: items, Total: len(items)}, traceID)
 }
 
 // ---------------------------------------------------------------- item
@@ -311,6 +379,11 @@ type updateValueRequest struct {
 	ExpectedVersion *int64  `json:"expected_version"`
 }
 
+type transitionItemRequest struct {
+	To              string `json:"to"`
+	ExpectedVersion *int64 `json:"expected_version"`
+}
+
 // UpdateValue 处理 PUT /admin/v1/configs/items/{id}（只追加新版本）。
 func (h *Handler) UpdateValue(w http.ResponseWriter, r *http.Request) {
 	traceID := apiresp.TraceIDFromContext(r.Context())
@@ -350,6 +423,57 @@ func (h *Handler) UpdateValue(w http.ResponseWriter, r *http.Request) {
 		})
 		if updateErr != nil {
 			return updateErr
+		}
+		item = updated
+		return nil
+	})
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	view, err := h.itemDetail(r.Context(), item)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	apiresp.OK(w, view, traceID)
+}
+
+// TransitionItem 处理 POST /admin/v1/configs/items/{id}/transition（CC-R-06）。
+func (h *Handler) TransitionItem(w http.ResponseWriter, r *http.Request) {
+	traceID := apiresp.TraceIDFromContext(r.Context())
+	auditActor, err := actor(r)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	var body transitionItemRequest
+	if err := decodeJSON(r, &body); err != nil {
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
+	to := domain.ItemStatus(strings.TrimSpace(body.To))
+	var item domain.Item
+	err = h.withinTx(r.Context(), func(ctx context.Context) error {
+		current, getErr := h.items.GetByID(ctx, id)
+		if getErr != nil {
+			return getErr
+		}
+		updated, transitionErr := h.items.Transition(ctx, app.TransitionInput{
+			Env:             current.Env,
+			Namespace:       current.Namespace,
+			Key:             current.Key,
+			To:              to,
+			ExpectedVersion: body.ExpectedVersion,
+			Actor:           auditActor,
+		})
+		if transitionErr != nil {
+			return transitionErr
 		}
 		item = updated
 		return nil
@@ -611,11 +735,17 @@ func (h *Handler) ListReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	releases, total, err := h.releases.List(r.Context(),
-		strings.TrimSpace(query.Get("env")),
-		strings.TrimSpace(query.Get("namespace")),
-		domain.ReleaseStatus(strings.TrimSpace(query.Get("status"))),
-		page.Limit(), page.Offset())
+	owner := strings.TrimSpace(query.Get("owner"))
+	if owner == "" {
+		owner = strings.TrimSpace(query.Get("created_by"))
+	}
+	releases, total, err := h.releases.List(r.Context(), domain.ReleaseListFilter{
+		Env:       strings.TrimSpace(query.Get("env")),
+		Namespace: strings.TrimSpace(query.Get("namespace")),
+		Status:    domain.ReleaseStatus(strings.TrimSpace(query.Get("status"))),
+		Keyword:   strings.TrimSpace(query.Get("keyword")),
+		Owner:     owner,
+	}, page.Limit(), page.Offset())
 	if err != nil {
 		apiresp.FromError(w, err, traceID)
 		return
@@ -754,6 +884,44 @@ func (h *Handler) ApproveRelease(w http.ResponseWriter, r *http.Request) {
 	apiresp.OK(w, toReleaseView(release), traceID)
 }
 
+type cancelReleaseRequest struct {
+	Reason string `json:"reason"`
+}
+
+// CancelRelease 处理 POST /admin/v1/configs/releases/{id}/cancel（CC-R-16）。
+func (h *Handler) CancelRelease(w http.ResponseWriter, r *http.Request) {
+	traceID := apiresp.TraceIDFromContext(r.Context())
+	auditActor, err := actor(r)
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	var body cancelReleaseRequest
+	if err := decodeJSON(r, &body); err != nil {
+		apiresp.FromError(w, apperr.BadRequest(err.Error()), traceID)
+		return
+	}
+	var release domain.Release
+	err = h.withinTx(r.Context(), func(ctx context.Context) error {
+		updated, cancelErr := h.releases.Cancel(ctx, id, body.Reason, auditActor)
+		if cancelErr != nil {
+			return cancelErr
+		}
+		release = updated
+		return nil
+	})
+	if err != nil {
+		apiresp.FromError(w, err, traceID)
+		return
+	}
+	apiresp.OK(w, toReleaseView(release), traceID)
+}
+
 type publishRequest struct {
 	ExpectedPointerVersion *int64 `json:"expected_pointer_version"`
 }
@@ -795,6 +963,8 @@ func (h *Handler) PublishRelease(w http.ResponseWriter, r *http.Request) {
 type rollbackRequest struct {
 	ExpectedPointerVersion *int64 `json:"expected_pointer_version"`
 	Comment                string `json:"comment"`
+	BreakGlass             bool   `json:"break_glass"`
+	BreakGlassReason       string `json:"break_glass_reason"`
 }
 
 // RollbackRelease 处理 POST /admin/v1/configs/releases/{id}/rollback。
@@ -821,6 +991,8 @@ func (h *Handler) RollbackRelease(w http.ResponseWriter, r *http.Request) {
 			TargetReleaseID:        id,
 			Description:            body.Comment,
 			ExpectedPointerVersion: body.ExpectedPointerVersion,
+			BreakGlass:             body.BreakGlass,
+			BreakGlassReason:       body.BreakGlassReason,
 			Actor:                  auditActor,
 		})
 		if rollbackErr != nil {

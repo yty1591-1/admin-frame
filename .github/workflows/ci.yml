@@ -1,4 +1,4 @@
-# CI_STANDARDS.md（CI-01～CI-14）
+# CI_STANDARDS.md（CI-01～CI-18）
 # 变更本文件须同步审查 docs/CI_STANDARDS.md。
 
 name: CI
@@ -121,6 +121,7 @@ jobs:
       TENANT_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
       NOTIFY_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
       FEATUREFLAG_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
+      CONFIGCENTER_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -331,3 +332,36 @@ jobs:
           bash scripts/ci/check-alerts.sh
           # check-release 的金丝雀渲染断言需要 helm；本地 make ci 无 helm 时该段 SKIP。
           bash scripts/ci/check-release.sh
+
+  # FE-CI-01：前端必跑门禁（FE-25～28），与 make frontend-check 同源。
+  # 不设置 paths 过滤：required check 被 skip 会让分支保护形同虚设。
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.node-version
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # FE-B-04：check-frontend-dockerfile.sh 需要 helm 做 chart 渲染断言（缺 helm 时该段 SKIP）。
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
+
+      - name: Frontend gates
+        env:
+          CI: "true"
+        run: bash scripts/ci/frontend-check.sh

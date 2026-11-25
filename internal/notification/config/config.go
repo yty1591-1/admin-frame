@@ -76,8 +76,8 @@ type SMTPConfig struct {
 
 // SMSConfig 是短信渠道配置。
 //
-// driver=aliyun 时 template_id / sign_name / access_key_id /
-// access_key_secret_env 必填。
+// driver=aliyun 时 template_id / sign_name 必填；AccessKey 运行期经
+// secretclient 解析（local 可回退 ALIYUN_SMS_* / 明文 access_key_id）。
 type SMSConfig struct {
 	// Driver memory | aliyun | disabled。
 	Driver string `yaml:"driver"`

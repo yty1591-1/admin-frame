@@ -1,3 +1,5 @@
+import type { VNode } from 'vue';
+
 import { DOMWrapper, mount } from '@vue/test-utils';
 import { defineComponent, h, markRaw, nextTick } from 'vue';
 
@@ -158,7 +160,7 @@ describe('icon-picker.vue', () => {
       attachTo: document.body,
       props: {
         icons: STATIC_ICONS,
-        inputComponent: markRaw(AntdvNextLikeInput),
+        inputComponent: markRaw(AntdvNextLikeInput) as unknown as VNode,
         modelValueProp: 'value',
         prefix: '',
       },
@@ -180,7 +182,7 @@ describe('icon-picker.vue', () => {
       attachTo: document.body,
       props: {
         icons: STATIC_ICONS,
-        inputComponent: markRaw(AntdvNextLikeInput),
+        inputComponent: markRaw(AntdvNextLikeInput) as unknown as VNode,
         modelValueProp: 'value',
         prefix: '',
         'onUpdate:value': onUpdateValue,

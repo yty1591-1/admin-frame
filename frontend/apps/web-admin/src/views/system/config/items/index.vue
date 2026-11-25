@@ -6,25 +6,28 @@ import type { ConfigEnv, ConfigItem, ConfigItemStatus } from '#/api';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import { Button, message, Modal, Space, Table, Tag } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   CONFIG_ENV_OPTIONS,
   CONFIG_ITEM_STATUS_OPTIONS,
   createConfigItemApi,
   getConfigErrorMessage,
+  listConfigDeclaredKeysApi,
   listConfigItemsApi,
   listConfigNamespacesApi,
 } from '#/api';
+import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
 
 defineOptions({ name: 'SystemConfigItems' });
 
 const router = useRouter();
 
 const namespaces = ref<{ label: string; value: string }[]>([]);
+const declaredKeyOptions = ref<{ label: string; value: string }[]>([]);
 const loading = ref(false);
 const rows = ref<ConfigItem[]>([]);
 const createOpen = ref(false);
@@ -108,8 +111,12 @@ const [CreateForm, createFormApi] = useVbenForm({
       rules: 'required',
     },
     {
-      component: 'Input',
-      componentProps: { placeholder: '须已在代码 key spec 声明' },
+      component: 'Select',
+      componentProps: {
+        options: declaredKeyOptions,
+        placeholder: '从代码声明键选择（排除敏感键）',
+        showSearch: true,
+      },
       fieldName: 'key',
       label: '配置键',
       rules: 'required',
@@ -231,12 +238,31 @@ function handleTableChange(page: TablePaginationConfig) {
 
 async function openCreate() {
   const values = await queryFormApi.getValues();
+  const namespace = String(
+    values.namespace || namespaces.value[0]?.value || '',
+  );
   createOpen.value = true;
   await createFormApi.reset();
   await createFormApi.setValues({
     env: values.env || 'dev',
-    namespace: values.namespace || namespaces.value[0]?.value,
+    namespace,
   });
+  declaredKeyOptions.value = [];
+  if (!namespace) {
+    return;
+  }
+  try {
+    const declared = await listConfigDeclaredKeysApi(namespace);
+    const existing = new Set(rows.value.map((item) => item.key));
+    declaredKeyOptions.value = declared.items
+      .filter((item) => !item.sensitive && !existing.has(item.key))
+      .map((item) => ({
+        label: `${item.key} (${item.value_type}${item.reload_mode === 'hot' ? ', hot' : ''})`,
+        value: item.key,
+      }));
+  } catch (error) {
+    message.error(getConfigErrorMessage(error, '加载声明键失败'));
+  }
 }
 
 async function submitCreate() {
@@ -281,6 +307,9 @@ function goVersions(record: ConfigItem) {
 }
 
 onMounted(async () => {
+  if (await redirectIfInstallRequired(router)) {
+    return;
+  }
   try {
     await loadNamespaces();
     await fetchList();
@@ -300,7 +329,11 @@ onMounted(async () => {
       <Space class="mt-2">
         <Button type="primary" @click="handleSearch">查询</Button>
         <Button @click="handleReset">重置</Button>
-        <Button v-access:code="'config:write'" type="primary" @click="openCreate">
+        <Button
+          v-access:code="'config:write'"
+          type="primary"
+          @click="openCreate"
+        >
           新建配置键
         </Button>
       </Space>

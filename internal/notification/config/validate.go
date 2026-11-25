@@ -74,12 +74,8 @@ func validateSMS(c SMSConfig, prodLike bool) []error {
 	if strings.TrimSpace(c.SignName) == "" && strings.TrimSpace(c.Aliyun.SignName) == "" {
 		errs = append(errs, fmt.Errorf("notification.channels.sms.sign_name is required when driver=aliyun"))
 	}
-	if strings.TrimSpace(c.Aliyun.AccessKeyID) == "" {
-		errs = append(errs, fmt.Errorf("notification.channels.sms.aliyun.access_key_id is required when driver=aliyun"))
-	}
-	if strings.TrimSpace(c.Aliyun.AccessKeySecretEnv) == "" {
-		errs = append(errs, fmt.Errorf("notification.channels.sms.aliyun.access_key_secret_env is required when driver=aliyun"))
-	}
+	// AccessKeyID / AccessKeySecretEnv 可空：运行期经 secretclient 解析；
+	// local/dev/test 可回退 ALIYUN_SMS_* 或配置树明文 ID。
 	return errs
 }
 

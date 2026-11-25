@@ -104,3 +104,28 @@ helm rollback admin-frame <revision> -n admin-frame --wait
 已执行迁移的回滚需配套 down 迁移与数据库备份，见
 [`docs/runbooks/release-rollback.md`](../../../docs/runbooks/release-rollback.md) 与
 [`docs/runbooks/backup-restore.md`](../../../docs/runbooks/backup-restore.md)。
+
+## 前端静态站（FE-B-04）
+
+`frontend.webAdmin` / `frontend.webBiz` 各自渲染 Deployment + Service + Ingress，
+镜像来自 `image.yml`（`web-admin` / `web-biz`，tag 为 `sha-<short>` 或 semver，禁止 latest）：
+
+```bash
+# A 端（默认开启）
+helm upgrade admin-frame deploy/helm/admin-frame \
+  --set frontend.webAdmin.image.digest=sha256:<digest> \
+  --set frontend.webAdmin.ingress.host=admin.example.com
+
+# B 端（生产入口确定后开启）
+helm upgrade admin-frame deploy/helm/admin-frame \
+  --set frontend.webBiz.enabled=true \
+  --set frontend.webBiz.ingress.enabled=true \
+  --set frontend.webBiz.ingress.host=biz.example.com \
+  --set frontend.webBiz.image.digest=sha256:<digest>
+```
+
+- nginx.conf 来自 `files/nginx.conf`（源文件 `frontend/scripts/deploy/nginx.conf`，CI 断言逐字节一致），
+  以 ConfigMap 下发到 `/etc/nginx/nginx.conf`；ConfigMap 变化触发 Pod 滚动（`checksum/nginx`）。
+- 探针走 `/healthz`；容器以非 root + 只读根文件系统运行，`/var/cache/nginx`、`/run`、`/tmp` 用 emptyDir。
+- kind 冒烟：`kubectl port-forward svc/<release>-web-admin 8080:80` 后访问 `http://127.0.0.1:8080`；
+  kind 无 ingress controller，`values-kind.yaml` 已关闭 Ingress。

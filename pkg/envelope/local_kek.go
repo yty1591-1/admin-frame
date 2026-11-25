@@ -53,7 +53,7 @@ func NewLocalKEKFromEnv() (*LocalKEK, error) {
 func (k *LocalKEK) KeyID() string { return k.keyID }
 
 // Wrap 用 AES-GCM 包装 DEK；输出 = nonce || ciphertext。
-func (k *LocalKEK) Wrap(dek []byte) ([]byte, string, error) {
+func (k *LocalKEK) Wrap(dek []byte) (wrapped []byte, keyID string, err error) {
 	if len(dek) != DEKSize {
 		return nil, "", fmt.Errorf("envelope: dek must be %d bytes", DEKSize)
 	}

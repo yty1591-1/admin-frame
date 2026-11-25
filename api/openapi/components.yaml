@@ -74,7 +74,7 @@ components:
         该码表按 API-04 只增不减，故声明为可扩展开放集合（`x-extensible-enum`）：
         客户端必须对未知码按「未知错误」兜底，不得据此改变已实现分支。
       x-extensible-enum:
-        [40000, 40100, 40300, 40400, 40900, 42900, 50000, 50300]
+        [40000, 40100, 40300, 40400, 40900, 40951, 40952, 42900, 50000, 50300, 50351]
       x-enum-descriptions:
         - 请求参数非法
         - 未认证或令牌无效
@@ -788,6 +788,55 @@ components:
         version: {type: integer}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    InstallState:
+      type: object
+      description: |
+        首次安装 / 重配置（repair）态（ADR-0017 / ADR-0018）。`ready` 之外的状态下
+        业务进程按 ADR-0018 决定降级或失败关闭；`lease_until` 只在 `installing` 有值。
+      required: [env, status, version, updated_at]
+      properties:
+        env: {type: string}
+        status:
+          type: string
+          enum: [pending, installing, ready, failed]
+        mode:
+          type: string
+          enum: [first_install, repair]
+          description: |
+            向导模式（ADR-0018）：`ready` 之前是首装（first_install），
+            之后是补配/修复（repair）。前端据此决定是否只渲染阻塞键。
+        owner:
+          type: string
+          description: 持有租约的安装者标识（`installing` 期间有效）
+        repair_keys:
+          type: array
+          description: |
+            repair 轮次在 begin 时冻结的阻塞键白名单，元素为 `namespace/key`（ADR-0018）。
+            首装为空数组；repair 期间 apply 只接受白名单内的键。
+          items:
+            type: string
+        lease_until: {type: string, format: date-time}
+        version:
+          type: integer
+          format: int64
+        last_error: {type: string}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    InstallGap:
+      type: object
+      description: |
+        缺失的必填键（ADR-0018）。`status.gaps` 与 `apply.remaining_gaps` 用它回答
+        「为什么进程起不来」，前端据此高亮需要填写的字段。
+      required: [namespace, key, reason]
+      properties:
+        namespace: {type: string}
+        key: {type: string}
+        reason:
+          type: string
+          enum: [no_active_release, missing_in_snapshot]
+          description: |
+            `no_active_release`：该 namespace 尚无生效指针（首装）；
+            `missing_in_snapshot`：指针存在但快照里缺这个必填键（升级/修复）。
   responses:
     BadRequest:
       description: 参数非法

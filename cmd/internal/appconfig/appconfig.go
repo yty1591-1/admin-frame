@@ -109,33 +109,33 @@ func NewLoader(path string) (*config.Loader[Config], error) {
 // NewLoaderWithValues 构造带配置中心快照覆盖的加载器。
 //
 // values 返回已验签快照的扁平取值（yaml 路径 → 字符串）；nil 表示不接入。
+// 环境变量仅放行 db/redis（InfraEnvPathAllowlist）。
 func NewLoaderWithValues(path string, values func() (map[string]string, error)) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:        []string{path},
-		EnvPrefix:    platformconfig.EnvPrefix,
-		Values:       values,
-		ValueAliases: spec.ValueAliases(),
-		Defaults:     (*Config).ApplyDefaults,
-		Normalize:    (*Config).Normalize,
-		Validate:     (*Config).Validate,
+		Files:            []string{path},
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
 	})
 }
 
-// LoadWithValuesAllowMissing 在允许缺失配置文件时加载（无文件启动演练）。
+// LoadFromValues 无 YAML 文件启动：代码默认值 → Values → 白名单环境变量。
 //
-// 仅当调用方确认已有可信签名快照时才应传 allowMissing=true；否则缺失文件
-// 会退化为代码默认值，可能掩盖部署错误。
-func LoadWithValuesAllowMissing(path string, values func() (map[string]string, error),
-	allowMissing bool) (*Config, error) {
+// 业务取值必须由调用方提供的配置中心快照 / 进程补齐 Values 覆盖，不得把
+// 「无文件」误读为允许仅用代码默认值启动。环境变量仅放行 db/redis。
+func LoadFromValues(values func() (map[string]string, error)) (*Config, error) {
 	loader, err := config.NewLoader(config.Options[Config]{
-		Files:             []string{path},
-		EnvPrefix:         platformconfig.EnvPrefix,
-		Values:            values,
-		ValueAliases:      spec.ValueAliases(),
-		Defaults:          (*Config).ApplyDefaults,
-		Normalize:         (*Config).Normalize,
-		Validate:          (*Config).Validate,
-		AllowMissingFiles: allowMissing,
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
 	})
 	if err != nil {
 		return nil, err
@@ -143,16 +143,18 @@ func LoadWithValuesAllowMissing(path string, values func() (map[string]string, e
 	return loader.Load()
 }
 
-// Load 从 YAML 文件加载完整配置，应用默认值与环境变量覆盖后校验。
+// Load 从可选 YAML 文件加载完整配置，应用默认值与白名单环境变量后校验。
 //
-// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// CFG-04：业务取值以「配置中心快照 > 代码默认值」为准；无 Values 时仅文件与
+// db/redis 环境变量参与，不得把 ADMIN_FRAME_* 业务键当作事实源。
 func Load(path string) (*Config, error) {
 	return LoadWithValues(path, nil)
 }
 
 // LoadWithValues 加载配置并应用配置中心快照取值。
 //
-// 优先级：配置中心快照 > 环境变量 > 配置文件 > 默认值（CFG-04）。
+// 优先级：配置中心快照 > 可选文件 > 代码默认值；ADMIN_FRAME_DB_*/REDIS_*
+// 作为基础设施补充通道在快照之后覆盖（CFG-04）。
 func LoadWithValues(path string, values func() (map[string]string, error)) (*Config, error) {
 	loader, err := NewLoaderWithValues(path, values)
 	if err != nil {

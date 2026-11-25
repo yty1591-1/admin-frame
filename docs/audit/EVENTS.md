@@ -59,6 +59,10 @@
 | `rbac.certification` | A | 访问复核活动创建 / 激活 / 关闭、任务裁决与证据导出 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
 | `config.bootstrap.completed` | A | 首次启动初始化完成：基线 Release、生成密钥数量、缺失项；不记录配置值 | 配置 | 180d | planned |
+| `config.install.begin` | A/setup | 安装态进入 installing（含 owner / lease）；不记录 setup token | 配置 | 180d | active |
+| `config.install.apply` | A/setup | 安装期播种 apply（namespaces / key 数量）；不记录配置值与 token | 配置 | 180d | active |
+| `config.install.complete` | A/setup | 安装态进入 ready；不记录 token | 配置 | 180d | active |
+| `config.install.fail` | A/setup | 安装失败进入 failed（含错误摘要）；不记录 token / 配置值 | 配置 | 180d | active |
 | `config.release.publish` | A | 配置 Release 发布（含灰度范围、release_id、变更键数量） | 配置 | 180d | planned |
 | `config.release.rollback` | A | 配置 Release 回滚（含源 / 目标 release_id、操作者、原因） | 配置 | 180d | planned |
 | `config.release.approve` | A | 配置发布审批；记录提交人与审批人，二者必须不同 | 配置 | 180d | planned |

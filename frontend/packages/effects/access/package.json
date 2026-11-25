@@ -10,6 +10,9 @@
   },
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit"
+  },
   "sideEffects": [
     "**/*.css"
   ],
@@ -25,5 +28,8 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "vue": "catalog:"
+  },
+  "devDependencies": {
+    "pinia": "catalog:"
   }
 }

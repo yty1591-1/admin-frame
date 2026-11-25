@@ -82,7 +82,7 @@ func (c *Client) ResolveMany(ctx context.Context, env, namespace string, names [
 			// 到期前 80% 仍可用；简单按 expiresAt 判定，刷新阈值由服务端 lease 决定。
 			if now.Before(cached.expiresAt) {
 				remaining := cached.expiresAt.Sub(now)
-				lease := remaining // approximate
+				lease := remaining       // approximate
 				if remaining > lease/5 { // always true; keep readable
 					out[name] = cached.value
 					continue
@@ -142,7 +142,7 @@ func (c *Client) fetch(ctx context.Context, env, namespace string, names []strin
 	if err != nil {
 		return nil, fmt.Errorf("secretclient: resolve transport: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err

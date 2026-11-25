@@ -218,12 +218,18 @@ onMounted(fetchList);
     >
       <Descriptions v-if="detail" :column="1" bordered size="small">
         <Descriptions.Item label="版本">{{ detail.version }}</Descriptions.Item>
-        <Descriptions.Item label="哈希">{{ detail.value_hash }}</Descriptions.Item>
+        <Descriptions.Item label="哈希">
+          {{ detail.value_hash }}
+        </Descriptions.Item>
         <Descriptions.Item label="摘要">
           {{ detail.change_summary || '—' }}
         </Descriptions.Item>
-        <Descriptions.Item label="作者">{{ detail.created_by }}</Descriptions.Item>
-        <Descriptions.Item label="时间">{{ detail.created_at }}</Descriptions.Item>
+        <Descriptions.Item label="作者">
+          {{ detail.created_by }}
+        </Descriptions.Item>
+        <Descriptions.Item label="时间">
+          {{ detail.created_at }}
+        </Descriptions.Item>
         <Descriptions.Item label="值">
           <pre class="whitespace-pre-wrap break-all">{{
             detail.value ?? '（敏感项不返回明文）'
@@ -232,19 +238,23 @@ onMounted(fetchList);
       </Descriptions>
     </Drawer>
 
-    <Drawer v-model:open="compareOpen" title="文本对比（所选 ↔ 当前）" width="720">
+    <Drawer
+      v-model:open="compareOpen"
+      title="文本对比（所选 ↔ 当前）"
+      width="720"
+    >
       <div class="grid grid-cols-2 gap-4">
         <div>
           <div class="mb-2 font-medium">所选版本</div>
-          <pre class="bg-muted max-h-[70vh] overflow-auto rounded p-3 text-sm">{{
-            leftText
-          }}</pre>
+          <pre
+            class="bg-muted max-h-[70vh] overflow-auto rounded p-3 text-sm"
+            >{{ leftText }}</pre>
         </div>
         <div>
           <div class="mb-2 font-medium">当前版本</div>
-          <pre class="bg-muted max-h-[70vh] overflow-auto rounded p-3 text-sm">{{
-            rightText
-          }}</pre>
+          <pre
+            class="bg-muted max-h-[70vh] overflow-auto rounded p-3 text-sm"
+            >{{ rightText }}</pre>
         </div>
       </div>
     </Drawer>

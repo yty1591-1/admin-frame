@@ -53,3 +53,47 @@ func TestRejectLocalKEKInProd(t *testing.T) {
 		t.Fatalf("dev should allow: %v", err)
 	}
 }
+
+// TestLocalKEKRotationRewrap 模拟 M3 CC-F-55：新旧 LocalKEK 双钥窗口 unwrap → rewrap → 旧钥下线。
+func TestLocalKEKRotationRewrap(t *testing.T) {
+	oldKEK, err := envelope.NewLocalKEK(bytes.Repeat([]byte{0x41}, 32), "local/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newKEK, err := envelope.NewLocalKEK(bytes.Repeat([]byte{0x42}, 32), "local/2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aad := envelope.AAD("staging", "platform", "auth.jwt.private_key", 3)
+	blob, err := envelope.Seal(oldKEK, []byte("rotate-me"), aad)
+	if err != nil {
+		t.Fatalf("Seal old: %v", err)
+	}
+	if blob.KEKKeyID != "local/1" {
+		t.Fatalf("kek_key_id = %q, want local/1", blob.KEKKeyID)
+	}
+	// 双钥窗口：旧钥仍可 unwrap。
+	plain, err := envelope.Open(oldKEK, blob, aad)
+	if err != nil {
+		t.Fatalf("Open old: %v", err)
+	}
+	// rewrap：明文用新 KEK 重新 seal。
+	rewrapped, err := envelope.Seal(newKEK, plain, aad)
+	if err != nil {
+		t.Fatalf("Seal new: %v", err)
+	}
+	if rewrapped.KEKKeyID != "local/2" {
+		t.Fatalf("rewrapped kek_key_id = %q, want local/2", rewrapped.KEKKeyID)
+	}
+	got, err := envelope.Open(newKEK, rewrapped, aad)
+	if err != nil {
+		t.Fatalf("Open new: %v", err)
+	}
+	if string(got) != "rotate-me" {
+		t.Fatalf("plaintext after rewrap = %q", got)
+	}
+	// 旧钥下线：无法 unwrap 新密文。
+	if _, err := envelope.Open(oldKEK, rewrapped, aad); err == nil {
+		t.Fatal("old KEK must fail unwrap after rewrap")
+	}
+}

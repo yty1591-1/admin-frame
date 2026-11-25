@@ -2,8 +2,10 @@ package menuview_test
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -44,6 +46,61 @@ func TestAdminComponentsExist(t *testing.T) {
 			t.Fatalf("component %q 对应文件不存在: %s", component, path)
 		} else if err != nil {
 			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+}
+
+// TestSeedComponentsRegistered 反向校验 seed 中的页面组件都已登记在白名单。
+//
+// seed 里存在大量 disabled 页面菜单（启用前必须先建 .vue），正向扫描只能发现
+// 白名单指向缺失文件，无法发现「seed 引用了白名单外的 component」——那种菜单
+// 一旦启用就会在前端落到 not-found。这里以 migrations 为事实源做双向校验。
+func TestSeedComponentsRegistered(t *testing.T) {
+	root := repoRoot(t)
+	migrations, err := os.OpenRoot(filepath.Join(root, "migrations"))
+	if err != nil {
+		t.Fatalf("open migrations: %v", err)
+	}
+	t.Cleanup(func() { _ = migrations.Close() })
+	files, err := fs.Glob(migrations.FS(), "*.up.sql")
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("未找到 migrations/*.up.sql")
+	}
+	views, err := os.OpenRoot(filepath.Join(root, "frontend", "apps", "web-admin", "src", "views"))
+	if err != nil {
+		t.Fatalf("open views: %v", err)
+	}
+	t.Cleanup(func() { _ = views.Close() })
+	componentPattern := regexp.MustCompile(`'/[A-Za-z0-9_/.-]+\.vue'`)
+	catalog := menuview.Catalog{}
+	for _, file := range files {
+		data, readErr := migrations.ReadFile(file)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", file, readErr)
+		}
+		for _, raw := range componentPattern.FindAllString(string(data), -1) {
+			component := strings.Trim(raw, "'")
+			switch {
+			case strings.HasPrefix(component, "/member/"):
+				// B 端菜单不开放组件登记，占位仅用于路由/面包屑文本。
+				continue
+			case component == "/system/config/index.vue":
+				// 000032 起该节点升级为 catalog（component 置空、redirect 到 items）。
+				continue
+			}
+			if !catalog.Allows(domain.ChannelAdmin, component) {
+				t.Errorf("%s: seed component %q 未登记在 adminComponents", filepath.Base(file), component)
+				continue
+			}
+			path := filepath.FromSlash(strings.TrimPrefix(component, "/"))
+			if _, statErr := views.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("%s: seed component %q 对应文件不存在: %s", filepath.Base(file), component, path)
+			} else if statErr != nil {
+				t.Errorf("stat %s: %v", path, statErr)
+			}
 		}
 	}
 }

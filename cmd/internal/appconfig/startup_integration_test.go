@@ -1,111 +1,48 @@
 package appconfig_test
 
 import (
-	"context"
-	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/admin-frame/admin-frame/cmd/internal/appconfig"
-	"github.com/admin-frame/admin-frame/cmd/internal/snapshotconfig"
-	"github.com/admin-frame/admin-frame/pkg/configclient"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
 )
 
-// TestSnapshotSwitchOverridesConfig 验证启用 namespace 的签名快照覆盖静态配置。
-func TestSnapshotSwitchOverridesConfig(t *testing.T) {
-	configPath := writeConfig(t, "admin.yaml", `
-service: admin-api
-channel: admin
-addr: ":8080"
-identity:
-  lockout:
-    max_failures: 5
-`)
-	dir := t.TempDir()
-	signer, publicKeys := snapshotSigner(t)
-	platformPath := filepath.Join(dir, "platform.json")
-	identityPath := filepath.Join(dir, "identity.json")
-	writeNamespaceSnapshot(t, signer, platformPath, "platform", map[string]string{"addr": ":9090"})
-	writeNamespaceSnapshot(t, signer, identityPath, "identity",
-		map[string]string{"identity.lockout.max_failures": "99"})
-	t.Setenv(snapshotconfig.FileEnv, "")
-	t.Setenv(snapshotconfig.FilesEnv, platformPath+","+identityPath)
-	t.Setenv(snapshotconfig.PublicKeysEnv, publicKeys)
-	t.Setenv(snapshotconfig.NamespacesEnv, "platform,identity")
-
-	startup, err := snapshotconfig.Load(context.Background())
-	if err != nil {
-		t.Fatalf("load startup: %v", err)
+// TestValuesOverrideConfig 验证 Values 覆盖代码默认值（ADR-0016 拉取结果注入）。
+func TestValuesOverrideConfig(t *testing.T) {
+	values := map[string]string{
+		"service":                       "admin-api",
+		"channel":                       "admin",
+		"env":                           "dev",
+		"server.addr":                   ":9090",
+		"identity.lockout.max_failures": "99",
 	}
-	cfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return startup.Values, nil
-	}, false)
+	cfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		return values, nil
+	})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 	if cfg.Addr != ":9090" {
-		t.Fatalf("addr = %q, want snapshot value", cfg.Addr)
+		t.Fatalf("addr = %q, want values override", cfg.Addr)
 	}
 	if cfg.Identity.Lockout.MaxFailures != 99 {
-		t.Fatalf("identity max failures = %d, want 99", cfg.Identity.Lockout.MaxFailures)
+		t.Fatalf("max failures = %d, want 99", cfg.Identity.Lockout.MaxFailures)
 	}
 }
 
-// TestSnapshotSwitchDisabledNamespaceKeepsFile 验证未启用 namespace 不覆盖文件取值。
-func TestSnapshotSwitchDisabledNamespaceKeepsFile(t *testing.T) {
-	configPath := writeConfig(t, "admin.yaml", `
-service: admin-api
-channel: admin
-addr: ":8080"
-identity:
-  lockout:
-    max_failures: 5
-`)
-	dir := t.TempDir()
-	signer, publicKeys := snapshotSigner(t)
-	platformPath := filepath.Join(dir, "platform.json")
-	identityPath := filepath.Join(dir, "identity.json")
-	writeNamespaceSnapshot(t, signer, platformPath, "platform", map[string]string{"addr": ":9090"})
-	writeNamespaceSnapshot(t, signer, identityPath, "identity",
-		map[string]string{"identity.lockout.max_failures": "99"})
-	t.Setenv(snapshotconfig.FileEnv, "")
-	t.Setenv(snapshotconfig.FilesEnv, platformPath+","+identityPath)
-	t.Setenv(snapshotconfig.PublicKeysEnv, publicKeys)
-	t.Setenv(snapshotconfig.NamespacesEnv, "platform")
-
-	startup, err := snapshotconfig.Load(context.Background())
-	if err != nil {
-		t.Fatalf("load startup: %v", err)
-	}
-	cfg, err := appconfig.LoadWithValuesAllowMissing(configPath, func() (map[string]string, error) {
-		return startup.Values, nil
-	}, false)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if cfg.Addr != ":9090" {
-		t.Fatalf("addr = %q, want snapshot value", cfg.Addr)
-	}
-	if cfg.Identity.Lockout.MaxFailures != 5 {
-		t.Fatalf("disabled namespace leaked: max failures = %d, want file value 5",
-			cfg.Identity.Lockout.MaxFailures)
-	}
-}
-
-// TestLoadWithoutConfigFile 验证无文件启动：部署身份走环境变量，其余取快照。
+// TestLoadWithoutConfigFile 验证无文件启动：业务键来自 Values。
 func TestLoadWithoutConfigFile(t *testing.T) {
-	t.Setenv("ADMIN_FRAME_SERVICE", "admin-api")
-	t.Setenv("ADMIN_FRAME_CHANNEL", "admin")
-	t.Setenv("ADMIN_FRAME_ENV", "dev")
-	missing := filepath.Join(t.TempDir(), "absent.yaml")
-	values := map[string]string{"server.addr": ":9090"}
+	values := map[string]string{
+		"service":     "admin-api",
+		"channel":     "admin",
+		"env":         "dev",
+		"server.addr": ":9090",
+	}
 
-	cfg, err := appconfig.LoadWithValuesAllowMissing(missing, func() (map[string]string, error) {
+	cfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
 		return values, nil
-	}, true)
+	})
 	if err != nil {
 		t.Fatalf("load without file: %v", err)
 	}
@@ -113,52 +50,91 @@ func TestLoadWithoutConfigFile(t *testing.T) {
 		t.Fatalf("deployment identity = %s/%s", cfg.Service, cfg.Channel)
 	}
 	if cfg.Addr != ":9090" {
-		t.Fatalf("addr = %q, want snapshot value", cfg.Addr)
+		t.Fatalf("addr = %q, want values", cfg.Addr)
 	}
 }
 
-// snapshotSigner 生成签名器与公钥配置串。
-func snapshotSigner(t *testing.T) (*configclient.Signer, string) {
-	t.Helper()
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
+// TestProcessIdentityEnvVisibleToValidate 覆盖 CC-R-01：各进程身份证在
+// LoadFromValues 前注入 env 后，prod 专属门禁必须生效（不得「先校验后赋值」）。
+func TestProcessIdentityEnvVisibleToValidate(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		id      configboot.ProcessIdentity
+		wantErr string
+	}{
+		{
+			name: "admin-api prod demo forbidden",
+			id: configboot.ProcessIdentity{
+				Service: "admin-api", Channel: "admin", Env: "prod", Addr: ":8081",
+			},
+			wantErr: "auth.mode=demo is forbidden when env=prod",
+		},
+		{
+			name: "biz-api prod demo forbidden",
+			id: configboot.ProcessIdentity{
+				Service: "biz-api", Channel: "biz", Env: "prod", Addr: ":8082",
+			},
+			wantErr: "auth.mode=demo is forbidden when env=prod",
+		},
+		{
+			name: "c-api prod demo forbidden",
+			id: configboot.ProcessIdentity{
+				Service: "c-api", Channel: "c", Env: "prod", Addr: ":8083",
+			},
+			wantErr: "auth.mode=demo is forbidden when env=prod",
+		},
+		{
+			name: "worker prod demo forbidden",
+			id: configboot.ProcessIdentity{
+				Service: "worker", Channel: "worker", Env: "prod", Addr: ":8090",
+			},
+			wantErr: "auth.mode=demo is forbidden when env=prod",
+		},
+		{
+			name: "admin-api prod missing hash_key",
+			id: configboot.ProcessIdentity{
+				Service: "admin-api", Channel: "admin", Env: "prod", Addr: ":8081",
+			},
+			wantErr: "identity.hash_key is required in prod/staging",
+		},
 	}
-	signer, err := configclient.NewSigner("k1", privateKey)
-	if err != nil {
-		t.Fatalf("new signer: %v", err)
-	}
-	return signer, "k1=" + base64.StdEncoding.EncodeToString(publicKey)
-}
-
-// writeNamespaceSnapshot 写入指定 namespace 的签名快照文件。
-func writeNamespaceSnapshot(t *testing.T, signer *configclient.Signer, path, namespace string,
-	values map[string]string) {
-	t.Helper()
-	items := make([]configclient.Item, 0, len(values))
-	for key, value := range values {
-		sum := sha256.Sum256([]byte(value))
-		items = append(items, configclient.Item{
-			ConfigKey: key, ItemID: int64(len(items) + 1), ItemVersion: 1,
-			ValueHash: hex.EncodeToString(sum[:]),
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+				values := configboot.WithProcessIdentity(map[string]string{
+					"auth.mode":        "demo",
+					"identity.enabled": "true",
+					"log.format":       "json",
+				}, tc.id)
+				return values, nil
+			})
+			if err == nil {
+				t.Fatal("expected Validate failure when env is injected before Load")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err=%v want substring %q", err, tc.wantErr)
+			}
 		})
 	}
-	snapshot := configclient.Snapshot{
-		Env: "dev", Namespace: namespace, ReleaseID: 1, ReleaseNo: 1,
-		SnapshotHash: configclient.HashItems(items), SnapshotSize: len(items),
-		Items: items, Values: values,
-	}
-	keyID, signature, err := signer.Sign(snapshot)
-	if err != nil {
-		t.Fatalf("sign snapshot: %v", err)
-	}
-	snapshot.KeyID = keyID
-	snapshot.Signature = signature
-	store, err := configclient.NewFileStore(path)
-	if err != nil {
-		t.Fatalf("new store: %v", err)
-	}
-	if err := store.Save(context.Background(), snapshot); err != nil {
-		t.Fatalf("save snapshot: %v", err)
+}
+
+// TestConfigAPIEnvInjectedBeforeValidate 覆盖 config-api 自举路径的 CC-R-01。
+func TestConfigAPIEnvInjectedBeforeValidate(t *testing.T) {
+	t.Parallel()
+	_, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		return map[string]string{
+			"service":    "config-api",
+			"channel":    "internal",
+			"addr":       ":8085",
+			"env":        "prod",
+			"auth.mode":  "demo",
+			"log.format": "json",
+		}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "auth.mode=demo is forbidden when env=prod") {
+		t.Fatalf("err=%v want prod demo rejection", err)
 	}
 }

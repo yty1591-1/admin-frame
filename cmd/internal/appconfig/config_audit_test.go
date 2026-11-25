@@ -11,7 +11,7 @@ import (
 
 // auditBaseConfig 是审计用例的公共头部；每个用例自行拼接 db 段与 audit 段，
 // 避免重复 mapping key 导致 YAML 解析失败。
-const auditBaseConfig = "service: admin-api\nchannel: admin\naddr: \":8081\"\n"
+const auditBaseConfig = "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n"
 
 // mysqlBlock 返回持久库配置（audit.store=db 的前提）。
 func mysqlBlock() string {
@@ -26,6 +26,10 @@ func memoryBlock() string {
 // loadAuditConfig 写入并加载配置，走真实「defaults → Validate」路径。
 func loadAuditConfig(t *testing.T, yaml string) (*appconfig.Config, error) {
 	t.Helper()
+	// 清掉本机可能残留的 ADMIN_FRAME_*，避免环境覆盖 yaml 断言。
+	t.Setenv("ADMIN_FRAME_DB_DRIVER", "")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "")
+	t.Setenv("ADMIN_FRAME_AUDIT_STORE", "")
 	path := writeConfig(t, "audit.yaml", auditBaseConfig+yaml)
 	return appconfig.Load(path)
 }
@@ -70,8 +74,12 @@ func TestAuditStoreResolution(t *testing.T) {
 
 // TestAuditProdRejectsLogStore 验证生产禁止只写日志（AUD-06）。
 func TestAuditProdRejectsLogStore(t *testing.T) {
-	yaml := "env: prod\n" + "log:\n  format: json\n" + memoryBlock() + "audit:\n  store: log\n"
-	_, err := loadAuditConfig(t, yaml)
+	t.Setenv("ADMIN_FRAME_DB_DRIVER", "")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "")
+	t.Setenv("ADMIN_FRAME_AUDIT_STORE", "")
+	yaml := "service: admin-api\nchannel: admin\nenv: prod\naddr: \":8081\"\n" +
+		"log:\n  format: json\n" + memoryBlock() + "audit:\n  store: log\n"
+	_, err := appconfig.Load(writeConfig(t, "audit-prod.yaml", yaml))
 	if err == nil {
 		t.Fatal("LoadConfig() prod+log: want error, got nil")
 	}

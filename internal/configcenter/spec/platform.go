@@ -86,38 +86,58 @@ func platformSpecs() []domain.KeySpec {
 		durationKey("http.read_timeout", "15s", "读取请求含 body 的上限", false),
 		durationKey("http.write_timeout", "30s", "写响应上限", false),
 		durationKey("http.idle_timeout", "60s", "keep-alive 空闲连接上限", false),
-		intKey("http.max_header_bytes", 1<<20, "请求头总字节上限", false, nil, nil),
+		intKey("http.max_header_bytes", 1<<20, "请求头总字节上限", false, int64Ptr(1024), nil),
 		durationKey("http.timeout", "30s", "单请求 context deadline", false),
-		intKey("http.body_limit_bytes", 32<<20, "请求体字节上限", false, nil, nil),
+		intKey("http.body_limit_bytes", 32<<20, "请求体字节上限", false, int64Ptr(1024), nil),
 
 		// 日志：级别支持热更，格式变更需重启。
 		stringKeyWithEnum("log.level", "info", "日志级别", true,
 			"debug", "info", "warn", "error"),
 		stringKeyWithEnum("log.format", "json", "日志输出格式", false, "json", "text"),
 
-		// 鉴权启动参数；密钥与密钥环不进入配置中心（SEC-01 / M2）。
+		// 鉴权启动参数；JWT 签名私钥走密钥子域（Q9 / M2），口令类仍不入库。
 		stringKeyWithEnum("auth.mode", "", "鉴权模式；空值按环境回退", false, "demo", "jwt"),
 		stringKeyWithEnum("auth.expected_channel", "", "期望端别；空值跟随 channel", false,
-			"admin", "biz", "c"),
+			"admin", "biz", "c", "worker", "internal"),
 		stringKeyWithEnum("auth.jwt.alg", "", "JWT 签名算法", false, "HS256", "RS256"),
 		requiredKey("auth.jwt.issuer", domain.ValueTypeString, "JWT 期望 issuer"),
 		requiredKey("auth.jwt.audience", domain.ValueTypeJSON, "JWT 期望 audience 列表（JSON 数组）"),
+		sensitiveAutoKey("auth.jwt.private_key", "JWT 签名私钥（M2 密钥子域；首次按 secret_rule 生成）",
+			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 
 		// 数据源与缓存：连接串与口令不进配置中心。
-		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql", "postgres"),
+		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql"),
 		intKey("db.max_open_conns", 0, "连接池上限；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		intKey("db.max_idle_conns", 0, "空闲连接数；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		durationKey("db.conn_max_lifetime", "0s", "连接最长存活时间；0 沿用默认值", false),
 		stringKey("redis.addr", "", "Redis 地址；空表示不启用", false),
 		intKey("redis.db", 0, "Redis 逻辑库编号", false, int64Ptr(0), nil),
 
-		// 对象存储：云厂商凭证与桶级配置不进配置中心。
+		// 对象存储：驱动与桶级参数进配置中心（可由安装向导填写 / 管理面审批）。
+		// 连接参数（bucket/region/endpoint/force_path_style）是「配置」而非凭据，
+		// 因此不再按部署侧注入排除；AK/SK 属凭据，登记为敏感键走 config_secret。
 		stringKeyWithEnum("storage.driver", "memory", "对象存储驱动", false,
-			"memory", "local", "s3", "oss", "cos", "obs"),
+			"memory", "local", "s3", "minio", "oss", "cos", "obs"),
 		stringKey("storage.key_prefix", "", "对象键前缀", false),
 		intKey("storage.max_object_bytes", 0, "单对象字节上限；0 表示不限制", false, int64Ptr(0), nil),
 		durationKey("storage.presign_put_ttl", "0s", "预签名上传有效期", false),
 		durationKey("storage.presign_get_ttl", "0s", "预签名下载有效期", false),
+		// 条件必填：bucket / region 仅在 storage.driver=s3/minio 时需要。
+		// KeySpec.Required 是「全局必填且与 Default 互斥」的语义，表达不了
+		// 依赖其他键的条件，故此处保留空默认值 + 非必填；缺值判定由
+		// spec.MissingStorageRefs（安装态 Gaps 与进程侧 configboot 共用）。
+		stringKey("storage.s3.bucket", "", "对象存储桶名；storage.driver=s3/minio 时必填", false),
+		stringKey("storage.s3.region", "", "对象存储区域；storage.driver=s3/minio 时必填", false),
+		stringKey("storage.s3.endpoint", "", "对象存储端点；空表示使用云厂商默认端点", false),
+		boolKey("storage.s3.force_path_style", "false", "对象存储是否强制 path-style 访问", false),
+		// 凭据：走密钥子域（config_secret），安装向导自动生成或由运维填写，
+		// 任何接口都不回显明文或密文（CC-R-05）。
+		sensitiveAutoKey("storage.s3.access_key",
+			"对象存储 AccessKey（密钥子域；prod-like 播种占位，须轮换真值）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
+		sensitiveAutoKey("storage.s3.secret_key",
+			"对象存储 SecretKey（密钥子域；prod-like 播种占位，须轮换真值）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
 
 		// 后台任务与追踪。
 		// startup：全仓无以该间隔运转的循环；列入热更会造成假热更（ADR-0015 H5）。
@@ -127,6 +147,8 @@ func platformSpecs() []domain.KeySpec {
 			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 		stringKeyWithEnum("tracing.exporter", "none", "追踪导出器", false,
 			"none", "otlp", "stdout", "noop"),
+		stringKeyWithPattern("tracing.sample_ratio", "1", "追踪采样率（0～1）", false,
+			`^(0(\.[0-9]+)?|1(\.0+)?)$`),
 		stringKey("tracing.endpoint", "", "OTLP/HTTP 端点；exporter=otlp 时必填", false),
 		boolKey("tracing.insecure", "false", "OTLP 明文传输", false),
 		stringKeyWithEnum("id.node_id_source", "env", "雪花节点号来源", false,
@@ -195,11 +217,11 @@ func iamSpecs() []domain.KeySpec {
 		keys.duration("iam.cache.l2_ttl", "5m", "IAM Redis 快照 TTL"),
 		keys.duration("iam.cache.negative_ttl", "30s", "IAM 空快照 TTL"),
 		keys.str("iam.cache.key_prefix", "iam", "IAM 缓存域段"),
-		keys.integer("iam.cache.l1_max_entries", 10000, "IAM 进程内快照最大条目数"),
-		keys.integer("iam.limits.max_roles_per_subject", 20, "单主体最大生效角色数"),
-		keys.integer("iam.limits.max_permissions_per_role", 200, "单角色最大权限点数"),
-		keys.integer("iam.limits.max_bindings_per_subject", 50, "单主体最大绑定数"),
-		keys.integer("iam.limits.max_custom_roles_per_merchant", 50, "B 端自定义角色数上限"),
+		keys.integerMin("iam.cache.l1_max_entries", 10000, 1, "IAM 进程内快照最大条目数"),
+		keys.integerMin("iam.limits.max_roles_per_subject", 20, 1, "单主体最大生效角色数"),
+		keys.integerMin("iam.limits.max_permissions_per_role", 200, 1, "单角色最大权限点数"),
+		keys.integerMin("iam.limits.max_bindings_per_subject", 50, 1, "单主体最大绑定数"),
+		keys.integerMin("iam.limits.max_custom_roles_per_merchant", 50, 1, "B 端自定义角色数上限"),
 		keys.boolean("iam.security.allow_wildcard", false, "是否允许快照携带通配符"),
 		keys.boolean("iam.security.require_reason", false, "高风险变更是否强制填写原因"),
 		keys.boolean("iam.breakglass.enabled", false, "是否启用破玻璃授权"),
@@ -208,7 +230,7 @@ func iamSpecs() []domain.KeySpec {
 			"off", "shadow", "enforce"),
 		keys.boolean("iam.certification.enabled", true, "是否启用访问复核 API 与到期扫描"),
 		keys.boolean("iam.certification.auto_revoke", false, "复核到期后是否自动回收绑定"),
-		keys.integer("iam.certification.max_tasks_per_campaign", 0,
+		keys.integerMin("iam.certification.max_tasks_per_campaign", 0, 0,
 			"单活动任务上限；0 表示使用服务内置默认"),
 	}
 }
@@ -222,9 +244,14 @@ func sensitiveAutoKey(key, description string, rule *domain.SecretRule) domain.K
 }
 
 func stringKey(key, defaultValue, description string, reloadable bool) domain.KeySpec {
+	mode := domain.ReloadStartup
+	if reloadable {
+		mode = domain.ReloadHot
+	}
 	return domain.KeySpec{
 		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeString,
-		Default: defaultValue, Description: description, Owner: ownerPlatform, Reloadable: reloadable,
+		Default: defaultValue, Description: description, Owner: ownerPlatform,
+		Reloadable: reloadable, ReloadMode: mode,
 	}
 }
 
@@ -245,26 +272,40 @@ func stringKeyWithPattern(key, defaultValue, description string, reloadable bool
 // intKey 构造整数键声明。
 func intKey(key string, defaultValue int64, description string, reloadable bool,
 	minValue, maxValue *int64) domain.KeySpec {
+	mode := domain.ReloadStartup
+	if reloadable {
+		mode = domain.ReloadHot
+	}
 	return domain.KeySpec{
 		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeInt,
 		Default: strconv.FormatInt(defaultValue, 10), Description: description, Owner: ownerPlatform,
-		Reloadable: reloadable, MinInt: minValue, MaxInt: maxValue,
+		Reloadable: reloadable, ReloadMode: mode, MinInt: minValue, MaxInt: maxValue,
 	}
 }
 
 // durationKey 构造时长键声明。
 func durationKey(key, defaultValue, description string, reloadable bool) domain.KeySpec {
+	mode := domain.ReloadStartup
+	if reloadable {
+		mode = domain.ReloadHot
+	}
 	return domain.KeySpec{
 		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeDuration,
-		Default: defaultValue, Description: description, Owner: ownerPlatform, Reloadable: reloadable,
+		Default: defaultValue, Description: description, Owner: ownerPlatform,
+		Reloadable: reloadable, ReloadMode: mode,
 	}
 }
 
 // boolKey 构造布尔键声明。
 func boolKey(key, defaultValue, description string, reloadable bool) domain.KeySpec {
+	mode := domain.ReloadStartup
+	if reloadable {
+		mode = domain.ReloadHot
+	}
 	return domain.KeySpec{
 		Namespace: NamespacePlatform, Key: key, ValueType: domain.ValueTypeBool,
-		Default: defaultValue, Description: description, Owner: ownerPlatform, Reloadable: reloadable,
+		Default: defaultValue, Description: description, Owner: ownerPlatform,
+		Reloadable: reloadable, ReloadMode: mode,
 	}
 }
 

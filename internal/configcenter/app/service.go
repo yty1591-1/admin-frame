@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
-	"github.com/admin-frame/admin-frame/pkg/configclient"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -44,9 +44,10 @@ type Options struct {
 	Service string
 	// Now 时钟；测试注入。
 	Now func() time.Time
-	// Signer 对发布快照签名（Ed25519）；nil 表示本进程未配置签名密钥，
-	// 发布不写签名字段，客户端会拒绝未签名快照并回退代码默认值。
-	Signer *configclient.Signer
+	// SecretObserver 密钥解析指标；nil 表示不打点。
+	SecretObserver SecretResolveObserver
+	// Specs 键声明注册表；Release/Secret 发布与入库校验使用（CC-R-07/14）。
+	Specs *spec.Registry
 }
 
 type auditContext struct {

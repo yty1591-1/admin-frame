@@ -117,6 +117,7 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - ^tmp/
 formatters:
   enable:
     - gofmt

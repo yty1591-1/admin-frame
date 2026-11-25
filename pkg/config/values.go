@@ -40,7 +40,7 @@ func BindValues(target any, values map[string]string) error {
 }
 
 // applyValueAliases 把配置中心键按别名补充为 yaml 路径；不修改入参。
-func applyValueAliases(values map[string]string, aliases map[string]string) map[string]string {
+func applyValueAliases(values, aliases map[string]string) map[string]string {
 	if len(aliases) == 0 || len(values) == 0 {
 		return values
 	}

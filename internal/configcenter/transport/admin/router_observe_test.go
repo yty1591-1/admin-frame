@@ -29,7 +29,7 @@ func TestObserveRecordsStatus(t *testing.T) {
 	}))
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/admin/v1/configs/releases/1/publish", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/admin/v1/configs/releases/1/publish", http.NoBody))
 
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusConflict)
@@ -52,7 +52,7 @@ func TestObserveNilObserverPassthrough(t *testing.T) {
 		})))
 
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/configs/items", nil))
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/configs/items", http.NoBody))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
 	}

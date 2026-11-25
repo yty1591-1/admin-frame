@@ -9,7 +9,8 @@
     "startWith": "{0} must start with `{1}`",
     "invalidURL": "Please input a valid URL",
     "sizeLimit": "The file size cannot exceed {0}MB",
-    "previewWarning": "Unable to open the file, there is no available URL or preview address"
+    "previewWarning": "Unable to open the file, there is no available URL or preview address",
+    "uploadTypeLimit": "Unsupported file type: {0}"
   },
   "actionTitle": {
     "edit": "Modify {0}",
@@ -123,7 +124,14 @@
       "unauthorized": "Unauthorized. Please log in to continue.",
       "forbidden": "Forbidden. You do not have permission to access this resource.",
       "notFound": "Not Found. The requested resource could not be found.",
-      "internalServerError": "Internal Server Error. Something went wrong on our end. Please try again later."
+      "internalServerError": "Internal Server Error. Something went wrong on our end. Please try again later.",
+      "conflict": "The data has changed. Please refresh and try again.",
+      "installInProgress": "The system is installing. Please try again later.",
+      "installCompleted": "Installation is already complete.",
+      "tooManyRequests": "Too many requests. Please try again later.",
+      "serviceUnavailable": "Service temporarily unavailable. Please try again later.",
+      "notInitialized": "The system has not been initialized yet.",
+      "errorWithTrace": "{0} (trace: {1})"
     }
   },
   "widgets": {

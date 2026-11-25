@@ -52,6 +52,7 @@ func secretNameKey(env, namespace, name string) string {
 
 type secretRepository struct{ store *secretStore }
 
+// Create 写入密钥元数据与首个密文版本。
 func (r *secretRepository) Create(_ context.Context, secret domain.Secret, version domain.SecretVersion) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -68,6 +69,7 @@ func (r *secretRepository) Create(_ context.Context, secret domain.Secret, versi
 	return nil
 }
 
+// GetByID 按主键读取密钥。
 func (r *secretRepository) GetByID(_ context.Context, id int64) (domain.Secret, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -78,6 +80,7 @@ func (r *secretRepository) GetByID(_ context.Context, id int64) (domain.Secret, 
 	return withFingerprint(s, r.store.versions[id]), nil
 }
 
+// GetByName 按环境 / namespace / 名称读取密钥。
 func (r *secretRepository) GetByName(_ context.Context, env, namespace, name string) (domain.Secret, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -88,6 +91,7 @@ func (r *secretRepository) GetByName(_ context.Context, env, namespace, name str
 	return withFingerprint(r.store.secrets[id], r.store.versions[id]), nil
 }
 
+// List 分页列出密钥。
 func (r *secretRepository) List(_ context.Context, env, namespace string, status domain.SecretStatus, limit, offset int) ([]domain.Secret, int, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -113,6 +117,7 @@ func (r *secretRepository) List(_ context.Context, env, namespace string, status
 	return all[offset:end], total, nil
 }
 
+// UpdateCAS 按期望版本条件更新密钥。
 func (r *secretRepository) UpdateCAS(_ context.Context, secret domain.Secret, expectedVersion int64) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -127,6 +132,7 @@ func (r *secretRepository) UpdateCAS(_ context.Context, secret domain.Secret, ex
 	return nil
 }
 
+// AppendVersion 追加密文版本。
 func (r *secretRepository) AppendVersion(_ context.Context, version domain.SecretVersion) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -142,6 +148,7 @@ func (r *secretRepository) AppendVersion(_ context.Context, version domain.Secre
 	return nil
 }
 
+// GetVersion 读取指定密文版本。
 func (r *secretRepository) GetVersion(_ context.Context, secretID, version int64) (domain.SecretVersion, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -153,6 +160,7 @@ func (r *secretRepository) GetVersion(_ context.Context, secretID, version int64
 	return domain.SecretVersion{}, domain.ErrNotFound
 }
 
+// ListVersions 分页列出密文版本。
 func (r *secretRepository) ListVersions(_ context.Context, secretID int64, limit, offset int) ([]domain.SecretVersion, int, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -179,6 +187,7 @@ func (r *secretRepository) ListVersions(_ context.Context, secretID int64, limit
 	return meta[offset:end], total, nil
 }
 
+// UpdateVersionStatus 条件迁移密文版本状态。
 func (r *secretRepository) UpdateVersionStatus(_ context.Context, secretID, version int64, from, to domain.SecretVersionStatus, at time.Time) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -206,6 +215,7 @@ func (r *secretRepository) UpdateVersionStatus(_ context.Context, secretID, vers
 	return domain.ErrNotFound
 }
 
+// AppendReview 追加审批记录。
 func (r *secretRepository) AppendReview(_ context.Context, review domain.SecretReview) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -213,6 +223,7 @@ func (r *secretRepository) AppendReview(_ context.Context, review domain.SecretR
 	return nil
 }
 
+// ListReviews 列出审批记录。
 func (r *secretRepository) ListReviews(_ context.Context, secretID int64) ([]domain.SecretReview, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -222,6 +233,7 @@ func (r *secretRepository) ListReviews(_ context.Context, secretID int64) ([]dom
 
 type secretGrantRepository struct{ store *secretStore }
 
+// Create 写入授权。
 func (r *secretGrantRepository) Create(_ context.Context, grant domain.SecretGrant) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -236,6 +248,7 @@ func (r *secretGrantRepository) Create(_ context.Context, grant domain.SecretGra
 	return nil
 }
 
+// GetByID 按主键读取授权。
 func (r *secretGrantRepository) GetByID(_ context.Context, id int64) (domain.SecretGrant, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -246,6 +259,7 @@ func (r *secretGrantRepository) GetByID(_ context.Context, id int64) (domain.Sec
 	return g, nil
 }
 
+// ListBySecret 列出密钥授权。
 func (r *secretGrantRepository) ListBySecret(_ context.Context, secretID int64) ([]domain.SecretGrant, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
@@ -259,18 +273,36 @@ func (r *secretGrantRepository) ListBySecret(_ context.Context, secretID int64) 
 	return out, nil
 }
 
+// FindActive 查找有效 resolve 授权。
 func (r *secretGrantRepository) FindActive(_ context.Context, env, namespace, serviceIdentity string, secretID int64, now time.Time) (domain.SecretGrant, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()
 	for _, g := range r.store.grants {
 		if g.Env == env && g.Namespace == namespace && g.ServiceIdentity == serviceIdentity &&
-			g.SecretID == secretID && g.Active(now) {
+			g.SecretID == secretID && g.Permission == "resolve" && g.Active(now) {
 			return g, nil
 		}
 	}
 	return domain.SecretGrant{}, domain.ErrNotFound
 }
 
+// Activate 将待审授权转为可 resolve。
+func (r *secretGrantRepository) Activate(_ context.Context, id int64) error {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	g, ok := r.store.grants[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if g.Permission != "pending" || g.RevokedAt != nil {
+		return domain.ErrStateConflict
+	}
+	g.Permission = "resolve"
+	r.store.grants[id] = g
+	return nil
+}
+
+// Revoke 吊销授权。
 func (r *secretGrantRepository) Revoke(_ context.Context, id int64, at time.Time) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -285,6 +317,7 @@ func (r *secretGrantRepository) Revoke(_ context.Context, id int64, at time.Time
 
 type secretAccessRepository struct{ store *secretStore }
 
+// Append 追加访问审计。
 func (r *secretAccessRepository) Append(_ context.Context, access domain.SecretAccess) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
@@ -295,6 +328,7 @@ func (r *secretAccessRepository) Append(_ context.Context, access domain.SecretA
 	return nil
 }
 
+// ListBySecretName 按密钥名分页列出访问审计。
 func (r *secretAccessRepository) ListBySecretName(_ context.Context, _, _, name string, limit, offset int) ([]domain.SecretAccess, int, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()

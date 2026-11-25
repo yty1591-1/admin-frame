@@ -6,14 +6,23 @@
 coverage.out
 /coverage
 /cov-domain
-# 本地配置（含 include 分层后的 configs/prod/modules），只允许 *.yaml.example 入库。
+# 本地配置（M3：configs/ 不得入库；未跟踪 yaml / .env 仅本机调试）。
 configs/**/*.yaml
-!configs/**/*.yaml.example
+configs/**/*.yml
+configs/**/.env
+configs/**/*.env
 .env
 # 本地 Python 工具环境（make ci-deps 创建），不得入库
 /.venv/
 # 临时恢复 / 调试产物，不得入库（如 tmp_recovered/、tmp_*.json）
 /tmp*
+# 本地运行时缓存与调试产物（配置中心拉取缓存等）
+/var/
+# 本地开发 dotenv（从 scripts/local/env.example 复制）
+/scripts/local/.env
+# 本机 prod 演练 dotenv（从 scripts/prod/env.example 复制）
+/scripts/prod/.env
+
 .idea/
 .vscode/
 # 本地智能体工作记忆，不得入库

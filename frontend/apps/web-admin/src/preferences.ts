@@ -1,4 +1,8 @@
-import { defineOverridesPreferences, preferences, updatePreferences } from '@vben/preferences';
+import {
+  defineOverridesPreferences,
+  preferences,
+  updatePreferences,
+} from '@vben/preferences';
 
 /**
  * 品牌静态资源地址。
@@ -57,27 +61,86 @@ export const overridesPreferences = defineOverridesPreferences({
 });
 
 /**
- * 把历史缓存中的 CDN 品牌资源改写为本地资源。
+ * 迁移本机残留的偏好 / 演示登录态。
  *
- * 背景：偏好设置按 namespace 持久化到 localStorage，且合并时缓存优先于
- * `overridesPreferences`（见 `@vben-core/preferences` 的 `initPreferences`）。
- * 若不做迁移，已访问过的浏览器仍会继续使用旧地址，表现为「改了代码但没生效」。
+ * 背景：偏好按 namespace 持久化到 localStorage，且合并时缓存优先于
+ * `overridesPreferences`。Vben 演示残留会导致：
+ * - accessMode=frontend（与 admin-frame backend 菜单契约冲突）
+ * - enableRefreshToken=false（与一次性 refresh 轮换冲突）
+ * - mock JWT（username=vben），请求 /iam/me/menus 401 或非数组载荷，
+ *   进而在 mapTree 处抛出 `tree.map is not a function`。
  *
- * 幂等：当前值已是本地路径时直接返回，不会产生多余写入。
- * 注意：不 bump `VITE_APP_VERSION` 清理缓存，因为那样会连带清掉 token 存储
- * 导致全员重新登录。
+ * 幂等：已对齐时不写偏好；仅在识别到演示 JWT 时清 access 存储。
  */
 export function migrateLegacyBrandAssets() {
   const currentLogo = preferences.logo.source ?? '';
   const currentAvatar = preferences.app.defaultAvatar ?? '';
-  const usesRemoteAsset = currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
+  const usesRemoteAsset =
+    currentLogo.includes('unpkg.com') || currentAvatar.includes('unpkg.com');
+  const needsAccessModeFix = preferences.app.accessMode !== 'backend';
+  const needsRefreshTokenFix = preferences.app.enableRefreshToken !== true;
 
-  if (!usesRemoteAsset) {
-    return;
+  if (usesRemoteAsset || needsAccessModeFix || needsRefreshTokenFix) {
+    updatePreferences({
+      app: {
+        ...(usesRemoteAsset ? { defaultAvatar: AVATAR_URL } : {}),
+        ...(needsAccessModeFix ? { accessMode: 'backend' } : {}),
+        ...(needsRefreshTokenFix ? { enableRefreshToken: true } : {}),
+      },
+      ...(usesRemoteAsset ? { logo: { source: LOGO_URL } } : {}),
+    });
   }
 
-  updatePreferences({
-    app: { defaultAvatar: AVATAR_URL },
-    logo: { source: LOGO_URL },
-  });
+  clearLegacyMockAccessToken();
+}
+
+/** 清除 Vben 演示 JWT，强制走真实登录。 */
+function clearLegacyMockAccessToken() {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (!key || !key.includes('-core-access')) {
+      continue;
+    }
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) {
+        continue;
+      }
+      const parsed = JSON.parse(raw) as {
+        accessToken?: string;
+        value?: { accessToken?: string };
+      };
+      const token = parsed.accessToken ?? parsed.value?.accessToken;
+      if (!token || !isVbenMockAccessToken(token)) {
+        continue;
+      }
+      localStorage.removeItem(key);
+    } catch {
+      // 解析失败的残留键直接丢掉，避免继续污染登录态
+      localStorage.removeItem(key);
+    }
+  }
+}
+
+function isVbenMockAccessToken(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length < 2 || !parts[1]) {
+    return false;
+  }
+  try {
+    const json =
+      typeof atob === 'function'
+        ? atob(parts[1].replaceAll('-', '+').replaceAll('_', '/'))
+        : '';
+    const payload = JSON.parse(json) as {
+      password?: string;
+      username?: string;
+    };
+    return payload.username === 'vben' && payload.password === '123456';
+  } catch {
+    return false;
+  }
 }

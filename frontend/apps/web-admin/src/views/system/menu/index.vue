@@ -9,7 +9,15 @@ import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
-import { Button, message, Modal, Space, Switch, Table, Tag } from 'ant-design-vue';
+import {
+  Button,
+  message,
+  Modal,
+  Space,
+  Switch,
+  Table,
+  Tag,
+} from 'ant-design-vue';
 
 import {
   createMenuApi,
@@ -66,7 +74,9 @@ function flatten(nodes: MenuAdminTreeNode[]): MenuAdminTreeNode[] {
 const flatMenus = computed(() => flatten(tree.value));
 const parentOptions = computed(() =>
   flatMenus.value
-    .filter((item) => item.id !== editing.value?.id && item.node_type === 'catalog')
+    .filter(
+      (item) => item.id !== editing.value?.id && item.node_type === 'catalog',
+    )
     .map((item) => ({
       label: `${item.title}（${item.code}）`,
       value: item.code,
@@ -247,13 +257,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="菜单只影响入口展示；接口鉴权仍由权限点中间件负责" title="菜单管理">
+  <Page
+    description="菜单只影响入口展示；接口鉴权仍由权限点中间件负责"
+    title="菜单管理"
+  >
     <div class="bg-card mb-4 rounded-lg p-4">
       <Space>
         <span class="text-muted-foreground text-sm">包含停用节点</span>
         <Switch v-model:checked="includeDisabled" @change="fetchTree" />
         <Button @click="fetchTree">刷新</Button>
-        <Button v-access:code="'iam:menu:write'" @click="openCreate"> 新建菜单 </Button>
+        <Button v-access:code="'iam:menu:write'" @click="openCreate">
+          新建菜单
+        </Button>
       </Space>
     </div>
 

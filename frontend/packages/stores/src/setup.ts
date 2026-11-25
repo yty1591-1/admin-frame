@@ -43,6 +43,9 @@ export async function initStores(app: App, options: InitStoreOptions) {
   const { createPersistedState } = await import('pinia-plugin-persistedstate');
   pinia = createPinia();
   const { namespace } = options;
+  // FE-SEC-04：SecureLS 只是混淆，不是加密。encryptionSecret 来自 VITE_*，
+  // 会随构建进入 bundle，任何同源脚本都能复现解密；令牌的防线是 CSP、XSS
+  // 出口管控、短 TTL 与后续的 httpOnly Cookie（另立 ADR），不要把它当密钥。
   const ls = new SecureLSConstructor({
     encodingType: 'aes',
     encryptionSecret: import.meta.env.VITE_APP_STORE_SECURE_KEY,

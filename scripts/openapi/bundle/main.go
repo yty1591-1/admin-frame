@@ -131,6 +131,11 @@ func (b *bundler) handleRef(n *yaml.Node, ref, baseDir string) error {
 	if target == nil {
 		return fmt.Errorf("%s: ref %q not found", abs, ref)
 	}
+	// 路径文件也可能定义 components，并以本地 $ref 引用它们。
+	// 内联路径后，这些指针改为相对根文档解析，因此必须同时提升源组件。
+	if err := b.hoist(abs); err != nil {
+		return err
+	}
 	clone := deepCopy(target)
 	*n = *clone
 	return b.expand(n, filepath.Dir(abs))

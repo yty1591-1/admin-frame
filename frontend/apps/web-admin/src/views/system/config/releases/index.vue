@@ -2,6 +2,7 @@
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
 
 import type {
+  ConfigDeclaredKey,
   ConfigEnv,
   ConfigItem,
   ConfigRelease,
@@ -9,7 +10,9 @@ import type {
 } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
 
@@ -25,14 +28,15 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   approveConfigReleaseApi,
+  cancelConfigReleaseApi,
   CONFIG_ENV_OPTIONS,
   CONFIG_RELEASE_STATUS_OPTIONS,
   createConfigReleaseApi,
   getConfigErrorMessage,
   getConfigReleaseApi,
+  listConfigDeclaredKeysApi,
   listConfigItemsApi,
   listConfigNamespacesApi,
   listConfigReleasesApi,
@@ -40,9 +44,11 @@ import {
   rollbackConfigReleaseApi,
   submitConfigReleaseApi,
 } from '#/api';
+import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
 
 defineOptions({ name: 'SystemConfigReleases' });
 
+const router = useRouter();
 const userStore = useUserStore();
 const currentUserId = computed(() => userStore.userInfo?.userId || '');
 
@@ -54,6 +60,7 @@ const createSubmitting = ref(false);
 const selectableItems = ref<ConfigItem[]>([]);
 const selectedItemIds = ref<number[]>([]);
 const itemsLoading = ref(false);
+const declaredByKey = ref<Record<string, ConfigDeclaredKey>>({});
 
 const detailOpen = ref(false);
 const detail = ref<ConfigRelease>();
@@ -71,6 +78,13 @@ const rollbackLoading = ref(false);
 const rollback = reactive<{ comment: string; id: number }>({
   comment: '',
   id: 0,
+});
+
+const cancelOpen = ref(false);
+const cancelLoading = ref(false);
+const cancelForm = reactive<{ id: number; reason: string }>({
+  id: 0,
+  reason: '',
 });
 
 const pagination = reactive({
@@ -132,6 +146,18 @@ const [QueryForm, queryFormApi] = useVbenForm({
       fieldName: 'status',
       label: '状态',
     },
+    {
+      component: 'Input',
+      componentProps: { allowClear: true, placeholder: '名称或说明' },
+      fieldName: 'keyword',
+      label: '关键词',
+    },
+    {
+      component: 'Input',
+      componentProps: { allowClear: true, placeholder: '创建人 subject id' },
+      fieldName: 'owner',
+      label: '创建人',
+    },
   ],
   showDefaultActions: false,
 });
@@ -188,6 +214,12 @@ const columns: TableColumnsType = [
 const itemColumns: TableColumnsType = [
   { dataIndex: 'key', key: 'key', title: '配置键' },
   {
+    dataIndex: 'impact',
+    key: 'impact',
+    title: '生效方式',
+    width: 110,
+  },
+  {
     dataIndex: 'current_version',
     key: 'current_version',
     title: '版本',
@@ -195,6 +227,30 @@ const itemColumns: TableColumnsType = [
   },
   { dataIndex: 'value_type', key: 'value_type', title: '类型', width: 100 },
 ];
+
+const selectionImpact = computed(() => {
+  let hot = 0;
+  let restart = 0;
+  for (const item of selectableItems.value) {
+    if (!selectedItemIds.value.includes(item.id)) {
+      continue;
+    }
+    if (declaredByKey.value[item.key]?.hot_whitelist) {
+      hot += 1;
+    } else {
+      restart += 1;
+    }
+  }
+  return { hot, restart };
+});
+
+function impactLabel(key: string) {
+  return declaredByKey.value[key]?.hot_whitelist ? '热更' : '需重启';
+}
+
+function impactColor(key: string) {
+  return declaredByKey.value[key]?.hot_whitelist ? 'success' : 'warning';
+}
 
 async function loadNamespaces() {
   const result = await listConfigNamespacesApi();
@@ -220,7 +276,9 @@ async function fetchList() {
   try {
     const result = await listConfigReleasesApi({
       env: values.env as ConfigEnv,
+      keyword: (values.keyword as string) || undefined,
       namespace: values.namespace,
+      owner: (values.owner as string) || undefined,
       page: pagination.current,
       pageSize: pagination.pageSize,
       status: (values.status || undefined) as ConfigReleaseStatus | undefined,
@@ -245,10 +303,24 @@ function handleTableChange(page: TablePaginationConfig) {
   fetchList();
 }
 
+async function loadDeclaredKeys(namespace: string) {
+  if (!namespace) {
+    declaredByKey.value = {};
+    return;
+  }
+  const result = await listConfigDeclaredKeysApi(namespace);
+  const next: Record<string, ConfigDeclaredKey> = {};
+  for (const item of result.items) {
+    next[item.key] = item;
+  }
+  declaredByKey.value = next;
+}
+
 async function loadSelectableItems(env: ConfigEnv, namespace: string) {
   itemsLoading.value = true;
   selectedItemIds.value = [];
   try {
+    await loadDeclaredKeys(namespace);
     const all: ConfigItem[] = [];
     let page = 1;
     for (;;) {
@@ -330,6 +402,7 @@ async function submitCreate() {
 
 async function openDetail(record: ConfigRelease) {
   try {
+    await loadDeclaredKeys(record.namespace);
     detail.value = await getConfigReleaseApi(record.id);
     detailOpen.value = true;
   } catch (error) {
@@ -402,13 +475,50 @@ function openRollback(record: ConfigRelease) {
   rollbackOpen.value = true;
 }
 
+function openCancel(record: ConfigRelease) {
+  cancelForm.id = record.id;
+  cancelForm.reason = '';
+  cancelOpen.value = true;
+}
+
+async function confirmCancel() {
+  if (!cancelForm.reason.trim()) {
+    message.error('取消必须填写原因');
+    return;
+  }
+  cancelLoading.value = true;
+  try {
+    await cancelConfigReleaseApi(cancelForm.id, {
+      reason: cancelForm.reason.trim(),
+    });
+    message.success('已取消发布单');
+    cancelOpen.value = false;
+    fetchList();
+  } catch (error) {
+    message.error(getConfigErrorMessage(error, '取消失败'));
+  } finally {
+    cancelLoading.value = false;
+  }
+}
+
+function canCancel(record: ConfigRelease) {
+  return (
+    record.status === 'draft' ||
+    record.status === 'pending_review' ||
+    record.status === 'approved'
+  );
+}
+
 async function confirmRollback() {
   rollbackLoading.value = true;
   try {
     await rollbackConfigReleaseApi(rollback.id, {
+      break_glass: true,
+      break_glass_reason:
+        rollback.comment || 'emergency rollback from admin UI',
       comment: rollback.comment || undefined,
     });
-    message.success('已发起回滚（生成新 Release 指向历史快照）');
+    message.success('已破玻璃回滚（须 24h 内补审）');
     rollbackOpen.value = false;
     fetchList();
   } catch (error) {
@@ -426,10 +536,13 @@ function canApprove(record: ConfigRelease) {
 }
 
 function onItemSelectChange(keys: (number | string)[]) {
-  selectedItemIds.value = keys.map((key) => Number(key));
+  selectedItemIds.value = keys.map(Number);
 }
 
 onMounted(async () => {
+  if (await redirectIfInstallRequired(router)) {
+    return;
+  }
   try {
     await loadNamespaces();
     await fetchList();
@@ -520,6 +633,16 @@ onMounted(async () => {
               发布
             </Button>
             <Button
+              v-if="canCancel(record as ConfigRelease)"
+              v-access:code="'config:write'"
+              danger
+              size="small"
+              type="link"
+              @click="openCancel(record as ConfigRelease)"
+            >
+              取消
+            </Button>
+            <Button
               v-if="
                 record.status === 'active' || record.status === 'superseded'
               "
@@ -550,6 +673,12 @@ onMounted(async () => {
           按表单环境刷新
         </Button>
       </div>
+      <p v-if="selectedItemIds.length > 0" class="mb-2 text-sm text-gray-500">
+        已选 {{ selectedItemIds.length }} 项：热更 {{ selectionImpact.hot }} /
+        需重启
+        {{ selectionImpact.restart }}
+        （ADR-0015 白名单）
+      </p>
       <Table
         :columns="itemColumns"
         :data-source="selectableItems"
@@ -562,7 +691,15 @@ onMounted(async () => {
         :scroll="{ y: 320 }"
         row-key="id"
         size="small"
-      />
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'impact'">
+            <Tag :color="impactColor((record as ConfigItem).key)">
+              {{ impactLabel((record as ConfigItem).key) }}
+            </Tag>
+          </template>
+        </template>
+      </Table>
     </Modal>
 
     <Drawer v-model:open="detailOpen" title="发布单详情" width="640">
@@ -575,7 +712,9 @@ onMounted(async () => {
           <Descriptions.Item label="状态">
             {{ statusText[detail.status] }}
           </Descriptions.Item>
-          <Descriptions.Item label="策略">{{ detail.strategy }}</Descriptions.Item>
+          <Descriptions.Item label="策略">
+            {{ detail.strategy }}
+          </Descriptions.Item>
           <Descriptions.Item label="快照哈希">
             {{ detail.snapshot_hash }}
           </Descriptions.Item>
@@ -586,7 +725,13 @@ onMounted(async () => {
         <div class="mb-2 mt-4 font-medium">包含键</div>
         <Table
           :columns="[
-            { dataIndex: 'config_key', title: '键' },
+            { dataIndex: 'config_key', key: 'config_key', title: '键' },
+            {
+              dataIndex: 'impact',
+              key: 'impact',
+              title: '生效方式',
+              width: 110,
+            },
             { dataIndex: 'item_version', title: '版本', width: 90 },
             { dataIndex: 'value_hash', title: '哈希' },
           ]"
@@ -594,7 +739,15 @@ onMounted(async () => {
           :pagination="false"
           row-key="item_id"
           size="small"
-        />
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'impact'">
+              <Tag :color="impactColor(record.config_key)">
+                {{ impactLabel(record.config_key) }}
+              </Tag>
+            </template>
+          </template>
+        </Table>
       </template>
     </Drawer>
 
@@ -606,7 +759,9 @@ onMounted(async () => {
     >
       <Input.TextArea
         v-model:value="decide.comment"
-        :placeholder="decide.decision === 'rejected' ? '驳回意见必填' : '可选意见'"
+        :placeholder="
+          decide.decision === 'rejected' ? '驳回意见必填' : '可选意见'
+        "
         :rows="4"
       />
     </Modal>
@@ -623,6 +778,22 @@ onMounted(async () => {
       <Input.TextArea
         v-model:value="rollback.comment"
         placeholder="回滚说明"
+        :rows="4"
+      />
+    </Modal>
+
+    <Modal
+      v-model:open="cancelOpen"
+      :confirm-loading="cancelLoading"
+      title="取消发布单"
+      @ok="confirmCancel"
+    >
+      <p class="mb-2 text-sm text-gray-500">
+        仅未生效的草稿 / 待审 / 已通过发布单可取消；取消后不可恢复。
+      </p>
+      <Input.TextArea
+        v-model:value="cancelForm.reason"
+        placeholder="取消原因（必填）"
         :rows="4"
       />
     </Modal>

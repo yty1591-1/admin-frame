@@ -1,0 +1,16 @@
+{
+  "drill": "configcenter-nofile",
+  "date": "2026-11-16",
+  "env": "local-as-staging",
+  "result": "pass",
+  "tests": [
+    "pkg/config.TestLoaderAllowsMissingFileWithValues",
+    "cmd/internal/appconfig.TestLoadWithoutConfigFile",
+    "cmd/internal/appconfig.TestSnapshotSwitchOverridesConfig",
+    "cmd/internal/appconfig.TestSnapshotSwitchDisabledNamespaceKeepsFile",
+    "cmd/internal/snapshotconfig.TestReportMissingFileIsSkipped",
+    "cmd/internal/snapshotconfig.TestRunPeriodicStopsWithoutBaseline"
+  ],
+  "gate": "CONFIGCENTER_ALLOW_MISSING_CONFIG + non-empty snapshot",
+  "blocks_deletion_until": "pass"
+}

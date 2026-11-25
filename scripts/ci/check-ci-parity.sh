@@ -37,6 +37,7 @@ declare -A PARITY=(
   [openapi]="openapi"
   [openapi-docs]="openapi-artifacts"
   [build]="build"
+  [frontend]="frontend-check"
   [deploy]="check-deploy check-alerts check-release"
   [image]="image-scan"
   [release]="build check-release check-sbom"

@@ -71,10 +71,25 @@ func TestSecretLifecycleAndResolve(t *testing.T) {
 		t.Fatalf("status = %s", secret.Status)
 	}
 
-	if _, err := svc.CreateGrant(ctx, app.CreateGrantInput{
+	grant, err := svc.CreateGrant(ctx, app.CreateGrantInput{
 		SecretID: secret.ID, ServiceIdentity: "spiffe://local/biz-api", Actor: creator,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateGrant: %v", err)
+	}
+	if grant.Permission != "pending" {
+		t.Fatalf("grant permission = %s, want pending", grant.Permission)
+	}
+	if _, err := svc.Resolve(ctx, app.ResolveInput{
+		Env: "dev", Namespace: "platform", Names: []string{"platform.demo.hmac_key"},
+		ServiceIdentity: "spiffe://local/biz-api",
+	}); err == nil {
+		t.Fatal("resolve with pending grant must fail")
+	}
+	if _, err := svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	}); err != nil {
+		t.Fatalf("Approve grant: %v", err)
 	}
 
 	if _, err := svc.Resolve(ctx, app.ResolveInput{
@@ -98,13 +113,52 @@ func TestSecretLifecycleAndResolve(t *testing.T) {
 		ID: secret.ID, Plaintext: "rotated-secret-value", Actor: creator,
 	})
 	if err != nil {
-		t.Fatalf("Rotate: %v", err)
+		t.Fatalf("Rotate submit: %v", err)
+	}
+	if secret.PendingAction != domain.PendingActionRotate {
+		t.Fatalf("pending_action = %q", secret.PendingAction)
+	}
+	if secret.ActiveVersion == nil || *secret.ActiveVersion != 1 {
+		t.Fatalf("active version before approve = %v", secret.ActiveVersion)
+	}
+	items, err = svc.Resolve(ctx, app.ResolveInput{
+		Env: "dev", Namespace: "platform", Names: []string{"platform.demo.hmac_key"},
+		ServiceIdentity: "spiffe://local/biz-api",
+	})
+	if err != nil || items[0].Value != "super-secret-value" {
+		t.Fatalf("resolve during pending rotate: %v %+v", err, items)
+	}
+	secret, err = svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	})
+	if err != nil {
+		t.Fatalf("Approve rotate: %v", err)
 	}
 	if secret.ActiveVersion == nil || *secret.ActiveVersion != 2 {
 		t.Fatalf("active version = %v", secret.ActiveVersion)
 	}
+	items, err = svc.Resolve(ctx, app.ResolveInput{
+		Env: "dev", Namespace: "platform", Names: []string{"platform.demo.hmac_key"},
+		ServiceIdentity: "spiffe://local/biz-api",
+	})
+	if err != nil || items[0].Value != "rotated-secret-value" {
+		t.Fatalf("resolve after rotate: %v %+v", err, items)
+	}
+
 	if _, err := svc.RevokeSecret(ctx, secret.ID, "drill", creator); err != nil {
-		t.Fatalf("Revoke: %v", err)
+		t.Fatalf("Revoke submit: %v", err)
+	}
+	if _, err := svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	}); err != nil {
+		t.Fatalf("Approve revoke: %v", err)
+	}
+	secret, err = svc.Get(ctx, secret.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if secret.Status != domain.SecretStatusRevoked {
+		t.Fatalf("status after revoke = %s", secret.Status)
 	}
 }
 
@@ -116,5 +170,62 @@ func TestSecretRuleGenerate(t *testing.T) {
 	}
 	if len(value) < 16 {
 		t.Fatalf("generated too short: %q", value)
+	}
+}
+
+func TestActivateVersionRequiresBreakGlass(t *testing.T) {
+	svc, _ := newSecretService(t)
+	ctx := context.Background()
+	creator := app.Actor{SubjectID: "u-create", Channel: "admin"}
+	approver := app.Actor{SubjectID: "u-approve", Channel: "admin"}
+
+	secret, err := svc.CreateSecret(ctx, app.CreateSecretInput{
+		Env: "dev", Namespace: "platform", Name: "platform.demo.hmac_key",
+		Owner: "team-platform", Plaintext: "super-secret-value", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+	if _, err := svc.SubmitSecret(ctx, secret.ID, creator); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	secret, err = svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	})
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	secret, err = svc.RotateSecret(ctx, app.RotateSecretInput{
+		ID: secret.ID, Plaintext: "rotated-secret-value", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	secret, err = svc.ApproveSecret(ctx, app.ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved, Actor: approver,
+	})
+	if err != nil {
+		t.Fatalf("Approve rotate: %v", err)
+	}
+
+	if _, err := svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1, Actor: creator,
+	}); err == nil {
+		t.Fatal("activate without break_glass must fail")
+	}
+	if _, err := svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1, BreakGlass: true, Actor: creator,
+	}); err == nil {
+		t.Fatal("activate without break_glass_reason must fail")
+	}
+	secret, err = svc.ActivateVersion(ctx, app.ActivateVersionInput{
+		SecretID: secret.ID, Version: 1,
+		BreakGlass: true, BreakGlassReason: "incident rollback drill", Actor: creator,
+	})
+	if err != nil {
+		t.Fatalf("ActivateVersion: %v", err)
+	}
+	if secret.ActiveVersion == nil || *secret.ActiveVersion != 1 {
+		t.Fatalf("active version after activate = %v", secret.ActiveVersion)
 	}
 }

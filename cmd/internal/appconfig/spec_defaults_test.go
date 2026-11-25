@@ -78,6 +78,8 @@ func defaultByYAMLPath(cfg any, path string) (string, bool) {
 		return strconv.FormatBool(value.Bool()), true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return strconv.FormatInt(value.Int(), 10), true
+	case reflect.Float32, reflect.Float64:
+		return strconv.FormatFloat(value.Float(), 'f', -1, 64), true
 	default:
 		return "", false
 	}

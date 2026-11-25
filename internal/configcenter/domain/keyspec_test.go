@@ -3,6 +3,7 @@ package domain
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func validDurationSpec() KeySpec {
@@ -14,6 +15,47 @@ func validDurationSpec() KeySpec {
 		Description: "HTTP 请求超时",
 		Owner:       "team-platform",
 		Reloadable:  true,
+	}
+}
+
+func TestKeySpecReloadModeAndExpiresAt(t *testing.T) {
+	t.Parallel()
+	spec := validDurationSpec()
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if spec.ReloadMode != ReloadHot || !spec.Reloadable {
+		t.Fatalf("reloadable=true must normalize to hot, got mode=%q reloadable=%v",
+			spec.ReloadMode, spec.Reloadable)
+	}
+	startup := validDurationSpec()
+	startup.Reloadable = false
+	startup.ReloadMode = ""
+	if err := startup.Normalize(); err != nil {
+		t.Fatalf("startup normalize: %v", err)
+	}
+	if startup.ReloadMode != ReloadStartup {
+		t.Fatalf("want startup, got %q", startup.ReloadMode)
+	}
+	bad := validDurationSpec()
+	bad.ReloadMode = "warm"
+	if err := bad.Normalize(); err == nil {
+		t.Fatal("invalid reload_mode must fail normalize")
+	}
+	disagree := validDurationSpec()
+	disagree.ReloadMode = ReloadStartup
+	disagree.Reloadable = true
+	if err := disagree.Validate(); err == nil {
+		t.Fatal("reload_mode/reloadable disagreement must fail")
+	}
+	expired := validDurationSpec()
+	zero := time.Time{}
+	expired.ExpiresAt = &zero
+	if err := expired.Validate(); err == nil {
+		t.Fatal("zero expires_at must fail")
 	}
 }
 

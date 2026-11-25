@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 
+	"github.com/admin-frame/admin-frame/internal/shared/deployenv"
 	"github.com/admin-frame/admin-frame/pkg/config"
 )
 
@@ -27,17 +28,20 @@ func redactDSN(dsn string) string {
 }
 
 // IsProdEnv 报告是否为生产环境，供平台装配层复用同一判定。
-func IsProdEnv(env string) bool { return isProdEnv(env) }
+func IsProdEnv(env string) bool { return deployenv.IsProd(env) }
 
-// isProdEnv 报告环境是否为生产。
-func isProdEnv(env string) bool {
-	return strings.EqualFold(strings.TrimSpace(env), "prod")
-}
+// IsProdLikeEnv 报告环境是否按生产标准校验（prod / staging）。
+func IsProdLikeEnv(env string) bool { return deployenv.IsProdLike(env) }
 
-// isProdLikeEnv 报告环境是否按生产标准校验（prod / staging）。
-func isProdLikeEnv(env string) bool {
-	return isProdEnv(env) || strings.EqualFold(strings.TrimSpace(env), "staging")
-}
+// IsLocalDevEnv 报告是否为允许本地开发回退的环境（local / dev / test）。
+//
+// staging/prod 以及未声明（空）一律返回 false，避免「Validate 后补 Env」或
+// 漏注入时误开源码内固定密钥（CC-R-02）。
+func IsLocalDevEnv(env string) bool { return deployenv.IsLocalDev(env) }
+
+// 内部别名：历史调用点仍用小写名。
+func isProdEnv(env string) bool     { return deployenv.IsProd(env) }
+func isProdLikeEnv(env string) bool { return deployenv.IsProdLike(env) }
 
 // NewConfigLoader 构造进程配置加载器。
 //
@@ -46,17 +50,18 @@ func isProdLikeEnv(env string) bool {
 // （CONFIG_STANDARDS §9）。保持导出是为了让未来的长驻进程复用同一套校验。
 func NewConfigLoader(path string) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:     []string{path},
-		EnvPrefix: envPrefix,
-		Defaults:  (*Config).applyDefaults,
-		Normalize: (*Config).normalize,
-		Validate:  (*Config).Validate,
+		Files:            []string{path},
+		EnvPrefix:        envPrefix,
+		EnvPathAllowlist: InfraEnvPathAllowlist,
+		Defaults:         (*Config).applyDefaults,
+		Normalize:        (*Config).normalize,
+		Validate:         (*Config).Validate,
 	})
 }
 
-// LoadConfig 从 YAML 文件加载配置，应用默认值与环境变量覆盖后校验。
+// LoadConfig 从 YAML 文件加载配置，应用默认值与白名单环境变量后校验。
 //
-// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// 优先级：配置中心快照（若接入）> ADMIN_FRAME_DB_*/REDIS_* > 文件 > 默认值。
 // 环境变量无法解析（如非法 duration/bool）时返回错误，不再静默忽略；
 // 错误只包含字段路径与变量名，不含取值（SEC-05）。
 func LoadConfig(path string) (*Config, error) {
@@ -81,6 +86,7 @@ type dbOnlyConfig struct {
 func LoadDBConfig(path string) (DBConfig, error) {
 	opts := config.Options[dbOnlyConfig]{
 		EnvPrefix:          envPrefix,
+		EnvPathAllowlist:   []string{"db"},
 		AllowUnknownFields: true,
 	}
 	if path != "" {

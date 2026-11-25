@@ -27,7 +27,7 @@ func (c *Config) ValidateErrors(iamMode string) []error {
 		errs = append(errs, errors.New("channel is required"))
 	} else {
 		switch c.Channel {
-		case "admin", "biz", "c", "worker":
+		case "admin", "biz", "c", "worker", "internal":
 		default:
 			errs = append(errs, fmt.Errorf("unsupported channel: %s", c.Channel))
 		}

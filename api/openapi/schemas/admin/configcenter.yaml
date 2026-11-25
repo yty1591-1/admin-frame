@@ -28,6 +28,54 @@ components:
         total:
           type: integer
 
+    ConfigDeclaredKey:
+      type: object
+      description: 代码 key spec 声明（不含敏感默认值）。
+      properties:
+        key:
+          type: string
+        value_type:
+          type: string
+          enum: [string, int, bool, duration, json]
+        default:
+          type: string
+          description: 代码默认值；敏感键为空。
+        description:
+          type: string
+        owner:
+          type: string
+        reload_mode:
+          type: string
+          enum: [startup, hot]
+          description: KeySpec 声明的 reloadable 枚举（CFG-02）。
+        hot_whitelist:
+          type: boolean
+          description: |
+            是否属于 ADR-0015 运行期热更白名单（HotKeySet）。
+            仅 true 时发布后可在刷新周期内热更；false 表示需重启进程才生效。
+        sensitive:
+          type: boolean
+        required:
+          type: boolean
+        deprecated:
+          type: boolean
+        enum:
+          type: array
+          items:
+            type: string
+      required: [key, value_type, description, owner, reload_mode, hot_whitelist, sensitive, required, deprecated]
+
+    ConfigDeclaredKeyListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigDeclaredKey"
+        total:
+          type: integer
+
     ConfigItem:
       type: object
       description: |
@@ -156,6 +204,19 @@ components:
           description: 只追加新版本，不原地修改。
         change_summary:
           type: string
+        expected_version:
+          type: integer
+          format: int64
+          description: 元数据乐观锁版本；不匹配返回 40900。
+
+    ConfigItemTransition:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          enum: [draft, active, deprecated, archived]
+          description: 目标治理状态；须符合状态机（如 active→deprecated→archived）。
         expected_version:
           type: integer
           format: int64
@@ -408,6 +469,7 @@ components:
 
     ConfigReleaseRollback:
       type: object
+      required: [break_glass, break_glass_reason]
       properties:
         expected_pointer_version:
           type: integer
@@ -416,3 +478,19 @@ components:
         comment:
           type: string
           description: 回滚说明；服务端会生成新 Release 指向历史快照。
+        break_glass:
+          type: boolean
+          description: 必须为 true；回滚绕过双人审批（CC-R-08）。
+        break_glass_reason:
+          type: string
+          description: 破玻璃原因；审计后须在 24h 内补审。
+
+    ConfigReleaseCancel:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: 取消原因；写入审计。

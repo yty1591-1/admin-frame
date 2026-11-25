@@ -1,7 +1,7 @@
 # 开发 / 集成测试依赖服务：MySQL + Redis + MinIO。
 #
 # 由原先独立的集成测试 compose 与对象存储 compose 合并而来。
-# 面向本地联调与集成测试（ENT-16），端口固定、不做环境变量插值，便于直接调试。
+# 面向本地联调与集成测试（ENT-16），默认端口可直接联调。
 # 所有口令均为开发默认值，禁止用于任何真实环境（TESTING_STANDARDS TEST-05 / CI-12）。
 #
 # 用法：
@@ -11,7 +11,8 @@
 #   KEEP_INTEGRATION_STACK=1 bash scripts/ci/run-integration-tests.sh
 #
 # 端口：MySQL 3306、Redis 6379、MinIO 9000（Console 9001）。
-# 若本机已有容器占用这些端口，先停掉旧容器再 up，否则会报 ports are not available。
+# 默认端口被占用时，可设置 INTEGRATION_MYSQL_PORT、INTEGRATION_REDIS_PORT、
+# INTEGRATION_MINIO_PORT 和 INTEGRATION_MINIO_CONSOLE_PORT。
 #
 # 固定独立 project name，避免与其他 compose 文件的服务/网络互相覆盖。
 name: admin-frame-integration
@@ -25,7 +26,7 @@ services:
       MYSQL_USER: app
       MYSQL_PASSWORD: app
     ports:
-      - "3306:3306"
+      - "${INTEGRATION_MYSQL_PORT:-3306}:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
       interval: 5s
@@ -38,7 +39,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "6379:6379"
+      - "${INTEGRATION_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -52,8 +53,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${INTEGRATION_MINIO_PORT:-9000}:9000"
+      - "${INTEGRATION_MINIO_CONSOLE_PORT:-9001}:9001"
 
   # 一次性创建测试 bucket；使用 AWS CLI 重试等待 MinIO 就绪，避免依赖镜像内工具差异。
   minio-init:

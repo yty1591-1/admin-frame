@@ -12,6 +12,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "stub": "pnpm exec tsdown"
   },
   "files": [
@@ -34,7 +35,6 @@
     "archiver": "catalog:",
     "cheerio": "catalog:",
     "html-minifier-terser": "catalog:",
-    "resolve.exports": "catalog:",
     "vite-plugin-pwa": "catalog:",
     "vite-plugin-vue-devtools": "catalog:"
   },
@@ -44,7 +44,6 @@
     "@types/html-minifier-terser": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
     "@vitejs/plugin-vue-jsx": "catalog:",
-    "dayjs": "catalog:",
     "dotenv": "catalog:",
     "rollup-plugin-visualizer": "catalog:",
     "sass": "catalog:",

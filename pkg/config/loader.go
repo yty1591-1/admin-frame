@@ -44,18 +44,24 @@ type Options[T any] struct {
 	//
 	// 前缀只允许字母、数字、下划线与 -/./，内部统一转为大写并把分隔符换成 "_"。
 	EnvPrefix string
+	// EnvPathAllowlist 限制可被环境变量覆盖的 yaml 根段（如 "db","redis"）。
+	//
+	// 空表示不限制（仅测试夹具）；业务进程必须设为基础设施段，禁止
+	// ADMIN_FRAME_LOG_LEVEL / AUTH_JWT_SECRET 等业务键经环境变量注入。
+	EnvPathAllowlist []string
 	// LookupEnv 读取环境变量；nil 时使用 os.LookupEnv。
 	LookupEnv func(key string) (value string, ok bool)
 	// Values 返回配置中心快照的扁平取值（yaml 路径 → 字符串）。
 	//
-	// 在文件与环境变量之后覆盖，优先级最高（CFG-04：配置中心 > 代码默认值）；
-	// 未出现在快照中的键保持文件/环境变量/默认值，便于迁移期只接管已声明键。
+	// 在默认值与可选文件之后、白名单环境变量之前覆盖（CFG-04：配置中心 >
+	// 代码默认值；db/redis 基础设施 env 作为补充通道可再覆盖）。
 	// nil 表示不接入配置中心；返回错误则整体加载失败。
 	Values func() (map[string]string, error)
-	// AllowMissingFiles 允许 opts.Files 中的文件不存在（无文件启动演练）。
+	// AllowMissingFiles 允许 opts.Files 中的文件不存在（无文件启动）。
 	//
 	// 仅跳过顶层文件缺失；include 缺失仍然报错，避免静默丢模块。开启后
-	// 文件层不参与取值，由默认值 / 环境变量 / 配置中心快照提供。
+	// 文件层不参与取值；业务取值由签名快照与代码默认值提供，基础设施口令
+	// 仍可由 EnvPathAllowlist 内的环境变量注入。
 	AllowMissingFiles bool
 	// ValueAliases 把配置中心键映射到配置文件 yaml 路径。
 	//
@@ -85,7 +91,11 @@ type Options[T any] struct {
 	AllowUnknownFields bool
 }
 
-// Loader 按「默认值 → 文件 → 环境变量 → 配置中心快照 → 校验」加载 T 类型配置。
+// Loader 按「默认值 →（可选）文件 → 配置中心快照 → 白名单环境变量 → 校验」加载 T。
+//
+// CFG-04：业务配置以「配置中心快照 > 代码默认值」为准；AllowMissingFiles
+// 时跳过缺失文件。基础设施口令仅经 EnvPathAllowlist（db/redis）与密钥
+// Provider / secretclient 注入，不属于业务配置层。
 //
 // 构造后只读，可并发调用 Load；每次调用返回独立副本。
 type Loader[T any] struct {
@@ -144,8 +154,9 @@ func NewLoader[T any](opts Options[T]) (loader *Loader[T], err error) {
 
 // Load 按优先级加载并校验配置，返回独立副本。
 //
-// 执行顺序：Defaults → Files（按声明顺序，展开 include）→ 环境变量 →
-// 配置中心快照 → Normalize → Validate。
+// 执行顺序：Defaults → Files（按声明顺序，展开 include）→ 配置中心快照 →
+// 环境变量（可选 EnvPathAllowlist，如仅 db/redis）→ Normalize → Validate。
+// 基础设施 env 放在快照之后，使本机 DSN/驱动可覆盖播种默认值（CFG-04 补充通道）。
 // 失败返回包装 ErrInvalidConfig 的错误，并按原因附加 ErrMissingFile、
 // ErrFileUnreadable、ErrMalformedFile、ErrUnknownField、ErrEnvOverride 或
 // ErrSnapshotOverride；语义码为 InvalidArgument（文件不存在为 NotFound）。
@@ -166,17 +177,17 @@ func (l *Loader[T]) Load() (cfg *T, err error) {
 			return nil, err
 		}
 	}
-	if l.opts.EnvPrefix != "" {
-		if err := BindEnv(&value, l.opts.EnvPrefix, l.opts.LookupEnv); err != nil {
-			return nil, err
-		}
-	}
 	if l.opts.Values != nil {
 		values, err := l.opts.Values()
 		if err != nil {
 			return nil, normalizeError(err)
 		}
 		if err := BindValues(&value, applyValueAliases(values, l.opts.ValueAliases)); err != nil {
+			return nil, err
+		}
+	}
+	if l.opts.EnvPrefix != "" {
+		if err := BindEnvFiltered(&value, l.opts.EnvPrefix, l.opts.EnvPathAllowlist, l.opts.LookupEnv); err != nil {
 			return nil, err
 		}
 	}

@@ -9,6 +9,26 @@ import (
 	"time"
 )
 
+// ReloadMode 是 CFG-02 的 reloadable 枚举（startup | hot）。
+type ReloadMode string
+
+const (
+	// ReloadStartup 表示仅启动期读取，变更需重启。
+	ReloadStartup ReloadMode = "startup"
+	// ReloadHot 表示允许热更（仍须进入 HotKeys 白名单才实际热更）。
+	ReloadHot ReloadMode = "hot"
+)
+
+// Valid 报告 ReloadMode 是否为已知值。
+func (m ReloadMode) Valid() bool {
+	switch m {
+	case ReloadStartup, ReloadHot:
+		return true
+	default:
+		return false
+	}
+}
+
 // KeySpec 是代码侧声明的配置键契约（CFG-07：禁止硬编码，键必须声明
 // owner、类型、默认值、校验规则与 reloadable）。
 //
@@ -27,8 +47,12 @@ type KeySpec struct {
 	Description string
 	// Owner 是负责人或团队，写入 config_item.owner。
 	Owner string
-	// Reloadable 表示是否支持热更；false 表示启动期读取，变更需重启。
+	// ReloadMode 是 CFG-02 reloadable(startup|hot)；空时由 Reloadable 推导。
+	ReloadMode ReloadMode
+	// Reloadable 是兼容布尔；与 ReloadMode 在 Validate 时互相同步（CC-R-09）。
 	Reloadable bool
+	// ExpiresAt 是可选治理到期日（UTC）；nil 表示无到期（CFG-02 expires_at）。
+	ExpiresAt *time.Time
 	// Sensitive 表示敏感项；M1 仅允许登记，不允许写入值（走 config_secret，M2）。
 	Sensitive bool
 	// Required 表示必须由配置中心提供；与 Default 互斥（有默认值就不算必填）。
@@ -108,10 +132,50 @@ func (s KeySpec) Validate() error {
 			return fmt.Errorf("configcenter: key spec %s has invalid pattern: %w", s.Key, err)
 		}
 	}
+	if s.ReloadMode != "" && !s.ReloadMode.Valid() {
+		return fmt.Errorf("configcenter: key spec %s reload_mode must be startup or hot, got %q",
+			s.Key, s.ReloadMode)
+	}
+	if s.ReloadMode.Valid() && s.Reloadable != (s.ReloadMode == ReloadHot) {
+		return fmt.Errorf("configcenter: key spec %s reload_mode=%q disagrees with reloadable=%v",
+			s.Key, s.ReloadMode, s.Reloadable)
+	}
+	if s.ExpiresAt != nil && s.ExpiresAt.IsZero() {
+		return fmt.Errorf("configcenter: key spec %s expires_at must not be zero time", s.Key)
+	}
 	if s.Default != "" {
 		if err := s.ValidateValue(s.Default); err != nil {
 			return fmt.Errorf("configcenter: key spec %s default is invalid: %w", s.Key, err)
 		}
+	}
+	return nil
+}
+
+// EffectiveReloadMode 返回规范化后的 reloadable 枚举。
+func (s KeySpec) EffectiveReloadMode() ReloadMode {
+	if s.ReloadMode.Valid() {
+		return s.ReloadMode
+	}
+	if s.Reloadable {
+		return ReloadHot
+	}
+	return ReloadStartup
+}
+
+// Normalize 将 ReloadMode 与 Reloadable 对齐（CC-R-09 / CFG-02）；登记前调用。
+func (s *KeySpec) Normalize() error {
+	switch {
+	case s.ReloadMode == "":
+		if s.Reloadable {
+			s.ReloadMode = ReloadHot
+		} else {
+			s.ReloadMode = ReloadStartup
+		}
+	case s.ReloadMode.Valid():
+		s.Reloadable = s.ReloadMode == ReloadHot
+	default:
+		return fmt.Errorf("configcenter: key spec %s reload_mode must be startup or hot, got %q",
+			s.Key, s.ReloadMode)
 	}
 	return nil
 }

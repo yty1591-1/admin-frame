@@ -43,9 +43,14 @@ func (c *Config) validateDB() []error {
 }
 
 // validateEnv 校验环境枚举与生产互斥项。
+//
+// 空 env 一律拒绝：否则 IsProdLike/IsLocalDev 均 false，mTLS / 裸密钥 /
+// namespace allowlist 等门禁会被静默绕过。
 func (c *Config) validateEnv() []error {
 	switch strings.ToLower(strings.TrimSpace(c.Env)) {
-	case "", "local", "dev", "test", "staging", "prod":
+	case "local", "dev", "test", "staging", "prod":
+	case "":
+		return []error{fmt.Errorf("env is required")}
 	default:
 		return []error{fmt.Errorf("unsupported env: %s", c.Env)}
 	}

@@ -26,6 +26,8 @@ func FlatValues(path string) (map[string]string, error) {
 }
 
 // mergeFileChain 按 include 顺序把文件链合并进 dst，语义与 Loader.loadFileChain 一致。
+//
+//nolint:gocritic // ptrToRefParam: 递归合并需要可变 map 指针，与 Loader 语义一致。
 func mergeFileChain(path string, dst *map[string]any, chain []string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {

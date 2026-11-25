@@ -8,7 +8,9 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4
 PYTHON ?= python3
 
 .PHONY: build build-admin build-biz build-c build-worker build-migrate \
-	run-admin run-biz run-c run-worker \
+	run-admin run-biz run-c run-worker run-config \
+	local-deps local-env local-migrate local-start local-stop local-restart local-status local-up \
+	prod-deps prod-env prod-certs prod-vault-init prod-migrate prod-start prod-stop prod-restart prod-status prod-up \
 	test test-ci test-integration check-test-gates lint fmt fmt-check tidy tidy-check \
 	check-transport check-debug check-openapi openapi-docs openapi-client openapi-bundle openapi-changelog openapi-artifacts check-deps check-no-static-config \
 	check-migrations check-reliability check-observability \
@@ -18,7 +20,7 @@ PYTHON ?= python3
         check-authn check-deploy check-alerts check-backup check-configcenter check-doclinks check-secret-provider gitee-job ci ci-deps mock migrate-up vuln docker docker-admin docker-push ops-image supply-chain-rehearsal \
         ci-full ci-strict ci-race image-scan
 
-build: build-admin build-biz build-c build-worker build-migrate
+build: build-admin build-biz build-c build-worker build-config build-migrate
 
 build-admin:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/admin-api ./cmd/admin-api
@@ -32,20 +34,122 @@ build-c:
 build-worker:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/worker ./cmd/worker
 
+build-config:
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/config-api ./cmd/config-api
+
 build-migrate:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/migrate ./cmd/migrate
 
+# 业务进程按 ADR-0016 从 config-api 拉取；先起 config-api，再导出
+# CONFIG_API_URL / CONFIG_SERVICE_IDENTITY / CONFIGCENTER_ENV 与 ADMIN_FRAME_DB_* /
+# ADMIN_FRAME_REDIS_*（见 docs/local-development.md）。
+run-config: build-config
+	./$(BIN_DIR)/config-api
+
 run-admin: build-admin
-	./$(BIN_DIR)/admin-api -config configs/dev/admin.yaml
+	./$(BIN_DIR)/admin-api
 
 run-biz: build-biz
-	./$(BIN_DIR)/biz-api -config configs/dev/biz.yaml
+	./$(BIN_DIR)/biz-api
 
 run-c: build-c
-	./$(BIN_DIR)/c-api -config configs/dev/c.yaml
+	./$(BIN_DIR)/c-api
 
 run-worker: build-worker
-	./$(BIN_DIR)/worker -config configs/dev/worker.yaml
+	./$(BIN_DIR)/worker
+
+# ---------- 本地开发编排（五进程 + 依赖）----------
+# 文档：docs/local-development.md
+# Windows 原生 PowerShell 可用：pwsh -File scripts/local/dev-services.ps1 <action>
+
+local-deps:
+	docker compose -f docker-compose.integration.yml up -d mysql redis
+
+local-env:
+	@bash -c 'test -f scripts/local/.env || cp scripts/local/env.example scripts/local/.env; echo "OK: scripts/local/.env"'
+
+local-migrate: local-env build-migrate
+	@bash -c 'set -a; . scripts/local/.env; set +a; exec ./$(BIN_DIR)/migrate -dir migrations -action up'
+
+local-start: local-env
+	bash scripts/local/dev-services.sh start
+
+local-stop:
+	bash scripts/local/dev-services.sh stop
+
+local-restart: local-env
+	bash scripts/local/dev-services.sh restart
+
+local-status:
+	bash scripts/local/dev-services.sh status
+
+# 重跑安装向导（config-api 需已就绪；ready 时为空操作）
+local-install:
+	bash scripts/local/dev-services.sh install
+
+# 一键：依赖 → env → 迁移 → 启动（首次本机推荐）
+local-up: local-deps local-env
+	bash scripts/local/dev-services.sh start --migrate
+
+# ---------- 本机 prod 演练编排（Vault + mTLS + 五进程）----------
+# 文档：docs/prod-rehearsal.md
+# Windows_NT（原生 make）：直接走 prod-services.ps1。
+# 其它（含 WSL）：bash prod-services.sh；WSL/Git Bash 内会再转调 .ps1（路径已转换）。
+# 勿在 WSL 里用 nohup 拉 Windows .exe。
+
+prod-deps:
+	docker compose -f docker-compose.prod-rehearsal.yml up -d --wait
+
+prod-env:
+	@bash -c 'test -f scripts/prod/.env || cp scripts/prod/env.example scripts/prod/.env; echo "OK: scripts/prod/.env"'
+
+prod-certs:
+	bash scripts/prod/gen-mtls-certs.sh
+
+prod-vault-init:
+	bash scripts/prod/vault-init.sh
+
+ifeq ($(OS),Windows_NT)
+PROD_PS = powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prod/prod-services.ps1
+
+prod-migrate: prod-env
+	$(PROD_PS) migrate
+
+prod-start: prod-env prod-vault-init
+	$(PROD_PS) start
+
+prod-stop:
+	$(PROD_PS) stop
+
+prod-restart: prod-env prod-vault-init
+	$(PROD_PS) restart
+
+prod-status:
+	$(PROD_PS) status
+
+# 一键：依赖 → env → 证书 → Vault Transit → 迁移 → 启动
+prod-up: prod-deps prod-env prod-certs prod-vault-init
+	$(PROD_PS) start -Migrate
+else
+prod-migrate: prod-env
+	bash scripts/prod/prod-services.sh migrate
+
+prod-start: prod-env prod-vault-init
+	bash scripts/prod/prod-services.sh start
+
+prod-stop:
+	bash scripts/prod/prod-services.sh stop
+
+prod-restart: prod-env prod-vault-init
+	bash scripts/prod/prod-services.sh restart
+
+prod-status:
+	bash scripts/prod/prod-services.sh status
+
+# 一键：依赖 → env → 证书 → Vault Transit → 迁移 → 启动
+prod-up: prod-deps prod-env prod-certs prod-vault-init
+	bash scripts/prod/prod-services.sh start --migrate
+endif
 
 test:
 	$(GO) test ./...
@@ -297,9 +401,15 @@ mock:
 	@command -v $(MOCKERY) >/dev/null 2>&1 || { echo "install mockery or set MOCKERY=..."; exit 1; }
 	$(MOCKERY)
 
+# 前端门禁（FE-CI-01）：与 CI frontend job 同源，刻意不并入 ci 目标。
+# 理由：pnpm install 依赖网络且耗时数分钟，本地 make ci 需保持可离线执行；
+# CI 侧由分支保护把 frontend 设为 required check 保证必跑。
+frontend-check:
+	bash scripts/ci/frontend-check.sh
+
 # 与 Gitee Go step 相同入口。示例: make gitee-job JOB=arch
 gitee-job:
-	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build"; exit 2; fi
+	@if [ -z "$(JOB)" ]; then echo "usage: make gitee-job JOB=fmt|mod|lint|test|vuln|arch|secrets|openapi|build|frontend"; exit 2; fi
 	bash scripts/ci/gitee-job.sh $(JOB)
 
 # 本地一键对齐 CI 必跑项（含 LIC/GEN/PERF 等门禁）。

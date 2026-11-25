@@ -5,6 +5,7 @@ import type { SodGroup, SodViolation } from '#/api';
 
 import { onMounted, reactive, ref } from 'vue';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import {
@@ -20,7 +21,6 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   createSodGroupApi,
   deleteSodGroupApi,

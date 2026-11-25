@@ -25,11 +25,12 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 )
 
-// Repositories 汇总三个持久化端口的 MySQL 实现。
+// Repositories 汇总持久化端口的 MySQL 实现。
 type Repositories struct {
 	Items    domain.ItemRepository
 	Releases domain.ReleaseRepository
 	Pointers domain.PointerRepository
+	Install  domain.InstallRepository
 }
 
 // New 构造共享同一连接池的仓储集合。
@@ -46,7 +47,11 @@ func New(sqlDB *sql.DB) (*Repositories, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Repositories{Items: items, Releases: releases, Pointers: pointers}, nil
+	install, err := NewInstallRepository(sqlDB)
+	if err != nil {
+		return nil, err
+	}
+	return &Repositories{Items: items, Releases: releases, Pointers: pointers, Install: install}, nil
 }
 
 // execer / queryer 让仓储在事务内复用调用方的 *sql.Tx。
@@ -292,9 +297,9 @@ func NewReleaseRepository(sqlDB *sql.DB) (*ReleaseRepository, error) {
 	return &ReleaseRepository{db: sqlDB}, nil
 }
 
-// releaseColumns 与 scanRelease 一一对齐。
+// releaseColumns 与 scanRelease 一一对齐（ADR-0016 起无签名列）。
 const releaseColumns = "id, env, namespace, release_no, name, description, status, strategy, " +
-	"target_rule_json, snapshot_hash, snapshot_size, snapshot_signature, snapshot_key_id, " +
+	"target_rule_json, snapshot_hash, snapshot_size, " +
 	"based_on_release_id, created_by, submitted_by, approved_by, approved_at, published_at, " +
 	"created_at, updated_at"
 
@@ -302,11 +307,11 @@ const releaseColumns = "id, env, namespace, release_no, name, description, statu
 func (r *ReleaseRepository) Create(ctx context.Context, release domain.Release, items []domain.ReleaseItem) error {
 	return db.WithinUnitOfWork(ctx, r.db, nil, func(ctx context.Context) error {
 		_, err := execFrom(ctx, r.db).ExecContext(ctx,
-			`INSERT INTO config_release (`+releaseColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO config_release (`+releaseColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			release.ID, release.Env, release.Namespace, release.ReleaseNo, release.Name,
 			release.Description, string(release.Status), string(release.Strategy),
 			nullJSON(release.TargetRuleJSON), release.SnapshotHash, release.SnapshotSize,
-			release.SnapshotSignature, release.SnapshotKeyID, nullInt64(release.BasedOnReleaseID),
+			nullInt64(release.BasedOnReleaseID),
 			release.CreatedBy, nullString(release.SubmittedBy), nullString(release.ApprovedBy),
 			nullTimePtr(release.ApprovedAt), nullTimePtr(release.PublishedAt),
 			release.CreatedAt.UTC(), release.UpdatedAt.UTC())
@@ -364,12 +369,21 @@ func (r *ReleaseRepository) GetByNo(ctx context.Context, env, namespace string, 
 }
 
 // List 按状态过滤列出发布（release_no 降序，稳定分页）；status 为空表示全部。
-func (r *ReleaseRepository) List(ctx context.Context, env, namespace string, status domain.ReleaseStatus, limit, offset int) ([]domain.Release, int, error) {
+func (r *ReleaseRepository) List(ctx context.Context, filter domain.ReleaseListFilter, limit, offset int) ([]domain.Release, int, error) {
 	where := " WHERE env = ? AND namespace = ?"
-	args := []any{env, namespace}
-	if status != "" {
+	args := []any{filter.Env, filter.Namespace}
+	if filter.Status != "" {
 		where += " AND status = ?"
-		args = append(args, string(status))
+		args = append(args, string(filter.Status))
+	}
+	if owner := strings.TrimSpace(filter.Owner); owner != "" {
+		where += " AND created_by = ?"
+		args = append(args, owner)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		needle := strings.ToLower(keyword)
+		where += " AND (INSTR(LOWER(name), ?) > 0 OR INSTR(LOWER(description), ?) > 0)"
+		args = append(args, needle, needle)
 	}
 	var total int
 	if err := queryFrom(ctx, r.db).QueryRowContext(ctx,
@@ -446,24 +460,10 @@ func (r *ReleaseRepository) Transition(ctx context.Context, id int64, from, to d
 	return nil
 }
 
-// UpdateSnapshotSignature 写入发布快照签名；发布不存在返回 ErrNotFound。
-//
-// 幂等：重复写入相同签名时 RowsAffected 可能为 0，此时按存在性返回成功。
-func (r *ReleaseRepository) UpdateSnapshotSignature(ctx context.Context, id int64, signature, keyID string, at time.Time) error {
-	res, err := execFrom(ctx, r.db).ExecContext(ctx,
-		`UPDATE config_release SET snapshot_signature = ?, snapshot_key_id = ?, updated_at = ?
-		 WHERE id = ?`, signature, keyID, at.UTC(), id)
-	if err != nil {
-		return fmt.Errorf("configcenter: update release signature: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("configcenter: update release signature affected: %w", err)
-	}
-	if affected == 0 {
-		if _, err := r.Get(ctx, id); err != nil {
-			return err
-		}
+// UpdateSnapshotSignature 已废弃（ADR-0016）；仅校验发布存在。
+func (r *ReleaseRepository) UpdateSnapshotSignature(ctx context.Context, id int64, _, _ string, _ time.Time) error {
+	if _, err := r.Get(ctx, id); err != nil {
+		return err
 	}
 	return nil
 }
@@ -561,6 +561,30 @@ func (r *PointerRepository) Get(ctx context.Context, env, namespace string) (dom
 	return pointer, nil
 }
 
+// ListByEnv 返回某环境下全部生效指针。
+func (r *PointerRepository) ListByEnv(ctx context.Context, env string) ([]domain.Pointer, error) {
+	rows, err := queryFrom(ctx, r.db).QueryContext(ctx,
+		`SELECT env, namespace, active_release_id, version, updated_at
+		 FROM config_release_pointer WHERE env = ? ORDER BY namespace`, env)
+	if err != nil {
+		return nil, fmt.Errorf("configcenter: list pointers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]domain.Pointer, 0, 8)
+	for rows.Next() {
+		var pointer domain.Pointer
+		if err := rows.Scan(&pointer.Env, &pointer.Namespace, &pointer.ActiveReleaseID,
+			&pointer.Version, &pointer.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("configcenter: scan pointer: %w", err)
+		}
+		out = append(out, pointer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("configcenter: list pointers rows: %w", err)
+	}
+	return out, nil
+}
+
 // Create 初始化指针；已存在返回 ErrDuplicateKey。
 func (r *PointerRepository) Create(ctx context.Context, pointer domain.Pointer) error {
 	_, err := execFrom(ctx, r.db).ExecContext(ctx,
@@ -653,9 +677,9 @@ func scanRelease(s scanner) (domain.Release, error) {
 	)
 	if err := s.Scan(&release.ID, &release.Env, &release.Namespace, &release.ReleaseNo,
 		&release.Name, &release.Description, &status, &strategy, &targetRule,
-		&release.SnapshotHash, &release.SnapshotSize, &release.SnapshotSignature,
-		&release.SnapshotKeyID, &basedOn, &release.CreatedBy, &submittedBy, &approvedBy,
-		&approvedAt, &publishedAt, &release.CreatedAt, &release.UpdatedAt); err != nil {
+		&release.SnapshotHash, &release.SnapshotSize, &basedOn, &release.CreatedBy,
+		&submittedBy, &approvedBy, &approvedAt, &publishedAt, &release.CreatedAt,
+		&release.UpdatedAt); err != nil {
 		return domain.Release{}, err
 	}
 	release.Status = domain.ReleaseStatus(status)

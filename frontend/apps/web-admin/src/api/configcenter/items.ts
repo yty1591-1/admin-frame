@@ -1,9 +1,11 @@
 import type {
+  ConfigDeclaredKeyListData,
   ConfigEnv,
   ConfigItem,
   ConfigItemCreatePayload,
   ConfigItemListData,
   ConfigItemStatus,
+  ConfigItemTransitionPayload,
   ConfigItemUpdatePayload,
   ConfigItemVersion,
   ConfigItemVersionListData,
@@ -23,6 +25,14 @@ export interface ConfigItemListParams extends PageQuery {
 
 export async function listConfigNamespacesApi(): Promise<ConfigNamespaceListData> {
   return requestClient.get<ConfigNamespaceListData>('/configs/namespaces');
+}
+
+export async function listConfigDeclaredKeysApi(
+  namespace: string,
+): Promise<ConfigDeclaredKeyListData> {
+  return requestClient.get<ConfigDeclaredKeyListData>(
+    `/configs/namespaces/${encodeURIComponent(namespace)}/keys`,
+  );
 }
 
 export async function listConfigItemsApi(
@@ -50,7 +60,17 @@ export async function updateConfigItemValueApi(
   return requestClient.put<ConfigItem>(`/configs/items/${id}`, payload);
 }
 
-export interface ConfigItemVersionListParams extends PageQuery {}
+export async function transitionConfigItemApi(
+  id: number,
+  payload: ConfigItemTransitionPayload,
+): Promise<ConfigItem> {
+  return requestClient.post<ConfigItem>(
+    `/configs/items/${id}/transition`,
+    payload,
+  );
+}
+
+export type ConfigItemVersionListParams = PageQuery;
 
 export async function listConfigItemVersionsApi(
   id: number,

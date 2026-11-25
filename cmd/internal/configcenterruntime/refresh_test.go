@@ -1,19 +1,69 @@
 package configcenterruntime
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/admin-frame/admin-frame/pkg/configclient"
 )
 
-// fakeRefreshSource 是可切换返回值的快照来源。
+type countingHandler struct {
+	info int
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelInfo && r.Message == "configcenter snapshot loaded" {
+		h.info++
+	}
+	return nil
+}
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestRefreshLoggerDedupsPerNamespace(t *testing.T) {
+	handler := &countingHandler{}
+	logFn := refreshLogger(slog.New(handler))
+	if logFn == nil {
+		t.Fatal("refreshLogger returned nil")
+	}
+
+	emit := func(ns string, release int64) {
+		logFn(configclient.RefreshEvent{
+			Loaded: true,
+			Snapshot: configclient.Snapshot{
+				Env: "prod", Namespace: ns, ReleaseID: release, ReleaseNo: 1,
+				Values: map[string]string{"k": "v"},
+			},
+		})
+	}
+
+	// 一轮多 namespace：各打一次。
+	emit("audit", 1)
+	emit("iam", 2)
+	emit("platform", 3)
+	if handler.info != 3 {
+		t.Fatalf("first round info=%d, want 3", handler.info)
+	}
+
+	// 同 release 再轮询：不应再打 INFO。
+	emit("audit", 1)
+	emit("iam", 2)
+	emit("platform", 3)
+	if handler.info != 3 {
+		t.Fatalf("unchanged round info=%d, want 3", handler.info)
+	}
+
+	// 仅 platform 升版：只多 1 条。
+	emit("platform", 4)
+	emit("audit", 1)
+	if handler.info != 4 {
+		t.Fatalf("after platform bump info=%d, want 4", handler.info)
+	}
+}
+
 type fakeRefreshSource struct {
 	snapshot configclient.Snapshot
 	err      error
@@ -26,48 +76,21 @@ func (f *fakeRefreshSource) Load(context.Context, string, string) (configclient.
 	return f.snapshot, nil
 }
 
-// loadSeedSnapshot 生成签名快照文件并返回快照与公钥配置串。
-func loadSeedSnapshot(t *testing.T, values map[string]string) (snapshot configclient.Snapshot, publicKeys string) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "seed.json")
-	publicKeys = writeSignedSnapshot(t, path, values)
-	store, err := configclient.NewFileStore(path)
-	if err != nil {
-		t.Fatalf("new file store: %v", err)
-	}
-	snapshot, err = store.Load(context.Background())
-	if err != nil {
-		t.Fatalf("load seed snapshot: %v", err)
-	}
-	return snapshot, publicKeys
-}
-
-func TestNewRefreshClientDisabledWithoutPublicKeys(t *testing.T) {
-	client, err := NewRefreshClient(RefreshConfig{
-		Source: &fakeRefreshSource{}, Env: "dev", Namespace: "platform",
-	})
+func TestNewRefreshClientWithoutSource(t *testing.T) {
+	client, err := NewRefreshClient(RefreshConfig{Env: "dev", Namespace: "platform"})
 	if err != nil || client != nil {
 		t.Fatalf("client = %v, %v; want nil, nil", client, err)
 	}
 }
 
-func TestNewRefreshClientRejectsInvalidPublicKeys(t *testing.T) {
-	if _, err := NewRefreshClient(RefreshConfig{
-		Source: &fakeRefreshSource{}, PublicKeys: "k1=not-base64", Env: "dev", Namespace: "platform",
-	}); err == nil {
-		t.Fatal("invalid public keys must be rejected")
+func TestRefreshClientLoadsSnapshot(t *testing.T) {
+	snapshot := configclient.Snapshot{
+		Env: "dev", Namespace: "platform", ReleaseID: 1, ReleaseNo: 1,
+		Values: map[string]string{"server.addr": ":9000"},
 	}
-}
-
-func TestRefreshClientLoadsAndPersistsSnapshot(t *testing.T) {
-	snapshot, publicKeys := loadSeedSnapshot(t, map[string]string{"server.addr": ":9000"})
-	livePath := filepath.Join(t.TempDir(), "live.json")
 	client, err := NewRefreshClient(RefreshConfig{
-		Source:       &fakeRefreshSource{snapshot: snapshot},
-		PublicKeys:   publicKeys,
-		SnapshotFile: livePath,
-		Env:          "dev",
-		Namespace:    "platform",
+		Source: &fakeRefreshSource{snapshot: snapshot},
+		Env:    "dev", Namespace: "platform",
 	})
 	if err != nil {
 		t.Fatalf("new refresh client: %v", err)
@@ -78,33 +101,16 @@ func TestRefreshClientLoadsAndPersistsSnapshot(t *testing.T) {
 	if got := client.String("server.addr", ""); got != ":9000" {
 		t.Fatalf("value = %q, want :9000", got)
 	}
-
-	keys, err := configclient.ParsePublicKeys(publicKeys)
-	if err != nil {
-		t.Fatalf("parse public keys: %v", err)
-	}
-	verifier, err := configclient.NewVerifier(keys)
-	if err != nil {
-		t.Fatalf("new verifier: %v", err)
-	}
-	store, err := configclient.NewFileStore(livePath)
-	if err != nil {
-		t.Fatalf("new file store: %v", err)
-	}
-	persisted, err := configclient.LoadFromStore(context.Background(), store, verifier)
-	if err != nil {
-		t.Fatalf("load persisted snapshot: %v", err)
-	}
-	if persisted.SnapshotHash != snapshot.SnapshotHash {
-		t.Fatalf("persisted hash = %q, want %q", persisted.SnapshotHash, snapshot.SnapshotHash)
-	}
 }
 
 func TestRunRefreshStopsOnContextCancel(t *testing.T) {
-	snapshot, publicKeys := loadSeedSnapshot(t, map[string]string{"server.addr": ":9000"})
+	snapshot := configclient.Snapshot{
+		Env: "dev", Namespace: "platform", ReleaseID: 1,
+		Values: map[string]string{"server.addr": ":9000"},
+	}
 	client, err := NewRefreshClient(RefreshConfig{
-		Source: &fakeRefreshSource{snapshot: snapshot}, PublicKeys: publicKeys,
-		Env: "dev", Namespace: "platform",
+		Source: &fakeRefreshSource{snapshot: snapshot},
+		Env:    "dev", Namespace: "platform",
 	})
 	if err != nil {
 		t.Fatalf("new refresh client: %v", err)
@@ -118,7 +124,7 @@ func TestRunRefreshStopsOnContextCancel(t *testing.T) {
 	for client.String("server.addr", "") == "" {
 		if time.Now().After(deadline) {
 			cancel()
-			t.Fatal("refresh did not load snapshot in time")
+			t.Fatal("timed out waiting for refresh")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -126,31 +132,9 @@ func TestRunRefreshStopsOnContextCancel(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("run refresh error = %v, want nil on cancel", err)
+			t.Fatalf("runRefresh: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("run refresh did not stop after cancel")
-	}
-}
-
-func TestRefreshLoggerDeduplicatesTransitions(t *testing.T) {
-	var buffer bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buffer, nil))
-	log := refreshLogger(logger)
-	snapshot := configclient.Snapshot{Env: "dev", Namespace: "platform", ReleaseID: 1}
-
-	log(configclient.RefreshEvent{Snapshot: snapshot, Loaded: true})
-	log(configclient.RefreshEvent{Snapshot: snapshot, Loaded: true})
-	snapshot.ReleaseID = 2
-	log(configclient.RefreshEvent{Snapshot: snapshot, Loaded: true})
-	log(configclient.RefreshEvent{Snapshot: snapshot, Loaded: true, Degraded: true, Err: errors.New("mysql unavailable")})
-	log(configclient.RefreshEvent{Snapshot: snapshot, Loaded: true, Degraded: true, Err: errors.New("mysql unavailable")})
-
-	output := buffer.String()
-	if got := strings.Count(output, "snapshot loaded"); got != 2 {
-		t.Fatalf("loaded logs = %d, want 2; output=%s", got, output)
-	}
-	if got := strings.Count(output, "refresh failed"); got != 1 {
-		t.Fatalf("failure logs = %d, want 1; output=%s", got, output)
+		t.Fatal("runRefresh did not stop")
 	}
 }

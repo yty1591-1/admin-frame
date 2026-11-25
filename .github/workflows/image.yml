@@ -46,7 +46,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cmd: [admin-api, biz-api, c-api, worker, migrate]
+        include:
+          - cmd: admin-api
+            context: .
+            dockerfile: ./Dockerfile
+          - cmd: biz-api
+            context: .
+            dockerfile: ./Dockerfile
+          - cmd: c-api
+            context: .
+            dockerfile: ./Dockerfile
+          - cmd: worker
+            context: .
+            dockerfile: ./Dockerfile
+          - cmd: migrate
+            context: .
+            dockerfile: ./Dockerfile
+          # 前端镜像：frontend/ 为构建上下文，目标为 Dockerfile 内的 web-admin / web-biz
+          - cmd: web-admin
+            context: frontend
+            dockerfile: frontend/scripts/deploy/Dockerfile
+          - cmd: web-biz
+            context: frontend
+            dockerfile: frontend/scripts/deploy/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,8 +90,20 @@ jobs:
           fi
           echo "owner=${owner}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          commit="${GITHUB_SHA::7}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "build_time=${build_time}" >> "$GITHUB_OUTPUT"
+          if [[ "${MATRIX_CMD}" == web-* ]]; then
+            extra_args="GIT_SHA=${GITHUB_SHA}"
+          else
+            extra_args="$(printf 'CMD=%s\nVERSION=%s\nCOMMIT=%s\nBUILD_TIME=%s' "${MATRIX_CMD}" "${version}" "${commit}" "${build_time}")"
+          fi
+          {
+            echo "extra_args<<EOF"
+            echo "${extra_args}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "image=${REGISTRY}/${owner}/${MATRIX_CMD}" >> "$GITHUB_OUTPUT"
         env:
           MATRIX_CMD: ${{ matrix.cmd }}
@@ -106,17 +140,15 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           target: ${{ matrix.cmd }}
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           labels: ${{ steps.tags.outputs.labels }}
           build-args: |
-            CMD=${{ matrix.cmd }}
-            VERSION=${{ steps.ver.outputs.version }}
-            COMMIT=${{ steps.ver.outputs.commit }}
-            BUILD_TIME=${{ steps.ver.outputs.build_time }}
+            ${{ steps.ver.outputs.extra_args }}
           cache-from: type=gha,scope=image-${{ matrix.cmd }}
           cache-to: type=gha,mode=max,scope=image-${{ matrix.cmd }}
 
@@ -262,7 +294,7 @@ jobs:
           set -euo pipefail
           owner="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
           : > dist/digests.txt
-          for cmd in admin-api biz-api c-api worker migrate; do
+          for cmd in admin-api biz-api c-api worker migrate web-admin web-biz; do
             image="${REGISTRY}/${owner}/${cmd}:${VERSION}"
             digest=""
             for attempt in 1 2 3 4 5; do

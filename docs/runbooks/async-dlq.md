@@ -102,13 +102,13 @@ LIMIT 20;
 2. 单条重放：
 
    ```bash
-   go run ./cmd/worker -config configs/worker.yaml -replay-dlq=<source_id>
+   go run ./cmd/worker -replay-dlq=<source_id>
    ```
 
 3. 全量重放（DLQ 量小且同一根因）：
 
    ```bash
-   go run ./cmd/worker -config configs/worker.yaml -replay-dlq=all
+   go run ./cmd/worker -replay-dlq=all
    ```
 
 4. 重放语义：

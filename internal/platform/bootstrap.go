@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -118,6 +119,8 @@ type Options struct {
 	NewAuthorizer func(*Deps) (*security.Authorizer, error)
 	// Register 注册本端 transport 与业务依赖；不得注册他端路由。
 	Register func(*Deps, *http.ServeMux) error
+	// TLSConfig 可选；非空时以 TLS（可含 mTLS）监听，供 config-api 使用。
+	TLSConfig *tls.Config
 }
 
 // Run 完成一次完整的进程装配与运行：配置 → 日志 → 指标 → 追踪 → 存储 →
@@ -310,7 +313,7 @@ func serve(ctx context.Context, infra *infraState, handler http.Handler) error {
 		"node_id", infra.nodeID,
 		"background_tasks", len(tasks),
 	)
-	return httpserver.ListenAndServe(ctx, infra.cfg, handler, infra.logger)
+	return httpserver.ListenAndServe(ctx, infra.cfg, handler, infra.logger, infra.tlsConfig)
 }
 
 // registerStorageChecks 为默认桶与命名桶注册就绪探测。

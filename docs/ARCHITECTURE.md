@@ -9,7 +9,7 @@
 > **关联硬约束**：  
 > - [工程化注释规范](./COMMENT_STANDARDS.md)（C-01～C-10）  
 > - [工程化代码编写风格规范](./CODE_STYLE.md)（S-01～S-12）  
-> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
+> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-18）  
 >   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（合并门禁）、[`.github/workflows/image.yml`](../.github/workflows/image.yml)（发版镜像）  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
 > - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-16）  
@@ -315,7 +315,7 @@ internal/
 - **默认同进程协作**：共享 app/domain，或通过领域事件（worker 消费）最终一致。
 - **禁止** `admin-api` HTTP 调用 `biz-api` / `c-api`（或反向）作为内部实现路径。
 - 若未来拆成独立服务，协作改为同步 RPC（接口在消费侧）或事件总线，并另立 ADR。
-- 配置中心密钥解析由独立 `cmd/config-api` 承担（ADR-0014），不属于 `admin-api` 与 B/C 端互调；业务进程不得调用 `admin-api` 获取密钥。`config-api` 仅提供内部 mTLS / SPIFFE 解析接口，不承载管理面。
+- 配置中心普通配置读与密钥解析均由独立 `cmd/config-api` 承担（ADR-0014 / ADR-0016），不属于 `admin-api` 与 B/C 端互调；业务进程不得调用 `admin-api` 获取配置或密钥，也不得直连配置库。`config-api` 提供内部 mTLS / SPIFFE 的配置拉取、长轮询与密钥解析，不承载管理面。
 
 ### 4.5 数据范围（摘要）
 
@@ -433,7 +433,7 @@ func run() error {
 
 拆分目标形态：`internal/platform/{config,observability,httpserver,authn}`；拆包前须保持现有导出 API 兼容一个版本，并同步更新 `scripts/ci/check-layering.sh`。
 
-**配置热更新**：配置优先级固定为「配置中心 > 代码默认值」；读路径为进程内缓存 + 5s 版本轮询 + Ed25519 签名快照，快照只作冷启动与灾备兜底。首次启动空库时按代码 key spec 默认值播种基线 Release。启用热更新前必须定义可热更字段白名单（禁止 `addr` / `auth` / `storage.driver` 等需重建资源的字段）并补 ADR（ADR-0013）。业务密钥不进入普通配置快照，只经 `cmd/config-api` 解析（ADR-0014）。
+**配置热更新**：配置优先级固定为「配置中心 > 代码默认值」；读路径为 SDK 启动拉取 config-api + 本地缓存灾备 + 长轮询（ADR-0016）。首次启动空库时由 `config-api` 按代码 key spec 默认值播种基线 Release。启用热更新前必须定义可热更字段白名单（禁止 `addr` / `auth` / `storage.driver` 等需重建资源的字段）并补 ADR（ADR-0015）。业务密钥不进入普通配置响应，只经 `cmd/config-api` 解析（ADR-0014）。
 
 ### 5.7 pkg —— 公共库
 
@@ -931,8 +931,8 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ### 17.1 配置加载
 
-- 来源：**配置中心（唯一事实源）+ 代码 key spec 默认值**；配置中心管理面挂 `admin-api`，密钥解析独立 `cmd/config-api`。
-- 优先级：**配置中心（tenant > namespace > global）> 代码默认值**；不再支持配置文件与环境变量业务配置层。
+- 来源：**配置中心（唯一事实源）+ 代码 key spec 默认值**；管理面挂 `admin-api`，普通配置读与密钥解析均经 `cmd/config-api`（ADR-0016）。
+- 优先级：**配置中心 > 代码默认值**；`ADMIN_FRAME_*` 仅放行 db/redis；不再支持配置文件与业务环境变量覆盖。
 - 首次启动：空库时按代码 key spec 默认值播种基线 Release；声明 `secret_rule` 的密钥自动生成并密文入库；初始化幂等、不覆盖已有值。
 - 启动期配置（`addr`、`db.host/port/name/user`、`redis.addr`、`storage.driver`、`auth.issuer/audience/mode`、`async.*`、`iam.mode`、`http.*`）由配置中心提供但只在启动期读取，变更需重启；热更只允许显式 `reloadable=hot` 的键。
 - 配置中心自身地址、环境、服务身份、CA 与 DB / Redis 连接参数使用代码默认值承载；自身口令与 KEK 访问凭据不入配置库。
@@ -1129,13 +1129,14 @@ docs/adr/
 git clone <repo>
 cd myproject
 
-# 无需复制配置样例：首次启动按代码默认值自动初始化（CFG-04 / CFG-09）
+# 无需复制配置样例：首次启动经安装向导播种（CFG-04 / CFG-09 / ADR-0018）
 
 # 本地依赖
 docker compose -f docker-compose.integration.yml up -d mysql redis
 
 make build
-./bin/admin-api   # A 端，首次启动自动播种基线 Release
+make local-start   # config-api 就绪后自动驱动安装向导（begin → apply → complete）
+./bin/admin-api   # A 端
 ./bin/biz-api     # B 端
 ./bin/c-api       # C 端
 ```

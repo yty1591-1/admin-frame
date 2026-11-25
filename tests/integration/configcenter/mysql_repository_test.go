@@ -95,6 +95,7 @@ func reset(t *testing.T, sqlDB *sql.DB) {
 		"config_item",
 	}
 	for _, table := range tables {
+		//nolint:gosec // G202: table 来自白名单常量切片，非用户输入。
 		if _, err := sqlDB.Exec("DELETE FROM " + table); err != nil {
 			t.Fatalf("reset %s: %v", table, err)
 		}
@@ -451,31 +452,40 @@ func TestReleaseListSignatureAndActivation(t *testing.T) {
 	}
 
 	// 列表按 release_no 倒序，并支持状态过滤。
-	all, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 10, 0)
+	all, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace,
+	}, 10, 0)
 	if err != nil || total != 2 || len(all) != 2 || all[0].ReleaseNo != 2 {
 		t.Fatalf("list all mismatch: %v total=%d releases=%+v", err, total, all)
 	}
-	drafts, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, domain.ReleaseStatusDraft, 10, 0)
+	drafts, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace, Status: domain.ReleaseStatusDraft,
+	}, 10, 0)
 	if err != nil || total != 1 || len(drafts) != 1 || drafts[0].ID != draft.ID {
 		t.Fatalf("status filter mismatch: %v total=%d releases=%+v", err, total, drafts)
 	}
-	page, total, err := repos.Releases.List(ctx, draft.Env, draft.Namespace, "", 1, 1)
+	page, total, err := repos.Releases.List(ctx, domain.ReleaseListFilter{
+		Env: draft.Env, Namespace: draft.Namespace,
+	}, 1, 1)
 	if err != nil || total != 2 || len(page) != 1 || page[0].ReleaseNo != 1 {
 		t.Fatalf("pagination mismatch: %v total=%d releases=%+v", err, total, page)
 	}
 
-	// 快照签名写入：首次写入、重复写入幂等、发布单不存在返回 ErrNotFound。
+	// ADR-0016：UpdateSnapshotSignature 仅校验发布存在，不再落库签名列。
 	signedAt := testNow.Add(3 * time.Minute)
+	before, err := repos.Releases.Get(ctx, pending.ID)
+	if err != nil {
+		t.Fatalf("get before signature noop: %v", err)
+	}
 	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
 		t.Fatalf("update signature: %v", err)
 	}
 	signed, err := repos.Releases.Get(ctx, pending.ID)
-	if err != nil || signed.SnapshotSignature != "sig-b64" || signed.SnapshotKeyID != "kid-1" ||
-		!signed.UpdatedAt.Equal(signedAt) {
-		t.Fatalf("signature roundtrip mismatch: %v %+v", err, signed)
+	if err != nil || signed.SnapshotSignature != "" || signed.SnapshotKeyID != "" {
+		t.Fatalf("signature must stay empty after noop: %v %+v", err, signed)
 	}
-	if err := repos.Releases.UpdateSnapshotSignature(ctx, pending.ID, "sig-b64", "kid-1", signedAt); err != nil {
-		t.Fatalf("repeated signature must be idempotent: %v", err)
+	if !signed.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("noop signature must not bump updated_at: before=%v after=%v", before.UpdatedAt, signed.UpdatedAt)
 	}
 	if err := repos.Releases.UpdateSnapshotSignature(ctx, 999999, "sig", "kid", signedAt); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing release signature must be ErrNotFound, got %v", err)

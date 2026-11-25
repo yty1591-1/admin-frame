@@ -36,42 +36,51 @@ func NewSnapshotService(items domain.ItemRepository, releases domain.ReleaseRepo
 
 // Load 实现 configclient.Source。
 func (s *SnapshotService) Load(ctx context.Context, env, namespace string) (configclient.Snapshot, error) {
+	snapshot, _, err := s.LoadIfChanged(ctx, env, namespace, "")
+	return snapshot, err
+}
+
+// LoadIfChanged 先比较指针，未变化时不组装快照、不读取配置项版本。
+func (s *SnapshotService) LoadIfChanged(ctx context.Context, env, namespace, releaseKey string) (configclient.Snapshot, bool, error) {
 	if !domain.ValidEnv(env) || !domain.ValidNamespace(namespace) {
-		return configclient.Snapshot{}, apperr.BadRequest("invalid env or namespace")
+		return configclient.Snapshot{}, false, apperr.BadRequest("invalid env or namespace")
 	}
 	pointer, err := s.pointers.Get(ctx, env, namespace)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return configclient.Snapshot{}, apperr.NotFound(
+			return configclient.Snapshot{}, false, apperr.NotFound(
 				fmt.Sprintf("config center has no active release for %s/%s", env, namespace))
 		}
-		return configclient.Snapshot{}, translate(err)
+		return configclient.Snapshot{}, false, translate(err)
+	}
+	if releaseKey != "" && releaseKey == ReleaseKey(pointer.ActiveReleaseID, pointer.Version) {
+		return configclient.Snapshot{}, true, nil
 	}
 	release, err := s.releases.Get(ctx, pointer.ActiveReleaseID)
 	if err != nil {
-		return configclient.Snapshot{}, translate(err)
+		return configclient.Snapshot{}, false, translate(err)
 	}
 	items, err := s.releases.ListItems(ctx, release.ID)
 	if err != nil {
-		return configclient.Snapshot{}, translate(err)
+		return configclient.Snapshot{}, false, translate(err)
 	}
 
 	snapshotItems := toSnapshotItems(items)
 	if configclient.HashItems(snapshotItems) != release.SnapshotHash {
-		return configclient.Snapshot{}, apperr.Internal("release snapshot hash mismatch", nil)
+		return configclient.Snapshot{}, false, apperr.Internal("release snapshot hash mismatch", nil)
 	}
 	values := make(map[string]string, len(items))
 	for _, releaseItem := range items {
 		item, getErr := s.items.GetByID(ctx, releaseItem.ItemID)
 		if getErr != nil {
-			return configclient.Snapshot{}, translate(getErr)
+			return configclient.Snapshot{}, false, translate(getErr)
 		}
 		if item.Sensitive {
 			continue
 		}
 		version, versionErr := s.items.GetVersion(ctx, releaseItem.ItemID, releaseItem.ItemVersion)
 		if versionErr != nil {
-			return configclient.Snapshot{}, translate(versionErr)
+			return configclient.Snapshot{}, false, translate(versionErr)
 		}
 		values[releaseItem.ConfigKey] = version.ValueText
 	}
@@ -93,5 +102,5 @@ func (s *SnapshotService) Load(ctx context.Context, env, namespace string) (conf
 		Items:          snapshotItems,
 		Values:         values,
 		GeneratedAt:    generatedAt.UTC(),
-	}, nil
+	}, false, nil
 }
