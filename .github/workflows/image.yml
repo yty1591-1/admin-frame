@@ -90,8 +90,10 @@ jobs:
           fi
           echo "owner=${owner}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          commit="${GITHUB_SHA::7}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "build_time=${build_time}" >> "$GITHUB_OUTPUT"
           if [[ "${MATRIX_CMD}" == web-* ]]; then
             extra_args="GIT_SHA=${GITHUB_SHA}"
           else
