@@ -214,6 +214,7 @@ func TestInstallSchemaRepairAfterReady(t *testing.T) {
 		Overrides: map[string]string{
 			"http.base_url":   "https://admin.example.com",
 			"auth.jwt.issuer": "admin-frame",
+			"db.driver":       "memory", // 单测无 ADMIN_FRAME_DB_DSN，避免 Complete 探测阻塞
 		},
 	}); err != nil {
 		t.Fatalf("apply: %v", err)

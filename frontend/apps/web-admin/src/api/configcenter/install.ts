@@ -12,12 +12,7 @@ import { ensureIdempotencyHeader } from '#/api/idempotency';
 /** 首装 vs 重配置：ready 之后一律按 repair 展示。 */
 export type InstallMode = 'first_install' | 'repair';
 
-export type InstallStatus =
-  | 'failed'
-  | 'installing'
-  | 'pending'
-  | 'ready'
-  | string;
+export type InstallStatus = 'failed' | 'installing' | 'pending' | 'ready' | string;
 
 /** 未满足的阻塞键（服务端与进程同源判定）。 */
 export type InstallGap = {
@@ -45,12 +40,8 @@ export type InstallStatusData = InstallState & {
   gaps: InstallGap[];
 };
 
-/** 默认值来源：代码声明 / prod-like 叠加层 / 无默认值。 */
-export type SchemaDefaultSource =
-  | 'code_default'
-  | 'none'
-  | 'prod_default'
-  | string;
+/** 默认值来源：代码声明 / 环境叠加层 / 无默认值。 */
+export type SchemaDefaultSource = 'code_default' | 'dev_default' | 'none' | 'prod_default' | string;
 
 export type SchemaDefault = {
   source: SchemaDefaultSource;
@@ -139,10 +130,7 @@ function installBase(): string {
   return `${api}/install`;
 }
 
-async function installFetch<T>(
-  path: string,
-  init?: RequestInit & { token?: string },
-): Promise<T> {
+async function installFetch<T>(path: string, init?: RequestInit & { token?: string }): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
   if (init?.token) {
@@ -161,9 +149,7 @@ async function installFetch<T>(
   try {
     json = JSON.parse(text) as Envelope<T>;
   } catch {
-    throw new Error(
-      text.trim() || `install api http ${resp.status} (non-json)`,
-    );
+    throw new Error(text.trim() || `install api http ${resp.status} (non-json)`);
   }
   if (!resp.ok || (json.code !== undefined && json.code !== 0)) {
     throw new Error(json.message || `install api http ${resp.status}`);

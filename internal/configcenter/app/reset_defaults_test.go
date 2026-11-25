@@ -97,8 +97,9 @@ func TestResetToDefaultsWritesNewVersionAndRelease(t *testing.T) {
 	if len(result.Reset) != 1 || result.Reset[0].Key != "log.level" {
 		t.Fatalf("reset entries = %+v", result.Reset)
 	}
-	if result.Reset[0].DefaultSource != app.DefaultSourceCode {
-		t.Fatalf("default source = %q, want %q", result.Reset[0].DefaultSource, app.DefaultSourceCode)
+	// log.level 在 non-prod 叠加层推荐 debug（spec.nonProdDefaults）。
+	if result.Reset[0].DefaultSource != app.DefaultSourceDev {
+		t.Fatalf("default source = %q, want %q", result.Reset[0].DefaultSource, app.DefaultSourceDev)
 	}
 	if len(result.Skipped) != 0 {
 		t.Fatalf("skipped = %+v", result.Skipped)

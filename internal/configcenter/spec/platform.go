@@ -9,9 +9,10 @@ import (
 // M1-4 键声明盘点：平台启动键与平台热更键、IAM 治理模式。
 //
 // 规则（CONFIG_STANDARDS CFG-07 / 计划 §6.8）：
-//   - 只登记允许进入配置中心的键；密钥、DSN、云厂商凭证与部署身份
-//     （env/service/channel/node_id）不登记；
-//   - 默认值与代码 applyDefaults 保持一致，有默认值即不标 Required；
+//   - 只登记允许进入配置中心的键；DB DSN 与部署身份（env/service/channel/node_id）
+//     不登记；Redis/NATS/SMTP 连接参数进中心，口令类敏感键走 config_secret；
+//   - KeySpec.Default 保持本地友好；环境推荐默认值见 env_defaults.go（ResolveDefault）；
+//   - 有代码默认值即不标 Required；环境叠加层可填 Required 键的推荐值；
 //   - 启动期读取的键 Reloadable=false，平台热更白名单内的键为 true；
 //   - 业务域（identity/audit/tenant/notification）键由域 owner 后续补齐，
 //     本目录不臆造。
@@ -105,12 +106,16 @@ func platformSpecs() []domain.KeySpec {
 		sensitiveAutoKey("auth.jwt.private_key", "JWT 签名私钥（M2 密钥子域；首次按 secret_rule 生成）",
 			&domain.SecretRule{MinLen: 32, MaxLen: 64, Encoding: "base64url", AutoGenerate: true}),
 
-		// 数据源与缓存：连接串与口令不进配置中心。
+		// 数据源与缓存：仅 DB DSN 走部署 env；Redis 地址/口令进配置中心。
 		stringKeyWithEnum("db.driver", "memory", "数据源驱动", false, "memory", "mysql"),
 		intKey("db.max_open_conns", 0, "连接池上限；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		intKey("db.max_idle_conns", 0, "空闲连接数；0 沿用 pkg/db 默认值", false, int64Ptr(0), nil),
 		durationKey("db.conn_max_lifetime", "0s", "连接最长存活时间；0 沿用默认值", false),
 		stringKey("redis.addr", "", "Redis 地址；空表示不启用", false),
+		stringKey("redis.username", "", "Redis 用户名；空表示匿名", false),
+		sensitiveAutoKey("redis.password",
+			"Redis 口令（密钥子域；可空表示无密；安装向导可覆盖）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
 		intKey("redis.db", 0, "Redis 逻辑库编号", false, int64Ptr(0), nil),
 
 		// 对象存储：驱动与桶级参数进配置中心（可由安装向导填写 / 管理面审批）。
@@ -189,6 +194,10 @@ func platformSpecs() []domain.KeySpec {
 		durationKey("async.consumer.visibility_timeout", "60s", "消费幂等记录接管窗口", true),
 		stringKeyWithEnum("async.consumer.retry_backoff", "exponential", "消费重试退避策略", true,
 			"exponential", "fixed"),
+		// async.broker.url 在 async.enabled && driver=nats 时条件必填（敏感，走密钥子域）。
+		sensitiveAutoKey("async.broker.url",
+			"NATS 服务地址（可含凭据；async.driver=nats 时必填；密钥子域）",
+			&domain.SecretRule{MinLen: 1, Encoding: "raw", AutoGenerate: false}),
 		stringKey("async.broker.stream", "async", "JetStream 流名称", false),
 		stringKey("async.broker.subject_prefix", "async", "JetStream 主题前缀", false),
 		durationKey("async.broker.ack_wait", "30s", "单条消息确认超时", false),

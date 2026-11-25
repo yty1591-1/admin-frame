@@ -7,7 +7,6 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
 	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 )
 
@@ -17,11 +16,12 @@ const (
 	InstallModeRepair       = string(domain.InstallModeRepair)
 )
 
-// 默认值来源：代码 KeySpec.Default / prod-like 叠加层 / 无默认值。
+// 默认值来源：与 spec.DefaultSource* 同值，供 OpenAPI / 前端契约稳定引用。
 const (
-	DefaultSourceCode     = "code_default"
-	DefaultSourceProdLike = "prod_default"
-	DefaultSourceNone     = "none"
+	DefaultSourceCode     = spec.DefaultSourceCode
+	DefaultSourceProdLike = spec.DefaultSourceProd
+	DefaultSourceDev      = spec.DefaultSourceDev
+	DefaultSourceNone     = spec.DefaultSourceNone
 )
 
 // InstallSchema 是向导渲染表单所需的元数据（只出声明信息，不出运行值）。
@@ -105,7 +105,7 @@ func (s *InstallService) Schema(ctx context.Context, env string) (InstallSchema,
 	if err != nil {
 		return InstallSchema{}, err
 	}
-	gaps, err := s.bootstrap.MissingRequired(ctx, env)
+	gaps, err := s.Gaps(ctx, env)
 	if err != nil {
 		return InstallSchema{}, err
 	}
@@ -116,7 +116,8 @@ func (s *InstallService) Schema(ctx context.Context, env string) (InstallSchema,
 		Status:       string(state.Status),
 		BlockingKeys: make([]SchemaGap, 0, len(gaps)),
 	}
-	if state.Status == domain.InstallReady || state.Mode == domain.InstallModeRepair {
+	if state.Status == domain.InstallReady || state.Status == domain.InstallFailed ||
+		state.Mode == domain.InstallModeRepair {
 		out.Mode = InstallModeRepair
 	}
 	blocking := make(map[string]map[string]struct{}, len(gaps))
@@ -211,17 +212,13 @@ func (s *InstallService) Schema(ctx context.Context, env string) (InstallSchema,
 	return out, nil
 }
 
-// schemaDefaultFor 解析默认值与来源：prod-like 叠加层优先于代码默认值。
+// schemaDefaultFor 解析默认值与来源（与播种 / 自愈同源：spec.ResolveDefault）。
 func schemaDefaultFor(env string, keySpec domain.KeySpec) SchemaDefault {
-	if platformconfig.IsProdLikeEnv(env) {
-		if value, ok := prodLikeSeedDefaults()[keySpec.Key]; ok && value != "" {
-			return SchemaDefault{Value: value, Source: DefaultSourceProdLike}
-		}
+	value, source := spec.ResolveDefault(env, keySpec)
+	if source == spec.DefaultSourceNone {
+		return SchemaDefault{Source: DefaultSourceNone}
 	}
-	if keySpec.Default != "" {
-		return SchemaDefault{Value: keySpec.Default, Source: DefaultSourceCode}
-	}
-	return SchemaDefault{Source: DefaultSourceNone}
+	return SchemaDefault{Value: value, Source: source}
 }
 
 // fieldOrder 把「命名空间顺序 + 分组顺序 + 组内序号」压成一个可比较整数。
