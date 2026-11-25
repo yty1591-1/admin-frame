@@ -2,6 +2,7 @@ package menuview_test
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -56,18 +57,27 @@ func TestAdminComponentsExist(t *testing.T) {
 // 一旦启用就会在前端落到 not-found。这里以 migrations 为事实源做双向校验。
 func TestSeedComponentsRegistered(t *testing.T) {
 	root := repoRoot(t)
-	files, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
+	migrations, err := os.OpenRoot(filepath.Join(root, "migrations"))
+	if err != nil {
+		t.Fatalf("open migrations: %v", err)
+	}
+	t.Cleanup(func() { _ = migrations.Close() })
+	files, err := fs.Glob(migrations.FS(), "*.up.sql")
 	if err != nil {
 		t.Fatalf("glob migrations: %v", err)
 	}
 	if len(files) == 0 {
 		t.Fatal("未找到 migrations/*.up.sql")
 	}
-	viewsRoot := filepath.Join(root, "frontend", "apps", "web-admin", "src", "views")
+	views, err := os.OpenRoot(filepath.Join(root, "frontend", "apps", "web-admin", "src", "views"))
+	if err != nil {
+		t.Fatalf("open views: %v", err)
+	}
+	t.Cleanup(func() { _ = views.Close() })
 	componentPattern := regexp.MustCompile(`'/[A-Za-z0-9_/.-]+\.vue'`)
 	catalog := menuview.Catalog{}
 	for _, file := range files {
-		data, readErr := os.ReadFile(file)
+		data, readErr := migrations.ReadFile(file)
 		if readErr != nil {
 			t.Fatalf("read %s: %v", file, readErr)
 		}
@@ -85,8 +95,8 @@ func TestSeedComponentsRegistered(t *testing.T) {
 				t.Errorf("%s: seed component %q 未登记在 adminComponents", filepath.Base(file), component)
 				continue
 			}
-			path := filepath.Join(viewsRoot, filepath.FromSlash(strings.TrimPrefix(component, "/")))
-			if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+			path := filepath.FromSlash(strings.TrimPrefix(component, "/"))
+			if _, statErr := views.Stat(path); errors.Is(statErr, os.ErrNotExist) {
 				t.Errorf("%s: seed component %q 对应文件不存在: %s", filepath.Base(file), component, path)
 			} else if statErr != nil {
 				t.Errorf("stat %s: %v", path, statErr)
