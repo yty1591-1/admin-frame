@@ -41,7 +41,10 @@ function isFilled(
 </script>
 
 <template>
-  <div v-if="sections.length === 0 && emptyMessage" class="text-muted-foreground text-sm">
+  <div
+    v-if="sections.length === 0 && emptyMessage"
+    class="text-muted-foreground text-sm"
+  >
     {{ emptyMessage }}
   </div>
   <div v-else class="space-y-4">
@@ -56,7 +59,9 @@ function isFilled(
         <h3 class="text-foreground text-[15px] font-semibold">
           {{ section.title }}
         </h3>
-        <Tag v-if="section.blockingCount > 0" color="red"> 阻塞 {{ section.blockingCount }} </Tag>
+        <Tag v-if="section.blockingCount > 0" color="red">
+          阻塞 {{ section.blockingCount }}
+        </Tag>
         <code class="text-muted-foreground/70 font-mono text-[11px]">
           {{ section.namespace }}
         </code>
@@ -74,7 +79,9 @@ function isFilled(
             :field="field"
             :filled="isFilled(draft, field.namespace, field.key)"
             :model-value="fieldValue(draft, field.namespace, field.key)"
-            @update:model-value="(value) => emit('setValue', field.namespace, field.key, value)"
+            @update:model-value="
+              (value) => emit('setValue', field.namespace, field.key, value)
+            "
           />
         </div>
       </div>

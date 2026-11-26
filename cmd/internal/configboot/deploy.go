@@ -84,7 +84,7 @@ func ApplyDeployStorage(values map[string]string) {
 // ApplyDeployOverlays 合并 node_id 与 storage 部署侧注入；业务进程在 Validate 前调用。
 //
 // redis.addr / redis.db / redis.username 仅来自配置中心快照（安装向导 / 审批发布），
-// 不再从 ADMIN_FRAME_REDIS_* 兜底。
+// 不再从 ADMIN_FRAME_REDIS_* 兜底。业务开关（M2M/SCIM/异步导出等）一律走配置中心。
 func ApplyDeployOverlays(values map[string]string) {
 	ApplyDeployNodeID(values)
 	ApplyDeployStorage(values)

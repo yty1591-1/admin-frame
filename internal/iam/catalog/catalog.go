@@ -493,7 +493,7 @@ var entries = []Entry{
 		Channel:     ChannelAdmin,
 		Status:      StatusActive,
 		Sort:        385,
-		Description: "审批配置发布单；申请人不得自审，与 config:publish 分离以落实职责分离。",
+		Description: "审批配置发布单；普通主体申请人不得自审，system_admin 可自批并记审计；与 config:publish 分离。",
 	},
 	{
 		Code:        iam.PermConfigSecretRead,

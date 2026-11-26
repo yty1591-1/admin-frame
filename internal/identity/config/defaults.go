@@ -186,6 +186,9 @@ func (c *IdentityConfig) ApplyDefaults() {
 // 这里不写指针，避免默认值把「显式 false」覆盖成 true。
 func (c *IdentityConfig) ApplySCIMDefaults() {
 	scimCfg := &c.SCIM
+	if scimCfg.GroupRoleMap == nil {
+		scimCfg.GroupRoleMap = map[string]string{}
+	}
 	if scimCfg.PageSize == 0 {
 		scimCfg.PageSize = identityDefaultSCIMPageSize
 	}
@@ -215,6 +218,9 @@ func (c *IdentityConfig) ApplySCIMDefaults() {
 // 「宽限期未结束即判定超龄」的无意义告警。
 func (c *IdentityConfig) ApplyM2MDefaults() {
 	m2m := &c.M2M
+	if m2m.AllowedScopes == nil {
+		m2m.AllowedScopes = []string{}
+	}
 	if m2m.TokenTTL == 0 {
 		m2m.TokenTTL = identityDefaultM2MTokenTTL
 	}

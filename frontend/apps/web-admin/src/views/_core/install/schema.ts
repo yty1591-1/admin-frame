@@ -6,7 +6,11 @@
  * 避免向导里散落硬编码的分组表。
  */
 
-import type { InstallMode, InstallSchema, SchemaField } from '#/api/configcenter/install';
+import type {
+  InstallMode,
+  InstallSchema,
+  SchemaField,
+} from '#/api/configcenter/install';
 
 export type FieldGroup = {
   fields: SchemaField[];
@@ -28,7 +32,10 @@ export type FieldSection = {
 export type InstallDraft = Record<string, Record<string, string>>;
 
 /** 表单里真正需要用户填的字段：敏感键走密钥服务，不在这里渲染成输入框。 */
-export function configFields(schema: InstallSchema, mode: InstallMode): SchemaField[] {
+export function configFields(
+  schema: InstallSchema,
+  mode: InstallMode,
+): SchemaField[] {
   return schema.fields
     .filter((field) => !field.sensitive)
     .filter((field) => (mode === 'repair' ? field.blocking : true))
@@ -45,7 +52,9 @@ export function secretFields(schema: InstallSchema): SchemaField[] {
 
 /** 可在向导中填写明文的敏感键（安装时写入密钥子域）。 */
 export function writableSecretFields(schema: InstallSchema): SchemaField[] {
-  return secretFields(schema).filter((field) => field.secret && !field.secret.auto_generate);
+  return secretFields(schema).filter(
+    (field) => field.secret && !field.secret.auto_generate,
+  );
 }
 
 /**

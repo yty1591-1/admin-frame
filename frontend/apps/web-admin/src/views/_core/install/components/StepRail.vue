@@ -58,7 +58,11 @@ const currentStep = () => props.steps[props.current];
           v-for="(item, index) in steps"
           :key="item.key"
           class="flex items-start gap-2.5 rounded-lg px-3 py-2.5"
-          :class="index === current ? 'bg-primary/10 ring-primary/30 ring-1' : 'hover:bg-muted/60'"
+          :class="
+            index === current
+              ? 'bg-primary/10 ring-primary/30 ring-1'
+              : 'hover:bg-muted/60'
+          "
         >
           <span
             class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
@@ -88,7 +92,9 @@ const currentStep = () => props.steps[props.current];
             </div>
             <div
               class="truncate text-[11px]"
-              :class="index === current ? 'text-primary' : 'text-muted-foreground/80'"
+              :class="
+                index === current ? 'text-primary' : 'text-muted-foreground/80'
+              "
             >
               {{ item.hint }}
             </div>
@@ -129,7 +135,9 @@ const currentStep = () => props.steps[props.current];
   </aside>
 
   <!-- Mobile top bar -->
-  <header class="border-border bg-background sticky top-0 z-20 shrink-0 border-b lg:hidden">
+  <header
+    class="border-border bg-background sticky top-0 z-20 shrink-0 border-b lg:hidden"
+  >
     <div class="flex items-center justify-between gap-3 px-4 py-3">
       <div class="flex min-w-0 items-center gap-2.5">
         <div
@@ -157,7 +165,10 @@ const currentStep = () => props.steps[props.current];
       </button>
     </div>
 
-    <div v-if="metaOpen" class="border-border bg-muted/40 space-y-1.5 border-t px-4 py-3">
+    <div
+      v-if="metaOpen"
+      class="border-border bg-muted/40 space-y-1.5 border-t px-4 py-3"
+    >
       <div
         v-for="row in metaRows"
         :key="`m-${row.label}`"
@@ -194,7 +205,13 @@ const currentStep = () => props.steps[props.current];
         <div class="flex w-full items-center">
           <div
             class="h-0.5 flex-1"
-            :class="index === 0 ? 'bg-transparent' : index <= current ? 'bg-primary' : 'bg-border'"
+            :class="
+              index === 0
+                ? 'bg-transparent'
+                : index <= current
+                  ? 'bg-primary'
+                  : 'bg-border'
+            "
           ></div>
           <span
             class="flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
@@ -222,7 +239,11 @@ const currentStep = () => props.steps[props.current];
         </div>
         <span
           class="max-w-full truncate text-center text-[10px] leading-tight"
-          :class="index === current ? 'text-primary font-semibold' : 'text-muted-foreground'"
+          :class="
+            index === current
+              ? 'text-primary font-semibold'
+              : 'text-muted-foreground'
+          "
         >
           {{ item.title }}
         </span>

@@ -26,6 +26,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
@@ -107,10 +108,17 @@ func (h *Handler) withinTx(ctx context.Context, fn func(context.Context) error) 
 }
 
 // actor 从鉴权主体构造审计主体；管理面端别固定为 admin。
+//
+// Roles 优先取 IAM 快照（enforce 模式可信），缺失时回退令牌 roles 声明，
+// 供 system_admin 跳过双人审批判定。
 func actor(r *http.Request) (app.Actor, error) {
 	principal, ok := auth.FromContext(r.Context())
 	if !ok || strings.TrimSpace(principal.SubjectID) == "" {
 		return app.Actor{}, apperr.Unauthorized("authentication required")
+	}
+	roles := principal.Roles
+	if snapshot, snapOK := authz.FromContext(r.Context()); snapOK {
+		roles = snapshot.Roles
 	}
 	return app.Actor{
 		SubjectID:  principal.SubjectID,
@@ -118,6 +126,7 @@ func actor(r *http.Request) (app.Actor, error) {
 		Channel:    "admin",
 		MerchantID: principal.MerchantID,
 		TraceID:    apiresp.TraceIDFromContext(r.Context()),
+		Roles:      append([]string(nil), roles...),
 	}, nil
 }
 

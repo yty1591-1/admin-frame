@@ -47,8 +47,8 @@ func TestResolveDefaultNonProdOverlay(t *testing.T) {
 		t.Fatalf("local log.level=%q/%q", value, source)
 	}
 	value, source = spec.ResolveDefault(domain.EnvProd, logLevel)
-	if value != "info" || source != spec.DefaultSourceCode {
-		t.Fatalf("prod log.level should fall back to code default, got %q/%q", value, source)
+	if value != "info" || source != spec.DefaultSourceProd {
+		t.Fatalf("prod log.level should use prod overlay, got %q/%q", value, source)
 	}
 }
 

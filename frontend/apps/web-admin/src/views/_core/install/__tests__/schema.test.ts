@@ -1,4 +1,8 @@
-import type { InstallSchema, SchemaDefault, SchemaField } from '#/api/configcenter/install';
+import type {
+  InstallSchema,
+  SchemaDefault,
+  SchemaField,
+} from '#/api/configcenter/install';
 
 import { describe, expect, it } from 'vitest';
 
@@ -60,18 +64,21 @@ describe('configFields', () => {
   ];
 
   it('首装保留全部非敏感字段并按 order 排序', () => {
-    expect(configFields(schema(fields), 'first_install').map((f) => f.key)).toEqual([
-      'db.driver',
+    expect(
+      configFields(schema(fields), 'first_install').map((f) => f.key),
+    ).toEqual(['db.driver', 'http.base_url']);
+  });
+
+  it('repair 只保留阻塞键', () => {
+    expect(configFields(schema(fields), 'repair').map((f) => f.key)).toEqual([
       'http.base_url',
     ]);
   });
 
-  it('repair 只保留阻塞键', () => {
-    expect(configFields(schema(fields), 'repair').map((f) => f.key)).toEqual(['http.base_url']);
-  });
-
   it('敏感键只出现在 secretFields', () => {
-    expect(secretFields(schema(fields)).map((f) => f.key)).toEqual(['smtp.password']);
+    expect(secretFields(schema(fields)).map((f) => f.key)).toEqual([
+      'smtp.password',
+    ]);
   });
 });
 
@@ -94,7 +101,10 @@ describe('buildSections', () => {
 
   it('按 namespace → group 两级分组，并把阻塞数记在域上', () => {
     const sections = buildSections(fields, { platform: '平台与基础设施' });
-    expect(sections.map((s) => s.namespace)).toEqual(['platform', 'notification']);
+    expect(sections.map((s) => s.namespace)).toEqual([
+      'platform',
+      'notification',
+    ]);
     expect(sections[0]?.title).toBe('平台与基础设施');
     expect(sections[0]?.blockingCount).toBe(1);
     expect(sections[0]?.groups.map((g) => g.id)).toEqual(['core', 'http']);
@@ -113,21 +123,27 @@ describe('defaultBadge', () => {
   });
 
   it('代码默认值与环境基线各有文案', () => {
-    expect(defaultBadge(field({ default: { source: 'code_default', value: 'memory' } }))).toBe(
-      '默认：memory',
-    );
-    expect(defaultBadge(field({ default: { source: 'prod_default', value: 'mysql' } }))).toBe(
-      '默认：mysql（生产基线）',
-    );
-    expect(defaultBadge(field({ default: { source: 'dev_default', value: 'debug' } }))).toBe(
-      '默认：debug（开发基线）',
-    );
+    expect(
+      defaultBadge(
+        field({ default: { source: 'code_default', value: 'memory' } }),
+      ),
+    ).toBe('默认：memory');
+    expect(
+      defaultBadge(
+        field({ default: { source: 'prod_default', value: 'mysql' } }),
+      ),
+    ).toBe('默认：mysql（生产基线）');
+    expect(
+      defaultBadge(
+        field({ default: { source: 'dev_default', value: 'debug' } }),
+      ),
+    ).toBe('默认：debug（开发基线）');
   });
 
   it('空串默认值显式标注', () => {
-    expect(defaultBadge(field({ default: { source: 'code_default', value: '' } }))).toBe(
-      '默认：空',
-    );
+    expect(
+      defaultBadge(field({ default: { source: 'code_default', value: '' } })),
+    ).toBe('默认：空');
   });
 });
 
@@ -138,14 +154,22 @@ describe('missingFields', () => {
   ];
 
   it('首装要求 required 键填值', () => {
-    expect(missingFields(fields, {}, 'first_install').map((f) => f.key)).toEqual(['http.base_url']);
     expect(
-      missingFields(fields, { platform: { 'http.base_url': ' https://x ' } }, 'first_install'),
+      missingFields(fields, {}, 'first_install').map((f) => f.key),
+    ).toEqual(['http.base_url']);
+    expect(
+      missingFields(
+        fields,
+        { platform: { 'http.base_url': ' https://x ' } },
+        'first_install',
+      ),
     ).toEqual([]);
   });
 
   it('repair 只要求阻塞键填值', () => {
-    expect(missingFields([field({ key: 'db.driver' })], {}, 'repair')).toEqual([]);
+    expect(missingFields([field({ key: 'db.driver' })], {}, 'repair')).toEqual(
+      [],
+    );
   });
 
   it('空白值不算已填', () => {
@@ -170,11 +194,11 @@ describe('collectValues', () => {
 
 describe('declaredKeyRefs', () => {
   it('按空白/逗号/分号切分，去重排序，丢弃非 namespace/key 片段', () => {
-    expect(declaredKeyRefs('platform/auth.jwt.secret, platform/b  ; platform/a\ninvalid')).toEqual([
-      'platform/a',
-      'platform/auth.jwt.secret',
-      'platform/b',
-    ]);
+    expect(
+      declaredKeyRefs(
+        'platform/auth.jwt.secret, platform/b  ; platform/a\ninvalid',
+      ),
+    ).toEqual(['platform/a', 'platform/auth.jwt.secret', 'platform/b']);
   });
 
   it('空输入返回空数组', () => {

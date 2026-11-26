@@ -15,6 +15,9 @@ import (
 	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
+
+	// 安装态连通性探测需要云存储驱动（s3/minio 等）；与 admin-api 对齐。
+	_ "github.com/admin-frame/admin-frame/pkg/storage/all"
 )
 
 var (

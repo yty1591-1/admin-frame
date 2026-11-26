@@ -46,18 +46,24 @@ const router = useRouter();
 /** 阻塞原因文案（与 OpenAPI InstallGap.reason 对齐）。 */
 function gapReasonLabel(reason: string | undefined): string {
   switch (reason) {
-    case 'no_active_release':
+    case 'no_active_release': {
       return '命名空间尚无生效发布';
-    case 'missing_in_snapshot':
+    }
+    case 'missing_in_snapshot': {
       return '快照缺键';
-    case 'connectivity_failed':
+    }
+    case 'connectivity_failed': {
       return '连通性探测失败';
-    case 'deploy_env_missing':
+    }
+    case 'deploy_env_missing': {
       return '需运维补部署环境变量（如 ADMIN_FRAME_DB_DSN）';
-    case 'secret_missing':
+    }
+    case 'secret_missing': {
       return '密钥子域缺失';
-    default:
+    }
+    default: {
       return reason || '';
+    }
   }
 }
 
@@ -82,7 +88,9 @@ const isRepair = computed(() => mode.value === 'repair');
 const formFields = computed<SchemaField[]>(() =>
   schema.value ? configFields(schema.value, mode.value) : [],
 );
-const secrets = computed<SchemaField[]>(() => (schema.value ? secretFields(schema.value) : []));
+const secrets = computed<SchemaField[]>(() =>
+  schema.value ? secretFields(schema.value) : [],
+);
 const writableSecrets = computed<SchemaField[]>(() =>
   schema.value ? writableSecretFields(schema.value) : [],
 );
@@ -113,13 +121,23 @@ const gaps = computed<InstallGap[]>(() => {
   }
   return status.value?.gaps ?? [];
 });
-const deployGaps = computed(() => gaps.value.filter((gap) => gap.reason === 'deploy_env_missing'));
-const otherGaps = computed(() => gaps.value.filter((gap) => gap.reason !== 'deploy_env_missing'));
-const missingRequired = computed(() => missingFields(formFields.value, draft, mode.value));
+const deployGaps = computed(() =>
+  gaps.value.filter((gap) => gap.reason === 'deploy_env_missing'),
+);
+const otherGaps = computed(() =>
+  gaps.value.filter((gap) => gap.reason !== 'deploy_env_missing'),
+);
+const missingRequired = computed(() =>
+  missingFields(formFields.value, draft, mode.value),
+);
 const previewEntries = computed(() => filledEntries(draft));
 
 const canSubmit = computed(
-  () => !busy.value && !!token.value && !!schema.value && missingRequired.value.length === 0,
+  () =>
+    !busy.value &&
+    !!token.value &&
+    !!schema.value &&
+    missingRequired.value.length === 0,
 );
 
 const railSteps = computed<RailStep[]>(() => [
@@ -165,7 +183,9 @@ const railMetaRows = computed<RailMetaRow[]>(() => {
     { label: $t('install.metaStatus'), value: st, tone: statusTone },
     {
       label: $t('install.metaMode'),
-      value: isRepair.value ? $t('install.modeRepair') : $t('install.modeFirst'),
+      value: isRepair.value
+        ? $t('install.modeRepair')
+        : $t('install.modeFirst'),
       tone: isRepair.value ? 'warning' : 'primary',
     },
     {
@@ -186,7 +206,9 @@ const railMetaRows = computed<RailMetaRow[]>(() => {
 
 const stepTitle = computed(() => {
   if (step.value === 0) {
-    return isRepair.value ? $t('install.titleTokenRepair') : $t('install.titleToken');
+    return isRepair.value
+      ? $t('install.titleTokenRepair')
+      : $t('install.titleToken');
   }
   const titles = [
     '',
@@ -200,7 +222,9 @@ const stepTitle = computed(() => {
 
 const stepDesc = computed(() => {
   if (step.value === 0) {
-    return isRepair.value ? $t('install.descTokenRepair') : $t('install.descToken');
+    return isRepair.value
+      ? $t('install.descTokenRepair')
+      : $t('install.descToken');
   }
   const descs = [
     '',
@@ -230,7 +254,11 @@ const stepProgress = computed(() => {
 const guideItems = computed(() => {
   if (step.value === 0) {
     return isRepair.value
-      ? [$t('install.guideRepair1'), $t('install.guideRepair2'), $t('install.guideRepair3')]
+      ? [
+          $t('install.guideRepair1'),
+          $t('install.guideRepair2'),
+          $t('install.guideRepair3'),
+        ]
       : [
           $t('install.guideToken1'),
           $t('install.guideToken2'),
@@ -254,16 +282,26 @@ const guideItems = computed(() => {
     ];
   }
   if (step.value === 3) {
-    return [$t('install.guideSecrets1'), $t('install.guideSecrets2'), $t('install.guideSecrets3')];
+    return [
+      $t('install.guideSecrets1'),
+      $t('install.guideSecrets2'),
+      $t('install.guideSecrets3'),
+    ];
   }
-  return [$t('install.guideReview1'), $t('install.guideReview2'), $t('install.guideReview3')];
+  return [
+    $t('install.guideReview1'),
+    $t('install.guideReview2'),
+    $t('install.guideReview3'),
+  ];
 });
 
 const primaryLabel = computed(() => {
   if (step.value === 0) return $t('install.btnLoadSchema');
   if (step.value === 3) return $t('install.btnPreview');
   if (step.value === 4) {
-    return isRepair.value ? $t('install.btnSubmitRepair') : $t('install.btnSubmit');
+    return isRepair.value
+      ? $t('install.btnSubmitRepair')
+      : $t('install.btnSubmit');
   }
   return $t('install.btnContinue');
 });
@@ -311,7 +349,9 @@ async function loadSchema() {
 async function runInstall() {
   if (missingRequired.value.length > 0) {
     errorMessage.value = $t('install.msgMissingRequired', {
-      list: missingRequired.value.map((field) => field.label || field.key).join('、'),
+      list: missingRequired.value
+        .map((field) => field.label || field.key)
+        .join('、'),
     });
     return;
   }
@@ -319,9 +359,14 @@ async function runInstall() {
   errorMessage.value = '';
   message.value = '';
   try {
-    const values = collectValues([...formFields.value, ...writableSecrets.value], draft);
+    const values = collectValues(
+      [...formFields.value, ...writableSecrets.value],
+      draft,
+    );
     const begun = await beginInstall(token.value, {
-      declaredKeys: isRepair.value ? declaredKeyRefs(declaredText.value) : undefined,
+      declaredKeys: isRepair.value
+        ? declaredKeyRefs(declaredText.value)
+        : undefined,
       owner: owner.value || undefined,
       reason: mode.value,
     });
@@ -420,10 +465,14 @@ onMounted(refreshStatus);
             <p class="text-primary text-xs font-medium">
               {{ stepProgress }}
             </p>
-            <h1 class="text-foreground text-xl font-semibold tracking-tight sm:text-[22px]">
+            <h1
+              class="text-foreground text-xl font-semibold tracking-tight sm:text-[22px]"
+            >
               {{ stepTitle }}
             </h1>
-            <p class="text-muted-foreground max-w-3xl text-[13px] leading-relaxed">
+            <p
+              class="text-muted-foreground max-w-3xl text-[13px] leading-relaxed"
+            >
               {{ stepDesc }}
             </p>
           </header>
@@ -449,13 +498,18 @@ onMounted(refreshStatus);
           >
             <template #description>
               <ul class="list-disc pl-4">
-                <li v-for="gap in otherGaps.slice(0, 8)" :key="`${gap.namespace}/${gap.key}`">
+                <li
+                  v-for="gap in otherGaps.slice(0, 8)"
+                  :key="`${gap.namespace}/${gap.key}`"
+                >
                   <code>{{ gap.namespace }}/{{ gap.key }}</code>
                   <span v-if="gap.reason" class="text-muted-foreground">
                     （{{ gapReasonLabel(gap.reason) }}）
                   </span>
                 </li>
-                <li v-if="otherGaps.length > 8">…共 {{ otherGaps.length }} 项</li>
+                <li v-if="otherGaps.length > 8">
+                  …共 {{ otherGaps.length }} 项
+                </li>
               </ul>
             </template>
           </Alert>
@@ -482,7 +536,10 @@ onMounted(refreshStatus);
               <span class="text-foreground font-medium">
                 {{ $t('install.ownerLabel') }}
               </span>
-              <Input v-model:value="owner" :placeholder="$t('install.ownerPlaceholder')" />
+              <Input
+                v-model:value="owner"
+                :placeholder="$t('install.ownerPlaceholder')"
+              />
               <span class="text-muted-foreground text-xs leading-relaxed">
                 {{ $t('install.ownerHelp') }}
               </span>
@@ -539,12 +596,20 @@ onMounted(refreshStatus);
 
           <!-- 第 4 步：密钥 -->
           <section v-show="step === 3" class="space-y-4">
-            <Alert type="info" show-icon :message="$t('install.alertSecretsTitle')">
+            <Alert
+              type="info"
+              show-icon
+              :message="$t('install.alertSecretsTitle')"
+            >
               <template #description>
                 {{ $t('install.alertSecretsDesc') }}
               </template>
             </Alert>
-            <SecretList :draft="draft" :fields="secrets" @set-value="setDraftValue">
+            <SecretList
+              :draft="draft"
+              :fields="secrets"
+              @set-value="setDraftValue"
+            >
               <template #empty>
                 {{ $t('install.secretsEmpty') }}
               </template>
@@ -553,8 +618,12 @@ onMounted(refreshStatus);
 
           <!-- 第 5 步：预览 -->
           <section v-show="step === 4" class="space-y-4">
-            <div class="border-border bg-muted overflow-hidden rounded-lg border">
-              <div class="border-border flex items-center justify-between border-b px-3.5 py-3">
+            <div
+              class="border-border bg-muted overflow-hidden rounded-lg border"
+            >
+              <div
+                class="border-border flex items-center justify-between border-b px-3.5 py-3"
+              >
                 <span class="text-sm font-semibold">
                   {{
                     $t('install.summaryTitle', {
@@ -576,17 +645,25 @@ onMounted(refreshStatus);
                 v-for="(row, index) in previewEntries"
                 :key="`${row.namespace}/${row.key}`"
                 class="flex flex-col gap-1 px-3.5 py-3 text-sm sm:flex-row sm:items-center sm:gap-3"
-                :class="index < previewEntries.length - 1 ? 'border-border border-b' : ''"
+                :class="
+                  index < previewEntries.length - 1
+                    ? 'border-border border-b'
+                    : ''
+                "
               >
                 <span class="text-muted-foreground shrink-0 text-xs sm:w-16">
                   {{ row.namespace }}
                 </span>
-                <code class="text-foreground break-all font-mono text-xs sm:w-52 sm:shrink-0">
+                <code
+                  class="text-foreground break-all font-mono text-xs sm:w-52 sm:shrink-0"
+                >
                   {{ row.key }}
                 </code>
                 <span class="text-foreground break-all font-medium">
                   {{
-                    secrets.some((s) => s.namespace === row.namespace && s.key === row.key)
+                    secrets.some(
+                      (s) => s.namespace === row.namespace && s.key === row.key,
+                    )
                       ? '••••••••'
                       : row.value
                   }}
@@ -594,17 +671,24 @@ onMounted(refreshStatus);
               </div>
             </div>
 
-            <p v-if="missingRequired.length > 0" class="text-destructive text-sm">
+            <p
+              v-if="missingRequired.length > 0"
+              class="text-destructive text-sm"
+            >
               {{
                 $t('install.summaryMissing', {
-                  list: missingRequired.map((field) => field.label || field.key).join('、'),
+                  list: missingRequired
+                    .map((field) => field.label || field.key)
+                    .join('、'),
                 })
               }}
             </p>
             <p v-if="remainingGaps.length > 0" class="text-destructive text-sm">
               {{
                 $t('install.summaryRemaining', {
-                  list: remainingGaps.map((gap) => `${gap.namespace}/${gap.key}`).join('、'),
+                  list: remainingGaps
+                    .map((gap) => `${gap.namespace}/${gap.key}`)
+                    .join('、'),
                 })
               }}
             </p>
@@ -638,11 +722,21 @@ onMounted(refreshStatus);
           >
             {{ $t('install.btnLogin') }}
           </Button>
-          <Button v-else type="link" class="self-start px-0" :disabled="busy" @click="goPrev">
+          <Button
+            v-else
+            type="link"
+            class="self-start px-0"
+            :disabled="busy"
+            @click="goPrev"
+          >
             {{ $t('install.btnPrev') }}
           </Button>
           <div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
-            <Button class="w-full sm:w-auto" :disabled="busy" @click="refreshStatus">
+            <Button
+              class="w-full sm:w-auto"
+              :disabled="busy"
+              @click="refreshStatus"
+            >
               {{ $t('install.btnRefresh') }}
             </Button>
             <Button

@@ -20,7 +20,11 @@ defineProps<{
       {{ title }}
     </div>
     <ol class="space-y-2">
-      <li v-for="(item, index) in items" :key="index" class="flex items-start gap-2">
+      <li
+        v-for="(item, index) in items"
+        :key="index"
+        class="flex items-start gap-2"
+      >
         <span
           class="bg-background text-primary mt-0.5 inline-flex size-[18px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
         >

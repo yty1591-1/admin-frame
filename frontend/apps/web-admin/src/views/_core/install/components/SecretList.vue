@@ -69,7 +69,9 @@ function secretMeta(field: SchemaField): string {
               {{ field.label }}
             </span>
             <Tag color="purple">敏感</Tag>
-            <Tag v-if="field.secret?.auto_generate" color="green"> 自动生成 </Tag>
+            <Tag v-if="field.secret?.auto_generate" color="green">
+              自动生成
+            </Tag>
             <Tag v-else color="orange">可填写</Tag>
             <Tag v-if="field.blocking" color="volcano">阻塞启动</Tag>
           </div>
@@ -82,7 +84,10 @@ function secretMeta(field: SchemaField): string {
       <p v-if="field.secret" class="text-muted-foreground text-xs">
         {{ secretMeta(field) }}
       </p>
-      <p v-if="field.description" class="text-muted-foreground text-xs leading-relaxed">
+      <p
+        v-if="field.description"
+        class="text-muted-foreground text-xs leading-relaxed"
+      >
         {{ field.description }}
       </p>
 

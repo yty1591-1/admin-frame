@@ -1,6 +1,7 @@
 package appconfig_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"strconv"
 	"strings"
@@ -80,6 +81,12 @@ func defaultByYAMLPath(cfg any, path string) (string, bool) {
 		return strconv.FormatInt(value.Int(), 10), true
 	case reflect.Float32, reflect.Float64:
 		return strconv.FormatFloat(value.Float(), 'f', -1, 64), true
+	case reflect.Slice, reflect.Map:
+		encoded, err := json.Marshal(value.Interface())
+		if err != nil {
+			return "", false
+		}
+		return string(encoded), true
 	default:
 		return "", false
 	}

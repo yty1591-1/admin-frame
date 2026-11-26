@@ -29,6 +29,9 @@ const (
 	ResourceTypeRelease = "config_release"
 )
 
+// RoleCodeSystemAdmin 是引导用超级管理员角色编码（migrations/000005 system_admin）。
+const RoleCodeSystemAdmin = "system_admin"
+
 // Actor 是审计主体（与 featureflag / tenant 用例层形态一致）。
 type Actor struct {
 	SubjectID  string
@@ -36,6 +39,18 @@ type Actor struct {
 	Channel    string
 	MerchantID string
 	TraceID    string
+	// Roles 来自 IAM 快照（优先）或令牌声明；用于 system_admin 跳过双人审批。
+	Roles []string
+}
+
+// IsSystemAdmin 报告主体是否持有超级管理员角色（可跳过配置/密钥双人审批，仍写审计）。
+func (a Actor) IsSystemAdmin() bool {
+	for _, role := range a.Roles {
+		if role == RoleCodeSystemAdmin {
+			return true
+		}
+	}
+	return false
 }
 
 // Options 是用例公共参数。

@@ -107,6 +107,7 @@ func identityKeySpecs() []domain.KeySpec {
 		keys.enum("identity.saml.rate_limit.failure_mode", "fail_closed",
 			"SAML 限流 Redis 故障策略", "fail_closed", "fail_open"),
 		keys.boolean("identity.m2m.enabled", false, "是否启用 client_credentials 令牌端点"),
+		keys.json("identity.m2m.allowed_scopes", "[]", "M2M 可授予的权限码白名单（JSON 数组）"),
 		keys.duration("identity.m2m.token_ttl", "15m", "机器令牌有效期"),
 		keys.duration("identity.m2m.rotate_grace", "24h", "旧 secret 退役宽限"),
 		keys.duration("identity.m2m.max_secret_age", "2160h", "secret 最长生命周期"),
@@ -116,6 +117,12 @@ func identityKeySpecs() []domain.KeySpec {
 		keys.enum("identity.m2m.rate_limit.failure_mode", "fail_closed",
 			"M2M 限流 Redis 故障策略", "fail_closed", "fail_open"),
 		keys.boolean("identity.scim.enabled", false, "是否启用 SCIM 2.0 服务端"),
+		func() domain.KeySpec {
+			spec := keys.str("identity.scim.provider", "", "SCIM 目录提供方标识（如 okta）")
+			spec.Pattern = `^[a-z][a-z0-9_-]{1,31}$`
+			return spec
+		}(),
+		keys.json("identity.scim.group_role_map", "{}", "SCIM 组显示名到 A 端角色 code 的映射（JSON 对象）"),
 		keys.integerMin("identity.scim.page_size", 50, 1, "SCIM 列表默认每页条数"),
 		keys.integerMin("identity.scim.max_payload", 1048576, 1024, "SCIM 单请求体上限（字节）"),
 		keys.duration("identity.scim.request_timeout", "10s", "SCIM 单请求处理超时"),

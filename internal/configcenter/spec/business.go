@@ -83,6 +83,10 @@ func (n namespaceSpecs) duration(key, defaultValue, description string) domain.K
 	return n.base(key, defaultValue, description, domain.ValueTypeDuration)
 }
 
+func (n namespaceSpecs) json(key, defaultValue, description string) domain.KeySpec {
+	return n.base(key, defaultValue, description, domain.ValueTypeJSON)
+}
+
 // sensitiveAuto 登记敏感键（仅进 config_secret，不进普通 Item 播种；CC-R-05）。
 func (n namespaceSpecs) sensitiveAuto(key, description string, rule *domain.SecretRule) domain.KeySpec {
 	return domain.KeySpec{

@@ -53,7 +53,13 @@ function onInput(event: Event) {
         : 'border-border/60 grid grid-cols-1 gap-3 border-b py-4 last:border-b-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]'
     "
   >
-    <div :class="compact ? 'flex min-w-0 flex-wrap items-center gap-2 sm:min-w-56' : 'space-y-1.5'">
+    <div
+      :class="
+        compact
+          ? 'flex min-w-0 flex-wrap items-center gap-2 sm:min-w-56'
+          : 'space-y-1.5'
+      "
+    >
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-foreground text-sm font-medium">
           {{ field.label }}
@@ -65,13 +71,19 @@ function onInput(event: Event) {
         <Tag v-if="!compact && field.deprecated" color="default">已废弃</Tag>
         <Tag v-if="!compact && field.hot_whitelist" color="green">可热更</Tag>
       </div>
-      <p v-if="!compact && field.description" class="text-muted-foreground text-xs leading-relaxed">
+      <p
+        v-if="!compact && field.description"
+        class="text-muted-foreground text-xs leading-relaxed"
+      >
         {{ field.description }}
       </p>
       <p v-if="!compact && badge" class="text-primary text-xs">
         {{ badge }}
       </p>
-      <code v-if="!compact" class="text-muted-foreground/80 block font-mono text-[11px]">
+      <code
+        v-if="!compact"
+        class="text-muted-foreground/80 block font-mono text-[11px]"
+      >
         {{ field.key }}
       </code>
     </div>
@@ -92,7 +104,11 @@ function onInput(event: Event) {
         v-else-if="field.widget === 'select' && selectOptions.length"
         :class="compact ? 'w-full sm:min-w-64 sm:w-auto' : 'w-full'"
         :options="selectOptions"
-        :placeholder="field.default.source === 'none' ? '请选择' : `默认 ${field.default.value}`"
+        :placeholder="
+          field.default.source === 'none'
+            ? '请选择'
+            : `默认 ${field.default.value}`
+        "
         :value="modelValue || undefined"
         @change="(value) => setValue(value as string)"
       />
