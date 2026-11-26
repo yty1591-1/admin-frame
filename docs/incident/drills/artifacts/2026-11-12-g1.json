@@ -1,0 +1,47 @@
+{
+  "generated_by": "scripts/ops/game-day-drill.sh",
+  "scenarios": [
+    {
+      "id": "G1",
+      "verdict": "PASS",
+      "elapsed_ms": 236,
+      "checks": [
+        {
+          "check": "runbook",
+          "status": "pass",
+          "detail": "docs/runbooks/release-rollback.md"
+        },
+        {
+          "check": "alerts_catalog",
+          "status": "pass",
+          "detail": "api.5xx.rate_high=P1"
+        },
+        {
+          "check": "rule",
+          "status": "pass",
+          "detail": "api.5xx.rate_high 规则存在"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "helm rollback"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "release-smoke"
+        },
+        {
+          "check": "marker",
+          "status": "pass",
+          "detail": "release-canary-gate"
+        },
+        {
+          "check": "route",
+          "status": "pass",
+          "detail": "severity=P1 → pager"
+        }
+      ]
+    }
+  ]
+}

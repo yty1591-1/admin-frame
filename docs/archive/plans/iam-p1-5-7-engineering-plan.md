@@ -1,0 +1,501 @@
+> **归档**：本计划已于 2026-11-11 关闭并归档（M0～M6 全部完成），只读不再维护；
+> 后续变更走变更评审（CCB）并新建计划。计划归属见 [`docs/README.md`](../../README.md)，归档索引见 [`archive/README.md`](../README.md)。
+
+# IAM 生产化整改工程规划（P1-5 / P1-6 / P1-7）
+
+| 项目 | 内容 |
+|------|------|
+| 文档编号 | IAM-PLAN-2026-11-001 |
+| 文档版本 | v1.9（执行基线；v1.1 由 2026-11-08 基线校正形成，v1.2 补 S6-1 设计交付，v1.3 回写 SCIM / M2M 代码交付，v1.4 补 S6-6 接入 Runbook，v1.5 补 M2M 端到端用例并修复机器审计，v1.6 状态转为可交付，v1.7 回写 §13 验收证据，v1.8 回写 S6-1 安全评审结论，v1.9 关闭计划） |
+| 编制日期 | 2026-11-05 |
+| 文档状态 | **已批准并关闭（2026-11-11）**：M0 会签（会签单 `m0-signoff-record-2026-11-10`）通过，S6-1 安全评审转为「通过」（`C1`～`C3` 闭环，staging 按 `STG-EQ-01` 等价环境放行），M5 `P1-7` 双评审签字通过，M6 生产准入评审通过；计划内无未关闭条目，已归档至 `docs/archive/plans/` |
+| 密级 | 内部 |
+| 适用范围 | `internal/iam`、`internal/identity`、`internal/platform`、CI 门禁与生产交付 |
+| 输入依据 | [IAM 审计报告](../iam/iam-audit-report-2026-11-05.md) §6.2、[RBAC 设计](../../rbac-iam.md)、[身份认证设计](../../identity-authn.md)、[测试规范](../../TESTING_STANDARDS.md)（如存在）、[CI 门禁脚本](../../../scripts/ci/check-test-gates.sh) |
+| 批准人 | 研发负责人、安全负责人、运维负责人（立项会签） |
+| 变更控制 | 里程碑、验收阈值、范围变更须经变更评审（CCB）批准并更新本文档版本 |
+
+## 修订记录
+
+| 版本 | 日期 | 修订人 | 说明 |
+|------|------|--------|------|
+| v1.0 | 2026-11-05 | IAM 工程组 | 首次编制，覆盖 P1-5/P1-6/P1-7 立项规划 |
+| v1.1 | 2026-11-08 | IAM 工程组 | **基线校正**：按代码、门禁与 CI 实测把已交付批次回写进 §3 里程碑与 §13 验收。判定依据见 §13 证据块；同时修正 §3.1/§13 与 §5.1.1 之间「已达成 / 未启动」的矛盾。范围与阈值未变，不涉及 CCB 事项 |
+| v1.2 | 2026-11-10 | IAM 工程组 | **S6-1 设计交付**：SCIM 2.0 与 M2M 设计冻结稿写入 [`identity-authn.md`](../../identity-authn.md) §21（资源映射、令牌与密钥生命周期、错误码、配置、门禁与验收），同步回写 §3.1 的 S6-1 状态。范围、阈值与里程碑不变，不涉及 CCB 事项 |
+| v1.3 | 2026-11-10 | IAM 工程组 | **P1-6 代码交付回写**：SCIM 2.0 与 M2M 已实现并接入 `check-authn` 门禁，同步更新 M4、S6-4 / S6-5、§6.1 门禁落地现状与 §13.2 验收证据；SCIM 10k 以 `LB-STG-SCIM-SYNC` 通过。范围与阈值未变，不涉及 CCB 事项 |
+| v1.4 | 2026-11-10 | IAM 工程组 | **S6-6 接入 Runbook 交付**：新建 [`runbooks/identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md)，覆盖 OIDC / SAML / SCIM / M2M 的材料清单、配置、冒烟、验收、回滚与交接；S6-6 剩余项收敛为真实/仿真 IdP 接入与运维交接。范围与阈值未变，不涉及 CCB 事项 |
+| v1.5 | 2026-11-10 | IAM 工程组 | **M2M 端到端补齐**：新增 `tests/integration/identity/m2m_test.go`（真实 MySQL + Redis 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离 / 审计落库）；用例暴露机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被校验丢弃，已修复。范围与阈值未变，不涉及 CCB 事项 |
+| v1.6 | 2026-11-10 | IAM 工程组 | **状态转为可交付**：三项工程的设计、代码、门禁、Runbook 与验收证据已齐备；剩余 M0 会签、S6-1 安全评审、S6-6 真实 IdP 接入与运维交接、P1-7 签字与 staging 实战、M6 准入列为交付后/外部依赖项。范围、阈值与里程碑未变，不涉及 CCB 事项 |
+| v1.7 | 2026-11-10 | IAM 工程组 | **§13 验收回写**：§13.2 的 M2M 条目改为端到端用例已通过并记录审计修复；§13.1 门禁演练按 S5-5 演练记录勾选，正文统一为「删除集成测试由清单断言在 `compose up` 前失败」。范围与阈值未变，不涉及 CCB 事项 |
+| v1.8 | 2026-11-10 | IAM 工程组 | **S6-1 安全评审完成**：17 项清单逐条核对通过，结论为有条件通过；`SEC-F-01` / `SEC-F-02` 已修复，`C1`（staging 复证 M2M 告警）、`C2`（`RR-04` 轮换演练）、`C3`（JWKS 轮换指标快照）三项 M6 前条件登记于评审记录 §7；S6-1 状态改为已完成，§13.2 安全项勾选。范围、阈值与里程碑未变，不涉及 CCB 事项 |
+| v1.9 | 2026-11-11 | IAM 工程组 | **计划关闭**：M0 会签通过（三位批准人同意）、S6-1 转为「通过」且 `C1`～`C3` 闭环、P1-7 双评审签字通过、M6 生产准入评审通过；staging 相关项按 `STG-EQ-01` 等价环境证据放行并记录，计划归档至 `docs/archive/plans/`。范围、阈值与里程碑未变 |
+
+---
+
+## 1. 项目背景
+
+### 1.1 业务背景
+
+> **基线说明**：本节是 2026-11-05 编制时的现状快照，保留不改写以便追溯立项动因；三项缺口的最新交付状态以下文 [§3.1](#31-总里程碑) 与 [§13](#13-验收标准) 为准。
+
+IAM 模块已完成 RBAC1/RBAC2、SoD、数据范围、变更审批、破玻璃、菜单派生、审计 Outbox 与两级授权快照，P0 阻断项与 P1-1～P1-4 已完成应用侧修复。当前模块满足“staging 灰度”条件，但距离企业客户规模化接入仍有三个缺口：
+
+1. **质量证据不足**：模块总覆盖率 57.2%，`iam/infrastructure/persistence` 21.3%，`iam/transport/rest` 间接覆盖 40.1%；CI 仅对 `domain` 设 70% 门槛，IAM MySQL 集成测试未进入 PR 必跑流水线。SQL 仓储与 HTTP 契约的回归无法在合并前暴露。
+2. **企业身份能力缺失（立项基线）**：OIDC 仅预留接口，仓库无 OIDC/SAML/SCIM 实现，也无机器身份（M2M）。企业 SSO、自动化开通、服务间调用均无法落地。当前进度见 §3.1 与 §13.2。
+3. **访问复核无工具化**：当前仅有季度人工导出流程，缺少待复核清单、责任人确认、超期回收与审计留痕，无法形成等保/SOC 2 周期性证据链。
+
+### 1.2 问题陈述
+
+| 编号 | 问题 | 现状证据 | 不解决的后果 |
+|------|------|---------|-------------|
+| GAP-5 | 测试与门禁覆盖不足 | 覆盖率 57.2%；`check-test-gates.sh` 仅 `domain` 门槛；`Makefile test-integration` 不在 `make ci` | SQL/契约回归漏检，灰度期故障定位成本高 |
+| GAP-6 | 企业身份能力缺口 | 立项基线：无 OIDC/SAML/SCIM/M2M 实现（2026-11-10 已全部交付，见 §3.1） | 企业客户无法 SSO 接入，账号开通依赖人工，服务调用无审计身份 |
+| GAP-7 | 访问复核无工具化 | 仅人工导出流程 | 等保/SOC 2 复核证据不可持续，超期权限无法自动收敛 |
+
+### 1.3 项目目标
+
+在 2027-01-15 前完成三项工程并达到生产准入：
+
+- P1-5：建立分层覆盖率门禁与 PR 必跑集成测试，使 IAM 关键层覆盖率与回归证据可量化、可阻断。
+- P1-6：完成 OIDC（授权码 + PKCE）端到端接入，按阶段交付 SAML 2.0 与 SCIM 2.0，并提供可审计的 M2M 身份。
+- P1-7：交付访问复核（Access Certification）工具链，支持季度周期、责任人确认、超期回收、证据导出与审计留痕。
+
+---
+
+## 2. 范围边界
+
+### 2.1 范围内
+
+| 工程项 | 范围 |
+|--------|------|
+| P1-5 | IAM 各层覆盖率门槛、PR 集成测试编排、审批/模板/缓存竞态/SQL 边界用例补齐、门禁脚本与 Makefile/CI 改造 |
+| P1-6 | OIDC 授权码 + PKCE；SAML 2.0 SP-initiated SSO；SCIM 2.0 用户/组同步；OAuth2 client credentials 机器身份；IdP 配置管理、密钥/证书轮换、审计与指标 |
+| P1-7 | 复核活动（Campaign）创建、待复核清单生成、复核人确认/驳回、超期自动回收或升级、证据导出、审计事件、权限使用数据支撑 |
+
+### 2.2 范围外
+
+- 不在本工程内实现 LDAP/AD 直连、Kerberos、OAuth2 授权服务器（本模块仅作为 SP/客户端）。
+- 不包含前端页面视觉设计；前端仅按接口契约接入（P1-7 管理页面可作为后续独立迭代）。
+- 不包含 P2 项（机器身份之外的权限使用分析、审批 SLA 引擎、角色数据归档）。
+- 不包含生产 Redis 集群/托管切换本身（属 P1-4 部署尾项，由 SRE 独立推进）。
+
+### 2.3 与既有整改的关系
+
+- 依赖已完成项：P0-1 模板审批、P0-2 缓存墓碑、P1-1 密钥治理、P1-2 幂等强制、P1-3 生产开关、P1-4 应用侧熔断降级。
+- 本工程不得回退上述能力；涉及审批与幂等的写路径必须沿用既有 `rejectDirectWrite` 与 `Idempotency-Key` 契约。
+
+---
+
+## 3. 里程碑节点
+
+### 3.1 总里程碑
+
+| 里程碑 | 日期（工作日） | 交付主题 | 退出条件（可校验） | 状态（2026-11-10 校正） |
+|--------|----------------|---------|-------------------|------------------------|
+| M0 立项评审 | 2026-11-06 | 范围、资源、阈值冻结 | 本文档会签通过；CCB 记录归档 | **已完成（2026-11-11）**：三位批准人（研发 / 安全 / 运维负责人，单人分角色）结论均为同意，无附条件；会签单 [`m0-signoff-record-2026-11-10.md`](../reviews/m0-signoff-record-2026-11-10.md) 已归档，CCB 决议 D1～D5 全部冻结 |
+| M1 P1-5 门禁生效 | 2026-11-20 | 覆盖率与集成测试门禁 | `make ci` 全绿；故意降低覆盖率可使 PR 失败（演练记录） | **已完成（2026-11-08）**：分层门禁与 PR 集成测试均已生效；S5-5 两类负向用例（阈值注入、移除集成测试）均通过并留档；`make ci` 已全绿复核 |
+| M2 OIDC 可接入 | 2026-12-04 | OIDC 授权码 + PKCE | 至少 1 个 IdP（Keycloak 或等价测试 IdP）端到端登录成功；JWKS 轮换演练通过 | **已完成（提前，2026-11-05）**：staging 真实 Keycloak 授权码 + PKCE 冒烟通过；JWKS 轮换步骤、判定指标与指标数值快照已补（`C3` 闭环，2026-11-11） |
+| M3 SAML 可接入 | 2026-12-18 | SAML 2.0 SP-initiated | 签名断言校验、证书轮换、重放防护用例通过 | **已完成（提前，2026-11-06）**：kind 等价 staging + Keycloak 26.7.4，加密断言 + 签名全链路通过，证书轮换演练通过 |
+| M4 SCIM + M2M | 2027-01-08 | 用户/组同步与机器身份 | 10k 用户同步演练达标；client credentials 轮换与审计通过 | **已完成（提前，2026-11-10；安全评审已通过）**：SCIM 见 `internal/identity/{app,transport/scim}`、M2M 见 `internal/identity/app/m2m.go`，迁移 `000027`–`000029`；`check-authn` 覆盖开关校验、`enabled=false` 路由 404、负向用例、审计动作与指标；SCIM 10k 在 STG-EQ-01 实测 151.7s、0 错误（`LB-STG-SCIM-SYNC`）；M2M 轮换与 scope 由单测 + 门禁负向用例覆盖；S6-1 评审结论见 [`S6-1 安全评审记录`](../reviews/s6-1-security-review-record-2026-11-10.md) |
+| M5 P1-7 复核闭环 | 2026-12-25 | 访问复核工具链 | 一次完整季度复核演练完成；超期回收与证据导出可用 | **已完成（2026-11-11）**：4 条验收项全部达标，双评审签字通过；工具链、完整演练（真实入口 + 一次性扫描 + 混合终态导出）、kind CronJob 真实调度与失败路径均已完成；staging 实战按 `STG-EQ-01` 等价环境放行，ADR-0012 评审 Accept，季度 Owner 与首轮排期已定；报告见 [`p1-7-acceptance-report.md`](../reviews/p1-7-acceptance-report.md) |
+| M6 生产准入评审 | 2027-01-15 | 三项整体验收 | 全部质量门禁、合规评审、回滚演练通过 | **已完成（2026-11-11）**：M0 会签、M4 安全评审、M5 验收与双评审签字均完成；G1 回滚演练、质量门禁与合规评审通过；staging 相关取证按 `STG-EQ-01` 等价环境口径放行并留痕 |
+
+### 3.2 P1-5 阶段拆解
+
+| 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
+|------|------|--------|---------|------------------------|
+| S5-1 基线采集 | 2026-11-09 ~ 11-11 | 分层覆盖率基线报告、缺口清单、测试矩阵 | 基线数据与审计报告一致；缺口按文件/函数登记 | 已完成：基线由 `check-iam-coverage.sh` 以 `-coverpkg` 合并口径产出，9 个门禁包实测达标 |
+| S5-2 用例补齐（第一批） | 2026-11-12 ~ 11-17 | 审批/模板/缓存竞态用例 | 新增用例全部通过；关键分支覆盖可追溯 | 已完成：`app` 76.3%、`cache` 88.6%、`catalog` 72.7% 均过门槛 |
+| S5-3 用例补齐（第二批） | 2026-11-12 ~ 11-17 | SQL 仓储边界、HTTP handler/契约用例 | 变更行覆盖率达到门槛；契约快照稳定 | 已完成：`transport/rest` 60.6%、`transport/admin` 与 `biz` 100%；`persistence` 由 `tests/integration/iam` 计入 |
+| S5-4 门禁改造 | 2026-11-18 ~ 11-19 | `check-test-gates.sh` 分层门槛、PR 集成测试编排、Makefile 目标 | 本地与 CI 同口径；失败信息可定位到包 | 已完成：`check-test-gates.sh` 调用 `check-iam-coverage.sh`；`ci.yml` integration job 跑 `tests/integration/...` 并注入 `IAM_TEST_MYSQL_DSN` |
+| S5-5 门禁演练 | 2026-11-20 | 门禁失败演练记录、回滚说明 | 人为降低覆盖率/移除集成测试均能阻断合并 | **已完成**：阈值注入负向用例（101% → exit 1）与「移除集成测试」负向用例均验证通过（2026-11-08，`docs/incident/drills/2026-11-08-s5-5-integration-gate.md`）；门禁落地为 run-integration-tests.sh 的三层清单断言（包存在 / 15 个关键用例点名 / 总数 ≥70），在 compose up 前确定性失败 |
+
+### 3.3 P1-6 阶段拆解
+
+| 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
+|------|------|--------|---------|------------------------|
+| S6-1 协议与安全设计 | 2026-11-23 ~ 11-27 | OIDC/SAML/SCIM/M2M 设计说明、威胁建模、接口契约 | 安全评审通过；错误码与配置项冻结 | **已完成（2026-11-10 评审，2026-11-11 转通过）**：OIDC 见 [`identity-authn.md`](../../identity-authn.md) §7.3、SAML 见 §8.2.1（含 Keycloak 兼容差异与错误码）、SCIM / M2M 见 §21（资源映射、令牌与 secret 生命周期、错误码、配置、门禁与验收）；威胁建模稿见 [`identity/threat-model.md`](../../identity/threat-model.md)（四通道 STRIDE + 6 项残留风险 `RR-01`～`RR-06`）；评审结论为「通过」，`C1`～`C3` 已闭环，见 [`S6-1 安全评审记录`](../reviews/s6-1-security-review-record-2026-11-10.md) |
+| S6-2 OIDC 实现 | 2026-11-30 ~ 12-04 | 授权码 + PKCE、state/nonce、JWKS 缓存与轮换、账号绑定 | 测试 IdP 端到端通过；单元/集成测试达标 | **已完成（提前，2026-11-05）**：`internal/identity/{app,infrastructure/oauth}`；验收用例 `TestOIDCEndToEndAuthorizationCodeFlow` 等 |
+| S6-3 SAML 实现 | 2026-12-07 ~ 12-18 | SP-initiated SSO、签名/加密断言、证书轮换、重放防护 | 测试 IdP 端到端通过；安全用例通过 | **已完成（提前，2026-11-06）**：`infrastructure/saml/{provider,keys,metadata}.go`；kind `af-verify` + Keycloak 26.7.4 全链路与证书轮换演练通过 |
+| S6-4 SCIM 实现 | 2026-12-21 ~ 2027-01-06 | `/Users`、`/Groups`、过滤/分页、增量同步、冲突策略 | 10k 用户 + 50 组同步演练达标；幂等与重试可验证 | **已完成（提前，2026-11-10；安全评审已通过）**：`internal/identity/{app,transport/scim}`、迁移 `000027`；集成用例 `tests/integration/identity/scim_sync_test.go`；10k 演练 151.7s、0 错误（[`perf/LOAD_BASELINES.md`](../../perf/LOAD_BASELINES.md) §4.4 `LB-STG-SCIM-SYNC`），重复批次幂等已复证 |
+| S6-5 M2M 实现 | 2026-12-28 ~ 2027-01-08 | client credentials、密钥轮换、scope 授权、审计与指标 | 服务账号可审计轮换；令牌 TTL 与吊销生效 | **已完成（提前，2026-11-10；安全评审已通过）**：`internal/identity/app/m2m.go`、迁移 `000028`、权限种子 `000029`；`client_credentials` + 双 secret 轮换 + `authn:client_ver` 吊销；单测 `app/m2m_test.go` 与 `check-authn` 负向用例覆盖；MySQL + Redis 端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建 / 签发 / 轮换 / 宽限 / 停用 / 端别隔离与审计落库，并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题 |
+| S6-6 接入与验收 | 2027-01-11 ~ 01-15 | 接入 Runbook、IdP 配置模板、验收报告 | 至少 1 家真实/仿真企业 IdP 接入；运维交接完成 | **已完成（2026-11-11）**：IdP 配置模板（`docs/identity/idp-config-templates.md`，Keycloak 26.x 基线 + 8 项验收清单）、SSO 故障处置（`docs/runbooks/identity-auth-failure.md`）与独立接入 Runbook [`runbooks/identity-federation-onboarding.md`](../../runbooks/identity-federation-onboarding.md) 已建；以 Keycloak 26.x 仿真 IdP（`STG-EQ-01` 等价环境）完成 OIDC / SAML / SCIM / M2M 接入与运维交接 |
+
+### 3.4 P1-7 阶段拆解
+
+| 阶段 | 日期 | 交付物 | 退出条件 | 状态（2026-11-10 校正） |
+|------|------|--------|---------|------------------------|
+| S7-1 模型与契约 | 2026-11-30 ~ 12-04 | Campaign/Task/Decision 领域模型、API 契约、状态机 | 与审批/绑定模型评审通过；错误码冻结 | **已完成（提前，2026-11-05）**：`internal/iam/domain/certification.go`、`app/certification_service.go`、`transport/admin/router.go` 复核路由、审计事件 `rbac.certification` |
+| S7-2 清单生成 | 2026-12-07 ~ 12-11 | 周期任务、待复核清单、责任人映射、权限使用快照 | 10k 主体清单生成 ≤5 分钟 | **已完成**：10k 实测 403–767 ms（目标 ≤5 min，2026-11-08，`docs/incident/drills/2026-11-08-s7-2-perf.md`）；同批修掉两处写放大——任务落库 10003 条 INSERT → 23 条批量（约 20 倍）、特权判定 30003 条查询 → 6 条（按角色去重，约 100 倍）。**10 万档位已补实测**（同一日）：清单生成 4.68 s、导出 10 万行 479–595 ms / 14.30 MB、生成期堆驻留 +67.8 MB；默认上限 10000 未改动，抬升方案见 `docs/adr/0012-certification-export-limit.md`（Accepted，2026-11-11；默认值随下一发布实施） |
+| S7-3 决策与回收 | 2026-12-14 ~ 12-18 | 确认/驳回、超期升级、自动回收、破玻璃豁免 | 超期回收与二次确认用例通过 | **已完成**：`DecideTask` / `CloseCampaign` / `AutoExpireOverdue`；回收按 `expectedVersion` 做乐观锁校验，`auto_revoke` 默认关闭（仅标记 expired）；超期扫描由 `SweepOverdue` + `worker -certification-sweep` + Helm CronJob 交付（2026-11-08），与人工触发共用同一状态机 |
+| S7-4 证据与审计 | 2026-12-21 ~ 12-23 | 证据导出（CSV/JSON）、审计事件、留存策略 | 导出可复现、审计可关联 Campaign | **已完成**：`ExportEvidence`；审计 `rbac.certification` 保留 180d；字段完整率已按「状态应填口径」量化（2026-11-08）：已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 全 100%，未裁决 10 000 行按语义留空；导出 1 万行 48–81 ms / 1.43 MB |
+| S7-5 演练与验收 | 2026-12-24 ~ 12-25 | 季度复核演练、运维 Runbook、验收报告 | 全流程演练通过；证据归档可查 | **已完成（2026-11-11）**：完整演练（`TestCertificationQuarterlyDrillEndToEnd`：API 建活动→真实入口裁决→真实 worker 扫描→混合终态导出→关闭）、纯人工裁决链路（`TestCertificationReviewOnAdminEntry`）、kind CronJob 真实调度与失败路径（`docs/incident/drills/2026-11-08-cronjob-sweep-kind.md`）均已完成；验收报告 [`p1-7-acceptance-report.md`](../reviews/p1-7-acceptance-report.md) 逐条判定达标并完成双评审签字；staging 实战按 `STG-EQ-01` 等价环境放行 |
+
+---
+
+## 4. 资源配置
+
+### 4.1 角色与职责（RACI）
+
+> 责任主体按角色定义；立项会后由研发负责人在项目章程中具名到人。
+
+| 角色 | 职责 | P1-5 | P1-6 | P1-7 |
+|------|------|------|------|------|
+| IAM 后端组负责人 | 总体技术方案、领域/应用层实现、代码评审 | A/R | A/R | A/R |
+| 身份域（identity）组 | OIDC/SAML/SCIM/M2M 协议实现、令牌与密钥 | C | R | C |
+| QA / SDET | 测试矩阵、集成测试编排、覆盖率门禁校验 | R | R | R |
+| SRE / 运维 | CI 运行环境、MySQL/Redis/MinIO、监控告警、回滚演练 | R | C | C |
+| 安全与合规 | 威胁建模、密钥/证书、等保/SOC 2 证据、渗透测试 | C | R | R |
+| 前端 / 管理台 | 复核任务页面、IdP 配置界面（如需要） | I | C | R |
+| DBA | 迁移脚本、索引与容量评估 | C | C | C |
+| 产品 / 客户成功 | 企业 IdP 对接协调、复核流程定义 | I | C | A（业务规则） |
+
+### 4.2 计划工作量（人日，评审后细化）
+
+| 工程项 | 后端 | 测试 | 安全 | 运维 | 前端 | 合计（区间） |
+|--------|------|------|------|------|------|-------------|
+| P1-5 | 12 | 18 | 1 | 3 | 0 | 34 ± 6 |
+| P1-6 | 35 | 15 | 6 | 6 | 4 | 66 ± 10 |
+| P1-7 | 18 | 8 | 3 | 3 | 8 | 40 ± 6 |
+| 合计 | 65 | 41 | 10 | 12 | 12 | 140 ± 22 |
+
+### 4.3 环境与工具
+
+- 测试 IdP：Keycloak（容器化）或客户提供的仿真 IdP；SAML 使用 Keycloak/Shibboleth 之一。
+- 集成环境：真实 MySQL 8、Redis、MinIO；CI 使用独立 namespace/数据库实例，测试数据隔离。
+- 工具链：Go 1.2x、`go test -race`、`golangci-lint`、覆盖率合并工具、SCIM 一致性测试脚本。
+- 密钥/证书：测试环境使用自签证书；生产由 Vault/KMS 注入，禁止入库。
+- 观测：Prometheus + Grafana + OpenTelemetry；新增身份协议指标接入现有看板。
+
+---
+
+## 5. 分项工程规划
+
+### 5.1 P1-5 测试与门禁覆盖
+
+#### 5.1.1 目标与量化指标
+
+| 指标 | 当前（2026-11-05） | 目标 | 门禁方式 |
+|------|------|------|---------|
+| IAM 模块总覆盖率 | 69.9% | ≥ 65% | CI 汇总报告 |
+| `iam/domain` | 85.6% | ≥ 75% | 包级门槛 |
+| `iam/app` | 76.5% | ≥ 75% | 包级门槛 |
+| `iam/infrastructure/persistence` | 57.3% | ≥ 50%（第一阶段），≥ 60%（2027-Q1） | 包级门槛 + 集成测试 |
+| `iam/infrastructure/cache` | 79.6% | ≥ 75%（不下降） | 包级门槛 |
+| `iam/transport/rest` | 63.5% | ≥ 60% | 包级门槛（含 handler E2E） |
+| `iam/transport/admin` / `biz` | 路由 100% | handler 逻辑 ≥ 60% | 包级门槛 |
+| 变更行覆盖率 | 已接入（≥ 70%） | ≥ 70% | PR diff coverage 脚本 |
+| IAM MySQL 集成测试 | 已进入 PR 必跑 | 必跑 | PR 流水线必需 job |
+
+> 实测口径：`check-iam-coverage.sh` 以 `-coverpkg=./internal/iam/...` 合并全部 IAM 包单测与 `tests/integration/iam` 的 MySQL 集成测试。第一阶段目标已达成；仅 persistence 的 ≥ 60% 为 2027-Q1 长尾目标。
+
+#### 5.1.2 交付物
+
+1. 分层覆盖率基线报告与缺口清单（按包、文件、函数）。
+2. 新增测试：审批状态机（申请/自审拒绝/超期/版本冲突）、模板实例化/同步/漂移、缓存并发撤权与墓碑、SQL 唯一约束/复合外键/软删除/分页边界、HTTP 契约与错误码。
+3. `check-test-gates.sh` 增加 IAM 包级门槛与汇总门槛，失败信息定位到包。
+4. `Makefile` 与 CI 增加 `test-iam-integration` 必跑 job；测试失败即阻断。
+5. 变更行覆盖率脚本与门禁说明文档。
+
+#### 5.1.3 质量门禁
+
+- G5-1：任何 IAM 包低于门槛即失败，不允许 `SKIP` 绕过。
+- G5-2：PR 必须包含新增/修改行为的测试；无测试变更需在 PR 模板勾选例外并说明理由，由 IAM 负责人审批。
+- G5-3：集成测试失败不得重试掩盖；失败日志与数据库快照保留 7 天。
+- G5-4：`-race` 必跑（Linux CI），本地无 CGO 时仅告警。
+
+#### 5.1.4 依赖与协作
+
+- 依赖 SRE 提供稳定 MySQL/Redis 测试实例与网络策略。
+- 依赖 QA 维护测试矩阵与数据夹具；DBA 审核测试库迁移。
+- 依赖 CI 平台支持独立 integration job 与超时/重试配置。
+
+### 5.2 P1-6 企业身份能力
+
+#### 5.2.1 范围与阶段
+
+- **OIDC**：授权码 + PKCE（S256）、state/nonce 校验、JWKS 缓存与轮换、issuer/audience 严格校验、账号绑定与 JIT 开通（可配置）、错误码与审计。
+- **SAML 2.0**：SP-initiated SSO、签名断言与可选加密断言、证书轮换、重放防护（Assertion ID 去重）、属性映射。
+- **SCIM 2.0**：`/Users`、`/Groups` 的创建/更新/停用/查询、过滤与分页、增量同步、冲突与幂等策略、Bearer Token 轮换。
+- **M2M**：OAuth2 client credentials、scope 最小授权、短令牌（建议 ≤15m）、密钥轮换（建议 ≤90 天）、吊销与审计。
+
+#### 5.2.2 交付物
+
+1. 协议设计说明、威胁建模报告、配置项与接口契约。
+2. 实现代码与单测/集成测试；测试 IdP 接入脚本。
+3. IdP 配置模板（Keycloak 示例）、接入 Runbook、证书轮换 Runbook。
+4. 指标与审计事件：登录成功/失败、断言校验失败、JWKS 刷新、SCIM 同步延迟、M2M 令牌签发/吊销。
+5. 安全测试报告（重放、伪造断言、开放重定向、过期令牌、越权 scope）。
+
+#### 5.2.3 质量门禁
+
+- G6-1：OIDC/SAML 端点必须通过协议一致性用例与安全用例；任一高危用例失败即阻断。
+- G6-2：令牌/断言校验失败必须 fail-closed，并写审计（不含敏感原文）。
+- G6-3：证书/密钥轮换演练成功，旧密钥保留窗口可配置且可观测。
+- G6-4：SCIM 同步具备幂等键与重试上限；同一批次重复执行不产生重复账号/绑定。
+- G6-5：M2M 令牌不得携带超出申请 scope 的权限；吊销后 ≤1 个 TTL 生效。
+
+#### 5.2.4 依赖与协作
+
+- 依赖企业客户 IT 提供 IdP 元数据、证书与测试账号；客户成功负责协调。
+- 依赖安全团队完成威胁建模与渗透测试；合规确认数据最小化与日志脱敏。
+- 依赖 SRE 配置 TLS、证书挂载与外部网络策略。
+- 关键路径：S6-1 设计评审 → OIDC → SAML → SCIM/M2M；SCIM 可与 SAML 并行，但依赖 OIDC 的账号绑定模型。
+
+### 5.3 P1-7 访问复核
+
+#### 5.3.1 功能设计
+
+- **Campaign**：按季度或临时发起，定义范围（端别、商户、角色类型、特权角色、破玻璃绑定）。
+- **Task**：为每个主体/角色绑定生成复核任务，指定责任人（默认直属负责人 + 角色 owner）。
+- **Decision**：确认保留、驳回撤销、限期整改；支持批量操作与理由必填。
+- **超期策略**：到期前提醒、到期自动回收或升级至二级审批（可配置）。
+- **证据**：导出 CSV/JSON，包含 Campaign、任务、决策、执行结果、操作人、时间戳与审计 ID。
+- **审计**：Campaign 创建/关闭、任务生成、决策、回收、导出全量留痕。
+
+#### 5.3.2 交付物
+
+1. 领域模型与状态机、REST API 契约、权限码与菜单。
+2. 周期任务与清单生成器（支持 10k 主体）。
+3. 决策、超期回收/升级、破玻璃豁免规则。
+4. 证据导出与管理台接口（前端页面可独立迭代）。
+5. 季度复核演练报告与 Runbook。
+
+#### 5.3.3 质量门禁
+
+- G7-1：复核任务与决策幂等；重复任务生成不产生重复待办。
+- G7-2：自动回收必须二次校验当前版本，避免覆盖并发变更；回收失败进入死信并告警。
+- G7-3：证据导出可复现，字段完整率 100%，审计可关联 Campaign ID。
+- G7-4：任何自动回收动作必须可通过配置关闭，切换为人工模式。
+
+#### 5.3.4 依赖与协作
+
+- 依赖 IAM 绑定/角色/权限查询接口与审批模型；复用 Outbox 审计。
+- 依赖产品/客户成功定义复核责任人规则与超期策略。
+- 依赖前端实现管理页面；依赖 SRE 配置周期任务与告警。
+
+---
+
+## 6. 质量门禁总表
+
+| 门禁 | 工程项 | 检查内容 | 阻断级别 | 责任人 |
+|------|--------|---------|---------|--------|
+| G0 构建 | 全部 | `go build ./...`、`go vet`、`golangci-lint` 0 issues | 阻断 | IAM 后端 |
+| G5-1 | P1-5 | IAM 分层覆盖率门槛 | 阻断 | QA |
+| G5-2 | P1-5 | PR 测试变更检查 | 阻断 | IAM 负责人 |
+| G5-3 | P1-5 | MySQL 集成测试必跑 | 阻断 | QA/SRE |
+| G6-1 | P1-6 | 协议一致性与安全用例 | 阻断 | 安全 |
+| G6-2 | P1-6 | 校验失败 fail-closed + 审计 | 阻断 | 身份域 |
+| G6-3 | P1-6 | 密钥/证书轮换演练 | 阻断 | 安全/SRE |
+| G6-4 | P1-6 | SCIM 幂等与重试 | 阻断 | 身份域 |
+| G7-1 | P1-7 | 复核幂等 | 阻断 | IAM 后端 |
+| G7-2 | P1-7 | 自动回收并发安全 | 阻断 | IAM 后端 |
+| G7-3 | P1-7 | 证据完整性 | 阻断 | 合规 |
+| G8 文档 | 全部 | 设计/接口/Runbook 与实现一致 | 阻断 | 各模块负责人 |
+
+> **落地现状（2026-11-10）**：G5-1 / G5-3 已由 `scripts/ci/check-iam-coverage.sh` 与 `.github/workflows/ci.yml` 的 integration job 强制执行；G5-2 尚为人工评审项，无脚本校验。G6-1（协议一致性与安全用例）在 OIDC / SAML / SCIM / M2M 均已有对应用例与门禁断言；G6-4 / G6-5 已随 SCIM 与 M2M 交付接入 `check-authn`。G7-1～G7-3 已有实现支撑（幂等任务、乐观锁回收、证据导出与 `rbac.certification` 审计），但缺演练记录。
+
+---
+
+## 7. 合规要求
+
+| 要求 | 适用项 | 落地方式 | 证据 |
+|------|--------|---------|------|
+| 身份鉴别与访问控制（等保 2.0） | P1-6/P1-7 | SSO 强身份、最小权限、定期复核、审计留存 | 协议日志、复核报告、审计查询 |
+| SOC 2 访问控制与变更管理 | 全部 | 4-eyes 审批、复核证据、变更留痕 | 审批单、Campaign 导出、CI 记录 |
+| OAuth 2.0 / OIDC Core | P1-6 | 标准授权码 + PKCE、严格 issuer/audience/nonce | 一致性测试报告 |
+| SAML 2.0 Web Browser SSO | P1-6 | 签名断言、重放防护、证书轮换 | 安全测试报告 |
+| SCIM 2.0（RFC 7643/7644） | P1-6 | 标准资源模型、过滤/分页、幂等 | 一致性脚本结果 |
+| 数据最小化与脱敏 | P1-6/P1-7 | 审计不落敏感原文；PII 加密/索引沿用身份域 | 安全评审记录 |
+| 审计保留 ≥180 天 | 全部 | 复用审计 Outbox 与保留策略 | 保留任务配置与查询验证 |
+
+合规评审为 M6 准入前置条件；未通过不得进入生产全量。
+
+---
+
+## 8. 性能指标与容量基线
+
+| 指标 | 目标 | 测量方式 |
+|------|------|---------|
+| OIDC 回调处理 p95（不含 IdP 耗时） | ≤ 300 ms | 压测/生产 trace |
+| JWKS 缓存命中率 | ≥ 99% | 指标统计 |
+| SAML 断言校验 p95 | ≤ 50 ms | 压测 |
+| SCIM 同步 10k 用户 + 50 组 | ≤ 30 min，错误率 < 0.1% | 演练 |
+| M2M 令牌签发 p95 | ≤ 100 ms | 压测 |
+| 复核清单生成 10k 主体 | ≤ 5 min | 演练 → **实测 403–767 ms**（2026-11-08，MySQL 8.0.46，`2026-11-08-s7-2-perf.md`）；10 万主体档位 4.68 s（`2026-11-08-s7-2-perf-100k.md`） |
+| 复核决策 API p95 | ≤ 200 ms | 压测 |
+| 证据导出 10 万行 | ≤ 2 min | 演练 → **抬升上限档位下实测 479–595 ms / 14.30 MB，达标**；档位抬升已由 [ADR-0012](../../adr/0012-certification-export-limit.md)（Accepted）决策，默认值随下一发布实施 |
+| 可用性 SLO | 99.9%（月度） | 监控 |
+
+容量评估由 SRE 在 staging 完成；未达标不得进入生产灰度。
+
+---
+
+## 9. 运维保障方案
+
+### 9.1 监控与告警
+
+- 指标：协议登录成功率/失败原因、JWKS 刷新失败、证书剩余有效期、SCIM 同步延迟与失败数、M2M 令牌签发/吊销、复核任务超期数、自动回收失败数。
+- 告警：证书 ≤30 天、JWKS 刷新失败连续 3 次、SCIM 同步失败率 >1%、回收死信 >0、复核超期未处理 >阈值。
+- 看板：身份协议、访问复核、IAM 核心链路三块，接入现有 Grafana。
+
+### 9.2 变更与灰度
+
+- 变更窗口：生产变更默认工作日 10:00–16:00；紧急变更走事故流程。
+- 灰度：新协议端点按租户/商户白名单灰度 5% → 25% → 100%；每阶段观察 ≥24h。
+- 开关：OIDC/SAML/SCIM/M2M/自动回收均设独立 feature flag，默认关闭，按租户开启。
+
+### 9.3 Runbook
+
+- IdP 证书/密钥轮换、JWKS 刷新异常、SAML 断言失败排查、SCIM 同步积压、M2M 密钥吊销、复核 Campaign 延期/终止、自动回收回退。
+
+---
+
+## 10. 回滚预案
+
+| 场景 | 触发条件 | 回滚动作 | 目标时长 | 责任人 |
+|------|---------|---------|---------|--------|
+| OIDC/SAML 登录异常 | 成功率 <95% 持续 15 min | 关闭对应协议开关，回退到密码/MFA 登录 | ≤5 min | SRE + 身份域 |
+| JWKS/证书故障 | 连续刷新失败或证书过期 | 切回上一版密钥/证书；必要时禁用该 IdP | ≤15 min | 安全 + SRE |
+| SCIM 同步异常 | 错误率 >1% 或积压 >1h | 暂停同步任务，保留队列；修复后按幂等重放 | ≤10 min | 身份域 |
+| M2M 令牌异常 | 越权 scope 或吊销失效 | 全局吊销 client、轮换密钥、关闭 M2M 开关 | ≤15 min | 安全 + 身份域 |
+| 复核自动回收误删 | 回收任务异常或投诉 | 关闭自动回收，恢复人工模式；按审计恢复绑定（需审批） | ≤30 min | IAM + 合规 |
+| 门禁误阻断 | CI 门禁配置错误 | 回退门禁脚本版本，保留原覆盖率报告；24h 内修复 | ≤30 min | QA |
+
+数据回滚原则：P1-6/P1-7 迁移只做加法（新增表/列/索引），不做破坏性变更；回滚不删数据，仅停用功能。所有回滚须记录审计与变更单。
+
+---
+
+## 11. 风险管控
+
+| 风险 ID | 风险描述 | 概率 | 影响 | 缓解措施 | 触发/监控 | 责任人 |
+|---------|---------|------|------|---------|----------|--------|
+| R-01 | 覆盖率门禁导致合并效率下降 | 中 | 中 | 分层阈值渐进提升；例外需负责人审批并限期补齐 | PR 平均时长 | QA |
+| R-02 | 集成测试环境不稳定造成假失败 | 中 | 高 | 独立数据库/命名空间；失败日志留存；禁止盲目重试 | 失败率 | SRE |
+| R-03 | 企业 IdP 差异导致接入返工 | 高 | 中 | 先支持标准子集；提供配置模板与兼容矩阵 | 接入问题单 | 产品/身份域 |
+| R-04 | 证书/密钥轮换中断登录 | 中 | 高 | 双密钥重叠窗口；轮换演练；告警提前 30 天 | 证书剩余期 | 安全 |
+| R-05 | SCIM 同步冲突覆盖人工变更 | 中 | 高 | 明确冲突策略（IdP 权威/人工优先可配）；幂等与审计 | 冲突计数 | 身份域 |
+| R-06 | 复核自动回收误撤销 | 低 | 高 | 二次版本校验、宽限期、可关闭自动模式、审批留痕 | 回收失败/投诉 | IAM/合规 |
+| R-07 | 范围蔓延导致里程碑延期 | 中 | 中 | CCB 冻结范围；新增项进入 backlog | 变更请求数 | 项目经理 |
+| R-08 | 安全漏洞（断言伪造、开放重定向） | 中 | 高 | 威胁建模、渗透测试、fail-closed、WAF/限流 | 安全扫描 | 安全 |
+
+风险评审节奏：每周项目例会更新风险台账；高影响风险进入升级路径（研发负责人 → 安全/运维负责人 → 项目决策会）。
+
+---
+
+## 12. 跨团队协作机制
+
+- **项目例会**：每周一次，IAM/身份域/QA/SRE/安全参加；输出进度、风险、阻塞项。
+- **设计评审**：S6-1、S7-1 各一次，安全与运维必须参加；评审结论归档。
+- **接口联调**：OIDC/SAML 与客户 IdP 联调前，双方确认元数据、证书、测试账号与网络策略。
+- **变更评审（CCB）**：范围、里程碑、验收阈值变更须书面申请；批准后更新本文档与任务系统。
+- **缺陷与升级**：P0/P1 缺陷 24h 内响应；跨团队阻塞 48h 未解决升级至研发负责人。
+- **交付物归档**：设计、测试报告、演练记录、验收报告统一存入 `docs/` 或指定知识库，PR 关联文档链接。
+
+---
+
+## 13. 验收标准
+
+### 13.1 P1-5 验收
+
+- [x] IAM 分层覆盖率全部达到 §5.1.1 目标，且 CI 实际执行门槛。
+- [x] IAM MySQL 集成测试在 PR 流水线必跑并通过。
+- [x] 新增审批/模板/缓存竞态/SQL 边界/HTTP 契约用例全部通过。
+- [x] 门禁演练：人为降低覆盖率或删除集成测试可使 PR 失败，记录可查。**（2026-11-08 达标）**
+- [x] 变更行覆盖率 ≥70%。
+
+**证据（2026-11-08 实测，命令可复跑）**
+
+- `bash scripts/ci/check-iam-coverage.sh`：`domain 84.7%/≥80`、`app 76.3%/≥75`、`catalog 72.7%/≥60`、`cache 88.6%/≥75`、`menuview 100%/≥90`、`observability 95.1%/≥45`、`transport/rest 60.6%/≥60`、`transport/admin 100%/≥90`、`transport/biz 100%/≥90`。`persistence` 本地跳过（无 `IAM_TEST_MYSQL_DSN`），CI 由 integration job 注入。
+- 变更行门禁：以 `586f232~1` 为基线、真实覆盖率档案运行，`229/243` 行 = **94.2%**。
+- 门禁演练：阈值注入 `IAM_DIFF_COVERAGE_MIN=101` 时脚本 `exit 1`，阻断成立；「删除集成测试」由 `run-integration-tests.sh` 的三层清单断言（包存在 / 15 个关键用例点名 / 总数 ≥70）在 `compose up` 前确定性失败，演练记录见 `docs/incident/drills/2026-11-08-s5-5-integration-gate.md`。
+- 顺带修复：该脚本原先把 `package config` 这类不进入覆盖率档案的行计入分母，导致「只加包注释」也报 0.0% 并阻断合并（`062397a` 复现）。现分母改为「变更行 ∩ 档案内可执行语句行」，同一提交重跑输出 `no changed executable IAM lines; skipped`。
+
+### 13.2 P1-6 验收
+
+- [x] 至少 1 个 IdP 完成 OIDC 端到端接入，含 PKCE、state/nonce、JWKS 轮换。
+- [x] SAML SP-initiated SSO 通过签名断言、重放、证书轮换安全用例。
+- [x] SCIM 10k 用户同步演练达标，重复批次不产生重复数据。**（2026-11-10 达标）** 集成用例 `tests/integration/identity/scim_sync_test.go`；STG-EQ-01 实测 10k 用户 + 50 组 151.7s、0 错误（`LB-STG-SCIM-SYNC`），同批重复执行数量不变。
+- [x] M2M client credentials 可签发、轮换、吊销，scope 最小化且审计可查。**（2026-11-10 达标）** 单测 `internal/identity/app/m2m_test.go` 覆盖签发、双 secret 轮换、scope 越权、停用吊销；审计动作 `auth.m2m.*` 已注册且机器事件（以 `client_id` 作 `actor_id`）实际落库；端到端用例 `tests/integration/identity/m2m_test.go` 覆盖创建、签发、双 secret 轮换、宽限、停用、端别隔离与审计。
+- [x] 安全测试无高危/严重问题；中危问题有整改计划与期限。**（2026-11-11 达标）** S6-1 安全评审 17 项清单逐条通过，未发现高危/严重问题；两项偏差 `SEC-F-01` / `SEC-F-02` 已修复，`C1`～`C3` 三项条件全部闭环，见 [评审记录](../reviews/s6-1-security-review-record-2026-11-10.md) §7。
+
+**证据与缺口（2026-11-10 核对）**
+
+- OIDC：`docs/identity-authn.md` §7.3「已实现并通过 staging 真实 Keycloak 验收（2026-11-05）」；用例 `TestOIDCEndToEndAuthorizationCodeFlow`、`TestJWKSRetainsCacheWhenRefreshFails`、`TestOIDCRequiresExplicitFlag`。JWKS 轮换的指标数值快照已于 2026-11-11 补齐（S6-1 `C3` 闭环）。
+- SAML：`docs/identity-authn.md` §8.2.1，2026-11-06 在 kind `af-verify` + Keycloak 26.7.4 跑通加密断言 + 签名全链路，证书轮换演练通过（`kid=rotate`）。
+- SCIM：已实现（2026-11-10，`internal/identity/{app,transport/scim}`），10k 演练见 [`perf/LOAD_BASELINES.md`](../../perf/LOAD_BASELINES.md) §4.4；默认关闭，`enabled=false` 时路由 404。
+- M2M：已实现（2026-11-10，`internal/identity/app/m2m.go`），`client_credentials` 签发 / 双 secret 轮换 / `authn:client_ver` 吊销齐备；端到端用例 `tests/integration/identity/m2m_test.go` 已在真实 MySQL + Redis 通过（2026-11-10），并修复机器事件 `actor_id` 为空导致 `token.issued` / `token.denied` 审计被丢弃的问题。
+- 安全测试报告：P1-6 未单独出具专项测试报告，安全结论由 S6-1 安全评审承接——2026-11-10 完成、2026-11-11 转为**通过**，清单、决议与条件闭环情况见 [S6-1 评审记录](../reviews/s6-1-security-review-record-2026-11-10.md) §3～§7。
+
+### 13.3 P1-7 验收
+
+- [x] 一次完整季度复核 Campaign 演练：清单生成 → 责任人确认 → 超期回收 → 证据导出。**（2026-11-08 达标，技术链路；2026-11-11 签收）** 同一活动内四段串联：A 端 API 建活动并激活 → 真实 HTTP 入口裁决（权限点 `iam:certification:decide` 校验）→ 真实 `worker -certification-sweep` 进程扫描 → 导出含 `confirmed` / `expired` 两种终态（`TestCertificationQuarterlyDrillEndToEnd`）；集群侧另有 kind CronJob 真实调度与失败路径实测。季度执行 Owner 已定（@identity-owner，首轮 2027-Q1），详见 [P1-7 验收报告](../reviews/p1-7-acceptance-report.md) §5。
+- [x] 复核结果全程审计可关联 Campaign；导出字段完整率 100%（应填口径实测：已裁决 100 行四列全 100%，未裁决行按语义留空，见 `2026-11-08-s7-2-perf.md` §7）。
+- [x] 自动回收具备并发安全与回退开关；误操作可人工恢复。
+- [x] 10k 主体清单生成达到性能指标（403–767 ms ≤ 5 min）。10 万行导出的**技术可达性已实测**：抬升上限档位下生成 4.68 s、导出 479–595 ms / 14.30 MB；档位抬升已由 [ADR-0012](../../adr/0012-certification-export-limit.md)（Accepted，2026-11-11）决策，与 [10 万档位实测](../../incident/drills/2026-11-08-s7-2-perf-100k.md) 互证。
+
+**证据与缺口（2026-11-08 核对）**
+
+- 工具链已具备：`internal/iam/app/certification_service.go` 提供 `CreateCampaign` / `ActivateCampaign` / `DecideTask` / `CloseCampaign` / `AutoExpireOverdue` / `ExportEvidence`，`certification_sweeper.go` 提供 `SweepOverdue`（worker 一次性模式与 CronJob 的入口）；路由注册于 `internal/iam/transport/admin/router.go:136`，受 `iam.certification.enabled` 控制（`config.IAMCertificationConfig.IsEnabled()` 未配置时默认开启）。
+- 403 成立依据：`AutoExpireOverdue` 按 `task.Version` 做乐观锁（`Save(ctx, task, expectedVersion)`），`auto_revoke` 默认 `false` 仅标记过期，`validate.go:196` 强制「`auto_revoke` 必须同时启用 `certification`」，可整体关闭回到人工模式。
+- 402 已闭环（2026-11-08）：字段完整率按「状态应填口径」实测——已裁决 100 行 `decision`/`reason`/`decided_by`/`decided_at` 均为 100%，未裁决 10 000 行按语义留空；口径依据见 `2026-11-08-s7-2-perf.md` §7。
+- 404 已闭环（2026-11-11）：10k 主体清单生成实测 403–767 ms；10 万档位在抬升上限至 100000 后生成 4.68 s、导出 479–595 ms / 14.30 MB / 10 万行、生成期堆驻留 +67.8 MB（`docs/incident/drills/2026-11-08-s7-2-perf-100k.md`）；口径已由 `docs/adr/0012-certification-export-limit.md` 评审 Accept。生产默认值仍为 10000，抬升随下一发布实施。
+
+### 13.4 整体生产准入（DoD）
+
+- [x] M1～M5 全部退出条件满足，M6 评审通过。
+- [x] `go build`、`go test`、`go vet`、`golangci-lint`、CI 门禁全绿。
+- [x] 安全评审与合规评审签字；至少一次生产级故障演练（IdP 不可用、证书过期、SCIM 积压）。
+- [x] 回滚演练在 staging 完成并记录时长。
+- [x] 文档更新：设计文档、接口契约、Runbook、监控看板、验收报告。
+- [x] 无未关闭的 P0/P1 缺陷。
+
+**DoD 闭环记录（2026-11-11）**：M0 会签通过，M4 安全评审（S6-1）转为「通过」，M5 验收与双评审签字完成，M6 生产准入评审通过；
+staging 相关取证（staging 实战、回滚演练、IdP 故障演练）按 `STG-EQ-01` 等价环境证据放行并留痕，
+见 [S6-1 评审记录](../reviews/s6-1-security-review-record-2026-11-10.md)、[P1-7 验收报告](../reviews/p1-7-acceptance-report.md) 与
+[身份域演练记录](../../incident/drills/staging-2026-11-10-identity-drill.md)。无未关闭 P0/P1 缺陷。
+
+---
+
+## 14. 附录
+
+### 14.1 关键度量命令
+
+```bash
+go test -count=1 -coverprofile=cover.out ./internal/iam/...
+go tool cover -func=cover.out | tail -1
+bash scripts/ci/check-test-gates.sh
+bash scripts/ci/run-integration-tests.sh
+golangci-lint run ./internal/iam/... ./internal/identity/...
+```
+
+### 14.2 关联文件
+
+- [IAM 审计报告](../iam/iam-audit-report-2026-11-05.md)
+- [RBAC 与 IAM 设计](../../rbac-iam.md)
+- [身份认证设计](../../identity-authn.md)
+- [身份域威胁建模](../../identity/threat-model.md)
+- [S6-1 安全评审记录（通过，2026-11-11）](../reviews/s6-1-security-review-record-2026-11-10.md)
+- [staging 身份域演练记录（已执行，2026-11-11 判定通过）](../../incident/drills/staging-2026-11-10-identity-drill.md)
+- [P1-7 验收报告（已签字，2026-11-11）](../reviews/p1-7-acceptance-report.md)
+- [M0 立项会签单（已签，2026-11-11）](../reviews/m0-signoff-record-2026-11-10.md)
+- [ADR-0012 单活动规模上限与导出口径](../../adr/0012-certification-export-limit.md)
+- [S7-5 全流程演练记录](../../incident/drills/2026-11-08-certification-sweep.md)
+- [S7-5 集群 CronJob 调度演练](../../incident/drills/2026-11-08-cronjob-sweep-kind.md)
+- [S7-2 10k 性能实测](../../incident/drills/2026-11-08-s7-2-perf.md)
+- [S7-2 10 万档位实测](../../incident/drills/2026-11-08-s7-2-perf-100k.md)
+- [CI 测试门禁](../../../scripts/ci/check-test-gates.sh)
+- [集成测试脚本](../../../scripts/ci/run-integration-tests.sh)
+- [Makefile](../../../Makefile)
+
+### 14.3 术语
+
+| 术语 | 说明 |
+|------|------|
+| OIDC | OpenID Connect，基于 OAuth 2.0 的身份层协议 |
+| PKCE | Proof Key for Code Exchange，授权码流程防截获扩展 |
+| SAML | Security Assertion Markup Language，企业 SSO 断言协议 |
+| SCIM | System for Cross-domain Identity Management，账号/组同步协议 |
+| M2M | Machine-to-Machine，服务间机器身份 |
+| Campaign | 一次访问复核活动 |
+| 门禁 | CI/评审中阻断不合格交付的强制检查 |

@@ -7,10 +7,14 @@ import (
 )
 
 // validateDB 校验驱动枚举、DSN 必填与连接池参数。
+//
+// 只支持 memory 与 mysql：仓储 SQL、迁移脚本（DATETIME(3) / AUTO_INCREMENT /
+// InnoDB）均为 MySQL 方言，postgres 虽曾被枚举但从未在业务仓储中实现，
+// 配置放行会变成「连接成功、查询失败」的假支持。
 func (c *Config) validateDB() []error {
 	var errs []error
 	switch c.DB.Driver {
-	case "memory", "mysql", "postgres":
+	case "memory", "mysql":
 	default:
 		errs = append(errs, fmt.Errorf("unsupported db.driver: %s", c.DB.Driver))
 		return errs
@@ -39,9 +43,14 @@ func (c *Config) validateDB() []error {
 }
 
 // validateEnv 校验环境枚举与生产互斥项。
+//
+// 空 env 一律拒绝：否则 IsProdLike/IsLocalDev 均 false，mTLS / 裸密钥 /
+// namespace allowlist 等门禁会被静默绕过。
 func (c *Config) validateEnv() []error {
 	switch strings.ToLower(strings.TrimSpace(c.Env)) {
-	case "", "local", "dev", "test", "staging", "prod":
+	case "local", "dev", "test", "staging", "prod":
+	case "":
+		return []error{fmt.Errorf("env is required")}
 	default:
 		return []error{fmt.Errorf("unsupported env: %s", c.Env)}
 	}

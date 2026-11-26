@@ -17,10 +17,16 @@ const (
 	CodeNotFound = 40400
 	// CodeConflict 表示状态冲突或资源已存在。
 	CodeConflict = 40900
+	// CodeInstallInProgress 表示配置中心安装进行中（ADR-0017）。
+	CodeInstallInProgress = 40951
+	// CodeInstallCompleted 表示安装已完成，拒绝再次写入安装 API。
+	CodeInstallCompleted = 40952
 	// CodeTooManyRequests 表示限流或配额耗尽（REL-05）。
 	CodeTooManyRequests = 42900
 	// CodeServiceUnavailable 表示鉴权/关键依赖不可用，服务暂时无法处理请求（失败关闭）。
 	CodeServiceUnavailable = 50300
+	// CodeInstallRequired 表示配置中心尚未完成首次安装（业务 readyz / 管理面）。
+	CodeInstallRequired = 50351
 	// CodeInternal 表示内部错误。
 	CodeInternal = 50000
 )
@@ -123,11 +129,13 @@ func MapSemanticCode(bizCode int) xerr.Code {
 		return xerr.CodePermissionDenied
 	case CodeNotFound:
 		return xerr.CodeNotFound
-	case CodeConflict:
+	case CodeConflict, CodeInstallCompleted:
 		return xerr.CodeAlreadyExists
+	case CodeInstallInProgress:
+		return xerr.CodeAborted
 	case CodeTooManyRequests:
 		return xerr.CodeResourceExhausted
-	case CodeServiceUnavailable:
+	case CodeServiceUnavailable, CodeInstallRequired:
 		return xerr.CodeUnavailable
 	case CodeInternal:
 		return xerr.CodeInternal

@@ -1,0 +1,77 @@
+{
+  "name": "@vben/app-kernel",
+  "version": "5.8.0",
+  "homepage": "https://github.com/vbenjs/vue-vben-admin",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./adapter/component": {
+      "types": "./src/adapter/component/index.ts",
+      "default": "./src/adapter/component/index.ts"
+    },
+    "./adapter/form": {
+      "types": "./src/adapter/form.ts",
+      "default": "./src/adapter/form.ts"
+    },
+    "./layouts/auth": {
+      "types": "./src/layouts/auth.vue",
+      "default": "./src/layouts/auth.vue"
+    },
+    "./locales": {
+      "types": "./src/locales.ts",
+      "default": "./src/locales.ts"
+    },
+    "./router": {
+      "types": "./src/router/index.ts",
+      "default": "./src/router/index.ts"
+    },
+    "./api/request": {
+      "types": "./src/api/request.ts",
+      "default": "./src/api/request.ts"
+    },
+    "./main": {
+      "types": "./src/main.ts",
+      "default": "./src/main.ts"
+    },
+    "./api/core/auth": {
+      "types": "./src/api/core/auth.ts",
+      "default": "./src/api/core/auth.ts"
+    },
+    "./store": {
+      "types": "./src/store/index.ts",
+      "default": "./src/store/index.ts"
+    }
+  },
+  "dependencies": {
+    "@vben/access": "workspace:*",
+    "@vben/common-ui": "workspace:*",
+    "@vben/constants": "workspace:*",
+    "@vben/hooks": "workspace:*",
+    "@vben/icons": "workspace:*",
+    "@vben/layouts": "workspace:*",
+    "@vben/locales": "workspace:*",
+    "@vben/plugins": "workspace:*",
+    "@vben/preferences": "workspace:*",
+    "@vben/request": "workspace:*",
+    "@vben/stores": "workspace:*",
+    "@vben/styles": "workspace:*",
+    "@vben/types": "workspace:*",
+    "@vben/utils": "workspace:*",
+    "@vueuse/core": "catalog:",
+    "ant-design-vue": "catalog:",
+    "dayjs": "catalog:",
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  }
+}

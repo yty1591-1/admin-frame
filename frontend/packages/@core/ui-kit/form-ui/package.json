@@ -11,6 +11,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "typecheck": "vue-tsc --noEmit",
     "build": "pnpm exec tsdown",
     "prepublishOnly": "npm run build"
   },
@@ -54,6 +55,7 @@
   },
   "devDependencies": {
     "@vue/test-utils": "catalog:",
+    "element-plus": "catalog:",
     "unplugin-vue": "catalog:"
   }
 }

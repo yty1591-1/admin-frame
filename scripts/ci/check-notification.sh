@@ -22,7 +22,7 @@ FAIL=0
 # 提取 EVENTS.md 中 status=active 的 notification.* 动作（表格第一列反引号包裹）。
 # planned 行是目录占位（路径未合入），不参与代码对账。
 doc_actions() {
-  grep -E '^\| `notification\.[a-z_.]+`' docs/audit/EVENTS.md | grep -E '\| active \|$' \
+  grep -E '^\| `notification\.[a-z_.]+`' docs/audit/EVENTS.md | grep -E '\| active \|[[:space:]]*$' \
     | grep -o '`notification\.[a-z_.]*`' | tr -d '`' | sort -u
 }
 

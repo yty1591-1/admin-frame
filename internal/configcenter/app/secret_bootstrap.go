@@ -1,0 +1,199 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+)
+
+const bootstrapReviewer = "system:config-bootstrap-reviewer"
+
+// EnsureAutoSecrets 对敏感键幂等生成并入库（D16 / AC-CC-17）。
+//
+//   - local/dev/test：仅 AutoGenerate=true；Required 且不可生成时 fail-fast。
+//   - prod/staging：凡声明 SecretRule 的 Sensitive 缺失即 GenerateForBootstrap 占位
+//     （含 AutoGenerate=false 的第三方凭据；不可真投递，须运维轮换）。
+//
+// 已存在同名密钥时只补 grant。
+func (s *SecretService) EnsureAutoSecrets(ctx context.Context, env string, registry *spec.Registry, actor Actor) error {
+	if registry == nil {
+		return apperr.Internal("secret bootstrap requires registry", nil)
+	}
+	if err := requireActor(actor); err != nil {
+		return err
+	}
+	prodLike := platformconfig.IsProdLikeEnv(env)
+	reviewer := Actor{
+		SubjectID: bootstrapReviewer,
+		ActorType: "system",
+		Channel:   actor.Channel,
+		TraceID:   actor.TraceID,
+	}
+	for _, namespace := range registry.Namespaces() {
+		for _, keySpec := range registry.List(namespace) {
+			if !keySpec.Sensitive {
+				continue
+			}
+			if keySpec.SecretRule == nil {
+				if keySpec.Required {
+					_, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
+					if errors.Is(err, domain.ErrNotFound) {
+						return apperr.BadRequest(fmt.Sprintf(
+							"required secret %s.%s missing and has no secret_rule", namespace, keySpec.Key))
+					}
+				}
+				continue
+			}
+			canGenerate := keySpec.SecretRule.AutoGenerate || prodLike
+			if !canGenerate {
+				if keySpec.Required {
+					_, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
+					if errors.Is(err, domain.ErrNotFound) {
+						return apperr.BadRequest(fmt.Sprintf(
+							"required secret %s.%s missing and cannot auto-generate", namespace, keySpec.Key))
+					}
+				}
+				continue
+			}
+			secret, err := s.secrets.GetByName(ctx, env, namespace, keySpec.Key)
+			if err == nil {
+				if err := s.ensureBootstrapGrant(ctx, secret, reviewer); err != nil {
+					return err
+				}
+				continue
+			} else if !errors.Is(err, domain.ErrNotFound) {
+				return apperr.Internal("lookup secret failed", err)
+			}
+			var plaintext string
+			if keySpec.SecretRule.AutoGenerate && !prodLike {
+				plaintext, err = keySpec.SecretRule.Generate()
+			} else {
+				plaintext, err = keySpec.SecretRule.GenerateForBootstrap()
+			}
+			if err != nil {
+				return apperr.Internal("generate secret failed", err)
+			}
+			desc := keySpec.Description
+			if prodLike && !keySpec.SecretRule.AutoGenerate {
+				desc = strings.TrimSpace(desc + " [bootstrap placeholder=true]")
+			}
+			secret, err = s.CreateSecret(ctx, CreateSecretInput{
+				Env: env, Namespace: namespace, Name: keySpec.Key,
+				Description: desc, Owner: keySpec.Owner,
+				Plaintext: plaintext, Actor: actor,
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := s.SubmitSecret(ctx, secret.ID, actor); err != nil {
+				return err
+			}
+			comment := "bootstrap auto-approve"
+			if prodLike {
+				comment = "bootstrap auto-approve placeholder=true"
+			}
+			secret, err = s.ApproveSecret(ctx, ApproveSecretInput{
+				ID: secret.ID, Decision: domain.DecisionApproved,
+				Comment: comment, Actor: reviewer,
+			})
+			if err != nil {
+				return err
+			}
+			if err := s.ensureBootstrapGrant(ctx, secret, reviewer); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureBootstrapGrant 为启动期服务身份补齐可解析授权（幂等）。
+//
+// 默认覆盖 admin/biz/c/worker 短名与 spiffe://local/*；可用
+// CONFIG_BOOTSTRAP_GRANT_IDENTITY 覆盖（逗号分隔）。JWT 等密钥须被
+// 各业务进程 CONFIG_SERVICE_IDENTITY 命中，否则 resolve 返回 forbidden。
+func (s *SecretService) ensureBootstrapGrant(ctx context.Context, secret domain.Secret, reviewer Actor) error {
+	if secret.Status != domain.SecretStatusActive {
+		return nil
+	}
+	submitter := Actor{
+		SubjectID: "system:config-bootstrap",
+		ActorType: "system",
+		Channel:   reviewer.Channel,
+		TraceID:   reviewer.TraceID,
+	}
+	identities, err := bootstrapGrantIdentities(secret.Env)
+	if err != nil {
+		return err
+	}
+	for _, identity := range identities {
+		if _, err := s.grants.FindActive(ctx, secret.Env, secret.Namespace, identity, secret.ID, s.now().UTC()); err == nil {
+			continue
+		}
+		current, err := s.secrets.GetByID(ctx, secret.ID)
+		if err != nil {
+			return apperr.Internal("reload secret for bootstrap grant failed", err)
+		}
+		if current.PendingAction != "" {
+			return apperr.Conflict(fmt.Sprintf(
+				"secret %s.%s has pending action %q; cannot bootstrap grant for %s",
+				current.Namespace, current.Name, current.PendingAction, identity))
+		}
+		grant, err := s.CreateGrant(ctx, CreateGrantInput{
+			SecretID: secret.ID, ServiceIdentity: identity, Actor: submitter,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := s.ApproveSecret(ctx, ApproveSecretInput{
+			ID: secret.ID, Decision: domain.DecisionApproved,
+			Comment: "bootstrap grant " + grant.ServiceIdentity, Actor: reviewer,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bootstrapGrantIdentities 返回启动期应获得 resolve 授权的服务身份列表。
+//
+// staging/prod 必须显式配置 CONFIG_BOOTSTRAP_GRANT_IDENTITY，禁止默认过宽 grant（CC-R-05）。
+func bootstrapGrantIdentities(env string) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("CONFIG_BOOTSTRAP_GRANT_IDENTITY"))
+	if raw != "" {
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		seen := make(map[string]struct{}, len(parts))
+		for _, part := range parts {
+			id := strings.TrimSpace(part)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+	if platformconfig.IsProdLikeEnv(env) {
+		return nil, apperr.BadRequest(
+			"CONFIG_BOOTSTRAP_GRANT_IDENTITY is required when env=" + strings.TrimSpace(env) +
+				" (refusing default wide bootstrap grants; CC-R-05)")
+	}
+	return []string{
+		"admin-api", "biz-api", "c-api", "worker",
+		"spiffe://local/admin-api", "spiffe://local/biz-api",
+		"spiffe://local/c-api", "spiffe://local/worker",
+	}, nil
+}

@@ -34,7 +34,7 @@
     "changeset": "pnpm exec changeset",
     "check": "pnpm run check:circular && pnpm run check:dep && pnpm run check:type && pnpm check:cspell",
     "check:circular": "vsh check-circular",
-    "check:cspell": "cspell lint \"**/*.ts\" \"**/README.md\" \".changeset/*.md\" --no-progress",
+    "check:cspell": "cspell lint \"**/*.ts\" \"**/*.vue\" \"**/README.md\" \".changeset/*.md\" --no-progress",
     "check:dep": "vsh check-dep",
     "check:type": "turbo run typecheck",
     "clean": "node ./scripts/clean.mjs",
@@ -51,18 +51,16 @@
     "publint": "vsh publint",
     "reinstall": "pnpm run clean -- --del-lock && pnpm install",
     "test:benchmark": "vitest bench --run",
-    "test:unit": "vitest run --dom",
-    "test:e2e": "turbo run test:e2e",
+    "test:unit": "vitest run --dom && vitest run --dom --config apps/web-admin/vitest.config.ts && vitest run --dom --config apps/web-biz/vitest.config.ts",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "update:deps": "npx taze -r -w",
     "version": "pnpm exec changeset version && pnpm install --no-frozen-lockfile",
     "catalog": "pnpm dlx codemod pnpm/catalog"
   },
-  "dependencies": {
-    "sortablejs": "catalog:"
-  },
   "devDependencies": {
     "@changesets/changelog-github": "catalog:",
     "@changesets/cli": "catalog:",
+    "@playwright/test": "catalog:",
     "@tsdown/css": "catalog:",
     "@types/node": "catalog:",
     "@vben/commitlint-config": "workspace:*",
@@ -77,6 +75,7 @@
     "@vben/vsh": "workspace:*",
     "@vitejs/plugin-vue": "catalog:",
     "@vitejs/plugin-vue-jsx": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "cross-env": "catalog:",
     "cspell": "catalog:",
     "eslint": "catalog:",

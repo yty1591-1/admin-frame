@@ -75,7 +75,7 @@ SAML 2.0 SP-initiated SSO 已实现并提交（`feat/saml2-sp-sso`，cc5f1c4）�
 ### 7. 文档回写（仅实测）
 
 - [docs/identity-authn.md](file:///d:/MyDocument/admin-frame/docs/identity-authn.md) §8.2.1：追加“验收记录（2026-11-06，kind af-verify + 真实 Keycloak 26.7.4）”，列出正向/负向实测结果与环境限制（kind 等价 staging，非真实 staging 域名）。
-- [docs/iam-audit-report-2026-11-05.md](file:///d:/MyDocument/admin-frame/docs/iam-audit-report-2026-11-05.md)：把“SAML 待交付/仅预留”更新为“已实现并完成真实 Keycloak 联调”；SCIM/M2M 仍标注待交付。
+- [docs/archive/iam/iam-audit-report-2026-11-05.md](file:///d:/MyDocument/admin-frame/docs/archive/iam/iam-audit-report-2026-11-05.md)：把“SAML 待交付/仅预留”更新为“已实现并完成真实 Keycloak 联调”；SCIM/M2M 仍标注待交付。
 - 若发现实现缺陷：只做最小修复，重跑相关单测与本次链路；若无法在本次范围内修复，则如实记录为已知问题，不虚构通过。
 
 ## 关键文件

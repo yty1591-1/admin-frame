@@ -1,3 +1,5 @@
+import type { PreferencesExtension } from '../src/types';
+
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { defaultPreferences } from '../src/config';
@@ -312,7 +314,10 @@ describe('preferences', () => {
   });
 
   it('initializes custom preferences extension with default values', async () => {
-    const extension = {
+    const extension: PreferencesExtension<{
+      enableWorkbench: boolean;
+      tenantMode: string;
+    }> = {
       fields: [
         {
           component: 'switch',
@@ -333,7 +338,7 @@ describe('preferences', () => {
       ],
       tabLabel: '扩展',
       title: '业务偏好',
-    } as const;
+    };
 
     await preferenceManager.initPreferences({
       extension,
@@ -348,7 +353,7 @@ describe('preferences', () => {
   });
 
   it('does not expose mutable custom preference baselines or extension schema', async () => {
-    const extension = {
+    const extension: PreferencesExtension<{ pageSize: number }> = {
       fields: [
         {
           component: 'number',
@@ -364,7 +369,7 @@ describe('preferences', () => {
       ],
       tabLabel: '扩展',
       title: '业务偏好',
-    } as const;
+    };
 
     await preferenceManager.initPreferences({
       extension,

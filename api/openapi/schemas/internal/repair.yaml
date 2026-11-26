@@ -1,0 +1,54 @@
+# ADR-0018 待定 1：启动自愈响应 Schema。
+#
+# 进程启动校验失败、且判定为「键存在但取值非法」时，admin-api 调本接口把
+# 取值重置为声明默认值。响应只含键与来源，不含任何取值。
+
+ResetDefaultsResponse:
+  allOf:
+    - $ref: ../../components.yaml#/components/schemas/Envelope
+    - type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [reset, skipped, release_keys]
+          properties:
+            reset:
+              type: array
+              description: 已重置为默认值的键（按 namespace/key 排序）。
+              items:
+                type: object
+                required: [namespace, key, default_source]
+                properties:
+                  namespace:
+                    type: string
+                  key:
+                    type: string
+                  default_source:
+                    type: string
+                    enum: [code_default, prod_default]
+            skipped:
+              type: array
+              description: 未重置的键及原因（敏感键、无默认值、未声明等）。
+              items:
+                type: object
+                required: [ref, reason]
+                properties:
+                  ref:
+                    type: string
+                    description: namespace/key
+                  reason:
+                    type: string
+                    enum:
+                      - no_active_release
+                      - unknown_key
+                      - sensitive_key
+                      - no_default
+                      - default_invalid
+                      - missing_item
+                      - archived_item
+            release_keys:
+              type: object
+              additionalProperties:
+                type: string
+              description: namespace → release_key（release_id:pointer_version）。

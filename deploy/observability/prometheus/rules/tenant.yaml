@@ -1,0 +1,33 @@
+# 租户域告警。
+#
+# 指标来源：internal/tenant/observability（tenant_*，无 service 标签，按进程聚合）。
+# 补这一组的原因：该域此前只有手册（tenant-onboarding.md / tenant-suspend.md）而无任何规则，
+# 手册没有入口能把值班人员叫过去；且 tenant_audit_emit_failed_total 的 Help 明确写「非零即应告警」。
+groups:
+  - name: admin-frame-tenant
+    rules:
+      - alert: TenantAuditEmitFailed
+        expr: increase(tenant_audit_emit_failed_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: tenant.audit.emit_failed
+        annotations:
+          summary: "租户域审计事件写入失败（业务事务已随之回滚）"
+          description: "不是后台静默丢失：Outbox 写入失败会连带回滚业务事务，用户侧表现为操作失败。先查审计表与 DB 可用性，按 async-dlq.md「审计写入失败」处置。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: TenantGuardErrorRate
+        expr: |
+          (sum(rate(tenant_guard_decisions_total{result="error"}[10m]))
+           / sum(rate(tenant_guard_decisions_total[10m]))) > 0.01
+          and
+          sum(rate(tenant_guard_decisions_total{result="error"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: tenant.guard.error_rate
+        annotations:
+          summary: "租户状态守卫无法判定比例超过 1%（fail closed）"
+          description: "result=error 表示查不到租户状态，守卫按 fail closed 拒绝，商户侧返回 503/50300；查 DB 可达性与连接池，不要通过关闭守卫恢复业务。"
+          runbook_url: docs/runbooks/tenant-suspend.md

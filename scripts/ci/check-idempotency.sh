@@ -20,32 +20,24 @@ else
   echo "    OK: idempotency middleware mounted"
 fi
 
-echo "==> ENT-02: config samples must declare id and idempotency"
-# 配置按端拆分后：端样例入库为 configs/prod/<channel>.yaml.example，本地运行配置
-# configs/prod-<channel>.yaml 被 .gitignore 排除，仅存在本地，CI 不得依赖。
-# 公共段（id / idempotency / async）收敛到 configs/prod/modules/platform.yaml.example。
-for sample in configs/prod/admin.yaml.example configs/prod/biz.yaml.example configs/prod/c.yaml.example configs/prod/worker.yaml.example; do
-  if [[ ! -f "${sample}" ]]; then
-    echo "ERROR: missing ${sample} (ENT-02)" >&2
-    FAIL=1
-  fi
-done
-PLATFORM_SAMPLE="configs/prod/modules/platform.yaml.example"
-if [[ ! -f "${PLATFORM_SAMPLE}" ]]; then
-  echo "ERROR: missing ${PLATFORM_SAMPLE} (ENT-02)" >&2
+echo "==> ENT-02: platform key spec must declare id and idempotency"
+# M3：configs/ 样例已删除；契约改查代码 key spec。
+SPEC="internal/configcenter/spec/platform.go"
+if [[ ! -f "${SPEC}" ]]; then
+  echo "ERROR: missing ${SPEC} (ENT-02)" >&2
   FAIL=1
 else
-  if ! grep -qE '^id:' "${PLATFORM_SAMPLE}" || ! grep -q 'node_id_source' "${PLATFORM_SAMPLE}"; then
-    echo "ERROR: ${PLATFORM_SAMPLE} must declare id.node_id_source (ENT-02)" >&2
+  if ! grep -q 'id.node_id_source' "${SPEC}"; then
+    echo "ERROR: ${SPEC} must declare id.node_id_source (ENT-02)" >&2
     FAIL=1
   fi
-  if ! grep -qE '^idempotency:' "${PLATFORM_SAMPLE}"; then
-    echo "ERROR: ${PLATFORM_SAMPLE} must declare idempotency section (ENT-02)" >&2
+  if ! grep -q 'idempotency.enabled' "${SPEC}"; then
+    echo "ERROR: ${SPEC} must declare idempotency keys (ENT-02)" >&2
     FAIL=1
   fi
 fi
 if [[ "${FAIL}" -eq 0 ]]; then
-  echo "    OK: config samples declare id / idempotency"
+  echo "    OK: platform key spec declares id / idempotency"
 fi
 
 echo "==> ENT-02: business code must not hard-code snowflake NodeID"

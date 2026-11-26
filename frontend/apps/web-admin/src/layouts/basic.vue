@@ -96,7 +96,10 @@ watch(
 
     <template #extra>
       <!-- 登录态过期：弹窗内直接重新登录，不丢失当前页面 -->
-      <AuthenticationLoginExpiredModal v-model:open="accessStore.loginExpired" :avatar>
+      <AuthenticationLoginExpiredModal
+        v-model:open="accessStore.loginExpired"
+        :avatar
+      >
         <LoginForm />
       </AuthenticationLoginExpiredModal>
     </template>

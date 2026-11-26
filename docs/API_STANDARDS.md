@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部对外 HTTP API（A/B/C）及对应 OpenAPI 契约
 > **关联**：架构 §十六；安全见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`
 > **执行方式**：oasdiff validate + oasdiff breaking + MR 模板 + Review
-> **最后更新**：2026-10-28
+> **最后更新**：2026-11-07（API-03 信封薄封装 `internal/shared/httpx` 更名 `apiresp`）
 > **变更方式**：修改本规范须同步更新 `api/openapi/**`、`scripts/ci/check-openapi.sh`、流水线与架构 §十六，经架构 Owner Review
 
 ---

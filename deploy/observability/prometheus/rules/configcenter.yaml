@@ -1,0 +1,144 @@
+# 配置中心 M1 告警（规划 §5.6 / 附录 C）。
+# 指标来源：internal/configcenter/observability（管理面）与 pkg/configclient 刷新回调。
+groups:
+  - name: admin-frame-configcenter
+    rules:
+      - alert: ConfigClientStale
+        expr: max(config_client_snapshot_age_seconds) > 300
+        for: 10m
+        labels:
+          severity: P1
+          alert_id: config.client_stale
+        annotations:
+          summary: "客户端快照超过 5 分钟未成功刷新"
+          description: "长轮询或拉取连续失败，进程仍在使用内存中上一份配置；检查 config-api / 网络 / 服务身份。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigPublishFailure
+        expr: |
+          (
+            sum(rate(config_release_publish_total{result="fail"}[5m]))
+            /
+            clamp_min(sum(rate(config_release_publish_total[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: config.publish_failure
+        annotations:
+          summary: "配置发布失败率超过 5%"
+          description: "查看 admin-api 日志、DB 与审计事件；确认指针 CAS 冲突。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSnapshotFetchError
+        expr: |
+          (
+            sum(rate(config_client_fetch_total{result="fail"}[5m]))
+            /
+            clamp_min(sum(rate(config_client_fetch_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: config.fetch_error
+        annotations:
+          summary: "配置拉取失败率超过 1%"
+          description: "检查 config-api、网络与服务身份；运行期可继续使用内存配置，重启依赖本地缓存或远端。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigPendingApproval
+        expr: max(config_release_pending_approval) > 0
+        for: 24h
+        labels:
+          severity: P2
+          alert_id: config.pending_approval
+        annotations:
+          summary: "存在超过 24 小时未处理的配置发布审批"
+          description: "通知审批人处理；确认发布单是否被遗忘或审批流程阻塞。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigDBLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(config_admin_request_duration_seconds_bucket[5m]))
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: config.db_latency
+        annotations:
+          summary: "配置管理面 P99 延迟超过 200ms"
+          description: "检查慢查询、连接池与锁竞争；确认是否影响发布时效。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigRollback
+        expr: increase(config_release_rollback_total{result="success"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: config.rollback
+        annotations:
+          summary: "触发配置回滚"
+          description: "确认回滚原因、影响范围与对应审计事件；通知业务负责人。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSnapshotCorrupt
+        expr: increase(config_client_snapshot_corrupt_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          alert_id: config.snapshot_corrupt
+        annotations:
+          summary: "配置缓存完整性校验失败"
+          description: "检查 CONFIGCENTER_CACHE_DIR 文件权限与内容；客户端已拒绝装载该缓存。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigColdStartDegraded
+        expr: increase(config_client_cold_start_degraded_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          alert_id: config.cold_start_degraded
+        annotations:
+          summary: "进程冷启动无可用配置缓存"
+          description: "确认 config-api 已就绪且曾成功拉取；ADR-0016 下无远端且无缓存应 fail-fast。"
+          runbook_url: docs/runbooks/config-center.md
+
+      - alert: ConfigSecretAPIUnavailable
+        expr: |
+          (
+            sum(rate(config_secret_resolve_total{result="error"}[5m]))
+            /
+            clamp_min(sum(rate(config_secret_resolve_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: P1
+          alert_id: config.secret_api_unavailable
+        annotations:
+          summary: "config-api 密钥解析失败率超过 1%"
+          description: "检查 config-api、KEK / Vault、网络策略与 grant。"
+          runbook_url: docs/runbooks/secret-management.md
+
+      - alert: ConfigSecretPlaintextLeak
+        expr: increase(config_secret_plaintext_leak_total[5m]) > 0
+        for: 0m
+        labels:
+          # 矩阵仅 P1–P3；密钥明文旁路按安全优先归入 P1（SEVERITY_MATRIX）。
+          severity: P1
+          alert_id: config.secret_plaintext_leak
+        annotations:
+          summary: "检测到密钥明文旁路"
+          description: "立即止血：吊销相关密钥、轮换 KEK 访问、排查日志 / 导出 / 前端响应。"
+          runbook_url: docs/runbooks/secret-management.md
+
+      - alert: ConfigSecretResolveDenied
+        expr: rate(config_secret_resolve_total{result="denied"}[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: P2
+          alert_id: config.secret_resolve_denied
+        annotations:
+          summary: "密钥解析拒绝率偏高"
+          description: "检查 grant / 服务身份与 mTLS；确认是否越权探测。"
+          runbook_url: docs/runbooks/secret-management.md

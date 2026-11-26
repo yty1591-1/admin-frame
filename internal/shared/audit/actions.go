@@ -33,21 +33,53 @@ const (
 	ActionAuthOAuthCallback   = "auth.oauth.callback"
 	ActionAuthSAMLAuthorize   = "auth.saml.authorize"
 	ActionAuthSAMLCallback    = "auth.saml.callback"
-	ActionAuthRateLimited     = "auth.rate_limited"
-	ActionAuthSessionEvicted  = "auth.session.evicted"
-	ActionAuthTenantSwitch    = "auth.tenant_switch"
-	ActionRBACRoleChange      = "rbac.role_change"
-	ActionRBACBindingChange   = "rbac.binding_change"
-	ActionRBACBreakglass      = "rbac.breakglass"
-	ActionRBACMenuChange      = "rbac.menu_change"
-	ActionRBACSodChange       = "rbac.sod_change"
+	// M2M 机器身份（§21.2.5）：签发成功 / 失败与客户端生命周期。
+	ActionAuthM2MTokenIssued    = "auth.m2m.token.issued" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthM2MTokenDenied    = "auth.m2m.token.denied" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthM2MClientCreated  = "auth.m2m.client.created"
+	ActionAuthM2MClientUpdated  = "auth.m2m.client.updated"
+	ActionAuthM2MClientDisabled = "auth.m2m.client.disabled"
+	ActionAuthM2MClientEnabled  = "auth.m2m.client.enabled"
+	ActionAuthM2MClientDeleted  = "auth.m2m.client.deleted"
+	ActionAuthM2MSecretRotated  = "auth.m2m.secret.rotated" //nolint:gosec // G101 误报：审计动作名，非凭据。
+	// SCIM 2.0 目录同步（§21.1.5）：资源变更与令牌生命周期。
+	ActionAuthScimUserCreated  = "auth.scim.user.created"
+	ActionAuthScimUserUpdated  = "auth.scim.user.updated"
+	ActionAuthScimUserDeact    = "auth.scim.user.deactivated"
+	ActionAuthScimUserDeleted  = "auth.scim.user.deleted"
+	ActionAuthScimGroupUpdated = "auth.scim.group.updated"
+	ActionAuthScimTokenCreated = "auth.scim.token.created" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthScimTokenRevoked = "auth.scim.token.revoked" //nolint:gosec // G101: 审计动作名，不是凭证
+	ActionAuthRateLimited      = "auth.rate_limited"
+	ActionAuthSessionEvicted   = "auth.session.evicted"
+	ActionAuthTenantSwitch     = "auth.tenant_switch"
+	ActionRBACRoleChange       = "rbac.role_change"
+	ActionRBACBindingChange    = "rbac.binding_change"
+	ActionRBACBreakglass       = "rbac.breakglass"
+	ActionRBACMenuChange       = "rbac.menu_change"
+	ActionRBACSodChange        = "rbac.sod_change"
 	// ActionRBACCertification 访问复核：创建 / 激活 / 关闭活动、裁决任务与证据导出。
 	ActionRBACCertification = "rbac.certification"
 	ActionConfigChange      = "config.change"
-	ActionDataExport        = "data.export"
-	ActionDataQueryScope    = "data.query_scope"
-	ActionPaymentCapture    = "payment.capture"
-	ActionPaymentRefund     = "payment.refund"
+	// 配置中心（ADR-0013）：初始化、发布、回滚与审批。
+	ActionConfigBootstrapCompleted = "config.bootstrap.completed"
+	ActionConfigInstallBegin       = "config.install.begin"
+	ActionConfigInstallApply       = "config.install.apply"
+	ActionConfigInstallComplete    = "config.install.complete"
+	ActionConfigInstallFail        = "config.install.fail"
+	ActionConfigReleasePublish     = "config.release.publish"
+	ActionConfigReleaseRollback    = "config.release.rollback"
+	ActionConfigReleaseApprove     = "config.release.approve"
+	// 业务密钥（ADR-0014）：创建、轮换、吊销、授权与解析访问。
+	ActionConfigSecretCreate  = "config.secret.create"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretRotate  = "config.secret.rotate"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretRevoke  = "config.secret.revoke"  //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretGrant   = "config.secret.grant"   //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionConfigSecretResolve = "config.secret.resolve" //nolint:gosec // G101: 审计动作名，非凭据。
+	ActionDataExport          = "data.export"
+	ActionDataQueryScope      = "data.query_scope"
+	ActionPaymentCapture      = "payment.capture"
+	ActionPaymentRefund       = "payment.refund"
 	// ActionAuditQuery 审计事件查询（ENT-04）；记录查询范围摘要，不记过滤结果原文。
 	ActionAuditQuery = "audit.query"
 	// ActionAuditExport 审计事件导出（ENT-04）；含导出范围、条数与操作者。
@@ -90,6 +122,21 @@ func KnownActions() []string {
 		ActionAuthOAuthCallback,
 		ActionAuthSAMLAuthorize,
 		ActionAuthSAMLCallback,
+		ActionAuthM2MTokenIssued,
+		ActionAuthM2MTokenDenied,
+		ActionAuthM2MClientCreated,
+		ActionAuthM2MClientUpdated,
+		ActionAuthM2MClientDisabled,
+		ActionAuthM2MClientEnabled,
+		ActionAuthM2MClientDeleted,
+		ActionAuthM2MSecretRotated,
+		ActionAuthScimUserCreated,
+		ActionAuthScimUserUpdated,
+		ActionAuthScimUserDeact,
+		ActionAuthScimUserDeleted,
+		ActionAuthScimGroupUpdated,
+		ActionAuthScimTokenCreated,
+		ActionAuthScimTokenRevoked,
 		ActionAuthRateLimited,
 		ActionAuthSessionEvicted,
 		ActionAuthTenantSwitch,
@@ -100,6 +147,19 @@ func KnownActions() []string {
 		ActionRBACSodChange,
 		ActionRBACCertification,
 		ActionConfigChange,
+		ActionConfigBootstrapCompleted,
+		ActionConfigInstallBegin,
+		ActionConfigInstallApply,
+		ActionConfigInstallComplete,
+		ActionConfigInstallFail,
+		ActionConfigReleasePublish,
+		ActionConfigReleaseRollback,
+		ActionConfigReleaseApprove,
+		ActionConfigSecretCreate,
+		ActionConfigSecretRotate,
+		ActionConfigSecretRevoke,
+		ActionConfigSecretGrant,
+		ActionConfigSecretResolve,
 		ActionDataExport,
 		ActionDataQueryScope,
 		ActionPaymentCapture,

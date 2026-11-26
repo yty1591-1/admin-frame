@@ -45,7 +45,7 @@
 | 注入（staging） | 停止 worker 消费者使事件堆积；或投递一条必然失败的事件（如回调目标不可达）制造死信 |
 | 预期观测 | `async_dlq_depth > 0` 触发告警；`async.outbox.backlog` 在积压超阈值时触发；重放后 `async_dlq_depth` 归零 |
 | 判定通过 | ① 告警按预期级别触发；② 能按 runbook 定位到具体事件 ID；③ 重放后积压归零且下游无重复（幂等键生效）；④ 审计/通知无丢失 |
-| 关键命令 | `SELECT id, … FROM async_dlq WHERE replayed_at IS NULL`；`go run ./cmd/worker -config configs/worker.yaml -replay-dlq=<source_id>`（`all` 为重放全部）；观测 `async_dlq_depth` 回落 |
+| 关键命令 | `SELECT id, … FROM async_dlq WHERE replayed_at IS NULL`；`go run ./cmd/worker -replay-dlq=<source_id>`（`all` 为重放全部）；观测 `async_dlq_depth` 回落 |
 | Runbook | [../runbooks/async-dlq.md](../runbooks/async-dlq.md) |
 | 常见缺口 | 重放卡住无独立告警（见行动项 AI-2026-11-05-03）、重复投递导致下游重复副作用 |
 

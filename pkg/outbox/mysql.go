@@ -179,7 +179,14 @@ func (s *MySQLStore) Stats(ctx context.Context) (Stats, error) {
 		`SELECT COUNT(*) FROM async_dlq WHERE replayed_at IS NULL`).Scan(&dlq); err != nil {
 		return Stats{}, fmt.Errorf("outbox dlq stats: %w", err)
 	}
-	stats := Stats{Pending: pending, DLQ: dlq}
+	// 近期重放行数：只统计窗口内发生过重放的记录，用于区分「没人重放」与「重放无效」。
+	var replayed int
+	if err := s.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM async_dlq WHERE replayed_at IS NOT NULL AND replayed_at >= ?`,
+		time.Now().UTC().Add(-ReplayRecentWindow)).Scan(&replayed); err != nil {
+		return Stats{}, fmt.Errorf("outbox dlq replay stats: %w", err)
+	}
+	stats := Stats{Pending: pending, DLQ: dlq, ReplayedRecently: replayed}
 	if oldest.Valid {
 		stats.OldestCreatedAt = oldest.Time.UTC()
 	}

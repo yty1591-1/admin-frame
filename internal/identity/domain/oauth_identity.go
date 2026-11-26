@@ -5,10 +5,12 @@ import (
 	"time"
 )
 
-// OAuth 身份映射字段上限，与 migrations/000001 的列宽一致。
+// OAuth 身份映射字段上限，与 migrations/000001 / 000027 的列宽一致。
 const (
 	// MaxOAuthProviderLen 提供方标识最大字节数。
-	MaxOAuthProviderLen = 32
+	//
+	// 000027 起列宽扩到 64，容纳 scim:<provider> 形式；SCIM provider 上限 32 字节。
+	MaxOAuthProviderLen = 64
 	// MaxOAuthProviderSubjectLen 提供方主体标识最大字节数。
 	MaxOAuthProviderSubjectLen = 255
 )

@@ -91,7 +91,7 @@ func TestThreeChannelMainFlow(t *testing.T) {
 	assertUnauthorized(t, c.baseURL+"/c/v1/me")
 
 	// ③ admin 登录：引导账号首登强制改密（票据链路）→ 改密 → 再登录拿令牌。
-	token := loginAdmin(t, admin.baseURL)
+	token, refreshToken := loginAdminTokens(t, admin.baseURL)
 
 	// ④ 租户主链路：列表（权限快照生效）→ 创建 → 详情。
 	status, body := doJSON(t, http.MethodGet, admin.baseURL+"/admin/v1/tenants", token, nil)
@@ -121,6 +121,48 @@ func TestThreeChannelMainFlow(t *testing.T) {
 	status, body = doJSON(t, http.MethodGet, biz.baseURL+"/biz/v1/notifications", token, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("admin token must be rejected on biz channel: status=%d body=%v", status, body)
+	}
+
+	// ⑥ 令牌链路：刷新轮换 → 登出撤销 → 访问令牌与刷新令牌同时失效。
+	if refreshToken == "" {
+		t.Fatalf("login returned empty refresh_token")
+	}
+	status, body = doJSON(t, http.MethodPost, admin.baseURL+"/admin/v1/auth/refresh", "", map[string]any{
+		"refresh_token": refreshToken,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("refresh: status=%d body=%v", status, body)
+	}
+	rotated, _ := body["data"].(map[string]any)
+	rotatedAccess := tokenOf(rotated)
+	rotatedRefresh, _ := rotated["refresh_token"].(string)
+	if rotatedAccess == "" || rotatedRefresh == "" {
+		t.Fatalf("refresh returned incomplete token pair: %v", body)
+	}
+	if rotatedAccess == token || rotatedRefresh == refreshToken {
+		t.Fatalf("refresh must rotate both tokens")
+	}
+
+	status, body = doJSON(t, http.MethodPost, admin.baseURL+"/admin/v1/auth/logout", rotatedAccess, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("logout: status=%d body=%v", status, body)
+	}
+	status, body = doJSON(t, http.MethodGet, admin.baseURL+"/admin/v1/tenants", rotatedAccess, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("access token after logout must be revoked: status=%d body=%v", status, body)
+	}
+	status, body = doJSON(t, http.MethodPost, admin.baseURL+"/admin/v1/auth/refresh", "", map[string]any{
+		"refresh_token": rotatedRefresh,
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("refresh token after logout must be revoked: status=%d body=%v", status, body)
+	}
+	// 已轮换的旧刷新令牌再次出现视为重放：撤销整条会话链并返回 40100。
+	status, body = doJSON(t, http.MethodPost, admin.baseURL+"/admin/v1/auth/refresh", "", map[string]any{
+		"refresh_token": refreshToken,
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("replayed refresh token must be rejected: status=%d body=%v", status, body)
 	}
 }
 
@@ -167,8 +209,9 @@ func buildBinaries(t *testing.T) string {
 			binErr = err
 			return
 		}
-		for _, name := range []string{"admin-api", "biz-api", "c-api"} {
-			//nolint:gosec // G204: 参数来自测试内固定清单（三个已知服务名），非用户输入。
+		// worker 用于 P1-7 季度复核演练：一次性模式（`-certification-sweep`）与 CronJob 同一入口。
+		for _, name := range []string{"admin-api", "biz-api", "c-api", "worker"} {
+			//nolint:gosec // G204: 参数来自测试内固定清单（四个已知服务名），非用户输入。
 			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, exeName(name)), "./cmd/"+name)
 			cmd.Dir = repoRoot(t)
 			out, err := cmd.CombinedOutput()
@@ -286,6 +329,13 @@ func probeOK(t *testing.T, svc *service) {
 // 「用新口令直接登录」——E2E 不假设数据库是干净的一次性实例。
 func loginAdmin(t *testing.T, baseURL string) string {
 	t.Helper()
+	token, _ := loginAdminTokens(t, baseURL)
+	return token
+}
+
+// loginAdminTokens 与 loginAdmin 相同，但同时返回刷新令牌，用于令牌链路验证。
+func loginAdminTokens(t *testing.T, baseURL string) (access, refresh string) {
+	t.Helper()
 	status, body := doJSON(t, http.MethodPost, baseURL+"/admin/v1/auth/login", "", map[string]any{
 		"subject":  bootstrapSubject,
 		"password": bootstrapPassword,
@@ -301,7 +351,7 @@ func loginAdmin(t *testing.T, baseURL string) string {
 		}
 		data, _ := body["data"].(map[string]any)
 		if token := tokenOf(data); token != "" {
-			return token
+			return token, refreshOf(data)
 		}
 		t.Fatalf("token missing after rotated login: %v", body)
 	}
@@ -312,7 +362,7 @@ func loginAdmin(t *testing.T, baseURL string) string {
 	if required, _ := data["password_change_required"].(bool); !required {
 		// 已改过密（重复运行时）：直接用返回的令牌。
 		if token := tokenOf(data); token != "" {
-			return token
+			return token, refreshOf(data)
 		}
 		t.Fatalf("login without token and without change ticket: %v", body)
 	}
@@ -341,7 +391,16 @@ func loginAdmin(t *testing.T, baseURL string) string {
 	if token == "" {
 		t.Fatalf("access token missing after login: %v", body)
 	}
-	return token
+	return token, refreshOf(data)
+}
+
+// refreshOf 从登录 / 刷新响应的 data 中取刷新令牌。
+func refreshOf(data map[string]any) string {
+	if data == nil {
+		return ""
+	}
+	value, _ := data["refresh_token"].(string)
+	return value
 }
 
 // tokenOf 从登录 data 中取访问令牌（兼容 access_token / token 两种字段）。

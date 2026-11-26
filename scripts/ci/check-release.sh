@@ -120,8 +120,13 @@ else
     echo "ERROR: image pipeline must scan before release (RELS-06 / §6)" >&2
     FAIL=1
   fi
+  # 后端构建元数据通过 extra_args 输出传给 Docker；前端只接收 GIT_SHA。
+  if ! grep -A 1 -E '^[[:space:]]+build-args: \|$' "${IMG_WF}" | grep -qF '${{ steps.ver.outputs.extra_args }}'; then
+    echo "ERROR: image pipeline must pass extra_args to Docker build-args (RELS-03)" >&2
+    FAIL=1
+  fi
   for arg in VERSION COMMIT BUILD_TIME; do
-    if grep -qF "${arg}=\${{ steps.ver.outputs" "${IMG_WF}"; then
+    if grep -F 'extra_args="$(printf ' "${IMG_WF}" | grep -qF "${arg}=%s"; then
       echo "    OK: build arg ${arg} from pipeline"
     else
       echo "ERROR: image pipeline missing ${arg} build arg (RELS-03)" >&2

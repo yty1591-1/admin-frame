@@ -34,6 +34,21 @@
 | `auth.oauth.callback` | C | OAuth 回调结果；只记 provider 与粗粒度原因，不含授权码 / 令牌 | 认证 | 180d | active |
 | `auth.saml.authorize` | C | SAML 授权发起（AuthnRequest / state 已签发）；只记 provider，不含主体 | 认证 | 180d | active |
 | `auth.saml.callback` | C | SAML ACS 断言校验结果；只记 provider 与粗粒度原因，不含断言原文 | 认证 | 180d | active |
+| `auth.m2m.token.issued` | A/B/C | M2M 令牌签发成功；记 `client_id`、端别与 scope，不含令牌原文 | 认证 | 180d | active |
+| `auth.m2m.token.denied` | A/B/C | M2M 签发失败；`reason=invalid_client\|invalid_scope\|disabled\|rate_limited` | 认证 | 180d | active |
+| `auth.m2m.client.created` | A | 创建机器客户端；记操作人与 scope 数量，不含 secret | 认证 | 180d | active |
+| `auth.m2m.client.updated` | A | 更新机器客户端（名称 / 归属 / scope / 端别） | 认证 | 180d | active |
+| `auth.m2m.client.disabled` | A | 停用机器客户端并查封全部密钥（`token_version++`） | 认证 | 180d | active |
+| `auth.m2m.client.enabled` | A | 启用机器客户端；不复活旧令牌与旧密钥 | 认证 | 180d | active |
+| `auth.m2m.client.deleted` | A | 软删机器客户端；`client_id` 不可复用 | 认证 | 180d | active |
+| `auth.m2m.secret.rotated` | A | 轮换客户端密钥；只记指纹与宽限到期时间，不含明文 | 认证 | 180d | active |
+| `auth.scim.user.created` | A | SCIM 建号；`actor_type=system`，记 `provider`、`external_id_hash`、`active`，不含 userName / 邮箱 | 认证 | 180d | active |
+| `auth.scim.user.updated` | A | SCIM 更新 User（userName / externalId / displayName / active）；记 `version_check=if-match\|none` | 认证 | 180d | active |
+| `auth.scim.user.deactivated` | A | SCIM `active=false`；撤销全部会话并递增 `token_version` | 认证 | 180d | active |
+| `auth.scim.user.deleted` | A | SCIM 软删 User；清理组成员与角色投影，不含成员原文 | 认证 | 180d | active |
+| `auth.scim.group.updated` | A | 组或成员变更；记 `provider`、`group_id`、`member_delta`（数量），不含成员列表 | 认证 | 180d | active |
+| `auth.scim.token.created` | A | 签发 SCIM 令牌；只记 `provider` 与 `fingerprint`，不含令牌原文 | 认证 | 180d | active |
+| `auth.scim.token.revoked` | A | 吊销 SCIM 令牌；只记 `provider` 与 `fingerprint` | 认证 | 180d | active |
 | `auth.rate_limited` | A/B/C | 登录 / 短信触发限流；`resource_id` 为账号或手机号摘要 | 认证 | 180d | active |
 | `auth.session.evicted` | A/B/C | 超出单账号设备上限，最久未使用的设备被淘汰（同时撤销该设备） | 认证 | 180d | active |
 | `rbac.role_change` | A/B | 角色/权限点变更 | 权限 | 180d | active |
@@ -43,6 +58,19 @@
 | `rbac.sod_change` | A/B | 互斥角色组（RBAC2）创建、更新、启停、删除 | 权限 | 180d | active |
 | `rbac.certification` | A | 访问复核活动创建 / 激活 / 关闭、任务裁决与证据导出 | 权限 | 180d | active |
 | `config.change` | A | 平台配置变更 | 配置 | 180d | planned |
+| `config.bootstrap.completed` | A | 首次启动初始化完成：基线 Release、生成密钥数量、缺失项；不记录配置值 | 配置 | 180d | planned |
+| `config.install.begin` | A/setup | 安装态进入 installing（含 owner / lease）；不记录 setup token | 配置 | 180d | active |
+| `config.install.apply` | A/setup | 安装期播种 apply（namespaces / key 数量）；不记录配置值与 token | 配置 | 180d | active |
+| `config.install.complete` | A/setup | 安装态进入 ready；不记录 token | 配置 | 180d | active |
+| `config.install.fail` | A/setup | 安装失败进入 failed（含错误摘要）；不记录 token / 配置值 | 配置 | 180d | active |
+| `config.release.publish` | A | 配置 Release 发布（含灰度范围、release_id、变更键数量） | 配置 | 180d | planned |
+| `config.release.rollback` | A | 配置 Release 回滚（含源 / 目标 release_id、操作者、原因） | 配置 | 180d | planned |
+| `config.release.approve` | A | 配置发布审批；记录提交人与审批人，二者必须不同 | 配置 | 180d | planned |
+| `config.secret.create` | A | 创建业务密钥；只记录 key、版本、指纹，不记录明文 / 密文 | 配置 | 180d | active |
+| `config.secret.rotate` | A | 轮换业务密钥；记录新旧版本与 grace，不记录密钥材料 | 配置 | 180d | active |
+| `config.secret.revoke` | A | 吊销业务密钥；记录原因与影响服务，不记录密钥材料 | 配置 | 180d | active |
+| `config.secret.grant` | A | 变更密钥解析授权（env / namespace / service_identity / secret） | 配置 | 180d | active |
+| `config.secret.resolve` | A | 服务身份解析密钥；记录服务身份、key、版本、结果与 trace_id，不记录明文 | 配置 | 180d | active |
 | `data.export` | A/B | 数据导出（含 PII 须记范围摘要）；同步 `GET /admin/v1/audit/events/export`、异步任务完成与下载（`attrs.mode=async` / `async-download`）均记录导出人、时间窗、条数、过滤条件名称与 `export_id` | 导出 | 365d | active |
 | `audit.query` | A | 审计事件查询；`GET /admin/v1/audit/events` 每次查询记录操作者、时间窗、命中条数与过滤条件名称 | 权限 | 180d | active |
 | `audit.retention_purge` | worker | 审计到期清理（元审计：记录 cutoff / 到期数 / 归档数 / 删除数 / 批次数；配置 `archive_prefix` 时先落归档对象再删除） | 权限 | 180d | active |

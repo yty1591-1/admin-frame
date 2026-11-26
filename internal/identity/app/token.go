@@ -25,6 +25,10 @@ const (
 	RefreshPrefixC = "cr_"
 	// refreshTokenBytes 刷新令牌随机字节数（32 字节 = 256 bit）。
 	refreshTokenBytes = 32
+	// clientSubjectPrefix 是机器主体 sub 前缀：client:<client_id>。
+	clientSubjectPrefix = "client:"
+	// TokenUseClient 是 M2M 令牌的 token_use 取值（§21.2.3）。
+	TokenUseClient = "client"
 )
 
 // 令牌生命周期哨兵错误。
@@ -79,6 +83,7 @@ type TokenService struct {
 	channel    domain.Channel
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	clientTTL  time.Duration
 	ids        IDGenerator
 	clock      Clock
 }
@@ -136,6 +141,18 @@ func WithTokenParser(parser TokenParser) TokenServiceOption {
 	return func(s *TokenService) {
 		if parser != nil {
 			s.parser = parser
+		}
+	}
+}
+
+// WithClientTokenTTL 设置 M2M 机器令牌有效期（docs/identity-authn.md §21.2.3）。
+//
+// 未设置时回退 access_ttl；调用方不能为单次签发指定 TTL，
+// 保证 exp - iat 恒等于配置值。
+func WithClientTokenTTL(ttl time.Duration) TokenServiceOption {
+	return func(s *TokenService) {
+		if ttl > 0 {
+			s.clientTTL = ttl
 		}
 	}
 }
@@ -230,6 +247,76 @@ func (s *TokenService) signAccessToken(account *domain.Account, sessionID, curre
 		return "", apperr.Internal("sign access token failed", err)
 	}
 	return access, nil
+}
+
+// IssueClientToken 为 M2M 客户端签发机器令牌（docs/identity-authn.md §21.2.3）。
+//
+// 声明约束：
+//   - sub = "client:<client_id>"，与用户主体命名空间隔离；
+//   - token_use = "client"，校验侧据此跳过账号 / 会话检查；
+//   - 不携带 roles / merchant_id / current_tenant / sid，避免被当作人工会话；
+//   - exp - iat 固定等于 client_ttl（未配置时回退 access_ttl），不接受调用方指定。
+//
+// 返回值第二项为 expires_in 秒数。
+func (s *TokenService) IssueClientToken(clientID string, tokenVersion int64, scopes []string) (token string, expiresIn int64, err error) {
+	trimmed := strings.TrimSpace(clientID)
+	if trimmed == "" {
+		return "", 0, apperr.Internal("client id is required", nil)
+	}
+	if tokenVersion < 1 {
+		return "", 0, apperr.Internal("client token version must be >= 1", nil)
+	}
+	if len(scopes) == 0 {
+		return "", 0, apperr.Internal("client scopes are required", nil)
+	}
+	ttl := s.clientTTL
+	if ttl <= 0 {
+		ttl = s.accessTTL
+	}
+	now := s.clock.Now().UTC()
+	jti, err := s.ids.NextString()
+	if err != nil {
+		return "", 0, apperr.Internal("generate token id failed", err)
+	}
+	claims := jwt.Claims{
+		Subject:   ClientSubject(trimmed),
+		Audience:  []string{string(s.channel)},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(ttl),
+		ID:        jti,
+		Extra: map[string]any{
+			"ver":       tokenVersion,
+			"channel":   string(s.channel),
+			"token_use": TokenUseClient,
+			"client_id": trimmed,
+			"scope":     strings.Join(scopes, " "),
+		},
+	}
+	signed, err := s.signer.Sign(claims)
+	if err != nil {
+		return "", 0, apperr.Internal("sign client token failed", err)
+	}
+	return signed, int64(ttl / time.Second), nil
+}
+
+// ClientSubject 返回机器主体在令牌中的 sub 值。
+//
+// 统一前缀使「客户端 ID」与「账号 ID」不可能相撞，撤销检查据此分流。
+func ClientSubject(clientID string) string {
+	return clientSubjectPrefix + strings.TrimSpace(clientID)
+}
+
+// ClientIDFromSubject 从 sub 还原 client_id；不是机器主体时 ok=false。
+func ClientIDFromSubject(subject string) (string, bool) {
+	trimmed := strings.TrimSpace(subject)
+	if !strings.HasPrefix(trimmed, clientSubjectPrefix) {
+		return "", false
+	}
+	id := strings.TrimPrefix(trimmed, clientSubjectPrefix)
+	if id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 // GenerateRefreshToken 生成指定端别的 32 字节随机刷新令牌。

@@ -58,7 +58,7 @@ RESTORE_CONFIRM=yes DB_DRIVER=mysql DB_DSN="$RESTORE_DSN" \
   bash scripts/backup/restore.sh /var/backups/admin-frame/mysql-<ts>.dump.gz
 # 4) 校验与迁移状态
 DB_DRIVER=mysql DB_DSN="$RESTORE_DSN" bash scripts/backup/verify.sh <file> --load
-./bin/migrate -config configs/admin.yaml -action status
+./bin/migrate -config configs/prod/admin.yaml -action status
 # 5) 切换连接串 → 恢复 worker → 灰度 API
 ```
 

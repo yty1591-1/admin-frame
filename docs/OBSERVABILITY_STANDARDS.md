@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部可执行进程的日志、指标、追踪、健康检查与关键审计触发点
 > **关联**：架构 §十二；脱敏见 `SECURITY_STANDARDS.md`；审计见 `AUDIT_STANDARDS.md`
 > **执行方式**：`check-observability.sh` + Review + MR 模板
-> **最后更新**：2026-10-19
+> **最后更新**：2026-11-07（平台拆包后路径同步：`internal/platform/middleware.go` → `httpserver/middleware.go`）
 > **变更方式**：修改本规范须同步更新 `platform` 日志/探针、`scripts/ci/check-observability.sh` 与架构 §十二，经架构 Owner Review
 
 ---

@@ -21,7 +21,7 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 OASDIFF_VERSION="${OASDIFF_VERSION:-v1.33.0}"
-SPECS=(api/openapi/admin.yaml api/openapi/biz.yaml api/openapi/c.yaml)
+SPECS=(api/openapi/admin.yaml api/openapi/biz.yaml api/openapi/c.yaml api/openapi/internal.yaml)
 SEVERITY_FILE="api/openapi/.oasdiff-severity.txt"
 COMPONENTS="api/openapi/components.yaml"
 BUNDLER="./scripts/openapi/bundle"

@@ -6,6 +6,12 @@ WARNING: serviceMonitor.enabled=true，但本集群没有 monitoring.coreos.com/
 {{- end }}
 admin-frame 已部署到命名空间 {{ .Release.Namespace }}（release: {{ .Release.Name }}）。
 
+配置面（ADR-0016）：
+  - 业务配置：config-api 拉取 + 本地缓存（emptyDir）；无远端且无缓存则 fail-fast
+  - 引导变量：CONFIG_API_URL / CONFIG_SERVICE_IDENTITY / CONFIGCENTER_ENV
+  - 基础设施口令：Secret / envFrom；JWT 等业务密钥经 config-api resolve
+  - 生产建议：先起 config-api 多副本；开启 mTLS（CONFIG_API_MTLS=require）
+
 检查就绪状态：
   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "admin-frame.fullname" . }}-admin --timeout=120s

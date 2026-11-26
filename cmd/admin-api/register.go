@@ -2,17 +2,24 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	featureflagruntime "github.com/admin-frame/admin-frame/cmd/internal/featureflagruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	auditadmin "github.com/admin-frame/admin-frame/internal/audit/transport/admin"
+	configcenteradmin "github.com/admin-frame/admin-frame/internal/configcenter/transport/admin"
 	featureflagadmin "github.com/admin-frame/admin-frame/internal/featureflag/transport/admin"
 	iamadmin "github.com/admin-frame/admin-frame/internal/iam/transport/admin"
 	identityadmin "github.com/admin-frame/admin-frame/internal/identity/transport/admin"
+	identityscim "github.com/admin-frame/admin-frame/internal/identity/transport/scim"
 	notificationadmin "github.com/admin-frame/admin-frame/internal/notification/transport/admin"
 	notificationrest "github.com/admin-frame/admin-frame/internal/notification/transport/rest"
 	"github.com/admin-frame/admin-frame/internal/platform"
@@ -25,12 +32,17 @@ import (
 // rt 由 NewAuthorizer 阶段构造并复用：IAM 管理端与鉴权中间件必须看到同一份
 // 角色 / 绑定数据，否则本地内存模式下会出现「刚授权的角色不生效」。
 // identityRT 用于注册身份域（登录 / 刷新 / 登出 / 会话管理）路由。
-func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
+func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime,
+	identityRT *identityruntime.Runtime, appCfg *appconfig.Config) error {
 	if rt != nil && rt.Handler != nil {
 		iamadmin.Register(mux, rt.Handler, deps.AuthMW, deps.RequirePermission)
 	}
 	if identityRT != nil && identityRT.Handler != nil {
 		identityadmin.Register(mux, identityRT.Handler, deps.AuthMW, deps.RequirePermission)
+	}
+	// SCIM 2.0 协议端点：独立 Bearer 鉴权，不挂 JWT 中间件（§21.1.2）。
+	if identityRT != nil && identityRT.ScimHandler != nil {
+		identityscim.Register(mux, identityRT.ScimHandler)
 	}
 	auditRT, err := auditruntime.New(deps, appCfg.Audit)
 	if err != nil {
@@ -68,6 +80,31 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 			tenantRT.SetFeatureEvaluator(featureflagruntime.NewTenantEvaluator(flagRT.Evaluator))
 		}
 	}
+	// M1-3：配置中心管理面（配置键 / 版本 / 发布 / 审批 / 回滚）。
+	// 装配失败不阻断其它管理链路（与 featureflag 口径一致），记录错误便于排查；
+	// 启动期 baseline 播种失败会由 New 返回错误，同样只降级本域路由。
+	configRT, cerr := configcenterruntime.New(deps, configcenterruntime.Options{Service: "admin-api"})
+	if cerr != nil {
+		deps.Logger.Warn("configcenter runtime unavailable, config management disabled", "error", cerr)
+	}
+	if configRT != nil && configRT.Handler != nil {
+		if configRT.Metrics != nil {
+			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission,
+				configRT.Metrics)
+		} else {
+			configcenteradmin.Register(mux, configRT.Handler, deps.AuthMW, deps.RequirePermission)
+		}
+	}
+	// ADR-0017：安装向导经 admin-api 代理到 config-api（mTLS），无 JWT。
+	registerInstallProxy(deps, mux)
+	// M1-7：管理面进程内动态刷新（5s ±20%）；未配置快照公钥时为空操作。
+	if configRT != nil {
+		configRT.StartRefresh(deps, 0)
+	}
+	// ADR-0015：把热更视图接到运行时参数（限流 / 幂等 TTL / 异步 relay）。
+	if configRT != nil {
+		configRT.ApplyRuntimeParams(deps)
+	}
 	if services != nil {
 		if tenantRT != nil {
 			tenantRT.SetInvitationNotifier(notificationruntime.NewInvitationNotifier(services.Dispatcher, ""))
@@ -85,6 +122,26 @@ func registerRoutes(deps *platform.Deps, mux *http.ServeMux, rt *iamRuntime, ide
 		notificationadmin.Register(mux, notificationHandler, deps.AuthMW, deps.RequirePermission)
 	}
 	return nil
+}
+
+// registerInstallProxy 挂载 /admin/v1/install/* → config-api（mTLS 客户端）。
+func registerInstallProxy(deps *platform.Deps, mux *http.ServeMux) {
+	base := strings.TrimSpace(os.Getenv("CONFIG_API_URL"))
+	if base == "" {
+		deps.Logger.Warn("install proxy skipped: CONFIG_API_URL empty")
+		return
+	}
+	env := ""
+	if deps != nil && deps.Config != nil {
+		env = deps.Config.Env
+	}
+	client, err := secretruntime.LoadClientHTTPFromEnvFor(env)
+	if err != nil {
+		deps.Logger.Warn("install proxy skipped: mTLS client unavailable", "error", err)
+		return
+	}
+	configboot.NewInstallProxy(base, client).Register(mux)
+	deps.Logger.Info("install proxy enabled", "upstream", base)
 }
 
 // tenantSessionRevoker 提取 identity 的租户会话撤销器；身份域未启用时返回 nil。

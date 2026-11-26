@@ -1,6 +1,6 @@
 # 数据资产清单与 PII 分类分级（ENT-15）
 
-> **状态**：v1.0（2026-11-04）
+> **状态**：v1.1（2026-11-05，补 `tenant_approval`（迁移 000023）与审批审计保留期）
 > **关联**：[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（PII 边界）、[`tenant-data-lifecycle.md`](./tenant-data-lifecycle.md)（三段式处置）、[`audit/EVENTS.md`](./audit/EVENTS.md)（保留期声明）、[`adr/0006-tenant-as-isolation-boundary.md`](./adr/0006-tenant-as-isolation-boundary.md)
 >
 > 定位：登记平台全部持久化数据的 PII 分类、保留期与删除边界——

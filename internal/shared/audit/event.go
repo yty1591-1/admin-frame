@@ -92,7 +92,9 @@ func rejectSensitive(s string) error {
 		"passwd=",
 		"secret=",
 		"api_key=",
-		"private_key",
+		// 必须带 '='：配置键名 auth.jwt.private_key 会出现在 attrs，
+		// 不能把键名本身当成密钥明文（bootstrap CreateSecret 会误杀）。
+		"private_key=",
 		"-----begin",
 	}
 	for _, n := range needles {

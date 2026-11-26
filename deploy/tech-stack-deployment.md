@@ -22,7 +22,7 @@
 
 | 项 | 版本 / 选型 | 说明 |
 |---|---|---|
-| Go | `1.26.10`（[go.mod](../go.mod#L3)） | 使用 `net/http` 方法化路由，需 Go ≥ 1.22 |
+| Go | `1.26.11`（[go.mod](../go.mod#L3)） | 使用 `net/http` 方法化路由，需 Go ≥ 1.22 |
 | HTTP 框架 | 标准库 `net/http` | 无 Web 框架，中间件在 [internal/platform](../internal/platform/middleware.go) |
 | 请求校验 | `go-playground/validator/v10 v10.27.0` | 传输层 DTO 校验 |
 | 配置 | `gopkg.in/yaml.v3 v3.0.1` + `ADMIN_FRAME_` 环境变量 | 优先级：环境变量 > 配置文件 > 默认值 |
@@ -158,7 +158,7 @@
 | `channel=c` | `identity.sms.enabled` 或至少一个 `identity.oauth.providers` |
 | OAuth URL | 必须 `https` |
 
-> 以下为部署要求，代码不强制但生产必须遵守：`db.driver` 使用 `mysql`/`postgres`、`storage.driver` 禁止 `memory`、`iam.mode=enforce`、`identity.enabled=true` 时 Redis 可用且 `auth.mode=jwt`。
+> 以下为部署要求，代码不强制但生产必须遵守：`db.driver` 使用 `mysql`（唯一支持的 SQL 方言）、`storage.driver` 禁止 `memory`、`iam.mode=enforce`、`identity.enabled=true` 时 Redis 可用且 `auth.mode=jwt`。
 
 ## 7. 部署流程
 
@@ -243,7 +243,7 @@
 ## 11. 常见部署坑（本项目实测约束）
 
 1. **端口不一致**：Dockerfile `EXPOSE 8080` 且 `HEALTHCHECK` 固定探测 `127.0.0.1:8080`，而示例配置为 `8081/8082/8083/8090`。容器内请统一 `ADMIN_FRAME_ADDR=:8080`，或同步修改探针与 Service `targetPort`。
-2. **配置文件缺失**：镜像只复制 `configs/*.yaml.example`，默认 `-config configs/admin.yaml` 不存在，必须挂载真实配置文件或显式传 `-config`。
+2. **配置文件缺失**：镜像只复制 `configs/**/*.yaml.example`，默认 `-config configs/dev/<service>.yaml` 在容器内不存在，必须挂载真实配置文件或显式传 `-config`。
 3. **雪花 ID 冲突**：`id.node_id` 重复会生成相同 ID。多副本必须唯一；HPA 动态扩缩与手工编号不兼容。
 4. **demo 鉴权**：`env=prod` 下 `auth.mode=demo` 直接启动失败，发布前先完成 JWT 配置与密钥注入。
 5. **身份域启用前置**：`identity.enabled=true` 要求 `auth.mode=jwt` 且 Redis 可用；C 端还要求短信或 OAuth 至少一项。

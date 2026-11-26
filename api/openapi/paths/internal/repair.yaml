@@ -1,0 +1,49 @@
+# ADR-0018 待定 1：启动自愈路径（仅集群内，/internal/v1/configs/repair/*）。
+#
+# 人不可调用；服务身份由 mTLS 证书 SAN 或 X-Service-Identity 确定，并逐个
+# 校验命名空间 allowlist。调用方只能声明 namespace/key，取值由服务端按
+# key spec 解析为声明默认值。
+
+internal-v1-configs-repair-reset-defaults:
+  post:
+    tags: [config-repair-internal]
+    summary: 把取值非法的键重置为声明默认值
+    description: |
+      进程启动校验失败、且诊断判定为「键存在但取值非法」时由 admin-api 调用。
+      单次最多 32 个键；取值由 config-api 解析（prod-like overlay 优先于代码
+      默认值），调用方不能指定取值。每个键追加 item 版本并生成一个新发布，
+      指针以 CAS 推进；敏感键、无默认值、未声明、已归档键会写入 `skipped`
+      并给出原因，不静默跳过。
+    operationId: internalResetConfigDefaults
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [refs]
+            properties:
+              env:
+                type: string
+                description: 省略时取 config-api 进程环境；显式给出时必须与之一致。
+              refs:
+                type: array
+                minItems: 1
+                maxItems: 32
+                items:
+                  type: string
+                  pattern: '^[a-z][a-z0-9_]*/[A-Za-z0-9_.-]+$'
+                description: namespace/key 形式，例如 platform/db.driver。
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/repair.yaml#/ResetDefaultsResponse"
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "503":
+        $ref: "../../components.yaml#/components/responses/ServiceUnavailable"

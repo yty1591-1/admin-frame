@@ -83,33 +83,23 @@ if [[ -f "${DOWN}" ]]; then
   done
 fi
 
-echo "==> ENT-03: async config samples must be complete"
-# 配置按端拆分后 async 段收敛到公共模块；端样例入库为
-# configs/prod/<channel>.yaml.example，本地运行配置 configs/prod-<channel>.yaml
-# 被 .gitignore 排除，仅存在本地，CI 不得依赖。
-for sample in configs/prod/admin.yaml.example configs/prod/biz.yaml.example configs/prod/c.yaml.example configs/prod/worker.yaml.example; do
-  if [[ ! -f "${sample}" ]]; then
-    echo "ERROR: missing ${sample} (ENT-03)" >&2
-    FAIL=1
-  fi
-done
-ASYNC_SAMPLE="configs/prod/modules/platform.yaml.example"
-if [[ ! -f "${ASYNC_SAMPLE}" ]]; then
-  echo "ERROR: missing ${ASYNC_SAMPLE} (ENT-03)" >&2
-  FAIL=1
-elif ! grep -qE '^async:' "${ASYNC_SAMPLE}"; then
-  echo "ERROR: ${ASYNC_SAMPLE} must declare async section (ENT-03)" >&2
+echo "==> ENT-03: async config keys must be declared in platform key spec"
+# M3：configs/ 样例已删除；契约改查代码 key spec（CFG-07）。
+SPEC="internal/configcenter/spec/platform.go"
+if [[ ! -f "${SPEC}" ]]; then
+  echo "ERROR: missing ${SPEC} (ENT-03)" >&2
   FAIL=1
 else
-  for key in 'driver:' 'publish_in_api:' 'lease:' 'max_attempts:' 'visibility_timeout:'; do
-    if ! grep -q "${key}" "${ASYNC_SAMPLE}"; then
-      echo "ERROR: ${ASYNC_SAMPLE} missing async key ${key}" >&2
+  for key in 'async.driver' 'async.outbox.publish_in_api' 'async.outbox.lease' \
+    'async.outbox.max_attempts' 'async.consumer.visibility_timeout'; do
+    if ! grep -q "${key}" "${SPEC}"; then
+      echo "ERROR: ${SPEC} missing async key ${key} (ENT-03)" >&2
       FAIL=1
     fi
   done
 fi
 if [[ "${FAIL}" -eq 0 ]]; then
-  echo "    OK: async config samples complete"
+  echo "    OK: async config keys declared in key spec"
 fi
 
 echo "==> ENT-03: async driver must reject unimplemented brokers"

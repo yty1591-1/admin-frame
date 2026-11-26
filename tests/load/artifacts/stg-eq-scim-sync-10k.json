@@ -1,0 +1,20 @@
+{
+  "scenario": "scim.sync",
+  "target": "POST /admin/scim/v2/Users + /admin/scim/v2/Groups（SCIM Bearer + MySQL 事务 + 角色投影）",
+  "users": 10000,
+  "groups": 50,
+  "members_per_group": 200,
+  "vus": 8,
+  "samples": 10050,
+  "success_rate": 1,
+  "errors": 0,
+  "p50_ms": 42.292,
+  "p95_ms": 65.273,
+  "p99_ms": 114.737,
+  "max_ms": 2689.531,
+  "throughput_rps": 66.263,
+  "duration_seconds": 151.7,
+  "target_duration_seconds": 1800,
+  "passed": true,
+  "started_at": "2026-11-10T08:01:09.229Z"
+}

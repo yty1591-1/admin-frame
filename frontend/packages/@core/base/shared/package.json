@@ -11,6 +11,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "build": "pnpm exec tsdown",
     "stub": "pnpm run build"
   },

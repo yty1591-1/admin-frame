@@ -9,7 +9,8 @@
 #   MG-01 文件命名与配对：NNNNNN_name.up.sql / .down.sql 成对，无其它文件
 #   MG-02 序号从 000001 起连续、不重号
 #   MG-03 相对基线不得删除或改名既有迁移（迁移是追加日志）
-#   MG-04 新增/修改的 up 迁移禁止破坏性 DDL（DROP TABLE/COLUMN、RENAME、CHANGE、TRUNCATE）
+#   MG-04 新增 up 迁移默认 expand-only（禁止 DROP/RENAME/CHANGE/TRUNCATE）；
+#         显式声明 `-- CONTRACT: <已停写依据>` 的才允许破坏性 DDL（DATA-05 收口阶段）
 #   MG-05 up 迁移中 ADD COLUMN ... NOT NULL 必须带 DEFAULT（否则旧代码写入即失败）
 #   MG-06 down 迁移必须存在且非空，或显式声明 `-- IRREVERSIBLE:` 与处置说明
 #   MG-07 提供 MIGRATE_DSN 时探测 schema 状态：dirty=false 才允许发布
@@ -162,7 +163,7 @@ if [[ -n "${BASE}" ]]; then
     echo "    OK: no deletions/renames"
   fi
 
-  echo "==> MG-04: new up migrations must be expand-only"
+  echo "==> MG-04: new up migrations must be expand-only (or marked CONTRACT)"
   mapfile -t NEW_UP < <(git diff --name-only --diff-filter=A "${BASE}" -- "${MIG_DIR}" | grep -E '\.up\.sql$' || true)
   if [[ "${#NEW_UP[@]}" -eq 0 ]]; then
     echo "    OK: no new up migration in this change"
@@ -170,12 +171,16 @@ if [[ -n "${BASE}" ]]; then
   for f in "${NEW_UP[@]}"; do
     echo "    checking ${f}"
     body="$(strip_sql "${f}")"
-    # 破坏性 DDL：DROP / RENAME / CHANGE / TRUNCATE / MODIFY NOT NULL 无默认值。
+    # 破坏性 DDL：DROP / RENAME / CHANGE / TRUNCATE。
     destructive="$(printf '%s\n' "${body}" |
       grep -inE '\b(DROP[[:space:]]+(TABLE|COLUMN|DATABASE|SCHEMA)|RENAME[[:space:]]+(TABLE|COLUMN)|CHANGE[[:space:]]+COLUMN|TRUNCATE([[:space:]]+TABLE)?)\b' || true)"
     if [[ -n "${destructive}" ]]; then
-      printf '%s\n' "${destructive}" | sed 's/^/      /' >&2
-      fail "${f}: destructive DDL in an expand migration (split into expand → code → contract)"
+      if grep -qiE '^--[[:space:]]*CONTRACT:' "${f}"; then
+        echo "    OK: ${f} declared as CONTRACT (DATA-05)"
+      else
+        printf '%s\n' "${destructive}" | sed 's/^/      /' >&2
+        fail "${f}: destructive DDL in an expand migration (split into expand → code → contract, or declare '-- CONTRACT: <依据>')"
+      fi
     fi
 
     echo "==> MG-05: ADD COLUMN NOT NULL requires DEFAULT (${f})"

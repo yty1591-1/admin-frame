@@ -1,0 +1,203 @@
+admin-v1-auth-m2m-clients:
+  get:
+    tags: [auth]
+    summary: M2M 客户端列表
+    description: |
+      返回客户端状态、端别、scope 与最近轮换时间，**不含任何密钥材料**。
+      `identity.m2m.enabled=false` 时本路径不注册（404）。
+    operationId: adminListM2MClients
+    parameters:
+      - name: status
+        in: query
+        schema: {type: string, enum: [active, disabled, deleted]}
+      - name: channel
+        in: query
+        schema: {type: string, enum: [admin, biz, c]}
+      - name: page
+        in: query
+        schema: {type: integer, minimum: 1, default: 1}
+      - name: page_size
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    responses:
+      "200":
+        description: 客户端列表
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required: [items, total, page, size]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: "../../components.yaml#/components/schemas/M2MClient"
+                        total: {type: integer}
+                        page: {type: integer}
+                        size: {type: integer}
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  post:
+    tags: [auth]
+    summary: 创建 M2M 客户端
+    description: |
+      `client_secret` 只在本次响应出现一次，之后不可取回；写操作强制 `Idempotency-Key`。
+      `allowed_scopes` 必须同时命中服务端 `identity.m2m.allowed_scopes` 白名单。
+    operationId: adminCreateM2MClient
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name, allowed_channels, allowed_scopes]
+            properties:
+              name: {type: string, maxLength: 128}
+              owner: {type: string, maxLength: 64}
+              allowed_channels:
+                type: array
+                items: {type: string, enum: [admin, biz, c]}
+              allowed_scopes:
+                type: array
+                items: {type: string}
+    responses:
+      "201":
+        description: 创建成功，返回一次性明文密钥
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        client:
+                          $ref: "../../components.yaml#/components/schemas/M2MClient"
+                        client_secret: {type: string, description: 只返回一次，禁止记录日志}
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+
+admin-v1-auth-m2m-clients-secrets:
+  post:
+    tags: [auth]
+    summary: 轮换客户端密钥
+    description: |
+      新密钥立即生效，旧密钥进入 `identity.m2m.rotate_grace` 宽限；同时递增
+      `token_version`，已签发令牌在 60s 内失效。需 `identity:m2m:credential`。
+    operationId: adminRotateM2MSecret
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "200":
+        description: 新密钥（只返回一次）
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        client_id: {type: string}
+                        client_secret: {type: string}
+                        fingerprint: {type: string}
+                        retiring_expires_at: {type: string, format: date-time}
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/Conflict"
+
+admin-v1-auth-m2m-clients-disable:
+  post:
+    tags: [auth]
+    summary: 停用 M2M 客户端
+    description: 停用并查封全部密钥，`token_version++`；旧令牌 60s 内失效。
+    operationId: adminDisableM2MClient
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "204":
+        description: 已停用（幂等）
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+admin-v1-auth-m2m-clients-enable:
+  post:
+    tags: [auth]
+    summary: 启用 M2M 客户端
+    description: 启用后不复活旧令牌与旧密钥，调用方必须先轮换密钥。
+    operationId: adminEnableM2MClient
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "204":
+        description: 已启用
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+admin-v1-auth-m2m-clients-by-id:
+  delete:
+    tags: [auth]
+    summary: 软删 M2M 客户端
+    description: 软删后 `client_id` 不可复用；审计与密钥指纹保留 ≥180 天。
+    operationId: adminDeleteM2MClient
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "204":
+        description: 已软删（幂等）
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"

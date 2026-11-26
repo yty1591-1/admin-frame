@@ -1,0 +1,123 @@
+# 本机 prod 演练依赖：MySQL + Redis + RustFS + Vault。
+#
+# 口令 / root token 均为演练固定值，禁止用于任何真实环境。
+#
+# 用法：
+#   docker compose -f docker-compose.prod-rehearsal.yml up -d
+#   bash scripts/prod/vault-init.sh
+#   bash scripts/prod/gen-mtls-certs.sh
+#
+# 端口：MySQL 3306、Redis 6379、RustFS 19000/19001（避开本机其它 :9000）、Vault 8200。
+# 与 integration compose 端口冲突时请先停掉另一套。
+
+name: admin-frame-prod-rehearsal
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: admin_frame_prod
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+    ports:
+      # 仅本机回环，避免演练口令暴露到局域网。
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    volumes:
+      - prod-rehearsal-mysql:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.8
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: us-east-1
+    ports:
+      # 宿主机用 19000/19001，避免与本机其它 S3 兼容服务占用 :9000 冲突。
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    volumes:
+      - prod-rehearsal-rustfs:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:9000/health && curl -fsS http://127.0.0.1:9001/rustfs/console/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  rustfs-init:
+    image: amazon/aws-cli:2.15.17
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      /bin/sh -c "
+      i=0;
+      until aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket admin-frame 2>/dev/null; do
+        i=$$((i+1));
+        if [ $$i -ge 30 ]; then echo 'rustfs not ready' >&2; exit 1; fi;
+        aws --endpoint-url http://rustfs:9000 s3 mb s3://admin-frame >/dev/null 2>&1 || true;
+        sleep 2;
+      done;
+      exit 0;
+      "
+
+  vault:
+    image: hashicorp/vault:2.2.2
+    cap_add:
+      - IPC_LOCK
+    # file 存储：Transit 密钥材料落盘，避免 -dev 重启后无法 unwrap 已播种密文。
+    # 只传子命令 server：镜像 entrypoint 会追加 -config=/vault/config（目录），
+    # 若再写 -config=vault.hcl 会加载两次 listener，触发 bind address already in use。
+    command: ["server"]
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      SKIP_SETCAP: "true"
+    ports:
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - ./scripts/prod/vault.hcl:/vault/config/vault.hcl:ro
+      - prod-rehearsal-vault:/vault/file
+    healthcheck:
+      # 未初始化 / 已封印也视为进程存活；真正解封由 scripts/prod/vault-init.sh 完成。
+      test:
+        [
+          "CMD-SHELL",
+          "vault status -address=http://127.0.0.1:8200 >/dev/null 2>&1; c=$$?; [ $$c -eq 0 ] || [ $$c -eq 2 ]",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  prod-rehearsal-mysql:
+  prod-rehearsal-rustfs:
+  prod-rehearsal-vault:

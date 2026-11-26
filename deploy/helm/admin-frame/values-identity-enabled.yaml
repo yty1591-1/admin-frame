@@ -1,6 +1,7 @@
 # 身份域生产启用 overlay（IDN-GAP-P0-01）。
 #
-# 使用方式（必须放在 values-prod.yaml 之后，确保覆盖 prod 的 identity.enabled=false）：
+# 使用方式（生产基线已为 A/B 端开启 identity；本 overlay 用于在旧基线或
+# 自定义 values 上重复声明同一组开关，必须放在 values-prod.yaml 之后）：
 #   helm upgrade --install admin-frame deploy/helm/admin-frame \
 #     -f deploy/helm/admin-frame/values.yaml \
 #     -f deploy/helm/admin-frame/values-prod.yaml \
@@ -10,7 +11,8 @@
 #   1. Secret `admin-frame-identity` 存在，且包含：
 #        hash_key      32 字节（64 位十六进制）HMAC 主密钥
 #        mfa_secret_key 32 字节（64 位十六进制）AES-GCM 主密钥
-#   2. auth.jwt 使用 RS256 密钥环，且私钥文件已挂载（登录令牌由本服务签发）。
+#   2. auth.jwt 使用 RS256 密钥环；Secret `admin-frame-jwt` 需同时包含
+#      public.pem 与 private.pem（Chart 通过 jwtPrivateKey 挂载私钥）。
 #   3. Redis 可用；db.driver=mysql；async.enabled=true。
 #   4. C 端还需配置 identity.sms（driver=aliyun，禁止 memory）或至少一个
 #      identity.oauth.providers；否则请保持 c.configOverrides.identity.enabled=false。

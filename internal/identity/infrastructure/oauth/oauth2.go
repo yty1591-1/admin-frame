@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -379,6 +380,11 @@ func pkceChallenge(verifier string) string {
 }
 
 // oauthUnavailable 包装网络 / 解码错误为 50300，且不对外暴露敏感请求信息。
+//
+// 必须用 errors.Join 挂接 ErrUnavailable 哨兵：apperr.New 带 cause 时不再自动
+// 附加语义码，缺了哨兵会导致上层 errors.Is(err, apperr.ErrUnavailable) 失配，
+// 被 OAuthService 降级成 50000（演练 D2 实测）。
 func oauthUnavailable(err error) error {
-	return apperr.New(apperr.CodeServiceUnavailable, "oauth provider unavailable", err)
+	return apperr.New(apperr.CodeServiceUnavailable, "oauth provider unavailable",
+		errors.Join(err, apperr.ErrUnavailable))
 }

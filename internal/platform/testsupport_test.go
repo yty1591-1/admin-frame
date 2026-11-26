@@ -26,6 +26,8 @@ func testJWTSecret(fill byte) string {
 // writeConfig 写入临时配置文件并返回路径。
 //
 // 平台级测试（bootstrap / middleware）仍需要它；配置包内部测试另有同名副本。
+// content 必须显式给出 env（local/dev/test/staging/prod）：空 env 会被
+// validateEnv 拒绝，装配会在加载配置阶段就失败，测不到目标路径。
 func writeConfig(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)

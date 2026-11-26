@@ -64,6 +64,11 @@ func (s CertificationScope) Validate() error {
 	return nil
 }
 
+// DefaultMaxTasksPerCampaign 是单活动任务上限的内置默认值（ADR-0012，2026-11-11）。
+// 10 万档位实测生成 4.68 s、导出 479–595 ms / 14.30 MB（docs/incident/drills/2026-11-08-s7-2-perf-100k.md），
+// 足以让一个季度复核活动覆盖全量主体；可按环境用 iam.certification.max_tasks_per_campaign 覆盖。
+const DefaultMaxTasksPerCampaign = 100000
+
 // CertificationLimits 是访问复核的规模上限与安全开关。
 type CertificationLimits struct {
 	// RequireReason 创建活动 / 裁决是否强制填写原因；裁决原因始终由领域层强制。
@@ -72,7 +77,7 @@ type CertificationLimits struct {
 	AllowBizChannel bool
 	// AutoRevoke 到期后是否自动回收绑定；false 时只标记 expired。
 	AutoRevoke bool
-	// MaxTasksPerCampaign 单活动任务上限；≤0 时使用默认 10000。
+	// MaxTasksPerCampaign 单活动任务上限；≤0 时使用 DefaultMaxTasksPerCampaign。
 	MaxTasksPerCampaign int
 }
 
@@ -124,7 +129,7 @@ func NewCertificationService(cfg CertificationServiceConfig) (*CertificationServ
 		return nil, apperr.Internal("iam id generator is required", nil)
 	}
 	if cfg.Limits.MaxTasksPerCampaign <= 0 {
-		cfg.Limits.MaxTasksPerCampaign = 10000
+		cfg.Limits.MaxTasksPerCampaign = DefaultMaxTasksPerCampaign
 	}
 	logger := cfg.Logger
 	if logger == nil {
@@ -518,69 +523,81 @@ func (s *CertificationService) AutoExpireOverdue(
 		if !campaignVisibleTo(campaign, scope) {
 			return apperr.NotFound("certification campaign not found")
 		}
-		if campaign.Status != domain.CertificationStatusActive {
-			return apperr.Conflict("certification campaign is not active")
-		}
-		if !campaign.IsOverdue(now) {
-			return nil
-		}
-		all, err := s.tasks.ListByCampaign(ctx, campaign.ID)
-		if err != nil {
-			return err
-		}
-		for _, task := range all {
-			if task.Status != domain.CertificationTaskStatusPending {
-				continue
-			}
-			expectedVersion := task.Version
-			if !s.limits.AutoRevoke {
-				if err := task.Expire(now); err != nil {
-					return err
-				}
-				if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-					return err
-				}
-				if err := s.recordDecision(ctx, campaign, task, "auto_expire", certificationSystemActor, certificationAutoReason); err != nil {
-					return err
-				}
-				affected++
-				continue
-			}
-			binding, findErr := s.bindings.FindByID(ctx, task.BindingID)
-			if findErr != nil || bindingFingerprintMismatch(task, binding, campaign) {
-				if findErr != nil && !errors.Is(findErr, apperr.ErrNotFound) {
-					return findErr
-				}
-				if err := task.MarkSkipped(certificationSystemActor, certificationAutoReason, now); err != nil {
-					return err
-				}
-				if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-					return err
-				}
-				if err := s.recordDecision(ctx, campaign, task, "auto_skip", certificationSystemActor, certificationAutoReason); err != nil {
-					return err
-				}
-				affected++
-				continue
-			}
-			if err := task.Decide(domain.CertificationDecisionRevoke, certificationSystemActor, certificationAutoReason, now); err != nil {
-				return err
-			}
-			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
-				return err
-			}
-			if err := s.revoker.Revoke(ctx, binding.ID, certificationSystemActor, certificationAutoReason); err != nil {
-				return err
-			}
-			if err := s.recordDecision(ctx, campaign, task, "auto_revoke", certificationSystemActor, certificationAutoReason); err != nil {
-				return err
-			}
-			affected++
-		}
-		return nil
+		affected, err = s.expireOverdueTasks(ctx, campaign, now)
+		return err
 	})
 	if err != nil {
 		return 0, err
+	}
+	return affected, nil
+}
+
+// expireOverdueTasks 在调用方事务内处理单个活动的超期任务。
+//
+// 调用方必须先完成可见性 / 作用域校验：本函数只做状态机与回收，
+// 不判断请求来源，避免扫描任务与人工触发出现两套判定。
+func (s *CertificationService) expireOverdueTasks(
+	ctx context.Context, campaign *domain.CertificationCampaign, now time.Time,
+) (int, error) {
+	if campaign.Status != domain.CertificationStatusActive {
+		return 0, apperr.Conflict("certification campaign is not active")
+	}
+	if !campaign.IsOverdue(now) {
+		return 0, nil
+	}
+	affected := 0
+	all, err := s.tasks.ListByCampaign(ctx, campaign.ID)
+	if err != nil {
+		return 0, err
+	}
+	for _, task := range all {
+		if task.Status != domain.CertificationTaskStatusPending {
+			continue
+		}
+		expectedVersion := task.Version
+		if !s.limits.AutoRevoke {
+			if err := task.Expire(now); err != nil {
+				return 0, err
+			}
+			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+				return 0, err
+			}
+			if err := s.recordDecision(ctx, campaign, task, "auto_expire", certificationSystemActor, certificationAutoReason); err != nil {
+				return 0, err
+			}
+			affected++
+			continue
+		}
+		binding, findErr := s.bindings.FindByID(ctx, task.BindingID)
+		if findErr != nil || bindingFingerprintMismatch(task, binding, campaign) {
+			if findErr != nil && !errors.Is(findErr, apperr.ErrNotFound) {
+				return 0, findErr
+			}
+			if err := task.MarkSkipped(certificationSystemActor, certificationAutoReason, now); err != nil {
+				return 0, err
+			}
+			if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+				return 0, err
+			}
+			if err := s.recordDecision(ctx, campaign, task, "auto_skip", certificationSystemActor, certificationAutoReason); err != nil {
+				return 0, err
+			}
+			affected++
+			continue
+		}
+		if err := task.Decide(domain.CertificationDecisionRevoke, certificationSystemActor, certificationAutoReason, now); err != nil {
+			return 0, err
+		}
+		if err := s.tasks.Save(ctx, task, expectedVersion); err != nil {
+			return 0, err
+		}
+		if err := s.revoker.Revoke(ctx, binding.ID, certificationSystemActor, certificationAutoReason); err != nil {
+			return 0, err
+		}
+		if err := s.recordDecision(ctx, campaign, task, "auto_revoke", certificationSystemActor, certificationAutoReason); err != nil {
+			return 0, err
+		}
+		affected++
 	}
 	return affected, nil
 }
@@ -691,6 +708,10 @@ func (s *CertificationService) generateTasks(
 	if err != nil {
 		return nil, err
 	}
+	// 特权判定按角色缓存：SQL 仓储的 FindByID 需要 3 条查询（角色 + 权限 + 数据范围），
+	// 若按绑定逐条判定，1 万绑定就是 3 万次往返（实测 49s → 15s 级）。
+	// 缓存只在本次活动生成内有效，语义与逐条判定等价（角色在生成期间不可变）。
+	privilegedCache := make(map[string]bool, len(roleScope))
 	tasks := make([]*domain.CertificationTask, 0, len(bindings))
 	for _, binding := range bindings {
 		if binding == nil || binding.IsRevoked() || binding.IsExpired(now) {
@@ -702,9 +723,13 @@ func (s *CertificationService) generateTasks(
 			}
 		}
 		if campaign.PrivilegedOnly {
-			privileged, err := s.isPrivilegedRole(ctx, binding.RoleID)
-			if err != nil {
-				return nil, err
+			privileged, cached := privilegedCache[binding.RoleID]
+			if !cached {
+				privileged, err = s.isPrivilegedRole(ctx, binding.RoleID)
+				if err != nil {
+					return nil, err
+				}
+				privilegedCache[binding.RoleID] = privileged
 			}
 			if !privileged {
 				continue

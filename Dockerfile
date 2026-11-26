@@ -3,7 +3,7 @@
 
 # 构建阶段固定在 BUILDPLATFORM（runner 原生架构），按 TARGETOS/TARGETARCH 交叉编译，
 # 多架构（amd64/arm64）构建无需逐架构 QEMU 编译 Go 代码。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.24 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine3.24 AS builder
 WORKDIR /src
 RUN apk add --no-cache ca-certificates git
 COPY go.mod go.sum ./
@@ -25,7 +25,7 @@ RUN adduser -D -u 10001 appuser \
   && mkdir -p /app/configs
 WORKDIR /app
 COPY --from=builder /out/app /app/app
-COPY configs/*.yaml.example /app/configs/
+# M3：configs/ 已零跟踪（CFG-01）；保留空目录供运维挂载调试文件，不打包样例。
 COPY migrations /app/migrations
 USER appuser
 EXPOSE 8080
@@ -37,5 +37,6 @@ FROM runtime AS admin-api
 FROM runtime AS biz-api
 FROM runtime AS c-api
 FROM runtime AS worker
+FROM runtime AS config-api
 # 迁移 Job 专用镜像（ENT-05 T7）；与 API 共用运行时基座与迁移文件。
 FROM runtime AS migrate

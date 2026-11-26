@@ -3,6 +3,7 @@ package security
 import (
 	stderrors "errors"
 	"net/http"
+	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
@@ -125,7 +126,22 @@ func (a *Authorizer) RequireAny(permissions ...string) func(http.Handler) http.H
 // guard 构造统一的权限中间件；静态与动态分支共用同一套错误响应。
 func (a *Authorizer) guard(needs []rbac.Permission, anyMatch bool) func(http.Handler) http.Handler {
 	if a == nil || a.mode == ModeOff || a.loader == nil {
-		return a.staticGuard(needs, anyMatch)
+		inner := a.staticGuard(needs, anyMatch)
+		// 机器主体不走角色表：静态模式下也必须只按 scope 判定（§21.2.3）。
+		return func(next http.Handler) http.Handler {
+			chain := inner(next)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if p, ok := auth.FromContext(r.Context()); ok && p.IsClient() {
+					if !scopesAllow(p.Scopes, needs, anyMatch) {
+						writeDenied(w, r)
+						return
+					}
+					next.ServeHTTP(w, r)
+					return
+				}
+				chain.ServeHTTP(w, r)
+			})
+		}
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +149,17 @@ func (a *Authorizer) guard(needs []rbac.Permission, anyMatch bool) func(http.Han
 			principal, ok := auth.FromContext(ctx)
 			if !ok {
 				writeUnauthenticated(w, r)
+				return
+			}
+			// 机器主体只按 scope 判定：不做 IAM 快照、不看角色（§21.2.3）。
+			if principal.IsClient() {
+				if !scopesAllow(principal.Scopes, needs, anyMatch) {
+					a.decisions.OnDecision(ctx, string(principal.Channel), DecisionDeny)
+					writeDenied(w, r)
+					return
+				}
+				a.decisions.OnDecision(ctx, string(principal.Channel), DecisionAllow)
+				next.ServeHTTP(w, r)
 				return
 			}
 			// shadowFallback 记录失败后按静态表放行 / 拒绝，确保 shadow 不改变请求行为。
@@ -256,6 +283,34 @@ func subjectFromSnapshot(snapshot authz.Snapshot) rbac.Subject {
 		permissions = append(permissions, rbac.Permission(code))
 	}
 	return rbac.Subject{Roles: snapshot.Roles, Permissions: permissions}
+}
+
+// scopesAllow 判断机器主体 scope 是否满足权限需求。
+//
+// 只做精确字符串匹配：不接受通配符，也不做前缀 / 大小写放宽，
+// 避免「申请一次宽 scope 永久越权」。scope 为空即拒绝（403）。
+func scopesAllow(scopes []string, needs []rbac.Permission, anyMatch bool) bool {
+	if len(scopes) == 0 || len(needs) == 0 {
+		return false
+	}
+	granted := make(map[string]struct{}, len(scopes))
+	for _, item := range scopes {
+		granted[strings.TrimSpace(item)] = struct{}{}
+	}
+	if anyMatch {
+		for _, need := range needs {
+			if _, ok := granted[need.String()]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	for _, need := range needs {
+		if _, ok := granted[need.String()]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // allows 按 need 集合判定；与 rbac.Checker 的 Allow / AllowAny 语义一致。

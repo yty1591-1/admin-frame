@@ -15,6 +15,7 @@ func baseDBPoolConfig(db platformconfig.DBConfig) *platformconfig.Config {
 	return &platformconfig.Config{
 		Service: "admin-api",
 		Channel: "admin",
+		Env:     "dev",
 		Addr:    ":8080",
 		Auth:    platformconfig.AuthConfig{ExpectedChannel: "admin"},
 		DB:      db,
@@ -95,6 +96,7 @@ func TestLoadConfigParsesDBPool(t *testing.T) {
 	content := []byte(`
 service: admin-api
 channel: admin
+env: dev
 addr: ":8080"
 auth:
   expected_channel: admin
@@ -133,6 +135,7 @@ func TestLoadConfigDBPoolEnvOverride(t *testing.T) {
 	content := []byte(`
 service: admin-api
 channel: admin
+env: dev
 addr: ":8080"
 auth:
   expected_channel: admin

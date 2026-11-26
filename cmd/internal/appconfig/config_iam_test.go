@@ -214,7 +214,7 @@ func TestValidateIAMRejectsUnsupportedChannel(t *testing.T) {
 }
 
 func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
-	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\n")
+	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\nenv: dev\n")
 	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -240,10 +240,11 @@ func TestLoadConfigIAMDefaultsAndEnvOverride(t *testing.T) {
 		t.Fatalf("async defaults = %+v", cfg.Async)
 	}
 
-	t.Setenv("ADMIN_FRAME_IAM_MODE", "shadow")
-	cfg, err = appconfig.Load(path)
+	cfg, err = appconfig.LoadWithValues(path, func() (map[string]string, error) {
+		return map[string]string{"iam.mode": "shadow"}, nil
+	})
 	if err != nil {
-		t.Fatalf("load with env: %v", err)
+		t.Fatalf("load with snapshot values: %v", err)
 	}
 	if cfg.IAM.Mode != iamconfig.IAMModeShadow {
 		t.Fatalf("iam.mode = %q, want shadow", cfg.IAM.Mode)

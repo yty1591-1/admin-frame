@@ -12,6 +12,9 @@ import (
 type Config struct {
 	// Level：debug / info / warn / error；默认 info。
 	Level string
+	// LevelVar 非空时作为运行期级别开关：初始化时按 Level 设定，
+	// 之后可由热更新直接 Set，无需重建 Handler（ADR-0015）。
+	LevelVar *slog.LevelVar
 	// Format：json（默认）或 text（仅 local/dev）。
 	Format string
 	// Output 输出目标；nil 表示 os.Stdout。

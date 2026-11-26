@@ -46,6 +46,20 @@ interface AccessState {
 }
 
 /**
+ * 访问 store 的持久化白名单。
+ *
+ * FE-SEC-05：用户输入的锁屏口令（`lockScreenPassword`）只保存在内存，
+ * 不写入任何 Storage；锁屏状态（`isLockScreen`）仍持久化，刷新后由锁屏
+ * 页面要求重新认证，而不是回放本地口令比对。
+ */
+export const ACCESS_STORE_PERSIST_KEYS = [
+  'accessToken',
+  'refreshToken',
+  'accessCodes',
+  'isLockScreen',
+] as const;
+
+/**
  * @zh_CN 访问权限相关
  */
 export const useAccessStore = defineStore('core-access', {
@@ -100,14 +114,8 @@ export const useAccessStore = defineStore('core-access', {
     },
   },
   persist: {
-    // 持久化
-    pick: [
-      'accessToken',
-      'refreshToken',
-      'accessCodes',
-      'isLockScreen',
-      'lockScreenPassword',
-    ],
+    // 持久化；lockScreenPassword 刻意不在此列（FE-SEC-05）
+    pick: [...ACCESS_STORE_PERSIST_KEYS],
   },
   state: (): AccessState => ({
     accessCodes: [],

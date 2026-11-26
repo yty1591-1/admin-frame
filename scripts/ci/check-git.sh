@@ -29,6 +29,20 @@ for f in .github/PULL_REQUEST_TEMPLATE.md .gitee/PULL_REQUEST_TEMPLATE.md; do
   fi
 done
 
+echo "==> FE-G-03: PR templates must include 前端自检 section"
+for f in .github/PULL_REQUEST_TEMPLATE.md .gitee/PULL_REQUEST_TEMPLATE.md; do
+  [[ -f "${f}" ]] || continue
+  if ! grep -qF '## 前端自检（FRONTEND_STANDARDS）' "${f}"; then
+    echo "ERROR: ${f} missing 前端自检 section (FE-G-03)" >&2
+    FAIL=1
+  elif ! grep -q 'make frontend-check' "${f}"; then
+    echo "ERROR: ${f} 前端自检 缺 'make frontend-check' 检查项 (FE-G-03)" >&2
+    FAIL=1
+  else
+    echo "    OK: ${f} has frontend checklist"
+  fi
+done
+
 echo "==> GIT-05: commitlint config present"
 if [[ -f commitlint.config.cjs ]] || [[ -f commitlint.config.js ]] || [[ -f .commitlintrc.yaml ]]; then
   echo "    OK: commitlint config found"

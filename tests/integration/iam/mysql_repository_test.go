@@ -92,6 +92,10 @@ func openAndMigrate(rawDSN string) (*sql.DB, error) {
 func reset(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
 	for _, stmt := range []string{
+		// 访问复核（P1-7）：任务先删——任务同时引用活动与绑定，
+		// 不先清会卡住下面 iam_role_binding 的外键（RESTRICT）。
+		"DELETE FROM iam_certification_task",
+		"DELETE FROM iam_certification_campaign",
 		"DELETE FROM async_consumed",
 		"DELETE FROM async_dlq",
 		"DELETE FROM async_outbox",

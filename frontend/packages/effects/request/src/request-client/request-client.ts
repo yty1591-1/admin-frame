@@ -65,6 +65,7 @@ class RequestClient {
       // 默认超时时间
       timeout: 10_000,
     };
+    // defu(object, defaults)：前者优先，缺省键由 defaults 补齐。
     const { ...axiosConfig } = options;
     const requestConfig = merge(axiosConfig, defaultConfig);
     requestConfig.paramsSerializer = getParamsSerializer(

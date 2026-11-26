@@ -73,16 +73,19 @@ wait_host_port() {
   echo "error: 127.0.0.1:${port} 30s 内不可达" >&2
   return 1
 }
-for port in 3306 6379 9000; do wait_host_port "${port}"; done
+MYSQL_PORT="${INTEGRATION_MYSQL_PORT:-3306}"
+REDIS_PORT="${INTEGRATION_REDIS_PORT:-6379}"
+MINIO_PORT="${INTEGRATION_MINIO_PORT:-9000}"
+for port in "${MYSQL_PORT}" "${REDIS_PORT}" "${MINIO_PORT}"; do wait_host_port "${port}"; done
 docker compose -f "${COMPOSE_FILE}" run --rm minio-init >/dev/null
 
 # 每个 step 的环境必须与该 step 对应的 CI job **完全一致**，不能图省事一次性全导出：
 # GitHub 的 test job 只注入 4 个 DSN（services.mysql），Redis/S3 变量只属于 integration job。
 # 多给的变量会让本应串行的集成用例在 `go test ./...` 的包级并行里互相踩库，
 # 制造出 CI 根本不会出现的失败（2026-11-07 实测：multiinstance / tenant 三个用例假红）。
-MYSQL_DSN="app:app@tcp(127.0.0.1:3306)/admin_frame_test?parseTime=true&loc=UTC"
-REDIS_ADDR="127.0.0.1:6379"
-S3_ENDPOINT="http://127.0.0.1:9000"
+MYSQL_DSN="app:app@tcp(127.0.0.1:${MYSQL_PORT})/admin_frame_test?parseTime=true&loc=UTC"
+REDIS_ADDR="127.0.0.1:${REDIS_PORT}"
+S3_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
 S3_BUCKET="admin-frame"
 
 # 变更行覆盖率（P1-5）只有在拿到 base ref 时才运行，这里补上，避免它变成永久 SKIP。
@@ -99,6 +102,7 @@ IAM_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   TENANT_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   NOTIFY_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   FEATUREFLAG_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+  CONFIGCENTER_TEST_MYSQL_DSN="${MYSQL_DSN}" \
   CI_STRICT=1 bash scripts/ci/ci-run.sh ci
 
 if [[ "${SKIP_INTEGRATION}" -eq 0 ]]; then
@@ -106,6 +110,10 @@ if [[ "${SKIP_INTEGRATION}" -eq 0 ]]; then
   # 对齐 scripts/ci/run-integration-tests.sh 的 env：只有这一步才注入 Redis / S3。
   TEST_MYSQL_DSN="${MYSQL_DSN}" \
     IAM_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    TENANT_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    NOTIFY_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    FEATUREFLAG_TEST_MYSQL_DSN="${MYSQL_DSN}" \
+    CONFIGCENTER_TEST_MYSQL_DSN="${MYSQL_DSN}" \
     TEST_REDIS_ADDR="${REDIS_ADDR}" \
     TEST_S3_ENDPOINT="${S3_ENDPOINT}" \
     TEST_S3_ACCESS_KEY="minioadmin" \

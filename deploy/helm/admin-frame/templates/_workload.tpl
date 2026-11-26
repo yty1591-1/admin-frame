@@ -53,7 +53,6 @@ spec:
         - name: {{ $key }}
           image: {{ include "admin-frame.image" (dict "root" $root "workload" $w) }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
-          args: ["-config", "/etc/admin-frame/config.yaml"]
           ports:
             - name: http
               containerPort: {{ $w.port }}
@@ -84,7 +83,9 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $w.resources | nindent 12 }}
-          {{- if or $root.Values.env $root.Values.identitySecrets.enabled }}
+          {{- $ccEnabled := and $root.Values.configCenter.enabled (ne $key "config") }}
+          {{- $installTok := and (eq $key "config") $root.Values.configCenter.installSetupToken.secretName }}
+          {{- if or $root.Values.env $root.Values.identitySecrets.enabled $ccEnabled $installTok }}
           env:
             {{- with $root.Values.env }}
             {{- toYaml . | nindent 12 }}
@@ -100,6 +101,31 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.identitySecrets.secretName }}
                   key: {{ $root.Values.identitySecrets.mfaSecretKey }}
+            {{- end }}
+            {{- if $ccEnabled }}
+            - name: CONFIG_API_URL
+              {{- if $root.Values.configCenter.apiURL }}
+              value: {{ $root.Values.configCenter.apiURL | quote }}
+              {{- else }}
+              value: "http://{{ include "admin-frame.fullname" $root }}-config:{{ (($root.Values.workloads.config.service).port | default 80) }}"
+              {{- end }}
+            - name: CONFIG_SERVICE_IDENTITY
+              value: {{ ($w.serviceName | default $key) | quote }}
+            - name: CONFIGCENTER_ENV
+              value: {{ $root.Values.configCenter.env | quote }}
+            {{- with $root.Values.configCenter.namespaces }}
+            - name: CONFIGCENTER_NAMESPACES
+              value: {{ . | quote }}
+            {{- end }}
+            - name: CONFIGCENTER_CACHE_DIR
+              value: {{ $root.Values.configCenter.cacheDir | quote }}
+            {{- end }}
+            {{- if $installTok }}
+            - name: CONFIG_INSTALL_SETUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.configCenter.installSetupToken.secretName }}
+                  key: {{ $root.Values.configCenter.installSetupToken.key | default "setup_token" }}
             {{- end }}
           {{- end }}
           {{- with $root.Values.envFrom }}
@@ -122,6 +148,10 @@ spec:
               mountPath: {{ $root.Values.secretMounts.mountPath }}
               readOnly: true
             {{- end }}
+            {{- if and $ccEnabled $root.Values.configCenter.cacheVolume }}
+            - name: configcenter-cache
+              mountPath: {{ $root.Values.configCenter.cacheDir }}
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -135,6 +165,10 @@ spec:
             items:
               - key: {{ $root.Values.jwtPublicKey.key }}
                 path: public.pem
+              {{- if (($root.Values.jwtPrivateKey | default dict).enabled) }}
+              - key: {{ $root.Values.jwtPrivateKey.key }}
+                path: private.pem
+              {{- end }}
         {{- end }}
         {{- if (($root.Values.secretMounts | default dict).enabled) }}
         # ENT-07：多个 Secret 投影到同一目录，文件名即密钥逻辑名（db_dsn 等）。
@@ -151,6 +185,11 @@ spec:
                   items:
                     {{- toYaml .items | nindent 20 }}
               {{- end }}
+        {{- end }}
+        {{- if and $ccEnabled $root.Values.configCenter.cacheVolume }}
+        # ADR-0016：本地配置缓存；仅灾备，首次部署须先起 config-api。
+        - name: configcenter-cache
+          emptyDir: {}
         {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1

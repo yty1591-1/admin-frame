@@ -8,7 +8,7 @@
 | `MasterPipeline.yml` | push 到 `main` / `master` |
 | `BranchPipeline.yml` | push 到其它分支 |
 
-命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi）。
+命令入口统一为 `scripts/ci/gitee-job.sh`，与 `.github/workflows/ci.yml`、本地 `make ci` 同一套门禁（含 secrets、openapi、frontend）。
 
 E2E smoke 与发版镜像暂只在 GitHub 侧执行。
 
@@ -23,7 +23,8 @@ Gitee 端**暂未接入**（需组织 registry 凭据与 `build@docker` 等价�
 1. 在 Gitee 仓库开通 **Gitee Go**。
 2. 确认本目录三个 YAML 已被流水线识别（或在控制台「从代码库导入」）。
 3. 将 YAML 中 `GO_VERSION` / `golangVersion` 改为控制台 **Golang 构建插件**当前可用的最高版本。
-4. 在仓库设置中开启「合并前必须通过流水线」（名称以控制台为准）。
+4. 确认 **Node 构建插件**（`build@nodejs`）可用；`frontend` step 的 `nodeVersion` 以控制台列表为准（目标 24.x，pnpm 由 corepack 按 `packageManager` 固定为 11.16.0）。
+5. 在仓库设置中开启「合并前必须通过流水线」（名称以控制台为准）。
 
 ## Go 版本注意
 

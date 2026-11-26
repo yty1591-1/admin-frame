@@ -1,0 +1,17 @@
+=== RUN   TestCertificationPerf10kOnMySQL
+    mysql_certification_perf_test.go:58: [perf] seed 10000 bindings: 535ms
+    mysql_certification_perf_test.go:68: [perf] ActivateCampaign(n=10000, privileged_only=false): 403ms
+    mysql_certification_perf_test.go:69: [perf] task_count=10000 generated, Com_insert delta=23, Com_select delta=3
+    mysql_certification_perf_test.go:92: [perf] ActivateCampaign(n=10000, privileged_only=true): 402ms
+    mysql_certification_perf_test.go:93: [perf] privileged task_count=10000, Com_select delta=6
+    mysql_certification_perf_test.go:110: [perf] ExportEvidence csv: 81ms, bytes=1430132, rows=10000, content_type=text/csv; charset=utf-8
+    mysql_certification_perf_test.go:112: [perf] export header: campaign_id,campaign_name,task_id,subject_id,role_id,binding_id,reviewer_id,status,decision,reason,decided_by,decided_at,created_at
+    mysql_certification_perf_test.go:118: [perf] status=map[pending:10000]
+    mysql_certification_perf_test.go:119: [perf] 非空列: decision=0 reason=0 decided_by=0 decided_at=0（共 10000 行）
+    mysql_certification_perf_test.go:134: [perf] boundary: 10001 条绑定被上限拦截 -> db: tx failed: certification task count exceeds limit
+    mysql_certification_perf_test.go:166: [perf] 已裁决证据 100 行: decision=100 reason=100 decided_by=100 decided_at=100
+    mysql_certification_perf_test.go:179: [perf] audit outbox delivered=109 (pending=0, dlq=0)
+    mysql_certification_perf_test.go:181: [perf] artifacts written to D:/MyDocument/admin-frame/docs/incident/drills/artifacts/2026-11-08-s7-2-perf
+--- PASS: TestCertificationPerf10kOnMySQL (4.28s)
+PASS
+ok  	github.com/admin-frame/admin-frame/tests/integration/iam	5.685s

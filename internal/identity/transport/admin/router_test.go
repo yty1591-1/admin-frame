@@ -178,3 +178,73 @@ func TestAccountRoutesFailClosedWithoutPermissionMiddleware(t *testing.T) {
 		t.Fatalf("status = %d, want 403 when permission middleware missing", recorder.Code)
 	}
 }
+
+// TestM2MRoutesAbsentWhenDisabled 验证 identity.m2m.enabled=false 时
+// 签发与管理端点均未注册，请求落到 mux 的 404（§21.4 路由注册门禁）。
+func TestM2MRoutesAbsentWhenDisabled(t *testing.T) {
+	handler, err := rest.NewHandler(rest.HandlerConfig{Auth: &app.AuthService{}, Channel: domain.ChannelAdmin})
+	if err != nil {
+		t.Fatalf("new rest handler: %v", err)
+	}
+	if handler.M2MEnabled() {
+		t.Fatalf("m2m must be disabled when no service is injected")
+	}
+	mux := http.NewServeMux()
+	admin.Register(mux, handler, passthrough, nil)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/admin/v1/auth/token"},
+		{method: http.MethodGet, path: "/admin/v1/auth/m2m/clients"},
+		{method: http.MethodPost, path: "/admin/v1/auth/m2m/clients"},
+		{method: http.MethodPost, path: "/admin/v1/auth/m2m/clients/1/secrets"},
+		{method: http.MethodPost, path: "/admin/v1/auth/m2m/clients/1/disable"},
+		{method: http.MethodPost, path: "/admin/v1/auth/m2m/clients/1/enable"},
+		{method: http.MethodDelete, path: "/admin/v1/auth/m2m/clients/1"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, http.NoBody)
+		mux.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s %s: status = %d, want 404", tc.method, tc.path, recorder.Code)
+		}
+	}
+}
+
+// TestScimRoutesAbsentWhenDisabled 验证 identity.scim.enabled=false 时
+// SCIM 管理端点与协议端点都未注册，请求落到 mux 的 404（§21.1）。
+func TestScimRoutesAbsentWhenDisabled(t *testing.T) {
+	handler, err := rest.NewHandler(rest.HandlerConfig{Auth: &app.AuthService{}, Channel: domain.ChannelAdmin})
+	if err != nil {
+		t.Fatalf("new rest handler: %v", err)
+	}
+	if handler.SCIMEnabled() {
+		t.Fatalf("scim must be disabled when no service is injected")
+	}
+	mux := http.NewServeMux()
+	admin.Register(mux, handler, passthrough, nil)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/admin/v1/auth/scim/tokens"},
+		{method: http.MethodPost, path: "/admin/v1/auth/scim/tokens"},
+		{method: http.MethodDelete, path: "/admin/v1/auth/scim/tokens/1"},
+		{method: http.MethodGet, path: "/admin/v1/auth/scim/groups"},
+		// 协议端点由 transport/scim 单独注册；关闭时必须完全缺席。
+		{method: http.MethodGet, path: "/admin/scim/v2/ServiceProviderConfig"},
+		{method: http.MethodGet, path: "/admin/scim/v2/Users"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, http.NoBody)
+		mux.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s %s: status = %d, want 404", tc.method, tc.path, recorder.Code)
+		}
+	}
+}

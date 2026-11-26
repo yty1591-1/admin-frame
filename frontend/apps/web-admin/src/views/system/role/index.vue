@@ -7,6 +7,7 @@ import type { ChangeAction, DataScope, Role, RoleStatus } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import {
@@ -24,7 +25,6 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import {
   cloneRoleApi,
   createChangeRequestApi,
@@ -366,7 +366,9 @@ async function saveGrant() {
   };
   try {
     const result = await replaceRolePermissionsApi(granting.value.id, body);
-    message.success(`授权已更新：新增 ${result.added.length}，移除 ${result.removed.length}`);
+    message.success(
+      `授权已更新：新增 ${result.added.length}，移除 ${result.removed.length}`,
+    );
     grantOpen.value = false;
     await fetchList();
   } catch (error) {
@@ -501,13 +503,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page description="RBAC 角色、权限与数据范围；写操作受权限码与审批模式约束" title="角色管理">
+  <Page
+    description="RBAC 角色、权限与数据范围；写操作受权限码与审批模式约束"
+    title="角色管理"
+  >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />
       <Space class="mt-2">
         <Button type="primary" @click="handleSearch">查询</Button>
         <Button @click="handleReset">重置</Button>
-        <Button v-access:code="'iam:role:write'" @click="createOpen = true"> 新建角色 </Button>
+        <Button v-access:code="'iam:role:write'" @click="createOpen = true">
+          新建角色
+        </Button>
       </Space>
     </div>
 
@@ -614,7 +621,9 @@ onMounted(async () => {
 
     <Drawer v-model:open="grantOpen" :width="720" title="角色授权">
       <template #extra>
-        <Button :loading="grantSubmitting" type="primary" @click="saveGrant"> 保存授权 </Button>
+        <Button :loading="grantSubmitting" type="primary" @click="saveGrant">
+          保存授权
+        </Button>
       </template>
       <div class="space-y-4">
         <div>
@@ -639,10 +648,20 @@ onMounted(async () => {
       @ok="saveConstraints"
     >
       <Form layout="vertical">
-        <FormItem label="单角色最大有效绑定数（留空表示不限）" name="max_bindings">
-          <InputNumber v-model:value="constraints.max_bindings" :min="1" class="w-full" />
+        <FormItem
+          label="单角色最大有效绑定数（留空表示不限）"
+          name="max_bindings"
+        >
+          <InputNumber
+            v-model:value="constraints.max_bindings"
+            :min="1"
+            class="w-full"
+          />
         </FormItem>
-        <FormItem label="前置角色（授予该角色前必须已持有）" name="required_role_ids">
+        <FormItem
+          label="前置角色（授予该角色前必须已持有）"
+          name="required_role_ids"
+        >
           <Select
             v-model:value="constraints.required_role_ids"
             :options="roleOptions"

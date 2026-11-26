@@ -4,7 +4,7 @@
 > **审查方式**：静态代码审查（未执行压测与故障注入）。
 > **审查日期**：2026-10-29。
 > **基线**：当前 `main` 工作区；行号可能在后续提交中漂移，定位以文件与函数名为准。
-> **关联文档**：[identity-authn.md](../.././identity-authn.md)、[production-readiness-gaps.md](../.././production-readiness-gaps.md)、[AUDIT_STANDARDS.md](../.././AUDIT_STANDARDS.md)、[CONFIG_STANDARDS.md](../.././CONFIG_STANDARDS.md)。
+> **关联文档**：[identity-authn.md](../.././identity-authn.md)、[production-readiness-gaps.md](../../archive/platform/production-readiness-gaps.md)、[AUDIT_STANDARDS.md](../.././AUDIT_STANDARDS.md)、[CONFIG_STANDARDS.md](../.././CONFIG_STANDARDS.md)。
 
 ## 一、结论摘要
 

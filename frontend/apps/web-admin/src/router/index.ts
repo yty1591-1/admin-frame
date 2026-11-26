@@ -1,37 +1,19 @@
-import {
-  createRouter,
-  createWebHashHistory,
-  createWebHistory,
-} from 'vue-router';
+import { createAppRouter } from '@vben/app-kernel/router';
 
-import { resetStaticRoutes } from '@vben/utils';
+import { useAuthStore } from '#/store';
 
-import { createRouterGuard } from './guard';
-import { routes } from './routes';
+import { generateAccess } from './access';
+import { accessRoutes, coreRouteNames, routes } from './routes';
 
 /**
- *  @zh_CN 创建vue-router实例
+ * 创建 vue-router 实例（守卫与组装逻辑在内核，应用只注入依赖）。
  */
-const router = createRouter({
-  history:
-    import.meta.env.VITE_ROUTER_HISTORY === 'hash'
-      ? createWebHashHistory(import.meta.env.VITE_BASE)
-      : createWebHistory(import.meta.env.VITE_BASE),
-  // 应该添加到路由的初始路由列表。
+const { resetRoutes, router } = createAppRouter({
+  accessRoutes,
+  coreRouteNames,
+  generateAccess,
+  getAuthStore: () => useAuthStore(),
   routes,
-  scrollBehavior: (to, _from, savedPosition) => {
-    if (savedPosition) {
-      return savedPosition;
-    }
-    return to.hash ? { behavior: 'smooth', el: to.hash } : { left: 0, top: 0 };
-  },
-  // 是否应该禁止尾部斜杠。
-  // strict: true,
 });
-
-const resetRoutes = () => resetStaticRoutes(router, routes);
-
-// 创建路由守卫
-createRouterGuard(router);
 
 export { resetRoutes, router };

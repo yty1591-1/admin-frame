@@ -1,0 +1,8 @@
+==> S5-5 inventory: package-level presence
+==> S5-5 inventory: required scenario tests
+ERROR: required integration test TestSQLBindingRepositoryTenantIsolation is missing (S5-5)
+ERROR: required integration test TestSQLRoleRepositoryOptimisticLock is missing (S5-5)
+ERROR: required integration test TestSQLRoleRepositoryUniqueCode is missing (S5-5)
+==> S5-5 inventory: total count >= 70
+ERROR: integration test count 63 < baseline 70 (S5-5)
+ERROR: integration test inventory check failed; merge blocked (S5-5)

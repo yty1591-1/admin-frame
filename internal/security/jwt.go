@@ -487,7 +487,8 @@ func principalFromClaims(claims jwt.Claims, expected auth.Channel) (auth.Princip
 	if ch := claims.GetString("channel"); ch != "" && !strings.EqualFold(ch, string(expected)) {
 		return auth.Principal{}, apperr.ErrUnauthorized
 	}
-	return auth.Principal{
+	tokenUse := strings.ToLower(strings.TrimSpace(claims.GetString("token_use")))
+	principal := auth.Principal{
 		Channel:         expected,
 		SubjectID:       subject,
 		MerchantID:      claims.GetString("merchant_id"),
@@ -497,7 +498,21 @@ func principalFromClaims(claims jwt.Claims, expected auth.Channel) (auth.Princip
 		TokenVersion:    claimInt64(claims.Extra, "ver"),
 		TokenExpiresAt:  claims.ExpiresAt,
 		CurrentTenantID: claims.GetString("current_tenant"),
-	}, nil
+	}
+	if tokenUse == auth.TokenUseClient {
+		// 机器主体：只保留 scope，角色 / 租户 / 会话一律忽略（§21.2.3）。
+		principal.TokenUse = auth.TokenUseClient
+		principal.ClientID = claims.GetString("client_id")
+		principal.Scopes = strings.Fields(claims.GetString("scope"))
+		principal.Roles = nil
+		principal.MerchantID = ""
+		principal.CurrentTenantID = ""
+		principal.SessionID = ""
+		if principal.ClientID == "" {
+			return auth.Principal{}, apperr.ErrUnauthorized
+		}
+	}
+	return principal, nil
 }
 
 // claimInt64 从 Extra 读取整数声明；兼容 JSON 反序列化产生的 float64。

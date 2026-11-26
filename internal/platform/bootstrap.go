@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/jwt"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
+	"github.com/admin-frame/admin-frame/pkg/ratelimit"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/storage"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
@@ -33,11 +35,21 @@ import (
 // 只暴露“平台能力”，不暴露 repo / bus 等业务对象，避免变成 god object；
 // 业务依赖由 cmd 在 Register 回调内自行构造。
 type Deps struct {
-	Config  *platformconfig.Config
-	Logger  *slog.Logger
-	Metrics *metrics.Metrics
-	Tracer  *tracing.Provider
-	Storage *platformstorage.Set
+	Config *platformconfig.Config
+	Logger *slog.Logger
+	// LogLevel 是日志级别的运行期开关；非 nil 时可由配置热更直接 Set（ADR-0015）。
+	LogLevel *slog.LevelVar
+	// RateLimitParams 在运行期提供限流参数（ADR-0015）。
+	//
+	// 由 cmd 在 Register 回调内注入（配置中心已装配时非 nil）；nil 表示
+	// 入口限流只使用配置文件静态值。注入必须发生在 Register 阶段，
+	// 因为 buildRouter 在 Register 之后才读取本字段。
+	RateLimitParams ratelimit.ParamsProvider
+	// IdempotencyTTL 在运行期提供幂等记录 TTL（ADR-0015）；nil 表示用静态配置。
+	IdempotencyTTL func() time.Duration
+	Metrics        *metrics.Metrics
+	Tracer         *tracing.Provider
+	Storage        *platformstorage.Set
 	// Database 是进程数据库；db.driver=memory 时为 nil（业务使用内存实现）。
 	Database *db.DB
 	// Redis 是共享缓存客户端；未配置 redis.addr 时为 nil。
@@ -107,6 +119,8 @@ type Options struct {
 	NewAuthorizer func(*Deps) (*security.Authorizer, error)
 	// Register 注册本端 transport 与业务依赖；不得注册他端路由。
 	Register func(*Deps, *http.ServeMux) error
+	// TLSConfig 可选；非空时以 TLS（可含 mTLS）监听，供 config-api 使用。
+	TLSConfig *tls.Config
 }
 
 // Run 完成一次完整的进程装配与运行：配置 → 日志 → 指标 → 追踪 → 存储 →
@@ -264,12 +278,14 @@ func buildRouter(deps *Deps, opts Options, build httpserver.BuildInfo) (http.Han
 	root.Handle("/", api)
 
 	pipeline, err := httpserver.NewPipeline(httpserver.PipelineConfig{
-		Timeout:        cfg.HTTP.Timeout,
-		BodyLimitBytes: cfg.HTTP.BodyLimitBytes,
-		Channel:        cfg.Channel,
-		RateLimit:      cfg.RateLimit,
-		Idempotency:    cfg.Idempotency,
-		CORS:           cfg.CORS,
+		Timeout:         cfg.HTTP.Timeout,
+		BodyLimitBytes:  cfg.HTTP.BodyLimitBytes,
+		Channel:         cfg.Channel,
+		RateLimit:       cfg.RateLimit,
+		RateLimitSource: deps.RateLimitParams,
+		Idempotency:     cfg.Idempotency,
+		IdempotencyTTL:  deps.IdempotencyTTL,
+		CORS:            cfg.CORS,
 	}, httpserver.PipelineDeps{
 		Logger:   deps.Logger,
 		Metrics:  deps.Metrics,
@@ -297,7 +313,7 @@ func serve(ctx context.Context, infra *infraState, handler http.Handler) error {
 		"node_id", infra.nodeID,
 		"background_tasks", len(tasks),
 	)
-	return httpserver.ListenAndServe(ctx, infra.cfg, handler, infra.logger)
+	return httpserver.ListenAndServe(ctx, infra.cfg, handler, infra.logger, infra.tlsConfig)
 }
 
 // registerStorageChecks 为默认桶与命名桶注册就绪探测。

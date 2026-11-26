@@ -29,7 +29,7 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 # 每项格式：包相对路径:最低覆盖率。阈值在审计基线上留出小幅回退空间，
-# 防止单次重构直接击穿门禁；目标值见 docs/iam-p1-5-7-engineering-plan.md。
+# 防止单次重构直接击穿门禁；目标值见 docs/archive/plans/iam-p1-5-7-engineering-plan.md。
 GATES=(
   "internal/iam/domain:80"
   "internal/iam/app:75"

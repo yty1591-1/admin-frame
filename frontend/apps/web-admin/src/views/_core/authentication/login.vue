@@ -8,6 +8,7 @@ import { computed, onUnmounted, ref } from 'vue';
 
 import { AuthenticationLogin, z } from '@vben/common-ui';
 import { $t } from '@vben/locales';
+import { parseRetryAfterSeconds } from '@vben/utils';
 
 import { message } from 'ant-design-vue';
 
@@ -102,7 +103,7 @@ function applyLoginError(error: unknown, invalidateTicket = false) {
     }
   )?.response;
   const status = response?.status;
-  const retryAfter = Number(response?.headers?.['retry-after'] ?? 0);
+  const retryAfter = parseRetryAfterSeconds(response?.headers);
   const backendMessage = response?.data?.message;
 
   if (status === 429 && retryAfter > 0) {

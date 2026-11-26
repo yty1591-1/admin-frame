@@ -106,7 +106,7 @@ docker build --target admin-api \
 | `plan` | tag `v*` / 手动 | 版本号 semver 校验 | 不进入后续阶段 |
 | `preflight` | 同上 | `check-migration-gate.sh`（expand-only / append-only / dirty=false）+ `check-release.sh` | **任何环境都不部署** |
 | `digests` | 非 dry_run 且 `RELEASE_ENABLED=true` | 每个镜像解析出 `sha256:` digest，形态校验 | 不允许用浮动 tag 继续 |
-| `verify` | 同上 | `verify-supply-chain.sh`：5 个镜像逐个验签（keyless 身份 + OIDC issuer）并校验 CycloneDX SBOM attestation 内容 | **中止发布**（RELS-14） |
+| `verify` | 同上 | `verify-supply-chain.sh`：7 个镜像（后端 5 + `web-admin`/`web-biz`）逐个验签（keyless 身份 + OIDC issuer）并校验 CycloneDX SBOM attestation 内容 | **中止发布**（RELS-14） |
 | `staging` | Environment `staging` 审批 | `helm upgrade --atomic --wait` + 发布冒烟 +（可选）部署后 schema 探测 | 自动回滚，不进生产 |
 | `canary` | Environment `production` 审批 | 独立 release 单副本 + 金丝雀冒烟 + 指标门禁（流量下限 / 5xx / p95） | 只保留金丝雀，生产流量不变 |
 | `promote` | 金丝雀通过 | 全量 `helm upgrade --atomic --wait` + 冒烟 + 生产指标门禁 | `rollback` job 接管 |
@@ -152,7 +152,7 @@ docker build --target admin-api \
 - 镜像非 root 运行；不含 `.git` 与源码树（多阶段构建）。  
 - **SBOM（RELS-13）**：每个镜像按**推送后的 digest** 生成 CycloneDX（Trivy `--format cyclonedx`），作为 `sbom-<cmd>` artifact 上传（保留 90 天），并以 `cosign attest --type cyclonedx` 附加到同一 digest。按 tag 生成 SBOM 会把「被扫描的镜像」与「被部署的镜像」解耦，禁止。
 - **签名（RELS-13）**：`cosign sign` 的对象必须是 digest（`<image>@sha256:...`），使用 **keyless**（OIDC → Fulcio 短期证书，`id-token: write`），不引入长期私钥 secret；签 tag 等于没签。
-- **部署前验签（RELS-14）**：`release.yml` 的 `verify` job 在第一次 `helm upgrade` 之前调用 `scripts/ci/verify-supply-chain.sh`，逐个校验 5 个镜像的签名与 SBOM，失败即中止（`staging` 把 `verify` 列入 `needs`，没有「跳过继续」的路径）。
+- **部署前验签（RELS-14）**：`release.yml` 的 `verify` job 在第一次 `helm upgrade` 之前调用 `scripts/ci/verify-supply-chain.sh`，逐个校验 7 个镜像（后端 5 + `web-admin`/`web-biz`）的签名与 SBOM，失败即中止（`staging` 把 `verify` 列入 `needs`，没有「跳过继续」的路径）。
 - **为什么 digest 不够**：digest 只证明「内容没变」，不证明「内容来自本仓库的流水线」。有 registry 写权限的人（或凭据泄漏）推一个同 tag 的新 digest，`digests` 阶段照样能解析出合法 `sha256:`，冒烟也不会失败——验签是唯一能拦住这条路径的环节。
 - **验证边界**：keyless 链路依赖 GitHub OIDC，本地无法复现。签名/验签/attestation 的等价演练见 `scripts/ci/supply-chain-rehearsal.sh`（本地 registry + 本地密钥对，11 项断言），细节与挂账见 [`release/supply-chain.md`](./release/supply-chain.md)。
 
@@ -162,7 +162,7 @@ docker build --target admin-api \
 
 | 资产 | 内容 | 用途 |
 |---|---|---|
-| `admin-frame-<version>-linux-{amd64,arm64}.tar.gz` | 5 个静态二进制（`CGO_ENABLED=0`，ldflags 与 Dockerfile 同源）+ `configs/**/*.example` + `migrations/` | 无容器运行时可直接取包核对/演练；**不含** `configs/prod/.env`（演练凭据不外发，SEC-01） |
+| `admin-frame-<version>-linux-{amd64,arm64}.tar.gz` | 5 个静态二进制（`CGO_ENABLED=0`，ldflags 与 Dockerfile 同源）+ `migrations/` | 无容器运行时可直接取包核对/演练；**不含**任何运行配置或凭据（CFG-01 / SEC-01） |
 | `sbom-<cmd>.cdx.json` | 每个镜像按 digest 生成的 CycloneDX SBOM | 让 SBOM 在 workflow artifact 90 天过期后仍可追溯（RELS-13 的长期留存） |
 | `images.json` | `version` / `commit` / `build_time` / `images`（每个 cmd 的 `<registry>/<owner>/<cmd>@sha256:…`） | 部署清单与运行中实例 `/version` 的核对基准（RELS-04） |
 | `SHA256SUMS` | 上述所有资产的 sha256 | 离线校验制品未被替换 |

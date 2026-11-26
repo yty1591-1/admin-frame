@@ -11,6 +11,12 @@ const EnvPrefix = "ADMIN_FRAME"
 
 const envPrefix = EnvPrefix
 
+// InfraEnvPathAllowlist 是业务进程唯一允许的 ADMIN_FRAME_* 环境覆盖根段。
+//
+// 仅基础设施连接参数（db / redis，含 username/password）；业务键与 JWT 等
+// 密钥不得经环境变量注入，须走签名快照或 secretclient → config-api。
+var InfraEnvPathAllowlist = []string{"db", "redis"}
+
 // maskedValue 是日志中敏感字段的占位符（SECURITY_STANDARDS SEC-05）。
 const maskedValue = "***"
 
@@ -22,10 +28,10 @@ const (
 	AuthModeJWT = "jwt"
 )
 
-// Config 进程配置根对象（按 cmd 对应 yaml 加载）。
+// Config 进程配置根对象（按 cmd 对应 yaml / 签名快照加载）。
 //
-// yaml 标签同时决定环境变量名：Env → ADMIN_FRAME_ENV、Log.Level →
-// ADMIN_FRAME_LOG_LEVEL（pkg/config.BindEnv）。新增字段无需再改环境变量代码。
+// 环境变量仅放行 db/redis 根段（InfraEnvPathAllowlist + BindEnvFiltered）；
+// 业务字段不得经 ADMIN_FRAME_* 注入。
 type Config struct {
 	// Env 部署环境：local / dev / test / staging / prod（可空，表示未声明）。
 	Env             string                 `yaml:"env"`

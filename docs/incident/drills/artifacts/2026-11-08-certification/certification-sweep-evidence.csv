@@ -1,0 +1,2 @@
+campaign_id,campaign_name,task_id,subject_id,role_id,binding_id,reviewer_id,status,decision,reason,decided_by,decided_at,created_at
+377723492063277056,S7-5 演练 A：超期过期,377723492121997312,9001,720240001,377723492021334016,drill,expired,,,,2026-11-08T07:38:18Z,2026-11-08T07:38:18Z

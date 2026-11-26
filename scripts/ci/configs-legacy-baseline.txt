@@ -1,0 +1,5 @@
+# CFG-01 迁移期样例基线（M3 已清空）。
+#
+# 历史：M1/M2 曾允许少量 *.example 登记于此，只减不增。
+# M3（CC-F-43）：git ls-files configs 必须为空；本文件不得再登记任何路径。
+# check-no-static-config.sh 将拒绝任何非注释行。

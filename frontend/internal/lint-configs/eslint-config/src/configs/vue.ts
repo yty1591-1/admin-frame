@@ -119,6 +119,7 @@ export async function vue(): Promise<Linter.Config[]> {
         'vue/no-sparse-arrays': 'error',
         'vue/no-unused-refs': 'error',
         'vue/no-useless-v-bind': 'error',
+        'vue/no-v-html': 'error',
         'vue/object-shorthand': [
           'error',
           'always',

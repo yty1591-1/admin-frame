@@ -11,6 +11,12 @@ config:
       issuer: admin-frame
       audience: [admin, biz, c, worker]
       public_key_file: /etc/admin-frame/jwt/public.pem
+      # 预发与生产同构：A/B 端开启身份域，需要私钥签发令牌。
+      active_kid: v1
+      keys:
+        - kid: v1
+          public_key_file: /etc/admin-frame/jwt/public.pem
+          private_key_file: /etc/admin-frame/jwt/private.pem
   db:
     driver: mysql
     dsn: "" # ADMIN_FRAME_DB_DSN 由 Secret 注入
@@ -40,11 +46,42 @@ config:
     mode: shadow
     cache:
       driver: redis
+  # 与 prod 同构：全局关闭，A/B 端由 configOverrides 开启。
+  identity:
+    enabled: false
+  notification:
+    channels:
+      email:
+        driver: smtp
+        from: no-reply@staging.example.com
+        from_name: AdminFrame
+        smtp:
+          host: smtp.staging.example.com
+          port: 587
+          encryption: starttls
+          auth: plain
+          username: no-reply@staging.example.com
+          password_env: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+          tls_min_version: "1.2"
+      sms:
+        driver: disabled
+      push:
+        driver: disabled
 
 jwtPublicKey:
   enabled: true
   secretName: admin-frame-jwt
   key: public.pem
+
+jwtPrivateKey:
+  enabled: true
+  key: private.pem
+
+identitySecrets:
+  enabled: true
+  secretName: admin-frame-identity
+  hashKeyKey: hash_key
+  mfaSecretKey: mfa_secret_key
 
 env:
   - name: ADMIN_FRAME_DB_DSN
@@ -70,12 +107,22 @@ env:
       secretKeyRef:
         name: admin-frame-notification
         key: blacklist_salt
+  - name: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: smtp_password
 
 workloads:
   admin:
     replicas: 2
     statefulset:
       enabled: true
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: true
     ingress:
       enabled: true
       className: nginx
@@ -85,6 +132,11 @@ workloads:
     replicas: 2
     statefulset:
       enabled: true
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: false
     ingress:
       enabled: true
       className: nginx

@@ -4,7 +4,7 @@
 
 > **状态**：主体完成 v1.1（FF-01～FF-08 全部落地：迁移 000020/000021、`internal/featureflag` 五层、admin 8.1.0、check-featureflag 门禁入 make ci、ADR-0009、runbook；首个调用方 = 租户邀请邮件灰度开关）
 > **实施记录**：迁移 000020（feature_flag 表）/ 000021（权限点）；`internal/featureflag` domain/app/infrastructure/observability/transport(admin) 齐备；cmd/internal/featureflagruntime 装配（内存/MySQL 切换 + 到期任务注册 + tenant 端口适配）；admin-api 已注册管理路由并注入邀请灰度评估
-> **关联**：[`production-readiness-implementation-plan.md`](../../production-readiness-implementation-plan.md)（ENT-11）、[`ARCHITECTURE.md`](../../ARCHITECTURE.md) §17.3（feature flag 硬约束）、[`production-readiness-gaps.md`](../../production-readiness-gaps.md)（缺口 #ENT-11）、[`rbac-iam.md`](../../rbac-iam.md)（权限点与快照）、[`docs/audit/EVENTS.md`](../../audit/EVENTS.md)（审计登记）、[`OBSERVABILITY_STANDARDS.md`](../../OBSERVABILITY_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](../../RELIABILITY_STANDARDS.md)
+> **关联**：[`production-readiness-implementation-plan.md`](../../production-readiness-implementation-plan.md)（ENT-11）、[`ARCHITECTURE.md`](../../ARCHITECTURE.md) §17.3（feature flag 硬约束）、[`production-readiness-gaps.md`](../../archive/platform/production-readiness-gaps.md)（缺口 #ENT-11）、[`rbac-iam.md`](../../rbac-iam.md)（权限点与快照）、[`docs/audit/EVENTS.md`](../../audit/EVENTS.md)（审计登记）、[`OBSERVABILITY_STANDARDS.md`](../../OBSERVABILITY_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](../../RELIABILITY_STANDARDS.md)
 > **规划日期**：2026-11-04
 > **目标读者**：后端 / 平台装配 / 安全 Review / SRE
 

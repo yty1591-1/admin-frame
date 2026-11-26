@@ -4,7 +4,7 @@
 > **效力**：与 `docs/ARCHITECTURE.md` 同等；违反则 MR **不得合并**
 > **适用范围**：本仓库全部合入路径（PR → `main` / 默认保护分支）
 > **执行方式**：见下文「多平台」；本地统一 `make ci`
-> **最后更新**：2026-10-21（纳入发版镜像流水线 `image`；LIC/GEN/PERF 已于 2026-10-13 纳入）
+> **最后更新**：2026-11-24（CI-18 增补镜像 Dockerfile 校验；见 FE-B-02 与 `scripts/ci/check-frontend-dockerfile.sh`）
 > **变更方式**：修改本规范须同步更新各平台流水线文件与 `ARCHITECTURE.md` §18.3，经架构 Owner Review
 
 ---
@@ -39,6 +39,7 @@
 | CI-15 | 门禁脚本自身引用的仓库内路径必须存在；文件迁移/重命名须同步 `scripts/ci/*.sh`（路径失效会让断言直接报错或以「grep 无匹配」静默放行） | `make check-ci-paths` |
 | CI-16 | 每个 workflow job 必须有本地可执行入口；新增/改名 job 须同 MR 在 `check-ci-parity.sh` 登记，指向的 make 目标必须存在（防「本地没有这个 job 的入口」导致长期绿红不一） | `make check-ci-parity` |
 | CI-17 | 本地对齐必须可「判定等价」：门禁因缺依赖而跳过时不得静默视为通过；`make ci-strict` / `make ci-full` 下未登记理由的跳过即失败 | `make ci-strict` / `make ci-full` |
+| CI-18 | 前端（`frontend/`）改动**必须**通过前端必跑门禁：`pnpm audit --prod --audit-level=high`（npmjs registry）、`pnpm lint`、`check-frontend-security.sh`（XSS 出口）、`check-frontend-headers.sh`（安全响应头 + CSP Report-Only）、`check:cspell`、`check:dep`、`check:circular`、`check:type`、`test:unit`（根 + web-admin + web-biz，apps 覆盖率阈值 30%）、`check-frontend-gates.sh`、`check-frontend-dockerfile.sh`（镜像双 target 与 build arg 白名单，FE-B-02）、`build:admin`、`build:biz`、`check-frontend-build-meta.sh`（SHA/版本/构建时间 meta，FE-B-01），任一步非 0 即阻断；job 不设 paths 过滤（required check 被 skip 等于门禁失效） | job `frontend` / Gitee step `frontend` / `make frontend-check` |
 
 **安全门禁（SECURITY_STANDARDS，与上表一并必跑）：** job/step `secrets`（gitleaks + 调试端点，SEC-01/SEC-08）；`lint` 内启用 gosec（SEC-09）。
 
@@ -48,7 +49,7 @@
 
 **依赖门禁（DEPENDENCY_STANDARDS，并入 job `vuln`）：** `govulncheck` + `scripts/ci/check-deps.sh`（go.sum、replace、许可证）。
 
-**配置门禁（CONFIG_STANDARDS，并入 job `secrets`）：** `scripts/ci/check-config.sh`（example 齐全、禁跟踪本地 yaml、DSN 策略）+ gitleaks。
+**配置门禁（CONFIG_STANDARDS，并入 job `secrets`）：** `scripts/ci/check-no-static-config.sh`（禁止跟踪运行时静态配置、样例只减不增、DSN 占位符策略）+ gitleaks。
 
 **数据 / 可靠性 / 可观测门禁（DATA / REL / OBS，并入 job `arch`）：** `check-migrations.sh` + `check-reliability.sh` + `check-observability.sh`。
 
@@ -86,10 +87,11 @@
 | CI-05 + TEST-01～05 | `test` | `test` | `make test-ci` |
 | CI-06 + DEP-01/03～05 | `vuln` | `vuln` | `make vuln` + `make check-deps` |
 | CI-09 + DATA…AUD + LIC/GEN/PERF | `arch` | `arch` | `make check-transport` + 各 standards 检查脚本（见 gitee-job arch） |
-| SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-config` |
+| SEC-01/08 + CFG-01/02/06 | `secrets` | `secrets` | `make secrets` + `make check-debug` + `make check-no-static-config` |
 | API-01/07/08 | `openapi` | `openapi` | `make openapi` |
 | API 契约产物（§3.2，非合并门禁） | `openapi-docs` | —（Gitee 待接入） | `make openapi-artifacts` |
 | CI-08 | `build` | `build` | `make build` |
+| CI-18 + FE-25～28 | `frontend` | `frontend` | `make frontend-check` |
 | CI-15 / CI-16 | 并入 `arch` | `arch` | `make check-ci-paths` + `make check-ci-parity` |
 | RELS-01/03/06 + 镜像产物 | `image`（非合并门禁，见 §3.5） | —（Gitee 待接入） | `make image-scan`（构建 + Trivy）+ `make docker-push` + `make check-release` |
 | CI-17（本地判定等价） | —（本地专用） | — | `make ci-strict` / `make ci-full` |
@@ -110,6 +112,7 @@
 - Go 版本：`actions/setup-go` 读取 `go.mod`
 - `arch` job 使用 runner 系统 Python；运行前钉扎安装 `pyyaml==6.0.3`，供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由
 - `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
+- `frontend` job（CI-18 / FE-CI-01）：`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`，`setup-node@v4` 用 `frontend/.node-version`（24.16.0）与 pnpm cache（键 `frontend/pnpm-lock.yaml`），执行 `bash scripts/ci/frontend-check.sh`（14 步，第 2 步为 `pnpm audit`、第 4 步为 XSS 出口巡检、第 5 步为安全响应头；脚本在 build 前把 `git rev-parse HEAD` 导出为 `VITE_APP_GIT_SHA`，该变量已纳入 turbo `globalEnv` 缓存键，避免缓存产物 SHA 过期）；与 `make frontend-check`、Gitee step 同源，禁止三处各写一套命令
 
 ### 3.3 Gitee Go
 
@@ -118,7 +121,7 @@
   - `PRPipeline.yml`：PR 目标为 `main`/`master`
   - `MasterPipeline.yml`：push 到 `main`/`master`
   - `BranchPipeline.yml`：其它分支 push（排除主干，避免重复）
-- 插件：`build@golang`（全部 job）；阶段 `strategy: fast`（一失败则快速失败）
+- 插件：`build@golang`（后端 job）+ `build@nodejs`（`frontend` step，`nodeVersion` 以控制台可用列表为准，pnpm 由 corepack 按 `packageManager` 固定为 11.16.0）；阶段 `strategy: fast`（一失败则快速失败）
 - 代理：默认 `GOPROXY=https://goproxy.cn,direct`
 - **Go 版本**：YAML 中 `GO_VERSION` / `golangVersion` 须改为控制台**当前可用最高版本**，且须满足 `go.mod`。若云端插件版本低于 `go.mod`：
   1. 优先使用企业自建构建环境 / Agent，安装匹配 Go 后执行 `make ci`；或
@@ -130,7 +133,8 @@
 1. 仓库启用 Gitee Go
 2. 确认 `.workflow` 三个文件生效（或控制台从代码库导入）
 3. 调整 `golangVersion`
-4. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
+4. 确认 Node 构建插件可用，并把 `frontend` step 的 `nodeVersion` 调成控制台实际提供的版本（目标 24.x）
+5. 开启「合并前流水线通过」类保护（名称以 Gitee 控制台为准）
 
 详见 [`.workflow/README.md`](../.workflow/README.md)。
 
@@ -148,16 +152,18 @@
 |----|------|
 | 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
 | 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
-| 镜像名 | `<registry>/<owner>/<cmd>`（admin-api / biz-api / c-api / worker 各自独立，RELS-05） |
+| 镜像名 | `<registry>/<owner>/<cmd>`（后端 admin-api / biz-api / c-api / worker / migrate 与前端 web-admin / web-biz 各自独立，RELS-05） |
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
-| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译 |
-| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03） |
+| 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译；前端镜像走 buildx（QEMU 下安装依赖并构建，缓存 scope 按镜像名隔离） |
+| 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03）；前端：`GIT_SHA` 作为 build arg 注入 `GITHUB_SHA`/`VITE_APP_GIT_SHA`，产物 `index.html` 的 `x-app-git-sha` 与 tag 同源（FE-B-01/FE-B-03） |
 | 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
 | SBOM | 按推送后的 **digest** 生成 CycloneDX，作为 `sbom-<cmd>` artifact 上传（缺文件即失败）；同一 digest 上以 `cosign attest --type cyclonedx` 附加（RELS-13） |
 | 签名 | `cosign sign`（keyless，`id-token: write`）签 **digest**，不签 tag；cosign 版本经 `COSIGN_VERSION` 钉扎（RELS-13） |
 | 验签 | 不在本流水线：由 `release.yml` 的 `verify` job 在部署前完成（RELS-14）；本流水线只负责「签得对」 |
 | 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |
+| 构建上下文 | matrix 每项带 `context` / `dockerfile`：后端为仓库根 + 根 `Dockerfile`，前端为 `frontend/` + `frontend/scripts/deploy/Dockerfile`，`target` 即镜像名 |
+| 发布清单 | `release` job 汇总 7 个镜像的 digest 到 `images.json`（含 `web-admin`、`web-biz`），随 `v*` tag 的 GitHub Release 资产发布；任一无 digest 即失败 |
 
 - 镜像推送**不是**合并门禁；但 `arch` job 内的 `check-release.sh` 会静态校验该文件（无 `:latest`、已禁用隐式 `latest`、扫描与版本注入齐备），`check-sbom.sh` 校验 SBOM/签名/验签结构（SB-01～SB-11）。
 - 供应链门禁是**静态**的：`make check-sbom` 不联网、不需要 cosign，因此可在合并门禁里跑；真实密码学链路由 `release.yml` 首跑与 `scripts/ci/supply-chain-rehearsal.sh` 覆盖。
@@ -176,7 +182,8 @@ PR / push main ──►  ├── lint
                     ├── arch  (cross-transport)
                     ├── secrets (gitleaks + debug + config examples)
                     ├── openapi (validate + breaking)
-                    └── build (all cmd)
+                    ├── build (all cmd)
+                    └── frontend (lint/type/unit/build；CI-18 / FE-CI-01)
 ```
 
 ```text
@@ -201,7 +208,7 @@ make openapi         # API-01/07/08
 make test-ci         # CI-05 + TEST 门禁
 make vuln            # CI-06 / DEP-04
 make check-deps      # DEP-01/03/05
-make check-config         # CFG-01/02/06
+make check-no-static-config    # CFG-01/06（禁止新增静态配置）
 make check-migrations     # DATA-01/02/03
 make check-reliability    # REL-01/02/05
 make check-observability  # OBS-01/02/04
@@ -216,6 +223,7 @@ make check-perf           # PERF-01/02
 make build                # CI-08
 make docker-push VERSION=<semver|sha>   # 发版镜像推送（本地复现；多架构见 CI `image`）
 make image-scan                        # 本地复现 image job 的 Trivy 扫描（HIGH/CRITICAL）
+make frontend-check                    # CI-18 / FE-CI-01：前端 audit/lint/type/unit/build（需 pnpm 11 + Node 24；不进 make ci；含两 app 冒烟与覆盖率）
 ```
 
 或一键：
@@ -259,14 +267,15 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 
 1. 保护 `main`（或默认分支）
 2. Require a pull request before merging
-3. Require status checks：勾选 `CI` workflow 全部必跑 job
+3. Require status checks：勾选 `CI` workflow 全部必跑 job（含 `frontend`；该 job 无 paths 过滤，不会因纯后端 PR 被 skip）
 4. 限制无检查强推；应急绕过须事后补跑
 
 ### Gitee
 
 1. 保护默认分支 / 设置合并规则
 2. 要求关联 PR 流水线（`PR CI` / `pr-pipeline`）通过后方可合并
-3. 限制管理员绕过；应急流程同 GitHub
+3. 确认质量门禁 stage 内包含 `frontend` step（`build@nodejs`，调用 `gitee-job.sh frontend`）
+4. 限制管理员绕过；应急流程同 GitHub
 
 未完成分支保护前，流水线文件合入仍视为「门禁未闭环」。
 
@@ -293,7 +302,8 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 - GitHub：`setup-go` cache；golangci-lint-action 缓存
 - Gitee：依赖平台构建缓存；配置 `GOPROXY` 加速模块下载
 - 不在 PR 构建/推送镜像；仅在 push `main`/`master` 与 `v*` tag 触发 `image`（§3.5），避免重复构建与成本
-- 不可用路径过滤跳过 fmt/lint/test/vuln
+- 前端：`setup-node` 的 pnpm store 缓存，键为 `frontend/pnpm-lock.yaml`；Gitee `build@nodejs` 依赖平台缓存
+- 不可用路径过滤跳过 fmt/lint/test/vuln（含 frontend）
 
 ---
 
@@ -323,6 +333,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 - [ ] `image` 相关改动仍满足 RELS（无 `:latest`、扫描保留、版本注入未删减）
 - [ ] 已更新本专文映射表（若有增删 job）
 - [ ] `make check-ci-parity` 通过：新增/改名 job 已在 `check-ci-parity.sh` 登记本地入口（CI-16）
+- [ ] 前端 job / Gitee step / `make frontend-check` 仍同源于 `scripts/ci/frontend-check.sh`（CI-18 / FE-CI-01），且含 `check-frontend-security.sh`（FE-S-01）、`check-frontend-gates.sh`（FE-G-06）、`pnpm audit`（FE-G-07）与 `check-frontend-build-meta.sh`（FE-B-01）、`check-frontend-dockerfile.sh`（FE-B-02）
 - [ ] 新门禁若依赖外部工具/服务，已说明 `make ci-full` 如何提供，或已在 `ci-run.sh` 的 ALLOW 表写明豁免理由（CI-17）
 
 ---
@@ -339,6 +350,10 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-transport-imports.sh` | CI-09 |
 | `scripts/ci/check-ci-paths.sh` | CI-15 |
 | `scripts/ci/check-ci-parity.sh` | CI-16：workflow job ↔ 本地入口一致性 |
+| `scripts/ci/frontend-check.sh` | CI-18 / FE-CI-01：前端门禁唯一入口（GitHub job、Gitee step、make 共用；14 步含 audit、XSS 巡检、安全响应头、apps 冒烟与覆盖率、镜像 Dockerfile、构建元数据） |
+| `scripts/ci/check-frontend-security.sh` | FE-S-01：XSS 出口巡检（v-html/innerHTML/eval/new Function/window.open 缺 noopener），例外见 `frontend-security-allowlist.txt`（带到期日；由 `frontend-check.sh` 第 4 步调用） |
+| `scripts/ci/check-frontend-gates.sh` | FE-G-06：apps 冒烟用例存在性 + `v-access`/`pageMap` 覆盖断言（由 `frontend-check.sh` 第 10 步调用） |
+| `frontend/.node-version` / `frontend/pnpm-lock.yaml` | 前端工具链钉扎（Node 24.16.0 + pnpm 11.16.0） |
 | `scripts/ci/ci-run.sh` | CI-17：跳过项汇总与严格模式（被 `make ci-strict` 调用） |
 | `scripts/ci/ci-full.sh` | CI-17：本地判定等价（service 容器 + integration + `-race` + 镜像扫描） |
 | `scripts/ci/run-race-tests.sh` | 容器内 `-race`（补足本地无 CGO 的降级） |
@@ -346,7 +361,7 @@ persistence 门禁消失；无 CGO → 不带 `-race`；无 promtool/helm → �
 | `scripts/ci/check-openapi.sh` | API-01/07/08 |
 | `scripts/ci/run-tests.sh` + `check-test-gates.sh` | TEST-01～05 |
 | `scripts/ci/check-deps.sh` | DEP-01/03/05 |
-| `scripts/ci/check-config.sh` | CFG-01/02/06 |
+| `scripts/ci/check-no-static-config.sh` | CFG-01/06 |
 | `scripts/ci/check-migrations.sh` | DATA-01/02/03 |
 | `scripts/ci/check-reliability.sh` | REL-01/02/05 |
 | `scripts/ci/check-observability.sh` | OBS-01/02/04 |

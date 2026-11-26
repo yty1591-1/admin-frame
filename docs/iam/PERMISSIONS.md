@@ -1,6 +1,6 @@
 # IAM 权限点目录（PERMISSIONS）
 
-> **状态**：生效中（23 条：19 条活跃 + 4 条已弃用）
+> **状态**：生效中（50 条：46 条活跃 + 4 条已弃用）
 > **唯一真相**：`internal/iam/catalog/catalog.go` 的 `entries`；本文件、`internal/iam/perm.go` 与 `migrations/*_seed_*.up.sql` 由 Go 测试强制一致
 > **门禁**：`go test ./internal/iam/catalog/...`（已纳入 `make test-ci` → `make ci`）
 > **关联**：[`docs/rbac-iam.md`](../rbac-iam.md) §4.3 / §5.3.1、[`docs/adr/0004-rbac-iam-domain.md`](../adr/0004-rbac-iam-domain.md)
@@ -49,8 +49,13 @@
 | `file:write` | both | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
 | `audit:read` | admin | 是 | 活跃 | 查询审计事件；敏感字段脱敏，批量导出需额外 `data:export` |
 | `data:export` | both | 是 | 活跃 | 批量导出业务数据；必须限流并记录导出审计 |
-| `config:read` | admin | 否 | 活跃 | 查看运行时配置；敏感项脱敏 |
-| `config:write` | admin | 否 | 活跃 | 修改运行时配置；须审计并支持回滚 |
+| `config:read` | admin | 否 | 活跃 | 查看配置中心普通配置；敏感项脱敏，不返回密钥元数据与明文 |
+| `config:write` | admin | 否 | 活跃 | 创建 / 修改配置草稿；须审计，不包含发布、审批与密钥操作 |
+| `config:publish` | admin | 否 | 活跃 | 发布配置 Release 与回滚；与审批分离，须审计 |
+| `config:approve` | admin | 否 | 活跃 | 审批配置发布；申请人不得自审 |
+| `config:secret:read` | admin | 否 | 活跃 | 查看业务密钥列表、版本与授权元数据；不返回明文、密文或 wrapped DEK |
+| `config:secret:write` | admin | 否 | 活跃 | 创建、轮换、吊销业务密钥并提交审批；明文一次性输入，永不回显 |
+| `config:secret:approve` | admin | 否 | 活跃 | 审批密钥创建、轮换、吊销与授权；提交人不得自审 |
 | `iam:change:request` | biz | 否 | 活跃 | 发起本商户变更申请，并查看本商户待办列表；`merchant_id` 只能来自 Principal |
 | `iam:change:review` | biz | 否 | 活跃 | 审批本商户变更申请；申请人不得自审（SoD） |
 | `iam:menu:read` | admin | 否 | 活跃 | 查看菜单 / 路由资源管理列表；不改变前端可见性 |
@@ -62,6 +67,11 @@
 | `identity:account:credential` | admin | 否 | 活跃 | 重置目标账号密码 / MFA；账号接管高风险动作，须与生命周期权限分离 |
 | `identity:account:delete` | admin | 否 | 活跃 | 软删目标账号；不可逆操作入口，不包含恢复与会话撤销 |
 | `identity:account:session` | admin | 否 | 活跃 | 撤销目标账号指定会话或全部会话；不包含凭据与生命周期变更 |
+| `identity:m2m:read` | admin | 否 | 活跃 | 查看 M2M 客户端列表 / 状态 / scope；不返回任何密钥材料 |
+| `identity:m2m:write` | admin | 否 | 活跃 | 创建、停用、启用、软删 M2M 客户端；不包含密钥轮换 |
+| `identity:m2m:credential` | admin | 否 | 活跃 | 轮换 M2M 客户端密钥（返回一次性明文）；与 write 分离以落实职责分离 |
+| `identity:scim:read` | admin | 否 | 活跃 | 查看 SCIM 令牌指纹与组映射状态；不返回令牌原文 |
+| `identity:scim:write` | admin | 否 | 活跃 | 签发与吊销 SCIM 令牌 |
 | `tenant:read` | admin | 否 | 活跃 | 查询租户列表与详情（含状态与状态原因）；不包含任何状态变更 |
 | `tenant:write` | admin | 否 | 活跃 | 创建租户与迁移租户状态（启用 / 停用 / 恢复 / 终止）；每次迁移写审计 |
 | `tenant:approve` | admin | 否 | 活跃 | 入驻审核裁决（通过 / 驳回）；与 `tenant:write` 拆开授予，且领域层拒绝「提交人审批自己的申请」（职责分离） |
@@ -102,7 +112,7 @@
 
 1. `internal/iam/catalog/catalog.go`：追加 `entries` 条目（唯一真相）；
 2. `internal/iam/perm.go`：新增 `Perm*` 常量；
-3. `migrations/000003_seed_iam_baseline.up.sql`：追加一行（行首为 `('`）；
+3. `migrations/*_seed_*.up.sql`：新增一行（行首为 `('`；只追加，不改写已应用的种子）；
 4. 本文件：追加表格行。
 
 `internal/iam/catalog` 的单元测试会校验：

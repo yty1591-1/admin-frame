@@ -105,3 +105,15 @@ stages:
           - set -euo pipefail
           - export GOPROXY=https://goproxy.cn,direct
           - bash scripts/ci/gitee-job.sh build
+
+      # FE-CI-01：前端门禁。build@nodejs 的 nodeVersion 以控制台可用列表为准，
+      # 当前与 frontend/.node-version（24.16.0）对齐；pnpm 由 corepack 按 packageManager 固定。
+      - step: build@nodejs
+        name: frontend
+        displayName: frontend
+        nodeVersion: "24"
+        commands:
+          - set -euo pipefail
+          - corepack enable
+          - corepack prepare pnpm@11.16.0 --activate
+          - bash scripts/ci/gitee-job.sh frontend
