@@ -12,20 +12,20 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/aws/smithy-go v1.28.5
 	github.com/crewjam/saml v0.5.1
-	github.com/go-playground/validator/v10 v10.27.0
+	github.com/go-playground/validator/v10 v10.30.6
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/golang-jwt/jwt/v5 v5.2.3
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/huaweicloud/huaweicloud-sdk-go-obs v3.26.6+incompatible
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/nats-io/nats-server/v2 v2.15.1
 	github.com/nats-io/nats.go v1.55.0
-	github.com/prometheus/client_golang v1.23.2
-	github.com/prometheus/client_model v0.6.2
+	github.com/prometheus/client_golang v1.25.0
+	github.com/prometheus/client_model v0.6.3
 	github.com/redis/go-redis/v9 v9.14.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
-	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.47.0
+	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/crypto v0.58.0
@@ -55,11 +55,11 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-playground/locales v0.14.1 // indirect
-	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/locales v0.14.2 // indirect
+	github.com/go-playground/universal-translator v0.18.2 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -69,7 +69,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
-	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
@@ -78,8 +78,8 @@ require (
 	github.com/nats-io/jwt/v2 v2.8.2 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
-	github.com/prometheus/common v0.66.1 // indirect
-	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/prometheus/common v0.72.0 // indirect
+	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/russellhaering/goxmldsig v1.6.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -87,7 +87,6 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
