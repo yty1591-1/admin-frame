@@ -88,6 +88,9 @@ func (s Snapshot) Empty() bool {
 	return len(s.Roles) == 0 && len(s.Permissions) == 0
 }
 
+// RoleCodeSystemAdmin 是引导用超级管理员角色编码（migrations/000005 system_admin）。
+const RoleCodeSystemAdmin = "system_admin"
+
 // HasPermission 判断快照是否包含指定权限码。
 //
 // 支持已展开的 "*"：它只会由破玻璃绑定在有效期内产生，普通角色永不携带。
@@ -98,6 +101,40 @@ func (s Snapshot) HasPermission(code string) bool {
 		}
 	}
 	return false
+}
+
+// HasRole 判断快照是否包含指定角色编码（精确匹配，大小写敏感）。
+func (s Snapshot) HasRole(code string) bool {
+	if code == "" {
+		return false
+	}
+	for _, role := range s.Roles {
+		if role == code {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSystemAdmin 判断快照是否持有超级管理员角色。
+func (s Snapshot) IsSystemAdmin() bool {
+	return s.HasRole(RoleCodeSystemAdmin)
+}
+
+// HasRole 从请求 context 读取快照并判断角色；无快照时返回 false。
+func HasRole(ctx context.Context, code string) bool {
+	snapshot, ok := FromContext(ctx)
+	if !ok {
+		return false
+	}
+	return snapshot.HasRole(code)
+}
+
+// IsSystemAdmin 从请求 context 判断是否为超级管理员；无快照时返回 false。
+//
+// 用于高风险直写放行与 SoD 自批旁路；调用方须另行写入 sod_bypass 审计。
+func IsSystemAdmin(ctx context.Context) bool {
+	return HasRole(ctx, RoleCodeSystemAdmin)
 }
 
 // ScopeFor 返回指定资源的数据范围；资源未配置时回退到 ScopeAll 键。

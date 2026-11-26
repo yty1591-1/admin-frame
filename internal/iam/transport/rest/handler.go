@@ -17,6 +17,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apiresp"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/pagination"
 )
 
@@ -99,8 +100,12 @@ func (h *Handler) Certification() *app.CertificationService { return h.certifica
 // rejectDirectWrite 在「高风险直写强制转审批」开启时写出 40900 并返回 true。
 //
 // 只拦截 HTTP 直写；审批单 apply 走用例内部调用，不受影响。
+// system_admin 直写放行：既有写审计会带 approval_bypass（见 auditBuilder）。
 func (h *Handler) rejectDirectWrite(w http.ResponseWriter, r *http.Request, action domain.ChangeAction) bool {
 	if !h.requireApproval {
+		return false
+	}
+	if authz.IsSystemAdmin(r.Context()) {
 		return false
 	}
 	traceID := apiresp.TraceIDFromContext(r.Context())

@@ -199,7 +199,7 @@ var entries = []Entry{
 		Channel:     ChannelAdmin,
 		Status:      StatusActive,
 		Sort:        110,
-		Description: "审批破玻璃申请；与申请人强制分离并触发高危告警。",
+		Description: "审批破玻璃申请；普通主体与申请人强制分离；system_admin 可自批并记审计。",
 	},
 	{
 		Code:        iam.PermOrderRead,

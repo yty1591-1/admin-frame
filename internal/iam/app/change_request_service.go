@@ -13,6 +13,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -276,7 +277,7 @@ func (s *ChangeRequestService) loadScoped(
 	return request, nil
 }
 
-// Approve 通过审批单；审批人必须与申请人不同（SoD）。
+// Approve 通过审批单；普通主体须与申请人不同（SoD），system_admin 可自批。
 func (s *ChangeRequestService) Approve(
 	ctx context.Context,
 	requestID string,
@@ -289,8 +290,14 @@ func (s *ChangeRequestService) Approve(
 	if err != nil {
 		return nil, err
 	}
-	if err := request.Approve(approver, decisionReason, version); err != nil {
-		return nil, err
+	var decideErr error
+	if authz.IsSystemAdmin(ctx) {
+		decideErr = request.ApproveAllowingSelf(approver, decisionReason, version)
+	} else {
+		decideErr = request.Approve(approver, decisionReason, version)
+	}
+	if decideErr != nil {
+		return nil, decideErr
 	}
 	if err := s.requests.Save(ctx, request, version); err != nil {
 		return nil, err
@@ -298,7 +305,7 @@ func (s *ChangeRequestService) Approve(
 	return request, nil
 }
 
-// Reject 拒绝审批单；同样适用职责分离。
+// Reject 拒绝审批单；system_admin 可自拒，普通主体仍受 SoD 约束。
 func (s *ChangeRequestService) Reject(
 	ctx context.Context,
 	requestID string,
@@ -311,8 +318,14 @@ func (s *ChangeRequestService) Reject(
 	if err != nil {
 		return nil, err
 	}
-	if err := request.Reject(approver, decisionReason, version); err != nil {
-		return nil, err
+	var decideErr error
+	if authz.IsSystemAdmin(ctx) {
+		decideErr = request.RejectAllowingSelf(approver, decisionReason, version)
+	} else {
+		decideErr = request.Reject(approver, decisionReason, version)
+	}
+	if decideErr != nil {
+		return nil, decideErr
 	}
 	if err := s.requests.Save(ctx, request, version); err != nil {
 		return nil, err

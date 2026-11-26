@@ -8,8 +8,8 @@
 --
 -- 设计约束：
 --   1. 角色按 (channel, merchant_id, code) 收敛，已存在时复用原主键；
---   2. 角色逐项授予权限、不写通配符（iam.security.allow_wildcard=false）；
---      排除 iam:breakglass:approve，保证「申请 ≠ 审批」；
+--   2. 角色逐项授予全部生效的 A 端权限、不写通配符（iam.security.allow_wildcard=false）；
+--      system_admin 含破玻璃审批；自批时由应用层记 sod_bypass 审计，普通主体仍受 SoD；
 --   3. data_bearing 权限统一配置 all 数据范围，与权限点定义保持同步；
 --   4. 存量订正在全新库上是空操作，重复执行幂等。
 
@@ -33,13 +33,12 @@ ON DUPLICATE KEY UPDATE
 SET @role_id := (SELECT id FROM iam_role
                  WHERE channel = 'admin' AND merchant_id = '' AND code = 'system_admin' LIMIT 1);
 
--- 2) 逐项授予全部生效的 A 端权限（排除破玻璃审批）
+-- 2) 逐项授予全部生效的 A 端权限（含破玻璃审批；自批只审计）
 INSERT INTO iam_role_permission (role_id, permission_code, granted_by, created_at)
 SELECT @role_id, p.code, 'system', @now
 FROM iam_permission p
 WHERE p.status = 'active'
   AND p.channel IN ('admin', 'both')
-  AND p.code <> 'iam:breakglass:approve'
 ON DUPLICATE KEY UPDATE granted_by = 'system';
 
 -- 3) 数据范围：data_bearing 权限必须配置范围，引导角色统一 all

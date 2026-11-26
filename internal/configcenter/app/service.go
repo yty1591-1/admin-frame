@@ -29,7 +29,7 @@ const (
 	ResourceTypeRelease = "config_release"
 )
 
-// RoleCodeSystemAdmin 是引导用超级管理员角色编码（migrations/000005 system_admin）。
+// RoleCodeSystemAdmin 与 authz.RoleCodeSystemAdmin 同值，保留别名以免破坏既有引用。
 const RoleCodeSystemAdmin = "system_admin"
 
 // Actor 是审计主体（与 featureflag / tenant 用例层形态一致）。

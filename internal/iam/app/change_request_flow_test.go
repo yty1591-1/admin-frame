@@ -9,6 +9,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/app"
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 )
 
 // adminScope 是 A 端审批操作的作用域（平台级，无商户）。
@@ -317,6 +318,24 @@ func TestChangeRequestApproveEnforcesSeparationOfDuties(t *testing.T) {
 	}
 	if !stored.IsPending() || stored.Version != 1 {
 		t.Fatalf("stored request must stay pending, got %+v", stored)
+	}
+}
+
+func TestChangeRequestApproveAllowsSystemAdminSelfReview(t *testing.T) {
+	f := newFixture(t)
+	role := createTestRole(t, f, "ops_lead")
+	request := createReplacePermissionsRequest(t, f, role.ID, "1001")
+	ctx := authz.WithSnapshot(context.Background(), authz.Snapshot{
+		Channel:   "admin",
+		SubjectID: "1001",
+		Roles:     []string{authz.RoleCodeSystemAdmin},
+	})
+	approved, err := f.changeSvc.Approve(ctx, request.ID, request.Version, "1001", "", adminScope)
+	if err != nil {
+		t.Fatalf("system_admin self approve: %v", err)
+	}
+	if !approved.IsApproved() || approved.ApprovedBy != "1001" {
+		t.Fatalf("got %+v", approved)
 	}
 }
 

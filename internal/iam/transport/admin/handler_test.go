@@ -20,6 +20,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 	"github.com/admin-frame/admin-frame/internal/shared/auth"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 )
 
 // noopCertRevoker 让路由测试无需真实绑定服务即可装配复核路由。
@@ -73,11 +74,18 @@ func (recorder) Record(context.Context, audit.Event) error { return nil }
 type router struct {
 	handler http.Handler
 	subject *string
+	roles   *[]string
 }
 
 // as 切换后续请求的认证主体（共享同一套用例与仓储）。
 func (rt *router) as(subjectID string) *router {
 	*rt.subject = subjectID
+	return rt
+}
+
+// withRoles 注入 IAM 快照角色（用于 system_admin 直写/自批旁路）。
+func (rt *router) withRoles(roles ...string) *router {
+	*rt.roles = append([]string(nil), roles...)
 	return rt
 }
 
@@ -174,16 +182,25 @@ func newRouterWithApproval(t *testing.T, requireApproval bool) *router {
 	if err != nil {
 		t.Fatal(err)
 	}
+	roleCodes := new([]string)
 	authMW := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal := auth.Principal{Channel: auth.ChannelAdmin, SubjectID: *subject}
-			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+			ctx := auth.WithPrincipal(r.Context(), principal)
+			if len(*roleCodes) > 0 {
+				ctx = authz.WithSnapshot(ctx, authz.Snapshot{
+					Channel:   "admin",
+					SubjectID: *subject,
+					Roles:     append([]string(nil), (*roleCodes)...),
+				})
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 	perm := func(string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	return &router{handler: admin.NewRouter(handler, authMW, perm), subject: subject}
+	return &router{handler: admin.NewRouter(handler, authMW, perm), subject: subject, roles: roleCodes}
 }
 
 // envelope 是响应信封的解码目标。

@@ -131,3 +131,16 @@ func TestApprovalRequiredRejectsDirectWrites(t *testing.T) {
 		t.Fatalf("roles total=%d, want 0", list.Total)
 	}
 }
+
+// TestSystemAdminBypassesApprovalRequired 验证超级管理员在审批开关开启时仍可直写。
+func TestSystemAdminBypassesApprovalRequired(t *testing.T) {
+	rt := newRouterWithApproval(t, true).withRoles("system_admin")
+	rec, env := rt.do(t, http.MethodPost, "/admin/v1/iam/roles",
+		json.RawMessage(`{"channel":"admin","scope_type":"platform","code":"admin_direct","name":"admin_direct"}`), nil)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("system_admin direct write status=%d code=%d body=%s", rec.Code, env.Code, rec.Body.String())
+	}
+	if env.Code == apperr.CodeConflict {
+		t.Fatalf("system_admin must not get approval conflict: %s", rec.Body.String())
+	}
+}

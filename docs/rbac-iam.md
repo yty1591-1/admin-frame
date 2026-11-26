@@ -156,7 +156,8 @@ wildcard   := "*" | segment ":" "*"
 
 - 配置化互斥组，例如：`iam:role:grant` 与 `audit:read` 不得由同一主体同时持有；`iam:breakglass:request` 与 `iam:breakglass:approve` 必须由不同主体持有。
 - 授权 / 绑定时校验：若新增权限导致主体同时持有任一互斥组，返回 `40900`，并在消息中只指出冲突组名，不泄露其他主体信息。
-- 破玻璃同样适用 SoD（申请人 ≠ 审批人），并记 `rbac.breakglass` 审计；不允许以「紧急」为由绕过双人审批。
+- 破玻璃同样适用 SoD（申请人 ≠ 审批人），并记 `rbac.breakglass` 审计；普通主体不允许以「紧急」为由绕过双人审批。
+  `system_admin` 可自批并记 `sod_bypass`，仍须写审计。
 - SoD 规则属于安全策略，放配置（`iam.security.sod_conflicts`），变更须安全 Owner Review。
 
 ### 4.6 RBAC2 落地与 `enforce` 切换
@@ -881,12 +882,12 @@ Recover → Trace → RequestID → Metrics → AccessLog → CORS
 | GET | `/admin/v1/iam/me/permissions` | 仅认证 | 当前主体有效权限 / 菜单 | 否 |
 | GET | `/admin/v1/iam/change-requests` | `iam:change:read` | 审批单列表（`status` / `action` / `requested_by` 过滤，默认按申请时间倒序） | 否 |
 | POST | `/admin/v1/iam/change-requests` | `iam:role:write` | 发起审批单（载荷 ≤ 16 KiB，禁敏感字段与 B 端 `merchant_id`） | 否（应用时才产生变更） |
-| POST | `/admin/v1/iam/change-requests/{id}/approve` | `iam:change:approve` | 通过审批（申请人 ≠ 审批人；自审 `40300`） | 否（应用时记 `rbac.*`） |
+| POST | `/admin/v1/iam/change-requests/{id}/approve` | `iam:change:approve` | 通过审批（普通主体申请人 ≠ 审批人；`system_admin` 可自批） | 否（应用时记 `rbac.*`） |
 | POST | `/admin/v1/iam/change-requests/{id}/reject` | `iam:change:approve` | 拒绝审批（同样适用 SoD） | 否 |
 | POST | `/admin/v1/iam/change-requests/{id}/cancel` | `iam:change:read` | 撤销（仅申请人本人） | 否 |
 | POST | `/admin/v1/iam/change-requests/{id}/apply` | `iam:change:approve` | 应用已通过审批；重新加载目标并按当前版本写入 | `rbac.role_change` / `rbac.binding_change` |
 | POST | `/admin/v1/iam/breakglass` | `iam:breakglass:request` | 申请限时超级权限（≤ 2h，需开启开关） | `rbac.breakglass` |
-| POST | `/admin/v1/iam/breakglass/{id}/approve` | `iam:breakglass:approve` | 审批并立即生效（申请人 ≠ 审批人） | `rbac.breakglass` |
+| POST | `/admin/v1/iam/breakglass/{id}/approve` | `iam:breakglass:approve` | 审批并立即生效（普通主体申请人 ≠ 审批人；`system_admin` 可自批） | `rbac.breakglass` |
 | POST | `/admin/v1/iam/breakglass/{id}/revoke` | `iam:breakglass:approve` | 提前撤销临时绑定（需 version） | `rbac.breakglass` |
 | GET | `/admin/v1/iam/menus` | `iam:menu:read` | 菜单资源平铺列表（含停用；`status` / `parent_code` / `keyword` 过滤） | 否 |
 | GET | `/admin/v1/iam/menus/tree` | `iam:menu:read` | 菜单资源树（`include_disabled=true` 含停用节点） | 否 |
@@ -1224,7 +1225,7 @@ JOIN role_chain c ON c.id = s.role_id;
 | 生产超级角色 | 默认不存在；`rbac.WithSuperRoles` 仅 local/demo 使用 |
 | 破玻璃角色 | 仅 `role_type=breakglass` 的系统角色可产生 `*`；**权限目录本身永不含 `*`**，避免被普通授权引用 |
 | 破玻璃申请 | 必须由 `iam:breakglass:request` 持有人发起，填写原因、时长（≤ 2h）、目标权限 |
-| 审批 | 必须由另一名 `iam:breakglass:approve` 持有人批准；申请人 ≠ 审批人 |
+| 审批 | 须由 `iam:breakglass:approve` 持有人批准；普通主体申请人 ≠ 审批人，`system_admin` 可自批并记审计 |
 | 生效 | 创建一条 `expires_at` 的临时绑定到 `breakglass` 角色；快照含 `*`；到期自动失效 |
 | 审计 | 申请、批准、生效、每次使用、到期全部记 `rbac.breakglass`；触发实时告警 |
 | 撤销 | 支持提前撤销；撤销后删除缓存并等待 L1 过期（≤ 3s） |
@@ -1894,7 +1895,7 @@ BenchmarkReplaceRolePermissions_Diff
 | biz | `merchant_owner` | `iam:role:read` / `write` / `grant`、`iam:binding:read` / `write`、`iam:change:request` / `review` | `merchant` |
 | biz | `merchant_staff` | `iam:change:request` | `merchant` |
 
-SoD：申请人 ≠ 审批人（`merchant_owner` 同时持有申请与审批权限点时仍受约束）；`system_admin` 不含 `iam:breakglass:approve`；系统角色逐项授予、不写 `*`，`*` 只由 `breakglass` 角色在有效审批绑定时动态展开。
+SoD：申请人 ≠ 审批人（`merchant_owner` 同时持有申请与审批权限点时仍受约束）；`system_admin` 持有全量权限（含 `iam:breakglass:approve`），可直写/自批并记 `sod_bypass` 审计；系统角色逐项授予、不写 `*`，`*` 只由 `breakglass` 角色在有效审批绑定时动态展开。
 
 ---
 
