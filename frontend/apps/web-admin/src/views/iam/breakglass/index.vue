@@ -26,9 +26,9 @@ import {
   requestBreakglassApi,
   revokeBreakglassApi,
 } from '#/api';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 import FormModal from '../components/form-modal.vue';
-import { listQueryCardClass } from '#/utils/list-query-form';
 
 defineOptions({ name: 'IamBreakglass' });
 
@@ -232,67 +232,67 @@ onMounted(fetchList);
       </p>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'subject_id'">
-          {{ subjectOf(record as ChangeRequest) }}
-        </template>
-        <template v-else-if="column.key === 'duration'">
-          {{ durationOf(record as ChangeRequest) || '—' }}
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ChangeStatus]">
-            {{ statusText[record.status as ChangeStatus] }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'requested_at'">
-          {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'expires_at'">
-          {{ expiresOf(record as ChangeRequest) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <template v-if="record.status === 'pending'">
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        size="middle"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'subject_id'">
+            {{ subjectOf(record as ChangeRequest) }}
+          </template>
+          <template v-else-if="column.key === 'duration'">
+            {{ durationOf(record as ChangeRequest) || '—' }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ChangeStatus]">
+              {{ statusText[record.status as ChangeStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'requested_at'">
+            {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'expires_at'">
+            {{ expiresOf(record as ChangeRequest) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" wrap>
+              <template v-if="record.status === 'pending'">
+                <Button
+                  v-access:code="'iam:breakglass:approve'"
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'approve')"
+                >
+                  审批通过
+                </Button>
+                <Button
+                  v-access:code="'iam:breakglass:approve'"
+                  danger
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'reject')"
+                >
+                  拒绝
+                </Button>
+              </template>
               <Button
-                v-access:code="'iam:breakglass:approve'"
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'approve')"
-              >
-                审批通过
-              </Button>
-              <Button
+                v-if="record.status === 'applied'"
                 v-access:code="'iam:breakglass:approve'"
                 danger
                 size="small"
                 type="link"
-                @click="openDecision(record as ChangeRequest, 'reject')"
+                @click="openDecision(record as ChangeRequest, 'revoke')"
               >
-                拒绝
+                撤销授权
               </Button>
-            </template>
-            <Button
-              v-if="record.status === 'applied'"
-              v-access:code="'iam:breakglass:approve'"
-              danger
-              size="small"
-              type="link"
-              @click="openDecision(record as ChangeRequest, 'revoke')"
-            >
-              撤销授权
-            </Button>
-          </Space>
+            </Space>
+          </template>
         </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <FormModal

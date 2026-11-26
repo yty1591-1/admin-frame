@@ -13,9 +13,9 @@ import { Page } from '@vben/common-ui';
 import { Button, message, Table, Tag } from 'ant-design-vue';
 
 import { createFeatureFlagApi, listFeatureFlagsApi } from '#/api';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import FormModal from '../../../iam/components/form-modal.vue';
-import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigFeatureFlags' });
 

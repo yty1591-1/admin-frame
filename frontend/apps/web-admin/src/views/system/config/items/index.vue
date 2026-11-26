@@ -337,47 +337,47 @@ onMounted(async () => {
       </div>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1200 }"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ConfigItemStatus]">
-            {{ record.status }}
-          </Tag>
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1200 }"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ConfigItemStatus]">
+              {{ record.status }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'sensitive'">
+            <Tag :color="record.sensitive ? 'error' : 'default'">
+              {{ record.sensitive ? '是' : '否' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space>
+              <Button
+                v-access:code="'config:write'"
+                :disabled="record.sensitive"
+                size="small"
+                type="link"
+                @click="goEdit(record as ConfigItem)"
+              >
+                编辑
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="goVersions(record as ConfigItem)"
+              >
+                版本
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'sensitive'">
-          <Tag :color="record.sensitive ? 'error' : 'default'">
-            {{ record.sensitive ? '是' : '否' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space>
-            <Button
-              v-access:code="'config:write'"
-              :disabled="record.sensitive"
-              size="small"
-              type="link"
-              @click="goEdit(record as ConfigItem)"
-            >
-              编辑
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="goVersions(record as ConfigItem)"
-            >
-              版本
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <Modal

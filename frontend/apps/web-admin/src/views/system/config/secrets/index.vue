@@ -81,7 +81,10 @@ const [QueryForm, queryFormApi] = useVbenForm(
     handleReset: async () => {
       await queryFormApi.reset();
       if (namespaces.value[0]) {
-        await queryFormApi.setFieldValue('namespace', namespaces.value[0].value);
+        await queryFormApi.setFieldValue(
+          'namespace',
+          namespaces.value[0].value,
+        );
       }
       handleQuerySearch();
     },
@@ -440,65 +443,65 @@ onMounted(async () => {
       </div>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      @change="onTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag>{{ record.status }}</Tag>
-          <Tag v-if="record.pending_action" color="orange">
-            pending:{{ record.pending_action }}
-          </Tag>
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="onTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag>{{ record.status }}</Tag>
+            <Tag v-if="record.pending_action" color="orange">
+              pending:{{ record.pending_action }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space wrap>
+              <Button size="small" @click="loadDetail(record as ConfigSecret)">
+                详情
+              </Button>
+              <Button
+                v-access:code="'config:secret:write'"
+                size="small"
+                @click="onSubmit(record as ConfigSecret)"
+              >
+                送审
+              </Button>
+              <Button
+                v-access:code="'config:secret:approve'"
+                size="small"
+                @click="onApprove(record as ConfigSecret, 'approved')"
+              >
+                批准
+              </Button>
+              <Button
+                v-access:code="'config:secret:write'"
+                size="small"
+                @click="onRotate(record as ConfigSecret)"
+              >
+                轮换
+              </Button>
+              <Button
+                v-access:code="'config:secret:write'"
+                size="small"
+                @click="onGrant(record as ConfigSecret)"
+              >
+                授权
+              </Button>
+              <Button
+                v-access:code="'config:secret:write'"
+                danger
+                size="small"
+                @click="onRevoke(record as ConfigSecret)"
+              >
+                吊销
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space wrap>
-            <Button size="small" @click="loadDetail(record as ConfigSecret)">
-              详情
-            </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onSubmit(record as ConfigSecret)"
-            >
-              送审
-            </Button>
-            <Button
-              v-access:code="'config:secret:approve'"
-              size="small"
-              @click="onApprove(record as ConfigSecret, 'approved')"
-            >
-              批准
-            </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onRotate(record as ConfigSecret)"
-            >
-              轮换
-            </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              size="small"
-              @click="onGrant(record as ConfigSecret)"
-            >
-              授权
-            </Button>
-            <Button
-              v-access:code="'config:secret:write'"
-              danger
-              size="small"
-              @click="onRevoke(record as ConfigSecret)"
-            >
-              吊销
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <Modal

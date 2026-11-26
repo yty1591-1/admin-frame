@@ -393,81 +393,81 @@ onMounted(fetchList);
       </div>
 
       <AdminListTable
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'channel'">
-          <Tag :color="record.channel === 'admin' ? 'blue' : 'green'">
-            {{ record.channel === 'admin' ? 'A 端' : 'B 端' }}
-          </Tag>
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'channel'">
+            <Tag :color="record.channel === 'admin' ? 'blue' : 'green'">
+              {{ record.channel === 'admin' ? 'A 端' : 'B 端' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'updated_at'">
+            {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                v-access:code="'iam:role:grant'"
+                size="small"
+                type="link"
+                @click="openGrant(record as RoleTemplate)"
+              >
+                权限基线
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="openDrift(record as RoleTemplate)"
+              >
+                漂移
+              </Button>
+              <Button
+                v-access:code="'iam:role:grant'"
+                size="small"
+                type="link"
+                @click="handleSync(record as RoleTemplate)"
+              >
+                同步
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openInstantiate(record as RoleTemplate)"
+              >
+                实例化
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as RoleTemplate)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleDelete(record as RoleTemplate)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'updated_at'">
-          {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" class="whitespace-nowrap">
-            <Button
-              v-access:code="'iam:role:grant'"
-              size="small"
-              type="link"
-              @click="openGrant(record as RoleTemplate)"
-            >
-              权限基线
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="openDrift(record as RoleTemplate)"
-            >
-              漂移
-            </Button>
-            <Button
-              v-access:code="'iam:role:grant'"
-              size="small"
-              type="link"
-              @click="handleSync(record as RoleTemplate)"
-            >
-              同步
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openInstantiate(record as RoleTemplate)"
-            >
-              实例化
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as RoleTemplate)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleDelete(record as RoleTemplate)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </AdminListTable>
+      </AdminListTable>
     </div>
 
     <FormModal

@@ -24,9 +24,9 @@ import {
   listNotificationsApi,
   sendNotificationApi,
 } from '#/api';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import FormModal from '../../iam/components/form-modal.vue';
-import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'MessagingNotifications' });
 

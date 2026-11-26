@@ -591,92 +591,92 @@ onMounted(async () => {
       </div>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1400 }"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ConfigReleaseStatus]">
-            {{ statusText[record.status as ConfigReleaseStatus] }}
-          </Tag>
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1400 }"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ConfigReleaseStatus]">
+              {{ statusText[record.status as ConfigReleaseStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space wrap>
+              <Button
+                size="small"
+                type="link"
+                @click="openDetail(record as ConfigRelease)"
+              >
+                详情
+              </Button>
+              <Button
+                v-if="record.status === 'draft'"
+                v-access:code="'config:write'"
+                size="small"
+                type="link"
+                @click="submitRelease(record as ConfigRelease)"
+              >
+                提交
+              </Button>
+              <Button
+                v-if="canApprove(record as ConfigRelease)"
+                v-access:code="'config:approve'"
+                size="small"
+                type="link"
+                @click="openApprove(record as ConfigRelease, 'approved')"
+              >
+                通过
+              </Button>
+              <Button
+                v-if="canApprove(record as ConfigRelease)"
+                v-access:code="'config:approve'"
+                danger
+                size="small"
+                type="link"
+                @click="openApprove(record as ConfigRelease, 'rejected')"
+              >
+                驳回
+              </Button>
+              <Button
+                v-if="record.status === 'approved'"
+                v-access:code="'config:publish'"
+                size="small"
+                type="link"
+                @click="publishRelease(record as ConfigRelease)"
+              >
+                发布
+              </Button>
+              <Button
+                v-if="canCancel(record as ConfigRelease)"
+                v-access:code="'config:write'"
+                danger
+                size="small"
+                type="link"
+                @click="openCancel(record as ConfigRelease)"
+              >
+                取消
+              </Button>
+              <Button
+                v-if="
+                  record.status === 'active' || record.status === 'superseded'
+                "
+                v-access:code="'config:publish'"
+                danger
+                size="small"
+                type="link"
+                @click="openRollback(record as ConfigRelease)"
+              >
+                回滚
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="openDetail(record as ConfigRelease)"
-            >
-              详情
-            </Button>
-            <Button
-              v-if="record.status === 'draft'"
-              v-access:code="'config:write'"
-              size="small"
-              type="link"
-              @click="submitRelease(record as ConfigRelease)"
-            >
-              提交
-            </Button>
-            <Button
-              v-if="canApprove(record as ConfigRelease)"
-              v-access:code="'config:approve'"
-              size="small"
-              type="link"
-              @click="openApprove(record as ConfigRelease, 'approved')"
-            >
-              通过
-            </Button>
-            <Button
-              v-if="canApprove(record as ConfigRelease)"
-              v-access:code="'config:approve'"
-              danger
-              size="small"
-              type="link"
-              @click="openApprove(record as ConfigRelease, 'rejected')"
-            >
-              驳回
-            </Button>
-            <Button
-              v-if="record.status === 'approved'"
-              v-access:code="'config:publish'"
-              size="small"
-              type="link"
-              @click="publishRelease(record as ConfigRelease)"
-            >
-              发布
-            </Button>
-            <Button
-              v-if="canCancel(record as ConfigRelease)"
-              v-access:code="'config:write'"
-              danger
-              size="small"
-              type="link"
-              @click="openCancel(record as ConfigRelease)"
-            >
-              取消
-            </Button>
-            <Button
-              v-if="
-                record.status === 'active' || record.status === 'superseded'
-              "
-              v-access:code="'config:publish'"
-              danger
-              size="small"
-              type="link"
-              @click="openRollback(record as ConfigRelease)"
-            >
-              回滚
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <Modal

@@ -276,33 +276,33 @@ onMounted(async () => {
         row-key="id"
         size="middle"
       >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4">
+              <Button
+                v-access:code="'iam:menu:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as MenuAdmin)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:menu:write'"
+                size="small"
+                type="link"
+                @click="toggleMenu(record as MenuAdmin)"
+              >
+                {{ record.status === 'active' ? '停用' : '启用' }}
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4">
-            <Button
-              v-access:code="'iam:menu:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as MenuAdmin)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:menu:write'"
-              size="small"
-              type="link"
-              @click="toggleMenu(record as MenuAdmin)"
-            >
-              {{ record.status === 'active' ? '停用' : '启用' }}
-            </Button>
-          </Space>
-        </template>
-      </template>
       </Table>
     </div>
 

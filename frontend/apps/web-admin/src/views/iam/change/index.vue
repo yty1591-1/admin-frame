@@ -303,73 +303,73 @@ onMounted(fetchList);
       </div>
 
       <AdminListTable
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'action'">
-          {{ actionLabel.get(record.action) ?? record.action }}
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ChangeStatus]">
-            {{ statusText[record.status as ChangeStatus] }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'requested_at'">
-          {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" class="whitespace-nowrap">
-            <Button
-              size="small"
-              type="link"
-              @click="openDetail(record as ChangeRequest)"
-            >
-              详情
-            </Button>
-            <template v-if="record.status === 'pending'">
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'action'">
+            {{ actionLabel.get(record.action) ?? record.action }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ChangeStatus]">
+              {{ statusText[record.status as ChangeStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'requested_at'">
+            {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
               <Button
+                size="small"
+                type="link"
+                @click="openDetail(record as ChangeRequest)"
+              >
+                详情
+              </Button>
+              <template v-if="record.status === 'pending'">
+                <Button
+                  v-access:code="'iam:change:approve'"
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'approve')"
+                >
+                  通过
+                </Button>
+                <Button
+                  v-access:code="'iam:change:approve'"
+                  danger
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'reject')"
+                >
+                  拒绝
+                </Button>
+                <Button
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'cancel')"
+                >
+                  撤销
+                </Button>
+              </template>
+              <Button
+                v-if="record.status === 'approved'"
                 v-access:code="'iam:change:approve'"
                 size="small"
                 type="link"
-                @click="openDecision(record as ChangeRequest, 'approve')"
+                @click="openDecision(record as ChangeRequest, 'apply')"
               >
-                通过
+                应用
               </Button>
-              <Button
-                v-access:code="'iam:change:approve'"
-                danger
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'reject')"
-              >
-                拒绝
-              </Button>
-              <Button
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'cancel')"
-              >
-                撤销
-              </Button>
-            </template>
-            <Button
-              v-if="record.status === 'approved'"
-              v-access:code="'iam:change:approve'"
-              size="small"
-              type="link"
-              @click="openDecision(record as ChangeRequest, 'apply')"
-            >
-              应用
-            </Button>
-          </Space>
+            </Space>
+          </template>
         </template>
-      </template>
-    </AdminListTable>
+      </AdminListTable>
     </div>
 
     <Drawer v-model:open="detailOpen" :width="620" title="审批单详情">

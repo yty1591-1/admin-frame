@@ -226,14 +226,14 @@ const stepDesc = computed(() => {
       ? $t('install.descTokenRepair')
       : $t('install.descToken');
   }
-  const descs = [
+  const descriptions = [
     '',
     $t('install.descPlatform'),
     $t('install.descBusiness'),
     $t('install.descSecrets'),
     $t('install.descReview'),
   ];
-  return descs[step.value] || '';
+  return descriptions[step.value] || '';
 });
 
 const stepProgress = computed(() => {

@@ -515,78 +515,78 @@ onMounted(async () => {
       </div>
 
       <AdminListTable
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'role_type'">
-          <Tag :color="roleTypeMeta[record.role_type]?.color">
-            {{ roleTypeMeta[record.role_type]?.text }}
-          </Tag>
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'role_type'">
+            <Tag :color="roleTypeMeta[record.role_type]?.color">
+              {{ roleTypeMeta[record.role_type]?.text }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'updated_at'">
+            {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                v-access:code="'iam:role:grant'"
+                :disabled="record.role_type === 'breakglass'"
+                size="small"
+                type="link"
+                @click="openGrant(record as Role)"
+              >
+                授权
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                size="small"
+                type="link"
+                @click="openEdit(record as Role)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                size="small"
+                type="link"
+                @click="openConstraints(record as Role)"
+              >
+                约束
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openClone(record as Role)"
+              >
+                克隆
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                danger
+                size="small"
+                type="link"
+                @click="openDelete(record as Role)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'updated_at'">
-          {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" class="whitespace-nowrap">
-            <Button
-              v-access:code="'iam:role:grant'"
-              :disabled="record.role_type === 'breakglass'"
-              size="small"
-              type="link"
-              @click="openGrant(record as Role)"
-            >
-              授权
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              size="small"
-              type="link"
-              @click="openEdit(record as Role)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              size="small"
-              type="link"
-              @click="openConstraints(record as Role)"
-            >
-              约束
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openClone(record as Role)"
-            >
-              克隆
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              danger
-              size="small"
-              type="link"
-              @click="openDelete(record as Role)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </AdminListTable>
+      </AdminListTable>
     </div>
 
     <FormModal

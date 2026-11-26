@@ -29,7 +29,6 @@ import {
   preflightSodGroupApi,
   updateSodGroupApi,
 } from '#/api';
-
 import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import RoleMultiSelect from '../components/role-multi-select.vue';
@@ -265,60 +264,60 @@ onMounted(fetchList);
       </div>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'role_ids'">
-          {{ record.role_ids.length }}
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        size="middle"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'role_ids'">
+            {{ record.role_ids.length }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" wrap>
+              <Button
+                size="small"
+                type="link"
+                @click="preflight(record as SodGroup)"
+              >
+                预检
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="loadViolations(record as SodGroup)"
+              >
+                违规
+              </Button>
+              <Button
+                v-access:code="'iam:sod:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as SodGroup)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:sod:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleDelete(record as SodGroup)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="preflight(record as SodGroup)"
-            >
-              预检
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="loadViolations(record as SodGroup)"
-            >
-              违规
-            </Button>
-            <Button
-              v-access:code="'iam:sod:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as SodGroup)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:sod:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleDelete(record as SodGroup)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <Modal

@@ -253,41 +253,41 @@ onMounted(loadRoleOptions);
       </div>
 
       <AdminListTable
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="false"
-      row-key="id"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'expires_at'">
-          {{ record.expires_at?.replace('T', ' ').slice(0, 19) || '永久' }}
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="false"
+        row-key="id"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'expires_at'">
+            {{ record.expires_at?.replace('T', ' ').slice(0, 19) || '永久' }}
+          </template>
+          <template v-else-if="column.key === 'created_at'">
+            {{ record.created_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                size="small"
+                type="link"
+                @click="openPermissions(record.subject_id)"
+              >
+                主体权限
+              </Button>
+              <Button
+                v-access:code="'iam:binding:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleUnbind(record as Binding)"
+              >
+                解绑
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'created_at'">
-          {{ record.created_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" class="whitespace-nowrap">
-            <Button
-              size="small"
-              type="link"
-              @click="openPermissions(record.subject_id)"
-            >
-              主体权限
-            </Button>
-            <Button
-              v-access:code="'iam:binding:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleUnbind(record as Binding)"
-            >
-              解绑
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </AdminListTable>
+      </AdminListTable>
     </div>
 
     <FormModal

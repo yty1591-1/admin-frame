@@ -234,39 +234,39 @@ onMounted(fetchList);
       </Space>
 
       <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1500 }"
-      row-key="event_id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'occurred_at'">
-          {{ formatTime((record as AuditEvent).occurred_at) }}
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1500 }"
+        row-key="event_id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'occurred_at'">
+            {{ formatTime((record as AuditEvent).occurred_at) }}
+          </template>
+          <template v-else-if="column.key === 'outcome'">
+            <Tag :color="outcomeColor((record as AuditEvent).outcome)">
+              {{ (record as AuditEvent).outcome }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'trace_id'">
+            <span class="text-xs">{{
+              (record as AuditEvent).trace_id || '—'
+            }}</span>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Button
+              size="small"
+              type="link"
+              @click="openDetail(record as AuditEvent)"
+            >
+              详情
+            </Button>
+          </template>
         </template>
-        <template v-else-if="column.key === 'outcome'">
-          <Tag :color="outcomeColor((record as AuditEvent).outcome)">
-            {{ (record as AuditEvent).outcome }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'trace_id'">
-          <span class="text-xs">{{
-            (record as AuditEvent).trace_id || '—'
-          }}</span>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Button
-            size="small"
-            type="link"
-            @click="openDetail(record as AuditEvent)"
-          >
-            详情
-          </Button>
-        </template>
-      </template>
-    </Table>
+      </Table>
     </div>
 
     <Drawer v-model:open="detailOpen" title="审计事件详情" width="560">
