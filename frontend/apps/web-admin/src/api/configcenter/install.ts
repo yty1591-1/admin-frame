@@ -45,9 +45,10 @@ export type InstallStatusData = InstallState & {
   gaps: InstallGap[];
 };
 
-/** 默认值来源：代码声明 / prod-like 叠加层 / 无默认值。 */
+/** 默认值来源：代码声明 / 环境叠加层 / 无默认值。 */
 export type SchemaDefaultSource =
   | 'code_default'
+  | 'dev_default'
   | 'none'
   | 'prod_default'
   | string;

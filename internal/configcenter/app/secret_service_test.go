@@ -37,6 +37,29 @@ func bytes32(b byte) []byte {
 	return out
 }
 
+func TestSystemAdminSecretSubmitAutoApproves(t *testing.T) {
+	svc, _ := newSecretService(t)
+	ctx := context.Background()
+	admin := app.Actor{
+		SubjectID: "u-super", Channel: "admin",
+		Roles: []string{app.RoleCodeSystemAdmin},
+	}
+	secret, err := svc.CreateSecret(ctx, app.CreateSecretInput{
+		Env: "dev", Namespace: "platform", Name: "platform.demo.hmac_key",
+		Owner: "team-platform", Plaintext: "super-secret-value", Actor: admin,
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+	activated, err := svc.SubmitSecret(ctx, secret.ID, admin)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if activated.Status != domain.SecretStatusActive {
+		t.Fatalf("status = %s, want active", activated.Status)
+	}
+}
+
 func TestSecretLifecycleAndResolve(t *testing.T) {
 	svc, _ := newSecretService(t)
 	ctx := context.Background()

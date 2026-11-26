@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/admin-frame/admin-frame/internal/configcenter/domain"
-	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
 )
@@ -218,14 +218,9 @@ func (s *BootstrapService) emitResetAudit(ctx context.Context, in ResetInput, bo
 	return nil
 }
 
-// resetDefaultFor 解析重置取值：prod-like overlay 优先，其次代码声明默认值。
+// resetDefaultFor 解析重置取值（与播种 / 向导同源：spec.ResolveDefault）。
 func resetDefaultFor(env string, keySpec domain.KeySpec) (value, source string) {
-	if platformconfig.IsProdLikeEnv(env) {
-		if overlay, ok := prodLikeSeedDefaults()[keySpec.Key]; ok && overlay != "" {
-			return overlay, "prod_default"
-		}
-	}
-	return keySpec.Default, "code_default"
+	return spec.ResolveDefault(env, keySpec)
 }
 
 // groupRefs 解析并校验 namespace/key 形式的引用，按域分组。

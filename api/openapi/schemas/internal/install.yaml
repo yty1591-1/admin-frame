@@ -53,7 +53,16 @@ InstallSchemaResponse:
       properties:
         data:
           type: object
-          required: [env, mode, status, blocking_count, blocking_keys, namespaces, fields]
+          required:
+            [
+              env,
+              mode,
+              status,
+              blocking_count,
+              blocking_keys,
+              namespaces,
+              fields,
+            ]
           properties:
             env:
               type: string
@@ -139,7 +148,17 @@ InstallSchemaResponse:
                     description: 命名空间顺序 + 分组顺序 + 组内序号压成的排序键
                   widget:
                     type: string
-                    enum: [text, password, select, switch, number, duration, code, textarea]
+                    enum:
+                      [
+                        text,
+                        password,
+                        select,
+                        switch,
+                        number,
+                        duration,
+                        code,
+                        textarea,
+                      ]
                   value_type:
                     type: string
                     enum: [string, bool, int, duration, json]
@@ -179,12 +198,15 @@ InstallSchemaResponse:
                         type: string
                       source:
                         type: string
-                        enum: [code_default, prod_default, none]
-                        description: 无默认值时 value 为空、source=none（不可与空默认混淆）
+                        enum: [code_default, prod_default, dev_default, none]
+                        description: |
+                          code_default=KeySpec.Default；prod_default=staging/prod 叠加层；
+                          dev_default=local/dev/test 叠加层；none 表示无推荐默认值（value 为空）。
                   secret:
                     type: object
                     description: 仅敏感键存在；不含任何密钥值
-                    required: [algorithm, auto_generate, encoding, min_len, max_len]
+                    required:
+                      [algorithm, auto_generate, encoding, min_len, max_len]
                     properties:
                       algorithm:
                         type: string

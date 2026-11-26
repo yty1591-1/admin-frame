@@ -8,6 +8,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/contextx"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
@@ -160,6 +161,17 @@ type auditParams struct {
 func (b auditBuilder) record(ctx context.Context, recorder ChangeRecorder, p auditParams) error {
 	if recorder == nil {
 		return apperr.Internal("audit recorder is not configured", nil)
+	}
+	if authz.IsSystemAdmin(ctx) {
+		if p.attrs == nil {
+			p.attrs = map[string]string{}
+		}
+		// 调用方已写 sod_bypass 时不覆盖；否则标记超级管理员直写/操作旁路。
+		if _, ok := p.attrs["sod_bypass"]; !ok {
+			if _, ok := p.attrs["approval_bypass"]; !ok {
+				p.attrs["approval_bypass"] = authz.RoleCodeSystemAdmin
+			}
+		}
 	}
 	event, err := b.build(ctx, p)
 	if err != nil {

@@ -61,7 +61,8 @@ func NewConfigLoader(path string) (*config.Loader[Config], error) {
 
 // LoadConfig 从 YAML 文件加载配置，应用默认值与白名单环境变量后校验。
 //
-// 优先级：配置中心快照（若接入）> ADMIN_FRAME_DB_*/REDIS_* > 文件 > 默认值。
+// 优先级：配置中心快照（若接入）> ADMIN_FRAME_DB_* > 文件 > 默认值。
+// Redis 口令等已迁出 env 白名单，改由密钥子域注入。
 // 环境变量无法解析（如非法 duration/bool）时返回错误，不再静默忽略；
 // 错误只包含字段路径与变量名，不含取值（SEC-05）。
 func LoadConfig(path string) (*Config, error) {

@@ -141,6 +141,38 @@ func TestCreateReleaseRejectsInvalidEntries(t *testing.T) {
 	}
 }
 
+func TestSystemAdminSubmitAutoApproves(t *testing.T) {
+	service, repos, emitter := newReleaseService(t)
+	ctx := context.Background()
+	itemID := seedItem(t, repos, 1001, "http.timeout", "10s")
+	release := createDraftRelease(t, service, itemID, "超管自批")
+	admin := app.Actor{
+		SubjectID: "admin-1", ActorType: "user", Channel: "admin", TraceID: "trace-1",
+		Roles: []string{app.RoleCodeSystemAdmin},
+	}
+
+	approved, err := service.Submit(ctx, release.ID, admin)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if approved.Status != domain.ReleaseStatusApproved {
+		t.Fatalf("status = %s, want approved", approved.Status)
+	}
+	if approved.ApprovedBy != admin.SubjectID {
+		t.Fatalf("approved_by = %q, want %q", approved.ApprovedBy, admin.SubjectID)
+	}
+	foundBypass := false
+	for _, event := range emitter.all() {
+		if event.Action == audit.ActionConfigReleaseApprove && event.Attrs["sod_bypass"] == app.RoleCodeSystemAdmin {
+			foundBypass = true
+			break
+		}
+	}
+	if !foundBypass {
+		t.Fatal("approve audit must record sod_bypass=system_admin")
+	}
+}
+
 func TestApproveRules(t *testing.T) {
 	service, repos, _ := newReleaseService(t)
 	ctx := context.Background()

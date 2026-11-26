@@ -359,49 +359,57 @@ func (c *ChangeRequest) DecodePayload(dst any) error {
 	return nil
 }
 
-// Approve 通过审批；审批人必须与申请人不同。
+// Approve 通过审批；默认要求审批人与申请人不同（SoD）。
 //
 // 超过审批时效的单据必须先由 Expire 收敛为 expired，不能再被通过：
 // 审批人看到的载荷可能已与目标聚合格局不一致，迟到的批准等于授权了过期意图。
 func (c *ChangeRequest) Approve(approver, decisionReason string, expectedVersion int64) error {
-	if err := c.ensurePending(approver, expectedVersion); err != nil {
-		return err
-	}
-	if c.IsExpiredAt(nowUTC()) {
-		return errConflict(ErrChangeExpired, "change request %s has expired", c.ID)
-	}
-	if approver == c.RequestedBy {
-		return errForbidden(ErrSelfApproval,
-			"requester %s must not approve their own change request (separation of duties)", approver)
-	}
-	reason, err := normalizeDecisionReason(decisionReason, false)
-	if err != nil {
-		return err
-	}
-	now := nowUTC()
-	c.Status = ChangeStatusApproved
-	c.ApprovedBy = approver
-	c.ApprovedAt = &now
-	c.DecisionReason = reason
-	c.Version++
-	return nil
+	return c.decide(ChangeStatusApproved, approver, decisionReason, expectedVersion, false)
+}
+
+// ApproveAllowingSelf 允许申请人自批（仅供 system_admin 等旁路；须另写 sod_bypass 审计）。
+func (c *ChangeRequest) ApproveAllowingSelf(approver, decisionReason string, expectedVersion int64) error {
+	return c.decide(ChangeStatusApproved, approver, decisionReason, expectedVersion, true)
 }
 
 // Reject 拒绝审批；同样适用职责分离，且必须说明拒绝理由。
 func (c *ChangeRequest) Reject(approver, decisionReason string, expectedVersion int64) error {
+	return c.decide(ChangeStatusRejected, approver, decisionReason, expectedVersion, false)
+}
+
+// RejectAllowingSelf 允许申请人自拒（仅供 system_admin 等旁路；须另写 sod_bypass 审计）。
+func (c *ChangeRequest) RejectAllowingSelf(approver, decisionReason string, expectedVersion int64) error {
+	return c.decide(ChangeStatusRejected, approver, decisionReason, expectedVersion, true)
+}
+
+// decide 收敛通过 / 拒绝的公共校验与状态迁移。
+func (c *ChangeRequest) decide(
+	status ChangeStatus,
+	approver, decisionReason string,
+	expectedVersion int64,
+	allowSelfApproval bool,
+) error {
 	if err := c.ensurePending(approver, expectedVersion); err != nil {
 		return err
 	}
-	if approver == c.RequestedBy {
-		return errForbidden(ErrSelfApproval,
-			"requester %s must not reject their own change request", approver)
+	if status == ChangeStatusApproved && c.IsExpiredAt(nowUTC()) {
+		return errConflict(ErrChangeExpired, "change request %s has expired", c.ID)
 	}
-	reason, err := normalizeDecisionReason(decisionReason, true)
+	if approver == c.RequestedBy && !allowSelfApproval {
+		if status == ChangeStatusRejected {
+			return errForbidden(ErrSelfApproval,
+				"requester %s must not reject their own change request", approver)
+		}
+		return errForbidden(ErrSelfApproval,
+			"requester %s must not approve their own change request (separation of duties)", approver)
+	}
+	requireReason := status == ChangeStatusRejected
+	reason, err := normalizeDecisionReason(decisionReason, requireReason)
 	if err != nil {
 		return err
 	}
 	now := nowUTC()
-	c.Status = ChangeStatusRejected
+	c.Status = status
 	c.ApprovedBy = approver
 	c.ApprovedAt = &now
 	c.DecisionReason = reason

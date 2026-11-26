@@ -41,9 +41,8 @@ func validateEmail(c EmailConfig, prodLike bool) []error {
 	if strings.TrimSpace(c.SMTP.Host) == "" {
 		errs = append(errs, fmt.Errorf("notification.channels.email.smtp.host is required when driver=smtp"))
 	}
-	if strings.TrimSpace(c.SMTP.PasswordEnv) == "" {
-		errs = append(errs, fmt.Errorf("notification.channels.email.smtp.password_env is required when driver=smtp"))
-	}
+	// 密码：优先密钥子域 notification.smtp.password；password_env 仅兼容兜底。
+	// 二者皆空时由装配期 Resolve 失败关闭，避免把「未配密」误判为校验层缺键。
 	if prodLike && c.SMTP.AllowInsecure {
 		errs = append(errs, fmt.Errorf("notification.channels.email.smtp.allow_insecure is forbidden when env is prod/staging"))
 	}

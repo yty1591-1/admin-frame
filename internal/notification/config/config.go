@@ -39,8 +39,8 @@ type ChannelsConfig struct {
 
 // EmailConfig 是邮件渠道配置。
 //
-// driver=memory 时不需要其余字段；driver=smtp 时 from / smtp.host /
-// smtp.password_env 必填，密码本身只从环境变量读取。
+// driver=memory 时不需要其余字段；driver=smtp 时 from / smtp.host 必填。
+// 密码优先 notification.smtp.password 密钥子域；password_env 仅兼容兜底。
 type EmailConfig struct {
 	// Driver memory | smtp | disabled。
 	Driver string `yaml:"driver"`
@@ -64,7 +64,7 @@ type SMTPConfig struct {
 	Auth string `yaml:"auth"`
 	// Username 认证用户名。
 	Username string `yaml:"username"`
-	// PasswordEnv 保存 SMTP 密码的环境变量名；禁止在 YAML 写明文密码。
+	// PasswordEnv 兼容旧部署：环境变量名；优先走密钥子域 notification.smtp.password。
 	PasswordEnv string `yaml:"password_env"`
 	// HELOName EHLO 名称；空则使用主机名。
 	HELOName string `yaml:"helo_name"`
@@ -148,6 +148,18 @@ type FCMConfig struct {
 func (c *NotificationConfig) ApplyDefaults() {
 	if c.Channels.Email.Driver == "" {
 		c.Channels.Email.Driver = DriverMemory
+	}
+	if c.Channels.Email.SMTP.Port == 0 {
+		c.Channels.Email.SMTP.Port = 587
+	}
+	if c.Channels.Email.SMTP.Encryption == "" {
+		c.Channels.Email.SMTP.Encryption = "starttls"
+	}
+	if c.Channels.Email.SMTP.Auth == "" {
+		c.Channels.Email.SMTP.Auth = "plain"
+	}
+	if c.Channels.Email.SMTP.TLSMinVersion == "" {
+		c.Channels.Email.SMTP.TLSMinVersion = "1.2"
 	}
 	if c.Channels.SMS.Driver == "" {
 		c.Channels.SMS.Driver = DriverMemory

@@ -33,7 +33,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # 与首次安装写入的 redis.password（演练固定值）对齐；容器重建后仍须鉴权。
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "prod-rehearsal-redis"]
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:

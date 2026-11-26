@@ -21,12 +21,12 @@ import {
 
 import {
   approveBreakglassApi,
-  getErrorMessage,
   listChangeRequestsApi,
   rejectChangeRequestApi,
   requestBreakglassApi,
   revokeBreakglassApi,
 } from '#/api';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 import FormModal from '../components/form-modal.vue';
 
@@ -168,8 +168,8 @@ async function handleRequest(payload: Record<string, any>) {
     message.success('破玻璃申请已提交，等待另一账号审批');
     requestOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     requestSubmitting.value = false;
   }
@@ -202,8 +202,8 @@ async function submitDecision() {
     message.success('操作成功');
     decideOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -213,12 +213,12 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="限时超级权限：申请本身不授权，需另一账号审批后临时生效"
-    title="破玻璃申请"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <Space>
+          <Button @click="fetchList">刷新</Button>
+        </Space>
         <Button
           v-access:code="'iam:breakglass:request'"
           type="primary"
@@ -226,75 +226,74 @@ onMounted(fetchList);
         >
           申请破玻璃
         </Button>
-        <Button @click="fetchList">刷新</Button>
-      </Space>
-      <p class="text-muted-foreground mt-2 text-xs">
+      </div>
+      <p class="text-muted-foreground mb-3 text-xs">
         关闭 `iam.breakglass.enabled` 时申请会返回 403；审批人与申请人必须不同。
       </p>
-    </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'subject_id'">
-          {{ subjectOf(record as ChangeRequest) }}
-        </template>
-        <template v-else-if="column.key === 'duration'">
-          {{ durationOf(record as ChangeRequest) || '—' }}
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ChangeStatus]">
-            {{ statusText[record.status as ChangeStatus] }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'requested_at'">
-          {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'expires_at'">
-          {{ expiresOf(record as ChangeRequest) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <template v-if="record.status === 'pending'">
+      <Table
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        size="middle"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'subject_id'">
+            {{ subjectOf(record as ChangeRequest) }}
+          </template>
+          <template v-else-if="column.key === 'duration'">
+            {{ durationOf(record as ChangeRequest) || '—' }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ChangeStatus]">
+              {{ statusText[record.status as ChangeStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'requested_at'">
+            {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'expires_at'">
+            {{ expiresOf(record as ChangeRequest) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" wrap>
+              <template v-if="record.status === 'pending'">
+                <Button
+                  v-access:code="'iam:breakglass:approve'"
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'approve')"
+                >
+                  审批通过
+                </Button>
+                <Button
+                  v-access:code="'iam:breakglass:approve'"
+                  danger
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'reject')"
+                >
+                  拒绝
+                </Button>
+              </template>
               <Button
-                v-access:code="'iam:breakglass:approve'"
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'approve')"
-              >
-                审批通过
-              </Button>
-              <Button
+                v-if="record.status === 'applied'"
                 v-access:code="'iam:breakglass:approve'"
                 danger
                 size="small"
                 type="link"
-                @click="openDecision(record as ChangeRequest, 'reject')"
+                @click="openDecision(record as ChangeRequest, 'revoke')"
               >
-                拒绝
+                撤销授权
               </Button>
-            </template>
-            <Button
-              v-if="record.status === 'applied'"
-              v-access:code="'iam:breakglass:approve'"
-              danger
-              size="small"
-              type="link"
-              @click="openDecision(record as ChangeRequest, 'revoke')"
-            >
-              撤销授权
-            </Button>
-          </Space>
+            </Space>
+          </template>
         </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <FormModal
       v-model:open="requestOpen"

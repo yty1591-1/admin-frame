@@ -21,7 +21,6 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tag,
 } from 'ant-design-vue';
 
@@ -39,6 +38,8 @@ import {
   replaceRolePermissionsApi,
   updateRoleApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import ConflictModal from '../../iam/components/conflict-modal.vue';
 import DataScopeEditor from '../../iam/components/data-scope-editor.vue';
@@ -47,33 +48,41 @@ import PermissionPicker from '../../iam/components/permission-picker.vue';
 
 defineOptions({ name: 'SystemRole' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: {
-        allowClear: true,
-        placeholder: '角色码 / 名称',
-      },
-      fieldName: 'keyword',
-      label: '关键字',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '请选择状态',
-      },
-      fieldName: 'status',
-      label: '状态',
+    handleSubmit: async () => {
+      handleSearch();
     },
-  ],
-  showDefaultActions: false,
-});
+    schema: [
+      {
+        component: 'Input',
+        componentProps: {
+          allowClear: true,
+          placeholder: '输入关键词',
+        },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<Role[]>([]);
@@ -89,12 +98,12 @@ const pagination = reactive({
 
 const columns: TableColumnsType = [
   { dataIndex: 'code', key: 'code', title: '角色码', width: 180 },
-  { dataIndex: 'name', key: 'name', title: '角色名称' },
+  { dataIndex: 'name', key: 'name', title: '角色名称', width: 160 },
   { dataIndex: 'role_type', key: 'role_type', title: '类型', width: 100 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 90 },
   { dataIndex: 'parent_id', key: 'parent_id', title: '父角色', width: 180 },
   { dataIndex: 'updated_at', key: 'updated_at', title: '更新时间', width: 190 },
-  { key: 'actions', title: '操作', width: 320 },
+  { key: 'actions', title: '操作', width: 260 },
 ];
 
 const roleTypeMeta: Record<string, { color: string; text: string }> = {
@@ -241,11 +250,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -266,9 +270,7 @@ function handleWriteError(
       targetId,
     });
     conflictOpen.value = true;
-    return;
   }
-  message.error(getErrorMessage(error));
 }
 
 async function handleCreate(payload: Record<string, any>) {
@@ -486,8 +488,8 @@ async function submitApproval(payload: {
     });
     message.success('已提交审批单');
     conflictOpen.value = false;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     conflictSubmitting.value = false;
   }
@@ -503,95 +505,89 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="RBAC 角色、权限与数据范围；写操作受权限码与审批模式约束"
-    title="角色管理"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="createOpen = true">
           新建角色
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'role_type'">
-          <Tag :color="roleTypeMeta[record.role_type]?.color">
-            {{ roleTypeMeta[record.role_type]?.text }}
-          </Tag>
+      <AdminListTable
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'role_type'">
+            <Tag :color="roleTypeMeta[record.role_type]?.color">
+              {{ roleTypeMeta[record.role_type]?.text }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'updated_at'">
+            {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                v-access:code="'iam:role:grant'"
+                :disabled="record.role_type === 'breakglass'"
+                size="small"
+                type="link"
+                @click="openGrant(record as Role)"
+              >
+                授权
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                size="small"
+                type="link"
+                @click="openEdit(record as Role)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                size="small"
+                type="link"
+                @click="openConstraints(record as Role)"
+              >
+                约束
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openClone(record as Role)"
+              >
+                克隆
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                :disabled="isReadonlyRole(record as Role)"
+                danger
+                size="small"
+                type="link"
+                @click="openDelete(record as Role)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'updated_at'">
-          {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <Button
-              v-access:code="'iam:role:grant'"
-              :disabled="record.role_type === 'breakglass'"
-              size="small"
-              type="link"
-              @click="openGrant(record as Role)"
-            >
-              授权
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              size="small"
-              type="link"
-              @click="openEdit(record as Role)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              size="small"
-              type="link"
-              @click="openConstraints(record as Role)"
-            >
-              约束
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openClone(record as Role)"
-            >
-              克隆
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              :disabled="isReadonlyRole(record as Role)"
-              danger
-              size="small"
-              type="link"
-              @click="openDelete(record as Role)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

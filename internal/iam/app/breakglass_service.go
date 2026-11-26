@@ -11,6 +11,7 @@ import (
 	"github.com/admin-frame/admin-frame/internal/iam/domain"
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/pkg/id"
 )
 
@@ -18,8 +19,8 @@ import (
 //
 // 设计要点（docs/rbac-iam.md §8.5）：
 //   - 申请只是一张 action=breakglass_request 的审批单，本身不产生任何授权；
-//   - 审批人与申请人必须不同（复用 ChangeRequest 的 SoD），审批通过后立即应用：
-//     创建一条 expires_at ≤ 2h 的绑定到系统 breakglass 角色；
+//   - 审批人与申请人默认必须不同（复用 ChangeRequest 的 SoD）；system_admin 可自批并记 sod_bypass；
+//     审批通过后立即应用：创建一条 expires_at ≤ 2h 的绑定到系统 breakglass 角色；
 //   - 超级权限不在权限目录中，只由快照在绑定期内展开 "*"；
 //   - 申请 / 审批 / 撤销全部写 rbac.breakglass 审计（AUD-01）。
 type BreakglassService struct {
@@ -178,9 +179,11 @@ func (s *BreakglassService) Approve(ctx context.Context, cmd ApproveBreakglassCo
 			return applyErr
 		}
 		applied = result
-		return s.record(ctx, result, "approve", cmd.Approver, map[string]string{
-			attrBindingID: result.TargetID,
-		})
+		extra := map[string]string{attrBindingID: result.TargetID}
+		if authz.IsSystemAdmin(ctx) && cmd.Approver == result.RequestedBy {
+			extra["sod_bypass"] = authz.RoleCodeSystemAdmin
+		}
+		return s.record(ctx, result, "approve", cmd.Approver, extra)
 	}); err != nil {
 		return nil, err
 	}

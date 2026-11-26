@@ -16,7 +16,6 @@ import {
   message,
   Modal,
   Space,
-  Table,
   Tag,
 } from 'ant-design-vue';
 
@@ -30,6 +29,8 @@ import {
   listBindingsApi,
   listRolesApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 import ConflictModal from '../components/conflict-modal.vue';
 import FormModal from '../components/form-modal.vue';
@@ -142,9 +143,7 @@ function handleWriteError(
       targetId,
     };
     conflictOpen.value = true;
-    return;
   }
-  message.error(getErrorMessage(error));
 }
 
 async function handleCreate(payload: Record<string, any>) {
@@ -219,8 +218,8 @@ async function submitApproval(payload: {
     });
     message.success('已提交审批单');
     conflictOpen.value = false;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     conflictSubmitting.value = false;
   }
@@ -230,68 +229,66 @@ onMounted(loadRoleOptions);
 </script>
 
 <template>
-  <Page
-    description="主体与角色的绑定关系；支持按角色或按主体查询"
-    title="授权绑定"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space wrap>
-        <RoleSelect
-          :model-value="roleId"
-          class="w-64"
-          placeholder="按角色查询"
-          @update:model-value="roleId = $event"
-        />
-        <Input
-          v-model:value="subjectId"
-          class="w-64"
-          placeholder="按主体 ID 查询（staff）"
-        />
-        <Button type="primary" @click="fetchList">查询</Button>
-        <Button @click="fetchList">刷新</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <Space wrap>
+          <RoleSelect
+            :model-value="roleId"
+            class="w-64"
+            placeholder="按角色查询"
+            @update:model-value="roleId = $event"
+          />
+          <Input
+            v-model:value="subjectId"
+            class="w-64"
+            placeholder="按主体 ID 查询（staff）"
+          />
+          <Button type="primary" @click="fetchList">查询</Button>
+          <Button @click="fetchList">刷新</Button>
+        </Space>
         <Button v-access:code="'iam:binding:write'" @click="createOpen = true">
           新建绑定
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="false"
-      row-key="id"
-      size="middle"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'expires_at'">
-          {{ record.expires_at?.replace('T', ' ').slice(0, 19) || '永久' }}
+      <AdminListTable
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="false"
+        row-key="id"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'expires_at'">
+            {{ record.expires_at?.replace('T', ' ').slice(0, 19) || '永久' }}
+          </template>
+          <template v-else-if="column.key === 'created_at'">
+            {{ record.created_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                size="small"
+                type="link"
+                @click="openPermissions(record.subject_id)"
+              >
+                主体权限
+              </Button>
+              <Button
+                v-access:code="'iam:binding:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleUnbind(record as Binding)"
+              >
+                解绑
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'created_at'">
-          {{ record.created_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4">
-            <Button
-              size="small"
-              type="link"
-              @click="openPermissions(record.subject_id)"
-            >
-              主体权限
-            </Button>
-            <Button
-              v-access:code="'iam:binding:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleUnbind(record as Binding)"
-            >
-              解绑
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

@@ -193,6 +193,8 @@ func (s *SecretService) CreateSecret(ctx context.Context, in CreateSecretInput) 
 }
 
 // SubmitSecret 送审：draft/rejected → pending_review。
+//
+// 超级管理员提交后自动自批，并写 sod_bypass 审计；普通主体仍须另一人审批。
 func (s *SecretService) SubmitSecret(ctx context.Context, secretID int64, actor Actor) (domain.Secret, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Secret{}, err
@@ -213,7 +215,15 @@ func (s *SecretService) SubmitSecret(ctx context.Context, secretID int64, actor 
 	if err := s.secrets.UpdateCAS(ctx, secret, expected); err != nil {
 		return domain.Secret{}, mapSecretErr(err)
 	}
-	return secret, nil
+	if !actor.IsSystemAdmin() {
+		return secret, nil
+	}
+	return s.ApproveSecret(ctx, ApproveSecretInput{
+		ID:       secret.ID,
+		Decision: domain.DecisionApproved,
+		Comment:  "system_admin: skip dual approval",
+		Actor:    actor,
+	})
 }
 
 // ApproveSecretInput 审批入参。
@@ -239,7 +249,8 @@ func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput
 	if !secret.CanApprove() {
 		return domain.Secret{}, apperr.Conflict("secret is not pending review")
 	}
-	if secret.SubmittedBy == in.Actor.SubjectID {
+	selfReview := secret.SubmittedBy == in.Actor.SubjectID
+	if selfReview && !in.Actor.IsSystemAdmin() {
 		return domain.Secret{}, apperr.Forbidden("submitter cannot review their own secret change")
 	}
 	if secret.PendingAction != "" {
@@ -263,10 +274,12 @@ func (s *SecretService) ApproveSecret(ctx context.Context, in ApproveSecretInput
 		ID: reviewID, SecretID: secret.ID, Action: domain.SecretReviewCreate,
 		Reviewer: in.Actor.SubjectID, Decision: in.Decision, Comment: in.Comment, CreatedAt: now,
 	})
+	attrs := map[string]string{"name": secret.Name, "decision": string(in.Decision)}
+	if selfReview && in.Actor.IsSystemAdmin() {
+		attrs["sod_bypass"] = RoleCodeSystemAdmin
+	}
 	if err := s.requireAudit(ctx, in.Actor, audit.ActionConfigSecretCreate, ResourceTypeSecret,
-		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, string(in.Decision), map[string]string{
-			"name": secret.Name, "decision": string(in.Decision),
-		}); err != nil {
+		strconv.FormatInt(secret.ID, 10), audit.OutcomeSuccess, string(in.Decision), attrs); err != nil {
 		return domain.Secret{}, err
 	}
 	return secret, nil
@@ -479,7 +492,13 @@ func (s *SecretService) RotateSecret(ctx context.Context, in RotateSecretInput) 
 		}); err != nil {
 		return domain.Secret{}, err
 	}
-	return secret, nil
+	if !in.Actor.IsSystemAdmin() {
+		return secret, nil
+	}
+	return s.ApproveSecret(ctx, ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved,
+		Comment: "system_admin: skip dual approval", Actor: in.Actor,
+	})
 }
 
 // RevokeSecret 提交吊销：进入待审，审批通过后再生效。
@@ -511,7 +530,13 @@ func (s *SecretService) RevokeSecret(ctx context.Context, secretID int64, commen
 		}); err != nil {
 		return domain.Secret{}, err
 	}
-	return secret, nil
+	if !actor.IsSystemAdmin() {
+		return secret, nil
+	}
+	return s.ApproveSecret(ctx, ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved,
+		Comment: "system_admin: skip dual approval", Actor: actor,
+	})
 }
 
 // ActivateVersionInput 是激活历史版本入参（CC-R-14：须破玻璃）。
@@ -635,7 +660,20 @@ func (s *SecretService) CreateGrant(ctx context.Context, in CreateGrantInput) (d
 		}); err != nil {
 		return domain.SecretGrant{}, err
 	}
-	return grant, nil
+	if !in.Actor.IsSystemAdmin() {
+		return grant, nil
+	}
+	if _, err := s.ApproveSecret(ctx, ApproveSecretInput{
+		ID: secret.ID, Decision: domain.DecisionApproved,
+		Comment: "system_admin: skip dual approval", Actor: in.Actor,
+	}); err != nil {
+		return domain.SecretGrant{}, err
+	}
+	updated, err := s.grants.GetByID(ctx, grant.ID)
+	if err != nil {
+		return domain.SecretGrant{}, mapSecretErr(err)
+	}
+	return updated, nil
 }
 
 // RevokeGrant 收回授权。

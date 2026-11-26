@@ -23,7 +23,6 @@ import {
 import {
   createTemplateApi,
   deleteTemplateApi,
-  getErrorMessage,
   getTemplateDriftApi,
   instantiateTemplateApi,
   listTemplatesApi,
@@ -31,6 +30,8 @@ import {
   syncTemplateApi,
   updateTemplateApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import DataScopeEditor from '../components/data-scope-editor.vue';
 import FormModal from '../components/form-modal.vue';
@@ -38,43 +39,51 @@ import PermissionPicker from '../components/permission-picker.vue';
 
 defineOptions({ name: 'IamTemplate' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: 'A 端', value: 'admin' },
-          { label: 'B 端', value: 'biz' },
-        ],
-        placeholder: '端别',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
+    },
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: 'A 端', value: 'admin' },
+            { label: 'B 端', value: 'biz' },
+          ],
+          placeholder: '端别',
+        },
+        fieldName: 'channel',
+        label: '端别',
       },
-      fieldName: 'channel',
-      label: '端别',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '状态',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '模板码 / 名称' },
-      fieldName: 'keyword',
-      label: '关键字',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<RoleTemplate[]>([]);
@@ -88,12 +97,12 @@ const pagination = reactive({
 
 const columns: TableColumnsType = [
   { dataIndex: 'code', key: 'code', title: '模板码', width: 190 },
-  { dataIndex: 'name', key: 'name', title: '名称' },
+  { dataIndex: 'name', key: 'name', title: '名称', width: 160 },
   { dataIndex: 'channel', key: 'channel', title: '端别', width: 90 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 90 },
   { dataIndex: 'version', key: 'version', title: '版本', width: 80 },
   { dataIndex: 'updated_at', key: 'updated_at', title: '更新时间', width: 190 },
-  { key: 'actions', title: '操作', width: 360 },
+  { key: 'actions', title: '操作', width: 420 },
 ];
 
 const createOpen = ref(false);
@@ -194,11 +203,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -219,8 +223,8 @@ async function handleCreate(payload: Record<string, any>) {
     message.success('模板已创建，请继续配置权限基线');
     createOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -241,8 +245,8 @@ async function handleEdit(payload: Record<string, any>) {
     message.success('模板已更新');
     editOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     editSubmitting.value = false;
   }
@@ -278,8 +282,8 @@ async function saveGrant() {
     message.success('模板权限基线已保存');
     grantOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     grantSubmitting.value = false;
   }
@@ -292,8 +296,8 @@ async function openDrift(item: RoleTemplate) {
   try {
     const result = await getTemplateDriftApi(item.id);
     driftRows.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     driftLoading.value = false;
   }
@@ -315,14 +319,14 @@ async function handleSync(item: RoleTemplate) {
           });
           message.success(`已同步 ${result.total} 个实例`);
           await fetchList();
-        } catch (error) {
-          message.error(getErrorMessage(error));
+        } catch {
+          // 错误已由全局请求拦截器提示
         }
       },
       title: '同步模板到实例',
     });
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -347,8 +351,8 @@ async function handleInstantiate(payload: Record<string, any>) {
     message.success('角色已按模板实例化');
     instantiateOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     instantiateSubmitting.value = false;
   }
@@ -367,8 +371,8 @@ function handleDelete(item: RoleTemplate) {
         });
         message.success('模板已删除');
         await fetchList();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '删除角色模板',
@@ -379,98 +383,92 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="平台定义权限基线，商户或平台按模板实例化角色，并可查看漂移与同步"
-    title="角色模板"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="openCreate">
           新建模板
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'channel'">
-          <Tag :color="record.channel === 'admin' ? 'blue' : 'green'">
-            {{ record.channel === 'admin' ? 'A 端' : 'B 端' }}
-          </Tag>
+      <AdminListTable
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'channel'">
+            <Tag :color="record.channel === 'admin' ? 'blue' : 'green'">
+              {{ record.channel === 'admin' ? 'A 端' : 'B 端' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'updated_at'">
+            {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
+              <Button
+                v-access:code="'iam:role:grant'"
+                size="small"
+                type="link"
+                @click="openGrant(record as RoleTemplate)"
+              >
+                权限基线
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="openDrift(record as RoleTemplate)"
+              >
+                漂移
+              </Button>
+              <Button
+                v-access:code="'iam:role:grant'"
+                size="small"
+                type="link"
+                @click="handleSync(record as RoleTemplate)"
+              >
+                同步
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openInstantiate(record as RoleTemplate)"
+              >
+                实例化
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as RoleTemplate)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:role:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleDelete(record as RoleTemplate)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'updated_at'">
-          {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <Button
-              v-access:code="'iam:role:grant'"
-              size="small"
-              type="link"
-              @click="openGrant(record as RoleTemplate)"
-            >
-              权限基线
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="openDrift(record as RoleTemplate)"
-            >
-              漂移
-            </Button>
-            <Button
-              v-access:code="'iam:role:grant'"
-              size="small"
-              type="link"
-              @click="handleSync(record as RoleTemplate)"
-            >
-              同步
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openInstantiate(record as RoleTemplate)"
-            >
-              实例化
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as RoleTemplate)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:role:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleDelete(record as RoleTemplate)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

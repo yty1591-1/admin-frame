@@ -75,6 +75,28 @@ func TestSnapshotHasPermission(t *testing.T) {
 	}
 }
 
+// TestSnapshotHasRoleAndSystemAdmin 验证角色精确匹配与 context 旁路。
+func TestSnapshotHasRoleAndSystemAdmin(t *testing.T) {
+	snapshot := testSnapshot()
+	if !snapshot.HasRole("merchant_owner") || snapshot.HasRole("system_admin") {
+		t.Fatalf("roles=%v", snapshot.Roles)
+	}
+	if snapshot.IsSystemAdmin() {
+		t.Fatal("non-admin snapshot must not be system admin")
+	}
+	admin := authz.Snapshot{Roles: []string{authz.RoleCodeSystemAdmin}}
+	if !admin.IsSystemAdmin() || !admin.HasRole(authz.RoleCodeSystemAdmin) {
+		t.Fatal("system_admin role must match")
+	}
+	if authz.IsSystemAdmin(context.Background()) || authz.HasRole(context.Background(), "ops") {
+		t.Fatal("empty context must deny role checks")
+	}
+	ctx := authz.WithSnapshot(context.Background(), admin)
+	if !authz.IsSystemAdmin(ctx) || !authz.HasRole(ctx, authz.RoleCodeSystemAdmin) {
+		t.Fatal("context with system_admin must pass")
+	}
+}
+
 // TestSnapshotScopeFor 验证资源精确命中与 * 兜底。
 func TestSnapshotScopeFor(t *testing.T) {
 	snapshot := testSnapshot()

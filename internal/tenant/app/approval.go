@@ -8,6 +8,7 @@ import (
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
 	"github.com/admin-frame/admin-frame/internal/shared/audit"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 )
 
@@ -108,14 +109,18 @@ func (s *Service) recordApproval(ctx context.Context, in ApprovalInput, action d
 		if deriveErr != nil {
 			return deriveErr
 		}
+		attrs := approvalAttrs(action)
 		if checkErr := checkApprovalAction(action, latest, event.ActorID); checkErr != nil {
-			return checkErr
+			if !errors.Is(checkErr, domain.ErrApprovalSelfReview) || !authz.IsSystemAdmin(txCtx) {
+				return checkErr
+			}
+			attrs["sod_bypass"] = authz.RoleCodeSystemAdmin
 		}
 		if appendErr := s.approvals.AppendApproval(txCtx, event); appendErr != nil {
 			return appendErr
 		}
 		if emitErr := s.emitWithAttrs(txCtx, in.Actor, approvalActionName(action), current,
-			audit.OutcomeSuccess, event.Note, approvalAttrs(action)); emitErr != nil {
+			audit.OutcomeSuccess, event.Note, attrs); emitErr != nil {
 			return emitErr
 		}
 		tenant = current

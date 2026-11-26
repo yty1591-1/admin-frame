@@ -18,7 +18,8 @@ import (
 //
 // 空 namespace：按代码 key spec 生成 baseline Release 并直接生效。
 // 已有指针：仅补齐「有默认值且尚未进生效快照」的声明键，生成 reconcile
-// Release 并切换指针；不覆盖已有键值。
+// Release 并切换指针；普通路径不覆盖已有键值。
+// Repair=true 且 Overrides 含该键时，写新 ItemVersion 并发布 supersede Release（ADR-0018）。
 type BootstrapService struct {
 	items    domain.ItemRepository
 	releases domain.ReleaseRepository
@@ -86,7 +87,7 @@ type BootstrapResult struct {
 //
 // 幂等：无缺失键时不新增 Release、不覆盖已有值。
 // 敏感键与解析后仍无取值的键不播种，登记到 SkippedKeys。
-// prod/staging 优先使用 prodLikeSeedDefaults 叠加层（CONFIG_STANDARDS §4）。
+// 默认值按环境经 spec.ResolveDefault 解析（CONFIG_STANDARDS §4）。
 func (s *BootstrapService) EnsureBaseline(ctx context.Context, in BootstrapInput) (BootstrapResult, error) {
 	if err := requireActor(in.Actor); err != nil {
 		return BootstrapResult{}, err
@@ -187,6 +188,7 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 		ReleaseNo: pointer.Version,
 	}
 	added := make([]domain.ReleaseItem, 0)
+	replaced := make(map[string]domain.ReleaseItem)
 	for _, keySpec := range specs {
 		seedValue := resolveSeedValue(in.Env, keySpec, in.Overrides)
 		if keySpec.Sensitive || seedValue == "" {
@@ -195,11 +197,38 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 			}
 			continue
 		}
-		if _, ok := inRelease[keySpec.Key]; ok {
+		_, exists := inRelease[keySpec.Key]
+		_, hasOverride := in.Overrides[keySpec.Key]
+		// 普通 reconcile 不覆盖已有键；repair 轮次对 Overrides 内的键写新版本（ADR-0018）。
+		repairOverride := in.Repair && hasOverride && strings.TrimSpace(in.Overrides[keySpec.Key]) != ""
+		if exists && !repairOverride {
 			continue
 		}
 		item, getErr := s.items.GetByKey(ctx, in.Env, in.Namespace, keySpec.Key)
 		switch {
+		case getErr == nil && exists && in.Repair && hasOverride:
+			nextVersion := item.CurrentVersion + 1
+			version, buildErr := buildVersion(s.ids, item, nextVersion, seedValue,
+				"install-repair", in.Actor.SubjectID, now)
+			if buildErr != nil {
+				return BootstrapResult{}, buildErr
+			}
+			if appendErr := s.items.AppendVersion(ctx, version); appendErr != nil {
+				return BootstrapResult{}, translate(appendErr)
+			}
+			updated := item
+			updated.CurrentVersion = nextVersion
+			updated.Version = item.Version + 1
+			updated.UpdatedBy = in.Actor.SubjectID
+			updated.UpdatedAt = now
+			if uerr := s.items.UpdateCAS(ctx, updated, item.Version); uerr != nil {
+				return BootstrapResult{}, translate(uerr)
+			}
+			replaced[keySpec.Key] = domain.ReleaseItem{
+				ItemID: item.ID, ItemVersion: nextVersion,
+				ConfigKey: item.Key, ValueHash: version.ValueHash,
+			}
+			continue
 		case getErr == nil:
 			// 键已存在但未进生效快照：按当前版本并入。
 		case errors.Is(getErr, domain.ErrNotFound):
@@ -226,13 +255,20 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 			ConfigKey: item.Key, ValueHash: version.ValueHash,
 		})
 	}
-	if len(added) == 0 {
+	if len(added) == 0 && len(replaced) == 0 {
 		return result, nil
 	}
 
 	merged := make([]domain.ReleaseItem, 0, len(activeItems)+len(added))
-	merged = append(merged, activeItems...)
+	for _, entry := range activeItems {
+		if repl, ok := replaced[entry.ConfigKey]; ok {
+			merged = append(merged, repl)
+			continue
+		}
+		merged = append(merged, entry)
+	}
 	merged = append(merged, added...)
+	itemCount := len(added) + len(replaced)
 
 	release, err := s.buildSeedRelease(ctx, in, merged, now, seedReleaseName(in, false),
 		seedReleaseDescription(in, false))
@@ -250,13 +286,13 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 		pointer.Version, release.ID, now); err != nil {
 		return BootstrapResult{}, translate(err)
 	}
-	if err := s.emitBootstrapAudit(ctx, in, release, len(added), result.SkippedKeys,
+	if err := s.emitBootstrapAudit(ctx, in, release, itemCount, result.SkippedKeys,
 		seedAuditMode(in, "reconcile")); err != nil {
 		return BootstrapResult{}, err
 	}
 
 	result.Seeded = true
-	result.ItemCount = len(added)
+	result.ItemCount = itemCount
 	result.ReleaseID = release.ID
 	result.ReleaseNo = release.ReleaseNo
 	return result, nil
@@ -451,6 +487,11 @@ func (s *BootstrapService) MissingRequired(ctx context.Context, env string) ([]R
 		return nil, err
 	}
 	gaps = append(gaps, storageGaps...)
+	infraGaps, err := s.missingInfraGaps(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	gaps = append(gaps, infraGaps...)
 	return gaps, nil
 }
 
@@ -463,7 +504,32 @@ func (s *BootstrapService) missingStorageGaps(ctx context.Context, env string) (
 	if !hasRelease {
 		return nil, nil
 	}
-	refs := spec.MissingStorageRefs(values)
+	return refsToGaps(spec.MissingStorageRefs(values), spec.GapReasonMissingInSnapshot), nil
+}
+
+// missingInfraGaps 把 SMTP 等条件必填仍缺的非敏感键记为安装阻塞键。
+func (s *BootstrapService) missingInfraGaps(ctx context.Context, env string) ([]RequiredGap, error) {
+	merged := make(map[string]string)
+	for _, namespace := range []string{spec.NamespacePlatform, spec.NamespaceNotification} {
+		values, hasRelease, err := s.activeValues(ctx, env, namespace)
+		if err != nil {
+			return nil, err
+		}
+		if !hasRelease {
+			continue
+		}
+		for key, value := range values {
+			merged[key] = value
+		}
+	}
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	return refsToGaps(spec.MissingInfraRefs(merged), spec.GapReasonMissingInSnapshot), nil
+}
+
+// refsToGaps 把 namespace/key 列表转成 RequiredGap。
+func refsToGaps(refs []string, reason string) []RequiredGap {
 	out := make([]RequiredGap, 0, len(refs))
 	for _, ref := range refs {
 		namespace, key, ok := strings.Cut(ref, "/")
@@ -471,10 +537,10 @@ func (s *BootstrapService) missingStorageGaps(ctx context.Context, env string) (
 			continue
 		}
 		out = append(out, RequiredGap{
-			Namespace: namespace, Key: key, Reason: "missing_in_snapshot",
+			Namespace: namespace, Key: key, Reason: reason,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // activeKeys 返回 namespace 生效发布内的键集合；hasRelease=false 表示该域尚无生效发布。
@@ -489,6 +555,24 @@ func (s *BootstrapService) activeKeys(ctx context.Context, env, namespace string
 		present[key] = struct{}{}
 	}
 	return present, true, nil
+}
+
+// MergedActiveValues 合并各 namespace 生效快照键值，供条件 Gaps / 连通性探测使用。
+func (s *BootstrapService) MergedActiveValues(ctx context.Context, env string) (map[string]string, error) {
+	merged := make(map[string]string)
+	for _, namespace := range s.specs.Namespaces() {
+		values, hasRelease, err := s.activeValues(ctx, env, namespace)
+		if err != nil {
+			return nil, err
+		}
+		if !hasRelease {
+			continue
+		}
+		for key, value := range values {
+			merged[key] = value
+		}
+	}
+	return merged, nil
 }
 
 // activeValues 返回 namespace 生效发布的键值；hasRelease=false 表示该域尚无生效发布。

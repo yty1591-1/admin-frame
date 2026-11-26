@@ -24,41 +24,49 @@ import {
 import {
   createSodGroupApi,
   deleteSodGroupApi,
-  getErrorMessage,
   listSodGroupsApi,
   listSodViolationsApi,
   preflightSodGroupApi,
   updateSodGroupApi,
 } from '#/api';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import RoleMultiSelect from '../components/role-multi-select.vue';
 
 defineOptions({ name: 'IamSod' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '编码 / 名称' },
-      fieldName: 'keyword',
-      label: '关键字',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '状态',
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键字',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<SodGroup[]>([]);
@@ -124,11 +132,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -188,8 +191,8 @@ async function saveForm() {
     message.success('互斥组已保存');
     formOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     formSubmitting.value = false;
   }
@@ -208,8 +211,8 @@ function handleDelete(item: SodGroup) {
         });
         message.success('互斥组已删除');
         await fetchList();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '删除互斥组',
@@ -226,8 +229,8 @@ async function preflight(item: SodGroup) {
       role_ids: item.role_ids,
     });
     violations.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     violationsLoading.value = false;
   }
@@ -240,8 +243,8 @@ async function loadViolations(item: SodGroup) {
   try {
     const result = await listSodViolationsApi(item.id);
     violations.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     violationsLoading.value = false;
   }
@@ -251,76 +254,71 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="互斥角色组（SoD）：同一主体同时持有的互斥角色不得超过阈值"
-    title="互斥角色组"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:sod:write'" @click="openCreate">
           新建互斥组
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'role_ids'">
-          {{ record.role_ids.length }}
+      <Table
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        size="middle"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'role_ids'">
+            {{ record.role_ids.length }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" wrap>
+              <Button
+                size="small"
+                type="link"
+                @click="preflight(record as SodGroup)"
+              >
+                预检
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="loadViolations(record as SodGroup)"
+              >
+                违规
+              </Button>
+              <Button
+                v-access:code="'iam:sod:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as SodGroup)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:sod:write'"
+                danger
+                size="small"
+                type="link"
+                @click="handleDelete(record as SodGroup)"
+              >
+                删除
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="preflight(record as SodGroup)"
-            >
-              预检
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="loadViolations(record as SodGroup)"
-            >
-              违规
-            </Button>
-            <Button
-              v-access:code="'iam:sod:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as SodGroup)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:sod:write'"
-              danger
-              size="small"
-              type="link"
-              @click="handleDelete(record as SodGroup)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <Modal
       v-model:open="formOpen"

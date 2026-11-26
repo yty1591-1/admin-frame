@@ -156,6 +156,9 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, in CreateReleaseInpu
 }
 
 // Submit 将草稿提交审批（draft → pending_review）。
+//
+// 超级管理员（system_admin）提交后自动自批为 approved，并写 sod_bypass 审计；
+// 普通主体仍须另一人审批。
 func (s *ReleaseService) Submit(ctx context.Context, releaseID int64, actor Actor) (domain.Release, error) {
 	if err := requireActor(actor); err != nil {
 		return domain.Release{}, err
@@ -180,7 +183,15 @@ func (s *ReleaseService) Submit(ctx context.Context, releaseID int64, actor Acto
 	release.Status = domain.ReleaseStatusPendingReview
 	release.SubmittedBy = actor.SubjectID
 	release.UpdatedAt = now
-	return release, nil
+	if !actor.IsSystemAdmin() {
+		return release, nil
+	}
+	return s.Approve(ctx, ApproveInput{
+		ReleaseID: release.ID,
+		Decision:  domain.DecisionApproved,
+		Comment:   "system_admin: skip dual approval",
+		Actor:     actor,
+	})
 }
 
 // ApproveInput 是审批入参。
@@ -209,7 +220,8 @@ func (s *ReleaseService) Approve(ctx context.Context, in ApproveInput) (domain.R
 	if release.SubmittedBy == "" {
 		return domain.Release{}, apperr.Conflict("release has no submitter recorded")
 	}
-	if release.SubmittedBy == in.Actor.SubjectID {
+	selfReview := release.SubmittedBy == in.Actor.SubjectID
+	if selfReview && !in.Actor.IsSystemAdmin() {
 		return domain.Release{}, apperr.Forbidden("submitter cannot review their own release")
 	}
 	if in.Decision == domain.DecisionRejected && strings.TrimSpace(in.Comment) == "" {
@@ -244,12 +256,15 @@ func (s *ReleaseService) Approve(ctx context.Context, in ApproveInput) (domain.R
 		target, in.Actor.SubjectID, now); err != nil {
 		return domain.Release{}, translate(err)
 	}
+	attrs := map[string]string{
+		"release_no": fmt.Sprintf("%d", release.ReleaseNo),
+		"decision":   string(in.Decision),
+	}
+	if selfReview && in.Actor.IsSystemAdmin() {
+		attrs["sod_bypass"] = RoleCodeSystemAdmin
+	}
 	if err := s.audit.emit(ctx, in.Actor, audit.ActionConfigReleaseApprove, ResourceTypeRelease,
-		releaseResourceID(release), audit.OutcomeSuccess, "",
-		map[string]string{
-			"release_no": fmt.Sprintf("%d", release.ReleaseNo),
-			"decision":   string(in.Decision),
-		}); err != nil {
+		releaseResourceID(release), audit.OutcomeSuccess, "", attrs); err != nil {
 		return domain.Release{}, apperr.Internal("emit config audit failed", err)
 	}
 

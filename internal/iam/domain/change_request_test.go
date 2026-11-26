@@ -222,6 +222,16 @@ func TestApproveEnforcesSeparationOfDuties(t *testing.T) {
 	}
 }
 
+func TestApproveAllowingSelfBypassesSeparationOfDuties(t *testing.T) {
+	request := mustNewChangeRequest(t, nil)
+	if err := request.ApproveAllowingSelf("requester-1", "", 1); err != nil {
+		t.Fatalf("ApproveAllowingSelf: %v", err)
+	}
+	if !request.IsApproved() || request.ApprovedBy != "requester-1" {
+		t.Fatalf("status=%s approved_by=%s", request.Status, request.ApprovedBy)
+	}
+}
+
 func TestApproveHappyPathAndIdempotency(t *testing.T) {
 	request := mustNewChangeRequest(t, nil)
 	if err := request.Approve("approver-1", "", 1); err != nil {

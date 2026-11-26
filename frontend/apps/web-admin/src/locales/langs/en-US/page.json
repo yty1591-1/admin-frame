@@ -5,26 +5,68 @@
   "profile": {
     "title": "Profile"
   },
+  "tenant": {
+    "title": "Tenants",
+    "list": "Tenant Management"
+  },
+  "identity": {
+    "title": "Identity",
+    "account": "Admin Accounts",
+    "m2m": "Machine Identity",
+    "scim": "Directory Sync"
+  },
+  "access": {
+    "title": "Access Control",
+    "role": "Roles",
+    "binding": "Role Bindings",
+    "template": "Role Templates",
+    "permission": "Permission Catalog",
+    "check": "Authorization Check"
+  },
+  "governance": {
+    "title": "Access Governance",
+    "change": "Change Requests",
+    "sod": "Segregation of Duties",
+    "breakglass": "Emergency Access"
+  },
+  "config": {
+    "title": "Config & Release",
+    "items": "Config Items",
+    "releases": "Releases",
+    "secrets": "Secrets"
+  },
+  "messaging": {
+    "title": "Messaging",
+    "notifications": "Notifications",
+    "templates": "Templates"
+  },
+  "audit": {
+    "title": "Compliance Audit",
+    "events": "Audit Events",
+    "exports": "Export Jobs"
+  },
   "system": {
     "title": "System",
     "role": "Roles",
-    "menu": "Menus",
-    "audit": "Audit Log",
-    "config": "Config Center",
+    "menu": "Menu Resources",
+    "audit": "Audit Events",
+    "config": "Config & Release",
     "configItems": "Config Items",
     "configEdit": "Edit Config",
     "configVersions": "Version History",
     "configReleases": "Releases",
-    "configSecrets": "Secrets"
+    "configSecrets": "Secrets",
+    "configFeatureFlags": "Feature Flags"
   },
   "iam": {
-    "title": "Permissions",
+    "title": "Access Control",
     "permission": "Permission Catalog",
-    "binding": "Bindings",
+    "binding": "Role Bindings",
     "template": "Role Templates",
     "change": "Change Requests",
-    "breakglass": "Breakglass",
+    "breakglass": "Emergency Access",
     "check": "Authorization Check",
-    "sod": "Segregation of Duties"
+    "sod": "Segregation of Duties",
+    "certification": "Access Review"
   }
 }

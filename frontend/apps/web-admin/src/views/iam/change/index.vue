@@ -17,7 +17,6 @@ import {
   message,
   Modal,
   Space,
-  Table,
   Tag,
 } from 'ant-design-vue';
 
@@ -26,10 +25,11 @@ import {
   approveChangeRequestApi,
   cancelChangeRequestApi,
   createChangeRequestApi,
-  getErrorMessage,
   listChangeRequestsApi,
   rejectChangeRequestApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import FormModal from '../components/form-modal.vue';
 import JsonPreview from '../components/json-preview.vue';
@@ -52,43 +52,51 @@ const actionLabel = new Map(
   actionOptions.map((item) => [item.value, item.label]),
 );
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '待审批', value: 'pending' },
-          { label: '已通过', value: 'approved' },
-          { label: '已应用', value: 'applied' },
-          { label: '已拒绝', value: 'rejected' },
-          { label: '已撤销', value: 'cancelled' },
-        ],
-        placeholder: '状态',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
+    },
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '待审批', value: 'pending' },
+            { label: '已通过', value: 'approved' },
+            { label: '已应用', value: 'applied' },
+            { label: '已拒绝', value: 'rejected' },
+            { label: '已撤销', value: 'cancelled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: actionOptions,
-        placeholder: '动作',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: actionOptions,
+          placeholder: '动作',
+        },
+        fieldName: 'action',
+        label: '动作',
       },
-      fieldName: 'action',
-      label: '动作',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '申请人主体 ID' },
-      fieldName: 'requested_by',
-      label: '申请人',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '申请人主体 ID' },
+        fieldName: 'requested_by',
+        label: '申请人',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<ChangeRequest[]>([]);
@@ -208,11 +216,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -231,8 +234,8 @@ async function handleCreate(payload: Record<string, any>) {
     message.success('审批单已创建');
     createOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -279,8 +282,8 @@ async function submitDecision() {
     message.success('操作成功');
     decideOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -290,90 +293,84 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="审批中心：直写被审批模式拦截时，可在此提交并流转变更"
-    title="变更审批"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="createOpen = true">
           新建审批单
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      row-key="id"
-      size="middle"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'action'">
-          {{ actionLabel.get(record.action) ?? record.action }}
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ChangeStatus]">
-            {{ statusText[record.status as ChangeStatus] }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'requested_at'">
-          {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="openDetail(record as ChangeRequest)"
-            >
-              详情
-            </Button>
-            <template v-if="record.status === 'pending'">
+      <AdminListTable
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'action'">
+            {{ actionLabel.get(record.action) ?? record.action }}
+          </template>
+          <template v-else-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ChangeStatus]">
+              {{ statusText[record.status as ChangeStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'requested_at'">
+            {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4" class="whitespace-nowrap">
               <Button
+                size="small"
+                type="link"
+                @click="openDetail(record as ChangeRequest)"
+              >
+                详情
+              </Button>
+              <template v-if="record.status === 'pending'">
+                <Button
+                  v-access:code="'iam:change:approve'"
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'approve')"
+                >
+                  通过
+                </Button>
+                <Button
+                  v-access:code="'iam:change:approve'"
+                  danger
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'reject')"
+                >
+                  拒绝
+                </Button>
+                <Button
+                  size="small"
+                  type="link"
+                  @click="openDecision(record as ChangeRequest, 'cancel')"
+                >
+                  撤销
+                </Button>
+              </template>
+              <Button
+                v-if="record.status === 'approved'"
                 v-access:code="'iam:change:approve'"
                 size="small"
                 type="link"
-                @click="openDecision(record as ChangeRequest, 'approve')"
+                @click="openDecision(record as ChangeRequest, 'apply')"
               >
-                通过
+                应用
               </Button>
-              <Button
-                v-access:code="'iam:change:approve'"
-                danger
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'reject')"
-              >
-                拒绝
-              </Button>
-              <Button
-                size="small"
-                type="link"
-                @click="openDecision(record as ChangeRequest, 'cancel')"
-              >
-                撤销
-              </Button>
-            </template>
-            <Button
-              v-if="record.status === 'approved'"
-              v-access:code="'iam:change:approve'"
-              size="small"
-              type="link"
-              @click="openDecision(record as ChangeRequest, 'apply')"
-            >
-              应用
-            </Button>
-          </Space>
+            </Space>
+          </template>
         </template>
-      </template>
-    </Table>
+      </AdminListTable>
+    </div>
 
     <Drawer v-model:open="detailOpen" :width="620" title="审批单详情">
       <div v-if="detail" class="space-y-3">

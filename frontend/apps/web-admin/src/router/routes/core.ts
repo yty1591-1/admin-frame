@@ -73,7 +73,7 @@ const coreRoutes: RouteRecordRaw[] = [
       hideInMenu: true,
       hideInTab: true,
       ignoreAccess: true,
-      title: '配置中心安装',
+      title: $t('install.brandSubtitle'),
     },
     name: 'ConfigInstall',
     path: '/setup/install',

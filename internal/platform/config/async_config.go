@@ -23,8 +23,7 @@ type AsyncConfig struct {
 
 // AsyncBrokerConfig 是 NATS JetStream 连接与投递参数。
 //
-// URL 可包含用户名/口令，生产建议通过 ADMIN_FRAME_ASYNC_BROKER_URL 注入，
-// 避免把凭证写入 yaml（CFG-06）。
+// URL 可包含用户名/口令，登记为配置中心敏感键 async.broker.url（密钥子域）。
 type AsyncBrokerConfig struct {
 	// URL NATS 服务地址；driver=nats 时必填，支持 nats:// / tls:// / ws:// / wss://。
 	URL string `yaml:"url"`

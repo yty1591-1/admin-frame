@@ -26,7 +26,7 @@ ResetDefaultsResponse:
                     type: string
                   default_source:
                     type: string
-                    enum: [code_default, prod_default]
+                    enum: [code_default, prod_default, dev_default]
             skipped:
               type: array
               description: 未重置的键及原因（敏感键、无默认值、未声明等）。

@@ -34,7 +34,6 @@ import {
   CONFIG_ENV_OPTIONS,
   CONFIG_RELEASE_STATUS_OPTIONS,
   createConfigReleaseApi,
-  getConfigErrorMessage,
   getConfigReleaseApi,
   listConfigDeclaredKeysApi,
   listConfigItemsApi,
@@ -45,12 +44,16 @@ import {
   submitConfigReleaseApi,
 } from '#/api';
 import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigReleases' });
 
 const router = useRouter();
 const userStore = useUserStore();
 const currentUserId = computed(() => userStore.userInfo?.userId || '');
+const isSystemAdmin = computed(() =>
+  (userStore.userInfo?.roles || []).includes('system_admin'),
+);
 
 const namespaces = ref<{ label: string; value: string }[]>([]);
 const loading = ref(false);
@@ -117,50 +120,63 @@ const statusColor: Record<ConfigReleaseStatus, string> = {
   superseded: 'default',
 };
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: { options: CONFIG_ENV_OPTIONS },
-      defaultValue: 'dev',
-      fieldName: 'env',
-      label: '环境',
-      rules: 'required',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        options: namespaces,
-        showSearch: true,
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          options: CONFIG_ENV_OPTIONS,
+          placeholder: '环境',
+        },
+        defaultValue: 'dev',
+        fieldName: 'env',
+        label: '环境',
+        rules: 'required',
       },
-      fieldName: 'namespace',
-      label: '命名空间',
-      rules: 'required',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: CONFIG_RELEASE_STATUS_OPTIONS,
+      {
+        component: 'Select',
+        componentProps: {
+          options: namespaces,
+          placeholder: '命名空间',
+          showSearch: true,
+        },
+        fieldName: 'namespace',
+        label: '命名空间',
+        rules: 'required',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '名称或说明' },
-      fieldName: 'keyword',
-      label: '关键词',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '创建人 subject id' },
-      fieldName: 'owner',
-      label: '创建人',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: CONFIG_RELEASE_STATUS_OPTIONS,
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键词',
+      },
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '创建人 subject id' },
+        fieldName: 'owner',
+        label: '创建人',
+      },
+    ],
+  }),
+);
 
 const [CreateForm, createFormApi] = useVbenForm({
   commonConfig: { componentProps: { class: 'w-full' } },
@@ -285,8 +301,8 @@ async function fetchList() {
     });
     rows.value = result.items;
     pagination.total = result.total;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载发布单失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -393,8 +409,8 @@ async function submitCreate() {
     message.success('已创建发布单（仅全量策略）');
     createOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '创建发布单失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -405,23 +421,31 @@ async function openDetail(record: ConfigRelease) {
     await loadDeclaredKeys(record.namespace);
     detail.value = await getConfigReleaseApi(record.id);
     detailOpen.value = true;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载详情失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
 async function submitRelease(record: ConfigRelease) {
   try {
-    await submitConfigReleaseApi(record.id);
-    message.success('已提交审批');
+    const updated = await submitConfigReleaseApi(record.id);
+    message.success(
+      updated.status === 'approved'
+        ? '已提交并由超级管理员自动审批'
+        : '已提交审批',
+    );
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '提交失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
 function openApprove(record: ConfigRelease, decision: 'approved' | 'rejected') {
-  if (record.submitted_by && record.submitted_by === currentUserId.value) {
+  if (
+    record.submitted_by &&
+    record.submitted_by === currentUserId.value &&
+    !isSystemAdmin.value
+  ) {
     message.error('提交人不得自审');
     return;
   }
@@ -445,8 +469,8 @@ async function confirmDecide() {
     message.success(decide.decision === 'approved' ? '已通过' : '已驳回');
     decideOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '审批失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -461,8 +485,8 @@ async function publishRelease(record: ConfigRelease) {
         await publishConfigReleaseApi(record.id);
         message.success('已发布');
         fetchList();
-      } catch (error) {
-        message.error(getConfigErrorMessage(error, '发布失败'));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '确认发布',
@@ -494,8 +518,8 @@ async function confirmCancel() {
     message.success('已取消发布单');
     cancelOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '取消失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     cancelLoading.value = false;
   }
@@ -521,8 +545,8 @@ async function confirmRollback() {
     message.success('已破玻璃回滚（须 24h 内补审）');
     rollbackOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '回滚失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     rollbackLoading.value = false;
   }
@@ -531,7 +555,7 @@ async function confirmRollback() {
 function canApprove(record: ConfigRelease) {
   return (
     record.status === 'pending_review' &&
-    record.submitted_by !== currentUserId.value
+    (isSystemAdmin.value || record.submitted_by !== currentUserId.value)
   );
 }
 
@@ -546,21 +570,17 @@ onMounted(async () => {
   try {
     await loadNamespaces();
     await fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '初始化失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 });
 </script>
 
 <template>
-  <Page
-    description="M1 仅支持 strategy=all；写 / 审批 / 发布三权分离，提交人不得自审"
-    title="发布与回滚"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button
           v-access:code="'config:write'"
           type="primary"
@@ -568,96 +588,96 @@ onMounted(async () => {
         >
           新建发布单
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1400 }"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ConfigReleaseStatus]">
-            {{ statusText[record.status as ConfigReleaseStatus] }}
-          </Tag>
+      <Table
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1400 }"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ConfigReleaseStatus]">
+              {{ statusText[record.status as ConfigReleaseStatus] }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space wrap>
+              <Button
+                size="small"
+                type="link"
+                @click="openDetail(record as ConfigRelease)"
+              >
+                详情
+              </Button>
+              <Button
+                v-if="record.status === 'draft'"
+                v-access:code="'config:write'"
+                size="small"
+                type="link"
+                @click="submitRelease(record as ConfigRelease)"
+              >
+                提交
+              </Button>
+              <Button
+                v-if="canApprove(record as ConfigRelease)"
+                v-access:code="'config:approve'"
+                size="small"
+                type="link"
+                @click="openApprove(record as ConfigRelease, 'approved')"
+              >
+                通过
+              </Button>
+              <Button
+                v-if="canApprove(record as ConfigRelease)"
+                v-access:code="'config:approve'"
+                danger
+                size="small"
+                type="link"
+                @click="openApprove(record as ConfigRelease, 'rejected')"
+              >
+                驳回
+              </Button>
+              <Button
+                v-if="record.status === 'approved'"
+                v-access:code="'config:publish'"
+                size="small"
+                type="link"
+                @click="publishRelease(record as ConfigRelease)"
+              >
+                发布
+              </Button>
+              <Button
+                v-if="canCancel(record as ConfigRelease)"
+                v-access:code="'config:write'"
+                danger
+                size="small"
+                type="link"
+                @click="openCancel(record as ConfigRelease)"
+              >
+                取消
+              </Button>
+              <Button
+                v-if="
+                  record.status === 'active' || record.status === 'superseded'
+                "
+                v-access:code="'config:publish'"
+                danger
+                size="small"
+                type="link"
+                @click="openRollback(record as ConfigRelease)"
+              >
+                回滚
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space wrap>
-            <Button
-              size="small"
-              type="link"
-              @click="openDetail(record as ConfigRelease)"
-            >
-              详情
-            </Button>
-            <Button
-              v-if="record.status === 'draft'"
-              v-access:code="'config:write'"
-              size="small"
-              type="link"
-              @click="submitRelease(record as ConfigRelease)"
-            >
-              提交
-            </Button>
-            <Button
-              v-if="canApprove(record as ConfigRelease)"
-              v-access:code="'config:approve'"
-              size="small"
-              type="link"
-              @click="openApprove(record as ConfigRelease, 'approved')"
-            >
-              通过
-            </Button>
-            <Button
-              v-if="canApprove(record as ConfigRelease)"
-              v-access:code="'config:approve'"
-              danger
-              size="small"
-              type="link"
-              @click="openApprove(record as ConfigRelease, 'rejected')"
-            >
-              驳回
-            </Button>
-            <Button
-              v-if="record.status === 'approved'"
-              v-access:code="'config:publish'"
-              size="small"
-              type="link"
-              @click="publishRelease(record as ConfigRelease)"
-            >
-              发布
-            </Button>
-            <Button
-              v-if="canCancel(record as ConfigRelease)"
-              v-access:code="'config:write'"
-              danger
-              size="small"
-              type="link"
-              @click="openCancel(record as ConfigRelease)"
-            >
-              取消
-            </Button>
-            <Button
-              v-if="
-                record.status === 'active' || record.status === 'superseded'
-              "
-              v-access:code="'config:publish'"
-              danger
-              size="small"
-              type="link"
-              @click="openRollback(record as ConfigRelease)"
-            >
-              回滚
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <Modal
       v-model:open="createOpen"

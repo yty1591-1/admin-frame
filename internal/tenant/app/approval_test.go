@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/admin-frame/admin-frame/internal/shared/apperr"
+	"github.com/admin-frame/admin-frame/internal/shared/authz"
 	"github.com/admin-frame/admin-frame/internal/tenant/app"
 	"github.com/admin-frame/admin-frame/internal/tenant/domain"
 )
@@ -169,6 +170,37 @@ func TestApprovalNotFound(t *testing.T) {
 	ctx := context.Background()
 	if _, err := service.GetApproval(ctx, "missing-tenant"); !isNotFound(err) {
 		t.Fatalf("GetApproval(missing) error = %v, want 404", err)
+	}
+}
+
+// TestSystemAdminSelfApprovesTenant 验证超级管理员可自审入驻申请。
+func TestSystemAdminSelfApprovesTenant(t *testing.T) {
+	service, emitter, _ := newService(t)
+	created, err := service.Create(context.Background(), app.CreateInput{Name: "AdminSelf", Actor: adminActor()})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := service.SubmitApproval(context.Background(), app.ApprovalInput{
+		TenantID: created.ID, Note: "自助开通", Actor: adminActor(),
+	}); err != nil {
+		t.Fatalf("SubmitApproval() error = %v", err)
+	}
+	ctx := authz.WithSnapshot(context.Background(), authz.Snapshot{
+		Channel:   "admin",
+		SubjectID: adminActor().SubjectID,
+		Roles:     []string{authz.RoleCodeSystemAdmin},
+	})
+	approved, err := service.ApproveApproval(ctx, app.ApprovalInput{
+		TenantID: created.ID, Note: "system_admin 自批", Actor: adminActor(),
+	})
+	if err != nil {
+		t.Fatalf("ApproveApproval() error = %v", err)
+	}
+	if approved.Status != domain.ApprovalStatusApproved {
+		t.Fatalf("status = %s, want approved", approved.Status)
+	}
+	if !hasAction(emitter.actions(), app.ActionApprovalApprove) {
+		t.Fatalf("缺少通过审计, actions = %v", emitter.actions())
 	}
 }
 

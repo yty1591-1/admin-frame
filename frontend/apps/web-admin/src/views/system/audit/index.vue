@@ -5,6 +5,7 @@ import type { Dayjs } from 'dayjs';
 import type { AuditEvent } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -21,13 +22,20 @@ import {
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-import { listAuditEventsApi } from '#/api';
+import {
+  createAuditExportJobApi,
+  exportAuditEventsCsvApi,
+  listAuditEventsApi,
+} from '#/api';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemAudit' });
 
+const router = useRouter();
 const { RangePicker } = DatePicker;
 
 const loading = ref(false);
+const exporting = ref(false);
 const rows = ref<AuditEvent[]>([]);
 const range = ref<[Dayjs, Dayjs]>([
   dayjs().subtract(23, 'hour').startOf('hour'),
@@ -100,8 +108,8 @@ async function fetchList() {
     });
     rows.value = result.items;
     pagination.total = result.total;
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '加载审计事件失败');
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -132,16 +140,63 @@ function openDetail(record: AuditEvent) {
   detailOpen.value = true;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function isAsyncExportUnavailable(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response
+    ?.status;
+  return status === 503 || status === 409;
+}
+
+async function handleExport() {
+  const [start, end] = range.value;
+  if (!start || !end) {
+    message.warning('请选择时间范围');
+    return;
+  }
+  const params = {
+    from: start.toISOString(),
+    to: end.toISOString(),
+    ...(filters.actor_id ? { actor_id: filters.actor_id.trim() } : {}),
+    ...(filters.action ? { action: filters.action.trim() } : {}),
+    ...(filters.trace_id ? { trace_id: filters.trace_id.trim() } : {}),
+  };
+  exporting.value = true;
+  try {
+    const job = await createAuditExportJobApi(params);
+    message.success(`已创建导出任务 ${job.export_id}`);
+    await router.push({
+      path: '/system/audit/exports',
+      query: { export_id: job.export_id },
+    });
+  } catch (error) {
+    if (!isAsyncExportUnavailable(error)) {
+      return;
+    }
+    try {
+      const blob = await exportAuditEventsCsvApi(params);
+      downloadBlob(blob, `audit-events-${Date.now()}.csv`);
+      message.success('异步导出未启用，已改用同步导出');
+    } catch {}
+  } finally {
+    exporting.value = false;
+  }
+}
+
 onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="只读查询；时间窗必填，导出按 audit:read 单独授权"
-    title="审计日志"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space wrap>
+  <Page>
+    <div :class="listQueryCardClass">
+      <Space wrap class="mb-3">
         <RangePicker
           v-model:value="range"
           :allow-clear="false"
@@ -168,43 +223,51 @@ onMounted(fetchList);
         />
         <Button type="primary" @click="search">查询</Button>
         <Button @click="reset">重置</Button>
+        <Button
+          v-access:code="'audit:read'"
+          :loading="exporting"
+          type="primary"
+          @click="handleExport"
+        >
+          导出审计
+        </Button>
       </Space>
-    </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1500 }"
-      row-key="event_id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'occurred_at'">
-          {{ formatTime((record as AuditEvent).occurred_at) }}
+      <Table
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1500 }"
+        row-key="event_id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'occurred_at'">
+            {{ formatTime((record as AuditEvent).occurred_at) }}
+          </template>
+          <template v-else-if="column.key === 'outcome'">
+            <Tag :color="outcomeColor((record as AuditEvent).outcome)">
+              {{ (record as AuditEvent).outcome }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'trace_id'">
+            <span class="text-xs">{{
+              (record as AuditEvent).trace_id || '—'
+            }}</span>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Button
+              size="small"
+              type="link"
+              @click="openDetail(record as AuditEvent)"
+            >
+              详情
+            </Button>
+          </template>
         </template>
-        <template v-else-if="column.key === 'outcome'">
-          <Tag :color="outcomeColor((record as AuditEvent).outcome)">
-            {{ (record as AuditEvent).outcome }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'trace_id'">
-          <span class="text-xs">{{
-            (record as AuditEvent).trace_id || '—'
-          }}</span>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Button
-            size="small"
-            type="link"
-            @click="openDetail(record as AuditEvent)"
-          >
-            详情
-          </Button>
-        </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <Drawer v-model:open="detailOpen" title="审计事件详情" width="560">
       <Descriptions v-if="detail" :column="1" bordered size="small">

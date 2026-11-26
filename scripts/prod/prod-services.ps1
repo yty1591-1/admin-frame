@@ -227,8 +227,9 @@ function Start-Role([string]$Role) {
   $nodeId = $NodeIds[$Role]
   $env:CONFIG_SERVICE_IDENTITY = $identity
   $env:ADMIN_FRAME_ID_NODE_ID = $nodeId
-  # 最小权限：仅 config-api 注入 Vault token。
-  if ($Role -eq "config-api") {
+  # config-api（安装/密钥）与 admin-api（配置管理面）需要 Vault Transit KEK；
+  # 其余业务进程不注入 token。
+  if ($Role -eq "config-api" -or $Role -eq "admin-api") {
     if ($script:SavedVaultToken) { $env:VAULT_TOKEN = $script:SavedVaultToken }
   } else {
     Remove-Item Env:VAULT_TOKEN -ErrorAction SilentlyContinue

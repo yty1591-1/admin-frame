@@ -15,12 +15,12 @@ import {
   CONFIG_ENV_OPTIONS,
   CONFIG_ITEM_STATUS_OPTIONS,
   createConfigItemApi,
-  getConfigErrorMessage,
   listConfigDeclaredKeysApi,
   listConfigItemsApi,
   listConfigNamespacesApi,
 } from '#/api';
 import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigItems' });
 
@@ -41,53 +41,67 @@ const pagination = reactive({
   total: 0,
 });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        options: CONFIG_ENV_OPTIONS,
-        placeholder: '环境',
-      },
-      defaultValue: 'dev',
-      fieldName: 'env',
-      label: '环境',
-      rules: 'required',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      if (namespaces.value[0]) {
+        await queryFormApi.setValues({
+          env: 'dev',
+          namespace: namespaces.value[0].value,
+        });
+      }
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: false,
-        options: namespaces,
-        placeholder: '命名空间',
-        showSearch: true,
-      },
-      fieldName: 'namespace',
-      label: '命名空间',
-      rules: 'required',
+    handleSubmit: async () => {
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: CONFIG_ITEM_STATUS_OPTIONS,
-        placeholder: '状态',
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          options: CONFIG_ENV_OPTIONS,
+          placeholder: '环境',
+        },
+        defaultValue: 'dev',
+        fieldName: 'env',
+        label: '环境',
+        rules: 'required',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: {
-        allowClear: true,
-        placeholder: '按 key 过滤（前端过滤）',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: false,
+          options: namespaces,
+          placeholder: '命名空间',
+          showSearch: true,
+        },
+        fieldName: 'namespace',
+        label: '命名空间',
+        rules: 'required',
       },
-      fieldName: 'keyword',
-      label: '关键字',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: CONFIG_ITEM_STATUS_OPTIONS,
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Input',
+        componentProps: {
+          allowClear: true,
+          placeholder: '输入关键词',
+        },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+    ],
+  }),
+);
 
 const [CreateForm, createFormApi] = useVbenForm({
   commonConfig: { componentProps: { class: 'w-full' } },
@@ -207,8 +221,8 @@ async function fetchList() {
       ? result.items.filter((item) => item.key.toLowerCase().includes(keyword))
       : result.items;
     pagination.total = keyword ? rows.value.length : result.total;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载配置列表失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -217,17 +231,6 @@ async function fetchList() {
 function handleSearch() {
   pagination.current = 1;
   fetchList();
-}
-
-async function handleReset() {
-  await queryFormApi.reset();
-  if (namespaces.value[0]) {
-    await queryFormApi.setValues({
-      env: 'dev',
-      namespace: namespaces.value[0].value,
-    });
-  }
-  handleSearch();
 }
 
 function handleTableChange(page: TablePaginationConfig) {
@@ -260,8 +263,8 @@ async function openCreate() {
         label: `${item.key} (${item.value_type}${item.reload_mode === 'hot' ? ', hot' : ''})`,
         value: item.key,
       }));
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载声明键失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -285,8 +288,8 @@ async function submitCreate() {
     message.success('已创建配置键');
     createOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '创建失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -313,22 +316,17 @@ onMounted(async () => {
   try {
     await loadNamespaces();
     await fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '初始化失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 });
 </script>
 
 <template>
-  <Page
-    description="按环境与命名空间浏览配置草稿；敏感项不展示明文，编辑与版本走独立页"
-    title="配置列表"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button
           v-access:code="'config:write'"
           type="primary"
@@ -336,51 +334,51 @@ onMounted(async () => {
         >
           新建配置键
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
-      :columns="columns"
-      :data-source="rows"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 1200 }"
-      row-key="id"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="statusColor[record.status as ConfigItemStatus]">
-            {{ record.status }}
-          </Tag>
+      <Table
+        :columns="columns"
+        :data-source="rows"
+        :loading="loading"
+        :pagination="pagination"
+        :scroll="{ x: 1200 }"
+        row-key="id"
+        @change="handleTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="statusColor[record.status as ConfigItemStatus]">
+              {{ record.status }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'sensitive'">
+            <Tag :color="record.sensitive ? 'error' : 'default'">
+              {{ record.sensitive ? '是' : '否' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space>
+              <Button
+                v-access:code="'config:write'"
+                :disabled="record.sensitive"
+                size="small"
+                type="link"
+                @click="goEdit(record as ConfigItem)"
+              >
+                编辑
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                @click="goVersions(record as ConfigItem)"
+              >
+                版本
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'sensitive'">
-          <Tag :color="record.sensitive ? 'error' : 'default'">
-            {{ record.sensitive ? '是' : '否' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space>
-            <Button
-              v-access:code="'config:write'"
-              :disabled="record.sensitive"
-              size="small"
-              type="link"
-              @click="goEdit(record as ConfigItem)"
-            >
-              编辑
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="goVersions(record as ConfigItem)"
-            >
-              版本
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <Modal
       v-model:open="createOpen"

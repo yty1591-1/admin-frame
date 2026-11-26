@@ -13,6 +13,7 @@ import {
   declaredKeyRefs,
   defaultBadge,
   filledCount,
+  filledEntries,
   hasValue,
   missingFields,
   secretFields,
@@ -121,7 +122,7 @@ describe('defaultBadge', () => {
     expect(defaultBadge(field())).toBe('');
   });
 
-  it('代码默认值与生产基线各有文案', () => {
+  it('代码默认值与环境基线各有文案', () => {
     expect(
       defaultBadge(
         field({ default: { source: 'code_default', value: 'memory' } }),
@@ -132,6 +133,11 @@ describe('defaultBadge', () => {
         field({ default: { source: 'prod_default', value: 'mysql' } }),
       ),
     ).toBe('默认：mysql（生产基线）');
+    expect(
+      defaultBadge(
+        field({ default: { source: 'dev_default', value: 'debug' } }),
+      ),
+    ).toBe('默认：debug（开发基线）');
   });
 
   it('空串默认值显式标注', () => {
@@ -208,5 +214,27 @@ describe('filledCount', () => {
         identity: { 'e.f': 'y' },
       }),
     ).toBe(2);
+  });
+});
+
+describe('filledEntries', () => {
+  it('返回排序后的显式变更清单并忽略空白', () => {
+    expect(
+      filledEntries({
+        identity: { 'login.mfa.enabled': 'true' },
+        platform: { 'redis.addr': ' 10.0.0.1 ', 'redis.db': '  ' },
+      }),
+    ).toEqual([
+      {
+        key: 'login.mfa.enabled',
+        namespace: 'identity',
+        value: 'true',
+      },
+      {
+        key: 'redis.addr',
+        namespace: 'platform',
+        value: '10.0.0.1',
+      },
+    ]);
   });
 });

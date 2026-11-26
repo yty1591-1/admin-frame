@@ -8,7 +8,10 @@ interface ApiErrorLike {
   };
 }
 
-/** 提取后端 message，缺失时返回兜底文案。 */
+/**
+ * 提取后端 message，仅供需要原文案的局部展示。
+ * 通用错误 toast 由全局拦截器（FE-SEC-03）负责，页面勿再 `message.error`。
+ */
 export function getConfigErrorMessage(
   error: unknown,
   fallback = '操作失败',

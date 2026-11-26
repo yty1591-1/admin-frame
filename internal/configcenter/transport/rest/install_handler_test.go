@@ -121,7 +121,7 @@ func TestInstallSchemaReturnsFieldsAndBlocking(t *testing.T) {
 		t.Fatalf("fields=%+v", env.Data.Fields)
 	}
 	for _, field := range env.Data.Fields {
-		if field.Key == "log.level" && (field.Default.Value != "info" || field.Default.Source != app.DefaultSourceCode) {
+		if field.Key == "log.level" && (field.Default.Value != "debug" || field.Default.Source != app.DefaultSourceDev) {
 			t.Fatalf("log.level default=%+v", field.Default)
 		}
 	}

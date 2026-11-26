@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import type { RailMetaRow, RailStep } from './components/StepRail.vue';
 import type { FieldSection, InstallDraft } from './schema';
 
 import type {
@@ -13,19 +14,7 @@ import type {
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import { Page } from '@vben/common-ui';
-
-import {
-  Alert,
-  Button,
-  Input,
-  InputNumber,
-  Select,
-  Space,
-  Steps,
-  Switch,
-  Tag,
-} from 'ant-design-vue';
+import { Alert, Button, Input, Tag } from 'ant-design-vue';
 
 import {
   applyInstall,
@@ -34,19 +23,49 @@ import {
   fetchInstallSchema,
   fetchInstallStatus,
 } from '#/api/configcenter/install';
+import { $t } from '#/locales';
 
+import ConfigSections from './components/ConfigSections.vue';
+import GuidePanel from './components/GuidePanel.vue';
+import SecretList from './components/SecretList.vue';
+import StepRail from './components/StepRail.vue';
 import {
   buildSections,
   collectValues,
   configFields,
   declaredKeyRefs,
-  defaultBadge,
   filledCount,
+  filledEntries,
   missingFields,
   secretFields,
+  writableSecretFields,
 } from './schema';
 
 const router = useRouter();
+
+/** 阻塞原因文案（与 OpenAPI InstallGap.reason 对齐）。 */
+function gapReasonLabel(reason: string | undefined): string {
+  switch (reason) {
+    case 'no_active_release': {
+      return '命名空间尚无生效发布';
+    }
+    case 'missing_in_snapshot': {
+      return '快照缺键';
+    }
+    case 'connectivity_failed': {
+      return '连通性探测失败';
+    }
+    case 'deploy_env_missing': {
+      return '需运维补部署环境变量（如 ADMIN_FRAME_DB_DSN）';
+    }
+    case 'secret_missing': {
+      return '密钥子域缺失';
+    }
+    default: {
+      return reason || '';
+    }
+  }
+}
 
 const step = ref(0);
 const token = ref('');
@@ -55,6 +74,8 @@ const declaredText = ref('');
 const busy = ref(false);
 const message = ref('');
 const errorMessage = ref('');
+/** 移动端运行上下文折叠面板。 */
+const metaOpen = ref(false);
 
 const status = ref<InstallStatusData | null>(null);
 const schema = ref<InstallSchema | null>(null);
@@ -70,6 +91,9 @@ const formFields = computed<SchemaField[]>(() =>
 const secrets = computed<SchemaField[]>(() =>
   schema.value ? secretFields(schema.value) : [],
 );
+const writableSecrets = computed<SchemaField[]>(() =>
+  schema.value ? writableSecretFields(schema.value) : [],
+);
 const namespaceTitles = computed<Record<string, string>>(() => {
   const titles: Record<string, string> = {};
   for (const item of schema.value?.namespaces ?? []) {
@@ -81,7 +105,6 @@ const sections = computed<FieldSection[]>(() =>
   buildSections(formFields.value, namespaceTitles.value),
 );
 
-/** 平台/基础设施域放第 2 步，业务域放第 3 步；repair 时只会有阻塞键。 */
 const platformSections = computed<FieldSection[]>(() =>
   sections.value.filter((section) => section.namespace === 'platform'),
 );
@@ -98,9 +121,16 @@ const gaps = computed<InstallGap[]>(() => {
   }
   return status.value?.gaps ?? [];
 });
+const deployGaps = computed(() =>
+  gaps.value.filter((gap) => gap.reason === 'deploy_env_missing'),
+);
+const otherGaps = computed(() =>
+  gaps.value.filter((gap) => gap.reason !== 'deploy_env_missing'),
+);
 const missingRequired = computed(() =>
   missingFields(formFields.value, draft, mode.value),
 );
+const previewEntries = computed(() => filledEntries(draft));
 
 const canSubmit = computed(
   () =>
@@ -110,12 +140,178 @@ const canSubmit = computed(
     missingRequired.value.length === 0,
 );
 
+const railSteps = computed<RailStep[]>(() => [
+  {
+    key: 'token',
+    title: $t('install.stepToken'),
+    hint: $t('install.stepTokenHint'),
+  },
+  {
+    key: 'platform',
+    title: $t('install.stepPlatform'),
+    hint: $t('install.stepPlatformHint'),
+  },
+  {
+    key: 'business',
+    title: $t('install.stepBusiness'),
+    hint: $t('install.stepBusinessHint'),
+  },
+  {
+    key: 'secrets',
+    title: $t('install.stepSecrets'),
+    hint: $t('install.stepSecretsHint'),
+  },
+  {
+    key: 'review',
+    title: $t('install.stepReview'),
+    hint: $t('install.stepReviewHint'),
+  },
+]);
+
+const railMetaRows = computed<RailMetaRow[]>(() => {
+  const st = status.value?.status || '—';
+  let statusTone: RailMetaRow['tone'] = 'muted';
+  if (st === 'ready') statusTone = 'success';
+  else if (st === 'installing') statusTone = 'primary';
+  else if (st === 'failed' || st === 'pending') statusTone = 'danger';
+
+  return [
+    {
+      label: $t('install.metaEnv'),
+      value: status.value?.env || schema.value?.env || '—',
+    },
+    { label: $t('install.metaStatus'), value: st, tone: statusTone },
+    {
+      label: $t('install.metaMode'),
+      value: isRepair.value
+        ? $t('install.modeRepair')
+        : $t('install.modeFirst'),
+      tone: isRepair.value ? 'warning' : 'primary',
+    },
+    {
+      label: $t('install.metaBlocking'),
+      value: String(blockingCount.value),
+      tone: blockingCount.value > 0 ? 'danger' : 'success',
+    },
+    ...(status.value?.owner || owner.value
+      ? [
+          {
+            label: $t('install.metaOwner'),
+            value: status.value?.owner || owner.value,
+          },
+        ]
+      : []),
+  ];
+});
+
+const stepTitle = computed(() => {
+  if (step.value === 0) {
+    return isRepair.value
+      ? $t('install.titleTokenRepair')
+      : $t('install.titleToken');
+  }
+  const titles = [
+    '',
+    $t('install.titlePlatform'),
+    $t('install.titleBusiness'),
+    $t('install.titleSecrets'),
+    $t('install.titleReview'),
+  ];
+  return titles[step.value] || '';
+});
+
+const stepDesc = computed(() => {
+  if (step.value === 0) {
+    return isRepair.value
+      ? $t('install.descTokenRepair')
+      : $t('install.descToken');
+  }
+  const descriptions = [
+    '',
+    $t('install.descPlatform'),
+    $t('install.descBusiness'),
+    $t('install.descSecrets'),
+    $t('install.descReview'),
+  ];
+  return descriptions[step.value] || '';
+});
+
+const stepProgress = computed(() => {
+  const title = railSteps.value[step.value]?.title || '';
+  if (isRepair.value) {
+    return $t('install.progressRepair', {
+      current: step.value + 1,
+      total: 5,
+    });
+  }
+  return $t('install.progress', {
+    current: step.value + 1,
+    total: 5,
+    title,
+  });
+});
+
+const guideItems = computed(() => {
+  if (step.value === 0) {
+    return isRepair.value
+      ? [
+          $t('install.guideRepair1'),
+          $t('install.guideRepair2'),
+          $t('install.guideRepair3'),
+        ]
+      : [
+          $t('install.guideToken1'),
+          $t('install.guideToken2'),
+          $t('install.guideToken3'),
+          $t('install.guideToken4'),
+        ];
+  }
+  if (step.value === 1) {
+    return [
+      $t('install.guidePlatform1'),
+      $t('install.guidePlatform2'),
+      $t('install.guidePlatform3'),
+      $t('install.guidePlatform4'),
+    ];
+  }
+  if (step.value === 2) {
+    return [
+      $t('install.guideBusiness1'),
+      $t('install.guideBusiness2'),
+      $t('install.guideBusiness3'),
+    ];
+  }
+  if (step.value === 3) {
+    return [
+      $t('install.guideSecrets1'),
+      $t('install.guideSecrets2'),
+      $t('install.guideSecrets3'),
+    ];
+  }
+  return [
+    $t('install.guideReview1'),
+    $t('install.guideReview2'),
+    $t('install.guideReview3'),
+  ];
+});
+
+const primaryLabel = computed(() => {
+  if (step.value === 0) return $t('install.btnLoadSchema');
+  if (step.value === 3) return $t('install.btnPreview');
+  if (step.value === 4) {
+    return isRepair.value
+      ? $t('install.btnSubmitRepair')
+      : $t('install.btnSubmit');
+  }
+  return $t('install.btnContinue');
+});
+
 async function refreshStatus() {
   errorMessage.value = '';
   try {
     status.value = await fetchInstallStatus();
     if (status.value.status === 'ready') {
-      message.value = '安装已完成，可返回登录。';
+      message.value = $t('install.msgReady');
     }
   } catch (error) {
     errorMessage.value = describe(error);
@@ -124,7 +320,7 @@ async function refreshStatus() {
 
 async function loadSchema() {
   if (!token.value) {
-    errorMessage.value = '先填 Setup Token 再加载配置清单。';
+    errorMessage.value = $t('install.msgNeedToken');
     return;
   }
   busy.value = true;
@@ -135,8 +331,13 @@ async function loadSchema() {
     remainingGaps.value = [];
     message.value =
       schema.value.mode === 'repair'
-        ? `进入 repair 模式：仅阻塞键可改（${schema.value.blocking_count} 个）`
-        : `配置清单已加载：${schema.value.fields.length} 项 / ${schema.value.namespaces.length} 个命名空间`;
+        ? $t('install.msgSchemaRepair', {
+            count: schema.value.blocking_count,
+          })
+        : $t('install.msgSchemaLoaded', {
+            fields: schema.value.fields.length,
+            namespaces: schema.value.namespaces.length,
+          });
     step.value = 1;
   } catch (error) {
     errorMessage.value = describe(error);
@@ -147,16 +348,21 @@ async function loadSchema() {
 
 async function runInstall() {
   if (missingRequired.value.length > 0) {
-    errorMessage.value = `还有必填项未填：${missingRequired.value
-      .map((field) => field.label || field.key)
-      .join('、')}`;
+    errorMessage.value = $t('install.msgMissingRequired', {
+      list: missingRequired.value
+        .map((field) => field.label || field.key)
+        .join('、'),
+    });
     return;
   }
   busy.value = true;
   errorMessage.value = '';
   message.value = '';
   try {
-    const values = collectValues(formFields.value, draft);
+    const values = collectValues(
+      [...formFields.value, ...writableSecrets.value],
+      draft,
+    );
     const begun = await beginInstall(token.value, {
       declaredKeys: isRepair.value
         ? declaredKeyRefs(declaredText.value)
@@ -171,16 +377,21 @@ async function runInstall() {
       values,
     });
     remainingGaps.value = applied.remaining_gaps;
-    message.value = `已写入 ${applied.item_count} 个键 / ${applied.namespaces} 个命名空间`;
+    message.value = $t('install.msgApplied', {
+      items: applied.item_count,
+      namespaces: applied.namespaces,
+    });
 
     if (applied.remaining_gaps.length > 0) {
-      errorMessage.value = `仍有 ${applied.remaining_gaps.length} 个阻塞键未满足，补齐后再提交（无需重新 begin）。`;
+      errorMessage.value = $t('install.msgRemaining', {
+        count: applied.remaining_gaps.length,
+      });
       step.value = 4;
       return;
     }
     const done = await completeInstall(token.value, owner.value);
     status.value = { ...done, blocking_count: 0, gaps: [] };
-    message.value = '安装完成（status=ready）';
+    message.value = $t('install.msgCompleted');
     step.value = 4;
   } catch (error) {
     errorMessage.value = describe(error);
@@ -190,418 +401,356 @@ async function runInstall() {
   }
 }
 
-function fieldValue(field: SchemaField): string {
-  return draft[field.namespace]?.[field.key] ?? '';
-}
-
-function setFieldValue(field: SchemaField, value: boolean | number | string) {
-  draft[field.namespace] ??= {};
-  const group = draft[field.namespace];
-  if (!group) {
-    return;
+function setDraftValue(namespace: string, key: string, value: string) {
+  draft[namespace] ??= {};
+  const group = draft[namespace];
+  if (group) {
+    group[key] = value;
   }
-  group[field.key] =
-    typeof value === 'boolean' ? String(value) : String(value ?? '');
-}
-
-function inputValue(event: Event): string {
-  const target = event.target as HTMLInputElement | null;
-  return target?.value ?? '';
-}
-
-function isOn(field: SchemaField): boolean {
-  return fieldValue(field) === 'true';
 }
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isFieldFilled(field: SchemaField): boolean {
-  return (draft[field.namespace]?.[field.key] ?? '').trim() !== '';
+function onPrimary() {
+  if (step.value === 0) {
+    void loadSchema();
+    return;
+  }
+  if (step.value === 4) {
+    void runInstall();
+    return;
+  }
+  if (step.value < 4) {
+    step.value += 1;
+    metaOpen.value = false;
+  }
+}
+
+function goPrev() {
+  if (step.value > 0) {
+    step.value -= 1;
+    metaOpen.value = false;
+  }
 }
 
 onMounted(refreshStatus);
 </script>
 
 <template>
-  <Page
-    title="配置中心安装向导"
-    description="ADR-0018：所有环境统一经安装向导播种；表单由 /install/schema 驱动，repair 模式只渲染阻塞键"
+  <div
+    class="bg-background-deep text-foreground flex h-dvh min-h-0 w-full flex-col overflow-hidden lg:min-h-[640px] lg:flex-row"
   >
-    <div class="mx-auto max-w-5xl space-y-6 p-6">
-      <Steps
-        :current="step"
-        size="small"
-        :items="[
-          { title: '环境与令牌' },
-          { title: '平台与基础设施' },
-          { title: '业务配置' },
-          { title: '业务密钥' },
-          { title: '预览与提交' },
-        ]"
-      />
+    <StepRail
+      v-model:meta-open="metaOpen"
+      :context-title="$t('install.contextTitle')"
+      :current="step"
+      :last-error="status?.last_error"
+      :last-error-prefix="$t('install.lastErrorPrefix')"
+      :meta-rows="railMetaRows"
+      :steps="railSteps"
+      :subtitle="$t('install.brandSubtitle')"
+      :title="$t('install.brandTitle')"
+    />
 
-      <div class="flex flex-wrap items-center gap-3 text-sm">
-        <Tag :color="status?.status === 'ready' ? 'green' : 'orange'">
-          状态：{{ status?.status || '—' }}
-        </Tag>
-        <Tag>环境：{{ status?.env || schema?.env || '—' }}</Tag>
-        <Tag :color="isRepair ? 'blue' : 'default'">
-          模式：{{ isRepair ? 'repair（重配置）' : 'first_install（首装）' }}
-        </Tag>
-        <Tag v-if="blockingCount > 0" color="red">
-          阻塞键：{{ blockingCount }}
-        </Tag>
-        <span v-if="status?.owner" class="text-slate-500">
-          持锁：{{ status.owner }}
-        </span>
-        <span v-if="status?.last_error" class="text-red-600">
-          上次失败：{{ status.last_error }}
-        </span>
-      </div>
-
-      <Alert
-        v-if="gaps.length > 0"
-        type="warning"
-        show-icon
-        :message="`${gaps.length} 个必填键缺失，进程无法完成启动`"
+    <main class="flex min-h-0 min-w-0 flex-1 flex-col p-0 sm:p-4 lg:p-7">
+      <div
+        class="border-border bg-card flex min-h-0 flex-1 flex-col overflow-hidden border-0 sm:rounded-lg sm:border"
       >
-        <template #description>
-          <ul class="list-disc pl-4">
-            <li
-              v-for="gap in gaps.slice(0, 8)"
-              :key="`${gap.namespace}/${gap.key}`"
-            >
-              <code>{{ gap.namespace }}/{{ gap.key }}</code>
-              <span v-if="gap.reason" class="text-slate-500">
-                （{{ gap.reason }}）
-              </span>
-            </li>
-            <li v-if="gaps.length > 8">…共 {{ gaps.length }} 项</li>
-          </ul>
-        </template>
-      </Alert>
-
-      <!-- 第 1 步：令牌与环境 -->
-      <section v-show="step === 0" class="space-y-4">
-        <label class="block text-sm">
-          Setup Token
-          <Input
-            v-model:value="token"
-            type="password"
-            autocomplete="off"
-            placeholder="CONFIG_INSTALL_SETUP_TOKEN"
-          />
-          <span class="text-xs text-slate-500">
-            写操作与 schema 都要它；不落库、不回显，浏览器不直连 config-api。
-          </span>
-        </label>
-
-        <label class="block text-sm">
-          Owner（可选，begin 后回填）
-          <Input v-model:value="owner" placeholder="例如：运维值班组" />
-        </label>
-
-        <label v-if="isRepair" class="block text-sm">
-          声明的阻塞键（可选，逐行或逗号分隔的
-          <code>namespace/key</code>）
-          <Input.TextArea
-            v-model:value="declaredText"
-            :rows="3"
-            placeholder="platform/auth.jwt.secret"
-          />
-          <span class="text-xs text-slate-500">
-            用于「服务端推导不出阻塞键、但进程确实起不来」的场景；键必须已声明、非敏感、且尚未在生效快照里有值。
-          </span>
-        </label>
-
-        <Space>
-          <Button type="primary" :loading="busy" @click="loadSchema">
-            加载配置清单
-          </Button>
-          <Button :disabled="busy" @click="refreshStatus">刷新状态</Button>
-          <Button @click="router.push('/auth/login')">去登录</Button>
-        </Space>
-      </section>
-
-      <!-- 第 2 步：平台与基础设施 -->
-      <section v-show="step === 1" class="space-y-6">
-        <Alert
-          v-if="isRepair && platformSections.length === 0"
-          type="info"
-          show-icon
-          message="repair 模式下该域没有阻塞键，无需修改"
-        />
         <div
-          v-for="section in platformSections"
-          :key="section.namespace"
-          class="space-y-4 rounded border p-4"
+          class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5 sm:space-y-5 sm:px-6 sm:py-6 lg:px-8 lg:py-7"
         >
-          <header class="flex items-center gap-2">
-            <h3 class="text-base font-semibold">{{ section.title }}</h3>
-            <Tag v-if="section.blockingCount > 0" color="red">
-              阻塞 {{ section.blockingCount }}
-            </Tag>
-          </header>
-          <div
-            v-for="group in section.groups"
-            :key="group.id"
-            class="space-y-3"
-          >
-            <h4 class="text-sm font-medium text-slate-600">
-              {{ group.title }}
-            </h4>
-            <div
-              v-for="field in group.fields"
-              :key="field.key"
-              class="grid grid-cols-1 gap-1 border-b pb-3 last:border-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+          <header class="space-y-1.5">
+            <p class="text-primary text-xs font-medium">
+              {{ stepProgress }}
+            </p>
+            <h1
+              class="text-foreground text-xl font-semibold tracking-tight sm:text-[22px]"
             >
-              <div class="space-y-1">
-                <div class="flex flex-wrap items-center gap-2 text-sm">
-                  <span class="font-medium">{{ field.label }}</span>
-                  <Tag v-if="field.required" color="red">必填</Tag>
-                  <Tag v-if="field.blocking" color="volcano">阻塞启动</Tag>
-                  <Tag v-if="field.deprecated" color="default">已废弃</Tag>
-                  <Tag v-if="field.hot_whitelist" color="green">可热更</Tag>
-                  <code class="text-xs text-slate-500">{{ field.key }}</code>
-                </div>
-                <p v-if="field.description" class="text-xs text-slate-500">
-                  {{ field.description }}
-                </p>
-                <p v-if="defaultBadge(field)" class="text-xs text-blue-600">
-                  {{ defaultBadge(field) }}
-                </p>
-              </div>
-              <div class="space-y-1">
-                <Switch
-                  v-if="field.widget === 'switch'"
-                  :checked="isOn(field)"
-                  @change="(checked) => setFieldValue(field, Boolean(checked))"
-                />
-                <Select
-                  v-else-if="field.widget === 'select' && field.enum?.length"
-                  :value="fieldValue(field) || undefined"
-                  class="w-full"
-                  :options="
-                    field.enum.map((item) => ({ label: item, value: item }))
-                  "
-                  :placeholder="
-                    field.default.source === 'none'
-                      ? '请选择'
-                      : `默认 ${field.default.value}`
-                  "
-                  @change="(value) => setFieldValue(field, value as string)"
-                />
-                <InputNumber
-                  v-else-if="field.widget === 'number'"
-                  class="w-full"
-                  :value="
-                    fieldValue(field) ? Number(fieldValue(field)) : undefined
-                  "
-                  :min="field.min_int ?? undefined"
-                  :max="field.max_int ?? undefined"
-                  :placeholder="field.default.value || '整数'"
-                  @change="(value) => setFieldValue(field, value ?? '')"
-                />
-                <Input.TextArea
-                  v-else-if="field.widget === 'code'"
-                  :rows="3"
-                  class="font-mono text-xs"
-                  :value="fieldValue(field)"
-                  :placeholder="field.default.value || 'JSON'"
-                  @input="
-                    (event) => setFieldValue(field, inputValue(event as Event))
-                  "
-                />
-                <Input
-                  v-else
-                  :type="field.widget === 'password' ? 'password' : 'text'"
-                  :value="fieldValue(field)"
-                  :placeholder="field.default.value || field.value_type"
-                  @input="
-                    (event) => setFieldValue(field, inputValue(event as Event))
-                  "
-                />
-                <p class="text-xs text-slate-400">
-                  <span v-if="isFieldFilled(field)">已填写（覆盖默认值）</span>
-                  <span v-else>留空 = 使用默认值</span>
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+              {{ stepTitle }}
+            </h1>
+            <p
+              class="text-muted-foreground max-w-3xl text-[13px] leading-relaxed"
+            >
+              {{ stepDesc }}
+            </p>
+          </header>
 
-      <!-- 第 3 步：业务配置 -->
-      <section v-show="step === 2" class="space-y-6">
-        <Alert
-          v-if="isRepair && businessSections.length === 0"
-          type="info"
-          show-icon
-          message="repair 模式只允许修改阻塞键；非阻塞变更请走 提交 → 审批 → 发布"
-        />
-        <div
-          v-for="section in businessSections"
-          :key="section.namespace"
-          class="space-y-4 rounded border p-4"
-        >
-          <header class="flex items-center gap-2">
-            <h3 class="text-base font-semibold">{{ section.title }}</h3>
-            <Tag v-if="section.blockingCount > 0" color="red">
-              阻塞 {{ section.blockingCount }}
-            </Tag>
-          </header>
-          <div
-            v-for="group in section.groups"
-            :key="group.id"
-            class="space-y-2"
+          <GuidePanel :items="guideItems" :title="$t('install.guideTitle')" />
+
+          <Alert
+            v-if="deployGaps.length > 0"
+            type="error"
+            show-icon
+            :message="$t('install.alertDeployTitle')"
           >
-            <h4 class="text-sm font-medium text-slate-600">
-              {{ group.title }}
-            </h4>
-            <div
-              v-for="field in group.fields"
-              :key="field.key"
-              class="flex flex-wrap items-center gap-2 text-sm"
-            >
-              <span class="w-64 shrink-0 font-medium">
-                {{ field.label }}
-                <Tag v-if="field.required" color="red">必填</Tag>
-                <Tag v-if="field.blocking" color="volcano">阻塞</Tag>
+            <template #description>
+              {{ $t('install.alertDeployDesc') }}
+            </template>
+          </Alert>
+
+          <Alert
+            v-if="otherGaps.length > 0 && step <= 1"
+            type="warning"
+            show-icon
+            :message="$t('install.alertGapsTitle', { count: otherGaps.length })"
+          >
+            <template #description>
+              <ul class="list-disc pl-4">
+                <li
+                  v-for="gap in otherGaps.slice(0, 8)"
+                  :key="`${gap.namespace}/${gap.key}`"
+                >
+                  <code>{{ gap.namespace }}/{{ gap.key }}</code>
+                  <span v-if="gap.reason" class="text-muted-foreground">
+                    （{{ gapReasonLabel(gap.reason) }}）
+                  </span>
+                </li>
+                <li v-if="otherGaps.length > 8">
+                  …共 {{ otherGaps.length }} 项
+                </li>
+              </ul>
+            </template>
+          </Alert>
+
+          <!-- 第 1 步：令牌 -->
+          <section v-show="step === 0" class="max-w-xl space-y-4">
+            <label class="block space-y-1.5 text-sm">
+              <span class="text-foreground flex items-center gap-2 font-medium">
+                {{ $t('install.tokenLabel') }}
+                <Tag color="red">{{ $t('install.required') }}</Tag>
               </span>
-              <Switch
-                v-if="field.widget === 'switch'"
-                :checked="isOn(field)"
-                @change="(checked) => setFieldValue(field, Boolean(checked))"
-              />
-              <Select
-                v-else-if="field.widget === 'select' && field.enum?.length"
-                class="min-w-64"
-                :value="fieldValue(field) || undefined"
-                :options="
-                  field.enum.map((item) => ({ label: item, value: item }))
-                "
-                :placeholder="field.default.value || '请选择'"
-                @change="(value) => setFieldValue(field, value as string)"
-              />
-              <InputNumber
-                v-else-if="field.widget === 'number'"
-                :value="
-                  fieldValue(field) ? Number(fieldValue(field)) : undefined
-                "
-                :min="field.min_int ?? undefined"
-                :max="field.max_int ?? undefined"
-                :placeholder="field.default.value || '整数'"
-                @change="(value) => setFieldValue(field, value ?? '')"
-              />
               <Input
-                v-else
-                class="min-w-64"
-                :type="field.widget === 'password' ? 'password' : 'text'"
-                :value="fieldValue(field)"
-                :placeholder="field.default.value || field.value_type"
-                @input="
-                  (event) => setFieldValue(field, inputValue(event as Event))
-                "
+                v-model:value="token"
+                type="password"
+                autocomplete="off"
+                :placeholder="$t('install.tokenPlaceholder')"
               />
-              <span v-if="defaultBadge(field)" class="text-xs text-blue-600">
-                {{ defaultBadge(field) }}
+              <span class="text-muted-foreground text-xs leading-relaxed">
+                {{ $t('install.tokenHelp') }}
               </span>
-              <code class="text-xs text-slate-400">{{ field.key }}</code>
-            </div>
-          </div>
-        </div>
-      </section>
+            </label>
 
-      <!-- 第 4 步：业务密钥 -->
-      <section v-show="step === 3" class="space-y-4">
-        <Alert
-          type="info"
-          show-icon
-          message="敏感项由密钥服务在安装时自动生成，本页不收集也不回显密钥值"
-        >
-          <template #description>
-            需要人工指定或轮换时，安装完成后到「配置中心 → 业务密钥」走提交 →
-            审批 → 激活， 全程留审计；这里的规则只决定自动生成的长度与算法。
-          </template>
-        </Alert>
-        <div v-if="secrets.length === 0" class="text-sm text-slate-500">
-          当前环境没有敏感键声明。
-        </div>
-        <div
-          v-for="field in secrets"
-          :key="field.key"
-          class="space-y-1 rounded border p-3 text-sm"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="font-medium">{{ field.label }}</span>
-            <Tag color="purple">敏感</Tag>
-            <Tag v-if="field.secret?.auto_generate" color="green">自动生成</Tag>
-            <code class="text-xs text-slate-500">{{ field.key }}</code>
-          </div>
-          <div v-if="field.secret" class="text-xs text-slate-500">
-            算法 {{ field.secret.algorithm || '—' }} · 编码
-            {{ field.secret.encoding || '—' }} · 长度
-            {{ field.secret.min_len }}–{{ field.secret.max_len }}
-            <span v-if="field.secret.prefix">
-              · 前缀 {{ field.secret.prefix }}
-            </span>
-          </div>
-          <p v-if="field.description" class="text-xs text-slate-500">
-            {{ field.description }}
+            <label class="block space-y-1.5 text-sm">
+              <span class="text-foreground font-medium">
+                {{ $t('install.ownerLabel') }}
+              </span>
+              <Input
+                v-model:value="owner"
+                :placeholder="$t('install.ownerPlaceholder')"
+              />
+              <span class="text-muted-foreground text-xs leading-relaxed">
+                {{ $t('install.ownerHelp') }}
+              </span>
+            </label>
+
+            <label v-if="isRepair" class="block space-y-1.5 text-sm">
+              <span class="text-foreground font-medium">
+                {{ $t('install.declaredLabel') }}
+              </span>
+              <Input.TextArea
+                v-model:value="declaredText"
+                :rows="3"
+                :placeholder="$t('install.declaredPlaceholder')"
+                class="font-mono text-xs"
+              />
+              <span class="text-muted-foreground text-xs leading-relaxed">
+                {{ $t('install.declaredHelp') }}
+              </span>
+            </label>
+          </section>
+
+          <!-- 第 2 步：平台 -->
+          <section v-show="step === 1" class="space-y-4">
+            <Alert
+              v-if="isRepair && platformSections.length === 0"
+              type="info"
+              show-icon
+              :message="$t('install.alertRepairEmptyPlatform')"
+            />
+            <ConfigSections
+              :draft="draft"
+              :empty-message="$t('install.alertRepairEmptyPlatform')"
+              :sections="platformSections"
+              @set-value="setDraftValue"
+            />
+          </section>
+
+          <!-- 第 3 步：业务 -->
+          <section v-show="step === 2" class="space-y-4">
+            <Alert
+              v-if="isRepair && businessSections.length === 0"
+              type="info"
+              show-icon
+              :message="$t('install.alertRepairEmptyBusiness')"
+            />
+            <ConfigSections
+              compact
+              :draft="draft"
+              :empty-message="$t('install.alertRepairEmptyBusiness')"
+              :sections="businessSections"
+              @set-value="setDraftValue"
+            />
+          </section>
+
+          <!-- 第 4 步：密钥 -->
+          <section v-show="step === 3" class="space-y-4">
+            <Alert
+              type="info"
+              show-icon
+              :message="$t('install.alertSecretsTitle')"
+            >
+              <template #description>
+                {{ $t('install.alertSecretsDesc') }}
+              </template>
+            </Alert>
+            <SecretList
+              :draft="draft"
+              :fields="secrets"
+              @set-value="setDraftValue"
+            >
+              <template #empty>
+                {{ $t('install.secretsEmpty') }}
+              </template>
+            </SecretList>
+          </section>
+
+          <!-- 第 5 步：预览 -->
+          <section v-show="step === 4" class="space-y-4">
+            <div
+              class="border-border bg-muted overflow-hidden rounded-lg border"
+            >
+              <div
+                class="border-border flex items-center justify-between border-b px-3.5 py-3"
+              >
+                <span class="text-sm font-semibold">
+                  {{
+                    $t('install.summaryTitle', {
+                      count: filledCount(draft),
+                    })
+                  }}
+                </span>
+                <span class="text-muted-foreground text-xs">
+                  {{ $t('install.summaryHint') }}
+                </span>
+              </div>
+              <div
+                v-if="previewEntries.length === 0"
+                class="text-muted-foreground px-3.5 py-4 text-sm"
+              >
+                —
+              </div>
+              <div
+                v-for="(row, index) in previewEntries"
+                :key="`${row.namespace}/${row.key}`"
+                class="flex flex-col gap-1 px-3.5 py-3 text-sm sm:flex-row sm:items-center sm:gap-3"
+                :class="
+                  index < previewEntries.length - 1
+                    ? 'border-border border-b'
+                    : ''
+                "
+              >
+                <span class="text-muted-foreground shrink-0 text-xs sm:w-16">
+                  {{ row.namespace }}
+                </span>
+                <code
+                  class="text-foreground break-all font-mono text-xs sm:w-52 sm:shrink-0"
+                >
+                  {{ row.key }}
+                </code>
+                <span class="text-foreground break-all font-medium">
+                  {{
+                    secrets.some(
+                      (s) => s.namespace === row.namespace && s.key === row.key,
+                    )
+                      ? '••••••••'
+                      : row.value
+                  }}
+                </span>
+              </div>
+            </div>
+
+            <p
+              v-if="missingRequired.length > 0"
+              class="text-destructive text-sm"
+            >
+              {{
+                $t('install.summaryMissing', {
+                  list: missingRequired
+                    .map((field) => field.label || field.key)
+                    .join('、'),
+                })
+              }}
+            </p>
+            <p v-if="remainingGaps.length > 0" class="text-destructive text-sm">
+              {{
+                $t('install.summaryRemaining', {
+                  list: remainingGaps
+                    .map((gap) => `${gap.namespace}/${gap.key}`)
+                    .join('、'),
+                })
+              }}
+            </p>
+
+            <Alert
+              v-if="canSubmit && remainingGaps.length === 0"
+              type="success"
+              show-icon
+              :message="$t('install.alertReadyTitle')"
+            >
+              <template #description>
+                {{ $t('install.alertReadyDesc') }}
+              </template>
+            </Alert>
+          </section>
+
+          <p v-if="message" class="text-success text-sm">{{ message }}</p>
+          <p v-if="errorMessage" class="text-destructive text-sm">
+            {{ errorMessage }}
           </p>
         </div>
-      </section>
 
-      <!-- 第 5 步：预览与提交 -->
-      <section v-show="step === 4" class="space-y-4">
-        <div class="rounded border p-4 text-sm">
-          <div>
-            本次将写入 {{ filledCount(draft) }} 个显式值，其余使用默认值播种。
-          </div>
-          <div v-if="missingRequired.length > 0" class="text-red-600">
-            还缺：
-            {{
-              missingRequired
-                .map((field) => field.label || field.key)
-                .join('、')
-            }}
-          </div>
-          <div v-if="remainingGaps.length > 0" class="text-red-600">
-            未满足的阻塞键：
-            {{
-              remainingGaps
-                .map((gap) => `${gap.namespace}/${gap.key}`)
-                .join('、')
-            }}
-          </div>
-        </div>
-        <Space>
+        <footer
+          class="border-border flex shrink-0 flex-col gap-3 border-t px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8"
+        >
           <Button
-            type="primary"
-            :disabled="!canSubmit"
-            :loading="busy"
-            @click="runInstall"
+            v-if="step === 0"
+            type="link"
+            class="self-start px-0"
+            @click="router.push('/auth/login')"
           >
-            {{ isRepair ? '提交修复并完成' : '开始并完成安装' }}
+            {{ $t('install.btnLogin') }}
           </Button>
-          <Button :disabled="busy" @click="refreshStatus">刷新状态</Button>
-        </Space>
-      </section>
-
-      <div class="flex items-center justify-between">
-        <Space>
-          <Button :disabled="step === 0" @click="step -= 1">上一步</Button>
-          <Button :disabled="step >= 4" @click="step += 1">下一步</Button>
-        </Space>
-        <span class="text-xs text-slate-400">
-          向导不改非阻塞键；非阻塞变更始终走 提交 → 审批 → 发布
-        </span>
+          <Button
+            v-else
+            type="link"
+            class="self-start px-0"
+            :disabled="busy"
+            @click="goPrev"
+          >
+            {{ $t('install.btnPrev') }}
+          </Button>
+          <div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+            <Button
+              class="w-full sm:w-auto"
+              :disabled="busy"
+              @click="refreshStatus"
+            >
+              {{ $t('install.btnRefresh') }}
+            </Button>
+            <Button
+              type="primary"
+              class="w-full sm:w-auto"
+              :loading="busy"
+              :disabled="step === 4 && !canSubmit"
+              @click="onPrimary"
+            >
+              {{ primaryLabel }}
+            </Button>
+          </div>
+        </footer>
       </div>
-
-      <p v-if="message" class="text-sm text-green-700">{{ message }}</p>
-      <p v-if="errorMessage" class="text-sm text-red-600">{{ errorMessage }}</p>
-    </div>
-  </Page>
+    </main>
+  </div>
 </template>

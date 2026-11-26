@@ -42,7 +42,7 @@
 | `iam:change:read` | admin | 否 | 活跃 | 查看高风险变更审批单与审批记录 |
 | `iam:change:approve` | admin | 否 | 活跃 | 审批角色 / 绑定变更；申请人不得自审 |
 | `iam:breakglass:request` | admin | 否 | 活跃 | 申请限时超级权限；必须填写原因与有效期，默认上限 2 小时 |
-| `iam:breakglass:approve` | admin | 否 | 活跃 | 审批破玻璃申请；与申请人强制分离并触发高危告警 |
+| `iam:breakglass:approve` | admin | 否 | 活跃 | 审批破玻璃申请；普通主体与申请人强制分离；system_admin 可自批 |
 | `order:read` | both | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
 | `order:write` | both | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
 | `file:read` | both | 是 | 已弃用 | 历史遗留权限；保留既有授权，禁止新授 |
@@ -149,7 +149,8 @@
 > `merchant_owner` 同时持有 request / review，但领域层强制「申请人 ≠ 审批人」，
 > 因此同一 owner 仍需第二个具备 review 的主体才能完成审批。
 
-`system_admin` 不含 `iam:breakglass:approve`，以满足「申请 ≠ 审批」；破玻璃审批人单独配置。
+`system_admin` 持有平台全量权限（含 `iam:breakglass:approve`）；高风险操作可直写或自批，
+应用层记 `sod_bypass` 审计。普通主体仍须申请人 ≠ 审批人。
 
 ---
 

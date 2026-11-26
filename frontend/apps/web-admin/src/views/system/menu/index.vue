@@ -23,7 +23,6 @@ import {
   createMenuApi,
   disableMenuApi,
   enableMenuApi,
-  getErrorMessage,
   getMenuTreeApi,
   listAllPermissionsApi,
   listMenuComponentsApi,
@@ -216,8 +215,8 @@ async function handleSubmit(payload: Record<string, any>) {
     message.success('菜单已保存；刷新页面后生效');
     formOpen.value = false;
     await fetchTree();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     formSubmitting.value = false;
   }
@@ -243,8 +242,8 @@ function toggleMenu(menu: MenuAdmin) {
             }));
         message.success('菜单状态已更新；刷新页面后生效');
         await fetchTree();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: enabling ? '启用菜单' : '停用菜单',
@@ -257,12 +256,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="菜单只影响入口展示；接口鉴权仍由权限点中间件负责"
-    title="菜单管理"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space>
+  <Page>
+    <div class="bg-card rounded-lg border p-4">
+      <Space class="mb-3">
         <span class="text-muted-foreground text-sm">包含停用节点</span>
         <Switch v-model:checked="includeDisabled" @change="fetchTree" />
         <Button @click="fetchTree">刷新</Button>
@@ -270,45 +266,45 @@ onMounted(async () => {
           新建菜单
         </Button>
       </Space>
-    </div>
 
-    <Table
-      :columns="columns"
-      :data-source="tree"
-      :loading="loading"
-      :pagination="false"
-      default-expand-all-rows
-      row-key="id"
-      size="middle"
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'default'">
-            {{ record.status === 'active' ? '启用' : '停用' }}
-          </Tag>
+      <Table
+        :columns="columns"
+        :data-source="tree"
+        :loading="loading"
+        :pagination="false"
+        default-expand-all-rows
+        row-key="id"
+        size="middle"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <Tag :color="record.status === 'active' ? 'success' : 'default'">
+              {{ record.status === 'active' ? '启用' : '停用' }}
+            </Tag>
+          </template>
+          <template v-else-if="column.key === 'actions'">
+            <Space :size="4">
+              <Button
+                v-access:code="'iam:menu:write'"
+                size="small"
+                type="link"
+                @click="openEdit(record as MenuAdmin)"
+              >
+                编辑
+              </Button>
+              <Button
+                v-access:code="'iam:menu:write'"
+                size="small"
+                type="link"
+                @click="toggleMenu(record as MenuAdmin)"
+              >
+                {{ record.status === 'active' ? '停用' : '启用' }}
+              </Button>
+            </Space>
+          </template>
         </template>
-        <template v-else-if="column.key === 'actions'">
-          <Space :size="4">
-            <Button
-              v-access:code="'iam:menu:write'"
-              size="small"
-              type="link"
-              @click="openEdit(record as MenuAdmin)"
-            >
-              编辑
-            </Button>
-            <Button
-              v-access:code="'iam:menu:write'"
-              size="small"
-              type="link"
-              @click="toggleMenu(record as MenuAdmin)"
-            >
-              {{ record.status === 'active' ? '停用' : '启用' }}
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+      </Table>
+    </div>
 
     <FormModal
       v-model:open="formOpen"
