@@ -28,7 +28,7 @@ describe('generateMenus', () => {
         },
       ],
     },
-  ] as RouteRecordRaw[];
+  ] as unknown as RouteRecordRaw[];
 
   // 模拟 Vue 路由器实例
   const mockRouter = {
@@ -80,7 +80,7 @@ describe('generateMenus', () => {
         name: 'profile',
         path: '/profile',
       },
-    ] as RouteRecordRaw[];
+    ] as unknown as RouteRecordRaw[];
 
     const menus = generateMenus(mockRoutesWithMeta, mockRouter as any);
     expect(menus).toEqual([
@@ -107,7 +107,7 @@ describe('generateMenus', () => {
         name: 'userDetails',
         path: '/users/:userId',
       },
-    ] as RouteRecordRaw[];
+    ] as unknown as RouteRecordRaw[];
 
     const menus = generateMenus(mockRoutesWithParams, mockRouter as any);
     expect(menus).toEqual([
@@ -139,7 +139,7 @@ describe('generateMenus', () => {
         name: 'newPath',
         path: '/new-path',
       },
-    ] as RouteRecordRaw[];
+    ] as unknown as RouteRecordRaw[];
 
     const menus = generateMenus(mockRoutesWithRedirect, mockRouter as any);
     expect(menus).toEqual([

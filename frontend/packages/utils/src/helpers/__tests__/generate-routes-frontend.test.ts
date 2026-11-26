@@ -34,7 +34,7 @@ const mockRoutes = [
     meta: { hideInMenu: false },
     path: '/profile',
   },
-] as RouteRecordRaw[];
+] as unknown as RouteRecordRaw[];
 
 function routeAt(index: number): RouteRecordRaw {
   const route = mockRoutes[index];
@@ -101,7 +101,7 @@ describe('generateRoutesByFrontend', () => {
       { meta: { authority: ['admin'] }, path: '/path3' }, // Only authority
     ];
     const generatedRoutes = await generateRoutesByFrontend(
-      routesWithMissingMeta as RouteRecordRaw[],
+      routesWithMissingMeta as unknown as RouteRecordRaw[],
       ['admin'],
     );
     expect(generatedRoutes).toEqual([
