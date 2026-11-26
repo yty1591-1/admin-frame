@@ -15,7 +15,6 @@ import {
   CONFIG_ENV_OPTIONS,
   CONFIG_ITEM_STATUS_OPTIONS,
   createConfigItemApi,
-  getConfigErrorMessage,
   listConfigDeclaredKeysApi,
   listConfigItemsApi,
   listConfigNamespacesApi,
@@ -207,8 +206,8 @@ async function fetchList() {
       ? result.items.filter((item) => item.key.toLowerCase().includes(keyword))
       : result.items;
     pagination.total = keyword ? rows.value.length : result.total;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载配置列表失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -260,8 +259,8 @@ async function openCreate() {
         label: `${item.key} (${item.value_type}${item.reload_mode === 'hot' ? ', hot' : ''})`,
         value: item.key,
       }));
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载声明键失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -285,8 +284,8 @@ async function submitCreate() {
     message.success('已创建配置键');
     createOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '创建失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -313,8 +312,8 @@ onMounted(async () => {
   try {
     await loadNamespaces();
     await fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '初始化失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 });
 </script>
@@ -322,7 +321,7 @@ onMounted(async () => {
 <template>
   <Page
     description="按环境与命名空间浏览配置草稿；敏感项不展示明文，编辑与版本走独立页"
-    title="配置列表"
+    title="配置项"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />

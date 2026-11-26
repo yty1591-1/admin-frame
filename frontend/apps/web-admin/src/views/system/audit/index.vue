@@ -5,6 +5,7 @@ import type { Dayjs } from 'dayjs';
 import type { AuditEvent } from '#/api';
 
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -21,13 +22,19 @@ import {
 } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-import { listAuditEventsApi } from '#/api';
+import {
+  createAuditExportJobApi,
+  exportAuditEventsCsvApi,
+  listAuditEventsApi,
+} from '#/api';
 
 defineOptions({ name: 'SystemAudit' });
 
+const router = useRouter();
 const { RangePicker } = DatePicker;
 
 const loading = ref(false);
+const exporting = ref(false);
 const rows = ref<AuditEvent[]>([]);
 const range = ref<[Dayjs, Dayjs]>([
   dayjs().subtract(23, 'hour').startOf('hour'),
@@ -100,8 +107,8 @@ async function fetchList() {
     });
     rows.value = result.items;
     pagination.total = result.total;
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '加载审计事件失败');
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -132,14 +139,75 @@ function openDetail(record: AuditEvent) {
   detailOpen.value = true;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function isAsyncExportUnavailable(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response
+    ?.status;
+  return status === 503 || status === 409;
+}
+
+async function handleExport() {
+  const [start, end] = range.value;
+  if (!start || !end) {
+    message.warning('请选择时间范围');
+    return;
+  }
+  const params = {
+    from: start.toISOString(),
+    to: end.toISOString(),
+    ...(filters.actor_id ? { actor_id: filters.actor_id.trim() } : {}),
+    ...(filters.action ? { action: filters.action.trim() } : {}),
+    ...(filters.trace_id ? { trace_id: filters.trace_id.trim() } : {}),
+  };
+  exporting.value = true;
+  try {
+    const job = await createAuditExportJobApi(params);
+    message.success(`已创建导出任务 ${job.export_id}`);
+    await router.push({
+      path: '/system/audit/exports',
+      query: { export_id: job.export_id },
+    });
+  } catch (error) {
+    if (!isAsyncExportUnavailable(error)) {
+      return;
+    }
+    try {
+      const blob = await exportAuditEventsCsvApi(params);
+      downloadBlob(blob, `audit-events-${Date.now()}.csv`);
+      message.success('异步导出未启用，已改用同步导出');
+    } catch {}
+  } finally {
+    exporting.value = false;
+  }
+}
+
 onMounted(fetchList);
 </script>
 
 <template>
   <Page
-    description="只读查询；时间窗必填，导出按 audit:read 单独授权"
-    title="审计日志"
+    description="以时间、主体、动作和链路定位平台审计事件。"
+    title="审计事件"
   >
+    <template #extra>
+      <Button
+        v-access:code="'audit:read'"
+        :loading="exporting"
+        type="primary"
+        @click="handleExport"
+      >
+        导出审计
+      </Button>
+    </template>
+
     <div class="bg-card mb-4 rounded-lg p-4">
       <Space wrap>
         <RangePicker

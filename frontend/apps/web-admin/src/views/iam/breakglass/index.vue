@@ -21,7 +21,6 @@ import {
 
 import {
   approveBreakglassApi,
-  getErrorMessage,
   listChangeRequestsApi,
   rejectChangeRequestApi,
   requestBreakglassApi,
@@ -168,8 +167,8 @@ async function handleRequest(payload: Record<string, any>) {
     message.success('破玻璃申请已提交，等待另一账号审批');
     requestOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     requestSubmitting.value = false;
   }
@@ -202,8 +201,8 @@ async function submitDecision() {
     message.success('操作成功');
     decideOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -215,7 +214,7 @@ onMounted(fetchList);
 <template>
   <Page
     description="限时超级权限：申请本身不授权，需另一账号审批后临时生效"
-    title="破玻璃申请"
+    title="应急授权"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <Space>

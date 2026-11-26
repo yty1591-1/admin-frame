@@ -8,9 +8,10 @@ import { onMounted, reactive, ref } from 'vue';
 import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
-import { Button, Space, Table, Tag } from 'ant-design-vue';
+import { Button, Space, Tag } from 'ant-design-vue';
 
 import { listPermissionsApi } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
 
 defineOptions({ name: 'IamPermission' });
 
@@ -117,13 +118,12 @@ onMounted(fetchList);
       </Space>
     </div>
 
-    <Table
+    <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
       :pagination="pagination"
       row-key="code"
-      size="middle"
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, record }">
@@ -138,6 +138,6 @@ onMounted(fetchList);
           </Tag>
         </template>
       </template>
-    </Table>
+    </AdminListTable>
   </Page>
 </template>

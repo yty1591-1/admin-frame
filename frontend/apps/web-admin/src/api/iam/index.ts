@@ -1,6 +1,7 @@
 export * from './authorize';
 export * from './binding';
 export * from './breakglass';
+export * from './certification';
 export * from './change-request';
 export * from './errors';
 export * from './menu';

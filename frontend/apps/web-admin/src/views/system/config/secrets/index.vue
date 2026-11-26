@@ -32,7 +32,6 @@ import {
   CONFIG_ENV_OPTIONS,
   createConfigSecretApi,
   createConfigSecretGrantApi,
-  getConfigErrorMessage,
   listConfigNamespacesApi,
   listConfigSecretAccessesApi,
   listConfigSecretGrantsApi,
@@ -209,8 +208,8 @@ async function loadRows() {
     });
     rows.value = data.items ?? [];
     pagination.total = data.total ?? 0;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载密钥失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -229,8 +228,8 @@ async function loadDetail(secret: ConfigSecret) {
     versions.value = versionData.items ?? [];
     grants.value = grantData.items ?? [];
     accesses.value = accessData.items ?? [];
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载密钥详情失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     detailLoading.value = false;
   }
@@ -277,8 +276,8 @@ async function onCreate() {
     createOpen.value = false;
     createFormApi.resetForm();
     await loadRows();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '创建失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -286,11 +285,13 @@ async function onCreate() {
 
 async function onSubmit(row: ConfigSecret) {
   try {
-    await submitConfigSecretApi(row.id);
-    message.success('已送审');
+    const updated = await submitConfigSecretApi(row.id);
+    message.success(
+      updated.status === 'active' ? '已送审并由超级管理员自动审批' : '已送审',
+    );
     await loadRows();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '送审失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -299,8 +300,8 @@ async function onApprove(row: ConfigSecret, decision: 'approved' | 'rejected') {
     await approveConfigSecretApi(row.id, { decision });
     message.success(decision === 'approved' ? '已批准' : '已驳回');
     await loadRows();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '审批失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -308,15 +309,15 @@ async function onRotate(row: ConfigSecret) {
   const plaintext = await promptValue(
     '提交轮换',
     '新明文（不会回显到列表）',
-    '需另一审批人批准后旧版本才进入 grace。',
+    '普通主体需另一审批人批准；超级管理员提交后自动生效。',
   );
   if (!plaintext) return;
   try {
     await rotateConfigSecretApi(row.id, { plaintext });
     message.success('已提交轮换，待审批');
     await loadRows();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '提交轮换失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -345,8 +346,8 @@ async function onGrant(row: ConfigSecret) {
     if (detailOpen.value && detailSecret.value?.id === row.id) {
       await loadDetail(row);
     }
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '授权失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -375,8 +376,8 @@ async function onActivateVersion(version: ConfigSecretVersion) {
       active_version: version.version,
     };
     await loadDetail(refreshed);
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '激活版本失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -413,7 +414,7 @@ onMounted(async () => {
 <template>
   <Page
     description="业务密钥托管：明文一次性输入，列表仅展示指纹。"
-    title="密钥管理"
+    title="业务密钥"
   >
     <div class="mb-4 flex flex-wrap items-end gap-3">
       <QueryForm class="flex-1" />

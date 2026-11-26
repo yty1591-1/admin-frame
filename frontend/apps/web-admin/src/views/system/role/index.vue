@@ -21,7 +21,6 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tag,
 } from 'ant-design-vue';
 
@@ -39,6 +38,7 @@ import {
   replaceRolePermissionsApi,
   updateRoleApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
 
 import ConflictModal from '../../iam/components/conflict-modal.vue';
 import DataScopeEditor from '../../iam/components/data-scope-editor.vue';
@@ -89,12 +89,12 @@ const pagination = reactive({
 
 const columns: TableColumnsType = [
   { dataIndex: 'code', key: 'code', title: '角色码', width: 180 },
-  { dataIndex: 'name', key: 'name', title: '角色名称' },
+  { dataIndex: 'name', key: 'name', title: '角色名称', width: 160 },
   { dataIndex: 'role_type', key: 'role_type', title: '类型', width: 100 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 90 },
   { dataIndex: 'parent_id', key: 'parent_id', title: '父角色', width: 180 },
   { dataIndex: 'updated_at', key: 'updated_at', title: '更新时间', width: 190 },
-  { key: 'actions', title: '操作', width: 320 },
+  { key: 'actions', title: '操作', width: 260 },
 ];
 
 const roleTypeMeta: Record<string, { color: string; text: string }> = {
@@ -266,9 +266,7 @@ function handleWriteError(
       targetId,
     });
     conflictOpen.value = true;
-    return;
   }
-  message.error(getErrorMessage(error));
 }
 
 async function handleCreate(payload: Record<string, any>) {
@@ -486,8 +484,8 @@ async function submitApproval(payload: {
     });
     message.success('已提交审批单');
     conflictOpen.value = false;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     conflictSubmitting.value = false;
   }
@@ -518,13 +516,12 @@ onMounted(async () => {
       </Space>
     </div>
 
-    <Table
+    <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
       :pagination="pagination"
       row-key="id"
-      size="middle"
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, record }">
@@ -542,7 +539,7 @@ onMounted(async () => {
           {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
         </template>
         <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
+          <Space :size="4" class="whitespace-nowrap">
             <Button
               v-access:code="'iam:role:grant'"
               :disabled="record.role_type === 'breakglass'"
@@ -591,7 +588,7 @@ onMounted(async () => {
           </Space>
         </template>
       </template>
-    </Table>
+    </AdminListTable>
 
     <FormModal
       v-model:open="createOpen"

@@ -34,7 +34,6 @@ import {
   CONFIG_ENV_OPTIONS,
   CONFIG_RELEASE_STATUS_OPTIONS,
   createConfigReleaseApi,
-  getConfigErrorMessage,
   getConfigReleaseApi,
   listConfigDeclaredKeysApi,
   listConfigItemsApi,
@@ -51,6 +50,9 @@ defineOptions({ name: 'SystemConfigReleases' });
 const router = useRouter();
 const userStore = useUserStore();
 const currentUserId = computed(() => userStore.userInfo?.userId || '');
+const isSystemAdmin = computed(() =>
+  (userStore.userInfo?.roles || []).includes('system_admin'),
+);
 
 const namespaces = ref<{ label: string; value: string }[]>([]);
 const loading = ref(false);
@@ -285,8 +287,8 @@ async function fetchList() {
     });
     rows.value = result.items;
     pagination.total = result.total;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载发布单失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -393,8 +395,8 @@ async function submitCreate() {
     message.success('已创建发布单（仅全量策略）');
     createOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '创建发布单失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -405,23 +407,31 @@ async function openDetail(record: ConfigRelease) {
     await loadDeclaredKeys(record.namespace);
     detail.value = await getConfigReleaseApi(record.id);
     detailOpen.value = true;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载详情失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
 async function submitRelease(record: ConfigRelease) {
   try {
-    await submitConfigReleaseApi(record.id);
-    message.success('已提交审批');
+    const updated = await submitConfigReleaseApi(record.id);
+    message.success(
+      updated.status === 'approved'
+        ? '已提交并由超级管理员自动审批'
+        : '已提交审批',
+    );
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '提交失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
 function openApprove(record: ConfigRelease, decision: 'approved' | 'rejected') {
-  if (record.submitted_by && record.submitted_by === currentUserId.value) {
+  if (
+    record.submitted_by &&
+    record.submitted_by === currentUserId.value &&
+    !isSystemAdmin.value
+  ) {
     message.error('提交人不得自审');
     return;
   }
@@ -445,8 +455,8 @@ async function confirmDecide() {
     message.success(decide.decision === 'approved' ? '已通过' : '已驳回');
     decideOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '审批失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -461,8 +471,8 @@ async function publishRelease(record: ConfigRelease) {
         await publishConfigReleaseApi(record.id);
         message.success('已发布');
         fetchList();
-      } catch (error) {
-        message.error(getConfigErrorMessage(error, '发布失败'));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '确认发布',
@@ -494,8 +504,8 @@ async function confirmCancel() {
     message.success('已取消发布单');
     cancelOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '取消失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     cancelLoading.value = false;
   }
@@ -521,8 +531,8 @@ async function confirmRollback() {
     message.success('已破玻璃回滚（须 24h 内补审）');
     rollbackOpen.value = false;
     fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '回滚失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     rollbackLoading.value = false;
   }
@@ -531,7 +541,7 @@ async function confirmRollback() {
 function canApprove(record: ConfigRelease) {
   return (
     record.status === 'pending_review' &&
-    record.submitted_by !== currentUserId.value
+    (isSystemAdmin.value || record.submitted_by !== currentUserId.value)
   );
 }
 
@@ -546,16 +556,16 @@ onMounted(async () => {
   try {
     await loadNamespaces();
     await fetchList();
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '初始化失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 });
 </script>
 
 <template>
   <Page
-    description="M1 仅支持 strategy=all；写 / 审批 / 发布三权分离，提交人不得自审"
-    title="发布与回滚"
+    description="M1 仅支持 strategy=all；写 / 审批 / 发布三权分离；普通主体提交人不得自审，超级管理员可自批并记审计"
+    title="发布单"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />

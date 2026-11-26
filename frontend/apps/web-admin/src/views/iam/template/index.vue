@@ -23,7 +23,6 @@ import {
 import {
   createTemplateApi,
   deleteTemplateApi,
-  getErrorMessage,
   getTemplateDriftApi,
   instantiateTemplateApi,
   listTemplatesApi,
@@ -31,6 +30,7 @@ import {
   syncTemplateApi,
   updateTemplateApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
 
 import DataScopeEditor from '../components/data-scope-editor.vue';
 import FormModal from '../components/form-modal.vue';
@@ -88,12 +88,12 @@ const pagination = reactive({
 
 const columns: TableColumnsType = [
   { dataIndex: 'code', key: 'code', title: '模板码', width: 190 },
-  { dataIndex: 'name', key: 'name', title: '名称' },
+  { dataIndex: 'name', key: 'name', title: '名称', width: 160 },
   { dataIndex: 'channel', key: 'channel', title: '端别', width: 90 },
   { dataIndex: 'status', key: 'status', title: '状态', width: 90 },
   { dataIndex: 'version', key: 'version', title: '版本', width: 80 },
   { dataIndex: 'updated_at', key: 'updated_at', title: '更新时间', width: 190 },
-  { key: 'actions', title: '操作', width: 360 },
+  { key: 'actions', title: '操作', width: 420 },
 ];
 
 const createOpen = ref(false);
@@ -219,8 +219,8 @@ async function handleCreate(payload: Record<string, any>) {
     message.success('模板已创建，请继续配置权限基线');
     createOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -241,8 +241,8 @@ async function handleEdit(payload: Record<string, any>) {
     message.success('模板已更新');
     editOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     editSubmitting.value = false;
   }
@@ -278,8 +278,8 @@ async function saveGrant() {
     message.success('模板权限基线已保存');
     grantOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     grantSubmitting.value = false;
   }
@@ -292,8 +292,8 @@ async function openDrift(item: RoleTemplate) {
   try {
     const result = await getTemplateDriftApi(item.id);
     driftRows.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     driftLoading.value = false;
   }
@@ -315,14 +315,14 @@ async function handleSync(item: RoleTemplate) {
           });
           message.success(`已同步 ${result.total} 个实例`);
           await fetchList();
-        } catch (error) {
-          message.error(getErrorMessage(error));
+        } catch {
+          // 错误已由全局请求拦截器提示
         }
       },
       title: '同步模板到实例',
     });
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 
@@ -347,8 +347,8 @@ async function handleInstantiate(payload: Record<string, any>) {
     message.success('角色已按模板实例化');
     instantiateOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     instantiateSubmitting.value = false;
   }
@@ -367,8 +367,8 @@ function handleDelete(item: RoleTemplate) {
         });
         message.success('模板已删除');
         await fetchList();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '删除角色模板',
@@ -394,13 +394,12 @@ onMounted(fetchList);
       </Space>
     </div>
 
-    <Table
+    <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
       :pagination="pagination"
       row-key="id"
-      size="middle"
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, record }">
@@ -418,7 +417,7 @@ onMounted(fetchList);
           {{ record.updated_at?.replace('T', ' ').slice(0, 19) }}
         </template>
         <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
+          <Space :size="4" class="whitespace-nowrap">
             <Button
               v-access:code="'iam:role:grant'"
               size="small"
@@ -470,7 +469,7 @@ onMounted(fetchList);
           </Space>
         </template>
       </template>
-    </Table>
+    </AdminListTable>
 
     <FormModal
       v-model:open="createOpen"

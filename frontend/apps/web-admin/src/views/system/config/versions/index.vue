@@ -19,7 +19,6 @@ import {
 } from 'ant-design-vue';
 
 import {
-  getConfigErrorMessage,
   getConfigItemApi,
   getConfigItemVersionApi,
   listConfigItemVersionsApi,
@@ -85,8 +84,8 @@ async function fetchList() {
     });
     rows.value = result.items;
     pagination.total = result.total;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载版本失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -103,8 +102,8 @@ async function openDetail(record: ConfigItemVersion) {
   detailLoading.value = true;
   try {
     detail.value = await getConfigItemVersionApi(itemId.value, record.version);
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载版本详情失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
     detailOpen.value = false;
   } finally {
     detailLoading.value = false;
@@ -124,8 +123,8 @@ async function openCompare(record: ConfigItemVersion) {
     leftText.value = selected.value ?? `(敏感项仅哈希)\n${selected.value_hash}`;
     rightText.value = current.value ?? `(敏感项仅哈希)\n${current.value_hash}`;
     compareOpen.value = true;
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载对比失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   }
 }
 

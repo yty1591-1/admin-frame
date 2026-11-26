@@ -27,7 +27,10 @@ export function isForbidden(error: unknown): boolean {
   return statusOf(error) === 403;
 }
 
-/** 提取后端 message，缺失时返回兜底文案。 */
+/**
+ * 提取后端 message，仅供冲突弹窗等需要原文案的场景。
+ * 通用错误 toast 由全局 `errorMessageResponseInterceptor`（FE-SEC-03）负责，页面勿再 `message.error`。
+ */
 export function getErrorMessage(error: unknown, fallback = '操作失败'): string {
   const message = (error as ApiErrorLike)?.response?.data?.message;
   if (message) {

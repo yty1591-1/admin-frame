@@ -16,11 +16,7 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import {
-  getErrorMessage,
-  listAllPermissionsApi,
-  simulateAuthorizeApi,
-} from '#/api';
+import { listAllPermissionsApi, simulateAuthorizeApi } from '#/api';
 
 import JsonPreview from '../components/json-preview.vue';
 
@@ -68,8 +64,8 @@ async function handleSubmit() {
       subject_id: form.subject_id.trim(),
       subject_type: 'staff',
     });
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -79,7 +75,7 @@ async function handleSubmit() {
 <template>
   <Page
     description="按主体与权限点模拟鉴权，不落地授权；用于核对快照与数据范围"
-    title="模拟鉴权"
+    title="授权检查"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <Form layout="vertical">

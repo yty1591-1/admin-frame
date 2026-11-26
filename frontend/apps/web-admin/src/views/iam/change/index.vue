@@ -17,7 +17,6 @@ import {
   message,
   Modal,
   Space,
-  Table,
   Tag,
 } from 'ant-design-vue';
 
@@ -26,10 +25,10 @@ import {
   approveChangeRequestApi,
   cancelChangeRequestApi,
   createChangeRequestApi,
-  getErrorMessage,
   listChangeRequestsApi,
   rejectChangeRequestApi,
 } from '#/api';
+import { AdminListTable } from '#/components/admin-list-table';
 
 import FormModal from '../components/form-modal.vue';
 import JsonPreview from '../components/json-preview.vue';
@@ -231,8 +230,8 @@ async function handleCreate(payload: Record<string, any>) {
     message.success('审批单已创建');
     createOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     createSubmitting.value = false;
   }
@@ -279,8 +278,8 @@ async function submitDecision() {
     message.success('操作成功');
     decideOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     decideLoading.value = false;
   }
@@ -305,13 +304,12 @@ onMounted(fetchList);
       </Space>
     </div>
 
-    <Table
+    <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
       :pagination="pagination"
       row-key="id"
-      size="middle"
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, record }">
@@ -327,7 +325,7 @@ onMounted(fetchList);
           {{ record.requested_at?.replace('T', ' ').slice(0, 19) }}
         </template>
         <template v-else-if="column.key === 'actions'">
-          <Space :size="4" wrap>
+          <Space :size="4" class="whitespace-nowrap">
             <Button
               size="small"
               type="link"
@@ -373,7 +371,7 @@ onMounted(fetchList);
           </Space>
         </template>
       </template>
-    </Table>
+    </AdminListTable>
 
     <Drawer v-model:open="detailOpen" :width="620" title="审批单详情">
       <div v-if="detail" class="space-y-3">

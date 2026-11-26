@@ -16,7 +16,6 @@ import {
 } from 'ant-design-vue';
 
 import {
-  getConfigErrorMessage,
   getConfigItemApi,
   transitionConfigItemApi,
   updateConfigItemValueApi,
@@ -62,8 +61,8 @@ async function loadItem() {
     if (detail.sensitive) {
       message.warning('敏感键由密钥子域管理（M2），本页不可写值');
     }
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '加载配置失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     loading.value = false;
   }
@@ -84,8 +83,8 @@ async function save() {
     value.value = updated.value ?? value.value;
     changeSummary.value = '';
     message.success(`已写入版本 ${updated.current_version}`);
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '保存失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     saving.value = false;
   }
@@ -103,8 +102,8 @@ async function transitionTo(to: 'active' | 'archived' | 'deprecated') {
     });
     item.value = updated;
     message.success(`状态已迁移为 ${updated.status}`);
-  } catch (error) {
-    message.error(getConfigErrorMessage(error, '状态迁移失败'));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     transitioning.value = false;
   }

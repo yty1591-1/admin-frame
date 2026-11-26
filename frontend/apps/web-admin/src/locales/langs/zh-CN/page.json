@@ -5,26 +5,68 @@
   "profile": {
     "title": "个人中心"
   },
+  "tenant": {
+    "title": "租户运营",
+    "list": "租户管理"
+  },
+  "identity": {
+    "title": "身份管理",
+    "account": "管理员账号",
+    "m2m": "机器身份",
+    "scim": "目录同步"
+  },
+  "access": {
+    "title": "访问控制",
+    "role": "角色管理",
+    "binding": "角色绑定",
+    "template": "角色模板",
+    "permission": "权限目录",
+    "check": "授权检查"
+  },
+  "governance": {
+    "title": "访问治理",
+    "change": "变更审批",
+    "sod": "职责分离",
+    "breakglass": "应急授权"
+  },
+  "config": {
+    "title": "配置与发布",
+    "items": "配置项",
+    "releases": "发布单",
+    "secrets": "业务密钥"
+  },
+  "messaging": {
+    "title": "消息运营",
+    "notifications": "通知单",
+    "templates": "通知模板"
+  },
+  "audit": {
+    "title": "合规审计",
+    "events": "审计事件",
+    "exports": "导出任务"
+  },
   "system": {
     "title": "系统管理",
     "role": "角色管理",
-    "menu": "菜单管理",
-    "audit": "审计日志",
-    "config": "配置中心",
-    "configItems": "配置列表",
+    "menu": "菜单资源",
+    "audit": "审计事件",
+    "config": "配置与发布",
+    "configItems": "配置项",
     "configEdit": "配置编辑",
     "configVersions": "版本历史",
-    "configReleases": "发布与回滚",
-    "configSecrets": "密钥管理"
+    "configReleases": "发布单",
+    "configSecrets": "业务密钥",
+    "configFeatureFlags": "特性开关"
   },
   "iam": {
-    "title": "权限管理",
+    "title": "访问控制",
     "permission": "权限目录",
-    "binding": "授权绑定",
+    "binding": "角色绑定",
     "template": "角色模板",
     "change": "变更审批",
-    "breakglass": "破玻璃申请",
-    "check": "模拟鉴权",
-    "sod": "互斥角色组"
+    "breakglass": "应急授权",
+    "check": "授权检查",
+    "sod": "职责分离",
+    "certification": "访问复核"
   }
 }

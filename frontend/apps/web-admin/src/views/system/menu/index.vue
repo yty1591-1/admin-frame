@@ -23,7 +23,6 @@ import {
   createMenuApi,
   disableMenuApi,
   enableMenuApi,
-  getErrorMessage,
   getMenuTreeApi,
   listAllPermissionsApi,
   listMenuComponentsApi,
@@ -216,8 +215,8 @@ async function handleSubmit(payload: Record<string, any>) {
     message.success('菜单已保存；刷新页面后生效');
     formOpen.value = false;
     await fetchTree();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     formSubmitting.value = false;
   }
@@ -243,8 +242,8 @@ function toggleMenu(menu: MenuAdmin) {
             }));
         message.success('菜单状态已更新；刷新页面后生效');
         await fetchTree();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: enabling ? '启用菜单' : '停用菜单',
@@ -259,7 +258,7 @@ onMounted(async () => {
 <template>
   <Page
     description="菜单只影响入口展示；接口鉴权仍由权限点中间件负责"
-    title="菜单管理"
+    title="菜单资源"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <Space>

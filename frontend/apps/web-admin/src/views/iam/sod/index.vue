@@ -24,7 +24,6 @@ import {
 import {
   createSodGroupApi,
   deleteSodGroupApi,
-  getErrorMessage,
   listSodGroupsApi,
   listSodViolationsApi,
   preflightSodGroupApi,
@@ -188,8 +187,8 @@ async function saveForm() {
     message.success('互斥组已保存');
     formOpen.value = false;
     await fetchList();
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     formSubmitting.value = false;
   }
@@ -208,8 +207,8 @@ function handleDelete(item: SodGroup) {
         });
         message.success('互斥组已删除');
         await fetchList();
-      } catch (error) {
-        message.error(getErrorMessage(error));
+      } catch {
+        // 错误已由全局请求拦截器提示
       }
     },
     title: '删除互斥组',
@@ -226,8 +225,8 @@ async function preflight(item: SodGroup) {
       role_ids: item.role_ids,
     });
     violations.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     violationsLoading.value = false;
   }
@@ -240,8 +239,8 @@ async function loadViolations(item: SodGroup) {
   try {
     const result = await listSodViolationsApi(item.id);
     violations.value = result.items;
-  } catch (error) {
-    message.error(getErrorMessage(error));
+  } catch {
+    // 错误已由全局请求拦截器提示
   } finally {
     violationsLoading.value = false;
   }
@@ -253,7 +252,7 @@ onMounted(fetchList);
 <template>
   <Page
     description="互斥角色组（SoD）：同一主体同时持有的互斥角色不得超过阈值"
-    title="互斥角色组"
+    title="职责分离"
   >
     <div class="bg-card mb-4 rounded-lg p-4">
       <QueryForm />
