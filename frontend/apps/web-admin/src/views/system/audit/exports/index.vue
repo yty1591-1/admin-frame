@@ -54,10 +54,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page
-    description="根据已创建任务的标识查询处理状态，成功后下载。任务由审计事件页面按筛选条件创建。"
-    title="导出任务"
-  >
+  <Page>
     <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_428px]">
       <div class="bg-card rounded-lg p-5">
         <h3 class="mb-4 text-base font-semibold">填写信息</h3>

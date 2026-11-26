@@ -44,6 +44,7 @@ import {
   submitConfigReleaseApi,
 } from '#/api';
 import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigReleases' });
 
@@ -119,50 +120,63 @@ const statusColor: Record<ConfigReleaseStatus, string> = {
   superseded: 'default',
 };
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: { options: CONFIG_ENV_OPTIONS },
-      defaultValue: 'dev',
-      fieldName: 'env',
-      label: '环境',
-      rules: 'required',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        options: namespaces,
-        showSearch: true,
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          options: CONFIG_ENV_OPTIONS,
+          placeholder: '环境',
+        },
+        defaultValue: 'dev',
+        fieldName: 'env',
+        label: '环境',
+        rules: 'required',
       },
-      fieldName: 'namespace',
-      label: '命名空间',
-      rules: 'required',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: CONFIG_RELEASE_STATUS_OPTIONS,
+      {
+        component: 'Select',
+        componentProps: {
+          options: namespaces,
+          placeholder: '命名空间',
+          showSearch: true,
+        },
+        fieldName: 'namespace',
+        label: '命名空间',
+        rules: 'required',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '名称或说明' },
-      fieldName: 'keyword',
-      label: '关键词',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '创建人 subject id' },
-      fieldName: 'owner',
-      label: '创建人',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: CONFIG_RELEASE_STATUS_OPTIONS,
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键词',
+      },
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '创建人 subject id' },
+        fieldName: 'owner',
+        label: '创建人',
+      },
+    ],
+  }),
+);
 
 const [CreateForm, createFormApi] = useVbenForm({
   commonConfig: { componentProps: { class: 'w-full' } },
@@ -563,14 +577,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="M1 仅支持 strategy=all；写 / 审批 / 发布三权分离；普通主体提交人不得自审，超级管理员可自批并记审计"
-    title="发布单"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button
           v-access:code="'config:write'"
           type="primary"
@@ -578,10 +588,9 @@ onMounted(async () => {
         >
           新建发布单
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -668,6 +677,7 @@ onMounted(async () => {
         </template>
       </template>
     </Table>
+    </div>
 
     <Modal
       v-model:open="createOpen"

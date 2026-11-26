@@ -29,6 +29,7 @@ import {
   rejectChangeRequestApi,
 } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import FormModal from '../components/form-modal.vue';
 import JsonPreview from '../components/json-preview.vue';
@@ -51,43 +52,51 @@ const actionLabel = new Map(
   actionOptions.map((item) => [item.value, item.label]),
 );
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '待审批', value: 'pending' },
-          { label: '已通过', value: 'approved' },
-          { label: '已应用', value: 'applied' },
-          { label: '已拒绝', value: 'rejected' },
-          { label: '已撤销', value: 'cancelled' },
-        ],
-        placeholder: '状态',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
+    },
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '待审批', value: 'pending' },
+            { label: '已通过', value: 'approved' },
+            { label: '已应用', value: 'applied' },
+            { label: '已拒绝', value: 'rejected' },
+            { label: '已撤销', value: 'cancelled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: actionOptions,
-        placeholder: '动作',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: actionOptions,
+          placeholder: '动作',
+        },
+        fieldName: 'action',
+        label: '动作',
       },
-      fieldName: 'action',
-      label: '动作',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '申请人主体 ID' },
-      fieldName: 'requested_by',
-      label: '申请人',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '申请人主体 ID' },
+        fieldName: 'requested_by',
+        label: '申请人',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<ChangeRequest[]>([]);
@@ -207,11 +216,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -289,22 +293,16 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="审批中心：直写被审批模式拦截时，可在此提交并流转变更"
-    title="变更审批"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="createOpen = true">
           新建审批单
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <AdminListTable
+      <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -372,6 +370,7 @@ onMounted(fetchList);
         </template>
       </template>
     </AdminListTable>
+    </div>
 
     <Drawer v-model:open="detailOpen" :width="620" title="审批单详情">
       <div v-if="detail" class="space-y-3">

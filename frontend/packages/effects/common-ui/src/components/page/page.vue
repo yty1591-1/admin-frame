@@ -45,40 +45,6 @@ const contentStyle = computed<StyleValue>(() => {
     "
   >
     <div
-      v-if="
-        description ||
-        $slots.description ||
-        title ||
-        $slots.title ||
-        $slots.extra
-      "
-      :class="
-        cn(
-          'relative flex shrink-0 items-end border-b border-border bg-card px-6 py-4',
-          headerClass,
-        )
-      "
-    >
-      <div class="flex-auto">
-        <slot name="title">
-          <div v-if="title" class="mb-2 flex text-lg font-semibold">
-            {{ title }}
-          </div>
-        </slot>
-
-        <slot name="description">
-          <p v-if="description" class="text-muted-foreground">
-            {{ description }}
-          </p>
-        </slot>
-      </div>
-
-      <div v-if="$slots.extra">
-        <slot name="extra"></slot>
-      </div>
-    </div>
-
-    <div
       data-layout-region="page-content"
       :class="
         cn(

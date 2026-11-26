@@ -30,34 +30,44 @@ import {
   updateSodGroupApi,
 } from '#/api';
 
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
+
 import RoleMultiSelect from '../components/role-multi-select.vue';
 
 defineOptions({ name: 'IamSod' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '编码 / 名称' },
-      fieldName: 'keyword',
-      label: '关键字',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '状态',
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键字',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<SodGroup[]>([]);
@@ -121,11 +131,6 @@ async function fetchList() {
 function handleSearch() {
   pagination.current = 1;
   fetchList();
-}
-
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
 }
 
 function handleTableChange(page: TablePaginationConfig) {
@@ -250,22 +255,16 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="互斥角色组（SoD）：同一主体同时持有的互斥角色不得超过阈值"
-    title="职责分离"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:sod:write'" @click="openCreate">
           新建互斥组
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -320,6 +319,7 @@ onMounted(fetchList);
         </template>
       </template>
     </Table>
+    </div>
 
     <Modal
       v-model:open="formOpen"

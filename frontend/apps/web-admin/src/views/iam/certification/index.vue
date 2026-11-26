@@ -157,17 +157,7 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page description="创建与跟踪访问复核活动，处理待复核任务。" title="访问复核">
-    <template #extra>
-      <Button
-        v-access:code="'iam:certification:write'"
-        type="primary"
-        @click="createOpen = true"
-      >
-        创建复核
-      </Button>
-    </template>
-
+  <Page>
     <div class="bg-card rounded-lg p-4">
       <div class="mb-4 flex flex-wrap gap-4 border-b pb-3">
         <button
@@ -192,6 +182,13 @@ onMounted(fetchList);
 
       <Space class="mb-3">
         <Button @click="fetchList">刷新</Button>
+        <Button
+          v-access:code="'iam:certification:write'"
+          type="primary"
+          @click="createOpen = true"
+        >
+          创建复核
+        </Button>
       </Space>
 
       <Table

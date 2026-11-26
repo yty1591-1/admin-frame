@@ -170,21 +170,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="管理 SCIM 令牌与目录组的角色映射。令牌明文仅签发时显示。"
-    title="目录同步"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'identity:scim:write'"
-        :loading="issuing"
-        type="primary"
-        @click="handleIssue"
-      >
-        签发令牌
-      </Button>
-    </template>
-
+  <Page>
     <div class="bg-card rounded-lg p-4">
       <p v-if="featureDisabled" class="text-muted-foreground mb-3 text-sm">
         当前环境未启用 SCIM（`identity.scim.enabled`）。开启并配置 provider
@@ -194,6 +180,14 @@ onMounted(async () => {
         <Tabs.TabPane key="tokens" tab="令牌管理">
           <Space class="mb-3">
             <Button @click="fetchTokens">刷新</Button>
+            <Button
+              v-access:code="'identity:scim:write'"
+              :loading="issuing"
+              type="primary"
+              @click="handleIssue"
+            >
+              签发令牌
+            </Button>
           </Space>
           <Table
             :columns="tokenColumns"

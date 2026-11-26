@@ -31,6 +31,7 @@ import {
   updateTemplateApi,
 } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import DataScopeEditor from '../components/data-scope-editor.vue';
 import FormModal from '../components/form-modal.vue';
@@ -38,43 +39,51 @@ import PermissionPicker from '../components/permission-picker.vue';
 
 defineOptions({ name: 'IamTemplate' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: 'A 端', value: 'admin' },
-          { label: 'B 端', value: 'biz' },
-        ],
-        placeholder: '端别',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
+    },
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: 'A 端', value: 'admin' },
+            { label: 'B 端', value: 'biz' },
+          ],
+          placeholder: '端别',
+        },
+        fieldName: 'channel',
+        label: '端别',
       },
-      fieldName: 'channel',
-      label: '端别',
-    },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '状态',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '模板码 / 名称' },
-      fieldName: 'keyword',
-      label: '关键字',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<RoleTemplate[]>([]);
@@ -192,11 +201,6 @@ async function fetchList() {
 function handleSearch() {
   pagination.current = 1;
   fetchList();
-}
-
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
 }
 
 function handleTableChange(page: TablePaginationConfig) {
@@ -379,22 +383,16 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="平台定义权限基线，商户或平台按模板实例化角色，并可查看漂移与同步"
-    title="角色模板"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="openCreate">
           新建模板
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <AdminListTable
+      <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -470,6 +468,7 @@ onMounted(fetchList);
         </template>
       </template>
     </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

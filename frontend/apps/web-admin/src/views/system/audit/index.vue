@@ -27,6 +27,7 @@ import {
   exportAuditEventsCsvApi,
   listAuditEventsApi,
 } from '#/api';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemAudit' });
 
@@ -193,23 +194,9 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="以时间、主体、动作和链路定位平台审计事件。"
-    title="审计事件"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'audit:read'"
-        :loading="exporting"
-        type="primary"
-        @click="handleExport"
-      >
-        导出审计
-      </Button>
-    </template>
-
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space wrap>
+  <Page>
+    <div :class="listQueryCardClass">
+      <Space wrap class="mb-3">
         <RangePicker
           v-model:value="range"
           :allow-clear="false"
@@ -236,10 +223,17 @@ onMounted(fetchList);
         />
         <Button type="primary" @click="search">查询</Button>
         <Button @click="reset">重置</Button>
+        <Button
+          v-access:code="'audit:read'"
+          :loading="exporting"
+          type="primary"
+          @click="handleExport"
+        >
+          导出审计
+        </Button>
       </Space>
-    </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -273,6 +267,7 @@ onMounted(fetchList);
         </template>
       </template>
     </Table>
+    </div>
 
     <Drawer v-model:open="detailOpen" title="审计事件详情" width="560">
       <Descriptions v-if="detail" :column="1" bordered size="small">

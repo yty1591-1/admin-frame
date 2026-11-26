@@ -39,6 +39,7 @@ import {
   updateRoleApi,
 } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import ConflictModal from '../../iam/components/conflict-modal.vue';
 import DataScopeEditor from '../../iam/components/data-scope-editor.vue';
@@ -47,33 +48,41 @@ import PermissionPicker from '../../iam/components/permission-picker.vue';
 
 defineOptions({ name: 'SystemRole' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: {
-        allowClear: true,
-        placeholder: '角色码 / 名称',
-      },
-      fieldName: 'keyword',
-      label: '关键字',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '请选择状态',
-      },
-      fieldName: 'status',
-      label: '状态',
+    handleSubmit: async () => {
+      handleSearch();
     },
-  ],
-  showDefaultActions: false,
-});
+    schema: [
+      {
+        component: 'Input',
+        componentProps: {
+          allowClear: true,
+          placeholder: '输入关键词',
+        },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<Role[]>([]);
@@ -239,11 +248,6 @@ async function loadRoleOptions() {
 function handleSearch() {
   pagination.current = 1;
   fetchList();
-}
-
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
 }
 
 function handleTableChange(page: TablePaginationConfig) {
@@ -501,22 +505,16 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="RBAC 角色、权限与数据范围；写操作受权限码与审批模式约束"
-    title="角色管理"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button v-access:code="'iam:role:write'" @click="createOpen = true">
           新建角色
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <AdminListTable
+      <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -589,6 +587,7 @@ onMounted(async () => {
         </template>
       </template>
     </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

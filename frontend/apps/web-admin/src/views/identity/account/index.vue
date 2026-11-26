@@ -8,39 +8,48 @@ import { onMounted, reactive, ref } from 'vue';
 import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
-import { Button, Descriptions, Drawer, Space, Tag } from 'ant-design-vue';
+import { Button, Descriptions, Drawer, Tag } from 'ant-design-vue';
 
 import { getAccountApi, listAccountsApi } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'IdentityAccount' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '登录主体关键词' },
-      fieldName: 'keyword',
-      label: '关键词',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '待激活', value: 'pending' },
-          { label: '正常', value: 'active' },
-          { label: '锁定', value: 'locked' },
-          { label: '停用', value: 'disabled' },
-        ],
-        placeholder: '状态',
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '输入关键词' },
+        fieldName: 'keyword',
+        label: '关键词',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '待激活', value: 'pending' },
+            { label: '正常', value: 'active' },
+            { label: '锁定', value: 'locked' },
+            { label: '停用', value: 'disabled' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<AccountSummary[]>([]);
@@ -93,11 +102,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -120,19 +124,10 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="查询账号状态并管理账号生命周期与登录会话。"
-    title="管理员账号"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
-      </Space>
-    </div>
+  <Page>
+    <div :class="listQueryCardClass">
+      <QueryForm class="mb-3" />
 
-    <div class="bg-card rounded-lg p-4">
       <AdminListTable
         :columns="columns"
         :data-source="rows"

@@ -43,6 +43,7 @@ import {
   submitConfigSecretApi,
 } from '#/api';
 import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigSecrets' });
 
@@ -70,32 +71,46 @@ const pagination = reactive({
   total: 0,
 });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: { options: CONFIG_ENV_OPTIONS, placeholder: '环境' },
-      defaultValue: 'dev',
-      fieldName: 'env',
-      label: '环境',
-      rules: 'required',
+function handleQuerySearch() {
+  pagination.current = 1;
+  void loadRows();
+}
+
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      if (namespaces.value[0]) {
+        await queryFormApi.setFieldValue('namespace', namespaces.value[0].value);
+      }
+      handleQuerySearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        options: namespaces,
-        placeholder: '命名空间',
-        showSearch: true,
+    handleSubmit: async () => {
+      handleQuerySearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: { options: CONFIG_ENV_OPTIONS, placeholder: '环境' },
+        defaultValue: 'dev',
+        fieldName: 'env',
+        label: '环境',
+        rules: 'required',
       },
-      fieldName: 'namespace',
-      label: '命名空间',
-      rules: 'required',
-    },
-  ],
-  showDefaultActions: false,
-  commonConfig: { labelWidth: 80 },
-  wrapperClass: 'grid-cols-1 md:grid-cols-3',
-});
+      {
+        component: 'Select',
+        componentProps: {
+          options: namespaces,
+          placeholder: '命名空间',
+          showSearch: true,
+        },
+        fieldName: 'namespace',
+        label: '命名空间',
+        rules: 'required',
+      },
+    ],
+  }),
+);
 
 const [CreateForm, createFormApi] = useVbenForm({
   schema: [
@@ -412,24 +427,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="业务密钥托管：明文一次性输入，列表仅展示指纹。"
-    title="业务密钥"
-  >
-    <div class="mb-4 flex flex-wrap items-end gap-3">
-      <QueryForm class="flex-1" />
-      <Space>
-        <Button type="primary" @click="loadRows">查询</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button
           v-access:code="'config:secret:write'"
           @click="createOpen = true"
         >
           新建密钥
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -489,6 +499,7 @@ onMounted(async () => {
         </template>
       </template>
     </Table>
+    </div>
 
     <Modal
       v-model:open="createOpen"

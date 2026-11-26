@@ -28,6 +28,7 @@ import {
 } from '#/api';
 
 import FormModal from '../components/form-modal.vue';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 defineOptions({ name: 'IamBreakglass' });
 
@@ -212,12 +213,12 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="限时超级权限：申请本身不授权，需另一账号审批后临时生效"
-    title="应急授权"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <Space>
+          <Button @click="fetchList">刷新</Button>
+        </Space>
         <Button
           v-access:code="'iam:breakglass:request'"
           type="primary"
@@ -225,14 +226,12 @@ onMounted(fetchList);
         >
           申请破玻璃
         </Button>
-        <Button @click="fetchList">刷新</Button>
-      </Space>
-      <p class="text-muted-foreground mt-2 text-xs">
+      </div>
+      <p class="text-muted-foreground mb-3 text-xs">
         关闭 `iam.breakglass.enabled` 时申请会返回 403；审批人与申请人必须不同。
       </p>
-    </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -294,6 +293,7 @@ onMounted(fetchList);
         </template>
       </template>
     </Table>
+    </div>
 
     <FormModal
       v-model:open="requestOpen"

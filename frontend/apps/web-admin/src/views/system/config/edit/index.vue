@@ -131,10 +131,7 @@ onMounted(loadItem);
 </script>
 
 <template>
-  <Page
-    description="只追加新版本，不原地覆盖；须带乐观锁 version，冲突时请刷新后重试"
-    title="配置编辑"
-  >
+  <Page>
     <div v-if="item" class="bg-card mb-4 rounded-lg p-4">
       <Descriptions :column="2" bordered size="small">
         <Descriptions.Item label="配置键">{{ item.key }}</Descriptions.Item>

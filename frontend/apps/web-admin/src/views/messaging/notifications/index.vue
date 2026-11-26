@@ -15,7 +15,6 @@ import {
   Descriptions,
   Drawer,
   message,
-  Space,
   Table,
   Tag,
 } from 'ant-design-vue';
@@ -27,44 +26,53 @@ import {
 } from '#/api';
 
 import FormModal from '../../iam/components/form-modal.vue';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'MessagingNotifications' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '场景' },
-      fieldName: 'scene',
-      label: '场景',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '待投递', value: 'pending' },
-          { label: '已派发', value: 'dispatched' },
-          { label: '已发送', value: 'sent' },
-          { label: '已送达', value: 'delivered' },
-          { label: '未送达', value: 'undelivered' },
-          { label: '失败', value: 'failed' },
-          { label: '已拒绝', value: 'rejected' },
-        ],
-        placeholder: '状态',
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '场景' },
+        fieldName: 'scene',
+        label: '场景',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '租户 ID' },
-      fieldName: 'tenant_id',
-      label: '租户 ID',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '待投递', value: 'pending' },
+            { label: '已派发', value: 'dispatched' },
+            { label: '已发送', value: 'sent' },
+            { label: '已送达', value: 'delivered' },
+            { label: '未送达', value: 'undelivered' },
+            { label: '失败', value: 'failed' },
+            { label: '已拒绝', value: 'rejected' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '租户 ID' },
+        fieldName: 'tenant_id',
+        label: '租户 ID',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<NotificationRequest[]>([]);
@@ -150,11 +158,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -201,29 +204,19 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="按租户、场景和状态查找通知，并查看各渠道投递结果。"
-    title="通知单"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'notification:write'"
-        type="primary"
-        @click="sendOpen = true"
-      >
-        代发通知
-      </Button>
-    </template>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
+        <Button
+          v-access:code="'notification:write'"
+          type="primary"
+          @click="sendOpen = true"
+        >
+          代发通知
+        </Button>
+      </div>
 
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
-      </Space>
-    </div>
-
-    <div class="bg-card rounded-lg p-4">
       <Table
         :columns="columns"
         :data-source="rows"

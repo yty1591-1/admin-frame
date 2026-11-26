@@ -10,7 +10,7 @@ import { reactive, ref } from 'vue';
 import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
-import { Button, message, Space, Table, Tag } from 'ant-design-vue';
+import { Button, message, Table, Tag } from 'ant-design-vue';
 
 import {
   listNotificationTemplatesApi,
@@ -18,20 +18,30 @@ import {
 } from '#/api';
 
 import FormModal from '../../iam/components/form-modal.vue';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'MessagingTemplates' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Input',
-      componentProps: { allowClear: true, placeholder: '模板键' },
-      fieldName: 'key',
-      label: '模板键',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      rows.value = [];
+      queriedKey.value = '';
     },
-  ],
-  showDefaultActions: false,
-});
+    handleSubmit: async () => {
+      await handleSearch();
+    },
+    schema: [
+      {
+        component: 'Input',
+        componentProps: { allowClear: true, placeholder: '模板键' },
+        fieldName: 'key',
+        label: '模板键',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<NotificationTemplate[]>([]);
@@ -97,12 +107,6 @@ async function handleSearch() {
   }
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  rows.value = [];
-  queriedKey.value = '';
-}
-
 async function handleRegister(payload: Record<string, any>) {
   registerSubmitting.value = true;
   try {
@@ -130,29 +134,19 @@ function rowKey(record: NotificationTemplate) {
 </script>
 
 <template>
-  <Page
-    description="按模板键查询版本，管理各渠道的内容与启停。"
-    title="通知模板"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'notification:write'"
-        type="primary"
-        @click="registerOpen = true"
-      >
-        登记模板
-      </Button>
-    </template>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
+        <Button
+          v-access:code="'notification:write'"
+          type="primary"
+          @click="registerOpen = true"
+        >
+          登记模板
+        </Button>
+      </div>
 
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
-      </Space>
-    </div>
-
-    <div class="bg-card rounded-lg p-4">
       <Table
         :columns="columns"
         :data-source="rows"

@@ -73,10 +73,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <Page
-    description="按主体与权限点模拟鉴权，不落地授权；用于核对快照与数据范围"
-    title="授权检查"
-  >
+  <Page>
     <div class="bg-card mb-4 rounded-lg p-4">
       <Form layout="vertical">
         <div class="grid grid-cols-2 gap-x-4">

@@ -20,6 +20,7 @@ import {
   listConfigNamespacesApi,
 } from '#/api';
 import { redirectIfInstallRequired } from '#/api/configcenter/ensure-install';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigItems' });
 
@@ -40,53 +41,67 @@ const pagination = reactive({
   total: 0,
 });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        options: CONFIG_ENV_OPTIONS,
-        placeholder: '环境',
-      },
-      defaultValue: 'dev',
-      fieldName: 'env',
-      label: '环境',
-      rules: 'required',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      if (namespaces.value[0]) {
+        await queryFormApi.setValues({
+          env: 'dev',
+          namespace: namespaces.value[0].value,
+        });
+      }
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: false,
-        options: namespaces,
-        placeholder: '命名空间',
-        showSearch: true,
-      },
-      fieldName: 'namespace',
-      label: '命名空间',
-      rules: 'required',
+    handleSubmit: async () => {
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: CONFIG_ITEM_STATUS_OPTIONS,
-        placeholder: '状态',
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          options: CONFIG_ENV_OPTIONS,
+          placeholder: '环境',
+        },
+        defaultValue: 'dev',
+        fieldName: 'env',
+        label: '环境',
+        rules: 'required',
       },
-      fieldName: 'status',
-      label: '状态',
-    },
-    {
-      component: 'Input',
-      componentProps: {
-        allowClear: true,
-        placeholder: '按 key 过滤（前端过滤）',
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: false,
+          options: namespaces,
+          placeholder: '命名空间',
+          showSearch: true,
+        },
+        fieldName: 'namespace',
+        label: '命名空间',
+        rules: 'required',
       },
-      fieldName: 'keyword',
-      label: '关键字',
-    },
-  ],
-  showDefaultActions: false,
-});
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: CONFIG_ITEM_STATUS_OPTIONS,
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Input',
+        componentProps: {
+          allowClear: true,
+          placeholder: '输入关键词',
+        },
+        fieldName: 'keyword',
+        label: '关键字',
+      },
+    ],
+  }),
+);
 
 const [CreateForm, createFormApi] = useVbenForm({
   commonConfig: { componentProps: { class: 'w-full' } },
@@ -218,17 +233,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  if (namespaces.value[0]) {
-    await queryFormApi.setValues({
-      env: 'dev',
-      namespace: namespaces.value[0].value,
-    });
-  }
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -319,15 +323,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="按环境与命名空间浏览配置草稿；敏感项不展示明文，编辑与版本走独立页"
-    title="配置项"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
         <Button
           v-access:code="'config:write'"
           type="primary"
@@ -335,10 +334,9 @@ onMounted(async () => {
         >
           新建配置键
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <Table
+      <Table
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -380,6 +378,7 @@ onMounted(async () => {
         </template>
       </template>
     </Table>
+    </div>
 
     <Modal
       v-model:open="createOpen"

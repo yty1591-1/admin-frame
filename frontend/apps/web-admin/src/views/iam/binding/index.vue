@@ -30,6 +30,7 @@ import {
   listRolesApi,
 } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass } from '#/utils/list-query-form';
 
 import ConflictModal from '../components/conflict-modal.vue';
 import FormModal from '../components/form-modal.vue';
@@ -228,32 +229,30 @@ onMounted(loadRoleOptions);
 </script>
 
 <template>
-  <Page
-    description="主体与角色的绑定关系；支持按角色或按主体查询"
-    title="角色绑定"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space wrap>
-        <RoleSelect
-          :model-value="roleId"
-          class="w-64"
-          placeholder="按角色查询"
-          @update:model-value="roleId = $event"
-        />
-        <Input
-          v-model:value="subjectId"
-          class="w-64"
-          placeholder="按主体 ID 查询（staff）"
-        />
-        <Button type="primary" @click="fetchList">查询</Button>
-        <Button @click="fetchList">刷新</Button>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <Space wrap>
+          <RoleSelect
+            :model-value="roleId"
+            class="w-64"
+            placeholder="按角色查询"
+            @update:model-value="roleId = $event"
+          />
+          <Input
+            v-model:value="subjectId"
+            class="w-64"
+            placeholder="按主体 ID 查询（staff）"
+          />
+          <Button type="primary" @click="fetchList">查询</Button>
+          <Button @click="fetchList">刷新</Button>
+        </Space>
         <Button v-access:code="'iam:binding:write'" @click="createOpen = true">
           新建绑定
         </Button>
-      </Space>
-    </div>
+      </div>
 
-    <AdminListTable
+      <AdminListTable
       :columns="columns"
       :data-source="rows"
       :loading="loading"
@@ -289,6 +288,7 @@ onMounted(loadRoleOptions);
         </template>
       </template>
     </AdminListTable>
+    </div>
 
     <FormModal
       v-model:open="createOpen"

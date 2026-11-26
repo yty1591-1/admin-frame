@@ -16,50 +16,58 @@ import {
   Drawer,
   message,
   Modal,
-  Space,
   Tag,
 } from 'ant-design-vue';
 
 import { createM2MClientApi, listM2MClientsApi } from '#/api';
 import { AdminListTable } from '#/components/admin-list-table';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 import FormModal from '../../iam/components/form-modal.vue';
 
 defineOptions({ name: 'IdentityM2M' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'active' },
-          { label: '停用', value: 'disabled' },
-          { label: '已删除', value: 'deleted' },
-        ],
-        placeholder: '状态',
-      },
-      fieldName: 'status',
-      label: '状态',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: 'A 端', value: 'admin' },
-          { label: 'B 端', value: 'biz' },
-          { label: 'C 端', value: 'c' },
-        ],
-        placeholder: '端别',
-      },
-      fieldName: 'channel',
-      label: '端别',
+    handleSubmit: async () => {
+      handleSearch();
     },
-  ],
-  showDefaultActions: false,
-});
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'active' },
+            { label: '停用', value: 'disabled' },
+            { label: '已删除', value: 'deleted' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'status',
+        label: '状态',
+      },
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: 'A 端', value: 'admin' },
+            { label: 'B 端', value: 'biz' },
+            { label: 'C 端', value: 'c' },
+          ],
+          placeholder: '端别',
+        },
+        fieldName: 'channel',
+        label: '端别',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<M2MClient[]>([]);
@@ -152,11 +160,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -204,29 +207,18 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="管理服务客户端及其授权端别和作用域。创建和轮换后的密钥仅在本次响应展示。"
-    title="机器身份"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'identity:m2m:write'"
-        type="primary"
-        @click="createOpen = true"
-      >
-        创建客户端
-      </Button>
-    </template>
-
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
-      </Space>
-    </div>
-
-    <div class="bg-card rounded-lg p-4">
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
+        <Button
+          v-access:code="'identity:m2m:write'"
+          type="primary"
+          @click="createOpen = true"
+        >
+          创建客户端
+        </Button>
+      </div>
       <p v-if="featureDisabled" class="text-muted-foreground mb-3 text-sm">
         当前环境未启用 M2M（`identity.m2m.enabled`）。开启并重启 admin-api
         后可管理客户端。

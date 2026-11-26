@@ -256,12 +256,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    description="菜单只影响入口展示；接口鉴权仍由权限点中间件负责"
-    title="菜单资源"
-  >
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <Space>
+  <Page>
+    <div class="bg-card rounded-lg border p-4">
+      <Space class="mb-3">
         <span class="text-muted-foreground text-sm">包含停用节点</span>
         <Switch v-model:checked="includeDisabled" @change="fetchTree" />
         <Button @click="fetchTree">刷新</Button>
@@ -269,17 +266,16 @@ onMounted(async () => {
           新建菜单
         </Button>
       </Space>
-    </div>
 
-    <Table
-      :columns="columns"
-      :data-source="tree"
-      :loading="loading"
-      :pagination="false"
-      default-expand-all-rows
-      row-key="id"
-      size="middle"
-    >
+      <Table
+        :columns="columns"
+        :data-source="tree"
+        :loading="loading"
+        :pagination="false"
+        default-expand-all-rows
+        row-key="id"
+        size="middle"
+      >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'status'">
           <Tag :color="record.status === 'active' ? 'success' : 'default'">
@@ -307,7 +303,8 @@ onMounted(async () => {
           </Space>
         </template>
       </template>
-    </Table>
+      </Table>
+    </div>
 
     <FormModal
       v-model:open="formOpen"

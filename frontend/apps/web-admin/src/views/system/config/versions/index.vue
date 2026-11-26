@@ -151,10 +151,7 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="版本只读；文本 diff 为当前版本对照所选版本（结构化 diff 属 P1）"
-    title="版本历史"
-  >
+  <Page>
     <div v-if="item" class="bg-card mb-4 rounded-lg p-4">
       <Descriptions :column="3" size="small">
         <Descriptions.Item label="配置键">{{ item.key }}</Descriptions.Item>

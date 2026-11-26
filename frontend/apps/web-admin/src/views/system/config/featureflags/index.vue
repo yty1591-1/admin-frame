@@ -10,33 +10,42 @@ import { onMounted, reactive, ref } from 'vue';
 import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
-import { Button, message, Space, Table, Tag } from 'ant-design-vue';
+import { Button, message, Table, Tag } from 'ant-design-vue';
 
 import { createFeatureFlagApi, listFeatureFlagsApi } from '#/api';
 
 import FormModal from '../../../iam/components/form-modal.vue';
+import { listQueryCardClass, withListQueryForm } from '#/utils/list-query-form';
 
 defineOptions({ name: 'SystemConfigFeatureFlags' });
 
-const [QueryForm, queryFormApi] = useVbenForm({
-  schema: [
-    {
-      component: 'Select',
-      componentProps: {
-        allowClear: true,
-        options: [
-          { label: '启用', value: 'enabled' },
-          { label: '关闭', value: 'disabled' },
-          { label: '已到期', value: 'expired' },
-        ],
-        placeholder: '状态',
-      },
-      fieldName: 'state',
-      label: '状态',
+const [QueryForm, queryFormApi] = useVbenForm(
+  withListQueryForm({
+    handleReset: async () => {
+      await queryFormApi.reset();
+      handleSearch();
     },
-  ],
-  showDefaultActions: false,
-});
+    handleSubmit: async () => {
+      handleSearch();
+    },
+    schema: [
+      {
+        component: 'Select',
+        componentProps: {
+          allowClear: true,
+          options: [
+            { label: '启用', value: 'enabled' },
+            { label: '关闭', value: 'disabled' },
+            { label: '已到期', value: 'expired' },
+          ],
+          placeholder: '状态',
+        },
+        fieldName: 'state',
+        label: '状态',
+      },
+    ],
+  }),
+);
 
 const loading = ref(false);
 const rows = ref<FeatureFlag[]>([]);
@@ -120,11 +129,6 @@ function handleSearch() {
   fetchList();
 }
 
-async function handleReset() {
-  await queryFormApi.reset();
-  handleSearch();
-}
-
 function handleTableChange(page: TablePaginationConfig) {
   pagination.current = page.current ?? 1;
   pagination.pageSize = page.pageSize ?? 20;
@@ -164,29 +168,19 @@ onMounted(fetchList);
 </script>
 
 <template>
-  <Page
-    description="维护默认值和灰度规则，查看启停状态及到期时间。"
-    title="特性开关"
-  >
-    <template #extra>
-      <Button
-        v-access:code="'featureflag:write'"
-        type="primary"
-        @click="createOpen = true"
-      >
-        新建开关
-      </Button>
-    </template>
+  <Page>
+    <div :class="listQueryCardClass">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <QueryForm class="min-w-0 flex-1" />
+        <Button
+          v-access:code="'featureflag:write'"
+          type="primary"
+          @click="createOpen = true"
+        >
+          新建开关
+        </Button>
+      </div>
 
-    <div class="bg-card mb-4 rounded-lg p-4">
-      <QueryForm />
-      <Space class="mt-2">
-        <Button type="primary" @click="handleSearch">查询</Button>
-        <Button @click="handleReset">重置</Button>
-      </Space>
-    </div>
-
-    <div class="bg-card rounded-lg p-4">
       <Table
         :columns="columns"
         :data-source="rows"
