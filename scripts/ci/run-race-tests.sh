@@ -40,13 +40,26 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 export MSYS_NO_PATHCONV=1
 
+# 容器默认 GOPROXY=proxy.golang.org；国内/受限网络会 dial refused。
+# 与 docs/CI_STANDARDS.md、gitee-job.sh 对齐，默认 goproxy.cn，可被环境覆盖。
+goproxy="${GOPROXY:-https://goproxy.cn,direct}"
+gosumdb="${GOSUMDB:-sum.golang.google.cn}"
+modcache="$(go env GOMODCACHE)"
+modcache_args=()
+if [[ -n "${modcache}" && -d "${modcache}" ]]; then
+  modcache_args=(-v "${modcache}:/go/pkg/mod")
+fi
+
 echo "==> ${image} go test -race -count=1 ${pkgs}"
 docker run --rm \
   -v "${src}:/src" \
+  "${modcache_args[@]}" \
   -w /src \
   -e CGO_ENABLED=1 \
   -e GOFLAGS="${GOFLAGS:-}" \
   -e GOTOOLCHAIN=local \
+  -e GOPROXY="${goproxy}" \
+  -e GOSUMDB="${gosumdb}" \
   "${image}" \
   go test -race -count=1 ${pkgs}
 

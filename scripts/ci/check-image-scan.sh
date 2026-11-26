@@ -19,6 +19,10 @@ cd "${ROOT}"
 TRIVY_IMAGE="${TRIVY_IMAGE:-aquasec/trivy:0.70.0}"
 IMAGES="${IMAGES:-admin-api}"
 TAG="${SCAN_TAG:-ci-scan}"
+# mirror.gcr.io / ghcr 在部分网络下会超时或 EOF；允许用 TRIVY_* 覆盖。
+TRIVY_TIMEOUT="${TRIVY_TIMEOUT:-15m}"
+TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY:-public.ecr.aws/aquasecurity/trivy-db:2}"
+TRIVY_JAVA_DB_REPOSITORY="${TRIVY_JAVA_DB_REPOSITORY:-public.ecr.aws/aquasecurity/trivy-java-db:1}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker 不可用；镜像扫描依赖 docker build" >&2
@@ -55,14 +59,19 @@ for cmd in ${IMAGES}; do
   echo "==> trivy image ${img} (CRITICAL,HIGH, ignore-unfixed)"
   if ! docker run --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -v trivy-ci-cache:/root/.cache/ \
+    -e TRIVY_TIMEOUT="${TRIVY_TIMEOUT}" \
+    -e TRIVY_DB_REPOSITORY="${TRIVY_DB_REPOSITORY}" \
+    -e TRIVY_JAVA_DB_REPOSITORY="${TRIVY_JAVA_DB_REPOSITORY}" \
     "${TRIVY_IMAGE}" image \
     --scanners vuln \
     --severity CRITICAL,HIGH \
     --ignore-unfixed \
     --exit-code 1 \
+    --timeout "${TRIVY_TIMEOUT}" \
     --no-progress \
     "${img}"; then
-    echo "    ERROR: ${cmd} 命中 HIGH/CRITICAL 漏洞（RELS-06）" >&2
+    echo "    ERROR: ${cmd} 命中 HIGH/CRITICAL 漏洞或扫描失败（RELS-06）" >&2
     FAIL=1
   fi
 done
