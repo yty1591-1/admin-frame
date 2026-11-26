@@ -433,8 +433,8 @@ catalogs:
       specifier: ^3.3.11
       version: 3.3.11
     vxe-pc-ui:
-      specifier: ^4.17.18
-      version: 4.17.18
+      specifier: ^4.21.6
+      version: 4.21.6
     vxe-table:
       specifier: ^4.21.2
       version: 4.21.2
@@ -1629,7 +1629,7 @@ importers:
         version: 3.5.46(typescript@6.0.3)
       vxe-pc-ui:
         specifier: 'catalog:'
-        version: 4.17.18(vue@3.5.46(typescript@6.0.3))
+        version: 4.21.6(vue@3.5.46(typescript@6.0.3))
       vxe-table:
         specifier: 'catalog:'
         version: 4.21.2
@@ -5544,8 +5544,8 @@ packages:
     peerDependencies:
       vue: 3.5.46
 
-  '@vxe-ui/core@4.4.20':
-    resolution: {integrity: sha512-PYsssySS4cK3M2nahIRGcIRjQvnsDA/AB9Ie1fu5zAFRaUGTpyHh62sSRi1qNSsqpDiABEYquOSrexZ/NG6akw==}
+  '@vxe-ui/core@4.5.9':
+    resolution: {integrity: sha512-b65Md4gLuDW5vpHNLJ9sLkXsw2VUsHsHlKVZVTOyw+/wE6uh6rryg1pRnlhTywphRgVkQBOzXoZ44s3KQ6lWRA==}
     peerDependencies:
       vue: 3.5.46
 
@@ -6424,8 +6424,8 @@ packages:
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
 
-  dom-zindex@1.0.7:
-    resolution: {integrity: sha512-cKU/h8v8IPBgdZOTPbPmq3Ib+Ac5C+kKoh9I4LbGR9BM3GwbmB16KYWKJcj5M2BavnA66EbgYzxYDLd1IytnlQ==}
+  dom-zindex@1.0.8:
+    resolution: {integrity: sha512-n6UB0BU5pltbvMWNu3zZqnLO35uFvOjTBO/s2GiPbdnfhyVGYLhLxynou/B2QSQEPJR4d398/0jbUZHLNiOmfA==}
 
   domelementtype@2.3.0:
     resolution: {integrity: sha512-OLETBj6w0OsagBwdXnPdN0cnMfF9opN69co+7ZrbfPGrdpPVNBUj02spi6B1N7wChLQiPn4CSH/zJvXw56gmHw==}
@@ -9776,8 +9776,8 @@ packages:
       typescript:
         optional: true
 
-  vxe-pc-ui@4.17.18:
-    resolution: {integrity: sha512-uWzUN+caAY7Tf863brGxHE0JPjsuP2/aMmt0Vjcsp8kryqHFftSTbGrPtglPDjN5szd+k3pbrmwAPvgAZjhQiA==}
+  vxe-pc-ui@4.21.6:
+    resolution: {integrity: sha512-iPerVt+01aoDglIGj6fCub5xoaiuvcqQLNc59GQ6YQtsMu1CwiZ+BUb9bTUUpLeLACw6p0u06kb7Nlt8lInIbQ==}
 
   vxe-table@4.21.2:
     resolution: {integrity: sha512-QhaysMEMehHp9w2D7/AETjIm0hUwdvhpzNTurCJ2nLF3RwQH22Ka4ChXiUGfk8iASfYUiBbocU1tq50/HiTB/g==}
@@ -9948,8 +9948,8 @@ packages:
   xe-utils@3.9.1:
     resolution: {integrity: sha512-Ujk5UmoH6Iaqhgz3oGwfCXVcMdUJKlXnfvLABdnMyseMG0eHsX2mcCvLd/8sGlIXtfwsprI9bW7vgcVognLmqQ==}
 
-  xe-utils@4.0.12:
-    resolution: {integrity: sha512-4y2OXEVlXHoBMSyzdAcXDM9oyb8EL9U4LIEq642JO0liULVpC9U5aEiVv2xbS9hhoebYCMdZZYASqh/7H5Wd0Q==}
+  xe-utils@4.1.5:
+    resolution: {integrity: sha512-MDy2CKbwB5K9LY9pRm597Mb4Ah3wbUkFZtJTgsZgJaEeDuRtpQsaQLD+QKGAUBW5NI5y/4thzPT6c05pWPRWnA==}
 
   xml-name-validator@5.0.0:
     resolution: {integrity: sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==}
@@ -13495,11 +13495,11 @@ snapshots:
     dependencies:
       vue: 3.5.46(typescript@6.0.3)
 
-  '@vxe-ui/core@4.4.20(vue@3.5.46(typescript@6.0.3))':
+  '@vxe-ui/core@4.5.9(vue@3.5.46(typescript@6.0.3))':
     dependencies:
-      dom-zindex: 1.0.7
+      dom-zindex: 1.0.8
       vue: 3.5.46(typescript@6.0.3)
-      xe-utils: 4.0.12
+      xe-utils: 4.1.5
 
   '@yuku-codegen/binding-android-arm64@0.8.7':
     optional: true
@@ -14384,7 +14384,7 @@ snapshots:
       domhandler: 5.0.3
       entities: 4.5.0
 
-  dom-zindex@1.0.7: {}
+  dom-zindex@1.0.8: {}
 
   domelementtype@2.3.0: {}
 
@@ -17996,9 +17996,9 @@ snapshots:
     optionalDependencies:
       typescript: 6.0.3
 
-  vxe-pc-ui@4.17.18(vue@3.5.46(typescript@6.0.3)):
+  vxe-pc-ui@4.21.6(vue@3.5.46(typescript@6.0.3)):
     dependencies:
-      '@vxe-ui/core': 4.4.20(vue@3.5.46(typescript@6.0.3))
+      '@vxe-ui/core': 4.5.9(vue@3.5.46(typescript@6.0.3))
     transitivePeerDependencies:
       - vue
 
@@ -18235,7 +18235,7 @@ snapshots:
 
   xe-utils@3.9.1: {}
 
-  xe-utils@4.0.12: {}
+  xe-utils@4.1.5: {}
 
   xml-name-validator@5.0.0: {}
 
