@@ -58,7 +58,7 @@ func TestAsyncMetricsGauges(t *testing.T) {
 	}
 	now := time.Now().Add(-30 * time.Second)
 	if err := metrics.RegisterGauges(func(context.Context) (outbox.Stats, error) {
-		return outbox.Stats{Pending: 3, DLQ: 1, OldestCreatedAt: now}, nil
+		return outbox.Stats{Pending: 3, DLQ: 1, OldestCreatedAt: now, ReplayedRecently: 2}, nil
 	}); err != nil {
 		t.Fatalf("register gauges: %v", err)
 	}
@@ -78,6 +78,9 @@ func TestAsyncMetricsGauges(t *testing.T) {
 	}
 	if values["async_dlq_depth"] != 1 {
 		t.Fatalf("async_dlq_depth = %v, want 1", values["async_dlq_depth"])
+	}
+	if values["async_dlq_replayed_30m"] != 2 {
+		t.Fatalf("async_dlq_replayed_30m = %v, want 2", values["async_dlq_replayed_30m"])
 	}
 	if lag := values["async_outbox_lag_seconds"]; lag < 29 || lag > 60 {
 		t.Fatalf("async_outbox_lag_seconds = %v, want ~30", lag)

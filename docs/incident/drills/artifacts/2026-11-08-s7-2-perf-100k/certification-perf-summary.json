@@ -1,0 +1,29 @@
+{
+  "bindings": 100000,
+  "max_tasks_per_campaign": 100000,
+  "default_max_tasks": 10000,
+  "seed_ms": 7604,
+  "activate_full_ms": 4683,
+  "activate_privileged_ms": 4828,
+  "activate_alloc_bytes": 365600232,
+  "activate_heap_inuse_delta_bytes": 67829760,
+  "insert_statements": 203,
+  "select_statements_full": 3,
+  "select_statements_privileged": 6,
+  "export_ms": 479,
+  "export_bytes": 14300132,
+  "export_rows": 100000,
+  "status_counts": {
+    "pending": 100000
+  },
+  "fill_non_empty_decision": 0,
+  "fill_non_empty_reason": 0,
+  "fill_non_empty_decided_by": 0,
+  "fill_non_empty_decided_at": 0,
+  "boundary_rejected": true,
+  "decided_rows": 100,
+  "decided_fill_decision": 100,
+  "decided_fill_reason": 100,
+  "decided_fill_decided_by": 100,
+  "decided_fill_decided_at": 100
+}

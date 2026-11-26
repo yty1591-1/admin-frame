@@ -1,10 +1,29 @@
 openapi: 3.0.3
 info:
   title: Admin API (A)
-  version: 8.2.0
+  version: 9.6.0
   description: |
     平台运营管理端。破坏性变更须提升本文件 `info.version` 的 **major**，
     并按 `docs/API_STANDARDS.md` 走弃用与发布说明。
+    9.5.0：安装向导进入 repair 形态（ADR-0018，纯增量）——`POST /admin/v1/install/begin`
+    接受 `reason: first_install|repair`，repair 只允许在 `ready` 之后发起并把阻塞键冻结成
+    `repair_keys` 白名单；`apply` 新增按 namespace 分组的 `values`，响应新增
+    `remaining_gaps`；安装态响应新增 `gaps`/`blocking_count`/`repair_keys`；
+    `complete` 在仍有阻塞键时返回 40000 且状态保持 `installing`。
+    9.6.0：`POST /admin/v1/install/begin` 新增 `declared_keys`（运维声明的额外阻塞键），
+    只在 repair 轮次有效，须已声明、非敏感且尚未进入生效快照（ADR-0018 待定 5）。
+    9.4.0：新增 `GET /admin/v1/install/schema` 向导渲染元数据（ADR-0018，纯增量）——
+    返回字段清单/分组/默认值来源/缺失必填键；只出声明信息、不出运行值，
+    与写操作一样要求 `X-Config-Install-Token`。安装态响应新增 `mode`
+    （first_install / repair）。
+    9.3.0：新增安装向导代理端点 `/admin/v1/install/*`（ADR-0017 / ADR-0018，纯增量）——
+    安装期尚无可用 JWT，四个端点均不鉴权，写操作凭 `X-Config-Install-Token`
+    由 config-api 校验，响应原样透传（含 502 上游不可达）。
+    9.2.0：发布单取消端点与列表 keyword/owner 过滤（CC-R-16）；声明键增补
+    `hot_whitelist`（ADR-0015 HotKeySet；CC-R-17）（纯增量）。
+    9.1.0：新增 `GET /admin/v1/configs/namespaces/{namespace}/keys` 声明键列表（纯增量；CC-R-12）。
+    9.0.0：配置发布回滚与密钥版本激活强制 `break_glass` + `break_glass_reason`（破坏性；CC-R-08/14）；
+    密钥激活端点新增必填 requestBody。
     2.0.0：生产级信封/分页上限/错误模型（相对 1.0.0 骨架契约）。
     3.0.0：移除历史订单契约（破坏性）。
     3.1.0：登录新增 `MFABindingRequired` 分支与 `mfa_setup_ticket`（§7.2.1）。
@@ -38,6 +57,20 @@ info:
     （消息携带当前版本）；租户详情与成功写入响应带 `ETag` 头（纯增量）。
     补录：7.5.0 邀请端点的 5 个路径已挂载到本文件 paths 段（7.5.0 时漏挂，
     由 T-17 域门禁的路由 ↔ OpenAPI 双向对账发现）。
+    8.3.0：M2M 机器身份（docs/identity-authn.md 21.2）——新增 `POST /admin/v1/auth/token`
+    与客户端生命周期六个端点；协议端点错误体为统一信封的显式例外（RFC 6749 5.2），
+    `client_secret` 仅在创建 / 轮换响应出现一次（纯增量）。
+    8.4.0：SCIM 2.0 目录同步（docs/identity-authn.md 21.1）——新增 `/admin/scim/v2/*`
+    协议端点与三个管理端点；SCIM 响应体按 RFC 7643 / 7644，是统一信封的显式例外，
+    链路 ID 经响应头 `X-Trace-Id` 返回（纯增量）。
+    8.5.0：配置中心管理面（M1-3）——新增 `/admin/v1/configs/*` 十四个端点
+    （namespace、配置键与版本、发布单创建 / 送审 / 审批 / 发布 / 回滚）；
+    读、写、审批、发布四权分离（`config:read` / `config:write` / `config:approve` /
+    `config:publish`）；敏感项（`sensitive=true`）只返回 `value_hash`，不返回明文；
+    快照不可变，生效只切换释放指针（纯增量）。
+    8.6.1：密钥轮换 / 吊销 / 授权改为双人审批（pending_action）；纯增量。
+    8.6.0：配置中心业务密钥管理面（M2 / ADR-0014）——新增 `/admin/v1/configs/secrets*`；
+    `config:secret:read/write/approve` 三权分离；列表 / 详情仅指纹，明文只允许创建与轮换一次性输入（纯增量）。
 servers:
   - url: http://localhost:8081
     description: 本地直连（make run-admin）
@@ -50,6 +83,12 @@ servers:
 tags:
   - name: probe
     description: 存活/就绪/版本（无需鉴权）
+  - name: install
+    description: |
+      安装向导代理（ADR-0017 / ADR-0018）。安装期业务配置尚未播种，A 端无可用 JWT，
+      因此四个端点均不鉴权；写操作凭 `X-Config-Install-Token`（与 config-api 的
+      `CONFIG_INSTALL_SETUP_TOKEN` 一致）由 config-api 校验，请求经 admin-api 以 mTLS
+      转发到 `/internal/v1/install/*`，响应与错误码原样透传。
   - name: iam
     description: |
       RBAC / IAM 管理。写接口要求 `If-Match` 或 body `version` 与当前版本一致（乐观锁），
@@ -64,6 +103,13 @@ tags:
     description: |
       身份认证：密码登录、一次性刷新、登出与会话管理。令牌不携带角色，
       权限以 IAM 快照为唯一来源；错误码覆盖 40000 / 40100 / 42900 / 50300。
+  - name: config
+    description: |
+      配置中心管理面（M1-3）。配置键只能追加版本、不可原地修改；发布单是
+      不可变快照，生效只切换释放指针。读、写、审批、发布四权分离
+      （`config:read` / `config:write` / `config:approve` / `config:publish`），
+      提交人不得自审（40300）；敏感项（`sensitive=true`）不返回明文，只返回
+      `value_hash`。指针与版本冲突返回 40900。
 paths:
   /healthz:
     $ref: './paths/admin/probe.yaml#/healthz'
@@ -71,6 +117,16 @@ paths:
     $ref: './paths/admin/probe.yaml#/readyz'
   /version:
     $ref: './paths/admin/probe.yaml#/version'
+  /admin/v1/install/status:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-status'
+  /admin/v1/install/schema:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-schema'
+  /admin/v1/install/begin:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-begin'
+  /admin/v1/install/apply:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-apply'
+  /admin/v1/install/complete:
+    $ref: './paths/admin/install.yaml#/admin-v1-install-complete'
   /admin/v1/auth/login:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-login'
   /admin/v1/auth/refresh:
@@ -117,6 +173,44 @@ paths:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-unlock'
   /admin/v1/auth/accounts/{id}/mfa/reset:
     $ref: './paths/admin/auth.yaml#/admin-v1-auth-accounts-by-id-mfa-reset'
+  /admin/v1/auth/token:
+    $ref: './paths/admin/token.yaml#/admin-v1-auth-token'
+  /admin/v1/auth/m2m/clients:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients'
+  /admin/v1/auth/m2m/clients/{id}/secrets:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-secrets'
+  /admin/v1/auth/m2m/clients/{id}/disable:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-disable'
+  /admin/v1/auth/m2m/clients/{id}/enable:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-enable'
+  /admin/v1/auth/m2m/clients/{id}:
+    $ref: './paths/admin/m2m.yaml#/admin-v1-auth-m2m-clients-by-id'
+  /admin/v1/auth/scim/tokens:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-tokens'
+  /admin/v1/auth/scim/tokens/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-tokens-id'
+  /admin/v1/auth/scim/groups:
+    $ref: './paths/admin/scim.yaml#/admin-v1-auth-scim-groups'
+  /admin/scim/v2/ServiceProviderConfig:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-service-provider-config'
+  /admin/scim/v2/ResourceTypes:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-resource-types'
+  /admin/scim/v2/ResourceTypes/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-resource-types-id'
+  /admin/scim/v2/Schemas:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-schemas'
+  /admin/scim/v2/Schemas/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-schemas-id'
+  /admin/scim/v2/Bulk:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-bulk'
+  /admin/scim/v2/Users:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-users'
+  /admin/scim/v2/Users/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-users-id'
+  /admin/scim/v2/Groups:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-groups'
+  /admin/scim/v2/Groups/{id}:
+    $ref: './paths/admin/scim.yaml#/admin-scim-v2-groups-id'
   /admin/v1/me:
     $ref: './paths/admin/me.yaml#/admin-v1-me'
   /admin/v1/iam/permissions:
@@ -219,6 +313,56 @@ paths:
     $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key'
   /admin/v1/feature-flags/{key}/status:
     $ref: './paths/admin/featureflag.yaml#/admin-v1-feature-flags-by-key-status'
+  /admin/v1/configs/namespaces:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-namespaces'
+  /admin/v1/configs/namespaces/{namespace}/keys:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-namespaces-by-namespace-keys'
+  /admin/v1/configs/items:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items'
+  /admin/v1/configs/items/{id}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id'
+  /admin/v1/configs/items/{id}/transition:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-transition'
+  /admin/v1/configs/items/{id}/versions:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-versions'
+  /admin/v1/configs/items/{id}/versions/{version}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-items-by-id-versions-by-version'
+  /admin/v1/configs/releases:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases'
+  /admin/v1/configs/releases/{id}:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id'
+  /admin/v1/configs/releases/{id}/submit:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-submit'
+  /admin/v1/configs/releases/{id}/approve:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-approve'
+  /admin/v1/configs/releases/{id}/publish:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-publish'
+  /admin/v1/configs/releases/{id}/rollback:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-rollback'
+  /admin/v1/configs/releases/{id}/cancel:
+    $ref: './paths/admin/configcenter.yaml#/admin-v1-configs-releases-by-id-cancel'
+  /admin/v1/configs/secrets:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets'
+  /admin/v1/configs/secrets/{id}:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id'
+  /admin/v1/configs/secrets/{id}/submit:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-submit'
+  /admin/v1/configs/secrets/{id}/approve:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-approve'
+  /admin/v1/configs/secrets/{id}/rotate:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-rotate'
+  /admin/v1/configs/secrets/{id}/revoke:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-revoke'
+  /admin/v1/configs/secrets/{id}/versions:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-versions'
+  /admin/v1/configs/secrets/{id}/versions/{version}/activate:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-versions-by-version-activate'
+  /admin/v1/configs/secrets/{id}/grants:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-grants'
+  /admin/v1/configs/secrets/{id}/grants/{grant_id}/revoke:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-grants-by-grant-id-revoke'
+  /admin/v1/configs/secrets/{id}/accesses:
+    $ref: './paths/admin/secrets.yaml#/admin-v1-configs-secrets-by-id-accesses'
   /admin/v1/notifications:
     $ref: './paths/admin/notification.yaml#/admin-v1-notifications'
   /admin/v1/notifications/{id}:
@@ -271,4 +415,8 @@ components:
       type: http
       scheme: bearer
       description: "A 端 JWT（Bearer）。权限与主体以 IAM 快照为准，令牌不携带角色。仅 auth.mode=demo 的本地/测试形态使用演示令牌 admin.<subject_id>，生产禁止。"
+    scimBearerAuth:
+      type: http
+      scheme: bearer
+      description: "SCIM 目录同步令牌（Bearer scim_<32B base64url>）。只能访问 /admin/scim/v2/*，不能调用任何 /{端}/v1/* 业务端点；A 端账号 JWT 也不能调用 SCIM（docs/identity-authn.md 21.1.2）。"
 

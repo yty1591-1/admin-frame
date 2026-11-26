@@ -17,10 +17,16 @@ const (
 	BizCodeNotFound = 40400
 	// BizCodeConflict 状态冲突。
 	BizCodeConflict = 40900
+	// BizCodeInstallInProgress 配置中心安装进行中。
+	BizCodeInstallInProgress = 40951
+	// BizCodeInstallCompleted 配置中心安装已完成。
+	BizCodeInstallCompleted = 40952
 	// BizCodeTooManyRequests 限流或配额耗尽。
 	BizCodeTooManyRequests = 42900
 	// BizCodeServiceUnavailable 依赖不可用（失败关闭）。
 	BizCodeServiceUnavailable = 50300
+	// BizCodeInstallRequired 配置中心尚未完成首次安装。
+	BizCodeInstallRequired = 50351
 	// BizCodeInternal 内部错误。
 	BizCodeInternal = 50000
 )

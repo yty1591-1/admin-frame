@@ -74,7 +74,7 @@ components:
         该码表按 API-04 只增不减，故声明为可扩展开放集合（`x-extensible-enum`）：
         客户端必须对未知码按「未知错误」兜底，不得据此改变已实现分支。
       x-extensible-enum:
-        [40000, 40100, 40300, 40400, 40900, 42900, 50000, 50300]
+        [40000, 40100, 40300, 40400, 40900, 40951, 40952, 42900, 50000, 50300, 50351]
       x-enum-descriptions:
         - 请求参数非法
         - 未认证或令牌无效
@@ -589,6 +589,254 @@ components:
         next_cursor:
           type: string
           description: 下一页游标；省略表示没有更多设备
+    M2MClient:
+      type: object
+      description: M2M 机器客户端视图；不含任何密钥材料（docs/identity-authn.md 21.2.4）
+      required: [id, client_id, name, status, allowed_channels, allowed_scopes, token_version]
+      properties:
+        id: {type: string}
+        client_id:
+          type: string
+          description: 形如 svc_<22 字符 base64url>；软删后不可复用
+        name: {type: string}
+        status: {type: string, enum: [active, disabled, deleted]}
+        allowed_channels:
+          type: array
+          items: {type: string, enum: [admin, biz, c]}
+        allowed_scopes:
+          type: array
+          items: {type: string}
+        owner: {type: string}
+        token_version:
+          type: integer
+          minimum: 1
+          description: 撤销版本；递增后旧令牌在 60s 内失效
+        rotation_due_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        deleted_at: {type: string, format: date-time}
+    M2MTokenRequest:
+      type: object
+      description: RFC 6749 客户端凭据请求（application/x-www-form-urlencoded）
+      required: [grant_type, scope]
+      properties:
+        grant_type: {type: string, enum: [client_credentials]}
+        scope:
+          type: string
+          description: 空格分隔的权限码；必填、无隐式默认值，必须同时命中客户端与服务端白名单
+        client_id: {type: string, description: Basic 认证时可省略}
+        client_secret: {type: string, description: Basic 认证时可省略；禁止经 query 传参}
+    M2MTokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, scope]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, enum: [Bearer]}
+        expires_in: {type: integer, minimum: 300, maximum: 3600}
+        scope: {type: string}
+    OAuth2Error:
+      type: object
+      description: RFC 6749 5.2 错误体；本仓库统一信封的显式例外
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_client, invalid_scope, unsupported_grant_type, temporarily_unavailable]
+        error_description: {type: string}
+    SCIMUser:
+      type: object
+      description: SCIM 2.0 User（RFC 7643）；响应体不使用统一信封
+      required: [schemas, userName]
+      properties:
+        schemas:
+          type: array
+          items: {type: string}
+        id: {type: string, description: 服务端生成，稳定不可变}
+        externalId:
+          type: string
+          description: IdP 侧用户 ID；必填，幂等键，重复返回 409 uniqueness
+        userName:
+          type: string
+          description: A 端登录主体；改名即主体变更（重算索引与密文）
+        name:
+          type: object
+          properties:
+            formatted: {type: string}
+            givenName: {type: string}
+            familyName: {type: string}
+        displayName: {type: string}
+        active:
+          type: boolean
+          description: false 等价于停用：撤销全部会话并递增 token_version
+        password:
+          type: string
+          description: 一律拒绝（400 mutability）；SSO-only 账号禁止经 SCIM 下发口令
+        groups:
+          type: array
+          description: 只读投影，来自 Group.members
+          items:
+            type: object
+            properties:
+              value: {type: string}
+              display: {type: string}
+              type: {type: string}
+        meta:
+          $ref: "#/components/schemas/SCIMMeta"
+    SCIMGroup:
+      type: object
+      description: SCIM 2.0 Group（RFC 7643）
+      required: [schemas, displayName]
+      properties:
+        schemas:
+          type: array
+          items: {type: string}
+        id: {type: string}
+        externalId: {type: string, description: 必填，幂等键，provider 内唯一}
+        displayName: {type: string, description: 必填；group_role_map 的映射键}
+        members:
+          type: array
+          items:
+            type: object
+            required: [value]
+            properties:
+              value: {type: string, description: 账号 ID 或 externalId}
+              display: {type: string}
+              type: {type: string}
+        meta:
+          $ref: "#/components/schemas/SCIMMeta"
+    SCIMMeta:
+      type: object
+      properties:
+        resourceType: {type: string}
+        created: {type: string, format: date-time}
+        lastModified: {type: string, format: date-time}
+        version:
+          type: string
+          description: 弱 ETag（W/"<version>"），与 If-Match 校验同源
+        location: {type: string}
+    SCIMListResponse:
+      type: object
+      description: SCIM 列表响应（RFC 7644 §3.4.2）
+      required: [schemas, totalResults, startIndex, itemsPerPage, Resources]
+      properties:
+        schemas:
+          type: array
+          items: {type: string}
+        totalResults: {type: integer}
+        startIndex: {type: integer, minimum: 1}
+        itemsPerPage: {type: integer}
+        Resources:
+          type: array
+          items: {type: object}
+    SCIMPatchRequest:
+      type: object
+      description: SCIM PATCH（RFC 7644 §3.5.2）；仅 add / replace / remove
+      required: [schemas, Operations]
+      properties:
+        schemas:
+          type: array
+          items: {type: string}
+        Operations:
+          type: array
+          items:
+            type: object
+            required: [op]
+            properties:
+              op: {type: string, enum: [add, replace, remove]}
+              path:
+                type: string
+                description: 限定 active / userName / externalId / displayName / name / members
+              value: {}
+    SCIMError:
+      type: object
+      description: RFC 7644 §3.12 协议错误体；本仓库统一信封的显式例外
+      required: [schemas, status]
+      properties:
+        schemas:
+          type: array
+          items: {type: string}
+        status: {type: string}
+        scimType:
+          type: string
+          enum: [invalidSyntax, invalidValue, invalidPath, invalidFilter, noTarget, mutability, uniqueness]
+        detail: {type: string}
+    SCIMToken:
+      type: object
+      description: SCIM 令牌视图；不含原文
+      required: [id, provider, fingerprint, status, created_at]
+      properties:
+        id: {type: string}
+        provider: {type: string}
+        fingerprint: {type: string}
+        status: {type: string, enum: [active, retiring, revoked]}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    SCIMGroupSummary:
+      type: object
+      description: 管理端组视图（含映射角色与成员数量）
+      required: [id, external_id, display_name, mapped_role, member_count, version]
+      properties:
+        id: {type: string}
+        external_id: {type: string}
+        display_name: {type: string}
+        mapped_role:
+          type: string
+          description: 映射到的 A 端角色 code；空串表示未映射（不产生授权）
+        member_count: {type: integer}
+        version: {type: integer}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    InstallState:
+      type: object
+      description: |
+        首次安装 / 重配置（repair）态（ADR-0017 / ADR-0018）。`ready` 之外的状态下
+        业务进程按 ADR-0018 决定降级或失败关闭；`lease_until` 只在 `installing` 有值。
+      required: [env, status, version, updated_at]
+      properties:
+        env: {type: string}
+        status:
+          type: string
+          enum: [pending, installing, ready, failed]
+        mode:
+          type: string
+          enum: [first_install, repair]
+          description: |
+            向导模式（ADR-0018）：`ready` 之前是首装（first_install），
+            之后是补配/修复（repair）。前端据此决定是否只渲染阻塞键。
+        owner:
+          type: string
+          description: 持有租约的安装者标识（`installing` 期间有效）
+        repair_keys:
+          type: array
+          description: |
+            repair 轮次在 begin 时冻结的阻塞键白名单，元素为 `namespace/key`（ADR-0018）。
+            首装为空数组；repair 期间 apply 只接受白名单内的键。
+          items:
+            type: string
+        lease_until: {type: string, format: date-time}
+        version:
+          type: integer
+          format: int64
+        last_error: {type: string}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    InstallGap:
+      type: object
+      description: |
+        缺失的必填键（ADR-0018）。`status.gaps` 与 `apply.remaining_gaps` 用它回答
+        「为什么进程起不来」，前端据此高亮需要填写的字段。
+      required: [namespace, key, reason]
+      properties:
+        namespace: {type: string}
+        key: {type: string}
+        reason:
+          type: string
+          enum: [no_active_release, missing_in_snapshot]
+          description: |
+            `no_active_release`：该 namespace 尚无生效指针（首装）；
+            `missing_in_snapshot`：指针存在但快照里缺这个必填键（升级/修复）。
   responses:
     BadRequest:
       description: 参数非法
@@ -676,3 +924,55 @@ components:
             code: 50300
             message: service temporarily unavailable
             trace_id: a1b2c3d4e5f60708
+    SCIMBadRequest:
+      description: SCIM 协议错误（RFC 7644 3.12）；scimType=invalidSyntax / invalidValue / invalidPath / invalidFilter / noTarget / mutability
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+          example:
+            schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+            status: "400"
+            scimType: invalidValue
+            detail: externalId is required
+    SCIMUnauthorized:
+      description: SCIM 令牌缺失或无效；只接受 scim_ 前缀令牌
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMNotFound:
+      description: 资源不存在或已删除
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMConflict:
+      description: 唯一性冲突（scimType=uniqueness）
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+          example:
+            schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+            status: "409"
+            scimType: uniqueness
+            detail: externalId already exists
+    SCIMPreconditionFailed:
+      description: If-Match 与资源版本不匹配
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMTooManyRequests:
+      description: 超过单令牌或单 IP 限流；带 Retry-After
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"

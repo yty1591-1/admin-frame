@@ -2,17 +2,21 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	identityruntime "github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/runtimebind"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
+	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/internal/platform/httpserver"
 
 	// 注册全部云存储驱动；C 端如需独立裁剪可只 import 所需驱动。
@@ -29,9 +33,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/c.yaml", "config file path")
-	flag.Parse()
-	if err := run(*configPath); err != nil {
+	if err := run(); err != nil {
 		log.Printf("c-api: %v", err)
 		os.Exit(1)
 	}
@@ -41,11 +43,73 @@ func main() {
 //
 // 身份域运行时在装配期构造一次：撤销检查器必须在 AuthMW 构造前返回
 // （NewSessionValidator），路由注册复用同一实例。
-func run(configPath string) error {
-	appCfg, err := appconfig.Load(configPath)
+func run() error {
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("config boot: %w", err)
+	}
+	// 先 Resolve 再 Validate：JWT / identity 明文只来自 secretclient。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		if boot.InstallPending {
+			jwtSecret = configboot.InstallPendingJWTSecret
+		} else {
+			return fmt.Errorf("jwt secret: %w", err)
+		}
+	}
+	// 对象存储凭据：走密钥子域（config_secret）；缺失时由装配阶段决定是否致命。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
+	hashKey, mfaSecret, err := secretruntime.ResolveIdentitySecretsFromEnv(ctx, boot.Env)
+	if err != nil {
+		if boot.InstallPending || platformconfig.IsLocalDevEnv(boot.Env) {
+			hashKey, mfaSecret = "", ""
+		} else {
+			return fmt.Errorf("identity secrets: %w", err)
+		}
+	}
+	samlPrivateKey, _ := secretruntime.ResolveIdentitySAMLPrivateKeyFromEnv(ctx, boot.Env)
+	subjectKey, _ := secretruntime.ResolveIdentitySubjectKeyFromEnv(ctx, boot.Env)
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		// Env 必须在此注入，供 Normalize/Validate 使用（CC-R-01）。
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "c-api", Channel: "c", Env: boot.Env, Addr: ":8083",
+		})
+		// C 端启用登录路由；prod-like 短信渠道由 ApplyProdLikeProcessDefaults 补齐。
+		values["identity.enabled"] = "true"
+		configboot.SetIfEmpty(values, "auth.mode", "jwt")
+		configboot.SetIfEmpty(values, "auth.jwt.alg", "HS256")
+		configboot.SetIfEmpty(values, "auth.jwt.issuer", "admin-frame")
+		configboot.SetIfEmpty(values, "auth.jwt.audience", "c")
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "c")
+		configboot.ApplyDeployOverlays(values)
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
+		if hashKey != "" {
+			values[secretruntime.IdentityHashKeyValueKey] = hashKey
+		}
+		if mfaSecret != "" {
+			values[secretruntime.IdentityMFASecretValueKey] = mfaSecret
+		}
+		// enabled=false 时注入私钥会触发 Validate 失败（密钥仍可由配置中心托管）。
+		if samlPrivateKey != "" && strings.EqualFold(values["identity.saml.enabled"], "true") {
+			values[secretruntime.IdentitySAMLPrivateKeyValueKey] = samlPrivateKey
+		}
+		// 缺必填键时 fail-fast：C 端无法自行修复，等 admin 向导补齐（ADR-0018）。
+		if err := configboot.RequireComplete("c-api", values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	secretruntime.ApplyIdentitySubjectKey(&appCfg.Identity, subjectKey)
 	var (
 		identityOnce sync.Once
 		identityRT   *identityruntime.Runtime
@@ -72,9 +136,18 @@ func run(configPath string) error {
 			return built.Checker, nil
 		},
 		Register: func(deps *platform.Deps, mux *http.ServeMux) error {
+			configboot.RegisterInstallReadyCheck(deps.Health, boot.ConfigAPIURL, boot.HTTPClient)
 			built, err := buildIdentity(deps)
 			if err != nil {
 				return err
+			}
+			// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
+			if refreshRT, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
+				deps.Logger.Warn("configcenter refresh unavailable", "err", rerr)
+			} else if refreshRT != nil {
+				refreshRT.StartRefresh(deps, 0)
+				// ADR-0015：入口限流跟随热更视图，`rate_limit.*` 发布后无需重启。
+				refreshRT.ApplyRuntimeParams(deps)
 			}
 			return registerRoutes(deps, mux, built)
 		},

@@ -5,7 +5,7 @@
 ## 变更元数据
 
 - [ ] 发布单 / 工单号：________
-- [ ] 影响端：admin / biz / c / worker / migrate
+- [ ] 影响端：admin / biz / c / worker / migrate / web-admin / web-biz
 - [ ] 镜像 tag：________
 - [ ] 镜像由 GitHub `Image` 流水线产出（push main / `v*` tag），非本机手工构建
 - [ ] 镜像 digest：`sha256:________`（已记录）
@@ -13,6 +13,7 @@
 - [ ] SBOM：`sbom-<cmd>` artifact 已生成并可下载（CycloneDX），且 attestation 挂在**同一 digest** 上
 - [ ] 验签：`Release` 流水线 `verify` job 通过（keyless 身份 = 本仓库 `image.yml`），无 `continue-on-error`
 - [ ] git commit：________
+- [ ] 前端镜像 digest：`web-admin@sha256:________` / `web-biz@sha256:________`（GitHub Release `images.json` 可查）
 
 ## 质量门禁
 
@@ -38,6 +39,17 @@
 - [ ] `/version` 显示预期 version/commit/build_time（非全 `dev`）
 - [ ] 金丝雀 release（`admin-frame-canary`）已在 promote 阶段卸载
 - [ ] 生产实际运行的 digest 与「已验签的 digest」一致（`kubectl get deploy -o jsonpath` 抽查一端）
+- [ ] 前端 Deployment 已滚到目标 digest，`/healthz` 返回 200 且 Pod Ready
+- [ ] 前端 `index.html` 的 `x-app-git-sha` 与发布 commit 一致（`curl -s <站点> | grep x-app-git-sha`）
+
+## 前端回滚（FE-B-04）
+
+- [ ] `helm history admin-frame` 可见本次 revision，上一 revision 的 web-admin/web-biz digest 已记录
+- [ ] 回滚命令：`helm rollback admin-frame <上一版本> --wait`
+- [ ] 回滚后 `kubectl rollout status deploy/<release>-web-admin`（启用 web-biz 时同样检查）
+- [ ] 回滚后抽查 `/healthz` 200，且 `x-app-git-sha` 为上一良好 commit
+- [ ] 入口 `index.html` 为 `no-store`，无需 CDN 刷新；若接入 CDN 按 runbook 失效缓存
+- [ ] 演练记录：日期 / 起止版本 / 回滚耗时 / 抽查截图（至少一次，随发布单归档）
 
 ## 回滚预备
 

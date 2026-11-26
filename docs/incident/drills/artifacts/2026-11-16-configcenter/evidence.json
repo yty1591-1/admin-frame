@@ -1,0 +1,38 @@
+{
+  "started_at": "2026-11-15T16:30:08Z",
+  "finished_at": "2026-11-15T16:30:09Z",
+  "env": "dev",
+  "namespace": "platform",
+  "bootstrap_release_id": 1042512709,
+  "bootstrap_item_count": 54,
+  "dual_read_after_seed": {
+    "release_id": 1042512709,
+    "mismatch_count": 0,
+    "missing_in_center": 0,
+    "missing_in_baseline": 0,
+    "degraded": false
+  },
+  "updated_key": "log.level",
+  "updated_value": "debug",
+  "published_release_id": 1042512713,
+  "dual_read_after_publish": {
+    "release_id": 1042512713,
+    "mismatch_count": 0,
+    "missing_in_center": 0,
+    "missing_in_baseline": 0,
+    "degraded": false
+  },
+  "rollback_release_id": 1042512719,
+  "active_after_rollback": 1042512719,
+  "dual_read_after_rollback": {
+    "release_id": 1042512719,
+    "mismatch_count": 0,
+    "missing_in_center": 0,
+    "missing_in_baseline": 0,
+    "degraded": false
+  },
+  "snapshot_file": "docs\\incident\\drills\\artifacts\\2026-11-16-configcenter\\platform.snapshot.json",
+  "snapshot_verified": true,
+  "soak_waiver": "authorized_by_owner_2026-11-16: local staging; 7-day calendar wait waived; single-cycle zero-diff accepted",
+  "result": "pass"
+}

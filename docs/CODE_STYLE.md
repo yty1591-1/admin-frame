@@ -5,7 +5,7 @@
 > **适用范围**：本仓库全部 Go 代码（含 `pkg/`、`internal/`、`cmd/`）  
 > **关联**：注释见 [`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)；分层与依赖见架构文档 §五～§六  
 > **执行方式**：`gofmt` / `goimports` + `golangci-lint` + Code Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-22（移除演示域后示例包路径 `internal/order` → `internal/iam`）  
 > **变更方式**：修改本规范须同步更新架构文档对应小节与 `.golangci.yml`，经架构 Owner Review
 
 ---

@@ -25,6 +25,7 @@ import (
 	identityobs "github.com/admin-frame/admin-frame/internal/identity/observability"
 	identityc "github.com/admin-frame/admin-frame/internal/identity/transport/c"
 	"github.com/admin-frame/admin-frame/internal/identity/transport/rest"
+	identityscim "github.com/admin-frame/admin-frame/internal/identity/transport/scim"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformaudit "github.com/admin-frame/admin-frame/internal/platform/audit"
 	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
@@ -58,6 +59,12 @@ const platformAdminBootstrapTimeout = 10 * time.Second
 // refreshLimiterKeyPrefix 是 refresh / logout 端点限流键前缀（SEC-04）。
 const refreshLimiterKeyPrefix = "identity:refresh:"
 
+// m2mLimiterKeyPrefix 是 M2M 令牌签发端点限流键前缀（§21.2.2）。
+const m2mLimiterKeyPrefix = "identity:m2m:"
+
+// scimLimiterKeyPrefix 是 SCIM 端点限流键前缀（§21.1.2）。
+const scimLimiterKeyPrefix = "identity:scim:"
+
 // configView 把平台段配置与身份域配置组合为只读视图，供装配期各构造器使用。
 //
 // 平台 Config 不再内聚业务域配置，装配层显式接收域配置；嵌入 *platformconfig.Config
@@ -77,15 +84,50 @@ type Runtime struct {
 	CHandler *identityc.Handler
 	// TenantRevoker 供租户域在停用 / 终止时撤销该商户全部会话（ENT-09 D-02）。
 	TenantRevoker *app.TenantSessionRevoker
+	// Scim 供 A 端 SCIM 管理端点复用；未启用时为 nil。
+	Scim *app.ScimService
+	// ScimHandler 供 admin-api 注册 /admin/scim/v2/*；未启用时为 nil。
+	ScimHandler *identityscim.Handler
+}
+
+// Option 是身份域装配的可选依赖。
+type Option func(*options)
+
+// options 收集可选装配参数。
+type options struct {
+	scimRoles app.ScimRoleProvisioner
+}
+
+// WithScimRoleProvisioner 注入 SCIM 组→角色投影实现（由 cmd 提供 IAM 适配器）。
+//
+// 身份域不 import IAM（§13.1）；未注入且配置了 group_role_map 时启动失败，
+// 避免「同步成功但没有授权」。
+func WithScimRoleProvisioner(provisioner app.ScimRoleProvisioner) Option {
+	return func(o *options) {
+		if provisioner != nil {
+			o.scimRoles = provisioner
+		}
+	}
 }
 
 // New 按配置装配身份域；identity.enabled=false 时返回空运行时（保持只验签）。
 //
 // tenantBind 由 cmd 装配层显式传入（租户状态 / 成员关系判定）；
 // platform.Deps 不再承载业务语义函数字段。
-func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantBind runtimebind.Tenant) (*Runtime, error) {
+func New(
+	deps *platform.Deps,
+	identityCfg identityconfig.IdentityConfig,
+	tenantBind runtimebind.Tenant,
+	opts ...Option,
+) (*Runtime, error) {
 	if deps == nil || deps.Config == nil {
 		return nil, apperr.Internal("identity runtime requires platform deps", nil)
+	}
+	resolved := options{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&resolved)
+		}
 	}
 	cfg := configView{Config: deps.Config, Identity: identityCfg}
 	if !cfg.Identity.Enabled {
@@ -214,13 +256,18 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantB
 	if err != nil {
 		return nil, fmt.Errorf("identity signing manager: %w", err)
 	}
+	tokenOpts := []app.TokenServiceOption{app.WithTokenParser(signer)}
+	if cfg.Identity.M2M.Enabled {
+		// M2M 令牌 TTL 独立于用户 access_ttl（§21.2.3）；未启用时不传入，保持默认。
+		tokenOpts = append(tokenOpts, app.WithClientTokenTTL(cfg.Identity.M2M.TokenTTL))
+	}
 	tokens, err := app.NewTokenService(
 		signer,
 		channel,
 		cfg.Identity.AccessTTL,
 		cfg.Identity.RefreshTTL,
 		deps.IDs,
-		app.WithTokenParser(signer),
+		tokenOpts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity token service: %w", err)
@@ -259,15 +306,22 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantB
 		revocationCacheObserver,
 	)
 
+	checkerOpts := []app.RevocationCheckerOption{
+		app.WithRevocationObserver(revocationObserver),
+		app.WithRevocationCacheObserver(revocationCacheObserver),
+		app.WithRevocationSessions(repos.sessions),
+		app.WithRevocationTokenGrace(cfg.Identity.Revocation.TokenGrace),
+	}
+	if cfg.Identity.M2M.Enabled {
+		// 仅在启用时注入：关闭时不注册 client 分支，也不触碰 M2M 表（§21.3）。
+		checkerOpts = append(checkerOpts, app.WithRevocationClients(repos.m2mClients))
+	}
 	checker, err := app.NewRevocationChecker(
 		repos.accounts,
 		revocation,
 		cfg.Identity.Revocation.FailureMode,
 		cfg.Identity.Revocation.StateTTL,
-		app.WithRevocationObserver(revocationObserver),
-		app.WithRevocationCacheObserver(revocationCacheObserver),
-		app.WithRevocationSessions(repos.sessions),
-		app.WithRevocationTokenGrace(cfg.Identity.Revocation.TokenGrace),
+		checkerOpts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("identity revocation checker: %w", err)
@@ -383,9 +437,32 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantB
 		return nil, fmt.Errorf("identity auth service: %w", err)
 	}
 
+	// 指标端口按需降级：未配置 Metrics 时传 nil，避免装配层出现非空接口包空指针。
+	var m2mObserver app.M2MObserver
+	if identityObserver != nil {
+		m2mObserver = identityObserver
+	}
+	m2mSvc, m2mLimiter, err := buildM2M(cfg, deps, repos, tokens, auditEmitter, revocation, m2mObserver)
+	if err != nil {
+		return nil, err
+	}
+
+	// SCIM 仅 A 端装配：配置校验已拒绝其他端别，这里兜底一次。
+	var scimObserver app.ScimObserver
+	if identityObserver != nil {
+		scimObserver = identityObserver
+	}
+	scimSvc, scimHandler, err := buildScim(cfg, deps, repos, piiHasher, auditEmitter, scimObserver, resolved.scimRoles)
+	if err != nil {
+		return nil, err
+	}
+
 	handler, err := rest.NewHandler(rest.HandlerConfig{
 		Auth: authSvc, Channel: channel, ClientIP: deps.ClientIP, Hasher: piiHasher,
 		EndpointLimiter: refreshLimiter,
+		M2M:             m2mSvc,
+		M2MLimiter:      m2mLimiter,
+		SCIM:            scimSvc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("identity handler: %w", err)
@@ -396,7 +473,10 @@ func New(deps *platform.Deps, identityCfg identityconfig.IdentityConfig, tenantB
 		return nil, fmt.Errorf("identity tenant session revoker: %w", revokerErr)
 	}
 
-	runtime := &Runtime{Checker: checker, Handler: handler, TenantRevoker: tenantRevoker}
+	runtime := &Runtime{
+		Checker: checker, Handler: handler, TenantRevoker: tenantRevoker,
+		Scim: scimSvc, ScimHandler: scimHandler,
+	}
 	if channel == domain.ChannelC {
 		cHandler, cErr := buildChannelC(deps, cfg, repos.accounts, repos.oauthIdentities, guard,
 			authSvc, piiHasher, identityMetrics, identityObserver, handler)
@@ -683,6 +763,12 @@ type repositories struct {
 	attempts        domain.LoginAttemptRepository
 	mfa             domain.MFAEnrollmentRepository
 	oauthIdentities domain.OAuthIdentityRepository
+	// m2mClients / m2mSecrets 仅在 identity.m2m.enabled=true 时装配；其余为 nil。
+	m2mClients domain.M2MClientRepository
+	m2mSecrets domain.M2MSecretRepository
+	// scimTokens / scimGroups 仅在 identity.scim.enabled=true 时使用；始终装配以简化分支。
+	scimTokens domain.ScimTokenRepository
+	scimGroups domain.ScimGroupRepository
 }
 
 // buildRepositories 按 db.driver 选择内存或 MySQL 仓储。
@@ -696,6 +782,8 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 				deps.Config.DB.Driver,
 			)
 		}
+		m2mClients, m2mSecrets := persistence.NewMemoryM2MRepositories()
+		scimTokens, scimGroups := persistence.NewMemoryScimRepositories()
 		return repositories{
 			accounts:        persistence.NewMemoryAccountRepository(),
 			credentials:     persistence.NewMemoryCredentialRepository(),
@@ -703,9 +791,15 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 			attempts:        persistence.NewMemoryLoginAttemptRepository(),
 			mfa:             persistence.NewMemoryMFAEnrollmentRepository(),
 			oauthIdentities: persistence.NewMemoryOAuthIdentityRepository(),
+			m2mClients:      m2mClients,
+			m2mSecrets:      m2mSecrets,
+			scimTokens:      scimTokens,
+			scimGroups:      scimGroups,
 		}, nil
 	}
 	sqlDB := deps.Database.SQL()
+	m2mClients, m2mSecrets := persistence.NewSQLM2MRepositories(sqlDB)
+	scimTokens, scimGroups := persistence.NewSQLScimRepositories(sqlDB)
 	return repositories{
 		accounts:    persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(protector)),
 		credentials: persistence.NewSQLCredentialRepository(sqlDB),
@@ -714,6 +808,10 @@ func buildRepositories(deps *platform.Deps, protector persistence.SubjectProtect
 		mfa:         persistence.NewSQLMFAEnrollmentRepository(sqlDB),
 		oauthIdentities: persistence.NewSQLOAuthIdentityRepository(sqlDB,
 			persistence.WithOAuthSubjectProtector(protector)),
+		m2mClients: m2mClients,
+		m2mSecrets: m2mSecrets,
+		scimTokens: scimTokens,
+		scimGroups: scimGroups,
 	}, nil
 }
 
@@ -951,6 +1049,151 @@ func buildSAMLLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, er
 }
 
 // buildRefreshLimiter 构造 refresh / logout 的 IP + 主体双维度限流器（SEC-04）。
+// buildM2M 按配置装配 M2M 用例与限流器；enabled=false 时返回 (nil, nil, nil)。
+//
+// 关闭时不装配任何依赖：路由不注册、不读表、不参与健康检查（§21.3）。
+func buildM2M(
+	cfg configView,
+	deps *platform.Deps,
+	repos repositories,
+	tokens *app.TokenService,
+	auditEmitter audit.Emitter,
+	store app.RevocationStore,
+	observer app.M2MObserver,
+) (*app.M2MService, app.LoginLimiter, error) {
+	if !cfg.Identity.M2M.Enabled {
+		return nil, nil, nil
+	}
+	limiter, err := buildKeyedLimiter(deps,
+		cfg.Identity.M2M.RateLimit.RPS,
+		cfg.Identity.M2M.RateLimit.Burst,
+		cfg.Identity.M2M.RateLimit.FailureMode,
+		m2mLimiterKeyPrefix, "m2m")
+	if err != nil {
+		return nil, nil, err
+	}
+	svc, err := app.NewM2MService(app.M2MServiceConfig{
+		Clients:            repos.m2mClients,
+		Secrets:            repos.m2mSecrets,
+		Tokens:             tokens,
+		IDs:                deps.IDs,
+		Audit:              auditEmitter,
+		ClientStates:       clientStateStore(store),
+		RevocationStateTTL: cfg.Identity.Revocation.StateTTL,
+		Channel:            domain.Channel(cfg.Channel),
+		TokenTTL:           cfg.Identity.M2M.TokenTTL,
+		RotateGrace:        cfg.Identity.M2M.RotateGrace,
+		MaxSecretAge:       cfg.Identity.M2M.MaxSecretAge,
+		AllowedScopes:      cfg.Identity.M2M.AllowedScopes,
+		Service:            cfg.Service,
+		Logger:             deps.Logger,
+		Observer:           observer,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("identity m2m service: %w", err)
+	}
+	return svc, limiter, nil
+}
+
+// buildScim 按配置装配 SCIM 用例与协议 Handler；enabled=false 时返回 (nil, nil, nil)。
+//
+// 关闭时不装配任何依赖：路由不注册、不读 SCIM 表、不参与健康检查（§21.1）。
+func buildScim(
+	cfg configView,
+	deps *platform.Deps,
+	repos repositories,
+	hasher *crypto.Hasher,
+	auditEmitter audit.Emitter,
+	observer app.ScimObserver,
+	roles app.ScimRoleProvisioner,
+) (*app.ScimService, *identityscim.Handler, error) {
+	if !cfg.Identity.SCIM.Enabled {
+		return nil, nil, nil
+	}
+	if cfg.Channel != string(domain.ChannelAdmin) {
+		return nil, nil, apperr.Internal("identity scim is only supported on admin channel", nil)
+	}
+	scimCfg := cfg.Identity.SCIM
+	// 配了映射却没有投影实现：继续启动只会「同步成功但没有任何授权」，
+	// 属于最难排查的静默失效，必须在启动期失败（§21.1.3）。
+	if len(scimCfg.GroupRoleMap) > 0 && roles == nil {
+		return nil, nil, fmt.Errorf(
+			"identity scim group_role_map requires a ScimRoleProvisioner: inject it via identityruntime.WithScimRoleProvisioner")
+	}
+	if len(scimCfg.GroupRoleMap) > 0 && roles != nil {
+		// 装配期校验角色可用：映射到不存在 / 停用角色的配置必须在启动时失败。
+		ctx, cancel := context.WithTimeout(context.Background(), platformAdminBootstrapTimeout)
+		defer cancel()
+		codes := make([]string, 0, len(scimCfg.GroupRoleMap))
+		seen := make(map[string]struct{}, len(scimCfg.GroupRoleMap))
+		for _, code := range scimCfg.GroupRoleMap {
+			trimmed := strings.TrimSpace(code)
+			if _, dup := seen[trimmed]; dup || trimmed == "" {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			codes = append(codes, trimmed)
+		}
+		if err := roles.ValidateRoleCodes(ctx, codes); err != nil {
+			return nil, nil, fmt.Errorf("identity scim group_role_map: %w", err)
+		}
+	}
+	limiter, err := buildKeyedLimiter(deps,
+		scimCfg.RateLimit.RPS,
+		scimCfg.RateLimit.Burst,
+		scimCfg.RateLimit.FailureMode,
+		scimLimiterKeyPrefix, "scim")
+	if err != nil {
+		return nil, nil, err
+	}
+	uow := app.UnitOfWork(app.NoopUnitOfWork{})
+	if deps.Database != nil {
+		uow = persistence.NewSQLUnitOfWork(deps.Database.SQL())
+	}
+	svc, err := app.NewScimService(app.ScimServiceConfig{
+		Accounts:      repos.accounts,
+		Identities:    repos.oauthIdentities,
+		Groups:        repos.scimGroups,
+		Tokens:        repos.scimTokens,
+		Sessions:      repos.sessions,
+		IDs:           deps.IDs,
+		Audit:         auditEmitter,
+		Roles:         roles,
+		UoW:           uow,
+		Logger:        deps.Logger,
+		Observer:      observer,
+		Service:       cfg.Service,
+		Provider:      scimCfg.Provider,
+		AutoProvision: scimCfg.AutoProvision(),
+		GroupRoleMap:  scimCfg.GroupRoleMap,
+		PageSize:      scimCfg.PageSize,
+		TokenGrace:    scimCfg.TokenGrace,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("identity scim service: %w", err)
+	}
+	handler := identityscim.NewHandler(identityscim.HandlerConfig{
+		Service:    svc,
+		Limiter:    limiter,
+		ClientIP:   deps.ClientIP,
+		Hasher:     hasher,
+		MaxPayload: scimCfg.MaxPayload,
+		Timeout:    scimCfg.RequestTimeout,
+	})
+	return svc, handler, nil
+}
+
+// clientStateStore 复用检查器同一个撤销存储实例的客户端快照能力。
+//
+// 必须是同一实例：否则 M2M 撤销写入与检查器 L1 缓存各自独立，
+// 停用客户端在本地副本上最多多出一个 L1 TTL 的可见延迟。存储未实现时返回 nil。
+func clientStateStore(store app.RevocationStore) app.ClientStateStore {
+	if clientStore, ok := store.(app.ClientStateStore); ok {
+		return clientStore
+	}
+	return nil
+}
+
 func buildRefreshLimiter(cfg configView, deps *platform.Deps) (app.LoginLimiter, error) {
 	rate := cfg.Identity.RefreshRateLimit
 	return buildKeyedLimiter(deps, rate.RPS, rate.Burst, rate.FailureMode, refreshLimiterKeyPrefix, "refresh")

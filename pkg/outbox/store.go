@@ -15,7 +15,13 @@ var (
 	ErrNotClaimed = errors.New("outbox: event is not claimed")
 )
 
-// Stats 是 Outbox 积压统计快照。
+// ReplayRecentWindow 是 Stats.ReplayedRecently 的统计窗口。
+//
+// 它与 async.dlq.replay_ineffective 告警的语义绑定：改这个值等于改告警里「近期」的口径，
+// 须同步 docs/runbooks/async-dlq.md 与 ALERTS.md 的描述。
+const ReplayRecentWindow = 30 * time.Minute
+
+// Stats 是 Outbox 与死信的积压快照。
 type Stats struct {
 	// Pending 未完成事件数（含 pending / processing / dead / failed）。
 	Pending int
@@ -23,6 +29,11 @@ type Stats struct {
 	DLQ int
 	// OldestCreatedAt 最老未完成事件的入盒时间；零值表示无积压。
 	OldestCreatedAt time.Time
+	// ReplayedRecently 最近 ReplayRecentWindow 内被重放的死信行数。
+	//
+	// 只表达「近期确实有人重放过」，不代表重放成功；与 DLQ > 0 同时成立即
+	// 「重放已发起但未清空」，用于把「没人重放」与「重放无效」分开归因。
+	ReplayedRecently int
 }
 
 // Store 是事务性 Outbox 的持久化抽象。

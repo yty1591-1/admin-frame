@@ -39,4 +39,9 @@ func Register(mux *http.ServeMux, h *rest.Handler, authMW func(http.Handler) htt
 	mux.Handle("GET /biz/v1/me", secure(authMW(http.HandlerFunc(h.Me))))
 	// PATCH /biz/v1/me 只改展示昵称；与 GET 同级，仅需认证。
 	mux.Handle("PATCH /biz/v1/me", secure(authMW(http.HandlerFunc(h.UpdateMe))))
+	// M2M 机器令牌：enabled=false 时不注册（404）。B 端只有签发端点，
+	// 客户端生命周期统一在 A 端管理（§21.2.4）。路径写字面量，供契约对账扫描。
+	if h.M2MEnabled() {
+		mux.Handle("POST /biz/v1/auth/token", rest.M2MTokenHandler(h))
+	}
 }

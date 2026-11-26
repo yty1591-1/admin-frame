@@ -17,6 +17,12 @@ config:
       issuer: admin-frame
       audience: [admin, biz, c, worker]
       public_key_file: /etc/admin-frame/jwt/public.pem
+      # 身份域开启后 A/B 端需要签发令牌：密钥环 + 私钥文件（jwtPrivateKey 挂载）。
+      active_kid: v1
+      keys:
+        - kid: v1
+          public_key_file: /etc/admin-frame/jwt/public.pem
+          private_key_file: /etc/admin-frame/jwt/private.pem
   db:
     driver: mysql
     dsn: ""
@@ -48,14 +54,46 @@ config:
       driver: redis
     security:
       allow_wildcard: false
-  # 身份域按 docs/identity-authn.md 补齐后置 true（需 MFA 主密钥与短信/OAuth 凭证）。
+  # 身份域：全局关闭，A/B 端由 workloads.configOverrides 精确开启（worker/C 端
+  # 需要各自的前置条件）。开启前置：identitySecrets 与 jwtPrivateKey 已注入。
   identity:
     enabled: false
+  # 通知渠道（ENT-10 NT-04）：prod 禁止 memory；未使用的渠道显式 disabled。
+  notification:
+    channels:
+      email:
+        driver: smtp
+        from: no-reply@example.com
+        from_name: AdminFrame
+        smtp:
+          host: smtp.example.com
+          port: 587
+          encryption: starttls
+          auth: plain
+          username: no-reply@example.com
+          password_env: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+          tls_min_version: "1.2"
+      sms:
+        driver: disabled
+      push:
+        driver: disabled
 
 jwtPublicKey:
   enabled: true
   secretName: admin-frame-jwt
   key: public.pem
+
+# 签发进程私钥：开启身份域后 A/B 端需要签发 access/refresh 令牌。
+jwtPrivateKey:
+  enabled: true
+  key: private.pem
+
+# 身份域主密钥：Secret 需包含 hash_key 与 mfa_secret_key（各 32 字节）。
+identitySecrets:
+  enabled: true
+  secretName: admin-frame-identity
+  hashKeyKey: hash_key
+  mfaSecretKey: mfa_secret_key
 
 # 密钥文件挂载（ENT-07）：把分散的 Secret 投影到同一目录，供
 # internal/platform/secrets 的 FileProvider 读取（配置侧 secrets.providers: [file]）。
@@ -128,12 +166,23 @@ env:
       secretKeyRef:
         name: admin-frame-notification
         key: blacklist_salt
+  # 通知邮件渠道密码：只在装配期读取；缺失时进程失败关闭。
+  - name: ADMIN_FRAME_NOTIFICATION_SMTP_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: admin-frame-notification
+        key: smtp_password
 
 workloads:
   admin:
     replicas: 3
     statefulset:
       enabled: true
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: true
     resources:
       requests:
         cpu: 500m
@@ -162,6 +211,11 @@ workloads:
     replicas: 3
     statefulset:
       enabled: true
+    configOverrides:
+      identity:
+        enabled: true
+        mfa:
+          admin_required: false
     resources:
       requests:
         cpu: 500m
@@ -243,6 +297,12 @@ workloads:
 
 migrate:
   enabled: true
+
+# 生产开启超期扫描：auto_revoke 仍由 config.iam.certification.auto_revoke 控制，
+# 未开启时扫描只把超期任务标记为 expired（不回收），可先以该形态运行。
+certificationSweep:
+  enabled: true
+  schedule: "0 2 * * *"
 
 serviceMonitor:
   enabled: true

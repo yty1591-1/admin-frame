@@ -13,7 +13,7 @@ import (
 )
 
 // secretsBaseConfig 是密钥用例的公共头部：持久库 + 固定 JWT 基线。
-const secretsBaseConfig = "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+const secretsBaseConfig = "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 	"auth:\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n"
 
 // yamlDir 把目录路径转成 YAML 双引号字符串的安全形式。
@@ -52,25 +52,27 @@ func TestSecretsDisabledKeepsEnvInjection(t *testing.T) {
 	}
 }
 
-// TestSecretsEnvProviderUsesDefaultPrefix 验证默认 env 前缀带分隔符：
-// identity_hash_key 必须命中 ADMIN_FRAME_IDENTITY_HASH_KEY，
-// 而不是前缀与密钥名粘连的变量名。
-func TestSecretsEnvProviderUsesDefaultPrefix(t *testing.T) {
+// TestSecretsEnvProviderDeniesIdentityKeys 验证 env Provider 不再回源 identity 业务密钥。
+func TestSecretsEnvProviderDeniesIdentityKeys(t *testing.T) {
 	hashKey := strings.Repeat("ab", 32)
 	t.Setenv("ADMIN_FRAME_IDENTITY_HASH_KEY", hashKey)
+	t.Setenv("ADMIN_FRAME_DB_DSN", "svc:pass@tcp(127.0.0.1:3306)/admin_frame")
 
-	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+	yaml := "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n    secret: \"" + strings.Repeat("s", 32) + "\"\n" +
-		"db:\n  driver: memory\n" +
+		"db:\n  driver: mysql\n" +
 		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
 		"identity:\n  enabled: true\n" +
 		"secrets:\n  providers: [env]\n"
-	cfg, err := appconfig.Load(writeConfig(t, "secrets-env-prefix.yaml", yaml))
+	cfg, err := appconfig.Load(writeConfig(t, "secrets-env-deny.yaml", yaml))
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.Identity.HashKey != hashKey {
-		t.Fatalf("identity.hash_key 未命中 ADMIN_FRAME_ 前缀变量")
+	if cfg.Identity.HashKey == hashKey {
+		t.Fatal("identity.hash_key must not be filled from env Provider")
+	}
+	if cfg.DB.DSN != "svc:pass@tcp(127.0.0.1:3306)/admin_frame" {
+		t.Fatalf("db.dsn should still resolve via env Provider / BindEnv, got %q", cfg.DB.DSN)
 	}
 }
 
@@ -82,7 +84,7 @@ func TestSecretsFileOverridesConfig(t *testing.T) {
 	writeSecretFile(t, dir, platformconfig.SecretAuthJWTSecret, strings.Repeat("k", 32))
 	writeSecretFile(t, dir, platformconfig.SecretRedisPassword, "redis-from-file")
 
-	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+	yaml := "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 		"auth:\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
 		"    secret: \"" + strings.Repeat("c", 32) + "\"\n" +
 		"db:\n  driver: mysql\n  dsn: \"svc:from-config@tcp(db:3306)/app\"\n" +
@@ -114,7 +116,7 @@ func TestSecretsOverridesIdentityKeys(t *testing.T) {
 	writeSecretFile(t, dir, platformconfig.SecretIdentityHashKey, hashKey)
 	writeSecretFile(t, dir, platformconfig.SecretIdentityMFASecretKey, mfaKey)
 
-	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+	yaml := "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n    secret: \"" + strings.Repeat("s", 32) + "\"\n" +
 		"db:\n  driver: memory\n" +
 		"redis:\n  addr: \"127.0.0.1:6379\"\n" +
@@ -142,7 +144,7 @@ func TestSecretsFileSatisfiesRequiredFields(t *testing.T) {
 	writeSecretFile(t, dir, platformconfig.SecretDBDSN, "svc:file-only@tcp(db:3306)/app")
 	writeSecretFile(t, dir, platformconfig.SecretAuthJWTSecret, strings.Repeat("k", 32))
 
-	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+	yaml := "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 		"auth:\n  mode: jwt\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
 		"db:\n  driver: mysql\n" + // dsn 故意留空
 		"secrets:\n  providers: [file]\n  file:\n    dir: " + yamlDir(dir) + "\n"
@@ -230,7 +232,7 @@ func TestSecretsVaultOverridesConfig(t *testing.T) {
 	}))
 	defer server.Close()
 
-	yaml := "service: admin-api\nchannel: admin\naddr: \":8081\"\n" +
+	yaml := "service: admin-api\nchannel: admin\nenv: dev\naddr: \":8081\"\n" +
 		"auth:\n  jwt:\n    issuer: https://iam.example.com\n    audience: [admin]\n" +
 		"db:\n  driver: mysql\n  dsn: \"svc:from-config@tcp(db:3306)/app\"\n" +
 		"secrets:\n  providers: [vault]\n  vault:\n    address: \"" + server.URL + "\"\n" +

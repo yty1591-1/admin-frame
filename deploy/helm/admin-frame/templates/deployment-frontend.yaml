@@ -1,0 +1,101 @@
+{{- $apps := dict "web-admin" .Values.frontend.webAdmin "web-biz" .Values.frontend.webBiz }}
+{{- range $name, $app := $apps }}
+{{- if $app.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "admin-frame.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "admin-frame.labels" (dict "root" $ "component" $name) | nindent 4 }}
+spec:
+  replicas: {{ $app.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "admin-frame.selectorLabels" (dict "root" $ "component" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "admin-frame.selectorLabels" (dict "root" $ "component" $name) | nindent 8 }}
+        {{- with $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # ConfigMap 内 nginx.conf 变化时必须滚动 Pod（同 _workload.tpl 的 checksum/config）。
+        checksum/nginx: {{ $.Files.Get "files/nginx.conf" | sha256sum | quote }}
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.frontend.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: {{ $name }}
+          image: {{ include "admin-frame.image" (dict "root" $ "workload" $app) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $app.port }}
+              protocol: TCP
+          securityContext:
+            {{- toYaml $.Values.frontend.securityContext | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $app.resources | nindent 12 }}
+          volumeMounts:
+            {{- if $.Values.frontend.nginxConfig.enabled }}
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            {{- end }}
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /run
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- if $.Values.frontend.nginxConfig.enabled }}
+        - name: nginx-conf
+          configMap:
+            name: {{ include "admin-frame.fullname" $ }}-frontend-nginx
+        {{- end }}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "admin-frame.selectorLabels" (dict "root" $ "component" $name) | nindent 14 }}
+{{- end }}
+{{- end }}

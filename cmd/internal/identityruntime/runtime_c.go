@@ -4,10 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	"github.com/admin-frame/admin-frame/internal/identity/app"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
 	"github.com/admin-frame/admin-frame/internal/identity/domain"
@@ -25,12 +25,6 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/crypto"
 	"github.com/admin-frame/admin-frame/pkg/httpclient"
 	pkgsms "github.com/admin-frame/admin-frame/pkg/sms"
-)
-
-// C 端短信驱动凭证的环境变量名；禁止写入 YAML（D7）。
-const (
-	aliyunSMSAccessKeyIDEnv     = "ALIYUN_SMS_ACCESS_KEY_ID"
-	aliyunSMSAccessKeySecretEnv = "ALIYUN_SMS_ACCESS_KEY_SECRET" //nolint:gosec // G101: 环境变量名，不是凭证值
 )
 
 // buildChannelC 装配 C 端短信 / OAuth 登录栈并构造 C 端 Handler。
@@ -99,11 +93,23 @@ func buildSMSLoginService(
 		return nil, nil
 	}
 
+	accessKeyID := ""
+	accessKeySecret := ""
+	if strings.EqualFold(strings.TrimSpace(smsCfg.Driver), "aliyun") {
+		resolvedID, resolvedSecret, resolveErr := secretruntime.ResolveIdentitySMSAliyunOrEnv(
+			context.Background(), cfg.Env)
+		if resolveErr != nil {
+			return nil, apperr.Internal("identity sms credentials", resolveErr)
+		}
+		accessKeyID = resolvedID
+		accessKeySecret = resolvedSecret
+	}
+
 	smsDriverCfg := pkgsms.Config{
 		Driver: smsCfg.Driver,
 		Aliyun: pkgsms.AliyunConfig{
-			AccessKeyID:     os.Getenv(aliyunSMSAccessKeyIDEnv),
-			AccessKeySecret: os.Getenv(aliyunSMSAccessKeySecretEnv),
+			AccessKeyID:     accessKeyID,
+			AccessKeySecret: accessKeySecret,
 			SignName:        smsCfg.SignName,
 		},
 	}
@@ -249,10 +255,11 @@ func buildOAuthService(
 	providers := make(map[string]app.OAuthProvider, len(providerCfgs))
 	for _, providerCfg := range providerCfgs {
 		secretEnv := strings.TrimSpace(providerCfg.ClientSecretEnv)
-		secret := os.Getenv(secretEnv)
-		if secretEnv == "" || strings.TrimSpace(secret) == "" {
+		secret, err := secretruntime.ResolveOAuthClientSecretOrEnv(
+			context.Background(), cfg.Env, providerCfg.Name, secretEnv)
+		if err != nil {
 			return nil, apperr.Internal(
-				"identity oauth provider "+providerCfg.Name+": client secret env "+secretEnv+" is empty", nil)
+				"identity oauth provider "+providerCfg.Name+" credentials", err)
 		}
 		oauthCfg := identityoauth.Config{
 			Name:                   providerCfg.Name,

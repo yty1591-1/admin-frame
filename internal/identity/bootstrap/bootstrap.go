@@ -141,12 +141,40 @@ func EnsureAdmin(ctx context.Context, sqlDB *sql.DB, protector persistence.Subje
 }
 
 // ensureAccount 在账号不存在时创建；存在时返回 false。软删账号视为已占用唯一键，直接报错。
+//
+// 幂等优先按固定 bootstrapAccountID 判断（hash_key 轮换后 subject_index 会变，
+// 仅按索引查会误判为「不存在」并撞固定主键）；若索引/密文与当前保护器不一致则回写。
 func ensureAccount(ctx context.Context, tx *sql.Tx, protector persistence.SubjectProtector, accountID int64, index, subject string, now time.Time) (bool, error) {
 	var (
-		existingID int64
-		deletedAt  sql.NullTime
+		existingID    int64
+		existingIndex string
+		deletedAt     sql.NullTime
 	)
-	err := tx.QueryRowContext(ctx, `SELECT id, deleted_at FROM identity_account
+	err := tx.QueryRowContext(ctx, `SELECT id, subject_index, deleted_at FROM identity_account
+		WHERE id = ? LIMIT 1`, accountID).Scan(&existingID, &existingIndex, &deletedAt)
+	switch {
+	case err == nil:
+		if deletedAt.Valid {
+			return false, fmt.Errorf("bootstrap: bootstrap account %d is soft-deleted", existingID)
+		}
+		if existingIndex != index {
+			ciphertext, encErr := protector.Encrypt(strconv.FormatInt(accountID, 10), subject)
+			if encErr != nil {
+				return false, fmt.Errorf("bootstrap: re-encrypt subject: %w", encErr)
+			}
+			if _, execErr := tx.ExecContext(ctx, `UPDATE identity_account
+				SET subject_index = ?, subject_ciphertext = ?, updated_at = ?
+				WHERE id = ?`, index, ciphertext, now, accountID); execErr != nil {
+				return false, fmt.Errorf("bootstrap: refresh subject protection: %w", execErr)
+			}
+		}
+		return false, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf("bootstrap: query account by id: %w", err)
+	}
+
+	// 固定 ID 不存在时，再按 subject_index 防撞其它账号占用同一主体。
+	err = tx.QueryRowContext(ctx, `SELECT id, deleted_at FROM identity_account
 		WHERE channel = ? AND merchant_id = ? AND subject_index = ? LIMIT 1`,
 		bootstrapChannel, bootstrapMerchantID, index).Scan(&existingID, &deletedAt)
 	switch {
@@ -237,25 +265,9 @@ func ensureBinding(ctx context.Context, tx *sql.Tx, accountID, roleID int64, now
 
 // writeAudit 只在本次新建账号时写入 Outbox 审计，且载荷不含明文主体。
 func writeAudit(ctx context.Context, tx *sql.Tx, accountID int64, index, service string, now time.Time) error {
-	payload, err := json.Marshal(map[string]any{
-		"event_id":      bootstrapEventID,
-		"action":        "auth.account.created",
-		"actor_id":      bootstrapActorID,
-		"actor_type":    "system",
-		"channel":       bootstrapChannel,
-		"resource_type": "account",
-		"resource_id":   strconv.FormatInt(accountID, 10),
-		"outcome":       "success",
-		"occurred_at":   now.Format("2006-01-02T15:04:05.000Z"),
-		"trace_id":      auditTraceID,
-		"service":       service,
-		"attrs": map[string]any{
-			"subject_index":        index,
-			"must_change_password": true,
-		},
-	})
+	payload, err := auditPayload(accountID, index, service, now)
 	if err != nil {
-		return fmt.Errorf("bootstrap: encode audit payload: %w", err)
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO async_outbox
 		(id, topic, event_type, version, tenant_id, aggregate_type, aggregate_id,
@@ -269,4 +281,35 @@ func writeAudit(ctx context.Context, tx *sql.Tx, accountID int64, index, service
 		return fmt.Errorf("bootstrap: insert audit event: %w", err)
 	}
 	return nil
+}
+
+// auditPayload 构造审计事件载荷。
+//
+// attrs 必须是字符串值：消费端按 audit.Event 解码，其 Attrs 是 map[string]string；
+// 写入 bool / 数字会让事件在 identity.audit 永久解码失败并进死信，
+// 结果是「引导管理员建号」这条审计永远查不到。
+func auditPayload(accountID int64, index, service string, now time.Time) ([]byte, error) {
+	payload, err := json.Marshal(map[string]any{
+		"event_id":      bootstrapEventID,
+		"action":        "auth.account.created",
+		"actor_id":      bootstrapActorID,
+		"actor_type":    "system",
+		"channel":       bootstrapChannel,
+		"resource_type": "account",
+		"resource_id":   strconv.FormatInt(accountID, 10),
+		"outcome":       "success",
+		"occurred_at":   now.Format("2006-01-02T15:04:05.000Z"),
+		"trace_id":      auditTraceID,
+		"service":       service,
+		"attrs": map[string]string{
+			"subject_index": index,
+			// 键名不得含 "password=" 片段：AUD-08 的敏感字段过滤按 key=value 匹配，
+			// 命中即整条事件非法（引导管理员的审计会永远写不进审计库）。
+			"initial_credential_reset": "true",
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: encode audit payload: %w", err)
+	}
+	return payload, nil
 }

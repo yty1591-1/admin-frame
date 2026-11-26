@@ -65,6 +65,9 @@ type IdempotentOptions struct {
 	Consumer string
 	// VisibilityTimeout processing 记录的接管窗口；≤0 取 60s。
 	VisibilityTimeout time.Duration
+	// Visibility 非空时在每次调用上取当前接管窗口，覆盖 VisibilityTimeout
+	// （ADR-0015 热更）；只影响**本次抢占**，已存在的租约按其写入时的时长过期。
+	Visibility func() time.Duration
 	// Now 时钟注入，便于测试；nil 取 time.Now。
 	Now func() time.Time
 	// Logger 记录 Release 失败；nil 时静默。
@@ -99,7 +102,12 @@ func Idempotent(handler Handler, opts IdempotentOptions) (Handler, error) {
 		if event == nil {
 			return fmt.Errorf("%w: nil event", ErrInvalidEvent)
 		}
-		outcome, err := opts.Deduper.Acquire(ctx, event.EventID, consumer, now().UTC(), visibility)
+		leaseWindow := visibility
+		if opts.Visibility != nil {
+			// 非法值（≤0）按装配期规则收敛，避免坏发布产生永不过期的租约。
+			leaseWindow = normalizeVisibility(opts.Visibility())
+		}
+		outcome, err := opts.Deduper.Acquire(ctx, event.EventID, consumer, now().UTC(), leaseWindow)
 		if err != nil {
 			return fmt.Errorf("acquire consumer lease %s/%s: %w", event.EventID, consumer, err)
 		}

@@ -178,6 +178,14 @@ func TestValidateAcceptsCompliantConfig(t *testing.T) {
 	if err := zero.Validate("local", "c", "memory", false, false); err != nil {
 		t.Fatalf("zero-value config rejected: %v", err)
 	}
+	// 合规的单活动上限（含封顶边界）不得被拒。
+	for _, limit := range []int{1, 100000, config.MaxCertificationTasksPerCampaignCap} {
+		cfg := prodIAMConfig()
+		cfg.Certification.MaxTasksPerCampaign = limit
+		if err := cfg.Validate("prod", "admin", "mysql", true, true); err != nil {
+			t.Fatalf("max_tasks_per_campaign=%d rejected: %v", limit, err)
+		}
+	}
 }
 
 // TestValidateRejects 覆盖每条拒绝分支：越权与 4-eyes 一旦被误配，
@@ -498,6 +506,32 @@ func TestValidateRejects(t *testing.T) {
 			redisEnabled:  true,
 			asyncEnabled:  true,
 			wantErrSubstr: "auto_revoke requires iam.certification.enabled=true",
+		},
+		{
+			name: "certification max tasks negative",
+			mutate: func(c *config.IAMConfig) {
+				c.Certification = config.IAMCertificationConfig{MaxTasksPerCampaign: -1}
+			},
+			env:           "local",
+			channel:       "admin",
+			dbDriver:      "mysql",
+			redisEnabled:  true,
+			asyncEnabled:  true,
+			wantErrSubstr: "max_tasks_per_campaign must be >= 0",
+		},
+		{
+			name: "certification max tasks above cap",
+			mutate: func(c *config.IAMConfig) {
+				c.Certification = config.IAMCertificationConfig{
+					MaxTasksPerCampaign: config.MaxCertificationTasksPerCampaignCap + 1,
+				}
+			},
+			env:           "local",
+			channel:       "admin",
+			dbDriver:      "mysql",
+			redisEnabled:  true,
+			asyncEnabled:  true,
+			wantErrSubstr: "exceeds cap 500000",
 		},
 	}
 

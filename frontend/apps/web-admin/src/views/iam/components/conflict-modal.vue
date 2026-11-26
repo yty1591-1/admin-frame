@@ -15,9 +15,11 @@ const props = withDefaults(
     targetId?: string;
   }>(),
   {
+    action: undefined,
     message: '数据已被他人修改，或该操作需要走审批。',
     payload: () => ({}),
     submitting: false,
+    targetId: undefined,
   },
 );
 

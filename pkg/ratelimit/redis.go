@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -48,19 +49,27 @@ type RedisKeyedConfig struct {
 // 令牌补充与扣减在同一 Lua 脚本内完成，使用 Redis 服务端 TIME，
 // 避免各副本本地时钟偏差影响配额。
 type RedisKeyed struct {
-	client           *redis.Client
+	client       *redis.Client
+	failureMode  string
+	keyPrefix    string
+	degradeAfter int
+
+	// policy 是可在运行期替换的限流参数快照（ADR-0015 热更）。
+	// 用 atomic.Pointer 读取，避免 Allow 路径上取互斥锁。
+	policy atomic.Pointer[redisPolicy]
+
+	mu              sync.Mutex
+	failures        int
+	degradedUntil   time.Time
+	degradeCooldown time.Duration
+}
+
+// redisPolicy 是 RedisKeyed 的一次参数快照。
+type redisPolicy struct {
 	rps              float64
 	burst            int
 	idleTTL          time.Duration
-	failureMode      string
-	keyPrefix        string
 	degradeOnFailure bool
-	degradeAfter     int
-	degradeCooldown  time.Duration
-
-	mu            sync.Mutex
-	failures      int
-	degradedUntil time.Time
 }
 
 // NewRedisKeyed 构造 Redis 限流注册表；客户端未配置或参数非法时返回错误。
@@ -94,17 +103,56 @@ func NewRedisKeyed(client *redis.Client, cfg RedisKeyedConfig) (*RedisKeyed, err
 	if cooldown <= 0 {
 		cooldown = 30 * time.Second
 	}
-	return &RedisKeyed{
-		client:           client,
+	registry := &RedisKeyed{
+		client:          client,
+		failureMode:     mode,
+		keyPrefix:       prefix,
+		degradeAfter:    after,
+		degradeCooldown: cooldown,
+	}
+	registry.policy.Store(&redisPolicy{
 		rps:              cfg.RPS,
 		burst:            cfg.Burst,
 		idleTTL:          ttl,
-		failureMode:      mode,
-		keyPrefix:        prefix,
 		degradeOnFailure: cfg.DegradeOnFailure,
-		degradeAfter:     after,
-		degradeCooldown:  cooldown,
-	}, nil
+	})
+	return registry, nil
+}
+
+// Configure 运行期替换限流参数（ADR-0015 热更）。
+//
+// Redis 侧参数逐次下发给 Lua 脚本，因此改参对下一个请求即生效，
+// 不需要清空已存在的键；桶内令牌由服务端保存，语义与进程内令牌桶一致。
+func (r *RedisKeyed) Configure(params Params) error {
+	if r == nil {
+		return fmt.Errorf("ratelimit: redis limiter is nil")
+	}
+	if params.RPS <= 0 || params.Burst < 1 {
+		return fmt.Errorf("ratelimit: redis requires rps > 0 and burst >= 1")
+	}
+	current := r.currentPolicy()
+	ttl := params.IdleTTL
+	if ttl <= 0 {
+		ttl = current.idleTTL
+	}
+	r.policy.Store(&redisPolicy{
+		rps:              params.RPS,
+		burst:            params.Burst,
+		idleTTL:          ttl,
+		degradeOnFailure: params.DegradeOnFailure,
+	})
+	return nil
+}
+
+// currentPolicy 返回当前参数快照；未初始化时返回保守默认值。
+func (r *RedisKeyed) currentPolicy() redisPolicy {
+	if r == nil {
+		return redisPolicy{idleTTL: 10 * time.Minute}
+	}
+	if policy := r.policy.Load(); policy != nil {
+		return *policy
+	}
+	return redisPolicy{idleTTL: 10 * time.Minute}
 }
 
 // Allow 对 key 执行 AllowN(1)。
@@ -112,7 +160,8 @@ func (r *RedisKeyed) Allow(key string) Result { return r.AllowN(key, 1) }
 
 // AllowN 原子扣减 n 个令牌；Redis 故障按 failure_mode 处理。
 func (r *RedisKeyed) AllowN(key string, n int) Result {
-	return r.AllowNWithParams(key, r.rps, r.burst, n)
+	policy := r.currentPolicy()
+	return r.AllowNWithParams(key, policy.rps, policy.burst, n)
 }
 
 // AllowNWithParams 以键级参数执行原子扣减：配额场景下每个租户的
@@ -133,7 +182,7 @@ func (r *RedisKeyed) AllowNWithParams(key string, rps float64, burst, n int) Res
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	result, err := tokenBucketScript.Run(ctx, r.client.Redis(), []string{r.client.FullKey(r.keyPrefix + key)},
-		rps, burst, r.idleTTL.Milliseconds(), n).Result()
+		rps, burst, r.currentPolicy().idleTTL.Milliseconds(), n).Result()
 	if err != nil {
 		return r.onFailure()
 	}
@@ -160,7 +209,7 @@ func decodeTokenBucket(values []any) Result {
 
 // onSuccess 在 Redis 恢复后清零失败计数并退出降级窗口。
 func (r *RedisKeyed) onSuccess() {
-	if r == nil || !r.degradeOnFailure {
+	if r == nil || !r.currentPolicy().degradeOnFailure {
 		return
 	}
 	r.mu.Lock()
@@ -175,7 +224,7 @@ func (r *RedisKeyed) onFailure() Result {
 	if r == nil || r.failureMode != RedisFailureClosed {
 		return Result{Allowed: true}
 	}
-	if !r.degradeOnFailure {
+	if !r.currentPolicy().degradeOnFailure {
 		return Result{Allowed: false, RetryAfter: time.Second}
 	}
 	r.mu.Lock()

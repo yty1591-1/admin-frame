@@ -5,16 +5,17 @@
 > **适用范围**：本仓库全部代码、配置样例、流水线与发布物  
 > **关联**：架构 §十；密钥扫描与 gosec 见 CI；注释中的隐私约束见 `COMMENT_STANDARDS.md` C-08  
 > **执行方式**：gitleaks + gosec（golangci-lint）+ 调试端点检查 + MR 模板 + Review  
-> **最后更新**：2026-10-19  
-> **变更方式**：修改本规范须同步更新 `.gitleaks.toml`、`.golangci.yml`（gosec）、流水线与架构 §十，经架构 Owner Review
+> **最后更新**：2026-11-12（新增业务密钥信封加密、secret_rule 自动生成与密钥解析边界；SEC-15 / SEC-16）  
+> **变更方式**：修改本规范须同步更新 `.gitleaks.toml`、`.golangci.yml`（gosec）、流水线与架构 §十，经架构 Owner 与安全 Reviewer 评审
 
 ---
 
 ## 1. 目标
 
 1. **默认拒绝**：未认证、越权、跨端身份不得访问业务接口。
-2. **密钥不入库**：真实密钥、生产连接串、完整令牌不得进入 git（含历史）。
+2. **密钥明文不入库**：真实密钥、生产连接串、完整令牌不得进入 git（含历史）；业务密钥只允许密文入库。
 3. **可强制**：能用扫描拦住的，不靠口头约定。
+4. **可轮换**：业务密钥具备版本、审批、轮换、吊销与访问审计。
 
 ---
 
@@ -36,6 +37,8 @@
 | SEC-12 | 已知高危标准库/依赖漏洞未缓解不得发版（与 CI-06 相同） | `make vuln` |
 | SEC-13 | CI 不得使用生产凭据或生产库 | Review（见 `CI_STANDARDS` CI-12） |
 | SEC-14 | B 端读写必须约束 `merchant_id`；C 端必须校验资源归属；越权对外表现为不存在，而非泄露他人数据 | Review + 后续 TEST 专文用例 |
+| SEC-15 | 业务密钥只允许密文入库：每版本独立 DEK + AES-256-GCM + 外部 KEK；AAD 绑定 `env/namespace/name/version`；明文不落库、不落快照、不落日志、不回显前端；根密钥 / KEK、基础设施口令、K8s 凭据、人员凭据永不入库 | 单测 + 安全评审 + gitleaks |
+| SEC-16 | 密钥字段必须声明 `secret_rule`；首次启动仅对 `auto_generate=true` 的字段用 `crypto/rand` 生成；无规则或 `required` 缺失时 fail-fast；生成值只返回指纹 | 单测 + `check-configcenter.sh` + 安全评审 |
 
 ---
 
@@ -53,7 +56,7 @@
 - **JWT 鉴权**由 `internal/security.NewJWTAuth` 实现：校验签名、`exp/nbf`（含 leeway）、`iss`、`aud`；`sub` 必填，`channel` 声明若存在必须与进程端别一致（防跨端复用）。API 进程只持有校验密钥/公钥，`alg` 推荐 RS256。
 - 令牌通过 `Authorization: Bearer <token>` 传入；失败统一 401，响应不区分具体校验原因，避免枚举。
 - JWT 原语见 `pkg/jwt`（HS256/RS256）；三端须独立 `Issuer` / `Audience` / 密钥；日志禁止打印完整 Token（`Config.LogValue` 已脱敏密钥）。
-- 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；密钥须来自环境变量或 KMS，禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
+- 字段级加解密、HMAC、Ed25519 签名与 DEK 包装见 `pkg/crypto`（AES-256-GCM）；业务密钥由配置中心密钥子域托管（ADR-0014），KEK 只存在于外部 KMS / Vault / HSM；禁止硬编码；日志禁止打印密钥、明文或完整密文材料。
 - 账号密码哈希见 `pkg/password`（默认 argon2id，兼容 bcrypt）；禁止可逆加密存密码；日志禁止记录明文密码。
 - 日志 / Trace / 错误详情中的手机号、证件、银行卡、邮箱、Token 等须经 `pkg/mask` 脱敏后再输出（SEC-05）。
 - A/B 权限点判定见 `pkg/rbac`（默认拒绝；`resource:action`）；业务码 40300 由 `internal/security.Authorizer` 映射；角色→权限点表由 cmd 注入（`rbac.Checker`），platform 不持有业务权限数据；复杂 ABAC 留业务层。
@@ -71,8 +74,10 @@
 
 ## 5. 密钥与配置样例
 
-- 仓库只提交 `dsn: ""` 或占位说明，不提交真实口令。
-- 运行时密钥来自环境变量或 KMS，不写进镜像层。
+- 仓库只提交 `dsn: ""` 或占位说明，不提交真实口令；不再新增 `configs/` 配置样例（CFG-01）。
+- 业务密钥由配置中心密钥子域托管：只存密文、`wrapped_dek` 与 `kek_key_id`，不存明文；KEK 只存在于外部 KMS / Vault / HSM。
+- 基础设施口令（DB / Redis、K8s 凭据等）由部署编排注入，不属于业务配置层，也不进入配置库。
+- 密钥解析只经 `cmd/config-api`：mTLS / SPIFFE + 服务授权 + 短租约；业务进程不接触 KEK，禁止明文批量导出。
 - gitleaks 命中后：轮换已泄露凭证（即使是误提交），从历史清除须单独变更，不能只删最新文件。
 - 允许列表仅用于**明确的演示文案**（`.gitleaks.toml`）。禁止用 allowlist 放过真实密钥。
 - 测试中的假密钥（如 HS256 32 字节密钥、推送 Token）禁止写成高熵字面量：

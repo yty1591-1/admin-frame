@@ -2,8 +2,14 @@ package platform
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
@@ -22,15 +28,22 @@ import (
 	"github.com/admin-frame/admin-frame/pkg/db"
 	"github.com/admin-frame/admin-frame/pkg/health"
 	pkghttpx "github.com/admin-frame/admin-frame/pkg/httpx"
+	"github.com/admin-frame/admin-frame/pkg/id"
 	"github.com/admin-frame/admin-frame/pkg/metrics"
 	"github.com/admin-frame/admin-frame/pkg/redis"
 	"github.com/admin-frame/admin-frame/pkg/tracing"
 )
 
+// ErrStorageUnavailable 表示对象存储无法按配置打开（缺桶/区域、凭据无效、
+// 端点不可达等）。admin-api 据此降级为 setup-only，用安装向导重新配置对象
+// 存储；其余进程保持 fail-fast（ADR-0018 决策 2）。
+var ErrStorageUnavailable = errors.New("platform: storage unavailable")
+
 // infraState 是 prepareInfra 产出的进程级基础设施。
 type infraState struct {
 	cfg        *platformconfig.Config
 	logger     *slog.Logger
+	logLevel   *slog.LevelVar
 	nodeID     int64
 	build      httpserver.BuildInfo
 	metrics    *metrics.Metrics
@@ -41,6 +54,7 @@ type infraState struct {
 	health     *health.Handler
 	clientIP   *pkghttpx.ClientIPResolver
 	background *lifecycle.Tasks
+	tlsConfig  *tls.Config
 	deps       *Deps
 }
 
@@ -69,8 +83,10 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 		cfg = loaded
 	}
 	infra.cfg = cfg
-	logger := platformobservability.NewLogger(cfg)
+	infra.tlsConfig = opts.TLSConfig
+	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
 	infra.logger = logger
+	infra.logLevel = logLevel
 
 	ids, nodeID, err := NewIDGenerator(cfg.ID)
 	if err != nil {
@@ -104,7 +120,9 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 
 	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
-		return nil, fmt.Errorf("storage: %w", err)
+		// 包装为可识别类型：admin-api 据此降级为 setup-only，用安装向导
+		// 重新配置对象存储，而不是直接退出（ADR-0018 补充：资源装配失败）。
+		return nil, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	infra.stores = stores
 
@@ -142,6 +160,7 @@ func prepareInfra(ctx context.Context, opts Options) (infra *infraState, err err
 	deps := &Deps{
 		Config:     cfg,
 		Logger:     logger,
+		LogLevel:   logLevel,
 		Metrics:    met,
 		Tracer:     tp,
 		Storage:    stores,
@@ -202,6 +221,57 @@ func (s *infraState) close() error {
 		}
 	}
 	return first
+}
+
+// statefulSetOrdinal 匹配 StatefulSet Pod 名的数字序号后缀（如 admin-api-3）。
+var statefulSetOrdinal = regexp.MustCompile(`-(\d+)$`)
+
+// NewIDGenerator 按配置构造雪花 ID 生成器，返回生成器与实际节点号。
+//
+// 节点号来源：显式 id.node_id，或 statefulset 模式下从 HOSTNAME 末尾序号派生。
+// 非法配置返回错误而非 panic，由调用方终止启动（S-04）。
+func NewIDGenerator(cfg platformconfig.IDConfig) (id.Generator, int64, error) {
+	hostname := ""
+	if strings.EqualFold(strings.TrimSpace(cfg.NodeIDSource), platformconfig.IDSourceStatefulSet) {
+		name, err := os.Hostname()
+		if err != nil {
+			return nil, 0, fmt.Errorf("id: read hostname: %w", err)
+		}
+		hostname = name
+	}
+	nodeID, err := resolveNodeID(cfg, hostname)
+	if err != nil {
+		return nil, 0, err
+	}
+	generator, err := id.NewSnowflake(id.Options{NodeID: nodeID})
+	if err != nil {
+		return nil, 0, fmt.Errorf("id: %w", err)
+	}
+	return generator, nodeID, nil
+}
+
+// resolveNodeID 计算生效节点号；hostname 仅在 statefulset 来源下使用。
+func resolveNodeID(cfg platformconfig.IDConfig, hostname string) (int64, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.NodeIDSource)) {
+	case "", platformconfig.IDSourceConfig, platformconfig.IDSourceEnv:
+		if cfg.NodeID == nil {
+			// 非生产环境允许未显式配置；prod/staging 已在 Validate 阶段拒绝。
+			return 0, nil
+		}
+		return *cfg.NodeID, nil
+	case platformconfig.IDSourceStatefulSet:
+		match := statefulSetOrdinal.FindStringSubmatch(hostname)
+		if match == nil {
+			return 0, fmt.Errorf("id: hostname %q has no statefulset ordinal suffix", hostname)
+		}
+		nodeID, err := strconv.ParseInt(match[1], 10, 64)
+		if err != nil || nodeID < 0 || nodeID > platformconfig.MaxNodeID {
+			return 0, fmt.Errorf("id: statefulset ordinal must be in [0, %d]", platformconfig.MaxNodeID)
+		}
+		return nodeID, nil
+	default:
+		return 0, fmt.Errorf("id: unsupported node_id_source %q", cfg.NodeIDSource)
+	}
 }
 
 // sqlDriverName 把配置中的引擎名映射为已注册的 database/sql 驱动名。

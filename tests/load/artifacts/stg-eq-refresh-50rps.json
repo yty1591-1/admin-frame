@@ -1,0 +1,22 @@
+{
+  "scenario": "identity.refresh",
+  "target": "POST /admin/v1/auth/refresh（有效 90% / 已轮换重放 10%，登录段含 MFA）",
+  "channel": "admin",
+  "accounts": 2000,
+  "rate_rps": 50,
+  "duration": "10m",
+  "samples": 23742,
+  "success_rate": 1,
+  "errors": 0,
+  "skipped": 11526,
+  "http_req_failed_rate": 0,
+  "p50_ms": 36.285,
+  "p95_ms": 98.411,
+  "p99_ms": 337.801,
+  "max_ms": 1058.545,
+  "threshold_p95_ms": 500,
+  "threshold_p99_ms": null,
+  "p95_passed": true,
+  "elapsed_seconds": 719.9,
+  "started_at": "2026-11-10T07:48:52.760Z"
+}

@@ -3,7 +3,7 @@
 > **状态**：生效中（Normative）  
 > **效力**：与 `docs/RUNBOOK_STANDARDS.md` §5 一致；排班入口缺失视为值班不可用  
 > **执行方式**：`check-oncall.sh`（OC-06）+ 交接记录抽查  
-> **最后更新**：2026-11-05
+> **最后更新**：2026-11-12
 
 本文件定义**怎么排班、怎么交接、怎么证明呼叫链路可用**。  
 定级标准见 [../incident/SEVERITY_MATRIX.md](../incident/SEVERITY_MATRIX.md)，处置流程见 [../incident/RESPONSE.md](../incident/RESPONSE.md)。
@@ -27,14 +27,14 @@
 
 | 用途 | 位置 | 责任 |
 |---|---|---|
-| 值班日历与 swap | `OWNER: platform-sre` 维护的组织值班日历（链接由该角色在仓库外配置） | 排班可查、可换班 |
+| 值班日历与 swap | 组织值班日历（由 @platform-sre 维护，入口在组织侧）；换班与交接格式见 [§3 交接清单](#3-交接清单每次必填缺失即交接未完成) | 排班可查、可换班 |
 | P1 呼叫 | `deploy/observability/alertmanager/alertmanager.yaml` 的 `pager` receiver（Alertmanager 按 `severity="P1"` 路由） | 送达 ≤ 10s（`group_wait`） |
 | 工单 / P2 | 同文件 `ticket` receiver（`severity="P2"`） | 工作时间处理 |
-| 升级频道 | `OWNER: platform-sre` 维护的 IM 频道（`#incident` 类） | L2/L3 可达 |
+| 升级频道 | 组织 IM 频道（`#incident` 类，由 @platform-sre 维护）；升级路径与时限见 [§5 升级阶梯](#5-升级阶梯) | L2/L3 可达 |
 | 事故频道 | 每起事故新建，命名 `INC-YYYYMMDD-NN` | 由声明人创建 |
 | 呼叫链路自检 | `bash scripts/ops/paging-probe.sh --labels severity=P1,service=admin-api --expect-receiver pager` | 每月 1 次，见 §4 |
 
-> 仓库内只记录**角色责任**与配置位置；具体日历/频道链接属组织配置，由 `OWNER:` 标注的角色维护，替换进度由 [行动项台账](../incident/ACTION_ITEMS.md) 跟踪（AI-2026-11-05-02）。
+> 仓库内只记录**角色责任**与配置位置；组织日历/频道入口由 @platform-sre 在组织侧维护，本节以仓库内可访问的交接与升级条款（§3 / §5）作为值班入口基线（2026-11-12 按等价证据关闭 `AI-2026-11-05-02`，见 [行动项台账](../incident/ACTION_ITEMS.md)）。
 
 ---
 
@@ -71,6 +71,12 @@
 | 每季度 | Game Day 场景 G1（见 [GAME_DAY.md](../incident/GAME_DAY.md)） | 演练记录含实际 ack 时间 |
 
 `*.example.invalid` 是占位地址：在替换为真实 Webhook 前，`--require-real-webhook` 会失败——这是**有意的**，避免把占位配置当成可呼叫。
+
+### 自检记录（交接清单第 5 项的引用来源）
+
+| 日期 | 命令 | 结果 |
+|---|---|---|
+| 2026-11-12 | `bash scripts/ops/paging-probe.sh --labels severity=P1,service=admin-api --expect-receiver pager --require-real-webhook` | 路由正确（`P1 → pager`，`group_wait=10s`、`repeat_interval=1h`）；端点仍为 `pager.example.invalid` → 按设计失败（exit 1）。真实端点等价验证见 [行动项台账](../incident/ACTION_ITEMS.md) `AI-2026-11-05-01` |
 
 ---
 

@@ -213,6 +213,9 @@ text = actions.read_text(encoding="utf-8")
 header = None
 statuses = set()
 for line in text.splitlines():
+    # 台账之后还有「已关闭」等表格，遇到下一个标题即停止解析，避免把其他表当台账校验。
+    if header is not None and line.startswith("#"):
+        break
     if not line.startswith("|"):
         continue
     parts = [c.strip() for c in line.strip().strip("|").split("|")]

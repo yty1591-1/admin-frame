@@ -108,6 +108,12 @@ jwtPublicKey:
   secretName: ""
   key: public.pem
 
+# JWT 私钥挂载（仅签发进程需要；当前 Chart 在全部 API/worker Pod 统一挂载，
+# 便于统一配置 auth.jwt.keys 并由文件权限控制）。
+jwtPrivateKey:
+  enabled: false
+  key: private.pem
+
 # 身份域密钥注入：values-identity-enabled.yaml 会打开并引用同一 Secret。
 # Secret 需包含 hash_key（32B HMAC 主密钥）与 mfa_secret_key（32B AES-GCM 主密钥）。
 identitySecrets:
@@ -116,9 +122,100 @@ identitySecrets:
   hashKeyKey: hash_key
   mfaSecretKey: mfa_secret_key
 
+# 配置中心拉取引导（ADR-0016 / ADR-0017）。业务进程经 config-api 拉取 + 本地缓存；
+# config-api 自身不注入 CONFIG_API_URL。业务库账号可收回配置表读权限。
+configCenter:
+  enabled: true
+  # 空则按 Release 内 config Service 推导：http://<fullname>-config:<port>
+  apiURL: ""
+  # 写入 CONFIGCENTER_ENV；与业务环境一致。
+  env: prod
+  # 可选；空 / all / * 表示全部已声明 namespace。
+  namespaces: ""
+  # 本地缓存目录（emptyDir）；权限依赖容器 0600 写入。
+  cacheDir: /var/configcenter-cache
+  # 是否挂载缓存卷；首次部署须先起 config-api。
+  cacheVolume: true
+  # ADR-0017：prod-like 安装 setup token（仅注入 config 工作负载）。
+  installSetupToken:
+    secretName: ""
+    key: setup_token
+
+
 # 额外环境变量（Secret 引用示例见 values-prod.yaml）。
 env: []
 envFrom: []
+
+# 前端静态站（FE-B-04）：独立 Deployment/Service/Ingress，A/B 端各自入口。
+# 镜像来自 image.yml 的 web-admin / web-biz；tag 用 sha-<short> 或 semver，禁止 latest。
+frontend:
+  # nginx.conf 由 ConfigMap 下发；源文件 frontend/scripts/deploy/nginx.conf，
+  # check-frontend-dockerfile.sh 会断言 chart files/ 与源文件一致（防漂移）。
+  nginxConfig:
+    enabled: true
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  webAdmin:
+    enabled: true
+    image:
+      repository: web-admin
+      tag: ""
+      digest: ""
+    replicas: 1
+    port: 8080
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    service:
+      port: 80
+    ingress:
+      enabled: true
+      className: ""
+      annotations: {}
+      host: admin.localhost
+      path: /
+      pathType: Prefix
+      tls: []
+  webBiz:
+    # web-biz 生产入口/域名未定（plan §十一 待决 2）；启用时由 values-<env> 覆盖 host。
+    enabled: false
+    image:
+      repository: web-biz
+      tag: ""
+      digest: ""
+    replicas: 1
+    port: 8080
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    service:
+      port: 80
+    ingress:
+      enabled: false
+      className: ""
+      annotations: {}
+      host: biz.localhost
+      path: /
+      pathType: Prefix
+      tls: []
 
 workloads:
   admin:
@@ -283,6 +380,42 @@ workloads:
     ingress:
       enabled: false
 
+  # M2：内部密钥解析；无公网 Ingress；KEK / mTLS 证书由 envFrom / secretMounts 注入。
+  config:
+    enabled: false
+    serviceName: config-api
+    channel: internal
+    nodeID: 5
+    image:
+      repository: config-api
+    port: 8085
+    replicas: 2
+    statefulset:
+      enabled: false
+    configOverrides: {}
+    probes:
+      enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+    pdb:
+      enabled: true
+      minAvailable: 1
+    service:
+      enabled: true
+      port: 80
+    ingress:
+      enabled: false
+
 # 迁移 Job：post-install/post-upgrade 执行，失败阻断（需 helm --atomic --wait）。
 migrate:
   enabled: false
@@ -301,6 +434,34 @@ migrate:
       cpu: 500m
       memory: 256Mi
 
+# 访问复核超期扫描（P1-7）：一次性 worker 进程 + CronJob，默认关闭。
+#
+# 开启前确认 iam.certification.enabled 未被显式关闭；auto_revoke 决定扫描是
+# 「只标记 expired」还是「同时回收绑定」，生产开启回收应先在 staging 演练。
+certificationSweep:
+  enabled: false
+  # 每日 02:00（集群时区）：复核截止时间按 UTC 存储，扫描本身与时区无关，
+  # 选择低峰期只是避免与业务写入争锁。
+  schedule: "0 2 * * *"
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  image:
+    repository: worker
+    tag: ""
+    digest: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 serviceMonitor:
   enabled: false
   # 集群缺少 monitoring.coreos.com/v1（Prometheus Operator CRD）时的行为。
@@ -308,8 +469,9 @@ serviceMonitor:
   #               难懂的 `no matches for kind "ServiceMonitor"`。
   # true：跳过 ServiceMonitor 渲染（该环境不抓取指标时才这样设；指标会缺失）。
   # 离线渲染（helm template）不会自带 CRD，用
-  #   --api-versions monitoring.coreos.com/v1/ServiceMonitor
-  # 声明模拟的 API 集合，而不是把这个开关设成 true。
+  #   --api-versions monitoring.coreos.com/v1
+  # 声明模拟的 API 集合，而不是把这个开关设成 true。必须写组版本；
+  # 带 Kind 后缀的 `monitoring.coreos.com/v1/ServiceMonitor` 不命中判断。
   allowMissingCRD: false
   interval: 30s
   scrapeTimeout: 10s

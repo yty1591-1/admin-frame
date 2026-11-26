@@ -1,12 +1,12 @@
 # 生产级能力缺口实施规划（Production Readiness Implementation Plan）
 
-> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2  
+> **状态**：规划生效（v0.1，2026-10-22）；上游基线 `production-readiness-gaps.md` v0.2（2026-11-09 归档至 `archive/platform/`，只读追溯）  
 > **定位**：把 `ENT-01`～`ENT-25` 的差距评估转化为**可执行、可验收、可回滚**的任务包；只规划平台级能力，不新增业务域功能  
 > **效力**：本文件的任务范围、验收标准与门禁对合入具有约束力；与 [`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md) 同级  
 > **适用范围**：`internal/`、`pkg/`、`cmd/`、`migrations/`、`deploy/`、`tests/`、`scripts/ci/`、`.github/`、`docs/`  
-> **关联**：[`production-readiness-gaps.md`](./production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)  
+> **关联**：[`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md)、[`ARCHITECTURE.md`](./ARCHITECTURE.md)、[`standards-roadmap.md`](./standards-roadmap.md)、[`platform-remediation-plan.md`](./archive/platform/platform-remediation-plan.md)、[`rbac-iam.md`](./rbac-iam.md)、[`CODE_STYLE.md`](./CODE_STYLE.md)、[`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)、[`CI_STANDARDS.md`](./CI_STANDARDS.md)、[`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)、[`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)、[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)、[`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)、[`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)、[`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)、[`API_STANDARDS.md`](./API_STANDARDS.md)、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)、[`RUNBOOK_STANDARDS.md`](./RUNBOOK_STANDARDS.md)、[`GIT_STANDARDS.md`](./GIT_STANDARDS.md)  
 > **执行方式**：每条 `ENT` 独立 MR；验收标准全绿 + `make ci` + 本条新增门禁通过 + 文档回写完成，方可标记关闭  
-> **最后更新**：2026-10-22  
+> **最后更新**：2026-11-09（归档上游差距评估并反指其归档路径；§六 补齐 `ENT-19`～`ENT-25` 现状证据，其余结构仍为 v0.1）  
 > **变更方式**：调整波次、范围或验收标准须同步更新「十二、状态跟踪」与「执行记录」，经架构 Owner Review；P0 关闭须附验收命令与输出
 
 ---
@@ -35,7 +35,7 @@
 
 | 项        | 内容                                                                                |
 | -------- | --------------------------------------------------------------------------------- |
-| 差距评估     | [`production-readiness-gaps.md`](./production-readiness-gaps.md) v0.2（2026-10-22） |
+| 差距评估     | [`production-readiness-gaps.md`](./archive/platform/production-readiness-gaps.md) v0.2（2026-10-22） |
 | 代码基线     | `dad8fc0`（工作区干净；演示业务域已清理）                                                         |
 | 已完成的平台整改 | `platform-remediation-plan.md` PLAT-01～PLAT-15 全部完成                               |
 | 已完成的 IAM | `rbac-iam.md` M0～M4.7；M5 生产加固进行中                                                  |
@@ -75,7 +75,7 @@
 | 约束                                                      | 来源                                     | 落地检查                           |
 | ------------------------------------------------------- | -------------------------------------- | ------------------------------ |
 | API 进程**禁止**自动执行数据库迁移                                   | `DATA_STANDARDS`、`check-migrations.sh` | 迁移只允许 `cmd/migrate` 与部署 Job 执行 |
-| 生产 `iam.mode` 必须为 `enforce`                             | 项目硬约束、配置 `Validate`                    | `check-config` + 启动校验          |
+| 生产 `iam.mode` 必须为 `enforce`                             | 项目硬约束、配置 `Validate`                    | `Validate` 单测 + 启动校验          |
 | 高风险 IAM 直写在 `iam.approval.enabled=true` 时必须转审批单         | IAM M5 实现                              | 单测 + 配置校验                      |
 | 生产 IAM 必须使用持久化数据库驱动 + Redis 缓存 + Outbox                 | 配置 `Validate`                          | 启动失败关闭                         |
 | 禁止明文密钥进入仓库、日志、镜像                                        | `SECURITY_STANDARDS` SEC-01/05         | gitleaks + 配置脱敏 + 镜像扫描         |
@@ -357,7 +357,7 @@ identity:
 - 集成用例：登录 → 刷新 → 登出 → 旧令牌 401；禁用账号 → 旧令牌 ≤ 60s 失效；刷新令牌重放 → 会话撤销。
 - 三端契约：`api/{admin,biz,c}/openapi.yaml` 新增认证端点与错误码。
 - 新增 `make check-authn`：生产配置禁止 demo、认证端点契约存在、撤销路径有测试引用。
-- `make secrets`、`make check-config`、`make check-openapi` 必须通过。
+- `make secrets`、`make check-no-static-config`、`make check-openapi` 必须通过。
 
 **回滚与风险**
 
@@ -421,7 +421,7 @@ rate_limit:
 - `AC-ENT-02-1`：两副本批量创建无重复 ID；`AC-ENT-02-2`：同 key 跨副本同结果。
 - `AC-ENT-02-3`：共享配额、统一 `42900`；`AC-ENT-02-4`：滚动重启无事件丢失 / 无重复副作用。
 - 新增 `make check-idempotency`：扫描三端写路由是否挂载幂等或声明唯一键。
-- `make check-config` 增加生产 NodeID / Redis 强制校验。
+- 生产 NodeID / Redis 强制校验由 `Validate` 与单测保证（原 `check-config` 样例断言已随 CFG-01 下线）。
 - 多副本用例进入 CI 集成 job；本地可用 compose 复现。
 
 **落地说明（2026-10-22）**
@@ -432,7 +432,7 @@ rate_limit:
 - T5/T6：`pkg/ratelimit.RedisKeyed` 以 Redis `TIME` 实现跨副本令牌桶，`failure_mode` 默认 `fail_open`；分键支持 `channel / channel_user / channel_tenant_user / client`，超限继续 `42900` + `Retry-After`。
 - T7：ENT-03 已改为平台统一异步基础设施（`async.*`）：`async.outbox.publish_in_api` 控制 API 侧是否内嵌 Relay，默认由 `cmd/worker` 的 `AsyncRuntime` 投递，退出时等待循环收敛；IAM 审计写入 `async_outbox`，指标通过 `AuditTopicObserver` 映射。
 - T8：`tests/integration/multiinstance` 覆盖 NodeID 唯一性、跨副本幂等、共享限流与 outbox 重启不重投；`scripts/ci/check-idempotency.sh` 校验挂载、配置样例、固定 NodeID 与 OpenAPI 契约。
-- 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
+- 验证命令：`make fmt-check`、`go build ./...`、`go test ./...`、`make check-idempotency`、`make check-no-static-config`；Redis/MySQL 用例在未设置 `TEST_REDIS_ADDR` / `TEST_MYSQL_DSN` 时显式 skip。
 
 **回滚与风险**
 
@@ -704,7 +704,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 - `AC-ENT-07-1`：轮换 JWT 密钥请求不中断，旧令牌重叠期可用。
 - `AC-ENT-07-2`：DB 凭据轮换步骤可执行；`AC-ENT-07-3`：仓库 / 镜像 / 日志无密钥。
 - `AC-ENT-07-4`：轮换与吊销 runbook 完成一次演练。
-- `make secrets`、`make check-config`、发布 Checklist 必须通过。
+- `make secrets`、`make check-no-static-config`、发布 Checklist 必须通过。
 - 新增 runbook：`docs/runbooks/key-rotation.md`、`docs/runbooks/key-compromise.md`。
 
 **回滚与风险**
@@ -794,15 +794,15 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 
 > P2 只在触发条件成立后启动；启动前必须完成对应前置评估，禁止「为了企业级而企业级」。
 
-| ID | 能力 | 启动条件 | 前置评估 / 产出 |
-|---|---|---|---|
-| `ENT-19` | 供应链强化 | 对外发布或客户安全评审 | SBOM（Syft）、镜像签名（Cosign）、DAST 方案；`make check-sbom` |
-| `ENT-20` | 边缘与传输安全 | 公网暴露或等保 / 渗透测试 | WAF / API Gateway 配置、mTLS 方案、安全头基线、C 端 Bot 防护 |
-| `ENT-21` | 治理与文档运营 | 团队规模扩大 | CODEOWNERS、分支保护勾选、文档站点；`standards-roadmap.md` §四 |
-| `ENT-22` | 容量与成本治理 | 进入放量阶段 | 负载模型、容量评估、成本标签、预算告警；压测基线升级 |
-| `ENT-23` | 多区域 / 读副本 / 多活 | 可用性目标提升或多区域合规 | 只读副本、跨区备份、故障切换与演练 |
-| `ENT-24` | 搜索 / 报表 / 数仓 | 运营分析或对账需求 | CDC / ETL、读模型、导出任务、BI 对接 |
-| `ENT-25` | ABAC / 组织架构 | 权限复杂度明确 | 先立 ADR，再评估部门树、角色继承、条件策略 |
+| ID | 能力 | 启动条件 | 现状证据（2026-10-22 评估快照，已归档） | 前置评估 / 产出 |
+|---|---|---|---|---|
+| `ENT-19` | 供应链强化 | 对外发布或客户安全评审 | 仅有 Trivy 扫描；无 SBOM、镜像签名 / 来源证明、DAST、依赖更新 SLA 落地 | SBOM（Syft）、镜像签名（Cosign）、DAST 方案；`make check-sbom` |
+| `ENT-20` | 边缘与传输安全 | 公网暴露或等保 / 渗透测试 | 无 WAF / API Gateway 配置、无 mTLS / 服务身份、无 HSTS 等安全头基线、C 端无 Bot 防护 | WAF / API Gateway 配置、mTLS 方案、安全头基线、C 端 Bot 防护 |
+| `ENT-21` | 治理与文档运营 | 团队规模扩大 | 分支保护仍待管理员勾选（`standards-roadmap.md` §四）；无 CODEOWNERS 落地、无文档站点 | CODEOWNERS、分支保护勾选、文档站点；`standards-roadmap.md` §四 |
+| `ENT-22` | 容量与成本治理 | 进入放量阶段 | 只有微基准（[`perf/BASELINES.md`](./perf/BASELINES.md)），无负载模型、容量评估、成本标签与预算告警 | 负载模型、容量评估、成本标签、预算告警；压测基线升级 |
+| `ENT-23` | 多区域 / 读副本 / 多活 | 可用性目标提升或多区域合规 | 单区域单库；无只读副本、跨区备份、故障切换方案 | 只读副本、跨区备份、故障切换与演练 |
+| `ENT-24` | 搜索 / 报表 / 数仓 | 运营分析或对账需求 | 无 CDC / ETL、读模型、导出任务、BI 对接 | CDC / ETL、读模型、导出任务、BI 对接 |
+| `ENT-25` | ABAC / 组织架构 | 权限复杂度明确 | v1 明确不做；无部门树、角色继承、条件策略 | 先立 ADR，再评估部门树、角色继承、条件策略 |
 
 **P2 启动检查清单**
 
@@ -855,7 +855,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | 既有门禁 | 扩展内容 |
 |---|---|
 | `check-layering.sh` | 新增 `internal/identity` / `internal/auditlog` / `internal/tenant` 不得依赖 `internal/platform` 的规则 |
-| `check-config.sh` | 新增配置段必须出现在四份样例；生产强制项与 `Validate` 一致 |
+| `check-no-static-config.sh` | 禁止新增 `configs/` 文件；迁移期样例只减不增；生产强制项由 `Validate` 保证 |
 | `check-migrations.sh` | 新增表必须有 up/down、索引、保留期说明；审计表禁止 UPDATE/DELETE 授权 |
 | `check-test-gates.sh` | 新增域覆盖率门槛（`TEST_IDENTITY_COVER_MIN=80`、`TEST_AUDIT_COVER_MIN=80`） |
 | `check-runbooks.sh` | 新增 `key-rotation`、`backup-restore`、`disaster-recovery`、`dlq-replay`、`oncall` 条目 |
@@ -918,7 +918,7 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-09～18 | 对应域文档、三端 OpenAPI、`TESTING_STANDARDS.md`、`PERFORMANCE_STANDARDS.md`、`ARCHITECTURE.md` §10 / §17 |
 | 全部门禁 | `Makefile`、`.github/workflows/*.yml`、`.workflow/*.sh`、`scripts/ci/*`、PR 模板 |
 
-> 规则：**文档回写与代码同 MR**；禁止「先合代码，后补文档」。上游 `production-readiness-gaps.md` 的状态表在条目关闭时同步更新。
+> 规则：**文档回写与代码同 MR**；禁止「先合代码，后补文档」。上游差距评估已于 2026-11-09 归档只读，`ENT` 状态只在本文 §十二 维护；§六 保留归档时的现状证据快照，用于触发条件判定。
 
 ---
 
@@ -991,11 +991,11 @@ Grafana 数据源健康、5 张看板加载成功。新增 `scripts/observabilit
 | ENT-02 | P0 | Wave 1 | 已完成（2026-10-22） | 多副本 ID 唯一、幂等与限流共享；T4 逐 operation 标注延后 |
 | ENT-03 | P0 | Wave 1 | 已完成（2026-10-22；T7 NATS JetStream 2026-10-24） | 通用 Outbox + 消费运行时 + DLQ + 积压指标；`async.driver=nats` 可选 |
 | ENT-04 | P0 | Wave 1 | 完成（2026-11-03：T1～T7 全部交付，`AC-ENT-04-1`～`4` 达成；异步导出任务表 + worker 执行 + 下载，到期「先归档后删除」；`check-audit` 增路由↔OpenAPI↔状态枚举与追加写两项断言） | 审计可查询 / 导出 / 保留 ≥ 180 天 |
-| ENT-05 | P0 | Wave 2 | 完成（2026-11-02）——T1～T8 全部落地并在 kind 真集群验证：三套 values `server-side dry-run` 通过（dev 13 / staging 24 / prod 32 资源）；真部署 4 端全部 Ready、`/readyz` 五类检查 ok；`helm rollback` 成功；迁移失败时发布被阻断且 API Pod 未被替换。过程中修掉 4 个既有缺陷：`iam.mode: off` 被 YAML 解析成布尔 false（c/worker CrashLoop）；迁移 Job 原为 post-install hook（与 API 并行启动）；ServiceMonitor 无 CRD 检查；worker 未注入 `deps.IDs`（审计保留服务构造失败）。新增 `values-kind.yaml` 与 `docs/deploy-kind-verify.md` 使验证可重复 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
+| ENT-05 | P0 | Wave 2 | 完成（2026-11-02）——T1～T8 全部落地并在 kind 真集群验证：三套 values `server-side dry-run` 通过（2026-11-08 复核更新：dev 13 / staging 25 / prod 33 资源；离线渲染须带 `--api-versions monitoring.coreos.com/v1`）；真部署 4 端全部 Ready、`/readyz` 五类检查 ok；`helm rollback` 成功；迁移失败时发布被阻断且 API Pod 未被替换。过程中修掉 4 个既有缺陷：`iam.mode: off` 被 YAML 解析成布尔 false（c/worker CrashLoop）；迁移 Job 原为 post-install hook（与 API 并行启动）；ServiceMonitor 无 CRD 检查；worker 未注入 `deps.IDs`（审计保留服务构造失败）。新增 `values-kind.yaml` 与 `docs/deploy-kind-verify.md` 使验证可重复 | Helm 三环境 + 探针 + 资源 + Secret 注入 + 迁移 Job |
 | ENT-06 | P0 | Wave 2 | 完成（2026-11-03）——AC-ENT-06-1～4 全部达成：规则 / 看板 / SLO 代码化，kind 真集群注入 5xx、DB 池耗尽、Outbox 积压三类故障均实触发且撤销后自动恢复；37 个看板面板查询错误 0 / 空数据 0；入口到 DB 的 trace 实测贯通（`GET /admin/v1/audit/events` → `sql.conn.query`）。过程中修掉 6 个缺陷：`/metrics` 采集阻塞导致的告警自噬、`db.max_open_conns` 缺失、IAM 快照缓存观测器未接线、shadow 模式不记录鉴权决策、Collector `retry:` 非法键与 telemetry 端口双绑、入口 span 名退化 `GET unknown`。**生产剩余为运维配置项**：Alertmanager 接收端接入 | 告警规则 / 看板 / SLO 代码化并演练 |
 | ENT-07 | P0 | Wave 2 | 完成（2026-11-03：T1～T4 全部交付。T3 生产实现以 **Vault HTTP API** 落地，零新增依赖，故不触发 DEP-06 评审——`internal/platform/secrets/vault.go` 自动探测 KV v1/v2，支持单对象（一次请求取全部密钥）与逐键（`<prefix>/<name>` + `value_field`）两种布局，带 TTL 缓存、5s 超时、自定义 CA、令牌文件注入；403 / 5xx / 解析失败一律**硬错误**，`Chain` 只在 `ErrNotFound` 时回落，单对象整体缺失也 fail fast。`secrets.vault.*` 已接入配置，prod 禁显式令牌；`check-secret-provider` 增 8 条断言（含「禁止引入 Vault SDK」与 fail-fast 用例存在性）。**未做**：云 KMS 适配（T7 字段加密需真实云环境时再评估）、不停机轮换演练待 staging） | 密钥托管 + 不停机轮换演练 |
 | ENT-08 | P0 | Wave 2 | 完成（2026-11-02）——T1～T6 全部落地：`backup.sh` 加 `--source-data=2` 记录快照位点并写 `<备份>.pos` sidecar（随备份上对象存储，缺失即失败）；`restore.sh` 实现 `PITR_STOP_POS`（字节精确）/ `PITR_STOP_DATETIME`（秒级）两种截断，支持跨 binlog 文件回放，全部参数在覆盖目标库前预检；G1 binlog 归档（5 分钟 CronJob + db-ops 镜像）已端到端验证。PITR 实测：误删未被重放、备份后增量全部找回，27 表结构一致。**生产剩余为配置项而非开发项**：填 `BINLOG_S3_URI`、账号授 `REPLICATION SLAVE` + `RELOAD` + `REPLICATION CLIENT` | 备份 + PITR 恢复演练 + RPO/RTO |
-| ENT-09 | P1 | Wave 3 | 完成（2026-11-05，审核流补齐）——T1～T6 交付：`internal/tenant` 四层 + `tenant` / `tenant_member` / `tenant_quota` 三表（迁移 000008 / 000011）+ 权限点 `tenant:read` / `tenant:write`；状态机 `pending → active → suspended → terminated`（终止终态、`version` 乐观锁、停用/终止强制原因）；A 端 11 个端点（租户 / 成员 / 配额）+ `admin.yaml` 7.2.0；成员停用代替删除、最后一名 owner 受保护、配额 `-1` 不限（执行归 ENT-14）；**B 端停用生效**由 `app.Guard` + `platform.WithTenantGuard` 承担（30s 缓存，fail closed），`000010` 回填存量商户。runbook：[tenant-suspend.md](./runbooks/tenant-suspend.md)；决策：[ADR-0006](./adr/0006-tenant-as-isolation-boundary.md)。**后续归属**：终止数据处置 → ENT-15（已完成 2026-11-04：PurgeService + tenant.data_purge 审计）；数据范围强制 → ENT-12（已完成 2026-11-04）；**配额执行（42900）已完成（ENT-14，2026-11-04：席位 T-13 内联 + api.rps 令牌桶 QuotaEnforcer）**；**审核流（2026-11-05 补齐）**：`tenant_approval` append-only 事件表（迁移 000023）+ 四个端点（`GET/POST /tenants/{id}/approval`、`.../approve`、`.../reject`）+ `tenant:approve` 权限（迁移 000024）；`pending → active` 在事务内要求「最新审批为 approved 且 ≥1 名在册 owner」，提交人不得审批自己的申请（违反留 failure 审计）；驳回必填原因、可重提且历史保留；门禁 `check-tenant` 增 TN-04（审批前置存在且先于 owner 校验、路由/权限/文档一致）。退出数据处置由 ENT-15 完成（2026-11-04）。**ENT-09 验收缺口全部关闭**。整改见 [tenant-enterprise-review.md](./tenant-enterprise-review.md)（B1 修复 3 个 P0；B2（审计 Outbox + 会话撤销 + 登录链路）与 B3 全部完成——T-11 元数据 / T-12 开通前置 / T-13 席位 / T-14 邀请流 / T-15 条件更新 / T-22 current_tenant / T-24 套餐，契约 admin 7.6.0 + biz 6.0.0；B4 治理完成——T-16 指标、T-17 域门禁 check-tenant（已入 make ci）、T-19 状态与 ADR 更正、T-20 runbook、T-23 数据生命周期；T-18 IAM 联动已完成（ADR-0007：成员变更同事务同步商户级模板角色绑定，迁移 000015 存量回填）） | 租户生命周期与 IAM / 令牌联动 |
+| ENT-09 | P1 | Wave 3 | 完成（2026-11-05，审核流补齐）——T1～T6 交付：`internal/tenant` 四层 + `tenant` / `tenant_member` / `tenant_quota` 三表（迁移 000008 / 000011）+ 权限点 `tenant:read` / `tenant:write`；状态机 `pending → active → suspended → terminated`（终止终态、`version` 乐观锁、停用/终止强制原因）；A 端 11 个端点（租户 / 成员 / 配额）+ `admin.yaml` 7.2.0；成员停用代替删除、最后一名 owner 受保护、配额 `-1` 不限（执行归 ENT-14）；**B 端停用生效**由 `app.Guard` + `platform.WithTenantGuard` 承担（30s 缓存，fail closed），`000010` 回填存量商户。runbook：[tenant-suspend.md](./runbooks/tenant-suspend.md)；决策：[ADR-0006](./adr/0006-tenant-as-isolation-boundary.md)。**后续归属**：终止数据处置 → ENT-15（已完成 2026-11-04：PurgeService + tenant.data_purge 审计）；数据范围强制 → ENT-12（已完成 2026-11-04）；**配额执行（42900）已完成（ENT-14，2026-11-04：席位 T-13 内联 + api.rps 令牌桶 QuotaEnforcer）**；**审核流（2026-11-05 补齐）**：`tenant_approval` append-only 事件表（迁移 000023）+ 四个端点（`GET/POST /tenants/{id}/approval`、`.../approve`、`.../reject`）+ `tenant:approve` 权限（迁移 000024）；`pending → active` 在事务内要求「最新审批为 approved 且 ≥1 名在册 owner」，提交人不得审批自己的申请（违反留 failure 审计）；驳回必填原因、可重提且历史保留；门禁 `check-tenant` 增 TN-04（审批前置存在且先于 owner 校验、路由/权限/文档一致）。退出数据处置由 ENT-15 完成（2026-11-04）。**ENT-09 验收缺口全部关闭**。整改见 [tenant-enterprise-review.md](./archive/tenant/tenant-enterprise-review.md)（B1 修复 3 个 P0；B2（审计 Outbox + 会话撤销 + 登录链路）与 B3 全部完成——T-11 元数据 / T-12 开通前置 / T-13 席位 / T-14 邀请流 / T-15 条件更新 / T-22 current_tenant / T-24 套餐，契约 admin 7.6.0 + biz 6.0.0；B4 治理完成——T-16 指标、T-17 域门禁 check-tenant（已入 make ci）、T-19 状态与 ADR 更正、T-20 runbook、T-23 数据生命周期；T-18 IAM 联动已完成（ADR-0007：成员变更同事务同步商户级模板角色绑定，迁移 000015 存量回填）） | 租户生命周期与 IAM / 令牌联动 |
 | ENT-10 | P1 | Wave 3 | **主体完成（2026-11-04，NT-01～NT-10 十个任务包全部落地）**——`internal/notification` 五层 + 迁移 000016～000019（五表 / 邀请模板种子 / 权限点 / 回执索引）；编排管道（幂等续跑 → 过期 → 黑名单偏好 fail closed → 频控 → 熔断发送 → 主备降级 → 单调收敛，预算 6/4/2）；失败 `retry.Permanent` 进 DLQ 保留载荷，Replay 补偿；租户邀请邮件端到端接入（ADR-0007 事务内 fail closed）；回执回调公网端点（HMAC + nonce，密钥缺失拒启）；API 面 admin 8.0.0 / biz 6.1.0 + 权限 `notification:read/write`；`check-notification` 门禁入 make ci；ADR-0008 + runbook；DirectSender 同步旁路受控门面（identity 热路径不迁移，例外固化 ADR-0008 §3）。决策与遗留：[ADR-0008](./adr/0008-notification-event-driven.md)、[notification-center-plan.md](./archive/plans/notification-center-plan.md)（v1.2）。**遗留**：MySQL 集成用例（归 ENT-16）、生产渠道驱动装配（依赖渠道凭据，配置项非开发项） | 通知 / Webhook 投递编排与状态 |
 | ENT-11 | P1 | Wave 3 | **主体完成（2026-11-04，FF-01～FF-08 全部落地）**——`internal/featureflag` 五层：域模型（key 正则 / 治理状态机 enabled→disabled→expired 终态 / permanent 与 expires_at 二选一）；评估引擎（kill switch 无条件优先 → 规则按序 → default 回退；SHA-256 万分比稳定分桶，同主体稳定、上调只增不减、subject 缺失 fail closed；属性测试锁定单调性与均匀性）；两级 TTL 缓存（kill switch 5s / 规则 30s，判据「秒级开关」）；管理面 CRUD + 乐观锁 + `featureflag.*` 六动作审计（Outbox 优先 fail closed）；到期治理任务（worker 周期扫描 + 元审计）；API admin 8.1.0 + 权限 `featureflag:read/write`（000021 四处同步）；`check-featureflag.sh` 门禁入 make ci（key 命名 / EVENTS 对账 / 幽灵 key / 到期断言）；ADR-0009（进程内评估 + TTL，不引外部平台）+ runbook；首个调用方 = 租户邀请邮件灰度开关（消费方端口 + noop 注入，evaluator 未注入沿用 ENT-10 语义）。**遗留清账**：MySQL 集成用例已补（2026-11-04，`tests/integration/featureflag`：规则往返 / CAS / 治理落库 / ListExpired 扫描） | 特性开关与灰度可运营 |
 | ENT-12 | P1 | Wave 3 | 完成（2026-11-04）——`internal/shared/authz` 补齐执行原语：`ScopeWhere`（范围 → SQL 谓词，`Clause` 生成 `IN` 片段）、`Snapshot.EnforceMerchant`、`EnforceFromContext`（快照缺失放行，RequirePermission 兜底），越界统一 `ErrScopeDenied` → 40300；业务接线：租户域全部写用例经 `mutableTenant` 汇聚点强制 + 成员/配额/邀请三个读路径，通知 transport（查询/代发目标租户）接线；仓储强制过滤：通知域两实现对空租户键 fail closed + SQL 钉死 `tenant_id = ?`。越权自动化用例三处（authz 单测 / 租户 app 越权读写 / 通知 handler 403）；`make check-authz` 入 make ci（AZ-01～04 四项对账）。决策记录：rbac-iam.md §4.4 第 7 条（self 范围 v1 租户维度执行）。**后续归属**：iam / audit 等其余域的仓储织入随各自域演进逐批接入（原语已就绪） | 数据范围在业务查询 / 写入强制 |

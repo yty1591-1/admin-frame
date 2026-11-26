@@ -1,0 +1,258 @@
+# ADR-0017 / ADR-0018：Admin 安装向导代理（无 JWT，经 mTLS 转发到 config-api）。
+#
+# 浏览器无法向 prod-like config-api 出示 PEM 客户端证书，向导因此经 admin-api
+# 同源代理；写操作的 `X-Config-Install-Token` 由 config-api 校验，本端不做鉴权。
+# 响应体为 config-api 原样透传（成功信封与错误码一致）。
+
+admin-v1-install-status:
+  get:
+    tags: [install]
+    summary: 查询安装态
+    operationId: adminGetInstallStatus
+    # 安装期尚无可用 JWT（业务配置未播种、登录依赖尚未就绪），与内部端点一致不鉴权。
+    security: []
+    description: |
+      透传 `GET /internal/v1/install/status`（ADR-0017 / ADR-0018）。返回当前部署环境的
+      安装态、`gaps`（缺失的必填键）与 `blocking_count`，Admin SPA 据此决定进入
+      安装向导、重配置（repair）还是业务界面。无需 setup token。
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达（`CONFIG_API_URL` 未配置、mTLS 握手失败或上游 5xx）
+
+admin-v1-install-schema:
+  get:
+    tags: [install]
+    summary: 查询向导渲染元数据
+    operationId: adminGetInstallSchema
+    security: []
+    description: |
+      透传 `GET /internal/v1/install/schema`（ADR-0018）。返回字段清单、分组、
+      默认值来源与缺失必填键，供向导渲染表单；`mode=repair` 时只应允许修改阻塞键。
+      虽然只出元数据，仍与写操作一样要求 `X-Config-Install-Token`。
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallSchemaResponse"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "404":
+        description: 安装态行不存在（未 migrate / 未 Ensure）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
+admin-v1-install-begin:
+  post:
+    tags: [install]
+    summary: 开始安装 / 开始修复（抢租约）
+    operationId: adminBeginInstall
+    security: []
+    description: |
+      `reason=first_install`（默认）用于首次安装；`reason=repair` 只允许在 `ready`
+      之后发起，且要求当前存在阻塞键（或通过 `declared_keys` 声明），服务端会冻结
+      `namespace/key` 白名单到 `repair_keys`，后续 apply 只接受这些键（ADR-0018）。
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              owner:
+                type: string
+                description: 安装者标识；空则由服务端生成
+              reason:
+                type: string
+                enum: [first_install, repair]
+                description: 省略时按状态推断（ready → repair，否则 first_install）
+              declared_keys:
+                type: array
+                maxItems: 64
+                description: |
+                  运维声明的额外阻塞键（`namespace/key`），只在 `repair` 轮次有效：
+                  必须已声明、非敏感，且尚未进入生效快照。
+                items:
+                  type: string
+    responses:
+      "200":
+        description: 进入 installing
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "400":
+        description: reason 非法，或 repair 时状态不是 ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 40951 安装进行中（他人持租约）/ 40952 已完成或 repair 时无阻塞键可修
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
+admin-v1-install-apply:
+  post:
+    tags: [install]
+    summary: 安装期播种 / 修复阻塞键
+    operationId: adminApplyInstall
+    security: []
+    description: |
+      透传 `POST /internal/v1/install/apply`。响应里的 `remaining_gaps` 是本次 apply
+      之后的剩余阻塞键；`mode=repair` 时只接受 `repair_keys` 白名单内的键。
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+              values:
+                type: object
+                description: 按 namespace 分组的新契约（namespace → key → 字符串）
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    type: string
+              overrides:
+                type: object
+                additionalProperties:
+                  type: string
+                description: |
+                  扁平键值，兼容旧客户端；与 values 合并，后者优先。
+                  仅接受已声明键（未声明键返回 40000）。
+                  敏感项不接受明文覆盖（由服务端自动生成并落库信封加密）。
+    responses:
+      "200":
+        description: 播种完成（幂等）；响应内含 remaining_gaps
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallApplyResponse"
+      "400":
+        description: 未声明键、取值非法，或 repair 时提交了白名单之外的键
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 未持有租约或已完成
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达
+
+admin-v1-install-complete:
+  post:
+    tags: [install]
+    summary: 完成安装
+    operationId: adminCompleteInstall
+    security: []
+    parameters:
+      - name: X-Config-Install-Token
+        in: header
+        required: true
+        description: 与 config-api 的 `CONFIG_INSTALL_SETUP_TOKEN` 一致；不入库、不回显
+        schema:
+          type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [owner]
+            properties:
+              owner:
+                type: string
+    responses:
+      "200":
+        description: status=ready
+        content:
+          application/json:
+            schema:
+              $ref: "../../schemas/internal/install.yaml#/InstallStatusResponse"
+      "400":
+        description: 存在仍缺指针的 namespace，或仍有阻塞键（状态保持 installing，可继续 apply）
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "401":
+        description: setup token 无效
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "409":
+        description: 未持有租约或已完成
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/ErrorEnvelope"
+      "502":
+        description: config-api 不可达

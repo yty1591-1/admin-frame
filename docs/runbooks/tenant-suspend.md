@@ -1,6 +1,7 @@
 # 租户停用 / 不可用（B 端统一 403）
 
 > 关联：ENT-09、ADR-0006、`docs/audit/EVENTS.md`（`tenant.*`）、`docs/iam/PERMISSIONS.md`（`tenant:write`）
+> 关联告警：`tenant.guard.error_rate`（P2，守卫无法判定比例 > 1%，商户侧 503/50300）、`tenant.audit.emit_failed`（P1，审计写入失败，处置见 [async-dlq.md](./async-dlq.md)）
 
 ## 症状
 

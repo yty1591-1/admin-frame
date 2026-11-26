@@ -5,7 +5,7 @@
 > **适用范围**：本仓库 A/B/C 关键操作的审计事件定义、字段、保留与存储完整性  
 > **关联**：架构 §十二审计；可观测见 `OBSERVABILITY_STANDARDS.md`（OBS-07）；脱敏见 `SECURITY_STANDARDS.md`  
 > **执行方式**：事件目录 + `internal/shared/audit` 抽检单测 + `check-audit.sh` + Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-11-07（审计出口分层：`emitter.go` 收敛为端口，实现层由 cmd 装配期注入）  
 > **变更方式**：修改本规范须同步更新 `docs/audit/`、`internal/shared/audit`、`scripts/ci/check-audit.sh` 与架构 §十二，经架构 / 安全 Owner Review
 
 ---

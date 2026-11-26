@@ -25,6 +25,8 @@ const (
 	sessionKeyPrefix = "authn:sid:"
 	// revokedKeyPrefix jti 黑名单键：authn:revoked:<jti>。
 	revokedKeyPrefix = "authn:revoked:"
+	// clientStateKeyPrefix M2M 客户端撤销快照键：authn:client_ver:<client_id>。
+	clientStateKeyPrefix = "authn:client_ver:"
 )
 
 // RedisRevocationStore 基于 pkg/redis.Cache 实现撤销存储。
@@ -35,7 +37,10 @@ type RedisRevocationStore struct {
 }
 
 // 编译期断言。
-var _ app.RevocationStore = (*RedisRevocationStore)(nil)
+var (
+	_ app.RevocationStore  = (*RedisRevocationStore)(nil)
+	_ app.ClientStateStore = (*RedisRevocationStore)(nil)
+)
 
 // NewRedisRevocationStore 构造 Redis 撤销存储；cache 为 nil 时所有操作失败关闭。
 func NewRedisRevocationStore(c *redis.Cache) *RedisRevocationStore {
@@ -128,6 +133,49 @@ func (s *RedisRevocationStore) DeleteSessionState(ctx context.Context, sessionID
 	return nil
 }
 
+// LoadClientState 读取 M2M 客户端撤销快照；未命中或内容损坏返回 found=false。
+func (s *RedisRevocationStore) LoadClientState(ctx context.Context, clientID string) (app.ClientState, bool, error) {
+	if strings.TrimSpace(clientID) == "" {
+		return app.ClientState{}, false, apperr.BadRequest("client id is required")
+	}
+	raw, err := s.cache.Get(ctx, clientStateKeyPrefix+clientID)
+	if err != nil {
+		if errors.Is(err, redis.ErrMiss) {
+			return app.ClientState{}, false, nil
+		}
+		return app.ClientState{}, false, fmt.Errorf("identity client revocation get: %w", err)
+	}
+	state, err := decodeClientState(raw)
+	if err != nil {
+		// 缓存内容损坏按未命中处理：回源数据库并回填，而不是让鉴权整体失败。
+		return app.ClientState{}, false, nil
+	}
+	return state, true, nil
+}
+
+// SaveClientState 写入 M2M 客户端撤销快照。
+func (s *RedisRevocationStore) SaveClientState(ctx context.Context, clientID string, state app.ClientState, ttl time.Duration) error {
+	if strings.TrimSpace(clientID) == "" {
+		return apperr.BadRequest("client id is required")
+	}
+	value := fmt.Sprintf("%d|%s|%d", state.Version, state.Status, unixMilli(state.FetchedAt))
+	if err := s.cache.Set(ctx, clientStateKeyPrefix+clientID, []byte(value), ttl); err != nil {
+		return fmt.Errorf("identity client revocation set: %w", err)
+	}
+	return nil
+}
+
+// DeleteClientState 删除 M2M 客户端撤销快照；用于撤销路径的失效兜底。
+func (s *RedisRevocationStore) DeleteClientState(ctx context.Context, clientID string) error {
+	if strings.TrimSpace(clientID) == "" {
+		return apperr.BadRequest("client id is required")
+	}
+	if err := s.cache.Delete(ctx, clientStateKeyPrefix+clientID); err != nil {
+		return fmt.Errorf("identity client revocation delete: %w", err)
+	}
+	return nil
+}
+
 // RevokeToken 把 jti 写入黑名单，ttl 为令牌剩余寿命。
 func (s *RedisRevocationStore) RevokeToken(ctx context.Context, jti string, ttl time.Duration) error {
 	if strings.TrimSpace(jti) == "" {
@@ -201,8 +249,7 @@ func decodeSessionState(raw []byte) (app.SessionState, error) {
 	}, nil
 }
 
-// decodeState 解析 "<version>|<status>|<fetched_at_ms>" 快照。
-//
+// decodeState 解析 "<version>|<status>|<fetched_at_ms>" 快照。//
 // 兼容旧格式 "<version>|<status>"：FetchedAt 留零值，由检查器判定为陈旧并回源刷新。
 func decodeState(raw []byte) (app.AccountState, error) {
 	parts := strings.SplitN(string(raw), "|", 3)
@@ -222,6 +269,33 @@ func decodeState(raw []byte) (app.AccountState, error) {
 		ms, parseErr := strconv.ParseInt(parts[2], 10, 64)
 		if parseErr != nil || ms < 0 {
 			return app.AccountState{}, fmt.Errorf("identity revocation: malformed fetched_at")
+		}
+		state.FetchedAt = time.UnixMilli(ms).UTC()
+	}
+	return state, nil
+}
+
+// decodeClientState 解析 "<version>|<status>|<fetched_at_ms>" 客户端快照。
+//
+// 缺少 fetched_at 视为陈旧，由检查器回源升级；状态非法同样按未命中处理。
+func decodeClientState(raw []byte) (app.ClientState, error) {
+	parts := strings.SplitN(string(raw), "|", 3)
+	if len(parts) < 2 {
+		return app.ClientState{}, fmt.Errorf("identity client revocation: malformed state")
+	}
+	version, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || version < 1 {
+		return app.ClientState{}, fmt.Errorf("identity client revocation: malformed version")
+	}
+	status := domain.M2MClientStatus(parts[1])
+	if err := status.Validate(); err != nil {
+		return app.ClientState{}, err
+	}
+	state := app.ClientState{Version: version, Status: status}
+	if len(parts) == 3 {
+		ms, parseErr := strconv.ParseInt(parts[2], 10, 64)
+		if parseErr != nil || ms < 0 {
+			return app.ClientState{}, fmt.Errorf("identity client revocation: malformed fetched_at")
 		}
 		state.FetchedAt = time.UnixMilli(ms).UTC()
 	}

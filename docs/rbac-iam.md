@@ -1319,7 +1319,9 @@ JOIN role_chain c ON c.id = s.role_id;
 - **超期回收**：截止时间后可将 `iam.certification.auto_revoke` 打开（默认关闭）执行自动回收；回收前按绑定的 subject/channel/merchant/role/expiresAt/revoked 指纹做二次校验，与生成任务时不一致则任务置 `skipped`（死信）且绝不回收，等待人工处理。
 - **证据导出**：`GET /admin/v1/iam/certifications/{id}/export?format=csv|json` 输出任务级完整字段（活动、主体、角色、绑定、责任人、状态、裁决、原因、裁决人、时间），用于等保 / SOC 2 周期性归档。
 - 所有创建、激活、裁决、自动动作与导出均写 `rbac.certification` 审计，并与业务写入同事务；审计失败则操作回滚。
-- 周期触发由 SRE 配置定时调用 `auto-expire` 端点（可重入），服务本身不内置调度器；季度复核、离职 / 转岗解绑与破玻璃 24h 复盘要求不变。
+- **超期扫描**：服务本身不内置调度器（避免 API 多副本重复执行），由 Helm `certificationSweep` 渲染的 CronJob 起一次性进程 `worker -certification-sweep` 执行；进程内按 `active` 活动分页扫描，先只读收集已过截止时间的活动，再对每个活动开独立事务处理，单个活动失败不阻断其余活动。
+- 人工触发与扫描共用同一段过期状态机（`expireOverdueTasks`）：差别仅在入口是否做端别 / 商户可见性校验；扫描使用固定 actor `system:certification` 留痕，`auto_revoke` 仍由配置决定是「只标记 expired」还是「回收绑定」。
+- 扫描进程复用解绑用例（软撤销 + 约束校验 + 快照失效 + `rbac.binding_change` 审计），并连共享 Redis 删除快照键；未配置 Redis 时回收在 L2 TTL（≤15m）内才全量生效。季度复核、离职 / 转岗解绑与破玻璃 24h 复盘要求不变。
 
 ---
 
@@ -1606,7 +1608,7 @@ BenchmarkReplaceRolePermissions_Diff
 | OBS-01 / OBS-05 | 结构化日志 + `trace_id` 贯通 | `make check-observability` |
 | OBS-02 / OBS-03 / OBS-04 | 探针 + IAM 依赖检查器 + `/version` | `make check-observability` |
 | OBS-06 / OBS-07 | 4xx 不打 Error；关键操作审计 | Review + `check-audit` |
-| CFG-01 / CFG-02 / CFG-05 | example 更新；不提交真实 yaml；Validate 覆盖 prod 互斥 | `make check-config` |
+| CFG-01 / CFG-02 / CFG-06 | 不新增 `configs/` 文件；不提交真实密钥 / DSN；key spec 为唯一来源 | `make check-no-static-config` |
 | CFG-03 / CFG-07 | 启动即校验；无魔法数 | 单测 + Review |
 | CI-03～CI-09 | fmt / lint / test / vuln / tidy / build / transport | `make ci` |
 | C-01～C-10 | 包注释、导出 godoc、`nolint` 原因、忽略 error 原因 | `make lint` + Review |
@@ -1959,16 +1961,16 @@ iam:
 
 - [`adr/0004-rbac-iam-domain.md`](./adr/0004-rbac-iam-domain.md)：落位、失败关闭、`50300`、灰度路线的 ADR
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层、依赖、三端隔离、数据范围、缓存与消息
-- [`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)：SEC-01～SEC-14
+- [`SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)：SEC-01～SEC-16
 - [`AUDIT_STANDARDS.md`](./AUDIT_STANDARDS.md)：AUD-01～AUD-09
 - [`DATA_STANDARDS.md`](./DATA_STANDARDS.md)：DATA-01～DATA-08
 - [`TESTING_STANDARDS.md`](./TESTING_STANDARDS.md)：TEST-01～TEST-08
 - [`API_STANDARDS.md`](./API_STANDARDS.md)：API-01～API-12
-- [`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)：CFG-01～CFG-08
+- [`CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)：CFG-01～CFG-12
 - [`RELIABILITY_STANDARDS.md`](./RELIABILITY_STANDARDS.md)：REL-01～REL-08
 - [`OBSERVABILITY_STANDARDS.md`](./OBSERVABILITY_STANDARDS.md)：OBS-01～OBS-08
 - [`CODE_STYLE.md`](./CODE_STYLE.md) / [`COMMENT_STANDARDS.md`](./COMMENT_STANDARDS.md)：S-01～S-12 / C-01～C-10
-- [`CI_STANDARDS.md`](./CI_STANDARDS.md)：CI-01～CI-14
+- [`CI_STANDARDS.md`](./CI_STANDARDS.md)：CI-01～CI-18
 - [`docs/audit/EVENTS.md`](./audit/EVENTS.md) / [`docs/audit/FIELDS.md`](./audit/FIELDS.md)
 - 代码：`pkg/rbac`、`internal/security`、`internal/shared/auth`、`internal/shared/apperr`
 - NIST RBAC（INCITS 359）概念参考；OWASP Authorization Cheat Sheet

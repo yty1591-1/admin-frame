@@ -1,0 +1,112 @@
+# ADR-0016：config-api 内部配置拉取与长轮询。
+
+internal-v1-configs-env-namespace:
+  get:
+    tags: [config-internal]
+    summary: 拉取某 env/namespace 的非敏感配置
+    description: |
+      返回当前生效 Release 的非敏感 values。客户端可带 release_key；
+      未变化时返回 304。敏感项不出现在响应中。
+    operationId: internalGetNamespaceConfig
+    parameters:
+      - name: env
+        in: path
+        required: true
+        schema: { type: string }
+      - name: namespace
+        in: path
+        required: true
+        schema: { type: string }
+      - name: release_key
+        in: query
+        required: false
+        schema: { type: string }
+      - name: X-Service-Identity
+        in: header
+        required: false
+        schema: { type: string }
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required: [env, namespace, release_id, release_no, release_key, values]
+                      properties:
+                        env: { type: string }
+                        namespace: { type: string }
+                        release_id: { type: integer, format: int64 }
+                        release_no: { type: integer, format: int64 }
+                        pointer_version: { type: integer, format: int64 }
+                        release_key: { type: string }
+                        values:
+                          type: object
+                          additionalProperties: { type: string }
+                        generated_at: { type: string, format: date-time }
+      "304":
+        description: release_key unchanged
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+internal-v1-configs-notifications:
+  get:
+    tags: [config-internal]
+    summary: 长轮询配置变更通知
+    description: |
+      namespaces 形如 platform:12,identity:5（namespace:pointer_version）。
+      任一版本变化立即返回；否则挂起最长 60s 后 304。
+    operationId: internalConfigNotifications
+    parameters:
+      - name: env
+        in: query
+        required: true
+        schema: { type: string }
+      - name: namespaces
+        in: query
+        required: true
+        schema: { type: string }
+      - name: timeout
+        in: query
+        required: false
+        schema: { type: string, example: 60s }
+      - name: X-Service-Identity
+        in: header
+        required: false
+        schema: { type: string }
+    responses:
+      "200":
+        description: ok
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            required: [namespace, notification_id]
+                            properties:
+                              namespace: { type: string }
+                              notification_id: { type: string }
+      "304":
+        description: no change within timeout
+      "400":
+        $ref: "../../components.yaml#/components/responses/BadRequest"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"

@@ -26,6 +26,11 @@ export const defaultResponseInterceptor = ({
         return response;
       }
 
+      // 204 No Content 没有业务信封（常见于删除接口），视为成功且无数据。
+      if (status === 204) {
+        return undefined;
+      }
+
       if (status >= 200 && status < 400) {
         if (config.responseReturn === 'body') {
           return responseData;
@@ -87,6 +92,10 @@ export const authenticateResponseInterceptor = ({
 
       try {
         const newToken = await doRefreshToken();
+
+        // 重试请求必须带上新令牌，否则会再次 401（刷新单飞后也只重试一次）。
+        config.headers = config.headers ?? {};
+        config.headers.Authorization = formatToken(newToken);
 
         // 处理队列中的请求
         client.refreshTokenQueue.forEach((callback) => callback(newToken));

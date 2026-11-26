@@ -5,11 +5,11 @@ import type { Permission } from '#/api';
 
 import { onMounted, reactive, ref } from 'vue';
 
+import { useVbenForm } from '@vben/app-kernel/adapter/form';
 import { Page } from '@vben/common-ui';
 
 import { Button, Space, Table, Tag } from 'ant-design-vue';
 
-import { useVbenForm } from '#/adapter/form';
 import { listPermissionsApi } from '#/api';
 
 defineOptions({ name: 'IamPermission' });

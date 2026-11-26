@@ -22,7 +22,7 @@
 // 典型用法：
 //
 //	loader, err := config.NewLoader(config.Options[AppConfig]{
-//		Files:     []string{"configs/admin.yaml"},
+//		Files:     []string{"configs/dev/admin.yaml"},
 //		EnvPrefix: "ADMIN_FRAME",
 //		Defaults:  applyDefaults,
 //		Validate:  func(c *AppConfig) error { return c.Validate() },

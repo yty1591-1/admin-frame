@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/admin-frame/admin-frame/internal/platform/config"
@@ -31,8 +33,14 @@ type PipelineConfig struct {
 	Channel string
 	// RateLimit 限流参数；Enabled=false 时不挂载。
 	RateLimit config.RateLimitConfig
+	// RateLimitSource 非空时在运行期覆盖 RateLimit 的 rps / burst / idle_ttl /
+	// degrade_on_failure（ADR-0015 热更）；nil 表示只用配置文件静态值。
+	RateLimitSource ratelimit.ParamsProvider
 	// Idempotency 幂等参数；Enabled=false 时不挂载。
 	Idempotency config.IdempotencyConfig
+	// IdempotencyTTL 非空时在每次写请求上取当前 TTL，覆盖 Idempotency.TTL
+	// （ADR-0015 热更）；只影响新写入的记录。
+	IdempotencyTTL func() time.Duration
 	// CORS 跨域参数；AllowOrigins 为空时不挂载。
 	CORS config.CORSConfig
 }
@@ -83,14 +91,14 @@ func NewPipeline(cfg PipelineConfig, deps PipelineDeps) (func(http.Handler) http
 	if cfg.BodyLimitBytes > 0 {
 		mws = append(mws, bodyLimit(cfg.BodyLimitBytes))
 	}
-	limited, err := newRateLimit(cfg.RateLimit, cfg.Channel, deps.Redis, deps.ClientIP)
+	limited, err := newRateLimit(cfg.RateLimit, cfg.Channel, cfg.RateLimitSource, deps.Redis, deps.ClientIP)
 	if err != nil {
 		return nil, err
 	}
 	if limited != nil {
 		mws = append(mws, limited)
 	}
-	idem, err := newIdempotency(cfg.Idempotency, deps.Redis)
+	idem, err := newIdempotency(cfg.Idempotency, cfg.IdempotencyTTL, deps.Redis)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +131,13 @@ func bodyLimit(limit int64) middleware.Middleware {
 }
 
 // newRateLimit 构造按调用方分桶的令牌桶限流中间件。
+//
+// source 非空时走运行期可改参路径（ADR-0015）：参数变更只调整既有桶，
+// 不重建、不清空配额；source 为 nil 时与改造前完全一致。
 func newRateLimit(
 	cfg config.RateLimitConfig,
 	channel string,
+	source ratelimit.ParamsProvider,
 	redisClient *redis.Client,
 	clientIP *pkghttpx.ClientIPResolver,
 ) (middleware.Middleware, error) {
@@ -138,6 +150,14 @@ func newRateLimit(
 	var buckets middleware.Buckets
 	switch cfg.Driver {
 	case "", config.RateLimitDriverMemory:
+		if source != nil {
+			adaptive, err := ratelimit.NewAdaptive(source, ratelimit.WithAdaptiveIdleTTL(cfg.IdleTTL))
+			if err != nil {
+				return nil, fmt.Errorf("platform: adaptive rate limiter: %w", err)
+			}
+			buckets = adaptive
+			break
+		}
 		keyed, err := ratelimit.NewKeyed(
 			func() (ratelimit.Limiter, error) {
 				return ratelimit.NewTokenBucket(cfg.RPS, cfg.Burst)
@@ -159,7 +179,11 @@ func newRateLimit(
 		if err != nil {
 			return nil, fmt.Errorf("platform: redis rate limiter: %w", err)
 		}
-		buckets = shared
+		if source != nil {
+			buckets = &redisHotBuckets{inner: shared, source: source}
+		} else {
+			buckets = shared
+		}
 	default:
 		return nil, fmt.Errorf("platform: unsupported rate_limit.driver %q", cfg.Driver)
 	}
@@ -175,8 +199,48 @@ func newRateLimit(
 	}), nil
 }
 
+// redisHotBuckets 把热更参数下发给 Redis 限流器（ADR-0015）。
+//
+// Redis 侧参数逐次进 Lua，因此只需在版本变化时调一次 Configure；
+// 快路径用 atomic 比较版本，不取锁。
+type redisHotBuckets struct {
+	inner   *ratelimit.RedisKeyed
+	source  ratelimit.ParamsProvider
+	version atomic.Int64
+	applyMu sync.Mutex
+	inited  atomic.Bool
+}
+
+// Allow 同步参数后放行。
+func (b *redisHotBuckets) Allow(key string) ratelimit.Result {
+	b.syncParams()
+	return b.inner.Allow(key)
+}
+
+// syncParams 在参数版本变化时重配内部限流器；读取失败时保留既有参数。
+func (b *redisHotBuckets) syncParams() {
+	params, version, ok := b.source.Params()
+	if !ok || params.RPS <= 0 || params.Burst < 1 {
+		return
+	}
+	if b.inited.Load() && b.version.Load() == version {
+		return
+	}
+	b.applyMu.Lock()
+	defer b.applyMu.Unlock()
+	if b.inited.Load() && b.version.Load() == version {
+		return
+	}
+	if err := b.inner.Configure(params); err != nil {
+		return
+	}
+	b.version.Store(version)
+	b.inited.Store(true)
+}
+
 // newIdempotency 按配置构造幂等中间件；存储不可用失败关闭。
-func newIdempotency(cfg config.IdempotencyConfig, redisClient *redis.Client) (middleware.Middleware, error) {
+func newIdempotency(cfg config.IdempotencyConfig, ttlSource func() time.Duration,
+	redisClient *redis.Client) (middleware.Middleware, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -196,6 +260,7 @@ func newIdempotency(cfg config.IdempotencyConfig, redisClient *redis.Client) (mi
 	return idempotency.Middleware(idempotency.Config{
 		Store:          store,
 		TTL:            cfg.TTL,
+		TTLSource:      ttlSource,
 		Header:         cfg.Header,
 		Required:       cfg.Required,
 		MaxBodyBytes:   cfg.MaxBodyBytes,

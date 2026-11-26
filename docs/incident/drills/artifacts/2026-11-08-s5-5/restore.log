@@ -1,0 +1,12 @@
+==> S5-5 inventory: package-level presence
+==> S5-5 inventory: required scenario tests
+==> S5-5 inventory: total count >= 70
+ok  	github.com/admin-frame/admin-frame/tests/integration/async	2.656s
+ok  	github.com/admin-frame/admin-frame/tests/integration/audit	0.852s
+ok  	github.com/admin-frame/admin-frame/tests/integration/featureflag	0.094s
+ok  	github.com/admin-frame/admin-frame/tests/integration/iam	1.482s
+ok  	github.com/admin-frame/admin-frame/tests/integration/identity	1.329s
+ok  	github.com/admin-frame/admin-frame/tests/integration/multiinstance	0.219s
+ok  	github.com/admin-frame/admin-frame/tests/integration/notification	0.082s
+ok  	github.com/admin-frame/admin-frame/tests/integration/smoke	0.165s
+ok  	github.com/admin-frame/admin-frame/tests/integration/tenant	0.086s

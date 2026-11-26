@@ -31,7 +31,17 @@ async function generateRoutesByBackend(
 
   try {
     const menuRoutes = await fetchMenuListAsync?.();
+    // 契约是菜单数组；非数组（信封未解包、错误对象、mock 残留）会让 mapTree 抛
+    // TypeError: tree.map is not a function，这里提前拦截并给出可诊断信息。
     if (!menuRoutes) {
+      return [];
+    }
+    if (!Array.isArray(menuRoutes)) {
+      console.error(
+        'backend menus must be an array, got:',
+        Object.prototype.toString.call(menuRoutes),
+        menuRoutes,
+      );
       return [];
     }
 

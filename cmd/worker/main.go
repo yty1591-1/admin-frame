@@ -14,9 +14,12 @@ import (
 
 	appconfig "github.com/admin-frame/admin-frame/cmd/internal/appconfig"
 	"github.com/admin-frame/admin-frame/cmd/internal/auditruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/configboot"
+	configcenterruntime "github.com/admin-frame/admin-frame/cmd/internal/configcenterruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/iamruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/identityruntime"
 	"github.com/admin-frame/admin-frame/cmd/internal/notificationruntime"
+	"github.com/admin-frame/admin-frame/cmd/internal/secretruntime"
 	tenantruntime "github.com/admin-frame/admin-frame/cmd/internal/tenantruntime"
 	"github.com/admin-frame/admin-frame/internal/platform"
 	platformasync "github.com/admin-frame/admin-frame/internal/platform/async"
@@ -40,10 +43,11 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "configs/worker.yaml", "config file path")
 	replayDLQ := flag.String("replay-dlq", "", "replay dead letters: source event id or 'all'")
+	sweepCertifications := flag.Bool("certification-sweep", false,
+		"run one access-certification expiry sweep and exit")
 	flag.Parse()
-	if err := run(*configPath, *replayDLQ); err != nil {
+	if err := run(*replayDLQ, *sweepCertifications); err != nil {
 		log.Printf("worker: %v", err)
 		os.Exit(1)
 	}
@@ -52,14 +56,53 @@ func main() {
 // run 装配 worker 依赖并阻塞消费，直到收到退出信号。
 //
 // worker 是 Outbox Relay 的独占宿主：注册业务 topic handler 后运行 Relay；
-// -replay-dlq 模式只做死信重放后退出，不启动 Relay（见 docs/runbooks/async-dlq.md）。
-func run(configPath, replayDLQ string) error {
-	appCfg, err := appconfig.Load(configPath)
+// -replay-dlq 与 -certification-sweep 是两种一次性模式，完成后退出、不启动 Relay
+// （分别见 docs/runbooks/async-dlq.md 与 docs/runbooks/iam.md §季度访问复核）。
+func run(replayDLQ string, sweepCertifications bool) error {
+	ctx := context.Background()
+	boot, err := configboot.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("config boot: %w", err)
+	}
+	// prod-like 快照含 auth.mode=jwt；Validate 前须注入 secretclient 解析的签名密钥。
+	jwtSecret, err := secretruntime.ResolveJWTSecretFromEnv(ctx, boot.Env)
+	if err != nil {
+		if boot.InstallPending {
+			jwtSecret = configboot.InstallPendingJWTSecret
+		} else {
+			return fmt.Errorf("jwt secret: %w", err)
+		}
+	}
+	// 对象存储凭据：走密钥子域（config_secret）；解析失败不在此退出，
+	// 交由 Opening 阶段按 opts 判定（worker 无降级，缺凭据即 fail-fast）。
+	storageAK, storageSK, _ := secretruntime.ResolveStorageS3CredentialsFromEnv(ctx, boot.Env)
+	appCfg, err := appconfig.LoadFromValues(func() (map[string]string, error) {
+		// worker 是 Outbox Relay 独占宿主，进程级强制 async.enabled=true；
+		// 与 service/channel/addr/env 同属进程身份证，须在 Validate 前注入（CC-R-01）。
+		values := configboot.WithProcessIdentity(boot.Values, configboot.ProcessIdentity{
+			Service: "worker", Channel: "worker", Env: boot.Env, Addr: ":8090",
+		})
+		values["async.enabled"] = "true"
+		configboot.ApplyProdLikeProcessDefaults(values, boot.Env, "worker")
+		configboot.ApplyDeployOverlays(values)
+		values[secretruntime.JWTSecretValueKey] = jwtSecret
+		if storageAK != "" {
+			values[secretruntime.StorageS3AccessKeyValueKey] = storageAK
+		}
+		if storageSK != "" {
+			values[secretruntime.StorageS3SecretKeyValueKey] = storageSK
+		}
+		// 缺必填键时 fail-fast：worker 无法自行修复，等 admin 向导补齐（ADR-0018）。
+		if err := configboot.RequireComplete("worker", values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	cfg := &appCfg.Config
-	logger := platformobservability.NewLogger(cfg)
+	logger, logLevel := platformobservability.NewLoggerWithLevel(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -94,7 +137,8 @@ func run(configPath, replayDLQ string) error {
 		return fmt.Errorf("id generator: %w", err)
 	}
 
-	deps := &platform.Deps{Config: cfg, Logger: logger, Database: database, Metrics: met, IDs: ids}
+	deps := &platform.Deps{Config: cfg, Logger: logger, LogLevel: logLevel,
+		Database: database, Metrics: met, IDs: ids}
 	// worker 也要对象存储：审计异步导出的文件由 worker 生成并上传（ENT-04 T5）。
 	stores, err := platformstorage.OpenStorageSet(ctx, cfg.Storage)
 	if err != nil {
@@ -110,6 +154,27 @@ func run(configPath, replayDLQ string) error {
 	if replayDLQ != "" {
 		return replayDeadLetters(ctx, deps, replayDLQ, logger)
 	}
+	if sweepCertifications {
+		// 一次性扫描：只有 async 启用时才建 Outbox，让审计事件持久化后由常驻
+		// worker 投递；未启用时审计退化为结构化日志（本地 / demo 语义）。
+		if cfg.Async.Enabled {
+			asyncRuntime, err := platform.NewAsyncRuntime(deps)
+			if err != nil {
+				return fmt.Errorf("async runtime: %w", err)
+			}
+			deps.Async = asyncRuntime
+		}
+		return runCertificationSweep(ctx, deps, appCfg.IAM, logger)
+	}
+
+	// 动态刷新：快照可用性 / stale 指标 + ADR-0015 白名单键热更视图。
+	var refreshRT *configcenterruntime.Runtime
+	if built, rerr := configcenterruntime.NewRefresh(deps); rerr != nil {
+		logger.Warn("configcenter refresh unavailable", "err", rerr)
+	} else if built != nil {
+		refreshRT = built
+		refreshRT.StartRefreshContext(ctx, logger, 0)
+	}
 
 	asyncRuntime, err := platform.NewAsyncRuntime(deps)
 	if err != nil {
@@ -119,6 +184,11 @@ func run(configPath, replayDLQ string) error {
 		return fmt.Errorf("worker requires async.enabled=true")
 	}
 	deps.Async = asyncRuntime
+	// ADR-0015：async 运行时此时才装配完成，接线放在这里才能覆盖
+	// relay 参数（async.outbox.*）与消费租约（async.consumer.*）。
+	if refreshRT != nil {
+		refreshRT.ApplyRuntimeParams(deps)
+	}
 	if err := iamruntime.RegisterAsync(deps); err != nil {
 		return fmt.Errorf("register async handlers: %w", err)
 	}
@@ -129,8 +199,8 @@ func run(configPath, replayDLQ string) error {
 		return fmt.Errorf("register tenant async handlers: %w", err)
 	}
 	// 通知域（ENT-10）：编排 Handler 消费 notification.requested；
-	// 渠道默认 memory 驱动（阶段语义见 notificationruntime 包注释）。
-	notificationRT, err := notificationruntime.New(deps)
+	// 渠道路由由 notification 配置装配（SMTP / 阿里云 / APNs / FCM）。
+	notificationRT, err := notificationruntime.New(deps, appCfg.Notification)
 	if err != nil {
 		return fmt.Errorf("notification runtime: %w", err)
 	}
@@ -154,7 +224,7 @@ func run(configPath, replayDLQ string) error {
 	}
 
 	// worker 不承载业务流量，但需要暴露清理指标与探针，供 OPS-02 观测与 ServiceMonitor 抓取。
-	stopHTTP := startWorkerHTTP(cfg, database, met, logger)
+	stopHTTP := startWorkerHTTP(cfg, database, met, logger, boot)
 	defer stopHTTP()
 
 	logger.Info("worker started",
@@ -193,6 +263,7 @@ func startWorkerHTTP(
 	database *db.DB,
 	met *pkgmetrics.Metrics,
 	logger *slog.Logger,
+	boot *configboot.Result,
 ) func() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", met.Handler())
@@ -205,6 +276,13 @@ func startWorkerHTTP(
 		if err := database.Ping(pingCtx); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
 			return
+		}
+		if boot != nil && boot.ConfigAPIURL != "" {
+			st, err := configboot.FetchInstallStatus(pingCtx, boot.ConfigAPIURL, boot.HTTPClient)
+			if err != nil || !configboot.IsInstallReady(st.Status) {
+				http.Error(w, "config center install not ready", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

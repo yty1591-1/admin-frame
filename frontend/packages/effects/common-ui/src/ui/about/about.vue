@@ -32,9 +32,11 @@ declare global {
     authorName: string;
     authorUrl: string;
     buildTime: string;
+    buildTimeIso: string;
     dependencies: Record<string, string>;
     description: string;
     devDependencies: Record<string, string>;
+    gitSha: string;
     homepage: string;
     license: string;
     repositoryUrl: string;
@@ -56,6 +58,7 @@ const {
   buildTime,
   dependencies = {},
   devDependencies = {},
+  gitSha,
   homepage,
   license,
   version,
@@ -66,6 +69,10 @@ const vbenDescriptionItems: DescriptionItem[] = [
   {
     content: version,
     title: '版本号',
+  },
+  {
+    content: gitSha,
+    title: '提交 SHA',
   },
   {
     content: license,

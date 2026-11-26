@@ -1,0 +1,394 @@
+{
+  "env": "dev",
+  "namespace": "platform",
+  "release_id": 1042512719,
+  "release_no": 3,
+  "pointer_version": 3,
+  "snapshot_hash": "b91bab0c9142f975c135da782e0433ceac6b8e66b6e31d7efa4fe878a1ea3843",
+  "snapshot_size": 54,
+  "key_id": "k1",
+  "signature": "JCfj17czRRxaLre3oHJWUyMwHgeClVrSyXB32eeSvpNTwiF0s+CxYlCOqWfn3IY6Y4iXBRZfZ/Bx2Gc6vQwfCw==",
+  "generated_at": "2026-11-15T16:30:08.997Z",
+  "items": [
+    {
+      "config_key": "async.broker.ack_wait",
+      "item_id": 1042512601,
+      "item_version": 1,
+      "value_hash": "d3382a4f0e03f8b14cf99424376886c236f1503d4b332137667484fc96d58fc4"
+    },
+    {
+      "config_key": "async.broker.max_deliver",
+      "item_id": 1042512603,
+      "item_version": 1,
+      "value_hash": "4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5"
+    },
+    {
+      "config_key": "async.broker.stream",
+      "item_id": 1042512605,
+      "item_version": 1,
+      "value_hash": "2d4a6334d2f2bb73c1c106ccaf5b5e83c5a47abe274260dadc6a33286199d452"
+    },
+    {
+      "config_key": "async.broker.subject_prefix",
+      "item_id": 1042512607,
+      "item_version": 1,
+      "value_hash": "2d4a6334d2f2bb73c1c106ccaf5b5e83c5a47abe274260dadc6a33286199d452"
+    },
+    {
+      "config_key": "async.consumer.concurrency",
+      "item_id": 1042512609,
+      "item_version": 1,
+      "value_hash": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a"
+    },
+    {
+      "config_key": "async.consumer.retry_backoff",
+      "item_id": 1042512611,
+      "item_version": 1,
+      "value_hash": "d075063d475b0d1517adb0b6ee6d9903b42c4fec9ef54943bba127ec32bb2f5c"
+    },
+    {
+      "config_key": "async.consumer.visibility_timeout",
+      "item_id": 1042512613,
+      "item_version": 1,
+      "value_hash": "f79f071ab5b033ca8fb42c077f39708930d194b18f4608eb26ac1d9665a8836f"
+    },
+    {
+      "config_key": "async.driver",
+      "item_id": 1042512615,
+      "item_version": 1,
+      "value_hash": "7bdc25d1694ef984782a16f6f1710c1c6bc83ba7a131b515baf532bea021d011"
+    },
+    {
+      "config_key": "async.enabled",
+      "item_id": 1042512617,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "async.outbox.batch_size",
+      "item_id": 1042512619,
+      "item_version": 1,
+      "value_hash": "ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+    },
+    {
+      "config_key": "async.outbox.concurrency",
+      "item_id": 1042512621,
+      "item_version": 1,
+      "value_hash": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+    },
+    {
+      "config_key": "async.outbox.lease",
+      "item_id": 1042512623,
+      "item_version": 1,
+      "value_hash": "d3382a4f0e03f8b14cf99424376886c236f1503d4b332137667484fc96d58fc4"
+    },
+    {
+      "config_key": "async.outbox.max_attempts",
+      "item_id": 1042512625,
+      "item_version": 1,
+      "value_hash": "4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5"
+    },
+    {
+      "config_key": "async.outbox.poll_interval",
+      "item_id": 1042512627,
+      "item_version": 1,
+      "value_hash": "64c83df872d808a1820aab72aa20bf2cf33b96fff4933e691e30f7646dfcc1be"
+    },
+    {
+      "config_key": "async.outbox.publish_in_api",
+      "item_id": 1042512629,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "db.conn_max_lifetime",
+      "item_id": 1042512631,
+      "item_version": 1,
+      "value_hash": "cc21f265975e48b967a0601c0d204e0cd82dc43f6ff6223538008e63d6265f43"
+    },
+    {
+      "config_key": "db.driver",
+      "item_id": 1042512633,
+      "item_version": 1,
+      "value_hash": "c064fbca9d9de8dd9bb0624984403b28d0da807a69365d4f7fb09123ecb0c405"
+    },
+    {
+      "config_key": "db.max_idle_conns",
+      "item_id": 1042512635,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "db.max_open_conns",
+      "item_id": 1042512637,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "http.body_limit_bytes",
+      "item_id": 1042512639,
+      "item_version": 1,
+      "value_hash": "b58906a0e0ec65d7b1ea3a9f8c38caf7ae4da858cffcfc46c7ed835491a2175d"
+    },
+    {
+      "config_key": "http.idle_timeout",
+      "item_id": 1042512641,
+      "item_version": 1,
+      "value_hash": "f79f071ab5b033ca8fb42c077f39708930d194b18f4608eb26ac1d9665a8836f"
+    },
+    {
+      "config_key": "http.max_header_bytes",
+      "item_id": 1042512643,
+      "item_version": 1,
+      "value_hash": "50b4b069390c1d7966da182649bb2caddb412a2f9012425b5e9ec0ef4ec68545"
+    },
+    {
+      "config_key": "http.read_header_timeout",
+      "item_id": 1042512645,
+      "item_version": 1,
+      "value_hash": "93e3d8c5b10657d2884f177488b689aadf82a83f962237cb602b3314386ab3b7"
+    },
+    {
+      "config_key": "http.read_timeout",
+      "item_id": 1042512647,
+      "item_version": 1,
+      "value_hash": "21b5f52ded33ab19c16a680c4e280b8f9992395b514290163abf272f06394a6f"
+    },
+    {
+      "config_key": "http.timeout",
+      "item_id": 1042512649,
+      "item_version": 1,
+      "value_hash": "d3382a4f0e03f8b14cf99424376886c236f1503d4b332137667484fc96d58fc4"
+    },
+    {
+      "config_key": "http.write_timeout",
+      "item_id": 1042512651,
+      "item_version": 1,
+      "value_hash": "d3382a4f0e03f8b14cf99424376886c236f1503d4b332137667484fc96d58fc4"
+    },
+    {
+      "config_key": "id.node_id_source",
+      "item_id": 1042512653,
+      "item_version": 1,
+      "value_hash": "b77349bf1fa9b26d45d545d7d64dad96737e9cfbb3cbb5f5d10fb77b0fcc44ad"
+    },
+    {
+      "config_key": "idempotency.degrade_on_error",
+      "item_id": 1042512655,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "idempotency.driver",
+      "item_id": 1042512657,
+      "item_version": 1,
+      "value_hash": "c064fbca9d9de8dd9bb0624984403b28d0da807a69365d4f7fb09123ecb0c405"
+    },
+    {
+      "config_key": "idempotency.enabled",
+      "item_id": 1042512659,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "idempotency.header",
+      "item_id": 1042512661,
+      "item_version": 1,
+      "value_hash": "034af2ca155a9c5d61f1b1bef4f57a09d7233ee4c4611cf1e1e014b5e56185f5"
+    },
+    {
+      "config_key": "idempotency.max_body_bytes",
+      "item_id": 1042512663,
+      "item_version": 1,
+      "value_hash": "50b4b069390c1d7966da182649bb2caddb412a2f9012425b5e9ec0ef4ec68545"
+    },
+    {
+      "config_key": "idempotency.required",
+      "item_id": 1042512665,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "idempotency.ttl",
+      "item_id": 1042512667,
+      "item_version": 1,
+      "value_hash": "0b509e6d4c97d169f054897e72a9d70905e12c89ef711215e5f1f66f529a719d"
+    },
+    {
+      "config_key": "log.format",
+      "item_id": 1042512669,
+      "item_version": 1,
+      "value_hash": "02bd175f329720378ce83dd56a1b6b1f5291a60182d6c54b5e0d1e8d248a267a"
+    },
+    {
+      "config_key": "log.level",
+      "item_id": 1042512671,
+      "item_version": 1,
+      "value_hash": "06271baf49532c879aa3c58b48671884bcc858f09197412d682750496c33e1e1"
+    },
+    {
+      "config_key": "rate_limit.burst",
+      "item_id": 1042512673,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "rate_limit.degrade_on_failure",
+      "item_id": 1042512675,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "rate_limit.driver",
+      "item_id": 1042512677,
+      "item_version": 1,
+      "value_hash": "c064fbca9d9de8dd9bb0624984403b28d0da807a69365d4f7fb09123ecb0c405"
+    },
+    {
+      "config_key": "rate_limit.enabled",
+      "item_id": 1042512679,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "rate_limit.failure_mode",
+      "item_id": 1042512681,
+      "item_version": 1,
+      "value_hash": "41441347e819f3a0351912aebfd5d1ef3f4c291ca10139537fee23fb48bdf8bf"
+    },
+    {
+      "config_key": "rate_limit.idle_ttl",
+      "item_id": 1042512683,
+      "item_version": 1,
+      "value_hash": "6ef04fc2d275b70513b191bf6f0c0d3a9137453724461dfb02bb14bc4d51b402"
+    },
+    {
+      "config_key": "rate_limit.key",
+      "item_id": 1042512685,
+      "item_version": 1,
+      "value_hash": "69e36568cd8b4659389b9fcfbe1167547f6421e78168bfb439dada2ffddb0146"
+    },
+    {
+      "config_key": "rate_limit.rps",
+      "item_id": 1042512687,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "redis.db",
+      "item_id": 1042512689,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "server.addr",
+      "item_id": 1042512691,
+      "item_version": 1,
+      "value_hash": "646e1b71e277fceaf547c242318f02c1807bfa5966787251e58b3654c6821561"
+    },
+    {
+      "config_key": "server.shutdown_timeout",
+      "item_id": 1042512693,
+      "item_version": 1,
+      "value_hash": "21b5f52ded33ab19c16a680c4e280b8f9992395b514290163abf272f06394a6f"
+    },
+    {
+      "config_key": "storage.driver",
+      "item_id": 1042512695,
+      "item_version": 1,
+      "value_hash": "c064fbca9d9de8dd9bb0624984403b28d0da807a69365d4f7fb09123ecb0c405"
+    },
+    {
+      "config_key": "storage.max_object_bytes",
+      "item_id": 1042512697,
+      "item_version": 1,
+      "value_hash": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "config_key": "storage.presign_get_ttl",
+      "item_id": 1042512699,
+      "item_version": 1,
+      "value_hash": "cc21f265975e48b967a0601c0d204e0cd82dc43f6ff6223538008e63d6265f43"
+    },
+    {
+      "config_key": "storage.presign_put_ttl",
+      "item_id": 1042512701,
+      "item_version": 1,
+      "value_hash": "cc21f265975e48b967a0601c0d204e0cd82dc43f6ff6223538008e63d6265f43"
+    },
+    {
+      "config_key": "tracing.exporter",
+      "item_id": 1042512703,
+      "item_version": 1,
+      "value_hash": "140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe"
+    },
+    {
+      "config_key": "tracing.insecure",
+      "item_id": 1042512705,
+      "item_version": 1,
+      "value_hash": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "config_key": "worker.poll_interval",
+      "item_id": 1042512707,
+      "item_version": 1,
+      "value_hash": "93e3d8c5b10657d2884f177488b689aadf82a83f962237cb602b3314386ab3b7"
+    }
+  ],
+  "values": {
+    "async.broker.ack_wait": "30s",
+    "async.broker.max_deliver": "10",
+    "async.broker.stream": "async",
+    "async.broker.subject_prefix": "async",
+    "async.consumer.concurrency": "4",
+    "async.consumer.retry_backoff": "exponential",
+    "async.consumer.visibility_timeout": "60s",
+    "async.driver": "db",
+    "async.enabled": "false",
+    "async.outbox.batch_size": "100",
+    "async.outbox.concurrency": "2",
+    "async.outbox.lease": "30s",
+    "async.outbox.max_attempts": "10",
+    "async.outbox.poll_interval": "1s",
+    "async.outbox.publish_in_api": "false",
+    "db.conn_max_lifetime": "0s",
+    "db.driver": "memory",
+    "db.max_idle_conns": "0",
+    "db.max_open_conns": "0",
+    "http.body_limit_bytes": "33554432",
+    "http.idle_timeout": "60s",
+    "http.max_header_bytes": "1048576",
+    "http.read_header_timeout": "5s",
+    "http.read_timeout": "15s",
+    "http.timeout": "30s",
+    "http.write_timeout": "30s",
+    "id.node_id_source": "env",
+    "idempotency.degrade_on_error": "false",
+    "idempotency.driver": "memory",
+    "idempotency.enabled": "false",
+    "idempotency.header": "Idempotency-Key",
+    "idempotency.max_body_bytes": "1048576",
+    "idempotency.required": "false",
+    "idempotency.ttl": "24h",
+    "log.format": "json",
+    "log.level": "info",
+    "rate_limit.burst": "0",
+    "rate_limit.degrade_on_failure": "false",
+    "rate_limit.driver": "memory",
+    "rate_limit.enabled": "false",
+    "rate_limit.failure_mode": "fail_open",
+    "rate_limit.idle_ttl": "10m",
+    "rate_limit.key": "channel",
+    "rate_limit.rps": "0",
+    "redis.db": "0",
+    "server.addr": ":8080",
+    "server.shutdown_timeout": "15s",
+    "storage.driver": "memory",
+    "storage.max_object_bytes": "0",
+    "storage.presign_get_ttl": "0s",
+    "storage.presign_put_ttl": "0s",
+    "tracing.exporter": "none",
+    "tracing.insecure": "false",
+    "worker.poll_interval": "5s"
+  }
+}

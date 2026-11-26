@@ -1,0 +1,635 @@
+admin-v1-auth-scim-tokens:
+  get:
+    tags: [auth]
+    summary: SCIM 令牌列表
+    description: |
+      返回令牌指纹、状态与退役宽限到期时间，**不含令牌原文**。
+      `identity.scim.enabled=false` 时本路径不注册（404）。
+    operationId: adminListSCIMTokens
+    security: [{bearerAuth: []}]
+    responses:
+      "200":
+        description: 令牌列表
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required: [items, total]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: "../../components.yaml#/components/schemas/SCIMToken"
+                        total: {type: integer}
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+  post:
+    tags: [auth]
+    summary: 签发 SCIM 令牌
+    description: |
+      返回一次性令牌原文（`scim_` + 32 字节 base64url），库内只存 SHA-256 与指纹。
+      每 provider 同时最多 2 个生效令牌；超出时最旧的转入 `token_grace` 宽限。
+      写操作强制 `Idempotency-Key`，避免重试产生多个有效令牌。
+    operationId: adminCreateSCIMToken
+    security: [{bearerAuth: []}]
+    parameters:
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+    responses:
+      "200":
+        description: 签发结果；token 字段只出现一次
+        headers:
+          Cache-Control:
+            description: 固定 no-store
+            schema: {type: string}
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required: [id, provider, fingerprint, status, token]
+                      properties:
+                        id: {type: string}
+                        provider: {type: string}
+                        fingerprint: {type: string}
+                        status: {type: string, enum: [active, retiring, revoked]}
+                        created_at: {type: string, format: date-time}
+                        token:
+                          type: string
+                          description: 明文令牌，仅本次响应返回
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+admin-v1-auth-scim-tokens-id:
+  delete:
+    tags: [auth]
+    summary: 吊销 SCIM 令牌
+    description: 立即吊销；已吊销时幂等返回。写操作强制 `Idempotency-Key`。
+    operationId: adminRevokeSCIMToken
+    security: [{bearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: "../../components.yaml#/components/parameters/IdempotencyKey"
+    responses:
+      "200":
+        description: 已吊销
+        content:
+          application/json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/Envelope"
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+      "404":
+        $ref: "../../components.yaml#/components/responses/NotFound"
+
+admin-v1-auth-scim-groups:
+  get:
+    tags: [auth]
+    summary: SCIM 组与角色映射
+    description: |
+      返回组展示名、映射到的 A 端角色 code 与成员数量；`mapped_role` 为空表示未映射，
+      该组只同步成员关系、不产生授权。
+    operationId: adminListSCIMGroups
+    security: [{bearerAuth: []}]
+    parameters:
+      - name: page
+        in: query
+        schema: {type: integer, minimum: 1, default: 1}
+      - name: page_size
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    responses:
+      "200":
+        description: 组列表
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "../../components.yaml#/components/schemas/Envelope"
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      required: [items, total, page, size]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: "../../components.yaml#/components/schemas/SCIMGroupSummary"
+                        total: {type: integer}
+                        page: {type: integer}
+                        size: {type: integer}
+      "401":
+        $ref: "../../components.yaml#/components/responses/Unauthorized"
+      "403":
+        $ref: "../../components.yaml#/components/responses/Forbidden"
+
+admin-scim-v2-service-provider-config:
+  get:
+    tags: [scim]
+    summary: SCIM 能力声明
+    description: |
+      声明 patch 支持、bulk / sort / changePassword 不支持、过滤支持度与认证方案。
+      协议端点响应体按 RFC 7643 / 7644，不使用统一信封。
+    operationId: scimServiceProviderConfig
+    security: [{scimBearerAuth: []}]
+    responses:
+      "200":
+        description: 能力声明
+        content:
+          application/scim+json:
+            schema: {type: object}
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+
+admin-scim-v2-users:
+  get:
+    tags: [scim]
+    summary: 查询用户
+    description: |
+      分页：`startIndex` 从 1 开始，`count ∈ [0,100]`。过滤仅支持 `<attr> eq <value>`
+      与 `and` 连接，属性限定 `userName` / `externalId` / `displayName` / `active` / `id`。
+    operationId: scimListUsers
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: filter
+        in: query
+        schema: {type: string}
+      - name: startIndex
+        in: query
+        schema: {type: integer, minimum: 1, default: 1}
+      - name: count
+        in: query
+        schema: {type: integer, minimum: 0, maximum: 100, default: 50}
+    responses:
+      "200":
+        description: 用户列表
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMListResponse"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "429":
+        $ref: "../../components.yaml#/components/responses/SCIMTooManyRequests"
+  post:
+    tags: [scim]
+    summary: 创建用户
+    description: |
+      `externalId` 必填且是幂等键（重复返回 409 uniqueness）；`userName` 必填。
+      `auto_provision=false` 时返回 400 invalidValue。`password` 一律拒绝（400 mutability）。
+    operationId: scimCreateUser
+    security: [{scimBearerAuth: []}]
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMUser"
+        application/json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMUser"
+    responses:
+      "201":
+        description: 已创建
+        headers:
+          ETag:
+            description: 弱 ETag，值为资源版本
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMUser"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "409":
+        $ref: "../../components.yaml#/components/responses/SCIMConflict"
+
+admin-scim-v2-users-id:
+  get:
+    tags: [scim]
+    summary: 查询单个用户
+    operationId: scimGetUser
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "200":
+        description: 用户
+        headers:
+          ETag:
+            description: 弱 ETag，值为资源版本
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMUser"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+  put:
+    tags: [scim]
+    summary: 整体替换用户
+    description: |
+      `userName` / `externalId` 必填；`active` 缺省视为 true。
+      带 `If-Match` 时校验版本，不匹配返回 412。
+    operationId: scimReplaceUser
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: If-Match
+        in: header
+        schema: {type: string}
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMUser"
+    responses:
+      "200":
+        description: 已替换
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMUser"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/SCIMConflict"
+      "412":
+        $ref: "../../components.yaml#/components/responses/SCIMPreconditionFailed"
+  patch:
+    tags: [scim]
+    summary: 增量更新用户
+    description: |
+      仅支持 `add` / `replace` / `remove`，`path` 限定 `active` / `userName` /
+      `externalId` / `displayName` / `name`；其他 path 返回 400 invalidPath。
+    operationId: scimPatchUser
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: If-Match
+        in: header
+        schema: {type: string}
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMPatchRequest"
+    responses:
+      "200":
+        description: 已更新
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMUser"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+      "412":
+        $ref: "../../components.yaml#/components/responses/SCIMPreconditionFailed"
+  delete:
+    tags: [scim]
+    summary: 停用并软删用户
+    description: 撤销全部会话、清理组成员与角色投影；重复 DELETE 返回 204。
+    operationId: scimDeleteUser
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "204":
+        description: 已删除
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+
+admin-scim-v2-groups:
+  get:
+    tags: [scim]
+    summary: 查询组
+    operationId: scimListGroups
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: filter
+        in: query
+        schema: {type: string}
+      - name: startIndex
+        in: query
+        schema: {type: integer, minimum: 1, default: 1}
+      - name: count
+        in: query
+        schema: {type: integer, minimum: 0, maximum: 100, default: 50}
+    responses:
+      "200":
+        description: 组列表
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMListResponse"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+  post:
+    tags: [scim]
+    summary: 创建组
+    description: |
+      `externalId` 与 `displayName` 必填且各自在 provider 内唯一。
+      `members[].value` 接受账号 ID 或 externalId；任一解析失败整请求 400 invalidValue。
+    operationId: scimCreateGroup
+    security: [{scimBearerAuth: []}]
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+    responses:
+      "201":
+        description: 已创建
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "409":
+        $ref: "../../components.yaml#/components/responses/SCIMConflict"
+
+admin-scim-v2-groups-id:
+  get:
+    tags: [scim]
+    summary: 查询单个组
+    operationId: scimGetGroup
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "200":
+        description: 组
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+  put:
+    tags: [scim]
+    summary: 整体替换组
+    operationId: scimReplaceGroup
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: If-Match
+        in: header
+        schema: {type: string}
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+    responses:
+      "200":
+        description: 已替换
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+      "409":
+        $ref: "../../components.yaml#/components/responses/SCIMConflict"
+      "412":
+        $ref: "../../components.yaml#/components/responses/SCIMPreconditionFailed"
+  patch:
+    tags: [scim]
+    summary: 增量更新组（成员增删）
+    operationId: scimPatchGroup
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: If-Match
+        in: header
+        schema: {type: string}
+    requestBody:
+      required: true
+      content:
+        application/scim+json:
+          schema:
+            $ref: "../../components.yaml#/components/schemas/SCIMPatchRequest"
+    responses:
+      "200":
+        description: 已更新
+        headers:
+          ETag:
+            schema: {type: string}
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMGroup"
+      "400":
+        $ref: "../../components.yaml#/components/responses/SCIMBadRequest"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+      "412":
+        $ref: "../../components.yaml#/components/responses/SCIMPreconditionFailed"
+  delete:
+    tags: [scim]
+    summary: 删除组并回收授权
+    description: 软删组、清空成员并在同一事务内回收该组带来的角色绑定；重复 DELETE 返回 204。
+    operationId: scimDeleteGroup
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    responses:
+      "204":
+        description: 已删除
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+
+admin-scim-v2-resource-types:
+  get:
+    tags: [scim]
+    summary: SCIM 资源类型
+    description: |
+      仅声明 User 与 Group。每项的 `meta.location` 指向 `/ResourceTypes/{id}`，
+      客户端会跟随该地址，因此该端点必须存在（RFC 7644 §4）。
+    operationId: scimResourceTypes
+    security: [{scimBearerAuth: []}]
+    responses:
+      "200":
+        description: 资源类型列表
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMListResponse"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+
+admin-scim-v2-resource-types-id:
+  get:
+    tags: [scim]
+    summary: SCIM 单个资源类型
+    operationId: scimResourceTypeByID
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: User 或 Group（大小写不敏感）
+        schema: {type: string}
+    responses:
+      "200":
+        description: 资源类型定义
+        content:
+          application/scim+json:
+            schema: {type: object}
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+
+admin-scim-v2-schemas:
+  get:
+    tags: [scim]
+    summary: SCIM Schema 声明
+    description: |
+      返回 User / Group 的最小属性集：`password` 不在其中（一律拒绝），
+      `groups` 为只读投影。
+    operationId: scimSchemas
+    security: [{scimBearerAuth: []}]
+    responses:
+      "200":
+        description: Schema 列表
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMListResponse"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+
+admin-scim-v2-schemas-id:
+  get:
+    tags: [scim]
+    summary: SCIM 单个 Schema
+    operationId: scimSchemaByID
+    security: [{scimBearerAuth: []}]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: schema URI，例如 urn:ietf:params:scim:schemas:core:2.0:User
+        schema: {type: string}
+    responses:
+      "200":
+        description: Schema 定义
+        content:
+          application/scim+json:
+            schema: {type: object}
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"
+      "404":
+        $ref: "../../components.yaml#/components/responses/SCIMNotFound"
+
+admin-scim-v2-bulk:
+  post:
+    tags: [scim]
+    summary: 批量操作（不支持）
+    description: |
+      固定返回 501：`ServiceProviderConfig.bulk.supported=false` 已声明，
+      显式端点便于客户端快速失败，不必反复试探（§21.1.1）。
+    operationId: scimBulkNotImplemented
+    security: [{scimBearerAuth: []}]
+    responses:
+      "501":
+        description: 未实现
+        content:
+          application/scim+json:
+            schema:
+              $ref: "../../components.yaml#/components/schemas/SCIMError"
+      "401":
+        $ref: "../../components.yaml#/components/responses/SCIMUnauthorized"

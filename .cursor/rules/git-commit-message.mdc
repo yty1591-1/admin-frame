@@ -83,7 +83,7 @@ alwaysApply: true
 
 | 分组 | 可用 scope |
 |------|-----------|
-| 后端域 | `identity`、`iam`、`platform`、`security`、`shared` |
+| 后端域 | `identity`、`iam`、`platform`、`security`、`shared`、`configcenter` |
 | 通用包 | 包名本身（如 `db`、`redis`、`mq`、`outbox`、`httpx`、`jwt`、`storage`、`observability`）；跨多个包时用 `pkg` |
 | 契约 | `api`、`openapi` |
 | 交付 | `deploy`、`ci`、`scripts`、`migrations`、`deps`、`docs` |

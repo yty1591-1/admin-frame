@@ -37,7 +37,19 @@ type IAMCertificationConfig struct {
 	Enabled *bool `yaml:"enabled"`
 	// AutoRevoke 到期后是否自动回收绑定；默认 false，只标记 expired。
 	AutoRevoke bool `yaml:"auto_revoke"`
+	// MaxTasksPerCampaign 单活动任务上限；0 表示沿用服务内置默认（100000）。
+	// 复核规模属容量参数，按环境配置而不是固化进二进制——大租户的季度复核
+	// 可能覆盖十万级主体，小租户按默认档位即可。
+	MaxTasksPerCampaign int `yaml:"max_tasks_per_campaign"`
 }
+
+// MaxCertificationTasksPerCampaignCap 是单活动任务上限的配置封顶值。
+//
+// 依据 S7-2 10 万档位实测（docs/incident/drills/2026-11-08-s7-2-perf-100k.md）：
+// 生成期累计分配约 3.6 KB/任务、堆驻留约 0.7 KB/任务。50 万任务意味着生成期
+// 约 1.8 GB 累计分配与 340 MB 驻留，已接近单实例合理预算。超过该值属容量
+// 设计问题——应拆成多个活动，而不是继续抬高单活动上限。
+const MaxCertificationTasksPerCampaignCap = 500000
 
 // IsEnabled 返回是否启用访问复核；未配置时按默认开启。
 func (c IAMCertificationConfig) IsEnabled() bool {

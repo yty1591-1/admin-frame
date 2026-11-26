@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/admin-frame/admin-frame/internal/platform/config"
 	"github.com/admin-frame/admin-frame/pkg/db"
@@ -38,6 +40,81 @@ type Runtime struct {
 	router   *outbox.Router
 	observer outbox.Observer
 	broker   mq.Broker
+	live     atomic.Pointer[liveParams]
+}
+
+// liveParams 是 LiveParams 的进程内不可变副本，供原子读写。
+type liveParams = LiveParams
+
+// LiveParams 是 async 运行时的运行期参数来源（ADR-0015 白名单 `async.*`）。
+//
+// 三个字段都可为 nil，nil 表示该维度只用装配期配置。取值函数会在
+// 每次 Relay 循环 / 每次消费抢占时调用，因此必须廉价（读一次原子指针）。
+type LiveParams struct {
+	// Outbox 返回 Relay 参数（poll_interval / batch_size / lease / max_attempts / backoff）。
+	Outbox func() outbox.Params
+	// Visibility 返回消费幂等记录的接管窗口。
+	Visibility func() time.Duration
+}
+
+// SetLiveParams 注入运行期参数来源。
+//
+// 可在 Register 阶段任意时刻调用：Relay 与消费幂等包装保存的是读取函数而非取值，
+// 因此不存在「先注册后注入就不生效」的顺序陷阱。
+func (r *Runtime) SetLiveParams(live LiveParams) {
+	if r == nil {
+		return
+	}
+	r.live.Store(&live)
+}
+
+// currentVisibility 返回本次抢占使用的接管窗口。
+//
+// 非法值（≤0）回落到装配期配置，避免坏发布产生永不过期的租约。
+func (r *Runtime) currentVisibility() time.Duration {
+	if r == nil {
+		return 0
+	}
+	if live := r.live.Load(); live != nil && live.Visibility != nil {
+		if window := live.Visibility(); window > 0 {
+			return window
+		}
+	}
+	return r.cfg.Async.Consumer.VisibilityTimeout
+}
+
+// currentOutboxParams 返回 Relay 当前参数；实参与装配期配置同源，
+// 保证未注入热更来源时行为与改造前一致。
+func (r *Runtime) currentOutboxParams() outbox.Params {
+	if r == nil {
+		return outbox.Params{}
+	}
+	params := outbox.Params{
+		PollInterval: r.cfg.Async.Outbox.PollInterval,
+		BatchSize:    r.cfg.Async.Outbox.BatchSize,
+		Lease:        r.cfg.Async.Outbox.Lease,
+		MaxAttempts:  r.cfg.Async.Outbox.MaxAttempts,
+		Backoff:      outbox.Backoff(r.cfg.Async.Consumer.RetryBackoff),
+	}
+	if live := r.live.Load(); live != nil && live.Outbox != nil {
+		override := live.Outbox()
+		if override.PollInterval > 0 {
+			params.PollInterval = override.PollInterval
+		}
+		if override.BatchSize > 0 {
+			params.BatchSize = override.BatchSize
+		}
+		if override.Lease > 0 {
+			params.Lease = override.Lease
+		}
+		if override.MaxAttempts > 0 {
+			params.MaxAttempts = override.MaxAttempts
+		}
+		if override.Backoff != "" {
+			params.Backoff = override.Backoff
+		}
+	}
+	return params
 }
 
 // NewRuntime 按 async 配置装配通用异步组件；未启用时返回 (nil, nil)。
@@ -171,6 +248,7 @@ func (r *Runtime) Register(topic string, handler outbox.Handler) error {
 		Deduper:           r.deduper,
 		Consumer:          consumerName(topic),
 		VisibilityTimeout: r.cfg.Async.Consumer.VisibilityTimeout,
+		Visibility:        r.currentVisibility,
 		Logger:            r.logger,
 	})
 	if err != nil {
@@ -204,8 +282,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 		Lease:        r.cfg.Async.Outbox.Lease,
 		Concurrency:  r.cfg.Async.Outbox.Concurrency,
 		PollInterval: r.cfg.Async.Outbox.PollInterval,
-		Logger:       r.logger,
-		Observer:     r.observer,
+		// ADR-0015：每次循环重新读取，`async.outbox.*` / `async.consumer.retry_backoff`
+		// 发布后无需重启；未注入热更来源时等于装配期配置。
+		Params:   r.currentOutboxParams,
+		Logger:   r.logger,
+		Observer: r.observer,
 	})
 	if err != nil {
 		return fmt.Errorf("async relay: %w", err)

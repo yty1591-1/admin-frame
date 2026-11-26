@@ -256,6 +256,11 @@ func (s *MenuAdminService) EnableMenu(ctx context.Context, cmd EnableMenuCommand
 			return nil, apperr.Conflict("parent menu is disabled; enable it first")
 		}
 	}
+	// 禁用期间白名单可能变化（页面下线/改名），启用前再校验一次，
+	// 避免把死链重新暴露到 /v1/menus（前端仅表现为 404）。
+	if err := s.validateMenuComponent(menu); err != nil {
+		return nil, err
+	}
 	menu.Status = domain.MenuStatusActive
 	return s.saveStatus(ctx, menu, cmd.Version, opEnableMenu, cmd.Actor, cmd.Reason)
 }
@@ -474,6 +479,14 @@ func (s *MenuAdminService) validateRelations(menu *domain.Menu, menus []*domain.
 	if err := validateMenuPermission(menu.Channel, menu.PermissionCode); err != nil {
 		return err
 	}
+	return s.validateMenuComponent(menu)
+}
+
+// validateMenuComponent 校验页面组件已登记、iframe 使用固定占位符。
+//
+// create / update / enable 共用同一判定，保证「禁用期间白名单变化」不会
+// 让启用动作绕过组件校验。
+func (s *MenuAdminService) validateMenuComponent(menu *domain.Menu) error {
 	switch menu.NodeType {
 	case domain.MenuNodePage:
 		if !s.components.Allows(menu.Channel, menu.Component) {

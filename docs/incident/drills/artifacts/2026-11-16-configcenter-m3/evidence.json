@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-16",
+  "phase": "M3",
+  "env": "local-as-staging",
+  "ac_cc_09": "owner_waived_short_soak_plus_fault_inject",
+  "results": {
+    "nofile": "pass",
+    "secret_consume_jwt": "pass",
+    "drop_file_layer": "pass",
+    "delete_eight_examples": "pass",
+    "check_no_static_config": "zero_tracked",
+    "kek_rotation": "pass",
+    "fault_inject": "pass",
+    "sign_rotation": "pass",
+    "ac_cc_10": "pass_with_pitr_runbook_assert_config_secret"
+  },
+  "tracked_configs": []
+}

@@ -5,7 +5,7 @@
 > **适用范围**：本仓库 `go.mod` / `go.sum`、直接与间接依赖、许可证与漏洞治理  
 > **关联**：架构 §8.5；漏洞与密钥见 `SECURITY_STANDARDS.md`；CI 见 `CI_STANDARDS.md`  
 > **执行方式**：`go mod tidy` 无 diff + `govulncheck` + replace 检查 + 许可证检查 + Review  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-10-21（补「无修复版本」受控例外：ADR + `deps/vuln-allowlist.txt` + `check-vuln.sh` 到期阻断）  
 > **变更方式**：修改本规范须同步更新 `scripts/ci/check-deps.sh`、`deps/*`、流水线与架构 §8.5，经架构 Owner Review
 
 ---

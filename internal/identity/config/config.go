@@ -61,6 +61,10 @@ type IdentityConfig struct {
 	OAuth IdentityOAuthConfig `yaml:"oauth"`
 	// SAML C 端 SAML 2.0 SP-initiated SSO 参数。
 	SAML IdentitySAMLConfig `yaml:"saml"`
+	// M2M 服务间机器身份（client_credentials）参数（§21.2）；默认关闭。
+	M2M IdentityM2MConfig `yaml:"m2m"`
+	// SCIM 2.0 目录同步参数（§21.1）；仅 A 端，默认关闭。
+	SCIM IdentitySCIMConfig `yaml:"scim"`
 	// Consumer C 端账号自助操作参数。
 	Consumer IdentityConsumerConfig `yaml:"consumer"`
 	// Subject 账号登录主体的 PII 加密 / 索引参数（IDN-GAP-P1-06）。
@@ -266,6 +270,82 @@ type IdentitySAMLProviderConfig struct {
 	MetadataURL string `yaml:"metadata_url"`
 	// MetadataXML 内联 IdP 元数据；与 MetadataURL 二选一。
 	MetadataXML string `yaml:"metadata_xml"`
+}
+
+// IdentityM2MConfig 是 M2M 机器身份参数（docs/identity-authn.md §21.2 / §10.1）。
+//
+// 默认关闭：enabled=false 时三个 /{端}/v1/auth/token 路由均不注册（404），
+// 不读表、不参与健康检查；开启但配置非法必须启动失败。
+type IdentityM2MConfig struct {
+	// Enabled 是否启用 client_credentials 令牌端点。
+	Enabled bool `yaml:"enabled"`
+	// TokenTTL 机器令牌有效期；范围 [5m, 1h]，默认 15m，调用方不可指定。
+	TokenTTL time.Duration `yaml:"token_ttl"`
+	// RotateGrace 旧 secret 的退役宽限；范围 [0, 168h]，默认 24h。
+	RotateGrace time.Duration `yaml:"rotate_grace"`
+	// MaxSecretAge secret 最长生命周期；范围 [720h, 8760h]，默认 2160h（90d）。
+	//
+	// 超龄只标记 rotation_due 并告警，不自动失效，避免生产断链。
+	MaxSecretAge time.Duration `yaml:"max_secret_age"`
+	// AllowedScopes 允许申请的最大权限码集合；启用时必填，禁止通配符。
+	AllowedScopes []string `yaml:"allowed_scopes"`
+	// RateLimit 签发端点限流（按 client_id，叠加单 IP）；Redis fail_closed。
+	RateLimit IdentityLoginRateLimitConfig `yaml:"rate_limit"`
+}
+
+// ScopeAllowed 报告权限码是否在白名单内（精确匹配，不支持通配）。
+func (m IdentityM2MConfig) ScopeAllowed(scope string) bool {
+	target := strings.TrimSpace(scope)
+	if target == "" {
+		return false
+	}
+	for _, item := range m.AllowedScopes {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+// IdentitySCIMConfig 是 SCIM 2.0 目录同步参数（docs/identity-authn.md §21.1 / §10.1）。
+//
+// 默认关闭：enabled=false 时不注册 /admin/scim/v2 路由，不读 SCIM 表、不参与健康检查；
+// 仅 admin-api 允许开启，biz-api / c-api 出现 enabled=true 直接启动失败。
+type IdentitySCIMConfig struct {
+	// Enabled 是否启用 SCIM 2.0 服务端。
+	Enabled bool `yaml:"enabled"`
+	// Provider 目录提供方标识；启用时必填，写入映射表为 scim:<provider>。
+	Provider string `yaml:"provider"`
+	// AutoProvisionPtr 未绑定账号时是否按 User 直接建号；nil（未配置）视为 true。
+	//
+	// 用指针区分「未配置」与「显式 false」：默认 true 是 IdP 推送即建的预期语义，
+	// 显式 false 才表示账号必须先经 SSO 首登建立，SCIM 只做更新。
+	AutoProvisionPtr *bool `yaml:"auto_provision"`
+	// GroupRoleMap SCIM displayName → A 端角色 code；未映射的组只同步成员关系。
+	GroupRoleMap map[string]string `yaml:"group_role_map"`
+	// PageSize 列表默认每页条数；范围 [1, 100]，默认 50。
+	PageSize int `yaml:"page_size"`
+	// MaxPayload 单请求体上限（字节）；范围 [64KiB, 2MiB]，默认 1MiB。
+	MaxPayload int64 `yaml:"max_payload"`
+	// RequestTimeout 单请求处理超时；范围 [1s, 30s]，默认 10s。
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// TokenGrace 旧 SCIM 令牌退役宽限；范围 [0, 720h]，默认 168h。
+	TokenGrace time.Duration `yaml:"token_grace"`
+	// RateLimit SCIM 端点限流（单令牌，叠加单 IP）；Redis fail_closed。
+	RateLimit IdentityLoginRateLimitConfig `yaml:"rate_limit"`
+}
+
+// MappedRole 返回组 displayName 对应的角色 code；未映射返回空串。
+func (s IdentitySCIMConfig) MappedRole(displayName string) string {
+	if len(s.GroupRoleMap) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(s.GroupRoleMap[strings.TrimSpace(displayName)])
+}
+
+// AutoProvision 报告是否允许 SCIM 直接建号；未配置时为 true（§21.1.7）。
+func (s IdentitySCIMConfig) AutoProvision() bool {
+	return s.AutoProvisionPtr == nil || *s.AutoProvisionPtr
 }
 
 // IdentityMFAConfig 是 A 端多因素认证参数（docs/identity-authn.md §10）。

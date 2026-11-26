@@ -203,6 +203,20 @@ func TestSQLSessionArchiveSameTransaction(t *testing.T) {
 	sessions := persistence.NewSQLSessionRepository(sqlDB)
 	accounts := persistence.NewSQLAccountRepository(sqlDB, persistence.WithSubjectProtector(newIntegrationProtector(t)))
 
+	// 固定 ID 在多次运行间会残留：归档表不在同包 reset() 的清理清单内（它只清
+	// 在线表），残留会让本轮归档写入主键冲突。先按依赖顺序清理本用例涉及的行。
+	for _, stmt := range []string{
+		`DELETE FROM identity_session_archive WHERE id = '900000000000000203'`,
+		`DELETE FROM identity_session_family_archive WHERE family_id = '900000000000000202'`,
+		`DELETE FROM identity_session WHERE id = '900000000000000203'`,
+		`DELETE FROM identity_session_family WHERE family_id = '900000000000000202'`,
+		`DELETE FROM identity_account WHERE id = '900000000000000201'`,
+	} {
+		if _, err := sqlDB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("cleanup %q: %v", stmt, err)
+		}
+	}
+
 	now := time.Now().UTC()
 	account, err := domain.NewAccount(domain.NewAccountParams{
 		ID:      "900000000000000201",

@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoadConfigAsyncDefaults(t *testing.T) {
-	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\n")
+	path := writeConfig(t, "admin.yaml", "service: admin-api\nchannel: admin\nenv: dev\n")
 	cfg, err := appconfig.Load(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -143,18 +143,21 @@ func TestValidateAsyncProductionPublishInAPI(t *testing.T) {
 	}
 }
 
-func TestLoadConfigAsyncEnvOverride(t *testing.T) {
-	path := writeConfig(t, "worker.yaml", "service: worker\nchannel: worker\n"+
+func TestLoadConfigAsyncSnapshotOverride(t *testing.T) {
+	path := writeConfig(t, "worker.yaml", "service: worker\nchannel: worker\nenv: dev\n"+
 		"db:\n  driver: mysql\n  dsn: \"iam:iam@tcp(127.0.0.1:3306)/iam\"\n")
-	t.Setenv("ADMIN_FRAME_ASYNC_ENABLED", "true")
-	t.Setenv("ADMIN_FRAME_ASYNC_OUTBOX_BATCH_SIZE", "50")
-	t.Setenv("ADMIN_FRAME_ASYNC_CONSUMER_RETRY_BACKOFF", platformconfig.AsyncBackoffFixed)
-	cfg, err := appconfig.Load(path)
+	cfg, err := appconfig.LoadWithValues(path, func() (map[string]string, error) {
+		return map[string]string{
+			"async.enabled":                "true",
+			"async.outbox.batch_size":      "50",
+			"async.consumer.retry_backoff": platformconfig.AsyncBackoffFixed,
+		}, nil
+	})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if !cfg.Async.Enabled {
-		t.Fatal("async.enabled = false, want true from env")
+		t.Fatal("async.enabled = false, want true from snapshot")
 	}
 	if cfg.Async.Outbox.BatchSize != 50 {
 		t.Fatalf("async.outbox.batch_size = %d, want 50", cfg.Async.Outbox.BatchSize)

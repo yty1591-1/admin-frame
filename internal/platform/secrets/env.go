@@ -17,6 +17,8 @@ import (
 type EnvProvider struct {
 	// Prefix 环境变量前缀，如 "ADMIN_FRAME_SECRET_"；空值表示不加前缀。
 	Prefix string
+	// deny 逻辑名集合；命中时视为缺失，避免业务密钥经 env 回源。
+	deny map[string]struct{}
 
 	mu     sync.RWMutex
 	closed bool
@@ -25,6 +27,21 @@ type EnvProvider struct {
 // NewEnvProvider 构造环境变量 Provider。
 func NewEnvProvider(prefix string) *EnvProvider {
 	return &EnvProvider{Prefix: prefix}
+}
+
+// NewEnvProviderWithDeny 构造带逻辑名黑名单的环境变量 Provider。
+//
+// 黑名单内的名称一律返回 ErrNotFound，供 JWT / identity 等强制走 secretclient。
+func NewEnvProviderWithDeny(prefix string, denied []string) *EnvProvider {
+	deny := make(map[string]struct{}, len(denied))
+	for _, name := range denied {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		deny[trimmed] = struct{}{}
+	}
+	return &EnvProvider{Prefix: prefix, deny: deny}
 }
 
 // EnvName 返回密钥名对应的环境变量名，供部署清单与排障对齐。
@@ -46,6 +63,9 @@ func (p *EnvProvider) EnvName(name string) string {
 func (p *EnvProvider) Get(_ context.Context, name string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
+	}
+	if _, blocked := p.deny[strings.TrimSpace(name)]; blocked {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
 	value, ok := os.LookupEnv(p.EnvName(name))
 	if !ok || strings.TrimSpace(value) == "" {

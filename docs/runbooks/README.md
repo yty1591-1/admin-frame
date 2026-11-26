@@ -18,6 +18,7 @@
 | [tracing-pipeline.md](./tracing-pipeline.md) | OTel Collector / Tempo / Jaeger 断链处置 |
 | [identity-auth-failure.md](./identity-auth-failure.md) | 身份域认证类告警（令牌重放 / 锁定 / 撤销存储 / 清理） |
 | [identity-sms-balance.md](./identity-sms-balance.md) | 短信供应商余额与熔断 |
+| [identity-federation-onboarding.md](./identity-federation-onboarding.md) | 企业身份接入（OIDC / SAML / SCIM / M2M） |
 | [key-rotation.md](./key-rotation.md) | JWT 密钥环与摘要密钥的计划内轮换 |
 | [key-compromise.md](./key-compromise.md) | 密钥泄露应急（P1，先止血后轮换） |
 | [feature-flag.md](./feature-flag.md) | 特性开关误放量 / 缓存不一致 |

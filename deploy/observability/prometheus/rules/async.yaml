@@ -28,6 +28,37 @@ groups:
           description: "按 runbook 定位毒消息，修复后使用 worker -replay-dlq 重放。"
           runbook_url: docs/runbooks/async-dlq.md
 
+      # 与 AsyncDLQDepth 互补：depth > 0 只说明「有死信」，不区分「还没人重放」与
+      # 「重放了但没效果」。后者最危险（毒消息循环 / handler 阻塞），且原规则
+      # repeat_interval=4h，重放后无进展最长 4 小时才会再提醒。
+      # 不设 for：30m 窗口内最小值仍 > 0 本身即去抖，满 30 分钟即触发。
+      - alert: AsyncDLQStalled
+        expr: min by (service) (min_over_time(async_dlq_depth[30m])) > 0
+        labels:
+          severity: P2
+          alert_id: async.dlq.stalled
+        annotations:
+          summary: "死信 30 分钟未减少（重放疑似无效）"
+          description: "按 runbook「重放有效性判定」先区分 poison 循环与 handler 阻塞，再决定是否 -replay-dlq=all。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      # 归因规则：async_dlq_depth > 0 只说明「有死信」，不区分「没人重放」与「重放了但没效果」。
+      # 重放是 cmd/worker 的一次性 CLI，进程退出后无指标可抓，因此「近期是否重放过」
+      # 由 DB 派生（async_dlq_replayed_30m 来自 async_dlq.replayed_at 的行数），
+      # 两个条件同时成立才升级为「重放无效」，避免把「还没人处理」误报成投递故障。
+      - alert: AsyncDLQReplayIneffective
+        expr: |
+          (max by (service) (async_dlq_depth) > 0)
+          and on(service)
+          (max by (service) (async_dlq_replayed_30m) > 0)
+        labels:
+          severity: P2
+          alert_id: async.dlq.replay_ineffective
+        annotations:
+          summary: "重放已发起但死信仍未清空（重放无效）"
+          description: "近 30 分钟有重放记录且仍有未重放死信：比对 last_error 是否与上次相同（相同即 poison 循环），不要直接再 -replay-dlq=all。"
+          runbook_url: docs/runbooks/async-dlq.md
+
       - alert: AsyncOutboxDeadGrowth
         expr: sum by (service) (increase(async_outbox_delivery_total{result=~"dead|poison"}[10m])) > 0
         for: 5m

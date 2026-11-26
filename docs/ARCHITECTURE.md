@@ -1,22 +1,22 @@
 # Go 项目架构与工程规范
 
-> **版本**：v2.12  
+> **版本**：v2.13  
 > **状态**：生效中（Normative）  
 > **适用范围**：后端服务（A/B/C 三端业务；模块化单体 + 多可执行文件，可演进至微服务）  
 > **读者**：后端工程师、技术负责人、Code Reviewer、SRE  
-> **最后更新**：2026-10-13  
+> **最后更新**：2026-11-07（平台层拆包同步：`internal/platform/{async,httpserver,config}` 路径、审计出口分层与配置边界收敛）  
 > **变更方式**：架构变更须提交 ADR（Architecture Decision Record），经评审合入后同步更新本文档  
 > **关联硬约束**：  
 > - [工程化注释规范](./COMMENT_STANDARDS.md)（C-01～C-10）  
 > - [工程化代码编写风格规范](./CODE_STYLE.md)（S-01～S-12）  
-> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-14）  
+> - [工程化 CI 流水线规范](./CI_STANDARDS.md)（CI-01～CI-18）  
 >   - GitHub：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（合并门禁）、[`.github/workflows/image.yml`](../.github/workflows/image.yml)（发版镜像）  
 >   - Gitee：[`.workflow/`](../.workflow/)（Gitee Go）  
-> - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）  
+> - [工程化安全规范](./SECURITY_STANDARDS.md)（SEC-01～SEC-16）  
 > - [工程化 API 契约规范](./API_STANDARDS.md)（API-01～API-12）  
 > - [工程化测试规范](./TESTING_STANDARDS.md)（TEST-01～TEST-08）  
 > - [工程化依赖与供应链规范](./DEPENDENCY_STANDARDS.md)（DEP-01～DEP-08）  
-> - [工程化配置与多环境规范](./CONFIG_STANDARDS.md)（CFG-01～CFG-08）  
+> - [工程化配置与多环境规范](./CONFIG_STANDARDS.md)（CFG-01～CFG-12）  
 > - [工程化数据与迁移规范](./DATA_STANDARDS.md)（DATA-01～DATA-08）  
 > - [工程化可靠性与弹性规范](./RELIABILITY_STANDARDS.md)（REL-01～REL-08）  
 > - [工程化可观测性规范](./OBSERVABILITY_STANDARDS.md)（OBS-01～OBS-08）  
@@ -315,6 +315,7 @@ internal/
 - **默认同进程协作**：共享 app/domain，或通过领域事件（worker 消费）最终一致。
 - **禁止** `admin-api` HTTP 调用 `biz-api` / `c-api`（或反向）作为内部实现路径。
 - 若未来拆成独立服务，协作改为同步 RPC（接口在消费侧）或事件总线，并另立 ADR。
+- 配置中心普通配置读与密钥解析均由独立 `cmd/config-api` 承担（ADR-0014 / ADR-0016），不属于 `admin-api` 与 B/C 端互调；业务进程不得调用 `admin-api` 获取配置或密钥，也不得直连配置库。`config-api` 提供内部 mTLS / SPIFFE 的配置拉取、长轮询与密钥解析，不承载管理面。
 
 ### 4.5 数据范围（摘要）
 
@@ -355,7 +356,7 @@ func main() {
 // run 只做装配声明；配置加载、鉴权、探针、请求链路与优雅关闭由 platform.Run 负责。
 func run() error {
     return platform.Run(context.Background(), platform.Options{
-        ConfigPath:    "configs/admin.yaml",
+        ConfigPath:    "configs/dev/admin.yaml",
         Build:         platform.BuildInfo{Version: version, Commit: commit, BuildTime: buildTime},
         NewAuthorizer: newAuthorizer,
         Register: func(deps *platform.Deps, mux *http.ServeMux) error {
@@ -432,7 +433,7 @@ func run() error {
 
 拆分目标形态：`internal/platform/{config,observability,httpserver,authn}`；拆包前须保持现有导出 API 兼容一个版本，并同步更新 `scripts/ci/check-layering.sh`。
 
-**配置热更新**：`NewConfigLoader` 仅为未来长驻进程预留，当前所有 cmd 都在启动期一次性 `LoadConfig`。启用热更新前必须定义可热更字段白名单（禁止 `addr` / `auth` / `storage.driver` 等需重建资源的字段）并补 ADR。
+**配置热更新**：配置优先级固定为「配置中心 > 代码默认值」；读路径为 SDK 启动拉取 config-api + 本地缓存灾备 + 长轮询（ADR-0016）。首次启动空库时由 `config-api` 按代码 key spec 默认值播种基线 Release。启用热更新前必须定义可热更字段白名单（禁止 `addr` / `auth` / `storage.driver` 等需重建资源的字段）并补 ADR（ADR-0015）。业务密钥不进入普通配置响应，只经 `cmd/config-api` 解析（ADR-0014）。
 
 ### 5.7 pkg —— 公共库
 
@@ -658,7 +659,7 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十、安全规范
 
-> **硬约束全文**见 [`docs/SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（SEC-01～SEC-14）。门禁：`make secrets`（gitleaks）、`make lint`（gosec）、`make check-debug`、MR 模板。
+> **硬约束全文**见 [`docs/SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（SEC-01～SEC-16）。门禁：`make secrets`（gitleaks）、`make lint`（gosec）、`make check-debug`、MR 模板。
 
 ### 10.1 三端认证与鉴权（定稿）
 
@@ -925,14 +926,16 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 ## 十七、配置、密钥与多环境
 
-> **完整硬约束**见 [`docs/CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)（CFG-01～CFG-08）。  
-> 门禁：`make check-config`（并入 CI `secrets`）+ `Validate` 单测 + gitleaks。
+> **完整硬约束**见 [`docs/CONFIG_STANDARDS.md`](./CONFIG_STANDARDS.md)（CFG-01～CFG-12）与 [`docs/SECURITY_STANDARDS.md`](./SECURITY_STANDARDS.md)（SEC-15 / SEC-16）。  
+> 门禁：`make check-configcenter` + `make check-no-static-config` + `Validate` 单测 + gitleaks。
 
 ### 17.1 配置加载
 
-- 来源：`configs/<cmd>.yaml.example` + 环境变量（`ADMIN_FRAME_*`）+（可选）配置中心。
-- 优先级：**环境变量 > 配置文件 > 默认值**（配置中心若引入须 ADR 并更新专文）。
-- 各 cmd **独立监听地址/端口**与限流等段；DB/Redis 等共享连接参数可通过公共配置段或环境变量复用，由 `platform` 统一加载。
+- 来源：**配置中心（唯一事实源）+ 代码 key spec 默认值**；管理面挂 `admin-api`，普通配置读与密钥解析均经 `cmd/config-api`（ADR-0016）。
+- 优先级：**配置中心 > 代码默认值**；`ADMIN_FRAME_*` 仅放行 db/redis；不再支持配置文件与业务环境变量覆盖。
+- 首次启动：空库时按代码 key spec 默认值播种基线 Release；声明 `secret_rule` 的密钥自动生成并密文入库；初始化幂等、不覆盖已有值。
+- 启动期配置（`addr`、`db.host/port/name/user`、`redis.addr`、`storage.driver`、`auth.issuer/audience/mode`、`async.*`、`iam.mode`、`http.*`）由配置中心提供但只在启动期读取，变更需重启；热更只允许显式 `reloadable=hot` 的键。
+- 配置中心自身地址、环境、服务身份、CA 与 DB / Redis 连接参数使用代码默认值承载；自身口令与 KEK 访问凭据不入配置库。
 - 平台段（`internal/platform/config`）只承载进程级基础设施；`identity` / `iam` / `audit` / `tenant` 配置由各域包自持类型、默认值与校验，`cmd/internal/appconfig` 负责组合加载与聚合校验。
 - 结构体提供 `Validate()`；启动时校验必填项、范围与互斥项（含 `env=prod` ⇒ `auth.mode != demo`），失败则拒绝启动。
 - 禁止业务代码硬编码地址、超时、功能开关。
@@ -941,12 +944,13 @@ Recover → RequestID/Trace → AccessLog → Metrics → AuthN(本端) → Auth
 
 | 环境 | 要求 |
 |---|---|
-| local | 可分别启动三端 api；可用 docker-compose |
-| dev / test | 与生产拓扑近似；数据可销毁 |
-| staging | 生产同配（缩容）；发布前验证 |
-| prod | 变更受控；密钥隔离；审计开启；三端可独立扩缩；禁演示鉴权 |
+| local | 可分别启动三端 api；可用 docker-compose；使用代码默认值 + 可选本地配置中心 |
+| dev / test | 与生产拓扑近似；数据可销毁；配置中心 dev namespace |
+| staging | 生产同配（缩容）；配置中心 staging namespace；独立 KEK；发布前验证 |
+| prod | 变更受控；配置中心 prod namespace；独立 KMS / Vault / HSM；审计开启；三端可独立扩缩；禁演示鉴权 |
 
-- 仓库内仅提交 `*.yaml.example`，不含真实密钥；本地 `configs/*.yaml` 由 `.gitignore` 忽略。
+- 仓库不再提交 `configs/*.yaml.example`；删除 `configs/` 后由 `check-no-static-config.sh` 防回退。
+- 业务密钥与普通配置分离：普通配置进 Release 快照，密钥只按名称引用并走 `cmd/config-api` 短租约解析。
 
 ### 17.3 特性开关
 
@@ -1125,15 +1129,14 @@ docs/adr/
 git clone <repo>
 cd myproject
 
-cp configs/admin.yaml.example configs/admin.yaml
-cp configs/biz.yaml.example   configs/biz.yaml
-cp configs/c.yaml.example     configs/c.yaml
+# 无需复制配置样例：首次启动经安装向导播种（CFG-04 / CFG-09 / ADR-0018）
 
 # 本地依赖
-docker compose up -d
+docker compose -f docker-compose.integration.yml up -d mysql redis
 
 make build
-./bin/admin-api   # A 端，默认见 configs/admin.yaml
+make local-start   # config-api 就绪后自动驱动安装向导（begin → apply → complete）
+./bin/admin-api   # A 端
 ./bin/biz-api     # B 端
 ./bin/c-api       # C 端
 ```

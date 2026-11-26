@@ -19,6 +19,7 @@ const testSecret = "callback-secret-0123456789abcdef"
 
 func newReceiptFixture(t *testing.T) (*Handler, domain.RequestRepository, domain.DeliveryRepository) {
 	t.Helper()
+	t.Setenv("CONFIGCENTER_ENV", "local")
 	t.Setenv(EnvCallbackSecret, testSecret)
 	requests := persistence.NewMemoryRequestRepository()
 	deliveries := persistence.NewMemoryDeliveryRepository()
@@ -26,7 +27,7 @@ func newReceiptFixture(t *testing.T) (*Handler, domain.RequestRepository, domain
 	if err != nil {
 		t.Fatalf("NewReceiptService: %v", err)
 	}
-	handler, err := NewHandler(receipts)
+	handler, err := NewHandler(receipts, testSecret)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -136,12 +137,21 @@ func TestCallbackAppliesSignedReceipt(t *testing.T) {
 
 func TestCallbackSaltMissingFailsClosed(t *testing.T) {
 	// 密钥未配置：构造必须失败（不允许出现无验签的公开写端点）。
-	t.Setenv(EnvCallbackSecret, "")
-	if _, err := NewHandler(nil); err == nil {
+	if _, err := NewHandler(nil, testSecret); err == nil {
 		t.Fatal("nil receipts must be rejected")
 	}
-	_ = os.Unsetenv(EnvCallbackSecret)
-	if _, err := NewHandler(nil); err == nil {
-		t.Fatal("missing secret must fail construction")
+	if _, err := NewHandler(nil, ""); err == nil {
+		t.Fatal("empty secret must fail construction")
 	}
+	t.Setenv(EnvCallbackSecret, testSecret)
+	if _, err := LoadCallbackSecretFromEnv("prod"); err == nil {
+		t.Fatal("prod-like bare env must fail")
+	}
+	if _, err := LoadCallbackSecretFromEnv(""); err == nil {
+		t.Fatal("empty deploy env must fail")
+	}
+	if _, err := LoadCallbackSecretFromEnv("local"); err != nil {
+		t.Fatalf("local bare env must allow: %v", err)
+	}
+	_ = os.Unsetenv(EnvCallbackSecret)
 }

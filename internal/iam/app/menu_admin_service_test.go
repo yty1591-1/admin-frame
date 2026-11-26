@@ -247,6 +247,33 @@ func TestDisableMenuBlocksActiveChildrenAndEnableChecksParent(t *testing.T) {
 	}
 }
 
+func TestEnableMenuRejectsUnregisteredComponent(t *testing.T) {
+	svc, repo, _ := newMenuAdminFixture(t)
+	ctx := context.Background()
+	stored, err := repo.Get(ctx, "200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Status = domain.MenuStatusDisabled
+	stored.Component = "/retired/index.vue"
+	stored.Version = 2
+	if err := repo.Update(ctx, stored, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.EnableMenu(ctx, app.EnableMenuCommand{ID: "200", Version: 2, Actor: "1001"})
+	if bizCode(err) != apperr.CodeBadRequest {
+		t.Fatalf("enable retired component: %v, want bad request", err)
+	}
+	stored, err = repo.Get(ctx, "200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != domain.MenuStatusDisabled || stored.Version != 2 {
+		t.Fatalf("rejected enable changed status or version: %+v", stored)
+	}
+}
+
 // TestListAndTreeIncludeFilters 验证关键字过滤、分页与停用节点开关。
 func TestListAndTreeIncludeFilters(t *testing.T) {
 	svc, repo, _ := newMenuAdminFixture(t)

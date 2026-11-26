@@ -1,0 +1,25 @@
+{
+  "bindings": 10000,
+  "seed_ms": 535,
+  "activate_full_ms": 403,
+  "activate_privileged_ms": 402,
+  "insert_statements": 23,
+  "select_statements_full": 3,
+  "select_statements_privileged": 6,
+  "export_ms": 81,
+  "export_bytes": 1430132,
+  "export_rows": 10000,
+  "status_counts": {
+    "pending": 10000
+  },
+  "fill_non_empty_decision": 0,
+  "fill_non_empty_reason": 0,
+  "fill_non_empty_decided_by": 0,
+  "fill_non_empty_decided_at": 0,
+  "boundary_rejected": true,
+  "decided_rows": 100,
+  "decided_fill_decision": 100,
+  "decided_fill_reason": 100,
+  "decided_fill_decided_by": 100,
+  "decided_fill_decided_at": 100
+}

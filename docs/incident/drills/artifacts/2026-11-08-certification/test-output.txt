@@ -1,0 +1,44 @@
+=== RUN   TestCertificationSweepFullFlowOnMySQL
+    mysql_certification_sweep_test.go:475: cert drill artifact: D:\MyDocument\admin-frame\docs\incident\drills\artifacts\2026-11-08-certification\certification-sweep-evidence.csv
+    mysql_certification_sweep_test.go:480: cert drill artifact: D:\MyDocument\admin-frame\docs\incident\drills\artifacts\2026-11-08-certification\certification-sweep-evidence.json
+--- PASS: TestCertificationSweepFullFlowOnMySQL (0.35s)
+=== RUN   TestCertificationSweepAutoRevokeOnMySQL
+    mysql_certification_sweep_test.go:580: cert drill summary: l2_redis=true scanned=2 overdue=2 expired=2 tasks=2 audit_events=11
+--- PASS: TestCertificationSweepAutoRevokeOnMySQL (0.46s)
+=== RUN   TestMenuParentMustStayInSameChannel
+--- PASS: TestMenuParentMustStayInSameChannel (0.08s)
+=== RUN   TestSQLMenuRepositoryCRUD
+--- PASS: TestSQLMenuRepositoryCRUD (0.05s)
+=== RUN   TestSQLRoleRepositoryRoundTrip
+--- PASS: TestSQLRoleRepositoryRoundTrip (0.04s)
+=== RUN   TestSQLRoleRepositoryUniqueCode
+--- PASS: TestSQLRoleRepositoryUniqueCode (0.05s)
+=== RUN   TestSQLRoleRepositoryOptimisticLock
+--- PASS: TestSQLRoleRepositoryOptimisticLock (0.05s)
+=== RUN   TestSQLRoleRepositoryImmutableFields
+--- PASS: TestSQLRoleRepositoryImmutableFields (0.03s)
+=== RUN   TestSQLRoleRepositoryListAndSoftDelete
+--- PASS: TestSQLRoleRepositoryListAndSoftDelete (0.09s)
+=== RUN   TestSQLBindingRepositoryLifecycle
+--- PASS: TestSQLBindingRepositoryLifecycle (0.05s)
+=== RUN   TestSQLBindingRepositoryTenantIsolation
+--- PASS: TestSQLBindingRepositoryTenantIsolation (0.04s)
+=== RUN   TestSQLSnapshotRepository
+--- PASS: TestSQLSnapshotRepository (0.11s)
+=== RUN   TestSQLSnapshotRepositoryEmptyOnMissingPermissions
+--- PASS: TestSQLSnapshotRepositoryEmptyOnMissingPermissions (0.06s)
+=== RUN   TestSQLChangeRequestRepository
+--- PASS: TestSQLChangeRequestRepository (0.07s)
+=== RUN   TestSQLSnapshotBreakglassWildcard
+--- PASS: TestSQLSnapshotBreakglassWildcard (0.04s)
+=== RUN   TestSQLRepositoriesRejectUnconfigured
+--- PASS: TestSQLRepositoriesRejectUnconfigured (0.00s)
+=== RUN   TestSQLRoleConstraintRoundTrip
+--- PASS: TestSQLRoleConstraintRoundTrip (0.12s)
+=== RUN   TestSQLUnitOfWorkCommitsRoleAndOutboxTogether
+--- PASS: TestSQLUnitOfWorkCommitsRoleAndOutboxTogether (0.04s)
+=== RUN   TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails
+--- PASS: TestSQLUnitOfWorkRollsBackRoleWhenOutboxFails (0.07s)
+=== RUN   TestSQLUnitOfWorkNestedApplyReusesTransaction
+--- PASS: TestSQLUnitOfWorkNestedApplyReusesTransaction (0.03s)
+PASS

@@ -9,7 +9,8 @@
     "startWith": "{0}必須以 {1} 開頭",
     "invalidURL": "請輸入有效的連結",
     "sizeLimit": "檔案大小不能超過 {0}MB",
-    "previewWarning": "無法開啟檔案，沒有可用的URL或預覽地址"
+    "previewWarning": "無法開啟檔案，沒有可用的URL或預覽地址",
+    "uploadTypeLimit": "檔案類型不支援：{0}"
   },
   "actionTitle": {
     "edit": "修改{0}",
@@ -123,7 +124,14 @@
       "unauthorized": "登入認證過期，請重新登入後繼續。",
       "forbidden": "禁止訪問, 您沒有許可權訪問此資源。",
       "notFound": "未找到, 請求的資源不存在。",
-      "internalServerError": "內部伺服器錯誤，請稍後再試。"
+      "internalServerError": "內部伺服器錯誤，請稍後再試。",
+      "conflict": "資料衝突，請重新整理後重試。",
+      "installInProgress": "系統正在安裝中，請稍後再試。",
+      "installCompleted": "安裝已完成。",
+      "tooManyRequests": "操作過於頻繁，請稍後再試。",
+      "serviceUnavailable": "服務暫時無法使用，請稍後重試。",
+      "notInitialized": "系統尚未初始化。",
+      "errorWithTrace": "{0}（trace: {1}）"
     }
   },
   "widgets": {

@@ -81,3 +81,41 @@ groups:
           summary: "IAM 审计 Outbox 积压（pending/lag 超阈值）"
           description: "通常为 worker 未运行或审计出口不可用；审计延迟可能影响合规。"
           runbook_url: docs/runbooks/iam.md
+
+      # 终态失败：积压告警只覆盖「还没投出去」，这两条覆盖「投不出去且已放弃」。
+      # iam/observability 预创建了 dead / poison 标签值，就是为了让这两个表达式在
+      # 无投递时也能求值、不为空向量（见 metrics.go 注释）。
+      - alert: IAMAuditOutboxDead
+        expr: increase(iam_outbox_delivery_total{result="dead"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: iam.outbox.dead
+        annotations:
+          summary: "IAM 审计事件投递进入终态 dead"
+          description: "重试耗尽仍投递失败，审计事实缺失且不可回补；先按 async-dlq.md「审计写入失败」取 last_error 与载荷，再决定重放。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      - alert: IAMAuditOutboxPoison
+        expr: increase(iam_outbox_delivery_total{result="poison"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+          alert_id: iam.outbox.poison
+        annotations:
+          summary: "IAM 审计事件被判为毒消息（poison）"
+          description: "同一事件反复失败后被隔离；直接重放会再次进入 poison，须先修因（载荷格式或下游 schema）。"
+          runbook_url: docs/runbooks/async-dlq.md
+
+      # 超期扫描是唯一会把「过期未裁决」变成 expired 的路径；Job 失败意味着
+      # 复核证据停更，而人工未必会发现（没有请求、没有 5xx）。依赖 kube-state-metrics。
+      - alert: CertificationSweepFailed
+        expr: max by (job_name) (kube_job_status_failed{job_name=~"admin-frame-certification-sweep.*"} > 0)
+        for: 5m
+        labels:
+          severity: P2
+          alert_id: iam.certification.sweep_failed
+        annotations:
+          summary: "访问复核超期扫描 Job 失败"
+          description: "超期任务不会被标记 expired，复核证据与回收动作停更；按 runbook 查 Job 日志并手工补跑 worker -certification-sweep。"
+          runbook_url: docs/runbooks/iam.md

@@ -213,6 +213,22 @@ func (r *SQLAccountRepository) List(ctx context.Context, filter domain.AccountLi
 		conditions = append(conditions, "merchant_id = ?")
 		args = append(args, filter.MerchantID)
 	}
+	if filter.DisplayNameExact != "" {
+		conditions = append(conditions, "display_name = ?")
+		args = append(args, filter.DisplayNameExact)
+	}
+	if filter.Active != nil {
+		if *filter.Active {
+			conditions = append(conditions, "status <> ?")
+			args = append(args, string(domain.AccountStatusDisabled))
+		} else {
+			conditions = append(conditions, "status = ?")
+			args = append(args, string(domain.AccountStatusDisabled))
+		}
+	}
+	if filter.ExcludeDeleted {
+		conditions = append(conditions, "deleted_at IS NULL")
+	}
 
 	// PERF-07：精确主体走 subject_index 索引，避免关键词路径的全量扫描。
 	if exact := domain.NormalizeSubject(filter.SubjectExact); exact != "" {

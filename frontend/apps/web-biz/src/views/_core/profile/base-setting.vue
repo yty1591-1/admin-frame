@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import type { VbenFormSchema } from '@vben/app-kernel/adapter/form';
 import type { Recordable } from '@vben/types';
 
-import type { VbenFormSchema } from '#/adapter/form';
 import type { MeView } from '#/api';
 
 import { computed, onMounted, ref } from 'vue';

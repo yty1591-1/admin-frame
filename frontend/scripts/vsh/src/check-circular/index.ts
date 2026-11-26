@@ -7,6 +7,8 @@ import { extname, join } from 'node:path';
 
 import { execa, getStagedFiles } from '@vben/node-utils';
 
+import { exceedsThreshold } from './threshold';
+
 const require = createRequire(import.meta.url);
 const circularScannerCli =
   require.resolve('circular-dependency-scanner/dist/cli.js');
@@ -65,7 +67,8 @@ async function detectCircularDependencies({
       args.push('--absolute');
     }
 
-    args.push('--ignore', ignorePattern);
+    // 纯类型引用在运行时被擦除，不构成真实循环；只拦截运行期依赖环。
+    args.push('--ignore', ignorePattern, '--exclude-types');
 
     await execa(process.execPath, args, {
       cwd,
@@ -121,6 +124,11 @@ async function checkCircular({
       ...config,
     };
 
+    // 阈值非法时回退为 0，避免 NaN 让门禁静默通过
+    const threshold = Number.isFinite(finalConfig.threshold)
+      ? finalConfig.threshold
+      : 0;
+
     // 生成忽略模式
     const ignorePattern = `**/{${finalConfig.ignoreDirs.join(',')}}/**`;
 
@@ -128,8 +136,13 @@ async function checkCircular({
     const cacheKey = `${staged}-${process.cwd()}-${ignorePattern}`;
     if (cache.has(cacheKey)) {
       const cachedResults = cache.get(cacheKey);
-      if (cachedResults && verbose) {
-        formatCircles(cachedResults);
+      if (cachedResults) {
+        if (verbose) {
+          formatCircles(cachedResults);
+        }
+        if (exceedsThreshold(cachedResults.length, threshold)) {
+          process.exitCode = 1;
+        }
       }
       return;
     }
@@ -141,6 +154,8 @@ async function checkCircular({
       staged,
     });
 
+    let found = results;
+
     if (staged) {
       let files = await getStagedFiles();
       const allowedExtensions = new Set(finalConfig.allowedExtensions);
@@ -149,40 +164,40 @@ async function checkCircular({
       files = files.filter((file) => allowedExtensions.has(extname(file)));
 
       const circularFiles: CircularDependencyResult[] = [];
+      const seen = new Set<CircularDependencyResult>();
 
       for (const file of files) {
         for (const result of results) {
           const resultFiles = result.flat();
-          if (resultFiles.includes(file)) {
+          if (!seen.has(result) && resultFiles.includes(file)) {
+            seen.add(result);
             circularFiles.push(result);
           }
         }
       }
 
-      // 更新缓存
-      cache.set(cacheKey, circularFiles);
-      if (verbose) {
-        formatCircles(circularFiles);
-      }
-    } else {
-      // 更新缓存
-      cache.set(cacheKey, results);
-      if (verbose) {
-        formatCircles(results);
-      }
+      found = circularFiles;
     }
 
-    // 如果发现循环依赖，只输出警告信息
-    if (results.length > 0) {
-      console.log(
-        '\n⚠️ Warning: Circular dependencies found, please check and fix',
+    // 更新缓存
+    cache.set(cacheKey, found);
+    if (verbose) {
+      formatCircles(found);
+    }
+
+    // 超过阈值即判失败，退出码必须非 0，否则门禁形同虚设
+    if (exceedsThreshold(found.length, threshold)) {
+      console.error(
+        `\n❌ Circular dependencies: ${found.length} found, threshold is ${threshold}`,
       );
+      process.exitCode = 1;
     }
   } catch (error) {
     console.error(
       '❌ Error checking circular dependencies:',
       error instanceof Error ? error.message : error,
     );
+    process.exitCode = 1;
   }
 }
 

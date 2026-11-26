@@ -1,8 +1,8 @@
 # 数据库迁移使用指南（`pkg/migrate` / `cmd/migrate`）
 
-> **状态**：已落地（PostgreSQL / MySQL）  
+> **状态**：已落地（本仓库 schema 只提供 **MySQL 8.0**；`pkg/migrate` 另含 PostgreSQL 方言执行能力，但仓库内无 PG 迁移脚本，业务仓储也不支持 PG）  
 > **关联**：[`DATA_STANDARDS.md`](./DATA_STANDARDS.md)（DATA-01～DATA-08）、[`RELEASE_STANDARDS.md`](./RELEASE_STANDARDS.md)（RELS-06）、[`ARCHITECTURE.md`](./ARCHITECTURE.md) §十四、[`pkg-roadmap.md`](./pkg-roadmap.md)、[`migrations/`](../migrations)  
-> **最后更新**：2026-10-20  
+> **最后更新**：2026-11-07（平台拆包后路径同步：`internal/platform/config/config.go`）  
 > **变更方式**：CLI 参数、配置优先级、迁移文件规范或故障处置流程变更须同步 `cmd/migrate`、`pkg/migrate` 单测与本文，并确认与 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 一致  
 > **目标读者**：后端开发、SRE / 发布负责人、Code Review  
 > **效力说明**：本文是使用说明。硬约束以 `DATA_STANDARDS.md` / `RELEASE_STANDARDS.md` 为准；两者冲突时以规范为准。
@@ -88,7 +88,7 @@ schema_migrations（version / description / checksum / applied_at / execution_ms
 
 | 项 | 要求 |
 |----|------|
-| Go | 与 `go.mod` 一致（当前 `go 1.26.10`） |
+| Go | 与 `go.mod` 一致（当前 `go 1.26.11`） |
 | 数据库 | PostgreSQL 或 MySQL / MariaDB 可连接 |
 | 权限 | 可 `CREATE TABLE`（历史表）、可执行迁移中的 DDL/DML |
 | 目录 | 仓库根 `migrations/` 已存在至少一对 up/down 文件 |
@@ -104,26 +104,24 @@ go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
 
 ### 2.3 配置数据库连接
 
+本仓库只支持 MySQL 8.0：
+
 Linux / macOS：
-
-```bash
-export ADMIN_FRAME_DB_DRIVER=postgres
-export ADMIN_FRAME_DB_DSN='postgres://app:CHANGE_ME@127.0.0.1:5432/admin_frame?sslmode=disable'
-```
-
-Windows PowerShell：
-
-```powershell
-$env:ADMIN_FRAME_DB_DRIVER = "postgres"
-$env:ADMIN_FRAME_DB_DSN = "postgres://app:CHANGE_ME@127.0.0.1:5432/admin_frame?sslmode=disable"
-```
-
-MySQL：
 
 ```bash
 export ADMIN_FRAME_DB_DRIVER=mysql
 export ADMIN_FRAME_DB_DSN='app:CHANGE_ME@tcp(127.0.0.1:3306)/admin_frame?parseTime=true&loc=UTC'
 ```
+
+Windows PowerShell：
+
+```powershell
+$env:ADMIN_FRAME_DB_DRIVER = "mysql"
+$env:ADMIN_FRAME_DB_DSN = "app:CHANGE_ME@tcp(127.0.0.1:3306)/admin_frame?parseTime=true&loc=UTC"
+```
+
+> `pkg/migrate` 保留了 PostgreSQL 方言执行能力，但仓库内 `migrations/` 全部是 MySQL DDL，
+> 业务 SQL 仓储与 `db.driver` 启动校验也只支持 MySQL；不要把 PG 用于本项目。
 
 ### 2.4 三步走
 
@@ -168,10 +166,10 @@ up: 1 migration(s)
 |--------|------|------|
 | 1 | CLI 参数 | `-driver postgres -dsn '...'` |
 | 2 | 环境变量 | `ADMIN_FRAME_DB_DRIVER` / `ADMIN_FRAME_DB_DSN` |
-| 3 | 配置文件 `-config` 的 `db.driver` / `db.dsn` | `./bin/migrate -config configs/admin.yaml` |
+| 3 | 配置文件 `-config` 的 `db.driver` / `db.dsn` | `./bin/migrate -config configs/dev/admin.yaml` |
 | 4 | 内置默认 | 无默认驱动、无默认 DSN（缺失即报错） |
 
-规则对齐 CFG-04：**环境变量 > 配置文件 > 默认值**，CLI 参数位于环境变量之上。
+规则说明：`cmd/migrate` 是一次性运维工具，不是业务进程；上表仅描述迁移二进制的连接参数来源，**不属于 CFG-04 的业务配置优先级**。业务进程固定为「配置中心 > 代码默认值」。
 
 ### 3.2 支持的驱动
 
@@ -191,7 +189,7 @@ up: 1 migration(s)
 ```yaml
 # configs/migrate.yaml（本地文件，不入库）
 db:
-  driver: postgres
+  driver: mysql
   dsn: ""          # 留空，由 ADMIN_FRAME_DB_DSN 注入
 ```
 
@@ -199,11 +197,11 @@ db:
 ./bin/migrate -config configs/migrate.yaml -action up
 ```
 
-**禁止**在 `configs/*.yaml.example` 或仓库文件中写真实口令 / 生产主机（CFG-06）。
+**禁止**在仓库文件或迁移命令历史中写真实口令 / 生产主机（CFG-06）；迁移 DSN 通过 CLI 参数或环境变量一次性注入，不落盘。
 
 ### 3.4 DSN 示例
 
-PostgreSQL（pgx）：
+PostgreSQL（pgx，仅 `pkg/migrate` 通用能力；本仓库 schema 与业务仓储不支持）：
 
 ```text
 postgres://app:CHANGE_ME@db.internal:5432/admin_frame?sslmode=verify-full
@@ -592,7 +590,7 @@ LIMIT 5000;
 ./bin/migrate -action up
 # 2) 启动 admin-api：身份模块自动幂等创建系统默认平台管理员
 #    已存在则只校验凭据与绑定，不覆盖、不重复审计
-./bin/admin-api -config configs/admin.yaml
+./bin/admin-api -config configs/dev/admin.yaml
 ```
 
 身份域即按此实现：`migrations/000001_create_identity_tables` 直接建最终加密结构，

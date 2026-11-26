@@ -1,0 +1,35 @@
+{{- $apps := dict "web-admin" .Values.frontend.webAdmin "web-biz" .Values.frontend.webBiz }}
+{{- range $name, $app := $apps }}
+{{- if and $app.enabled $app.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "admin-frame.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "admin-frame.labels" (dict "root" $ "component" $name) | nindent 4 }}
+  {{- with $app.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $app.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $app.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ $app.ingress.host }}
+      http:
+        paths:
+          - path: {{ $app.ingress.path }}
+            pathType: {{ $app.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "admin-frame.fullname" $ }}-{{ $name }}
+                port:
+                  number: {{ $app.service.port }}
+{{- end }}
+{{- end }}

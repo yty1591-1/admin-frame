@@ -8,10 +8,15 @@ package appconfig
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	auditconfig "github.com/admin-frame/admin-frame/internal/audit/config"
+	"github.com/admin-frame/admin-frame/internal/configcenter/spec"
+	iamcatalog "github.com/admin-frame/admin-frame/internal/iam/catalog"
 	iamconfig "github.com/admin-frame/admin-frame/internal/iam/config"
 	identityconfig "github.com/admin-frame/admin-frame/internal/identity/config"
+	notificationconfig "github.com/admin-frame/admin-frame/internal/notification/config"
 	platformconfig "github.com/admin-frame/admin-frame/internal/platform/config"
 	tenantconfig "github.com/admin-frame/admin-frame/internal/tenant/config"
 	"github.com/admin-frame/admin-frame/pkg/config"
@@ -21,10 +26,11 @@ import (
 type Config struct {
 	platformconfig.Config `yaml:",inline"`
 
-	Identity identityconfig.IdentityConfig `yaml:"identity"`
-	IAM      iamconfig.IAMConfig           `yaml:"iam"`
-	Audit    auditconfig.AuditConfig       `yaml:"audit"`
-	Tenant   tenantconfig.TenantConfig     `yaml:"tenant"`
+	Identity     identityconfig.IdentityConfig         `yaml:"identity"`
+	IAM          iamconfig.IAMConfig                   `yaml:"iam"`
+	Audit        auditconfig.AuditConfig               `yaml:"audit"`
+	Tenant       tenantconfig.TenantConfig             `yaml:"tenant"`
+	Notification notificationconfig.NotificationConfig `yaml:"notification"`
 }
 
 // ApplyDefaults 依次填充平台段与各域默认值。
@@ -33,6 +39,7 @@ func (c *Config) ApplyDefaults() {
 	c.Identity.ApplyDefaults()
 	c.IAM.ApplyDefaults()
 	c.Audit.ApplyDefaults()
+	c.Notification.ApplyDefaults()
 }
 
 // Normalize 补齐平台段派生值、归一化 IAM 模式，并在同一次 Provider 解析中
@@ -66,26 +73,90 @@ func (c *Config) Validate() error {
 		c.Identity.Validate(c.Env, c.Channel, c.Auth.EffectiveMode(c.Env), c.DB.Driver, c.Redis.Enabled(), c.Async.Enabled),
 		c.Audit.Validate(c.Env, c.DB.Driver, c.Storage.Driver),
 		c.Tenant.Validate(),
+		c.validateM2MScopes(),
 	)
+	return errors.Join(errs...)
+}
+
+// validateM2MScopes 校验 identity.m2m.allowed_scopes 均为 IAM 活跃权限码（§21.2.6）。
+//
+// 身份域不 import IAM，权限目录校验只能落在装配层：未知权限码启动失败，
+// 避免「配置写了 scope，运行期却永远无法授权」的假启用。
+func (c *Config) validateM2MScopes() error {
+	if !c.Identity.M2M.Enabled {
+		return nil
+	}
+	known := make(map[string]struct{}, len(iamcatalog.Codes()))
+	for _, code := range iamcatalog.Codes() {
+		known[string(code)] = struct{}{}
+	}
+	var errs []error
+	for _, scope := range c.Identity.M2M.AllowedScopes {
+		code := strings.TrimSpace(scope)
+		if _, ok := known[code]; !ok {
+			errs = append(errs, fmt.Errorf(
+				"identity.m2m.allowed_scopes contains unknown permission code: %s", scope))
+		}
+	}
 	return errors.Join(errs...)
 }
 
 // NewLoader 构造完整的进程配置加载器。
 func NewLoader(path string) (*config.Loader[Config], error) {
+	return NewLoaderWithValues(path, nil)
+}
+
+// NewLoaderWithValues 构造带配置中心快照覆盖的加载器。
+//
+// values 返回已验签快照的扁平取值（yaml 路径 → 字符串）；nil 表示不接入。
+// 环境变量仅放行 db/redis（InfraEnvPathAllowlist）。
+func NewLoaderWithValues(path string, values func() (map[string]string, error)) (*config.Loader[Config], error) {
 	return config.NewLoader(config.Options[Config]{
-		Files:     []string{path},
-		EnvPrefix: platformconfig.EnvPrefix,
-		Defaults:  (*Config).ApplyDefaults,
-		Normalize: (*Config).Normalize,
-		Validate:  (*Config).Validate,
+		Files:            []string{path},
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
 	})
 }
 
-// Load 从 YAML 文件加载完整配置，应用默认值与环境变量覆盖后校验。
+// LoadFromValues 无 YAML 文件启动：代码默认值 → Values → 白名单环境变量。
 //
-// 优先级：环境变量 > 配置文件 > 默认值（CONFIG_STANDARDS CFG-04）。
+// 业务取值必须由调用方提供的配置中心快照 / 进程补齐 Values 覆盖，不得把
+// 「无文件」误读为允许仅用代码默认值启动。环境变量仅放行 db/redis。
+func LoadFromValues(values func() (map[string]string, error)) (*Config, error) {
+	loader, err := config.NewLoader(config.Options[Config]{
+		EnvPrefix:        platformconfig.EnvPrefix,
+		EnvPathAllowlist: platformconfig.InfraEnvPathAllowlist,
+		Values:           values,
+		ValueAliases:     spec.ValueAliases(),
+		Defaults:         (*Config).ApplyDefaults,
+		Normalize:        (*Config).Normalize,
+		Validate:         (*Config).Validate,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return loader.Load()
+}
+
+// Load 从可选 YAML 文件加载完整配置，应用默认值与白名单环境变量后校验。
+//
+// CFG-04：业务取值以「配置中心快照 > 代码默认值」为准；无 Values 时仅文件与
+// db/redis 环境变量参与，不得把 ADMIN_FRAME_* 业务键当作事实源。
 func Load(path string) (*Config, error) {
-	loader, err := NewLoader(path)
+	return LoadWithValues(path, nil)
+}
+
+// LoadWithValues 加载配置并应用配置中心快照取值。
+//
+// 优先级：配置中心快照 > 可选文件 > 代码默认值；ADMIN_FRAME_DB_*/REDIS_*
+// 作为基础设施补充通道在快照之后覆盖（CFG-04）。
+func LoadWithValues(path string, values func() (map[string]string, error)) (*Config, error) {
+	loader, err := NewLoaderWithValues(path, values)
 	if err != nil {
 		return nil, err
 	}

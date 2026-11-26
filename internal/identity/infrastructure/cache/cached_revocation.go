@@ -33,7 +33,10 @@ type cachedRevocationStore struct {
 }
 
 // 编译期断言：装饰器必须保持 RevocationStore 契约。
-var _ app.RevocationStore = (*cachedRevocationStore)(nil)
+var (
+	_ app.RevocationStore  = (*cachedRevocationStore)(nil)
+	_ app.ClientStateStore = (*cachedRevocationStore)(nil)
+)
 
 // NewCachedRevocationStore 构造 L1 装饰器；ttl <= 0 或 capacity <= 0 时直接返回 inner（关闭缓存）。
 func NewCachedRevocationStore(
@@ -122,6 +125,52 @@ func (s *cachedRevocationStore) DeleteSessionState(ctx context.Context, sessionI
 	return s.inner.DeleteSessionState(ctx, sessionID)
 }
 
+// LoadClientState 先读 L1；未命中 / 过期时读 inner 并回填 L1。
+//
+// inner 未实现 ClientStateStore 时退化为「不缓存」，由检查器直接回源数据库。
+func (s *cachedRevocationStore) LoadClientState(ctx context.Context, clientID string) (app.ClientState, bool, error) {
+	inner, ok := s.inner.(app.ClientStateStore)
+	if !ok {
+		return app.ClientState{}, false, nil
+	}
+	if state, hit := s.l1.get(clientKind, clientID); hit {
+		s.observeHit(ctx, clientKind)
+		return state.(app.ClientState), true, nil
+	}
+	s.observeRedisCall(ctx, "client_load")
+	state, found, err := inner.LoadClientState(ctx, clientID)
+	if err != nil || !found {
+		return state, found, err
+	}
+	s.l1.put(clientKind, clientID, state)
+	return state, true, nil
+}
+
+// SaveClientState 写入 inner 后同步更新 L1。
+func (s *cachedRevocationStore) SaveClientState(ctx context.Context, clientID string, state app.ClientState, ttl time.Duration) error {
+	inner, ok := s.inner.(app.ClientStateStore)
+	if !ok {
+		return nil
+	}
+	s.observeRedisCall(ctx, "client_set")
+	if err := inner.SaveClientState(ctx, clientID, state, ttl); err != nil {
+		return err
+	}
+	s.l1.put(clientKind, clientID, state)
+	return nil
+}
+
+// DeleteClientState 删除 inner 与 L1；本地必须清空，避免本副本继续放行。
+func (s *cachedRevocationStore) DeleteClientState(ctx context.Context, clientID string) error {
+	s.l1.delete(clientKind, clientID)
+	inner, ok := s.inner.(app.ClientStateStore)
+	if !ok {
+		return nil
+	}
+	s.observeRedisCall(ctx, "client_delete")
+	return inner.DeleteClientState(ctx, clientID)
+}
+
 // RevokeToken 写入 jti 黑名单；jti 永不经过 L1。
 func (s *cachedRevocationStore) RevokeToken(ctx context.Context, jti string, ttl time.Duration) error {
 	s.observeRedisCall(ctx, "token_revoke")
@@ -150,10 +199,11 @@ func (s *cachedRevocationStore) observeRedisCall(ctx context.Context, op string)
 	s.observer.OnRevocationRedisCall(ctx, op)
 }
 
-// 缓存条目类型；用于同一 LRU 链表中区分账号 / 会话。
+// 缓存条目类型；用于同一 LRU 链表中区分账号 / 会话 / 客户端。
 const (
 	accountKind = "account"
 	sessionKind = "session"
+	clientKind  = "client"
 )
 
 // revocationL1 是并发安全的 LRU + TTL 本地缓存。

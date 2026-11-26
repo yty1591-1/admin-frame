@@ -170,7 +170,18 @@ func (s *MemoryStore) ReclaimStale(_ context.Context, staleBefore, now time.Time
 func (s *MemoryStore) Stats(_ context.Context) (Stats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stats := Stats{DLQ: len(s.dead)}
+	cutoff := time.Now().UTC().Add(-ReplayRecentWindow)
+	stats := Stats{}
+	for _, record := range s.dead {
+		if record.ReplayedAt == nil {
+			// 与 MySQL 实现对齐：DLQ 只统计未重放的死信，重放成功后 depth 必须下降。
+			stats.DLQ++
+			continue
+		}
+		if !record.ReplayedAt.Before(cutoff) {
+			stats.ReplayedRecently++
+		}
+	}
 	for _, event := range s.events {
 		switch event.Status {
 		case StatusPending, StatusProcessing, StatusDead, StatusFailed:

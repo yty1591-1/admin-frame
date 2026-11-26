@@ -41,6 +41,36 @@ func TestValidateChannelMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsInternalChannel(t *testing.T) {
+	cfg := &platformconfig.Config{
+		Service: "config-api",
+		Channel: "internal",
+		Env:     "dev",
+		Addr:    ":8085",
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "internal"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("internal channel should be valid: %v", err)
+	}
+}
+
+func TestValidateRejectsEmptyEnv(t *testing.T) {
+	cfg := &platformconfig.Config{
+		Service: "config-api",
+		Channel: "internal",
+		Addr:    ":8085",
+		Auth:    platformconfig.AuthConfig{ExpectedChannel: "internal"},
+		DB:      platformconfig.DBConfig{Driver: "memory"},
+		Log:     platformconfig.LogConfig{Level: "info", Format: "json"},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "env is required") {
+		t.Fatalf("err=%v want env is required", err)
+	}
+}
+
 func TestLoadConfigEnvOverridesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
@@ -63,22 +93,24 @@ log:
 		t.Fatal(err)
 	}
 
+	// 业务键不得经 ADMIN_FRAME_* 覆盖；仅 DB/Redis 白名单生效。
 	t.Setenv("ADMIN_FRAME_ADDR", ":18083")
 	t.Setenv("ADMIN_FRAME_LOG_LEVEL", "warn")
 	t.Setenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT", "30s")
+	t.Setenv("ADMIN_FRAME_DB_DSN", "env-dsn")
 
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":18083" {
-		t.Fatalf("addr=%s", cfg.Addr)
+	if cfg.Addr == ":18083" {
+		t.Fatal("addr must not be overridden by ADMIN_FRAME_ADDR")
 	}
-	if cfg.Log.Level != "warn" {
-		t.Fatalf("level=%s", cfg.Log.Level)
+	if cfg.Log.Level == "warn" {
+		t.Fatal("log.level must not be overridden by ADMIN_FRAME_LOG_LEVEL")
 	}
-	if cfg.ShutdownTimeout != 30*time.Second {
-		t.Fatalf("timeout=%s", cfg.ShutdownTimeout)
+	if cfg.DB.DSN != "env-dsn" {
+		t.Fatalf("db.dsn=%s want env-dsn", cfg.DB.DSN)
 	}
 }
 
@@ -113,12 +145,13 @@ func TestLoadDBConfigEmptyPath(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsProdAuthModeDemoFromEnv(t *testing.T) {
+func TestLoadConfigRejectsProdAuthModeDemo(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.yaml")
 	content := []byte(`
 service: c-api
 channel: c
+env: prod
 addr: ":8083"
 auth:
   mode: demo
@@ -131,8 +164,6 @@ log:
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ADMIN_FRAME_ENV", "prod")
-	t.Setenv("ADMIN_FRAME_AUTH_MODE", "demo")
 	if _, err := platformconfig.LoadConfig(path); err == nil {
 		t.Fatal("expected validate failure")
 	}
@@ -164,12 +195,13 @@ func writeConfig(t *testing.T, name, content string) string {
 // minimalConfig 是最小的可用服务配置（不含 auth.expected_channel，由 normalize 派生）。
 const minimalConfig = "service: c-api\n" +
 	"channel: c\n" +
+	"env: dev\n" +
 	"addr: \":8083\"\n" +
 	"db:\n" +
 	"  driver: memory\n"
 
 func TestLoadConfigAppliesDefaults(t *testing.T) {
-	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\n")
+	path := writeConfig(t, "c.yaml", "service: c-api\nchannel: c\nenv: dev\n")
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -202,60 +234,43 @@ func TestLoadConfigRejectsUnknownField(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsInvalidEnvValue(t *testing.T) {
+func TestLoadConfigRejectsInvalidDBEnvValue(t *testing.T) {
 	path := writeConfig(t, "c.yaml", minimalConfig)
-	t.Setenv("ADMIN_FRAME_SHUTDOWN_TIMEOUT", "15")
+	t.Setenv("ADMIN_FRAME_DB_MAX_OPEN_CONNS", "not-int")
 	_, err := platformconfig.LoadConfig(path)
 	if !errors.Is(err, config.ErrEnvOverride) {
 		t.Fatalf("err=%v want ErrEnvOverride", err)
 	}
-	if !strings.Contains(err.Error(), "ADMIN_FRAME_SHUTDOWN_TIMEOUT") {
+	if !strings.Contains(err.Error(), "ADMIN_FRAME_DB_MAX_OPEN_CONNS") {
 		t.Fatalf("err=%v should name the variable", err)
 	}
 }
 
-func TestLoadConfigDerivesExpectedChannelAfterEnvOverride(t *testing.T) {
+func TestLoadConfigIgnoresBusinessEnvOverride(t *testing.T) {
 	path := writeConfig(t, "c.yaml", minimalConfig)
 	t.Setenv("ADMIN_FRAME_CHANNEL", "admin")
+	t.Setenv("ADMIN_FRAME_AUTH_JWT_SECRET", strings.Repeat("x", 32))
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Channel != "admin" || cfg.Auth.ExpectedChannel != "admin" {
-		t.Fatalf("channel=%q expected=%q want both admin", cfg.Channel, cfg.Auth.ExpectedChannel)
+	if cfg.Channel == "admin" {
+		t.Fatal("channel must not be overridden by ADMIN_FRAME_CHANNEL")
+	}
+	if cfg.Auth.JWT.Secret == strings.Repeat("x", 32) {
+		t.Fatal("jwt secret must not be overridden by ADMIN_FRAME_AUTH_JWT_SECRET")
 	}
 }
 
-func TestLoadConfigStorageSecretEnv(t *testing.T) {
-	path := writeConfig(t, "c.yaml", minimalConfig)
-	t.Setenv("ADMIN_FRAME_STORAGE_S3_ACCESS_KEY", "canonical-ak")
-	t.Setenv("ADMIN_FRAME_STORAGE_S3_SECRET_KEY", "canonical-sk")
+func TestLoadConfigRedisEnvOverride(t *testing.T) {
+	path := writeConfig(t, "c.yaml", minimalConfig+"redis:\n  addr: \"127.0.0.1:6379\"\n  password: \"file-pass\"\n")
+	t.Setenv("ADMIN_FRAME_REDIS_PASSWORD", "env-pass")
 	cfg, err := platformconfig.LoadConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.Storage.S3.AccessKey != "canonical-ak" || cfg.Storage.S3.SecretKey != "canonical-sk" {
-		t.Fatalf("storage env not applied: %+v", cfg.Storage.S3)
-	}
-}
-
-func TestLoadConfigTypedEnvKinds(t *testing.T) {
-	path := writeConfig(t, "c.yaml", minimalConfig)
-	t.Setenv("ADMIN_FRAME_WORKER_POLL_INTERVAL", "250ms")
-	t.Setenv("ADMIN_FRAME_TRACING_ENABLED", "off")
-	t.Setenv("ADMIN_FRAME_TRACING_SAMPLE_RATIO", "0.5")
-	cfg, err := platformconfig.LoadConfig(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.Worker.PollInterval != 250*time.Millisecond {
-		t.Fatalf("poll_interval=%s", cfg.Worker.PollInterval)
-	}
-	if cfg.Tracing.Enabled == nil || *cfg.Tracing.Enabled {
-		t.Fatalf("tracing.enabled=%v want explicit false", cfg.Tracing.Enabled)
-	}
-	if cfg.Tracing.SampleRatio == nil || *cfg.Tracing.SampleRatio != 0.5 {
-		t.Fatalf("sample_ratio=%v", cfg.Tracing.SampleRatio)
+	if cfg.Redis.Password != "env-pass" {
+		t.Fatalf("redis.password=%q want env-pass", cfg.Redis.Password)
 	}
 }
 
