@@ -12,7 +12,7 @@ import (
 )
 
 // PeekActivePlaintext 供安装态连通性探测读取活跃明文；不做 grant 校验
-//（调用方为 config-api 本进程）。找不到或未激活返回 NotFound。
+// （调用方为 config-api 本进程）。找不到或未激活返回 NotFound。
 func (s *SecretService) PeekActivePlaintext(ctx context.Context, env, namespace, name string) (string, error) {
 	if s == nil || s.secrets == nil || s.kek == nil {
 		return "", apperr.Internal("secret service unavailable", nil)

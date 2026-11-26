@@ -200,7 +200,8 @@ func (s *BootstrapService) reconcileMissingDefaults(ctx context.Context, in Boot
 		_, exists := inRelease[keySpec.Key]
 		_, hasOverride := in.Overrides[keySpec.Key]
 		// 普通 reconcile 不覆盖已有键；repair 轮次对 Overrides 内的键写新版本（ADR-0018）。
-		if exists && !(in.Repair && hasOverride && strings.TrimSpace(in.Overrides[keySpec.Key]) != "") {
+		repairOverride := in.Repair && hasOverride && strings.TrimSpace(in.Overrides[keySpec.Key]) != ""
+		if exists && !repairOverride {
 			continue
 		}
 		item, getErr := s.items.GetByKey(ctx, in.Env, in.Namespace, keySpec.Key)

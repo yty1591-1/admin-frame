@@ -14,7 +14,7 @@ const (
 	// RedisPasswordValueKey 是注入 appconfig Values 的扁平路径。
 	RedisPasswordValueKey = "redis.password"
 	// AsyncBrokerURLSecretName 是 NATS URL 的配置中心密钥名（platform 域）。
-	AsyncBrokerURLSecretName = "async.broker.url"
+	AsyncBrokerURLSecretName = "async.broker.url" //nolint:gosec // G101: 密钥名，非凭据值
 	// AsyncBrokerURLValueKey 是注入 appconfig Values 的扁平路径。
 	AsyncBrokerURLValueKey = "async.broker.url"
 

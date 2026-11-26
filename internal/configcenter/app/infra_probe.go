@@ -43,7 +43,7 @@ type ProbeInput struct {
 	// DB 可选；已装配的数据库句柄，用于 mysql Ping。
 	DB *db.DB
 	// ReportDeployEnvGaps 为 true 时，mysql 缺 ADMIN_FRAME_DB_DSN 记入 gaps
-	//（Complete / config-api 启动）；日常 Status 轮询为 false，避免安装中途刷屏。
+	// （Complete / config-api 启动）；日常 Status 轮询为 false，避免安装中途刷屏。
 	ReportDeployEnvGaps bool
 }
 
@@ -360,7 +360,7 @@ func probeSMTP(ctx context.Context, deadline time.Time, in ProbeInput) []ProbeRe
 	if encryption == "starttls" {
 		tlsCfg := &tls.Config{
 			MinVersion: tls.VersionTLS12, ServerName: host,
-			InsecureSkipVerify: allowInsecure, //nolint:gosec
+			InsecureSkipVerify: allowInsecure, //nolint:gosec // 探测遵循 allow_insecure
 		}
 		if err := client.StartTLS(tlsCfg); err != nil {
 			return []ProbeResult{{
@@ -393,10 +393,12 @@ type smtpLoginAuth struct {
 	username, password string
 }
 
-func (a *smtpLoginAuth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
+// Start 实现 smtp.Auth，声明 LOGIN 机制。
+func (a *smtpLoginAuth) Start(_ *smtp.ServerInfo) (mech string, resp []byte, err error) {
 	return "LOGIN", nil, nil
 }
 
+// Next 实现 smtp.Auth，按服务端提示回传用户名或口令。
 func (a *smtpLoginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	if !more {
 		return nil, nil

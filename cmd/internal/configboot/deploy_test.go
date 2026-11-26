@@ -80,4 +80,3 @@ func TestApplyDeployNodeIDAndStorage(t *testing.T) {
 		t.Fatalf("memory driver must skip s3 inject: %+v", memory)
 	}
 }
-
