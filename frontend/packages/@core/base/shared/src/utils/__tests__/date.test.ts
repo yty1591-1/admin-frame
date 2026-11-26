@@ -114,7 +114,8 @@ describe('dateUtils', () => {
     it('should return a valid IANA timezone string', () => {
       const tz = getSystemTimezone();
       expect(typeof tz).toBe('string');
-      expect(tz).toMatch(/^[A-Z]+\/[A-Z_]+/i);
+      // CI（如 GitHub Actions）常为 UTC；本机多为 Area/Location（含 Etc/UTC）
+      expect(tz).toMatch(/^(UTC|GMT|[A-Z]+\/[A-Z_]+(?:\/[A-Z_]+)?)$/i);
     });
   });
 
