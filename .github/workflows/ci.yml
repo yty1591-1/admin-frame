@@ -213,6 +213,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # check-audit.sh 会跑 `go test ./internal/audit/...`，arch job 因此需要 Go。
+      # GitHub 的 ubuntu-latest 自带 Go，Gitea 的 runner-images:ubuntu-latest 没有，
+      # 2026-11-27 实测报 `ERROR: go not found; cannot run audit package tests`。
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
       # check-oncall.sh 的 OC-03 通过 paging_probe.py 解析 Alertmanager 路由，
       # 该脚本依赖 PyYAML；runner 系统 Python 未预装，需在此钉扎安装。
       # 走 make ci-deps 而非裸 pip：Debian 12/Ubuntu 24.04（含 Gitea Act Runner
