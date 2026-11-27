@@ -90,23 +90,98 @@ compose() {
   fi
 }
 
-export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:${MYSQL_PORT})/admin_frame_test?parseTime=true&loc=UTC"
+# ---------------------------------------------------------------------------
+# 寻址方式：分「job 跑在容器里」与「job 直接跑在宿主/VM 上」两种。
+#
+# Gitea Act Runner 用 `docker create ... runner-images:ubuntu-latest` 把每个 job
+# 放进容器执行（2026-11-27 日志实测）。此时 compose 把端口发布在**宿主**上，
+# 而 job 容器里的 127.0.0.1 是它自己 —— 于是即使容器 Healthy、端口也映射成功，
+# 测试仍然全部 connection refused：
+#   WARN: 127.0.0.1:13638 not reachable after 30s
+#   dial tcp 127.0.0.1:13638: connect: connection refused
+# 这不是端口冲突（随机端口已避开），而是网络命名空间不通。
+#
+# 对策：把 compose 的默认网络接到 job 容器上，之后用服务名（mysql/redis/minio）
+# 走 Docker 内建 DNS 寻址，完全绕开宿主端口映射。
+# GitHub hosted runner 与本地开发都不是这种形态（127.0.0.1 直连可用），
+# 保持原路径，不引入额外依赖。
+# ---------------------------------------------------------------------------
+inside_container() {
+  [[ -f /.dockerenv ]] && return 0
+  grep -qaE '(docker|containerd|kubepods)' /proc/1/cgroup 2>/dev/null && return 0
+  return 1
+}
+
+SERVICE_MODE="host"   # host=127.0.0.1 + 宿主端口；network=Docker 服务名 + 容器内端口
+MYSQL_HOST="127.0.0.1"
+REDIS_HOST="127.0.0.1"
+MINIO_HOST="127.0.0.1"
+MYSQL_ACCESS_PORT="${MYSQL_PORT}"
+REDIS_ACCESS_PORT="${REDIS_PORT}"
+MINIO_ACCESS_PORT="${MINIO_PORT}"
+COMPOSE_NETWORK=""
+
+if inside_container; then
+  SERVICE_MODE="network"
+  # 容器内端口是 compose 文件里写死的服务端口，与宿主映射端口无关。
+  MYSQL_HOST="mysql"; MYSQL_ACCESS_PORT="3306"
+  REDIS_HOST="redis"; REDIS_ACCESS_PORT="6379"
+  MINIO_HOST="minio"; MINIO_ACCESS_PORT="9000"
+  if [[ -n "${PROJECT_NAME}" ]]; then
+    COMPOSE_NETWORK="${PROJECT_NAME}_default"
+  else
+    # 文件里 name: admin-frame-integration 时，默认网络名即 <name>_default。
+    COMPOSE_NETWORK="admin-frame-integration_default"
+  fi
+  echo "==> job 运行在容器内：集成服务改走 Docker 网络 ${COMPOSE_NETWORK}（服务名寻址）"
+fi
+
+export TEST_MYSQL_DSN="app:app@tcp(${MYSQL_HOST}:${MYSQL_ACCESS_PORT})/admin_frame_test?parseTime=true&loc=UTC"
 # 各域集成包使用独立 DSN 开关；值相同，指向 compose MySQL 测试库。
 export IAM_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export TENANT_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export NOTIFY_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export FEATUREFLAG_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
 export CONFIGCENTER_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
-export TEST_REDIS_ADDR="127.0.0.1:${REDIS_PORT}"
-export TEST_S3_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
+export TEST_REDIS_ADDR="${REDIS_HOST}:${REDIS_ACCESS_PORT}"
+export TEST_S3_ENDPOINT="http://${MINIO_HOST}:${MINIO_ACCESS_PORT}"
 export TEST_S3_ACCESS_KEY="minioadmin"
 export TEST_S3_SECRET_KEY="minioadmin"
 export TEST_S3_BUCKET="admin-frame"
+
+# 把 compose 网络接到当前 job 容器，使服务名可解析。
+# 失败必须硬退出：否则测试会以 connection refused 的形式报错，
+# 错误信息指向被测代码而不是接线问题（正是本轮踩过的坑）。
+join_compose_network() {
+  [[ "${SERVICE_MODE}" == "network" ]] || return 0
+  local self
+  self="$(hostname)"   # act 的 job 容器 hostname 即容器 ID
+  if ! docker network inspect "${COMPOSE_NETWORK}" >/dev/null 2>&1; then
+    echo "ERROR: compose 网络 ${COMPOSE_NETWORK} 不存在，无法为 job 容器接线" >&2
+    return 1
+  fi
+  if docker network connect "${COMPOSE_NETWORK}" "${self}" 2>/dev/null; then
+    echo "    OK: job 容器 ${self} 已接入 ${COMPOSE_NETWORK}"
+    return 0
+  fi
+  # 已接入（重复执行）时 connect 会报错，用 inspect 复核后视为成功。
+  if docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "${self}" 2>/dev/null |
+    grep -qw "${COMPOSE_NETWORK}"; then
+    echo "    OK: job 容器 ${self} 已在 ${COMPOSE_NETWORK} 中"
+    return 0
+  fi
+  echo "ERROR: 无法把 job 容器 ${self} 接入 ${COMPOSE_NETWORK}" >&2
+  return 1
+}
 
 cleanup() {
   if [[ "${KEEP_INTEGRATION_STACK:-0}" == "1" ]]; then
     echo "==> keep integration stack running (KEEP_INTEGRATION_STACK=1)"
     return
+  fi
+  # 容器内模式下 job 容器挂在这个网络上，不先断开则 `compose down` 删不掉网络。
+  if [[ "${SERVICE_MODE:-host}" == "network" ]]; then
+    docker network disconnect -f "${COMPOSE_NETWORK}" "$(hostname)" >/dev/null 2>&1 || true
   fi
   compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
@@ -190,26 +265,35 @@ fi
 echo "==> docker compose up: mysql / redis / minio"
 compose up -d --wait --wait-timeout 120 mysql redis minio
 
-# compose 的 healthcheck 只证明「容器内」就绪。Windows Docker Desktop 的主机端口
+# 探测目标与实际寻址方式一致：容器内走服务名 + 容器端口，宿主走 127.0.0.1 + 映射端口。
+# compose 的 healthcheck 只证明「容器内」就绪；Windows Docker Desktop 的主机端口
 # 转发会晚几秒生效，测试进程连的是 127.0.0.1，此时会拿到 connection refused
 # （2026-11-06 实测：Healthy 之后立刻 go test，9 个包全部报 3306 拒绝连接）。
-# 显式等主机侧 TCP 可连再继续；Linux 第一次探测即成功，不影响 CI。
+# Linux 第一次探测即成功，不影响 CI。
 wait_host_port() {
-  local port="$1" attempt
+  local host="$1" port="$2" attempt
   for attempt in $(seq 1 30); do
-    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
-      echo "    OK: 127.0.0.1:${port} reachable"
+    if (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null; then
+      echo "    OK: ${host}:${port} reachable"
       return 0
     fi
     sleep 1
   done
   # 探测手段本身可能在某些 shell 下不可用（非 bash 或缺 net-redirections）。
   # 这时不该把「探测不到」误判成「依赖没起来」：给警告并交给 go test 给出真实错误。
-  echo "WARN: 127.0.0.1:${port} not reachable after 30s (host forwarding or /dev/tcp unsupported)" >&2
+  echo "WARN: ${host}:${port} not reachable after 30s (host forwarding or /dev/tcp unsupported)" >&2
 }
 
-echo "==> wait for host-side port forwarding"
-for port in "${MYSQL_PORT}" "${REDIS_PORT}" "${MINIO_PORT}"; do wait_host_port "${port}"; done
+# 容器内模式下必须先接线：否则服务名不可解析，探测必然失败。
+if [[ "${SERVICE_MODE}" == "network" ]]; then
+  echo "==> join compose network"
+  join_compose_network
+fi
+
+echo "==> wait for services reachable"
+wait_host_port "${MYSQL_HOST}" "${MYSQL_ACCESS_PORT}"
+wait_host_port "${REDIS_HOST}" "${REDIS_ACCESS_PORT}"
+wait_host_port "${MINIO_HOST}" "${MINIO_ACCESS_PORT}"
 
 echo "==> create test bucket"
 compose run --rm minio-init

@@ -150,17 +150,22 @@
 
 Gitea（≥1.19）的 Actions 引擎（act）**直接读取 `.github/workflows/`**，与 GitHub 共用同一份 YAML。
 但 act 不是 GitHub hosted runner，以下差异会让「GitHub 上全绿」的 job 在 Gitea 上成片失败。
-2026-11-26 首次在 Gitea 1.27.3 跑全量 CI，13 个 job 中 3 个失败，全部源于下表：
+2026-11-26 首次在 Gitea 1.27.3 跑全量 CI，13 个 job 中 5 个失败，全部源于下表：
 
 | 差异 | GitHub | Gitea Act Runner | 本项目对策 |
 |------|--------|------------------|-----------|
 | `services:`（sidecar 容器） | 支持 | **不支持**，容器不会被拉起 | DSN 由 `scripts/ci/test-mysql-env.sh` 探测端口后再注入，不可连则不注入，用例按既有约定 `t.Skip` |
-| 系统 Python | Ubuntu 24.04，PEP 668 | Debian 12 镜像，PEP 668 | `arch` 走 `make ci-deps`（建仓库内 `.venv`），禁止裸 `pip install` |
+| 系统 Python | Ubuntu 24.04，PEP 668 | Debian 12，PEP 668 | `arch` 走 `make ci-deps`（建仓库内 `.venv`），禁止裸 `pip install` |
 | 预装工具链 | 自带 Go / Python / Node | 仅 Node 等少数，**无 Go** | 任何用到 Go 的 job 必须显式 `actions/setup-go`（含 `openapi-docs`） |
-| Docker 宿主 | 每 job 独立 VM | **多 job 共用宿主 docker** | `run-integration-tests.sh` 在 `CI` 下用唯一 project name（`-p`）+ 高位端口（13306/16379/19000） |
+| **job 执行位置** | 独立 VM，`127.0.0.1` 即宿主 | **job 本身跑在容器里**（`runner-images:ubuntu-latest`），`127.0.0.1` 是 job 容器自身 | `run-integration-tests.sh` 检测到容器内（`/.dockerenv` 或 PID 1 cgroup）时，把 compose 网络接到 job 容器，改用服务名（`mysql:3306`）寻址；宿主模式仍走 `127.0.0.1` |
+| Docker 宿主 | 每 job 独立 | **多 job 共用宿主 docker** | `run-integration-tests.sh` 在 `CI` 下用唯一 project name（`-p`）+ 随机空闲端口（探测去重，不钉死固定值） |
 | `secrets.GITHUB_TOKEN` | GitHub 签发，可推 GHCR | **Gitea 自己签发，对 ghcr.io 无权限** | `image.yml` 按 `env.REGISTRY` 分流凭据；非 ghcr.io 必须配 `IMAGE_REGISTRY_USERNAME` / `IMAGE_REGISTRY_PASSWORD` |
 | OIDC / cosign keyless | 有 Fulcio | 无 | `image.yml` 的签名与 attestation 步骤 `if: github.server_url == 'https://github.com'` |
 | `gh release` | 支持 | 无 | `image.yml` 的 `release` job 加同款 `if` 跳过 |
+
+> 「job 跑在容器里」这一条最容易被误判：compose 显示 `Healthy`、端口也映射成功，
+> 但 job 容器内连 `127.0.0.1:<映射端口>` 必然 `connection refused`。症状与「服务没起来」
+> 完全一样，却与端口冲突无关——排查时先确认 `[ -f /.dockerenv ]`，再怀疑端口。
 
 **判定用表达式**：`github.server_url == 'https://github.com'` 是区分平台的唯一可靠条件（`github.actor`、`GITHUB_TOKEN` 语义在两边不同）。
 
