@@ -9,8 +9,16 @@
 # bundle、各 cmd 的 CycloneDX SBOM、images.json（镜像→digest）与 SHA256SUMS。
 # workflow artifact 只留 90 天，Release 资产才是发版后仍可追溯的凭据。
 # 发布流水线在部署前验签（scripts/ci/verify-supply-chain.sh），验不过不部署。
-# 注册表：默认 GHCR（GITHUB_TOKEN 推送）；私有仓库可设 Repository variable
-#         IMAGE_REGISTRY，并另外注入推送凭据。
+#
+# 注册表：默认 GHCR（GITHUB_TOKEN 推送）。
+# 跨平台约束（2026-11-26 Gitea 实测）：Gitea 的 `secrets.GITHUB_TOKEN` 是 Gitea
+# 自己签发的令牌，对 ghcr.io 无任何权限，登录直接 `denied: denied`；且内网到
+# ghcr.io 常 timeout。因此本 workflow 按平台分流：
+#   - GitHub：默认 ghcr.io（原行为不变）；
+#   - Gitea 等其它平台：必须设 Repository variable `IMAGE_REGISTRY`，并用
+#     `IMAGE_REGISTRY_USERNAME` / `IMAGE_REGISTRY_PASSWORD` 注入该 registry 的凭据；
+#     未配置时 image job 显式失败并打印修法，避免静默产出半成品。
+# 供应链签名（cosign keyless）依赖 GitHub OIDC（Fulcio），非 GitHub 平台跳过。
 
 name: Image
 
@@ -114,12 +122,46 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 凭据选择：GitHub 用 GITHUB_TOKEN 登录 GHCR；其它平台（Gitea）必须显式提供
+      # IMAGE_REGISTRY_* ——Gitea 的 GITHUB_TOKEN 对 ghcr.io 无效（denied: denied）。
+      # 反向也要拦：非 GitHub 平台若没配 IMAGE_REGISTRY（回落到 ghcr.io），
+      # GITHUB_TOKEN 一定被拒，不如在这里直接给出修法，别让失败发生在 7 个 matrix 分支里。
+      - name: Resolve registry credentials
+        id: reg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${REGISTRY}" == "ghcr.io" ]]; then
+            if [[ "${SERVER_URL}" != "https://github.com" ]]; then
+              echo "::error::当前平台（${SERVER_URL}）的 GITHUB_TOKEN 只对 Gitea 自身有效，不能登录 ghcr.io"
+              echo "::error::请设置 Repository variable IMAGE_REGISTRY（如 gitea.xiaosu.org.cn）"
+              echo "::error::并配置 IMAGE_REGISTRY_USERNAME（variable）与 IMAGE_REGISTRY_PASSWORD（secret）"
+              exit 1
+            fi
+            echo "username=${GITHUB_ACTOR}" >> "$GITHUB_OUTPUT"
+            echo "password=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "${REG_USER:-}" || -z "${REG_PASS:-}" ]]; then
+            echo "::error::REGISTRY=${REGISTRY} 需要 IMAGE_REGISTRY_USERNAME / IMAGE_REGISTRY_PASSWORD"
+            echo "::error::请在仓库 Settings → Actions → Variables/Secrets 配置该 registry 的推送凭据"
+            exit 1
+          fi
+          echo "username=${REG_USER}" >> "$GITHUB_OUTPUT"
+          echo "password=${REG_PASS}" >> "$GITHUB_OUTPUT"
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REG_USER: ${{ vars.IMAGE_REGISTRY_USERNAME }}
+          REG_PASS: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+
       - name: Log in to registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ steps.reg.outputs.username }}
+          password: ${{ steps.reg.outputs.password }}
 
       - name: Docker metadata (tags + labels)
         id: tags
@@ -183,11 +225,15 @@ jobs:
           retention-days: 90
 
       - name: Install cosign
+        # keyless 签名依赖 GitHub OIDC → Fulcio。Gitea 等平台没有该身份源，
+        # 强行执行只会拿到空证书；显式跳过并保留 SBOM artifact 作为追溯凭据。
+        if: github.server_url == 'https://github.com'
         uses: sigstore/cosign-installer@v3.9.1
         with:
           cosign-release: ${{ env.COSIGN_VERSION }}
 
       - name: Sign image digest (keyless)
+        if: github.server_url == 'https://github.com'
         env:
           IMAGE: ${{ steps.ver.outputs.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -197,6 +243,7 @@ jobs:
           cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - name: Attest SBOM (CycloneDX)
+        if: github.server_url == 'https://github.com'
         env:
           IMAGE: ${{ steps.ver.outputs.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -212,7 +259,9 @@ jobs:
   release:
     name: release assets (${{ github.ref_name }})
     needs: image
-    if: startsWith(github.ref, 'refs/tags/v')
+    # gh release 是 GitHub 专有能力；Gitea 等平台没有对应 CLI/Release 语义，
+    # 在此跳过（镜像本身仍已推送到该平台的 registry）。
+    if: startsWith(github.ref, 'refs/tags/v') && github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

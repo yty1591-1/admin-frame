@@ -28,9 +28,68 @@ fi
 
 COMPOSE_FILE="docker-compose.integration.yml"
 
-MYSQL_PORT="${INTEGRATION_MYSQL_PORT:-3306}"
-REDIS_PORT="${INTEGRATION_REDIS_PORT:-6379}"
-MINIO_PORT="${INTEGRATION_MINIO_PORT:-9000}"
+# 共享 runner 上的隔离（2026-11-26 Gitea 实测）：
+# Act Runner 让多个 job 共用宿主 docker，compose 文件里的
+# `name: admin-frame-integration` 与默认 3306 会让并发 job 互相撞车 ——
+#   Bind for 127.0.0.1:3306 failed: port is already allocated
+# 因此在 CI 里改用唯一 project name（-p）+ 临时端口。
+#
+# 端口不能钉死成某个固定值：同一 runner 上可能同时跑多个 workflow（如 ci.yml 与
+# image.yml），固定 13306 只是把 3306 的冲突推迟到另一组进程之间。这里用
+# 「随机基数 + 探测空闲」取端口，冲突概率降到可忽略。
+# 本地保持原行为（固定 name、默认端口），方便联调时 `docker compose ps` 直接看到。
+port_free() {
+  ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+# 注意：pick_port 用「设置全局 PICK_PORT 再读取」而不是 echo + $()，
+# 因为 $( ) 是子 shell，里面记录的已选端口集合不会回传，会导致两个服务取到同一端口。
+PICKED_PORTS=" "
+PICK_PORT=""
+pick_port() {
+  local base="$1" candidate attempt
+  for attempt in $(seq 1 50); do
+    candidate=$((base + RANDOM % 400))
+    if [[ "${PICKED_PORTS}" != *" ${candidate} "* ]] && port_free "${candidate}"; then
+      PICKED_PORTS="${PICKED_PORTS}${candidate} "
+      PICK_PORT="${candidate}"
+      return 0
+    fi
+  done
+  # 兜底：退回基数（让 compose 自己报出真实错误，而不是静默用错端口）。
+  PICK_PORT="${base}"
+}
+
+if [[ -n "${CI:-}" ]]; then
+  PROJECT_NAME="${COMPOSE_PROJECT_NAME:-admin-frame-integration-${GITHUB_RUN_ID:-$$}}"
+  MYSQL_PORT="${INTEGRATION_MYSQL_PORT:-}"
+  if [[ -z "${MYSQL_PORT}" ]]; then pick_port 13306; MYSQL_PORT="${PICK_PORT}"; fi
+  REDIS_PORT="${INTEGRATION_REDIS_PORT:-}"
+  if [[ -z "${REDIS_PORT}" ]]; then pick_port 16379; REDIS_PORT="${PICK_PORT}"; fi
+  MINIO_PORT="${INTEGRATION_MINIO_PORT:-}"
+  if [[ -z "${MINIO_PORT}" ]]; then pick_port 19000; MINIO_PORT="${PICK_PORT}"; fi
+  MINIO_CONSOLE_PORT="${INTEGRATION_MINIO_CONSOLE_PORT:-}"
+  if [[ -z "${MINIO_CONSOLE_PORT}" ]]; then pick_port 19500; MINIO_CONSOLE_PORT="${PICK_PORT}"; fi
+else
+  PROJECT_NAME="${COMPOSE_PROJECT_NAME:-}"
+  MYSQL_PORT="${INTEGRATION_MYSQL_PORT:-3306}"
+  REDIS_PORT="${INTEGRATION_REDIS_PORT:-6379}"
+  MINIO_PORT="${INTEGRATION_MINIO_PORT:-9000}"
+  MINIO_CONSOLE_PORT="${INTEGRATION_MINIO_CONSOLE_PORT:-9001}"
+fi
+# 端口以导出变量交给 compose 做 `${VAR:-default}` 插值；-p 覆盖文件里的 name。
+export INTEGRATION_MYSQL_PORT="${MYSQL_PORT}"
+export INTEGRATION_REDIS_PORT="${REDIS_PORT}"
+export INTEGRATION_MINIO_PORT="${MINIO_PORT}"
+export INTEGRATION_MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT}"
+
+compose() {
+  if [[ -n "${PROJECT_NAME}" ]]; then
+    docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" "$@"
+  else
+    docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
+}
+
 export TEST_MYSQL_DSN="app:app@tcp(127.0.0.1:${MYSQL_PORT})/admin_frame_test?parseTime=true&loc=UTC"
 # 各域集成包使用独立 DSN 开关；值相同，指向 compose MySQL 测试库。
 export IAM_TEST_MYSQL_DSN="${TEST_MYSQL_DSN}"
@@ -49,7 +108,7 @@ cleanup() {
     echo "==> keep integration stack running (KEEP_INTEGRATION_STACK=1)"
     return
   fi
-  docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || true
+  compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -129,7 +188,7 @@ if [[ "${INV_FAIL}" -ne 0 ]]; then
 fi
 
 echo "==> docker compose up: mysql / redis / minio"
-docker compose -f "${COMPOSE_FILE}" up -d --wait --wait-timeout 120 mysql redis minio
+compose up -d --wait --wait-timeout 120 mysql redis minio
 
 # compose 的 healthcheck 只证明「容器内」就绪。Windows Docker Desktop 的主机端口
 # 转发会晚几秒生效，测试进程连的是 127.0.0.1，此时会拿到 connection refused
@@ -153,7 +212,7 @@ echo "==> wait for host-side port forwarding"
 for port in "${MYSQL_PORT}" "${REDIS_PORT}" "${MINIO_PORT}"; do wait_host_port "${port}"; done
 
 echo "==> create test bucket"
-docker compose -f "${COMPOSE_FILE}" run --rm minio-init
+compose run --rm minio-init
 
 # 各包共用同一套 MySQL 实例，且 IAM 用例会清空 async 表；串行执行包避免相互清表。
 echo "==> go test -count=1 -p 1 ./tests/integration/..."

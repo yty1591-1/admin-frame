@@ -102,7 +102,7 @@
 
 **并发约束（CI-05 补充）**：注入 DSN 后 `go test ./...` 会并行执行多个集成包，而每个包启动时都会 `reset` 清表，**并行必然互踩**（表被清空、固定 bootstrap 账号争抢唯一键），失败与被测代码无关。`scripts/ci/run-tests.sh` 因此固定 `-p 1` 串行执行包，与 `run-integration-tests.sh` 的既有约定一致；新增集成包沿用同一前提，不得依赖「runner 核数少所以不撞」。
 
-**工具依赖（CI-05 补充）**：`check-oncall.sh` 的 OC-03 通过 `scripts/ops/paging_probe.py` 解析 Alertmanager 路由，该脚本依赖 PyYAML。版本钉在 `scripts/ci/requirements.txt`（`pyyaml==6.0.3`），GitHub `arch` job 在运行门禁前安装该文件。本地首次运行前执行一次 `make ci-deps`（优先创建仓库内 `.venv`，避免污染受 PEP 668 管理的系统 Python）；`check-oncall.sh` 会优先使用 `.venv` 解释器，并在缺少 PyYAML 时直接提示修复命令，不再以笼统的汇总结论失败。Gitee Go 的 `build@golang` 镜像未预装 PyYAML，若启用 `arch` step 须显式执行 `make ci-deps`（或等效安装），否则 OC-03 报 `ModuleNotFoundError: No module named 'yaml'`。
+**工具依赖（CI-05 补充）**：`check-oncall.sh` 的 OC-03 通过 `scripts/ops/paging_probe.py` 解析 Alertmanager 路由，该脚本依赖 PyYAML。版本钉在 `scripts/ci/requirements.txt`（`pyyaml==6.0.3`），各平台的 `arch` job 在运行门禁前执行 `make ci-deps` 安装。`ci-deps.sh` 优先用已有解释器，其次 `uv venv`，否则创建仓库内 `.venv`（避免污染受 PEP 668 管理的系统 Python；仅当无法创建 venv 时才回退 `--break-system-packages`，供一次性 runner 使用）；`check-oncall.sh` 会优先使用 `.venv` 解释器，并在缺少 PyYAML 时直接提示修复命令，不再以笼统的汇总结论失败。**禁止**在 workflow 里直接 `pip install`：Debian 12 / Ubuntu 24.04 会把系统 Python 标记为 externally-managed，裸 pip 必然被拒（2026-11-26 Gitea `arch` job 实测）。
 
 ### 3.2 GitHub Actions
 
@@ -110,8 +110,8 @@
 - 并行 job + `concurrency` 取消旧 run
 - `permissions: contents: read`
 - Go 版本：`actions/setup-go` 读取 `go.mod`
-- `arch` job 使用 runner 系统 Python；运行前钉扎安装 `pyyaml==6.0.3`，供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由
-- `openapi-docs` job（非合并门禁）：用 Node 20 + `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
+- `arch` job 通过 `make ci-deps` 安装 `pyyaml==6.0.3`（优先仓库内 `.venv`），供 `check-oncall.sh`（OC-03）的 `paging_probe.py` 解析 Alertmanager 路由；不得用裸 `pip install`（PEP 668）
+- `openapi-docs` job（非合并门禁）：Node 20 + `actions/setup-go`（`make openapi-artifacts` 需要 Go）+ `make openapi-artifacts` 产出文档 / TS 类型 / changelog，并上传 `openapi-artifacts`；契约门禁仍由 `openapi` job 负责
 - `frontend` job（CI-18 / FE-CI-01）：`pnpm/action-setup@v4` 读取 `frontend/package.json` 的 `packageManager`，`setup-node@v4` 用 `frontend/.node-version`（24.16.0）与 pnpm cache（键 `frontend/pnpm-lock.yaml`），执行 `bash scripts/ci/frontend-check.sh`（14 步，第 2 步为 `pnpm audit`、第 4 步为 XSS 出口巡检、第 5 步为安全响应头；脚本在 build 前把 `git rev-parse HEAD` 导出为 `VITE_APP_GIT_SHA`，该变量已纳入 turbo `globalEnv` 缓存键，避免缓存产物 SHA 过期）；与 `make frontend-check`、Gitee step 同源，禁止三处各写一套命令
 
 ### 3.3 Gitee Go
@@ -146,19 +146,45 @@
 | 仅 Gitee | 维护 `.workflow`；分支保护走 Gitee；`.github` 可保留供镜像仓使用 |
 | 双远端 | 两边流水线均须绿；禁止「只过一边就合入」 |
 
+### 3.4.1 Gitea Actions（`.github/workflows` 复用）
+
+Gitea（≥1.19）的 Actions 引擎（act）**直接读取 `.github/workflows/`**，与 GitHub 共用同一份 YAML。
+但 act 不是 GitHub hosted runner，以下差异会让「GitHub 上全绿」的 job 在 Gitea 上成片失败。
+2026-11-26 首次在 Gitea 1.27.3 跑全量 CI，13 个 job 中 3 个失败，全部源于下表：
+
+| 差异 | GitHub | Gitea Act Runner | 本项目对策 |
+|------|--------|------------------|-----------|
+| `services:`（sidecar 容器） | 支持 | **不支持**，容器不会被拉起 | DSN 由 `scripts/ci/test-mysql-env.sh` 探测端口后再注入，不可连则不注入，用例按既有约定 `t.Skip` |
+| 系统 Python | Ubuntu 24.04，PEP 668 | Debian 12 镜像，PEP 668 | `arch` 走 `make ci-deps`（建仓库内 `.venv`），禁止裸 `pip install` |
+| 预装工具链 | 自带 Go / Python / Node | 仅 Node 等少数，**无 Go** | 任何用到 Go 的 job 必须显式 `actions/setup-go`（含 `openapi-docs`） |
+| Docker 宿主 | 每 job 独立 VM | **多 job 共用宿主 docker** | `run-integration-tests.sh` 在 `CI` 下用唯一 project name（`-p`）+ 高位端口（13306/16379/19000） |
+| `secrets.GITHUB_TOKEN` | GitHub 签发，可推 GHCR | **Gitea 自己签发，对 ghcr.io 无权限** | `image.yml` 按 `env.REGISTRY` 分流凭据；非 ghcr.io 必须配 `IMAGE_REGISTRY_USERNAME` / `IMAGE_REGISTRY_PASSWORD` |
+| OIDC / cosign keyless | 有 Fulcio | 无 | `image.yml` 的签名与 attestation 步骤 `if: github.server_url == 'https://github.com'` |
+| `gh release` | 支持 | 无 | `image.yml` 的 `release` job 加同款 `if` 跳过 |
+
+**判定用表达式**：`github.server_url == 'https://github.com'` 是区分平台的唯一可靠条件（`github.actor`、`GITHUB_TOKEN` 语义在两边不同）。
+
+**配置前置（Gitea 侧首次接入必须完成）**：
+
+1. 仓库 Settings → Actions → Variables 设 `IMAGE_REGISTRY`（如 `gitea.xiaosu.org.cn`）与 `IMAGE_REGISTRY_USERNAME`；
+2. Secrets 设 `IMAGE_REGISTRY_PASSWORD`（Gitea access token，需 `write:package`）；
+3. 确认 runner 有 `docker` 权限（`integration` job 需要起容器）。
+
+未完成 1～3 时 `image` job 会**显式失败并打印修法**，不会静默产出半成品镜像。
+
 ### 3.5 发版镜像流水线（`.github/workflows/image.yml`）
 
 | 项 | 约定 |
 |----|------|
 | 触发 | push `main`/`master`、push `v*` tag、手动 `workflow_dispatch`；**不在 PR 触发** |
-| 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；私有仓库设 Repository variable `IMAGE_REGISTRY` 并另外注入凭据 |
+| 注册表 | 默认 `ghcr.io`（`GITHUB_TOKEN` 推送）；其它 registry 设 Repository variable `IMAGE_REGISTRY`，并配 `IMAGE_REGISTRY_USERNAME`（variable）+ `IMAGE_REGISTRY_PASSWORD`（secret）。**Gitea 的 `GITHUB_TOKEN` 对 ghcr.io 无效**，非 GitHub 平台必须显式配置，否则 `image` job 显式失败（见 §3.4.1） |
 | 镜像名 | `<registry>/<owner>/<cmd>`（后端 admin-api / biz-api / c-api / worker / migrate 与前端 web-admin / web-biz 各自独立，RELS-05） |
 | 标签 | 分支：`sha-<short>`；tag：`<semver>` 与 `<semver>-sha-<short>`；**禁止** `latest`（RELS-01） |
 | 架构 | `linux/amd64,linux/arm64`；后端 `Dockerfile` 固定 `BUILDPLATFORM` 后按 `TARGETARCH` 交叉编译；前端镜像走 buildx（QEMU 下安装依赖并构建，缓存 scope 按镜像名隔离） |
 | 版本 | 后端：`VERSION`/`COMMIT`/`BUILD_TIME` 经 ldflags 注入，`/version` 可核对（RELS-03）；前端：`GIT_SHA` 作为 build arg 注入 `GITHUB_SHA`/`VITE_APP_GIT_SHA`，产物 `index.html` 的 `x-app-git-sha` 与 tag 同源（FE-B-01/FE-B-03） |
 | 扫描 | 推送后 Trivy `CRITICAL,HIGH`（`ignore-unfixed`）命中即 job 失败（RELS-06 / §6）；含 OS 包与 Go 二进制 |
 | SBOM | 按推送后的 **digest** 生成 CycloneDX，作为 `sbom-<cmd>` artifact 上传（缺文件即失败）；同一 digest 上以 `cosign attest --type cyclonedx` 附加（RELS-13） |
-| 签名 | `cosign sign`（keyless，`id-token: write`）签 **digest**，不签 tag；cosign 版本经 `COSIGN_VERSION` 钉扎（RELS-13） |
+| 签名 | `cosign sign`（keyless，`id-token: write`）签 **digest**，不签 tag；cosign 版本经 `COSIGN_VERSION` 钉扎（RELS-13）。仅 GitHub 执行（`github.server_url == 'https://github.com'`）：Gitea 无 OIDC/Fulcio，签名步骤在该平台跳过，SBOM artifact 仍保留 |
 | 验签 | 不在本流水线：由 `release.yml` 的 `verify` job 在部署前完成（RELS-14）；本流水线只负责「签得对」 |
 | 基础镜像 | 后端运行镜像 OS 必须在支持期内（当前 `alpine:3.24` 起） |
 | 并发 | 不取消进行中的发布构建，避免「一半已推送」的不可追溯状态（与 CI-11 的区别在此：发布不适用取消） |

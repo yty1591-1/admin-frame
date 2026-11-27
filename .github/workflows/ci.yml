@@ -101,6 +101,11 @@ jobs:
     timeout-minutes: 20
     # MySQL 8.0 service 供 tests/integration/iam 验证 SQL 仓储（租户隔离、唯一约束、乐观锁、
     # 快照查询）。版本与 docs/rbac-iam.md §13.1 的数据库基线一致；不使用生产数据源（CI-12）。
+    #
+    # 注意：`services` 是 GitHub Actions 专有能力，Gitea Act Runner 不会拉起该容器。
+    # 因此 DSN 不再写死在 job 级 env（否则在 Gitea 上会「注入了 DSN、库却不存在」，
+    # SQL 用例批量 connection refused 且不走跳过分支，见 2026-11-26 实测）。
+    # 改由 scripts/ci/test-mysql-env.sh 探测端口后再注入。
     services:
       mysql:
         image: mysql:8.0
@@ -116,12 +121,6 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=24
-    env:
-      IAM_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
-      TENANT_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
-      NOTIFY_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
-      FEATUREFLAG_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
-      CONFIGCENTER_TEST_MYSQL_DSN: "iam:iam@tcp(127.0.0.1:3306)/iam_test?parseTime=true&loc=UTC"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,6 +132,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # 探测 127.0.0.1:3306：可连则注入与 service 一致的 DSN；不可连（Gitea 等
+      # 不提供 services 的平台）则不注入，让用例按既有约定 t.Skip 并打印原因。
+      # GitHub 必然提供 services.mysql，探不到就是真问题（如 service 没起来），
+      # 置 MYSQL_REQUIRED=1 使其硬失败，防止 SQL 覆盖被静默跳过。
+      - name: Resolve MySQL test DSN
+        env:
+          MYSQL_REQUIRED: ${{ github.server_url == 'https://github.com' && '1' || '0' }}
+        run: bash scripts/ci/test-mysql-env.sh
 
       - name: Test with race + coverage + gates
         env:
@@ -165,6 +173,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # 端口冲突（2026-11-26 Gitea 实测）：
+      #   Bind for 127.0.0.1:3306 failed: port is already allocated
+      # Gitea Act Runner 让多个 job 共用宿主 docker，`test` job 的 3306 已被占用
+      # （同一提交的 lint/test/vuln 等在并行跑），本 job 再用 3306 必然绑定失败。
+      # run-integration-tests.sh 在 CI 环境（$CI 非空）下自动用唯一 project name +
+      # 随机空闲端口，因此这里不钉死端口（钉死会让并发 workflow 互相再次撞车）。
       - name: Integration tests (MySQL + Redis + MinIO)
         run: bash scripts/ci/run-integration-tests.sh
 
@@ -201,8 +215,12 @@ jobs:
 
       # check-oncall.sh 的 OC-03 通过 paging_probe.py 解析 Alertmanager 路由，
       # 该脚本依赖 PyYAML；runner 系统 Python 未预装，需在此钉扎安装。
+      # 走 make ci-deps 而非裸 pip：Debian 12/Ubuntu 24.04（含 Gitea Act Runner
+      # 镜像）按 PEP 668 标记系统 Python 为 externally-managed，裸 pip 会被拒绝，
+      # 2026-11-26 Gitea 上本 job 即因 externally-managed-environment 秒失败。
+      # ci-deps.sh 会创建仓库内 .venv，check-oncall.sh 优先使用该解释器。
       - name: Install PyYAML
-        run: python3 -m pip install --quiet -r scripts/ci/requirements.txt
+        run: bash scripts/ci/ci-deps.sh
 
       - name: Arch gates (transport + DATA/REL/OBS)
         run: bash scripts/ci/gitee-job.sh arch
@@ -266,6 +284,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      # make openapi-artifacts 依赖 Go（openapi-bundle 由 go 生成规范），
+      # 不能靠 runner 预装：GitHub 的 ubuntu-latest 自带 Go，Gitea Act Runner 的
+      # docker.gitea.com/runner-images:ubuntu-latest 没有，2026-11-26 实测本 job
+      # 直接 `error: go not found in PATH`。显式声明后两个平台行为一致。
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Fetch PR base for changelog
         if: github.event_name == 'pull_request'
